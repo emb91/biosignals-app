@@ -1,6 +1,7 @@
 import type React from "react"
 import { Poppins } from "next/font/google"
 import ClientLayout from "./ClientLayout"
+import { AuthProvider } from "@/context/AuthContext"
 import './globals.css'
 // import { Analytics } from "@vercel/analytics/next"
 
@@ -89,7 +90,9 @@ export default function RootLayout({
         />
       </head>
       <body>
-        <ClientLayout>{children}</ClientLayout>
+        <AuthProvider>
+          <ClientLayout>{children}</ClientLayout>
+        </AuthProvider>
         {/* <Analytics /> */}
       </body>
     </html>
