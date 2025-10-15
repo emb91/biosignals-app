@@ -32,7 +32,7 @@ export default function LoginPage() {
       } else {
         await login(email, password);
       }
-      router.push('/icp');
+      router.push('/dashboard');
     } catch (error: any) {
       // Handle specific Firebase errors with user-friendly messages
       if (error.code === 'auth/password-does-not-meet-requirements') {
@@ -63,7 +63,7 @@ export default function LoginPage() {
 
     try {
       await loginWithGoogle();
-      router.push('/icp');
+      router.push('/dashboard');
     } catch (error: any) {
       if (error.code === 'auth/popup-closed-by-user') {
         setError('Sign-in was cancelled. Please try again.');
@@ -138,11 +138,9 @@ export default function LoginPage() {
                       )}
                     </button>
                   </div>
-                  {isSignUp && (
-                    <p className="text-xs text-gray-500 mt-1">
-                      Password must be at least 6 characters with letters and numbers
-                    </p>
-                  )}
+                  <p className="text-xs text-gray-500 mt-1">
+                    Use at least 6 characters, with a mix of uppercase, lowercase, numbers, and symbols.
+                  </p>
                 </div>
               </div>
 
