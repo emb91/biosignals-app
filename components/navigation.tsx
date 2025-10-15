@@ -5,6 +5,7 @@ import { Menu, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { motion, AnimatePresence } from "framer-motion"
 import { usePathname } from "next/navigation"
+import { useAuth } from "@/context/AuthContext"
 
 interface NavItem {
   name: string
@@ -17,6 +18,7 @@ const navigation: NavItem[] = [
 export const Navigation = () => {
   const [mobileOpen, setMobileOpen] = useState(false)
   const pathname = usePathname()
+  const { user } = useAuth()
 
   return (
     <header className="w-full flex justify-center bg-transparent sticky top-0 z-50">
@@ -44,14 +46,16 @@ export const Navigation = () => {
         {/* <div className="hidden md:flex items-center">
           <Button ...> ... </Button>
         </div> */}
-        {/* Enter App Button (Always visible, right-aligned, min-width to match logo) */}
-        <div className="flex items-center justify-end min-w-[120px]">
-          <Link href="/login">
-            <Button className="bg-arcova-darkblue hover:bg-arcova-darkblue/90 text-white px-4 py-2 text-sm font-semibold rounded-lg transition-all duration-300 hover:shadow-lg">
-              Enter App
-            </Button>
-          </Link>
-        </div>
+        {/* Enter App Button (Show on landing page only) */}
+        {pathname === '/' && (
+          <div className="flex items-center justify-end min-w-[120px]">
+            <Link href="/login">
+              <Button className="bg-arcova-darkblue hover:bg-arcova-darkblue/90 text-white px-4 py-2 text-sm font-semibold rounded-lg transition-all duration-300 hover:shadow-lg">
+                Enter App
+              </Button>
+            </Link>
+          </div>
+        )}
       </nav>
 
       {/* Mobile Drawer */}

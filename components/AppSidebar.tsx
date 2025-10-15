@@ -9,8 +9,6 @@ import {
   Upload, 
   BarChart3, 
   Settings, 
-  BookOpen, 
-  Headphones,
   User,
   ChevronDown,
   ChevronRight
@@ -107,40 +105,6 @@ export default function AppSidebar() {
           ))}
         </nav>
 
-        {/* Credits Section */}
-        <div className="p-4 border-t border-arcova-mint/20">
-          <div className="bg-arcova-mint/10 rounded-lg p-3 mb-4">
-            <div className="text-xs text-white/80 mb-1">Available Credits</div>
-            <div className="text-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-white/90">Email</span>
-                <span className="text-arcova-teal font-semibold">3905</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-white/90">Phone</span>
-                <span className="text-white/70">0</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Bottom Links */}
-          <div className="space-y-2">
-            <Link
-              href="/learning"
-              className="flex items-center space-x-3 px-3 py-2 rounded-lg text-sm text-white hover:bg-arcova-mint/20 hover:text-white transition-colors"
-            >
-              <BookOpen className="w-4 h-4" />
-              <span>Learning Center</span>
-            </Link>
-            <Link
-              href="/support"
-              className="flex items-center space-x-3 px-3 py-2 rounded-lg text-sm text-white hover:bg-arcova-mint/20 hover:text-white transition-colors"
-            >
-              <Headphones className="w-4 h-4" />
-              <span>Open Support</span>
-            </Link>
-          </div>
-        </div>
       </div>
     </div>
   );

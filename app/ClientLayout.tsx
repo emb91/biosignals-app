@@ -12,12 +12,20 @@ export default function ClientLayout({
   children: React.ReactNode
 }) {
   const pathname = usePathname()
+  
+  // Only show navigation on landing page
+  const isAppPage = pathname.startsWith('/dashboard') || 
+                    pathname.startsWith('/about') || 
+                    pathname.startsWith('/icp') || 
+                    pathname.startsWith('/upload') || 
+                    pathname.startsWith('/results') || 
+                    pathname.startsWith('/settings')
 
   return (
     <div className="min-h-screen flex flex-col">
-      <Navigation />
+      {!isAppPage && <Navigation />}
       <main className="flex-grow">{children}</main>
-      <SiteFooter />
+      {!isAppPage && <SiteFooter />}
       <ScrollToTop />
     </div>
   )

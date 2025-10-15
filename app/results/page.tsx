@@ -6,7 +6,7 @@ import { useEffect } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 
 export default function ResultsPage() {
-  const { user, loading } = useAuth();
+  const { user, loading, logout } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
@@ -34,17 +34,19 @@ export default function ResultsPage() {
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Top Bar */}
-        <div className="bg-white border-b border-gray-200 px-6 py-4">
-          <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-semibold text-gray-900">Results</h1>
+        <div className="bg-gray-50 px-6 py-4">
+          <div className="flex items-center justify-end">
             <div className="flex items-center space-x-4">
               <span className="text-sm text-gray-600">Welcome, {user.email}</span>
-              <button
-                onClick={() => router.push('/login')}
-                className="text-sm text-gray-600 hover:text-gray-900"
-              >
-                Logout
-              </button>
+                <button
+                  onClick={async () => {
+                    await logout();
+                    router.push('/');
+                  }}
+                  className="text-sm text-gray-600 hover:text-gray-900"
+                >
+                  Logout
+                </button>
             </div>
           </div>
         </div>
