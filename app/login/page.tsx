@@ -17,8 +17,11 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetMessage, setResetMessage] = useState('');
   
-  const { login, signup, loginWithGoogle } = useAuth();
+  const { login, signup, loginWithGoogle, resetPassword } = useAuth();
   const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -51,6 +54,30 @@ export default function LoginPage() {
         setError('Too many failed attempts. Please try again later.');
       } else {
         setError(error.message || 'An error occurred. Please try again.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePasswordReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setResetMessage('');
+    setLoading(true);
+
+    try {
+      await resetPassword(resetEmail);
+      setResetMessage('Password reset email sent! Please check your inbox and spam folder. If you don\'t see it within a few minutes, try again.');
+      setShowForgotPassword(false);
+      setResetEmail('');
+    } catch (error: any) {
+      if (error.code === 'auth/user-not-found') {
+        setError('No account found with this email address.');
+      } else if (error.code === 'auth/invalid-email') {
+        setError('Please enter a valid email address.');
+      } else {
+        setError(error.message || 'Failed to send reset email. Please try again.');
       }
     } finally {
       setLoading(false);
@@ -144,6 +171,19 @@ export default function LoginPage() {
                 </div>
               </div>
 
+              {/* Forgot Password Link */}
+              {!isSignUp && (
+                <div className="text-right">
+                  <button
+                    type="button"
+                    onClick={() => setShowForgotPassword(true)}
+                    className="text-sm text-blue-600 hover:text-blue-500"
+                  >
+                    Forgot your password?
+                  </button>
+                </div>
+              )}
+
               <Button
                 type="submit"
                 className="w-full"
@@ -206,6 +246,71 @@ export default function LoginPage() {
             </form>
           </CardContent>
         </Card>
+
+        {/* Forgot Password Modal */}
+        {showForgotPassword && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <Card className="w-full max-w-md mx-4">
+              <CardHeader>
+                <CardTitle>Reset Password</CardTitle>
+                <CardDescription>
+                  Enter your email address and we'll send you a link to reset your password.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={handlePasswordReset} className="space-y-4">
+                  {error && (
+                    <Alert variant="destructive">
+                      <AlertDescription>{error}</AlertDescription>
+                    </Alert>
+                  )}
+                  
+                  {resetMessage && (
+                    <Alert>
+                      <AlertDescription>{resetMessage}</AlertDescription>
+                    </Alert>
+                  )}
+
+                  <div>
+                    <Label htmlFor="resetEmail">Email address</Label>
+                    <Input
+                      id="resetEmail"
+                      type="email"
+                      value={resetEmail}
+                      onChange={(e) => setResetEmail(e.target.value)}
+                      required
+                      className="mt-1"
+                      placeholder="Enter your email"
+                    />
+                  </div>
+
+                  <div className="flex space-x-3">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        setShowForgotPassword(false);
+                        setResetEmail('');
+                        setError('');
+                        setResetMessage('');
+                      }}
+                      className="flex-1"
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="submit"
+                      disabled={loading}
+                      className="flex-1"
+                    >
+                      {loading ? 'Sending...' : 'Send Reset Email'}
+                    </Button>
+                  </div>
+                </form>
+              </CardContent>
+            </Card>
+          </div>
+        )}
       </div>
     </div>
   );
