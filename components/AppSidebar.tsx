@@ -6,7 +6,8 @@ import { usePathname } from 'next/navigation';
 import { 
   LayoutDashboard, 
   Target, 
-  Upload, 
+  Radio, 
+  Users, 
   BarChart3, 
   Settings, 
   User,
@@ -34,19 +35,19 @@ const navigation: NavItem[] = [
     icon: User,
   },
   {
-    name: 'Setup New',
+    name: 'ICP',
     href: '/icp',
     icon: Target,
   },
   {
-    name: 'Upload Data',
-    href: '/upload',
-    icon: Upload,
+    name: 'Signals',
+    href: '/customer-signals',
+    icon: Radio,
   },
   {
-    name: 'Results',
+    name: 'Leads',
     href: '/results',
-    icon: BarChart3,
+    icon: Users,
   },
   {
     name: 'Settings',

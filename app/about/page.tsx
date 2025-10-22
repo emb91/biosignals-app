@@ -8,9 +8,10 @@ import { getCurrentUserToken } from '@/lib/auth-helpers';
 import { db } from '@/lib/firebase';
 import { collection, addDoc, serverTimestamp, updateDoc, getDocs, query, where, limit } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
+import { getDisplayName } from '@/lib/utils';
 
 export default function AboutPage() {
-  const { user, loading, logout } = useAuth();
+  const { user, firstName, loading, logout } = useAuth();
   const router = useRouter();
   const [websiteUrl, setWebsiteUrl] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -352,7 +353,7 @@ export default function AboutPage() {
         <div className="bg-gray-50 px-6 py-4">
           <div className="flex items-center justify-end">
             <div className="flex items-center space-x-4">
-              <span className="text-sm text-gray-600">Welcome, {user.email}</span>
+              <span className="text-sm text-gray-600">Welcome, {firstName}</span>
                 <button
                   onClick={async () => {
                     await logout();
