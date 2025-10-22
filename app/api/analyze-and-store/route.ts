@@ -46,15 +46,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Call n8n
+    // Call n8n with timeout
     console.log('Calling n8n webhook:', n8nWebhookUrl);
     console.log('Payload:', { website });
+    
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 minute timeout
     
     const response = await fetch(n8nWebhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ website }),
+      signal: controller.signal,
     });
+    
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -75,19 +81,41 @@ export async function POST(request: NextRequest) {
     const rawData = await response.json();
     console.log('Raw n8n response:', JSON.stringify(rawData, null, 2));
     
-    const analysisData = rawData[0]?.message?.content;
+    // Try multiple possible response structures
+    let analysisData;
+    
+    // Try: rawData[0]?.message?.content
+    if (rawData[0]?.message?.content) {
+      analysisData = rawData[0].message.content;
+      console.log('Found data in rawData[0].message.content');
+    }
+    // Try: rawData[0]?.json (common n8n format)
+    else if (rawData[0]?.json) {
+      analysisData = rawData[0].json;
+      console.log('Found data in rawData[0].json');
+    }
+    // Try: rawData[0] directly
+    else if (rawData[0] && typeof rawData[0] === 'object') {
+      analysisData = rawData[0];
+      console.log('Found data in rawData[0]');
+    }
+    // Try: rawData directly (not an array)
+    else if (rawData && typeof rawData === 'object' && !Array.isArray(rawData)) {
+      analysisData = rawData;
+      console.log('Found data in rawData (not array)');
+    }
 
-    if (!analysisData) {
+    if (!analysisData || Object.keys(analysisData).length === 0) {
       console.error('Invalid response structure:', {
-        hasArray: Array.isArray(rawData),
+        isArray: Array.isArray(rawData),
         hasFirstElement: !!rawData[0],
-        hasMessage: !!rawData[0]?.message,
-        hasContent: !!rawData[0]?.message?.content,
+        firstElementKeys: rawData[0] ? Object.keys(rawData[0]) : [],
+        rawDataKeys: typeof rawData === 'object' ? Object.keys(rawData) : [],
         rawData: rawData
       });
       return NextResponse.json(
         { 
-          error: 'Invalid response from analysis service',
+          error: 'Invalid response from analysis service - no valid data found',
           rawResponse: rawData 
         },
         { status: 500 }
