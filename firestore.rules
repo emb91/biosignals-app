@@ -1,0 +1,16 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /company_analyses/{docId} {
+      // Users can only read their own analyses
+      allow read: if request.auth != null && resource.data.user_id == request.auth.uid;
+      
+      // Users can create analyses (must set user_id to their own uid)
+      allow create: if request.auth != null && request.resource.data.user_id == request.auth.uid;
+      
+      // Users can update/delete their own analyses
+      allow update, delete: if request.auth != null && resource.data.user_id == request.auth.uid;
+    }
+  }
+}
+

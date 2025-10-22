@@ -4,6 +4,10 @@ import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
+import { getCurrentUserToken } from '@/lib/auth-helpers';
+import { db } from '@/lib/firebase';
+import { collection, addDoc, serverTimestamp, updateDoc, getDocs, query, where, limit } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 
 export default function AboutPage() {
   const { user, loading, logout } = useAuth();
@@ -12,6 +16,7 @@ export default function AboutPage() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResults, setAnalysisResults] = useState(null);
   const [error, setError] = useState('');
+  const [loadingExisting, setLoadingExisting] = useState(true);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -19,44 +24,121 @@ export default function AboutPage() {
     }
   }, [user, loading, router]);
 
+  // Check for existing analysis on component mount
+  useEffect(() => {
+    const loadExistingAnalysis = async () => {
+      if (!user) {
+        setLoadingExisting(false);
+        return;
+      }
+
+      try {
+        const q = query(
+          collection(db, 'company_analyses'),
+          where('user_id', '==', user.uid),
+          limit(1)
+        );
+
+        const existingDocs = await getDocs(q);
+
+        if (!existingDocs.empty) {
+          const existingData = existingDocs.docs[0].data();
+          setAnalysisResults({
+            id: existingDocs.docs[0].id,
+            ...existingData
+          });
+          setWebsiteUrl(existingData.website || '');
+          console.log('Loaded existing analysis:', existingDocs.docs[0].id);
+        }
+      } catch (err) {
+        console.error('Error loading existing analysis:', err);
+      } finally {
+        setLoadingExisting(false);
+      }
+    };
+
+    loadExistingAnalysis();
+  }, [user]);
+
   const handleAnalyze = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!websiteUrl.trim()) return;
 
     setIsAnalyzing(true);
     setError('');
-    setAnalysisResults(null);
-
+    
     try {
+      const idToken = await getCurrentUserToken();
+      const auth = getAuth();
+      const currentUser = auth.currentUser;
+      
+      if (!currentUser) {
+        throw new Error('User not authenticated');
+      }
+
+      // Call API to analyze
       const response = await fetch('/api/analyze-and-store', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
         },
         body: JSON.stringify({ website: websiteUrl }),
       });
 
+      const data = await response.json();
+
       if (!response.ok) {
-        const errorData = await response.json();
-        console.error('API Error:', errorData);
-        setError(`Analysis failed: ${errorData.error || 'Unknown error'}`);
-        return;
+        throw new Error(data.error || 'Analysis failed');
       }
 
-      const data = await response.json();
-      console.log('Analysis stored with Firebase ID:', data.id);
-      console.log('Full response data:', data);
-      console.log('Data keys:', Object.keys(data));
-      setAnalysisResults(data);
+      console.log('Analysis result:', data);
+
+      // Check if user already has an analysis document
+      const q = query(
+        collection(db, 'company_analyses'),
+        where('user_id', '==', currentUser.uid),
+        limit(1)
+      );
+      
+      const existingDocs = await getDocs(q);
+
+      let docRef;
+
+      if (!existingDocs.empty) {
+        // UPDATE existing document
+        const existingDocRef = existingDocs.docs[0].ref;
+        await updateDoc(existingDocRef, {
+          ...data,
+          analyzed_at: serverTimestamp(),
+          status: 'completed',
+        });
+        docRef = { id: existingDocRef.id };
+        console.log('Updated existing analysis:', existingDocRef.id);
+      } else {
+        // CREATE new document (first time)
+        docRef = await addDoc(collection(db, 'company_analyses'), {
+          ...data,
+          analyzed_at: serverTimestamp(),
+          status: 'completed',
+        });
+        console.log('Created new analysis:', docRef.id);
+      }
+
+      setAnalysisResults({
+        id: docRef.id,
+        ...data
+      });
+
     } catch (err) {
-      console.error('Network Error:', err);
-      setError(`Network error: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      console.error('Error:', err);
+      setError(err instanceof Error ? err.message : 'Analysis failed');
     } finally {
       setIsAnalyzing(false);
     }
   };
 
-  if (loading) {
+  if (loading || loadingExisting) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
