@@ -34,23 +34,21 @@ export default function LoginPage() {
       }
       router.push('/icp');
     } catch (error: any) {
-      // Handle specific Firebase errors with user-friendly messages
-      if (error.code === 'auth/password-does-not-meet-requirements') {
-        setError('Password must be at least 6 characters and contain both letters and numbers.');
-      } else if (error.code === 'auth/weak-password') {
-        setError('Password is too weak. Please choose a stronger password with at least 6 characters.');
-      } else if (error.code === 'auth/email-already-in-use') {
-        setError('An account with this email already exists. Please sign in instead.');
-      } else if (error.code === 'auth/user-not-found') {
-        setError('No account found with this email. Please check your email or sign up.');
-      } else if (error.code === 'auth/wrong-password') {
-        setError('Incorrect password. Please try again.');
-      } else if (error.code === 'auth/invalid-email') {
+      const message = error.message || '';
+      if (message.includes('Invalid login credentials')) {
+        setError('Invalid email or password. If you signed up with Google, use the Google button below.');
+      } else if (message.includes('Email not confirmed')) {
+        setError('Please check your email and confirm your account.');
+      } else if (message.includes('User already registered') || message.includes('already exists')) {
+        setError('An account with this email already exists. Try signing in, or use Google if you signed up that way.');
+      } else if (message.includes('Password should be at least')) {
+        setError('Password must be at least 6 characters.');
+      } else if (message.includes('Invalid email')) {
         setError('Please enter a valid email address.');
-      } else if (error.code === 'auth/too-many-requests') {
-        setError('Too many failed attempts. Please try again later.');
+      } else if (message.includes('rate limit')) {
+        setError('Too many attempts. Please try again later.');
       } else {
-        setError(error.message || 'An error occurred. Please try again.');
+        setError(message || 'An error occurred. Please try again.');
       }
     } finally {
       setLoading(false);
@@ -65,13 +63,7 @@ export default function LoginPage() {
       await loginWithGoogle();
       router.push('/icp');
     } catch (error: any) {
-      if (error.code === 'auth/popup-closed-by-user') {
-        setError('Sign-in was cancelled. Please try again.');
-      } else if (error.code === 'auth/popup-blocked') {
-        setError('Popup was blocked. Please allow popups for this site and try again.');
-      } else {
-        setError(error.message || 'An error occurred with Google sign-in.');
-      }
+      setError(error.message || 'An error occurred with Google sign-in.');
     } finally {
       setLoading(false);
     }
@@ -153,6 +145,17 @@ export default function LoginPage() {
               >
                 {loading ? 'Loading...' : (isSignUp ? 'Create Account' : 'Sign In')}
               </Button>
+
+              {!isSignUp && (
+                <div className="text-center">
+                  <a
+                    href="/forgot-password"
+                    className="text-sm text-blue-600 hover:text-blue-500"
+                  >
+                    Forgot your password?
+                  </a>
+                </div>
+              )}
 
               {/* Divider */}
               <div className="relative">
