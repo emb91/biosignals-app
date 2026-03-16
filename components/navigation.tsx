@@ -44,13 +44,15 @@ export const Navigation = () => {
         {/* <div className="hidden md:flex items-center">
           <Button ...> ... </Button>
         </div> */}
-        {/* Enter App Button (Always visible, right-aligned, min-width to match logo) */}
+        {/* Enter App Button (Only on landing page) */}
         <div className="flex items-center justify-end min-w-[120px]">
-          <Link href="/login">
-            <Button className="bg-arcova-darkblue hover:bg-arcova-darkblue/90 text-white px-4 py-2 text-sm font-semibold rounded-lg transition-all duration-300 hover:shadow-lg">
-              Enter App
-            </Button>
-          </Link>
+          {pathname === "/" && (
+            <Link href="/login">
+              <Button className="bg-arcova-darkblue hover:bg-arcova-darkblue/90 text-white px-4 py-2 text-sm font-semibold rounded-lg transition-all duration-300 hover:shadow-lg">
+                Enter App
+              </Button>
+            </Link>
+          )}
         </div>
       </nav>
 
