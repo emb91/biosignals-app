@@ -32,7 +32,7 @@ export default function LoginPage() {
       } else {
         await login(email, password);
       }
-      router.push('/icp');
+      router.push('/dashboard');
     } catch (error: any) {
       const message = error.message || '';
       if (message.includes('Invalid login credentials')) {
@@ -61,7 +61,7 @@ export default function LoginPage() {
 
     try {
       await loginWithGoogle();
-      router.push('/icp');
+      router.push('/dashboard');
     } catch (error: any) {
       setError(error.message || 'An error occurred with Google sign-in.');
     } finally {
@@ -146,17 +146,6 @@ export default function LoginPage() {
                 {loading ? 'Loading...' : (isSignUp ? 'Create Account' : 'Sign In')}
               </Button>
 
-              {!isSignUp && (
-                <div className="text-center">
-                  <a
-                    href="/forgot-password"
-                    className="text-sm text-blue-600 hover:text-blue-500"
-                  >
-                    Forgot your password?
-                  </a>
-                </div>
-              )}
-
               {/* Divider */}
               <div className="relative">
                 <div className="absolute inset-0 flex items-center">
@@ -196,7 +185,7 @@ export default function LoginPage() {
                 Continue with Google
               </Button>
 
-              <div className="text-center">
+              <div className="text-center space-y-2">
                 <button
                   type="button"
                   onClick={() => setIsSignUp(!isSignUp)}
@@ -207,6 +196,16 @@ export default function LoginPage() {
                     : "Don't have an account? Sign up"
                   }
                 </button>
+                {!isSignUp && (
+                  <div>
+                    <a
+                      href="/forgot-password"
+                      className="text-sm text-gray-500 hover:text-gray-700"
+                    >
+                      Forgot your password?
+                    </a>
+                  </div>
+                )}
               </div>
             </form>
           </CardContent>
