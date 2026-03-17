@@ -60,24 +60,66 @@ export async function POST(request: NextRequest) {
     const rawData = await response.json()
     console.log('Raw n8n response:', JSON.stringify(rawData, null, 2))
     
-    // Parse n8n response (try multiple structures)
+    // Parse n8n response - handle Anthropic's response format
     let analysisData
-    if (rawData[0]?.message?.content) {
-      analysisData = rawData[0].message.content
-    } else if (rawData[0]?.json) {
+    
+    // Anthropic format: [{ content: [{ type: "text", text: "```json\n{...}\n```" }] }]
+    if (rawData[0]?.content?.[0]?.text) {
+      const textContent = rawData[0].content[0].text
+      // Extract JSON from markdown code block
+      const jsonMatch = textContent.match(/```json\n?([\s\S]*?)\n?```/)
+      if (jsonMatch) {
+        try {
+          analysisData = JSON.parse(jsonMatch[1])
+        } catch (e) {
+          console.error('Failed to parse JSON from code block:', e)
+        }
+      }
+      // Try parsing the whole text if no code block
+      if (!analysisData) {
+        try {
+          analysisData = JSON.parse(textContent)
+        } catch (e) {
+          console.error('Failed to parse text as JSON:', e)
+        }
+      }
+    }
+    // OpenAI format: [{ message: { content: ... } }]
+    else if (rawData[0]?.message?.content) {
+      const content = rawData[0].message.content
+      if (typeof content === 'string') {
+        const jsonMatch = content.match(/```json\n?([\s\S]*?)\n?```/)
+        if (jsonMatch) {
+          try {
+            analysisData = JSON.parse(jsonMatch[1])
+          } catch (e) {
+            analysisData = JSON.parse(content)
+          }
+        } else {
+          analysisData = JSON.parse(content)
+        }
+      } else {
+        analysisData = content
+      }
+    }
+    // Direct JSON format
+    else if (rawData[0]?.json) {
       analysisData = rawData[0].json
-    } else if (rawData[0] && typeof rawData[0] === 'object') {
+    } else if (rawData[0] && typeof rawData[0] === 'object' && !rawData[0].content) {
       analysisData = rawData[0]
     } else if (rawData && typeof rawData === 'object' && !Array.isArray(rawData)) {
       analysisData = rawData
     }
 
     if (!analysisData || Object.keys(analysisData).length === 0) {
+      console.error('Could not parse analysis data from response')
       return NextResponse.json(
         { error: 'Invalid response from analysis service' },
         { status: 500 }
       )
     }
+    
+    console.log('Parsed analysis data:', JSON.stringify(analysisData, null, 2))
 
     // Check if user already has an analysis
     const { data: existing } = await supabase
@@ -85,7 +127,7 @@ export async function POST(request: NextRequest) {
       .select('id')
       .eq('user_id', user.id)
       .limit(1)
-      .single()
+      .maybeSingle()
 
     let result
     if (existing) {

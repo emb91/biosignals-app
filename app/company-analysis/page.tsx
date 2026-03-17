@@ -20,6 +20,11 @@ export default function CompanyAnalysisPage() {
   const [savingSection, setSavingSection] = useState<string | null>(null);
   const [successSection, setSuccessSection] = useState<string | null>(null);
   const [loadingMessage, setLoadingMessage] = useState('Thinking...');
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [isSavingAll, setIsSavingAll] = useState(false);
+  const [showAnalyzeForm, setShowAnalyzeForm] = useState(false);
+  const [isEditingCompanyName, setIsEditingCompanyName] = useState(false);
+  const [savingCompanyName, setSavingCompanyName] = useState(false);
 
   const firstName = user ? getDisplayName(user) : '';
 
@@ -43,7 +48,7 @@ export default function CompanyAnalysisPage() {
           .select('*')
           .eq('user_id', user.id)
           .limit(1)
-          .single();
+          .maybeSingle();
 
         if (data && !error) {
           setAnalysisResults(data);
@@ -103,6 +108,7 @@ export default function CompanyAnalysisPage() {
 
       setAnalysisResults(data);
       setEditedResults(data);
+      setShowAnalyzeForm(false);
 
     } catch (err) {
       console.error('Error:', err);
@@ -216,24 +222,63 @@ export default function CompanyAnalysisPage() {
     }));
   };
 
-  const handleClearData = async () => {
-    if (!analysisResults?.id || !confirm('Are you sure you want to clear all analysis data?')) return;
+  const handleNextClick = () => {
+    setShowConfirmModal(true);
+  };
 
+  const handleSaveCompanyName = async () => {
+    if (!editedResults?.id || !user) return;
+
+    setSavingCompanyName(true);
     try {
-      const response = await fetch(`/api/user-analyses?id=${analysisResults.id}`, {
-        method: 'DELETE',
+      const response = await fetch('/api/user-analyses', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editedResults),
       });
 
       if (!response.ok) {
-        throw new Error('Failed to delete');
+        throw new Error('Failed to save changes');
       }
 
-      setAnalysisResults(null);
-      setEditedResults(null);
-      setWebsiteUrl('');
+      const updatedData = await response.json();
+      setAnalysisResults(updatedData);
+      setIsEditingCompanyName(false);
     } catch (err) {
-      console.error('Error clearing data:', err);
-      setError('Failed to clear data');
+      console.error('Error saving company name:', err);
+      setError('Failed to save company name');
+    } finally {
+      setSavingCompanyName(false);
+    }
+  };
+
+  const handleConfirmNext = async () => {
+    if (!editedResults?.id || !user) {
+      setShowConfirmModal(false);
+      router.push('/icp');
+      return;
+    }
+
+    setIsSavingAll(true);
+    try {
+      const response = await fetch('/api/user-analyses', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editedResults),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save changes');
+      }
+
+      setShowConfirmModal(false);
+      router.push('/icp');
+    } catch (err) {
+      console.error('Error saving:', err);
+      setError('Failed to save changes');
+      setShowConfirmModal(false);
+    } finally {
+      setIsSavingAll(false);
     }
   };
 
@@ -249,41 +294,34 @@ export default function CompanyAnalysisPage() {
     return null;
   }
 
-  // Define sections for display
+  // Helper to format array data for display
+  const formatArrayValue = (value: any): string[] => {
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string') return [value];
+    return [];
+  };
+
+  // Define sections for display - only showing key fields for ICP seeding
   const getSections = () => {
     if (!editedResults) return [];
     
     return [
-      { key: 'company_name', title: 'Company Name', icon: '🏢', fields: [
-        { key: 'company_name', label: 'Name', value: editedResults.company_name, type: 'text' }
-      ]},
-      { key: 'description', title: 'Description', icon: '📝', fields: [
-        { key: 'description', label: 'Description', value: editedResults.description, type: 'textarea' }
-      ]},
-      { key: 'products_services', title: 'Products & Services', icon: '🛍️', data: editedResults.products_services || [] },
-      { key: 'target_customers', title: 'Target Customers', icon: '🎯', data: editedResults.target_customers || [] },
-      { key: 'value_propositions', title: 'Value Propositions', icon: '💎', data: editedResults.value_propositions || [] },
-      { key: 'industries', title: 'Industries', icon: '🏭', data: editedResults.industries || [] },
-      { key: 'technologies', title: 'Technologies', icon: '💻', data: editedResults.technologies || [] },
-      { key: 'competitors', title: 'Competitors', icon: '⚔️', data: editedResults.competitors || [] },
+      { key: 'description', title: 'Description', icon: '📝', data: formatArrayValue(editedResults.description) },
+      { key: 'customers_we_serve', title: 'Customers We Serve', icon: '🎯', data: formatArrayValue(editedResults.customers_we_serve) },
+      { key: 'good_fit', title: 'We work best with...', icon: '✅', data: formatArrayValue(editedResults.good_fit) },
+      { key: 'bad_fit', title: 'Not a fit for us', icon: '❌', data: formatArrayValue(editedResults.bad_fit) },
     ];
   };
 
   const sections = getSections();
-  const populatedSections = sections.filter(s => 
-    s.fields ? s.fields.some(f => f.value) : (s.data && s.data.length > 0)
-  );
-  const unpopulatedSections = sections.filter(s => 
-    s.fields ? !s.fields.some(f => f.value) : (!s.data || s.data.length === 0)
-  );
 
   return (
     <div className="flex h-screen bg-gray-50">
       <AppSidebar />
       
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 flex flex-col min-h-0">
         {/* Top Bar */}
-        <div className="bg-gray-50 px-6 py-4">
+        <div className="bg-gray-50 px-6 py-3 flex-shrink-0">
           <div className="flex items-center justify-end">
             <div className="flex items-center space-x-4">
               <span className="text-sm text-gray-600">Welcome, {firstName}</span>
@@ -301,39 +339,51 @@ export default function CompanyAnalysisPage() {
         </div>
 
         {/* Content Area */}
-        <div className="flex-1 overflow-auto p-6">
+        <div className="flex-1 overflow-y-auto p-4">
           <div className="max-w-4xl mx-auto">
-            {/* URL Input Form */}
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-8">
-              <h2 className="text-2xl font-bold text-gray-900 mb-4">Company Analysis</h2>
-              <p className="text-gray-600 mb-6">
-                Enter your company website to generate an AI-powered analysis of your business.
-              </p>
-              
-              <form onSubmit={handleAnalyze} className="flex gap-4">
-                <input
-                  type="text"
-                  value={websiteUrl}
-                  onChange={(e) => setWebsiteUrl(e.target.value)}
-                  placeholder="Enter company website (e.g., acme.com)"
-                  className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-arcova-teal focus:border-transparent"
-                  disabled={isAnalyzing}
-                />
-                <button
-                  type="submit"
-                  disabled={isAnalyzing || !websiteUrl.trim()}
-                  className="px-6 py-3 bg-arcova-teal text-white font-semibold rounded-lg hover:bg-arcova-teal/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  {isAnalyzing ? loadingMessage : (analysisResults ? 'Re-analyze' : 'Analyze')}
-                </button>
-              </form>
-
-              {error && (
-                <div className="mt-4 p-4 bg-red-50 text-red-700 rounded-lg">
-                  {error}
+            {/* URL Input Form - only show when no results or user clicked Re-analyze */}
+            {(!analysisResults || showAnalyzeForm) && (
+              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-8">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-2xl font-bold text-gray-900">Company Analysis</h2>
+                  {showAnalyzeForm && analysisResults && (
+                    <button
+                      onClick={() => setShowAnalyzeForm(false)}
+                      className="text-sm text-gray-500 hover:text-gray-700"
+                    >
+                      Cancel
+                    </button>
+                  )}
                 </div>
-              )}
-            </div>
+                <p className="text-gray-600 mb-6">
+                  Let's analyze your business model. Please enter your company website.
+                </p>
+                
+                <form onSubmit={handleAnalyze} className="flex gap-4">
+                  <input
+                    type="text"
+                    value={websiteUrl}
+                    onChange={(e) => setWebsiteUrl(e.target.value)}
+                    placeholder="Enter company website (e.g., acme.com)"
+                    className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-arcova-teal focus:border-transparent"
+                    disabled={isAnalyzing}
+                  />
+                  <button
+                    type="submit"
+                    disabled={isAnalyzing || !websiteUrl.trim()}
+                    className="px-6 py-3 bg-arcova-teal text-white font-semibold rounded-lg hover:bg-arcova-teal/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {isAnalyzing ? loadingMessage : 'Analyze'}
+                  </button>
+                </form>
+
+                {error && (
+                  <div className="mt-4 p-4 bg-red-50 text-red-700 rounded-lg">
+                    {error}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Loading State */}
             {isAnalyzing && (
@@ -345,38 +395,79 @@ export default function CompanyAnalysisPage() {
 
             {/* Results */}
             {analysisResults && !isAnalyzing && (
-              <div className="space-y-6">
-                <div className="mb-8">
-                  <h3 className="text-3xl font-bold text-arcova-darkblue mb-3">
-                    {editedResults?.company_name || 'Your Company'} Analysis
-                  </h3>
+              <div className="space-y-4">
+                <div className="mb-4">
+                  <div className="flex items-center gap-2 mb-1">
+                    {isEditingCompanyName ? (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={editedResults?.company_name || ''}
+                          onChange={(e) => handleFieldChange('company_name', e.target.value)}
+                          className="text-2xl font-bold text-arcova-darkblue px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-arcova-teal"
+                          autoFocus
+                        />
+                        <button
+                          onClick={() => {
+                            setEditedResults(analysisResults);
+                            setIsEditingCompanyName(false);
+                          }}
+                          className="text-sm text-gray-500 hover:text-gray-700"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={handleSaveCompanyName}
+                          disabled={savingCompanyName}
+                          className="text-sm bg-arcova-teal text-white px-3 py-1 rounded hover:bg-arcova-teal/90 disabled:opacity-50"
+                        >
+                          {savingCompanyName ? 'Saving...' : 'Save'}
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <h3 className="text-2xl font-bold text-arcova-darkblue">
+                          {editedResults?.company_name || 'Your Company'}
+                        </h3>
+                        <button
+                          onClick={() => setIsEditingCompanyName(true)}
+                          className="text-sm text-arcova-teal hover:text-arcova-darkblue"
+                        >
+                          Edit
+                        </button>
+                      </>
+                    )}
+                  </div>
                   {editedResults?.domain && (
                     <a 
                       href={editedResults.domain.startsWith('http') ? editedResults.domain : `https://${editedResults.domain}`}
                       target="_blank" 
                       rel="noopener noreferrer"
-                      className="text-arcova-teal hover:text-arcova-darkblue transition-colors text-lg inline-flex items-center gap-2"
+                      className="text-arcova-teal hover:text-arcova-darkblue transition-colors text-sm inline-flex items-center gap-1"
                     >
                       {editedResults.domain}
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                       </svg>
                     </a>
                   )}
                 </div>
 
-                {/* Populated Sections */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {populatedSections.map((section) => {
+                {/* Sections - 2x2 grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {sections.map((section) => {
                     const isEditing = editingSections.has(section.key);
                     const isSavingThis = savingSection === section.key;
                     const isSuccess = successSection === section.key;
+                    const hasData = section.fields 
+                      ? section.fields.some(f => f.value) 
+                      : (section.data && section.data.length > 0);
 
                     return (
-                      <div key={section.key} className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-                        <div className="flex items-center justify-between mb-4">
-                          <h4 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                            <span>{section.icon}</span>
+                      <div key={section.key} className={`bg-white rounded-lg shadow-sm border border-gray-200 p-4 ${!hasData ? 'opacity-60' : ''}`}>
+                        <div className="flex items-center justify-between mb-2">
+                          <h4 className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
+                            <span className="text-base">{section.icon}</span>
                             {section.title}
                           </h4>
                           <div className="flex items-center gap-2">
@@ -435,34 +526,40 @@ export default function CompanyAnalysisPage() {
                             ))}
                           </div>
                         ) : (
-                          <div className="space-y-2">
-                            {section.data?.map((item: string, idx: number) => (
-                              <div key={idx} className="flex items-start gap-2">
-                                <span className="text-arcova-teal">•</span>
-                                {isEditing ? (
-                                  <div className="flex-1 flex gap-2">
-                                    <input
-                                      type="text"
-                                      value={item}
-                                      onChange={(e) => handleArrayItemChange(section.key, idx, e.target.value)}
-                                      className="flex-1 px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-arcova-teal"
-                                    />
-                                    <button
-                                      onClick={() => handleRemoveArrayItem(section.key, idx)}
-                                      className="text-red-500 hover:text-red-700"
-                                    >
-                                      ✕
-                                    </button>
+                          <div className="space-y-1">
+                            {section.data && section.data.length > 0 ? (
+                              <>
+                                {section.data.map((item: string, idx: number) => (
+                                  <div key={idx} className="flex items-start gap-1.5 text-sm">
+                                    <span className="text-arcova-teal">•</span>
+                                    {isEditing ? (
+                                      <div className="flex-1 flex gap-1">
+                                        <input
+                                          type="text"
+                                          value={item}
+                                          onChange={(e) => handleArrayItemChange(section.key, idx, e.target.value)}
+                                          className="flex-1 px-2 py-0.5 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-arcova-teal"
+                                        />
+                                        <button
+                                          onClick={() => handleRemoveArrayItem(section.key, idx)}
+                                          className="text-red-500 hover:text-red-700 text-xs"
+                                        >
+                                          ✕
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <span className="text-gray-700">{item}</span>
+                                    )}
                                   </div>
-                                ) : (
-                                  <span className="text-gray-700">{item}</span>
-                                )}
-                              </div>
-                            ))}
+                                ))}
+                              </>
+                            ) : (
+                              <p className="text-gray-400 italic text-sm">No data available</p>
+                            )}
                             {isEditing && (
                               <button
                                 onClick={() => handleAddArrayItem(section.key)}
-                                className="text-sm text-arcova-teal hover:text-arcova-darkblue mt-2"
+                                className="text-xs text-arcova-teal hover:text-arcova-darkblue mt-1"
                               >
                                 + Add Item
                               </button>
@@ -474,57 +571,53 @@ export default function CompanyAnalysisPage() {
                   })}
                 </div>
 
-                {/* Unpopulated Sections */}
-                {unpopulatedSections.length > 0 && (
-                  <>
-                    <div className="relative my-8">
-                      <div className="absolute inset-0 flex items-center">
-                        <div className="w-full border-t border-gray-200"></div>
-                      </div>
-                      <div className="relative flex justify-center">
-                        <span className="bg-gray-50 px-4 text-sm text-gray-500">Additional Fields</span>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                      {unpopulatedSections.map((section) => (
-                        <div key={section.key} className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 opacity-60">
-                          <h4 className="text-lg font-semibold text-gray-900 flex items-center gap-2 mb-4">
-                            <span>{section.icon}</span>
-                            {section.title}
-                          </h4>
-                          <p className="text-gray-400 italic">No data available</p>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-
-                {/* Clear Data Button */}
-                <div className="border-t border-gray-200 pt-8 mt-8">
-                  <div className="flex justify-center">
+                {/* Bottom Buttons */}
+                <div className="pt-4 mt-4">
+                  <div className="flex justify-between items-center">
                     <button
-                      onClick={handleClearData}
-                      className="px-6 py-2 bg-red-50 text-red-600 border border-red-200 rounded-lg hover:bg-red-100 transition-colors font-medium"
+                      onClick={() => setShowAnalyzeForm(true)}
+                      className="px-6 py-2 bg-gray-500 text-white font-semibold rounded-lg hover:bg-gray-600 transition-colors"
                     >
-                      Clear All Data
+                      Re-analyze
+                    </button>
+                    <button
+                      onClick={handleNextClick}
+                      className="px-6 py-2 bg-arcova-teal text-white font-semibold rounded-lg hover:bg-arcova-teal/90 transition-colors"
+                    >
+                      Next
                     </button>
                   </div>
                 </div>
               </div>
             )}
 
-            {/* Empty State */}
-            {!analysisResults && !isAnalyzing && (
-              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-                <div className="text-gray-400 mb-4">
-                  <svg className="mx-auto h-12 w-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
+            {/* Confirmation Modal */}
+            {showConfirmModal && (
+              <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                <div className="bg-white rounded-lg shadow-xl p-6 max-w-md mx-4">
+                  <h3 className="text-xl font-semibold text-gray-900 mb-4">Confirm Details</h3>
+                  <p className="text-gray-600 mb-6">
+                    Please hit Next if these details are correct — otherwise, go back and edit.
+                  </p>
+                  <div className="flex justify-end gap-3">
+                    <button
+                      onClick={() => setShowConfirmModal(false)}
+                      className="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium"
+                    >
+                      Go Back
+                    </button>
+                    <button
+                      onClick={handleConfirmNext}
+                      disabled={isSavingAll}
+                      className="px-6 py-2 bg-arcova-teal text-white font-semibold rounded-lg hover:bg-arcova-teal/90 disabled:opacity-50 transition-colors"
+                    >
+                      {isSavingAll ? 'Saving...' : 'Next'}
+                    </button>
+                  </div>
                 </div>
-                <h3 className="text-lg font-medium text-gray-900 mb-2">No Analysis Yet</h3>
-                <p className="text-gray-500">Enter a company website URL above to get started.</p>
               </div>
             )}
+
           </div>
         </div>
       </div>

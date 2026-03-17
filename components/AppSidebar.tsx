@@ -26,7 +26,7 @@ const navigation: NavItem[] = [
     icon: LayoutDashboard,
   },
   {
-    name: 'Company Analysis',
+    name: 'My Company',
     href: '/company-analysis',
     icon: User,
   },
