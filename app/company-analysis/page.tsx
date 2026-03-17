@@ -597,7 +597,7 @@ export default function CompanyAnalysisPage() {
                 <div className="bg-white rounded-lg shadow-xl p-6 max-w-md mx-4">
                   <h3 className="text-xl font-semibold text-gray-900 mb-4">Confirm Details</h3>
                   <p className="text-gray-600 mb-6">
-                    Please hit Next if these details are correct — otherwise, go back and edit.
+                    Please click 'Next' if your company details are correct, otherwise click 'Go Back' to edit.
                   </p>
                   <div className="flex justify-end gap-3">
                     <button
