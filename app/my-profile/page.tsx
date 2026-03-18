@@ -255,7 +255,7 @@ export default function CompanyAnalysisPage() {
   const handleConfirmNext = async () => {
     if (!editedResults?.id || !user) {
       setShowConfirmModal(false);
-      router.push('/icp');
+      router.push('/companies');
       return;
     }
 
@@ -272,7 +272,7 @@ export default function CompanyAnalysisPage() {
       }
 
       setShowConfirmModal(false);
-      router.push('/icp');
+      router.push('/companies');
     } catch (err) {
       console.error('Error saving:', err);
       setError('Failed to save changes');

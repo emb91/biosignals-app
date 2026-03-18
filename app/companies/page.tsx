@@ -40,7 +40,7 @@ export default function ICPManagerPage() {
       if (!user) return;
 
       try {
-        const response = await fetch('/api/icp');
+        const response = await fetch('/api/companies');
         if (response.ok) {
           const result = await response.json();
           setIcps(result.data || []);
@@ -62,7 +62,7 @@ export default function ICPManagerPage() {
 
     setDeletingId(id);
     try {
-      const response = await fetch(`/api/icp/${id}`, {
+      const response = await fetch(`/api/companies/${id}`, {
         method: 'DELETE',
       });
 
@@ -132,41 +132,33 @@ export default function ICPManagerPage() {
         </div>
 
         {/* Content Area */}
-        <div className="flex-1 overflow-y-auto p-4">
+        <div className="flex-1 overflow-y-auto p-6">
           <div className="max-w-4xl mx-auto">
-{/* Main Content */}
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-              <div className="mb-6">
-                <h1 className="text-xl font-bold text-gray-900 mb-2">
-                  Define the companies you sell to
-                </h1>
-                <p className="text-sm text-gray-600">
-                  Create as many as you like. Each company type helps us build targeted lead lists and craft personalized messaging for that segment.
-                </p>
-              </div>
+            {/* Header */}
+            <div className="mb-6">
+              <h1 className="text-2xl font-bold text-gray-900">Company Profiles</h1>
+              <p className="text-gray-600 mt-1">Each company profile helps us build a targeted lead list for that segment. Create as many as you like.</p>
+            </div>
 
-              {/* ICP List or Empty State */}
-              {icps.length === 0 ? (
-                <div className="text-center py-12">
-                  <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                    </svg>
-                  </div>
-                  <p className="text-gray-500 mb-6">
-                    You haven't created any ICPs yet. Start by creating your first one.
-                  </p>
-                  <button
-                    onClick={() => router.push('/icp/new')}
-                    className="inline-flex items-center px-6 py-2 bg-arcova-teal text-white font-semibold rounded-lg hover:bg-arcova-teal/90 transition-colors"
-                  >
-                    <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
-                    </svg>
-                    Create New ICP
-                  </button>
+            {/* Main Content */}
+            {icps.length === 0 ? (
+              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
+                <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                  </svg>
                 </div>
-              ) : (
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">No target company profiles yet</h3>
+                <p className="text-gray-500 mb-6">Get started by defining your first target company type.</p>
+                <button
+                  onClick={() => router.push('/companies/new')}
+                  className="px-6 py-3 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors"
+                >
+                  + Create new company profile
+                </button>
+              </div>
+            ) : (
+              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
                 <div className="space-y-4">
                   {/* ICP Cards */}
                   {icps.map((icp) => (
@@ -206,7 +198,7 @@ export default function ICPManagerPage() {
                           </div>
                           <div className="flex items-center space-x-2" onClick={(e) => e.stopPropagation()}>
                             <button
-                              onClick={() => router.push(`/icp/${icp.id}/edit`)}
+                              onClick={() => router.push(`/companies/${icp.id}/edit`)}
                               className="px-3 py-1.5 text-sm text-arcova-teal hover:bg-arcova-teal/10 rounded transition-colors"
                             >
                               Edit
@@ -339,17 +331,14 @@ export default function ICPManagerPage() {
 
                   {/* Create New Button */}
                   <button
-                    onClick={() => router.push('/icp/new')}
+                    onClick={() => router.push('/companies/new')}
                     className="w-full border-2 border-dashed border-gray-300 rounded-lg p-4 text-gray-500 hover:border-arcova-teal hover:text-arcova-teal transition-colors flex items-center justify-center"
                   >
-                    <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
-                    </svg>
-                    Create New ICP
+                    + Create new company profile
                   </button>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

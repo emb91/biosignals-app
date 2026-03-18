@@ -27,3 +27,14 @@ export function extractSignalIds(signals: ({ id: string; weight: number } | stri
     typeof signal === 'string' ? signal : signal.id
   );
 }
+
+/**
+ * Transform an ordered array of function names into weighted function objects.
+ * Uses the same decay curve as signals.
+ */
+export function assignFunctionWeights(functions: string[]): { name: string; weight: number }[] {
+  return functions.map((name, index) => ({
+    name,
+    weight: calculateSignalWeight(index),
+  }));
+}

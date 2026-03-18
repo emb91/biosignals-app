@@ -47,7 +47,7 @@ export default function DashboardPage() {
       if (!user) return;
       
       try {
-        const response = await fetch('/api/icp');
+        const response = await fetch('/api/companies');
         if (response.ok) {
           const result = await response.json();
           setIcps(result.data || []);
@@ -112,7 +112,7 @@ export default function DashboardPage() {
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   <button
-                    onClick={() => router.push('/company-analysis')}
+                    onClick={() => router.push('/my-profile')}
                     className="bg-arcova-teal/10 rounded-lg p-6 hover:bg-arcova-teal/20 transition-colors text-left"
                   >
                     <h3 className="text-lg font-semibold text-arcova-darkblue mb-2">Your Company</h3>
@@ -147,7 +147,7 @@ export default function DashboardPage() {
                     <div className="flex items-center justify-between mb-4">
                       <h3 className="text-xl font-semibold text-gray-900 text-left">Your ICPs</h3>
                       <button
-                        onClick={() => router.push('/icp')}
+                        onClick={() => router.push('/companies')}
                         className="text-sm text-arcova-teal hover:text-arcova-teal/80"
                       >
                         Manage ICPs →
@@ -160,7 +160,7 @@ export default function DashboardPage() {
                       <div className="text-center py-6">
                         <p className="text-gray-500 text-sm mb-3">No ICPs created yet</p>
                         <button
-                          onClick={() => router.push('/icp/new')}
+                          onClick={() => router.push('/companies/new')}
                           className="text-sm text-arcova-teal hover:underline"
                         >
                           + Create your first ICP
@@ -171,7 +171,7 @@ export default function DashboardPage() {
                         {icps.slice(0, 3).map((icp) => (
                           <button
                             key={icp.id}
-                            onClick={() => router.push('/icp')}
+                            onClick={() => router.push('/companies')}
                             className="w-full flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-arcova-teal/5 transition-colors text-left"
                           >
                             <div>
@@ -247,7 +247,7 @@ export default function DashboardPage() {
                       }
                     </p>
                     <button
-                      onClick={() => router.push(analyses.length === 0 ? '/company-analysis' : '/icp')}
+                      onClick={() => router.push(analyses.length === 0 ? '/my-profile' : '/companies')}
                       className="bg-arcova-teal hover:bg-arcova-teal/90 text-white px-6 py-3 rounded-lg font-semibold transition-colors"
                     >
                       {analyses.length === 0 ? 'Start Company Analysis' : 'Setup Your ICP'}

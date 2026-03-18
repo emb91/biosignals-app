@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { 
   LayoutDashboard, 
@@ -26,18 +27,18 @@ const navigation: NavItem[] = [
     icon: LayoutDashboard,
   },
   {
-    name: 'My Company',
-    href: '/company-analysis',
+    name: 'My Profile',
+    href: '/my-profile',
     icon: User,
   },
   {
-    name: 'ICP',
-    href: '/icp',
+    name: 'Companies',
+    href: '/companies',
     icon: Target,
   },
   {
-    name: 'Ideal Contact',
-    href: '/personas',
+    name: 'Contacts',
+    href: '/contacts',
     icon: UserCircle,
   },
   {
@@ -70,10 +71,14 @@ export default function AppSidebar() {
         {/* Logo */}
         <div className="p-6 border-b border-arcova-mint/20">
           <Link href="/" className="flex items-center space-x-2">
-            <div className="w-8 h-8 bg-arcova-teal rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-sm">A</span>
-            </div>
-            <span className="text-white font-semibold text-lg">Arcova</span>
+            <Image 
+              src="/images/network-og.png" 
+              alt="Arcova" 
+              width={32} 
+              height={32} 
+              className="rounded-lg"
+            />
+            <span className="text-white font-semibold text-lg">arcova</span>
           </Link>
         </div>
 

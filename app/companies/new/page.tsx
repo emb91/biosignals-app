@@ -1,7 +1,7 @@
 'use client';
 
 import { useAuth } from '@/context/AuthContext';
-import { useRouter, useParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { getDisplayName } from '@/lib/auth-helpers';
@@ -45,7 +45,7 @@ const MODALITY_OPTIONS = [
   "Radiopharmaceutical", "Protein / Enzyme Replacement", "Gene Editing (CRISPR)",
   "Microbiome", "Biosimilar", "Vaccine",
   "Diagnostics", "Liquid Biopsy", "Digital Therapeutics",
-  "Drug Discovery Platform", "Biomarker", "Imaging"
+  "AI/ML Platform", "Drug Discovery Platform", "Biomarker", "Imaging"
 ];
 
 const DEVELOPMENT_STAGE_OPTIONS = [
@@ -116,11 +116,9 @@ function SortableSignalPill({ id, name, onRemove }: SortableSignalPillProps) {
   );
 }
 
-export default function ICPEditPage() {
+export default function ICPNewPage() {
   const { user, loading, logout } = useAuth();
   const router = useRouter();
-  const params = useParams();
-  const icpId = params.id as string;
   const firstName = user ? getDisplayName(user) : '';
 
   interface ExampleCompany {
@@ -154,12 +152,12 @@ export default function ICPEditPage() {
   });
   const [companyUrl, setCompanyUrl] = useState('');
   const [isSaving, setIsSaving] = useState(false);
-  const [loadingIcp, setLoadingIcp] = useState(true);
   const [isGeneratingName, setIsGeneratingName] = useState(false);
   const [isAnalyzingCompany, setIsAnalyzingCompany] = useState(false);
   const [isLoadingSignals, setIsLoadingSignals] = useState(false);
   const [allSignals, setAllSignals] = useState<Signal[]>([]);
   const [showAllSignals, setShowAllSignals] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
 
   const generateName = async () => {
     setIsGeneratingName(true);
@@ -185,33 +183,34 @@ export default function ICPEditPage() {
     }
   };
 
-  const loadSignals = async (existingSignals?: string[]) => {
+  const loadRecommendedSignals = async () => {
+    if (formData.signals.length > 0) return; // Already loaded
+    
     setIsLoadingSignals(true);
     try {
-      // First, always fetch the full list of signals
-      const response = await fetch('/api/recommend-signals');
+      const response = await fetch('/api/recommend-signals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData),
+      });
+
       if (response.ok) {
         const result = await response.json();
         setAllSignals(result.all || []);
-      }
-      
-      // If we have existing signals (from loaded ICP), use those
-      // Otherwise, get recommendations
-      if (!existingSignals || existingSignals.length === 0) {
-        const recResponse = await fetch('/api/recommend-signals', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(formData),
-        });
-
-        if (recResponse.ok) {
-          const recResult = await recResponse.json();
-          const recommendedIds = (recResult.recommended || []).map((s: Signal) => s.id);
-          setFormData(prev => ({ ...prev, signals: recommendedIds }));
+        const recommendedIds = (result.recommended || []).map((s: Signal) => s.id);
+        setFormData(prev => ({ ...prev, signals: recommendedIds }));
+      } else {
+        // Fallback: load all signals without recommendations
+        const fallbackResponse = await fetch('/api/recommend-signals');
+        if (fallbackResponse.ok) {
+          const fallback = await fallbackResponse.json();
+          setAllSignals(fallback.all || []);
         }
+        toast.error('Could not load recommendations, showing all signals');
       }
     } catch (error) {
       console.error('Error loading signals:', error);
+      toast.error('Failed to load signals');
     } finally {
       setIsLoadingSignals(false);
     }
@@ -255,72 +254,6 @@ export default function ICPEditPage() {
     }
   }, [user, loading, router]);
 
-  useEffect(() => {
-    const loadICP = async () => {
-      if (!user || !icpId) return;
-
-      try {
-        const response = await fetch(`/api/icp/${icpId}`);
-        if (response.ok) {
-          const result = await response.json();
-          if (result.data) {
-            const data = result.data;
-            // Parse stored company JSON strings back to objects
-            const storedCompanies = data.example_companies || [];
-            const exampleCompanies: ExampleCompany[] = storedCompanies.map((item: string) => {
-              try {
-                // Try to parse as JSON (new format with full data)
-                return JSON.parse(item);
-              } catch {
-                // Fallback for old format (just company name string)
-                return { url: '', companyName: item };
-              }
-            });
-            
-// Parse stored signals - they may be JSON strings with weights or plain IDs
-            const storedSignals = data.signals || [];
-            const loadedSignals = storedSignals.map((item: string) => {
-              try {
-                const parsed = JSON.parse(item);
-                return parsed.id || item; // Extract ID from weighted signal object
-              } catch {
-                return item; // Plain string ID (backward compatibility)
-              }
-            });
-
-            setFormData({
-              name: data.name || '',
-              companyType: data.company_type || '',
-              therapeuticAreas: data.therapeutic_areas || [],
-              modalities: data.modalities || [],
-              developmentStages: data.development_stages || [],
-              companySizes: data.company_sizes || [],
-              fundingStages: data.funding_stages || [],
-              signals: loadedSignals,
-              exampleCompanies,
-            });
-            
-            // Load all signals list
-            loadSignals(loadedSignals);
-          }
-        } else {
-          toast.error('ICP not found');
-          router.push('/icp');
-        }
-      } catch (error) {
-        console.error('Error loading ICP:', error);
-        toast.error('Failed to load ICP');
-        router.push('/icp');
-      } finally {
-        setLoadingIcp(false);
-      }
-    };
-
-    if (user) {
-      loadICP();
-    }
-  }, [user, icpId, router]);
-
   const handleMultiSelect = (field: 'therapeuticAreas' | 'modalities' | 'developmentStages' | 'companySizes' | 'fundingStages', value: string) => {
     const currentArray = formData[field];
     
@@ -362,8 +295,8 @@ export default function ICPEditPage() {
         exampleCompanies: formData.exampleCompanies.map(c => JSON.stringify(c)),
       };
       
-      const response = await fetch(`/api/icp/${icpId}`, {
-        method: 'PUT',
+      const response = await fetch('/api/companies', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(dataToSave),
       });
@@ -372,8 +305,7 @@ export default function ICPEditPage() {
         throw new Error('Failed to save ICP');
       }
 
-      toast.success('ICP updated successfully');
-      router.push('/icp');
+      setShowSuccessModal(true);
     } catch (error) {
       console.error('Error saving ICP:', error);
       toast.error('Failed to save ICP. Please try again.');
@@ -405,7 +337,7 @@ export default function ICPEditPage() {
       url = 'https://' + url;
     }
     
-    if (formData.exampleCompanies.some(c => c.url === url || c.companyName === url)) {
+    if (formData.exampleCompanies.some(c => c.url === url)) {
       toast.error('Company already added');
       return;
     }
@@ -454,14 +386,14 @@ export default function ICPEditPage() {
     }
   };
 
-  const handleRemoveCompany = (identifier: string) => {
+  const handleRemoveCompany = (url: string) => {
     setFormData(prev => ({
       ...prev,
-      exampleCompanies: prev.exampleCompanies.filter(c => c.url !== identifier && c.companyName !== identifier)
+      exampleCompanies: prev.exampleCompanies.filter(c => c.url !== url)
     }));
   };
 
-  if (loading || loadingIcp) {
+  if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-arcova-teal"></div>
@@ -505,7 +437,12 @@ export default function ICPEditPage() {
                 {[1, 2, 3, 4, 5, 6, 7, 8].map((step) => (
                   <div key={step} className="flex items-center">
                     <button
-                      onClick={() => setCurrentSection(step)}
+                      onClick={() => {
+                        if (step === 7 && formData.signals.length === 0) {
+                          loadRecommendedSignals();
+                        }
+                        setCurrentSection(step);
+                      }}
                       className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold transition-colors ${
                         currentSection === step
                           ? 'bg-arcova-teal text-white'
@@ -743,7 +680,7 @@ export default function ICPEditPage() {
                     {isLoadingSignals ? (
                       <div className="flex items-center justify-center py-8">
                         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-arcova-teal"></div>
-                        <span className="ml-3 text-sm text-gray-500">Loading signals...</span>
+                        <span className="ml-3 text-sm text-gray-500">Analyzing your profile...</span>
                       </div>
                     ) : (
                       <>
@@ -904,7 +841,7 @@ export default function ICPEditPage() {
                             <div className="flex items-start justify-between">
                               <div className="flex-1">
                                 <h3 className="font-medium text-gray-900">{company.companyName}</h3>
-                                {company.url && <p className="text-xs text-gray-400 mt-0.5">{company.url}</p>}
+                                <p className="text-xs text-gray-400 mt-0.5">{company.url}</p>
                                 <div className="flex flex-wrap gap-2 mt-2">
                                   {company.therapeuticArea && (
                                     <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs">
@@ -944,14 +881,14 @@ export default function ICPEditPage() {
                                       {company.companyType}
                                     </span>
                                   )}
-                                  {!company.therapeuticArea && (!company.modality || (Array.isArray(company.modality) && company.modality.length === 0)) && !company.fundingStage && !company.companySize && !company.developmentStage && !company.companyType && !company.url && (
-                                    <span className="text-xs text-gray-400 italic">Previously saved</span>
+                                  {!company.therapeuticArea && (!company.modality || (Array.isArray(company.modality) && company.modality.length === 0)) && !company.fundingStage && !company.companySize && !company.developmentStage && !company.companyType && (
+                                    <span className="text-xs text-gray-400 italic">No attributes detected</span>
                                   )}
                                 </div>
                               </div>
                               <button
                                 type="button"
-                                onClick={() => handleRemoveCompany(company.url || company.companyName)}
+                                onClick={() => handleRemoveCompany(company.url)}
                                 className="text-gray-400 hover:text-red-500 transition-colors ml-2"
                               >
                                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -968,22 +905,10 @@ export default function ICPEditPage() {
                       <p className="text-sm text-gray-400 italic">No companies added yet.</p>
                     )}
 
-                    <div className="flex items-center justify-between mt-4">
+                    <div className="mt-4">
                       <p className="text-xs text-gray-500">
                         {formData.exampleCompanies.length}/3 companies added
                       </p>
-                      {formData.exampleCompanies.length === 0 && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            handleSave(e);
-                          }}
-                          className="text-sm text-gray-500 hover:text-gray-700 underline"
-                        >
-                          Skip for now
-                        </button>
-                      )}
                     </div>
                   </div>
                 )}
@@ -995,7 +920,7 @@ export default function ICPEditPage() {
                     onClick={(e) => {
                       e.preventDefault();
                       if (currentSection === 1) {
-                        router.push('/icp');
+                        router.push('/companies');
                       } else {
                         setCurrentSection(currentSection - 1);
                       }
@@ -1018,6 +943,10 @@ export default function ICPEditPage() {
                         if (currentSection === 6 && !formData.name.trim()) {
                           toast.error('Please enter an ICP name');
                           return;
+                        }
+                        // Load signals when entering Section 7
+                        if (currentSection === 6) {
+                          loadRecommendedSignals();
                         }
                         setCurrentSection(currentSection + 1);
                       }}
@@ -1048,6 +977,44 @@ export default function ICPEditPage() {
         </div>
       </div>
       <Toaster position="top-center" richColors />
+
+      {/* Success Modal */}
+      {showSuccessModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-8 max-w-md mx-4 text-center">
+            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <h2 className="text-2xl font-semibold text-gray-900 mb-2">Your ICP is ready</h2>
+            <p className="text-gray-600 mb-6">
+              We'll use this to surface the most relevant accounts and contacts for you.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-3 justify-center">
+              <button
+                onClick={() => {
+                  setShowSuccessModal(false);
+                  router.push('/companies/new');
+                  window.location.reload();
+                }}
+                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Add another ICP
+              </button>
+              <button
+                onClick={() => router.push('/contacts')}
+                className="px-4 py-2 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors flex items-center justify-center gap-1"
+              >
+                Define your contacts
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

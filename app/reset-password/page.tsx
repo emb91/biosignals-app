@@ -42,7 +42,7 @@ export default function ResetPasswordPage() {
       await updatePassword(password);
       setSuccess(true);
       setTimeout(() => {
-        router.push('/icp');
+        router.push('/companies');
       }, 2000);
     } catch (error: any) {
       setError(error.message || 'An error occurred. Please try again.');
