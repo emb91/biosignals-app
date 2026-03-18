@@ -1,40 +1,23 @@
 ---
-description: Git workflow - always use feature branches, never push directly to main
+description: Git workflow - stay on current branch, avoid creating new branches
 alwaysApply: true
 ---
 
 # Git Workflow
 
-## Never Push Directly to Main
+## Branch Strategy
 
-Always use feature branches and pull requests. Never commit or push directly to the `main` branch.
+- **Stay on the current working branch** - do not create new feature branches unless explicitly requested
+- When asked to push to GitHub, push to the current branch
+- Only create a new branch if the user specifically asks for one
 
-## Workflow
+## Commit Guidelines
 
-1. **Create a feature branch** before making changes:
-   ```bash
-   git checkout -b feature/descriptive-name
-   ```
+- Commit frequently with descriptive messages
+- Use conventional commit style when appropriate
+- Never force push unless explicitly requested
 
-2. **Make commits** on the feature branch
+## Before Pushing
 
-3. **Push the branch** and create a PR:
-   ```bash
-   git push -u origin HEAD
-   gh pr create --title "Title" --body "Description"
-   ```
-
-4. **Merge via PR** after review
-
-## Branch Naming
-
-Use prefixes:
-- `feature/` - new features
-- `fix/` - bug fixes
-- `refactor/` - code refactoring
-- `chore/` - maintenance tasks
-
-Examples:
-- `feature/company-analysis-updates`
-- `fix/login-redirect`
-- `refactor/sidebar-component`
+1. Check current branch with `git branch`
+2. Push to that branch, not a new one
