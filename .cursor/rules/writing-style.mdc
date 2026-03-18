@@ -1,0 +1,27 @@
+---
+description: Writing style guidelines for website copy and AI prompts
+alwaysApply: true
+---
+
+# Writing Style
+
+## No Em Dashes
+
+Do not use em dashes (—) in:
+- Website copy (UI text, labels, descriptions, helper text)
+- AI prompts sent to Anthropic or other LLMs
+- User-facing content
+
+Use alternatives instead:
+- Commas for pauses
+- Colons for introductions
+- Periods for separate sentences
+- Hyphens (-) for compound words
+
+```tsx
+// ❌ BAD
+"Early to mid-stage companies — developing novel therapeutics"
+
+// ✅ GOOD
+"Early to mid-stage companies developing novel therapeutics"
+```

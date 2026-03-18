@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase-server';
 import { NextResponse } from 'next/server';
+import { assignSignalWeights } from '@/lib/signal-weights';
 
 export async function GET() {
   try {
@@ -41,6 +42,9 @@ export async function POST(request: Request) {
 
     const body = await request.json();
 
+    // Calculate weights for signals based on their position (priority order)
+    const weightedSignals = assignSignalWeights(body.signals || []);
+    
     const icpData = {
       user_id: user.id,
       user_email: user.email,
@@ -51,6 +55,8 @@ export async function POST(request: Request) {
       development_stages: body.developmentStages || [],
       company_sizes: body.companySizes || [],
       funding_stages: body.fundingStages || [],
+      signals: weightedSignals.map(s => JSON.stringify(s)),
+      example_companies: body.exampleCompanies || [],
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
