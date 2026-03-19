@@ -80,6 +80,7 @@ export async function POST(request: Request) {
       functions: weightedFunctions.map(f => JSON.stringify(f)),
       seniority_levels: body.seniorityLevels || [],
       job_titles: body.jobTitles || [],
+      signals: body.signals || [],
       icp_id: body.icpId || null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),

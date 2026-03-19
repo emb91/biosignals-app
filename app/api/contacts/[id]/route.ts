@@ -78,6 +78,7 @@ export async function PUT(
       functions: weightedFunctions.map(f => JSON.stringify(f)),
       seniority_levels: body.seniorityLevels || [],
       job_titles: body.jobTitles || [],
+      signals: body.signals || [],
       updated_at: new Date().toISOString(),
     };
 

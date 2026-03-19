@@ -402,6 +402,40 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
 
   return (
     <div className="max-w-3xl mx-auto">
+      {/* Edit mode banner */}
+      {mode === 'edit' && formData.name && (
+        <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200 flex items-center justify-between">
+          <div>
+            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Editing company profile</p>
+            <p className="font-medium text-gray-900">{formData.name}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={(e) => handleSave(e as unknown as React.FormEvent)}
+              disabled={isSaving || !formData.name.trim()}
+              className="px-3 py-1.5 text-sm bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 disabled:opacity-50 transition-colors flex items-center gap-1.5"
+            >
+              {isSaving ? (
+                <>
+                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
+                  Saving...
+                </>
+              ) : (
+                'Save'
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={onCancel}
+              className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Progress Bar */}
       <div className="mb-6">
         <div className="flex items-center justify-between">
@@ -921,6 +955,7 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
           </div>
         </form>
       </div>
+
     </div>
   );
 }

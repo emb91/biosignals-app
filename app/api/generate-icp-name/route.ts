@@ -11,46 +11,79 @@ export async function POST(request: Request) {
       );
     }
 
+    const body = await request.json();
+    const { companyType, companySizes, therapeuticAreas, modalities, developmentStages, fundingStages } = body;
+
     const anthropic = new Anthropic({
       apiKey: process.env.ANTHROPIC_API_KEY,
     });
 
-    const body = await request.json();
-    const { companyType, companySizes, therapeuticAreas, modalities, developmentStages, fundingStages } = body;
+    const cleanupName = (text: string): string => {
+      const noTrailingPunctuation = text.replace(/[.!?,;:]+$/g, '');
+      const normalised = noTrailingPunctuation.replace(/\s+/g, ' ').trim();
+      const words = normalised.split(' ').slice(0, 6);
+      let output = words.join(' ');
 
-    const prompt = `Generate a short, memorable name for an Ideal Customer Profile (ICP) based on these criteria:
+      const parts = output.split('&');
+      if (parts.length > 2) {
+        output = `${parts[0]}&${parts.slice(1).join(' and ')}`.replace(/\s+/g, ' ').trim();
+      }
 
-- Company Type: ${companyType || 'Not specified'}
-- Company Sizes: ${companySizes?.join(', ') || 'Any'}
-- Therapeutic Areas: ${therapeuticAreas?.join(', ') || 'Any'}
-- Modalities: ${modalities?.join(', ') || 'Any'}
-- Development Stages: ${developmentStages?.join(', ') || 'Any'}
-- Funding Stages: ${fundingStages?.join(', ') || 'Any'}
+      return output;
+    };
 
-Generate a concise, descriptive name (3-6 words) that captures the essence of this target customer segment. Examples of good names:
-- "Early Stage Oncology Biotech"
-- "Series A Gene Therapy Startups"
-- "Mid-Size Pharma R&D"
-- "Preclinical ADC Companies"
+    const fallbackParts: string[] = [];
+    if (fundingStages?.length) fallbackParts.push(fundingStages[0]);
+    if (therapeuticAreas?.length) fallbackParts.push(therapeuticAreas[0]);
+    if (companyType) fallbackParts.push(companyType);
+    const fallbackName = cleanupName(fallbackParts.join(' ') || 'Target Company Profile');
 
-Do not include em dashes in your response.
-Return ONLY the name, nothing else. No quotes, no explanation.`;
+    const prompt = `Generate a short name for a target company profile with these attributes:
+
+Company type: ${companyType || 'Not specified'}
+Therapeutic areas: ${therapeuticAreas?.join(', ') || 'Any'}
+Modalities: ${modalities?.join(', ') || 'Any'}
+Development stages: ${developmentStages?.join(', ') || 'Any'}
+Company sizes: ${companySizes?.join(', ') || 'Any'}
+Funding stages: ${fundingStages?.join(', ') || 'Any'}
+
+Rules:
+- Maximum 6 words
+- Identify the most distinctive characteristic of this profile. Lead with what makes it specific: the funding stage, therapeutic focus, modality, or size, whichever is most defining.
+- Include the company type (e.g. Biotech, Pharma, CRO, MedTech) but keep it to one word where possible
+- If there is a clear therapeutic focus (one or two areas), include it. If many are selected, omit it and focus on other differentiators like stage or size.
+- If there is a clear modality focus, include it. If many are selected, omit it.
+- Do not list multiple attributes from the same category. Pick the most representative one.
+- Do not use generic filler words like "companies", "organisations", "firms", or "partners"
+- Do not use ampersands more than once in the name
+- Do not include punctuation at the end
+- Do not include em dashes
+- Return only the name, nothing else
+
+Examples of good names:
+- Series A Oncology Biotech
+- Large Commercial Pharma
+- Preclinical Gene Therapy Biotech
+- Mid-size Rare Disease Biopharma
+- Grant-Funded Academic Spinouts
+- Late-stage ADC Developers`;
 
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 50,
-      messages: [
-        { role: 'user', content: prompt }
-      ],
+      max_tokens: 100,
+      temperature: 0.9,
+      messages: [{ role: 'user', content: prompt }],
     });
 
-    const generatedName = (message.content[0] as { type: string; text: string }).text.trim();
+    const rawName = (message.content[0] as { type: string; text: string }).text.trim();
+    const name = cleanupName(rawName) || fallbackName;
 
-    return NextResponse.json({ name: generatedName });
-  } catch (error: any) {
-    console.error('Error generating ICP name:', error?.message || error);
+    return NextResponse.json({ name });
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('Error generating ICP name:', errorMessage);
     return NextResponse.json(
-      { error: error?.message || 'Failed to generate name' },
+      { error: errorMessage || 'Failed to generate name' },
       { status: 500 }
     );
   }

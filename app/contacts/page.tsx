@@ -218,11 +218,11 @@ export default function ContactsPage() {
                       <div className="px-4 pb-4 border-t border-gray-100 pt-4">
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                           <div>
-                            <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Functions (by priority)</h4>
+                            <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Teams</h4>
                             <div className="flex flex-wrap gap-1">
-                              {parseFunctions(contact.functions)?.map((func, index) => (
+                              {parseFunctions(contact.functions)?.map((func) => (
                                 <span key={func} className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs">
-                                  {index + 1}. {func}
+                                  {func}
                                 </span>
                               ))}
                             </div>

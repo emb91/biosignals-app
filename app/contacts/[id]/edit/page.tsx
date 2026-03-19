@@ -55,6 +55,7 @@ export default function ContactEditPage() {
               functions: functionNames,
               seniorityLevels: contact.seniority_levels || [],
               jobTitles: contact.job_titles || [],
+              signals: contact.signals || [],
             });
             setInitialCompanyId(contact.icp_id || null);
           }

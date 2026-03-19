@@ -81,42 +81,32 @@ export async function POST(request: Request) {
     };
 
     const shortCompanyType = simplifyCompanyType(companyType, therapeuticArea, fundingStage);
-    const fallbackName = cleanupName(`${selectedFunctions[0] || 'Commercial'} ${topSeniority} at ${shortCompanyType}`);
+    const fallbackName = cleanupName(`${selectedFunctions[0] || 'Commercial'} at ${shortCompanyType}`);
 
-    const prompt = `Generate a short, specific name for a buyer persona based on the following attributes:
+    const prompt = `Generate a short name for a buyer segment with these attributes:
+
 Business areas: ${selectedFunctions.join(', ')}
 Seniority levels: ${selectedSeniority.join(', ')}
-Company profile: ${companyProfileName}
-Company type summary: ${shortCompanyType}
+Company profile name: ${companyProfileName}
 
 Rules:
 - Maximum 6 words
-- If 1-2 business areas selected, usually lead with the most descriptive area
-- If 3 or more business areas selected, summarise broadly using terms like "Commercial & Scientific", "Multi-function", or "Cross-functional" rather than listing each area
-- Pick the most senior seniority level selected (${topSeniority}), do not list all seniority levels
-- Include the company type from the company profile but keep it short (for example: "Large Pharma", "Series A Biotech", "Grant-Funded Biopharma")
-- Do not use generic filler words like "leaders", "professionals", "contacts", "people", or "individuals" unless nothing more specific is available
+- Identify the dominant theme across the business areas. For example, if most areas are commercial-facing (Sales, BD, Marketing, Strategy) use "Commercial" as the descriptor. If most are scientific (R&D, Clinical, Regulatory) use "Scientific". If mixed, use "Cross-functional".
+- Do not lead with a seniority level. Lead with the role theme.
+- End with a short version of the company profile name, keep it to 3 words maximum. Do not add the word "company" at the end.
+- Do not use the word "cross-functional" unless the business areas are genuinely evenly split across commercial and scientific functions
+- Do not use generic filler words like "leaders", "professionals", "contacts", "people", or "individuals"
 - Do not use ampersands more than once in the name
 - Do not include punctuation at the end
 - Do not include em dashes
-- Keep the meaning consistent, but vary phrasing naturally across repeated generations for the same inputs
-
-Use varied structures such as:
-- [Function] [Seniority] at [Company Type]
-- [Seniority] in [Function] at [Company Type]
-- [Function]-focused [Seniority] at [Company Type]
+- Return only the name, nothing else
 
 Examples of good names:
-- Clinical & BD Directors at Series A Biotech
-- C-Suite Buyers at Large Pharma
-- CMC & Regulatory VPs at Mid-size Biopharma
-- BD & Commercial Heads at Grant-Funded Biotech
-- Multi-function VPs at Late-stage Biopharma
-- Cross-functional Directors at Large Pharma
-- Lab & Research Scientists at Early-stage Biotech
-- Commercial & Medical Affairs at Oncology Pharma
-
-Return only the name, nothing else.`;
+- Commercial Leaders at Large Pharma
+- Scientific VPs at Series A Biotech
+- BD & Clinical Directors at Mid-size Biopharma
+- Commercial & BD at Grant-Funded Biotech
+- R&D Leadership at Early-stage Oncology`;
 
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',

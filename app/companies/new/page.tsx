@@ -72,19 +72,16 @@ export default function ICPNewPage() {
             </p>
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
               <button
-                onClick={() => {
-                  setShowSuccessModal(false);
-                  setFormKey(prev => prev + 1);
-                }}
+                onClick={() => router.push('/companies')}
                 className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
               >
-                Add another ICP
+                View your companies
               </button>
               <button
-                onClick={() => router.push('/personas')}
+                onClick={() => router.push('/contacts/new')}
                 className="px-4 py-2 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors flex items-center justify-center gap-1"
               >
-                Define your personas
+                Add a persona
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
                 </svg>
