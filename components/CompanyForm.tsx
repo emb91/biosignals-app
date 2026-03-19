@@ -409,30 +409,13 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
             <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Editing company profile</p>
             <p className="font-medium text-gray-900">{formData.name}</p>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={(e) => handleSave(e as unknown as React.FormEvent)}
-              disabled={isSaving || !formData.name.trim()}
-              className="px-3 py-1.5 text-sm bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 disabled:opacity-50 transition-colors flex items-center gap-1.5"
-            >
-              {isSaving ? (
-                <>
-                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
-                  Saving...
-                </>
-              ) : (
-                'Save'
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={onCancel}
-              className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="px-3 py-1.5 text-sm text-red-600 hover:text-red-700 border border-red-200 rounded-lg hover:bg-red-50 transition-colors"
+          >
+            Cancel
+          </button>
         </div>
       )}
 
@@ -923,35 +906,46 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
                   setCurrentSection(currentSection - 1);
                 }
               }}
-              className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors text-sm"
+              className={`px-6 py-2 border rounded-lg transition-colors text-sm ${
+                mode === 'edit' && currentSection === 1
+                  ? 'border-red-200 text-red-600 hover:bg-red-50'
+                  : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+              }`}
             >
               {currentSection === 1 ? 'Cancel' : 'Back'}
             </button>
 
-            {currentSection < 8 ? (
-              <button
-                type="button"
-                onClick={handleNext}
-                className="px-6 py-2 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors text-sm"
-              >
-                Next
-              </button>
-            ) : (
-              <button
-                type="submit"
-                disabled={isSaving}
-                className="px-6 py-2 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 disabled:opacity-50 transition-colors flex items-center gap-2 text-sm"
-              >
-                {isSaving ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                    Saving...
-                  </>
-                ) : (
-                  'Save'
-                )}
-              </button>
-            )}
+            <div className="flex items-center gap-2">
+              {currentSection < 8 && (
+                <button
+                  type="button"
+                  onClick={handleNext}
+                  className={`px-6 py-2 rounded-lg transition-colors text-sm ${
+                    mode === 'edit'
+                      ? 'border border-gray-300 text-gray-700 hover:bg-gray-50'
+                      : 'bg-arcova-teal text-white hover:bg-arcova-teal/90'
+                  }`}
+                >
+                  Next
+                </button>
+              )}
+              {mode === 'edit' || currentSection === 8 ? (
+                <button
+                  type="submit"
+                  disabled={isSaving || !formData.name.trim()}
+                  className="px-6 py-2 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 disabled:opacity-50 transition-colors flex items-center gap-2 text-sm"
+                >
+                  {isSaving ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      Saving...
+                    </>
+                  ) : (
+                    mode === 'edit' ? 'Save' : 'Save'
+                  )}
+                </button>
+              ) : null}
+            </div>
           </div>
         </form>
       </div>

@@ -26,52 +26,23 @@ export async function POST(request: Request) {
 
     const companyType = targetCompanyProfile?.company_type || 'Biotech';
     const companyProfileName = targetCompanyProfile?.name || companyType;
-    const therapeuticArea = targetCompanyProfile?.therapeutic_areas?.[0] || '';
-    const fundingStage = targetCompanyProfile?.funding_stages?.[0] || '';
-
-    const seniorityRank: Record<string, number> = {
-      'C-Level': 6,
-      'VP / SVP': 5,
-      'Director': 4,
-      'Head of / Senior Manager': 3,
-      'Manager': 2,
-      'Individual Contributor': 1,
-    };
-
-    const topSeniority = [...selectedSeniority].sort(
-      (a, b) => (seniorityRank[b] || 0) - (seniorityRank[a] || 0)
-    )[0] || 'VP / SVP';
-
-    const simplifyCompanyType = (type: string, area: string, stage: string): string => {
-      let base = type;
-      if (type.includes('Biotech') || type.includes('Biopharma')) base = 'Biopharma';
-      else if (type.includes('Pharma')) base = 'Pharma';
-      else if (type.includes('Medical Device')) base = 'MedTech';
-      else if (type.includes('Academic')) base = 'Academic Biotech';
-      else if (type.includes('CDMO')) base = 'CDMO';
-      else if (type.includes('CRO')) base = 'CRO';
-
-      const shortStage = stage
-        ? stage
-            .replace('Grant-funded', 'Grant-Funded')
-            .replace('Series ', 'Series ')
-            .trim()
-        : '';
-
-      if (shortStage && base) return `${shortStage} ${base}`;
-      if (area && base && !base.includes('Pharma') && !base.includes('Biotech') && !base.includes('Biopharma')) {
-        return `${area} ${base}`;
-      }
-      return base;
-    };
 
     const cleanupName = (text: string): string => {
-      const noTrailingPunctuation = text.replace(/[.!?,;:]+$/g, '');
+      let cleaned = text.trim();
+
+      // Strip any thinking preamble (e.g. "Wait, let me..." or "Here's...")
+      const noisePatterns = /^(wait|actually|here'?s|let me|hmm|ok|okay|sure|so|note)[,:\s].*/i;
+      const lines = cleaned.split('\n').map(l => l.trim()).filter(Boolean);
+      cleaned = lines.find(line => !noisePatterns.test(line)) || lines[lines.length - 1] || cleaned;
+
+      // Remove surrounding quotes
+      cleaned = cleaned.replace(/^["']+|["']+$/g, '');
+
+      const noTrailingPunctuation = cleaned.replace(/[.!?,;:]+$/g, '');
       const normalised = noTrailingPunctuation.replace(/\s+/g, ' ').trim();
       const words = normalised.split(' ').slice(0, 6);
       let output = words.join(' ');
 
-      // Enforce max one ampersand.
       const parts = output.split('&');
       if (parts.length > 2) {
         output = `${parts[0]}&${parts.slice(1).join(' and ')}`.replace(/\s+/g, ' ').trim();
@@ -80,43 +51,85 @@ export async function POST(request: Request) {
       return output;
     };
 
-    const shortCompanyType = simplifyCompanyType(companyType, therapeuticArea, fundingStage);
-    const fallbackName = cleanupName(`${selectedFunctions[0] || 'Commercial'} at ${shortCompanyType}`);
+    const teamCount = selectedFunctions.length;
 
-    const prompt = `Generate a short name for a buyer segment with these attributes:
+    const allSeniorityLevels = [
+      'C-Level',
+      'VP / SVP',
+      'Director',
+      'Head of / Senior Manager',
+      'Manager',
+      'Individual Contributor',
+    ];
+    const selectedSenioritySet = new Set(selectedSeniority);
+    const allSenioritiesSelected = allSeniorityLevels.every(level => selectedSenioritySet.has(level));
+
+    const hasSeniorLeadership =
+      selectedSenioritySet.has('C-Level') ||
+      selectedSenioritySet.has('VP / SVP') ||
+      selectedSenioritySet.has('Director') ||
+      selectedSenioritySet.has('Head of / Senior Manager');
+    const hasManager = selectedSenioritySet.has('Manager');
+    const hasIndividualContributor = selectedSenioritySet.has('Individual Contributor');
+
+    let broadTeamDescriptor: string | null = null;
+    if (teamCount > 3) {
+      if (allSenioritiesSelected) broadTeamDescriptor = 'Teams';
+      else if (hasSeniorLeadership) broadTeamDescriptor = 'Senior teams';
+      else if (hasManager) broadTeamDescriptor = 'Managers';
+      else if (hasIndividualContributor) broadTeamDescriptor = 'Individual contributors';
+      else broadTeamDescriptor = 'Teams';
+    }
+
+    const fallbackPrefix = broadTeamDescriptor || selectedFunctions[0] || 'Commercial';
+    const fallbackName = `${fallbackPrefix} at ${companyProfileName}`;
+
+    const teamGuidance = teamCount <= 2
+      ? `Name the specific teams (e.g. "BD & Clinical").`
+      : teamCount <= 3
+      ? `Summarise the teams with a theme like "Commercial" or "Scientific".`
+      : `There are ${teamCount} teams selected, which is broad. Use seniority-led language instead of team names.`;
+
+    const prompt = `Generate ONLY the short descriptor before "at" for a buyer segment name. I will append "at ${companyProfileName}" myself.
 
 Business areas: ${selectedFunctions.join(', ')}
 Seniority levels: ${selectedSeniority.join(', ')}
-Company profile name: ${companyProfileName}
 
 Rules:
-- Maximum 6 words
-- Identify the dominant theme across the business areas. For example, if most areas are commercial-facing (Sales, BD, Marketing, Strategy) use "Commercial" as the descriptor. If most are scientific (R&D, Clinical, Regulatory) use "Scientific". If mixed, use "Cross-functional".
-- Do not lead with a seniority level. Lead with the role theme.
-- End with a short version of the company profile name, keep it to 3 words maximum. Do not add the word "company" at the end.
-- Do not use the word "cross-functional" unless the business areas are genuinely evenly split across commercial and scientific functions
+- Maximum 3 words
+- ${teamGuidance}
+- ${broadTeamDescriptor ? `For this input, the descriptor must be exactly "${broadTeamDescriptor}".` : 'Use the best descriptor from teams and seniority.'}
+- Do not use the phrase "cross-functional"
+- Do not lead with a seniority level. Lead with the role or team theme.
+- Do not reference "all levels" or list seniority ranges
 - Do not use generic filler words like "leaders", "professionals", "contacts", "people", or "individuals"
-- Do not use ampersands more than once in the name
-- Do not include punctuation at the end
-- Do not include em dashes
-- Return only the name, nothing else
+- Do not use ampersands more than once
+- Do not include "at" or the company name
+- No punctuation at the end
+- No em dashes
 
-Examples of good names:
-- Commercial Leaders at Large Pharma
-- Scientific VPs at Series A Biotech
-- BD & Clinical Directors at Mid-size Biopharma
-- Commercial & BD at Grant-Funded Biotech
-- R&D Leadership at Early-stage Oncology`;
+Examples of good descriptors:
+- Commercial VPs
+- Scientific Directors
+- BD & Clinical
+- Teams
+- R&D Leadership
+- Buyers`;
 
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 100,
-      temperature: 0.9,
+      max_tokens: 20,
+      temperature: 0.7,
+      system: 'You are a naming tool. Output only the descriptor, nothing else. No thinking, no explanation, no quotes.',
       messages: [{ role: 'user', content: prompt }],
     });
 
-    const rawName = (message.content[0] as { type: string; text: string }).text.trim();
-    const name = cleanupName(rawName) || fallbackName;
+    const rawPrefix = (message.content[0] as { type: string; text: string }).text.trim();
+    let cleanedPrefix = cleanupName(rawPrefix);
+    if (broadTeamDescriptor && cleanedPrefix.toLowerCase() !== broadTeamDescriptor.toLowerCase()) {
+      cleanedPrefix = broadTeamDescriptor;
+    }
+    const name = cleanedPrefix ? `${cleanedPrefix} at ${companyProfileName}` : fallbackName;
 
     return NextResponse.json({ name });
   } catch (error: unknown) {

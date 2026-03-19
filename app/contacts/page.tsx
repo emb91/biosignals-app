@@ -155,12 +155,13 @@ export default function ContactsPage() {
                 </button>
               </div>
             ) : (
-              <div className="space-y-4">
-                {contacts.map((contact) => (
-                  <div
-                    key={contact.id}
-                    className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden"
-                  >
+              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                <div className="space-y-4">
+                  {contacts.map((contact) => (
+                    <div
+                      key={contact.id}
+                      className="rounded-lg border border-gray-200 overflow-hidden"
+                    >
                     <div
                       className="p-4 cursor-pointer hover:bg-gray-50 transition-colors"
                       onClick={() => setExpandedId(expandedId === contact.id ? null : contact.id)}
@@ -250,16 +251,17 @@ export default function ContactsPage() {
                         </div>
                       </div>
                     )}
-                  </div>
-                ))}
+                    </div>
+                  ))}
 
-                {/* Create New Button */}
-                <button
-                  onClick={() => router.push('/personas/new')}
-                  className="w-full border-2 border-dashed border-gray-300 rounded-lg p-4 text-gray-500 hover:border-arcova-teal hover:text-arcova-teal transition-colors flex items-center justify-center mt-4"
-                >
-                  + Create new persona
-                </button>
+                  {/* Create New Button */}
+                  <button
+                    onClick={() => router.push('/personas/new')}
+                    className="w-full border-2 border-dashed border-gray-300 rounded-lg p-4 text-gray-500 hover:border-arcova-teal hover:text-arcova-teal transition-colors flex items-center justify-center mt-4"
+                  >
+                    + Create new persona
+                  </button>
+                </div>
               </div>
             )}
           </div>

@@ -116,8 +116,8 @@ export default function ICPManagerPage() {
           <div className="max-w-4xl mx-auto">
             {/* Header */}
             <div className="mb-6">
-              <h1 className="text-2xl font-bold text-gray-900">Company Profiles</h1>
-              <p className="text-gray-600 mt-1">Each company profile helps us build a targeted lead list for that segment. Create as many as you like.</p>
+              <h1 className="text-2xl font-bold text-gray-900">Which companies do you sell to?</h1>
+              <p className="text-gray-600 mt-1">Tell us about the companies you sell to. We'll use these to find and score the best accounts for you. Create as many as you like.</p>
             </div>
 
             {/* Main Content */}

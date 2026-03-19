@@ -651,40 +651,68 @@ export default function PersonaForm({
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (mode === 'create' && !selectedCompanyId) {
+    if (!selectedCompanyId) {
       toast.error('Please select a company profile');
       setCurrentSection(1);
       return;
     }
 
-    if (formData.functions.length === 0) {
-      toast.error('Please select at least one business area');
-      setCurrentSection(2);
+    if (mode === 'edit') {
+      if (formData.functions.length === 0) {
+        toast.error('Please select at least one business area');
+        setCurrentSection(2);
+        return;
+      }
+
+      if (formData.seniorityLevels.length === 0) {
+        toast.error('Please select at least one seniority level');
+        setCurrentSection(3);
+        return;
+      }
+
+      if (formData.jobTitles.length === 0) {
+        toast.error('Please select at least one specific role');
+        setCurrentSection(4);
+        return;
+      }
+
+      if (!formData.name.trim()) {
+        toast.error('Please enter a name for this buyer persona');
+        return;
+      }
+    }
+
+    setIsSaving(true);
+    try {
+      const saveName = formData.name.trim() || `Draft persona at ${selectedCompany?.name || 'selected company'}`;
+      await onSave({ ...formData, name: saveName, icpId: selectedCompanyId });
+    } catch (error) {
+      console.error('Error saving persona:', error);
+      toast.error('Failed to save persona. Please try again.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSaveAndExit = async () => {
+    if (mode !== 'create') {
+      onCancel();
       return;
     }
 
-    if (formData.seniorityLevels.length === 0) {
-      toast.error('Please select at least one seniority level');
-      setCurrentSection(3);
-      return;
-    }
-
-    if (formData.jobTitles.length === 0) {
-      toast.error('Please select at least one specific role');
-      setCurrentSection(4);
-      return;
-    }
-
-    if (!formData.name.trim()) {
-      toast.error('Please enter a name for this buyer persona');
+    if (!selectedCompanyId) {
+      toast.error('Please select a company profile');
+      setCurrentSection(1);
       return;
     }
 
     setIsSaving(true);
     try {
-      await onSave({ ...formData, icpId: selectedCompanyId });
+      const saveName = formData.name.trim() || `Draft persona at ${selectedCompany?.name || 'selected company'}`;
+      await onSave({ ...formData, name: saveName, icpId: selectedCompanyId });
+      onCancel();
     } catch (error) {
-      console.error('Error saving persona:', error);
+      console.error('Error saving persona draft:', error);
       toast.error('Failed to save persona. Please try again.');
     } finally {
       setIsSaving(false);
@@ -708,19 +736,22 @@ export default function PersonaForm({
 
   return (
     <div className="max-w-3xl mx-auto">
-      {/* Company name banner (edit mode) */}
-      {mode === 'edit' && selectedCompany && (
+      {/* Company context banner */}
+      {selectedCompany && (
         <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200 flex items-center justify-between">
           <div>
-            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Editing persona for</p>
+            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">
+              {mode === 'edit' ? 'Editing persona for' : 'Creating buyer segment for'}
+            </p>
             <p className="font-medium text-gray-900">{selectedCompany.name}</p>
           </div>
           <button
             type="button"
-            onClick={onCancel}
-            className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors"
+            onClick={mode === 'create' ? handleSaveAndExit : onCancel}
+            className="px-3 py-1.5 text-sm text-red-600 hover:text-red-700 border border-red-200 rounded-lg hover:bg-red-50 transition-colors"
+            disabled={isSaving}
           >
-            Cancel
+            {mode === 'create' ? (isSaving ? 'Saving...' : 'Save and exit') : 'Cancel'}
           </button>
         </div>
       )}
@@ -1255,49 +1286,65 @@ export default function PersonaForm({
                   onCancel();
                 }
               }}
-              className={`px-4 py-2 text-gray-600 hover:text-gray-900 transition-colors ${
+              className={`px-4 py-2 transition-colors ${
+                mode === 'edit' && currentSection === firstStep
+                  ? 'text-red-600 hover:text-red-700'
+                  : 'text-gray-600 hover:text-gray-900'
+              } ${
                 mode === 'create' && currentSection === 1 ? 'invisible' : ''
               }`}
             >
               {mode === 'edit' && currentSection === firstStep ? 'Cancel' : 'Back'}
             </button>
 
-            {currentSection < lastStep ? (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  handleNext();
-                }}
-                disabled={
-                  (currentSection === 1 && !selectedCompanyId) ||
-                  (currentSection === 2 && formData.functions.length === 0) ||
-                  (currentSection === 3 && formData.seniorityLevels.length === 0) ||
-                  (currentSection === 4 && formData.jobTitles.length === 0) ||
-                  (currentSection === 5 && !formData.name.trim()) ||
-                  isGeneratingFunctions ||
-                  isGeneratingSeniority
-                }
-                className="px-6 py-2 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors disabled:opacity-50"
-              >
-                Next
-              </button>
-            ) : (
-              <button
-                type="submit"
-                disabled={isSaving || isGeneratingName}
-                className="px-6 py-2 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors disabled:opacity-50 flex items-center gap-2"
-              >
-                {isSaving ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                    {mode === 'create' ? 'Saving...' : 'Updating...'}
-                  </>
-                ) : (
-                  mode === 'create' ? 'Save' : 'Update'
-                )}
-              </button>
-            )}
+            <div className="flex items-center gap-2">
+              {currentSection < lastStep && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    handleNext();
+                  }}
+                  disabled={
+                    (currentSection === 1 && !selectedCompanyId) ||
+                    (currentSection === 2 && formData.functions.length === 0) ||
+                    (currentSection === 3 && formData.seniorityLevels.length === 0) ||
+                    (currentSection === 4 && formData.jobTitles.length === 0) ||
+                    (currentSection === 5 && !formData.name.trim()) ||
+                    isGeneratingFunctions ||
+                    isGeneratingSeniority
+                  }
+                  className={`px-6 py-2 rounded-lg transition-colors disabled:opacity-50 ${
+                    mode === 'edit'
+                      ? 'border border-gray-300 text-gray-700 hover:bg-gray-50'
+                      : 'bg-arcova-teal text-white hover:bg-arcova-teal/90'
+                  }`}
+                >
+                  Next
+                </button>
+              )}
+              {(mode === 'edit' || currentSection === lastStep) ? (
+                <button
+                  type="submit"
+                  disabled={
+                    isSaving ||
+                    isGeneratingName ||
+                    !selectedCompanyId ||
+                    (mode === 'edit' && !formData.name.trim())
+                  }
+                  className="px-6 py-2 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors disabled:opacity-50 flex items-center gap-2"
+                >
+                  {isSaving ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      Saving...
+                    </>
+                  ) : (
+                    'Save'
+                  )}
+                </button>
+              ) : null}
+            </div>
           </div>
         </form>
       </div>
