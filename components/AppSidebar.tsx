@@ -37,8 +37,8 @@ const navigation: NavItem[] = [
     icon: Target,
   },
   {
-    name: 'Contacts',
-    href: '/contacts',
+    name: 'Personas',
+    href: '/personas',
     icon: UserCircle,
   },
   {

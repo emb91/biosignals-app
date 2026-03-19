@@ -5,10 +5,8 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { supabase } from '@/lib/supabase';
-import { getDisplayName } from '@/lib/auth-helpers';
-
 export default function CompanyAnalysisPage() {
-  const { user, loading, logout } = useAuth();
+  const { user, loading } = useAuth();
   const router = useRouter();
   const [websiteUrl, setWebsiteUrl] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -26,7 +24,6 @@ export default function CompanyAnalysisPage() {
   const [isEditingCompanyName, setIsEditingCompanyName] = useState(false);
   const [savingCompanyName, setSavingCompanyName] = useState(false);
 
-  const firstName = user ? getDisplayName(user) : '';
 
   useEffect(() => {
     if (!loading && !user) {
@@ -320,24 +317,6 @@ export default function CompanyAnalysisPage() {
       <AppSidebar />
       
       <div className="flex-1 flex flex-col min-h-0">
-        {/* Top Bar */}
-        <div className="bg-gray-50 px-6 py-3 flex-shrink-0">
-          <div className="flex items-center justify-end">
-            <div className="flex items-center space-x-4">
-              <span className="text-sm text-gray-600">Welcome, {firstName}</span>
-              <button
-                onClick={async () => {
-                  await logout();
-                  router.push('/');
-                }}
-                className="text-sm text-gray-600 hover:text-gray-900"
-              >
-                Logout
-              </button>
-            </div>
-          </div>
-        </div>
-
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto p-4">
           <div className="max-w-4xl mx-auto">

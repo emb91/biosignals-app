@@ -24,72 +24,93 @@ export async function POST(request: Request) {
       apiKey: process.env.ANTHROPIC_API_KEY,
     });
 
-    // Build a concise description of the target company
     const companyType = targetCompanyProfile?.company_type || 'Biotech';
-    const fundingStage = targetCompanyProfile?.funding_stages?.slice(0, 1).join(', ') || '';
-    const therapeuticArea = targetCompanyProfile?.therapeutic_areas?.slice(0, 1).join(', ') || '';
-    const companySize = targetCompanyProfile?.company_sizes?.slice(0, 1).join(', ') || '';
+    const companyProfileName = targetCompanyProfile?.name || companyType;
+    const therapeuticArea = targetCompanyProfile?.therapeutic_areas?.[0] || '';
+    const fundingStage = targetCompanyProfile?.funding_stages?.[0] || '';
 
-    // Simplify seniority for the name
-    const simplifySeniority = (levels: string[]): string => {
-      if (levels.includes('C-Level')) return 'C-level';
-      if (levels.includes('VP / SVP')) return 'VP/SVP-level';
-      if (levels.includes('Director')) return 'Director-level';
-      if (levels.includes('Head of / Senior Manager')) return 'Senior';
-      if (levels.includes('Manager')) return 'Manager-level';
-      if (levels.includes('Individual Contributor')) return 'IC-level';
-      return levels[0]?.replace(' Level', '-level') || '';
+    const seniorityRank: Record<string, number> = {
+      'C-Level': 6,
+      'VP / SVP': 5,
+      'Director': 4,
+      'Head of / Senior Manager': 3,
+      'Manager': 2,
+      'Individual Contributor': 1,
     };
 
-    // Simplify business areas for the name
-    const simplifyFunctions = (funcs: string[]): string => {
-      const shortNames: Record<string, string> = {
-        'Executive / Leadership': 'Leadership',
-        'Commercial & Sales': 'Commercial',
-        'Business Development & Partnerships': 'BD',
-        'Marketing': 'Marketing',
-        'Clinical Operations': 'Clinical',
-        'Regulatory Affairs': 'Regulatory',
-        'Research & Development (R&D)': 'R&D',
-        'Manufacturing & CMC': 'CMC',
-        'Supply Chain & Procurement': 'Supply Chain',
-        'Finance': 'Finance',
-        'Strategy & Corporate Development': 'Strategy',
-        'Data & Technology': 'Data & Tech',
-        'People & HR': 'People',
-        'Legal & Compliance': 'Legal',
-        'Medical Affairs': 'Medical Affairs',
-      };
-      return funcs.slice(0, 2).map(f => shortNames[f] || f).join(' & ');
+    const topSeniority = [...selectedSeniority].sort(
+      (a, b) => (seniorityRank[b] || 0) - (seniorityRank[a] || 0)
+    )[0] || 'VP / SVP';
+
+    const simplifyCompanyType = (type: string, area: string, stage: string): string => {
+      let base = type;
+      if (type.includes('Biotech') || type.includes('Biopharma')) base = 'Biopharma';
+      else if (type.includes('Pharma')) base = 'Pharma';
+      else if (type.includes('Medical Device')) base = 'MedTech';
+      else if (type.includes('Academic')) base = 'Academic Biotech';
+      else if (type.includes('CDMO')) base = 'CDMO';
+      else if (type.includes('CRO')) base = 'CRO';
+
+      const shortStage = stage
+        ? stage
+            .replace('Grant-funded', 'Grant-Funded')
+            .replace('Series ', 'Series ')
+            .trim()
+        : '';
+
+      if (shortStage && base) return `${shortStage} ${base}`;
+      if (area && base && !base.includes('Pharma') && !base.includes('Biotech') && !base.includes('Biopharma')) {
+        return `${area} ${base}`;
+      }
+      return base;
     };
 
-    const seniorityPart = simplifySeniority(selectedSeniority);
-    const functionsPart = simplifyFunctions(selectedFunctions);
-    
-    // Build a suggested name
-    let companyPart = companyType;
-    if (fundingStage) companyPart = `${fundingStage} ${companyPart}`;
-    if (therapeuticArea) companyPart = `${therapeuticArea} ${companyPart}`;
+    const cleanupName = (text: string): string => {
+      const noTrailingPunctuation = text.replace(/[.!?,;:]+$/g, '');
+      const normalised = noTrailingPunctuation.replace(/\s+/g, ' ').trim();
+      const words = normalised.split(' ').slice(0, 6);
+      let output = words.join(' ');
 
-    const prompt = `Generate a concise, descriptive name for a contact profile.
+      // Enforce max one ampersand.
+      const parts = output.split('&');
+      if (parts.length > 2) {
+        output = `${parts[0]}&${parts.slice(1).join(' and ')}`.replace(/\s+/g, ' ').trim();
+      }
 
-Target company type: ${companyPart}
-${companySize ? `Company size: ${companySize} employees` : ''}
-Selected seniority levels: ${selectedSeniority.join(', ')}
-Selected business areas: ${selectedFunctions.join(', ')}
+      return output;
+    };
 
-Create a name like:
-- "VP-level Clinical & BD at Series A Oncology Biotech"
-- "Director-level R&D at Mid-size Pharma"
-- "C-Suite at Early-stage Cell Therapy Biotech"
+    const shortCompanyType = simplifyCompanyType(companyType, therapeuticArea, fundingStage);
+    const fallbackName = cleanupName(`${selectedFunctions[0] || 'Commercial'} ${topSeniority} at ${shortCompanyType}`);
 
-The name should be:
-- Under 60 characters
-- Start with the seniority level
-- Include 1-2 key business areas
-- Reference the company type/stage if space allows
+    const prompt = `Generate a short, specific name for a buyer persona based on the following attributes:
+Business areas: ${selectedFunctions.join(', ')}
+Seniority levels: ${selectedSeniority.join(', ')}
+Company profile: ${companyProfileName}
+Company type summary: ${shortCompanyType}
 
-Return ONLY the name, nothing else. No quotes, no explanation. Do not include em dashes in your response.`;
+Rules:
+- Maximum 6 words
+- If 1-2 business areas selected, lead with the most descriptive area, do not use the seniority level as the lead word
+- If 3 or more business areas selected, summarise broadly using terms like "Commercial & Scientific", "Multi-function", or "Cross-functional" rather than listing each area
+- Pick the most senior seniority level selected (${topSeniority}), do not list all seniority levels
+- Include the company type from the company profile but keep it short (for example: "Large Pharma", "Series A Biotech", "Grant-Funded Biopharma")
+- Do not use generic filler words like "leaders", "professionals", "contacts", "people", or "individuals" unless nothing more specific is available
+- Do not use ampersands more than once in the name
+- Do not include punctuation at the end
+- Do not include em dashes
+
+Examples of good names:
+- Clinical & BD Directors at Series A Biotech
+- C-Suite Buyers at Large Pharma
+- CMC & Regulatory VPs at Mid-size Biopharma
+- BD & Commercial Heads at Grant-Funded Biotech
+- Multi-function VPs at Late-stage Biopharma
+- Cross-functional Directors at Large Pharma
+- Lab & Research Scientists at Early-stage Biotech
+- Commercial & Medical Affairs at Oncology Pharma
+
+Return only the name, nothing else.`;
 
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
@@ -97,7 +118,8 @@ Return ONLY the name, nothing else. No quotes, no explanation. Do not include em
       messages: [{ role: 'user', content: prompt }],
     });
 
-    const name = (message.content[0] as { type: string; text: string }).text.trim();
+    const rawName = (message.content[0] as { type: string; text: string }).text.trim();
+    const name = cleanupName(rawName) || fallbackName;
 
     return NextResponse.json({ name });
   } catch (error: unknown) {

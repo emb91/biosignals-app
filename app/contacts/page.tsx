@@ -4,7 +4,6 @@ import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
-import { getDisplayName } from '@/lib/auth-helpers';
 import { toast, Toaster } from 'sonner';
 
 interface Contact {
@@ -24,9 +23,8 @@ interface CompanyProfile {
 }
 
 export default function ContactsPage() {
-  const { user, loading, logout } = useAuth();
+  const { user, loading } = useAuth();
   const router = useRouter();
-  const firstName = user ? getDisplayName(user) : '';
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [companyProfiles, setCompanyProfiles] = useState<CompanyProfile[]>([]);
   const [loadingContacts, setLoadingContacts] = useState(true);
@@ -76,7 +74,7 @@ export default function ContactsPage() {
         }
       } catch (error) {
         console.error('Error fetching data:', error);
-        toast.error('Failed to load contact profiles');
+        toast.error('Failed to load buyer personas');
       } finally {
         setLoadingContacts(false);
       }
@@ -88,7 +86,7 @@ export default function ContactsPage() {
   }, [user]);
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this contact profile?')) {
+    if (!confirm('Are you sure you want to delete this buyer persona?')) {
       return;
     }
 
@@ -99,13 +97,13 @@ export default function ContactsPage() {
 
       if (response.ok) {
         setContacts(contacts.filter(c => c.id !== id));
-        toast.success('Contact profile deleted');
+        toast.success('Buyer persona deleted');
       } else {
         throw new Error('Failed to delete');
       }
     } catch (error) {
       console.error('Error deleting contact:', error);
-      toast.error('Failed to delete contact profile');
+      toast.error('Failed to delete buyer persona');
     }
   };
 
@@ -126,31 +124,13 @@ export default function ContactsPage() {
       <AppSidebar />
       
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Top Bar */}
-        <div className="bg-gray-50 px-6 py-4">
-          <div className="flex items-center justify-end">
-            <div className="flex items-center space-x-4">
-              <span className="text-sm text-gray-600">Welcome, {firstName}</span>
-              <button
-                onClick={async () => {
-                  await logout();
-                  router.push('/');
-                }}
-                className="text-sm text-gray-600 hover:text-gray-900"
-              >
-                Logout
-              </button>
-            </div>
-          </div>
-        </div>
-
         {/* Content Area */}
         <div className="flex-1 overflow-auto p-6">
           <div className="max-w-4xl mx-auto">
             {/* Header */}
             <div className="mb-6">
-              <h1 className="text-2xl font-bold text-gray-900">Add Contacts to Your Target Companies</h1>
-              <p className="text-gray-600 mt-1">Define the types of people you want to reach at each company you’ve added. These profiles will be used to find and match relevant contacts.</p>
+              <h1 className="text-2xl font-bold text-gray-900">Add Buyer Personas to Your Target Companies</h1>
+              <p className="text-gray-600 mt-1">Define the types of people you want to reach at each company you’ve added. These personas will be used to find and match relevant contacts.</p>
             </div>
 
             {/* Contacts List */}
@@ -165,13 +145,13 @@ export default function ContactsPage() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
                   </svg>
                 </div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">No target contact profiles yet</h3>
-                <p className="text-gray-500 mb-6">Get started by defining your first target contact type.</p>
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">No buyer personas yet</h3>
+                <p className="text-gray-500 mb-6">Get started by defining your first buyer persona.</p>
                 <button
-                  onClick={() => router.push('/contacts/new')}
+                  onClick={() => router.push('/personas/new')}
                   className="px-6 py-3 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors"
                 >
-                  + Create new contact profile
+                  + Create new persona
                 </button>
               </div>
             ) : (
@@ -202,7 +182,7 @@ export default function ContactsPage() {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              router.push(`/contacts/${contact.id}/edit`);
+                              router.push(`/personas/${contact.id}/edit`);
                             }}
                             className="p-2 text-gray-400 hover:text-arcova-teal transition-colors"
                           >
@@ -275,10 +255,10 @@ export default function ContactsPage() {
 
                 {/* Create New Button */}
                 <button
-                  onClick={() => router.push('/contacts/new')}
+                  onClick={() => router.push('/personas/new')}
                   className="w-full border-2 border-dashed border-gray-300 rounded-lg p-4 text-gray-500 hover:border-arcova-teal hover:text-arcova-teal transition-colors flex items-center justify-center mt-4"
                 >
-                  + Create new contact profile
+                  + Create new persona
                 </button>
               </div>
             )}

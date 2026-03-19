@@ -4,7 +4,6 @@ import { useAuth } from '@/context/AuthContext';
 import { useRouter, useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
-import { getDisplayName } from '@/lib/auth-helpers';
 import { toast, Toaster } from 'sonner';
 
 interface CompanyProfile {
@@ -19,21 +18,20 @@ interface CompanyProfile {
 }
 
 const FUNCTION_OPTIONS = [
-  "Executive / Leadership",
-  "Commercial & Sales",
+  "C-Suite & Leadership",
   "Business Development & Partnerships",
-  "Marketing",
-  "Medical Affairs",
   "Clinical Operations",
+  "Research & Development",
   "Regulatory Affairs",
-  "Research & Development (R&D)",
   "Manufacturing & CMC",
-  "Supply Chain & Procurement",
-  "Finance",
+  "Medical Affairs",
+  "Commercial & Sales Operations",
+  "Procurement",
   "Strategy & Corporate Development",
-  "Data & Technology",
-  "People & HR",
-  "Legal & Compliance"
+  "Lab Operations",
+  "Technology & Systems",
+  "AI & Machine Learning",
+  "Marketing"
 ];
 
 const SENIORITY_OPTIONS = [
@@ -46,11 +44,10 @@ const SENIORITY_OPTIONS = [
 ];
 
 export default function ContactEditPage() {
-  const { user, loading, logout } = useAuth();
+  const { user, loading } = useAuth();
   const router = useRouter();
   const params = useParams();
   const contactId = params.id as string;
-  const firstName = user ? getDisplayName(user) : '';
 
   const [currentSection, setCurrentSection] = useState(2);
   const [companyProfiles, setCompanyProfiles] = useState<CompanyProfile[]>([]);
@@ -105,7 +102,7 @@ export default function ContactEditPage() {
           }
         } else {
           toast.error('Contact not found');
-          router.push('/contacts');
+          router.push('/personas');
         }
         
         if (companiesRes.ok) {
@@ -176,7 +173,7 @@ export default function ContactEditPage() {
     }
 
     if (!formData.name.trim()) {
-      toast.error('Please enter a name for this contact profile');
+      toast.error('Please enter a name for this buyer persona');
       return;
     }
 
@@ -194,14 +191,14 @@ export default function ContactEditPage() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to update contact profile');
+        throw new Error('Failed to update buyer persona');
       }
 
-      toast.success('Contact profile updated');
-      router.push('/contacts');
+      toast.success('Buyer persona updated');
+      router.push('/personas');
     } catch (error) {
       console.error('Error updating contact:', error);
-      toast.error('Failed to update contact profile. Please try again.');
+      toast.error('Failed to update buyer persona. Please try again.');
     } finally {
       setIsSaving(false);
     }
@@ -234,31 +231,13 @@ export default function ContactEditPage() {
       <AppSidebar />
       
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Top Bar */}
-        <div className="bg-gray-50 px-6 py-4">
-          <div className="flex items-center justify-end">
-            <div className="flex items-center space-x-4">
-              <span className="text-sm text-gray-600">Welcome, {firstName}</span>
-              <button
-                onClick={async () => {
-                  await logout();
-                  router.push('/');
-                }}
-                className="text-sm text-gray-600 hover:text-gray-900"
-              >
-                Logout
-              </button>
-            </div>
-          </div>
-        </div>
-
         {/* Content Area */}
         <div className="flex-1 overflow-auto p-6">
           <div className="max-w-3xl mx-auto">
             {/* Linked Company Profile Display */}
             {selectedCompany && (
               <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
-                <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Editing contacts for</p>
+                <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Editing persona for</p>
                 <p className="font-medium text-gray-900">{selectedCompany.name}</p>
               </div>
             )}
@@ -296,7 +275,7 @@ export default function ContactEditPage() {
                 ))}
               </div>
               <div className="flex justify-between mt-2 text-xs text-gray-500">
-                <span className={currentSection === 2 ? 'text-arcova-teal font-medium' : ''}>Business Areas</span>
+                <span className={currentSection === 2 ? 'text-arcova-teal font-medium' : ''}>Teams</span>
                 <span className={currentSection === 3 ? 'text-arcova-teal font-medium' : ''}>Seniority</span>
                 <span className={currentSection === 4 ? 'text-arcova-teal font-medium' : ''}>Name</span>
               </div>
@@ -309,13 +288,13 @@ export default function ContactEditPage() {
                 {currentSection === 2 && (
                   <div className="space-y-4">
                     <div>
-                      <h2 className="text-lg font-semibold text-gray-900 mb-1">Which business areas should we target?</h2>
+                      <h2 className="text-lg font-semibold text-gray-900 mb-1">Which teams should we target?</h2>
                       <p className="text-sm text-gray-500 mb-4">
                         These are suggested based on your setup. Select all that matter.
                       </p>
                     </div>
 
-                    {/* Selected business areas */}
+                    {/* Selected teams */}
                     {formData.functions.length > 0 && (
                       <div className="flex flex-wrap gap-2">
                         {formData.functions.map((func) => (
@@ -331,13 +310,13 @@ export default function ContactEditPage() {
                       </div>
                     )}
 
-                    {/* See all business areas toggle */}
+                    {/* See all teams toggle */}
                     <button
                       type="button"
                       onClick={() => setShowAllFunctions(!showAllFunctions)}
                       className="text-sm text-gray-600 hover:text-gray-900 flex items-center gap-1"
                     >
-                      {showAllFunctions ? 'Hide all business areas' : 'See all business areas'}
+                      {showAllFunctions ? 'Hide all teams' : 'See all teams'}
                       <svg
                         className={`w-4 h-4 transition-transform ${showAllFunctions ? 'rotate-180' : ''}`}
                         fill="none"
@@ -348,32 +327,25 @@ export default function ContactEditPage() {
                       </svg>
                     </button>
 
-                    {/* All business areas (collapsible) */}
+                    {/* All teams (collapsible) */}
                     {showAllFunctions && (
                       <div className="space-y-4 pt-2 border-t border-gray-200">
                         <div className="flex flex-wrap gap-2">
-                          {FUNCTION_OPTIONS.map((func) => {
-                            const isSelected = formData.functions.includes(func);
-                            return (
-                              <button
-                                key={func}
-                                type="button"
-                                onClick={() => handleFunctionToggle(func)}
-                                className={`px-4 py-2 rounded-full text-sm transition-colors ${
-                                  isSelected
-                                    ? 'bg-arcova-teal text-white'
-                                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                                }`}
-                              >
-                                {func}
-                              </button>
-                            );
-                          })}
+                          {FUNCTION_OPTIONS.filter((func) => !formData.functions.includes(func)).map((func) => (
+                            <button
+                              key={func}
+                              type="button"
+                              onClick={() => handleFunctionToggle(func)}
+                              className="px-4 py-2 rounded-full text-sm transition-colors bg-gray-100 text-gray-700 hover:bg-gray-200"
+                            >
+                              {func}
+                            </button>
+                          ))}
                         </div>
 
                         {/* Other - custom input */}
                         <div className="pt-3 border-t border-gray-200">
-                          <label className="text-sm text-gray-600 mb-2 block">Other business area not listed?</label>
+                          <label className="text-sm text-gray-600 mb-2 block">Other teams not listed?</label>
                           <div className="flex gap-2">
                             <input
                               type="text"
@@ -385,7 +357,7 @@ export default function ContactEditPage() {
                                   handleAddCustomFunction();
                                 }
                               }}
-                              placeholder="Enter custom business area"
+                              placeholder="Enter custom team"
                               className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-arcova-teal focus:border-transparent text-sm"
                             />
                             <button
@@ -438,7 +410,7 @@ export default function ContactEditPage() {
                 {currentSection === 4 && (
                   <div className="space-y-4">
                     <div>
-                      <h2 className="text-lg font-semibold text-gray-900 mb-1">Name this contact profile</h2>
+                      <h2 className="text-lg font-semibold text-gray-900 mb-1">Name this buyer persona</h2>
                       <p className="text-sm text-gray-500 mb-4">Update the name if needed.</p>
                     </div>
 
@@ -480,7 +452,7 @@ export default function ContactEditPage() {
                       if (currentSection > 2) {
                         setCurrentSection(currentSection - 1);
                       } else {
-                        router.push('/contacts');
+                        router.push('/personas');
                       }
                     }}
                     className="px-4 py-2 text-gray-600 hover:text-gray-900 transition-colors"

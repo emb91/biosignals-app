@@ -54,21 +54,20 @@ TARGET COMPANY PROFILE:
 ${targetDescription}
 
 Available business areas to choose from (use EXACTLY these names):
-- Executive / Leadership
-- Commercial & Sales
+- C-Suite & Leadership
 - Business Development & Partnerships
-- Marketing
-- Medical Affairs
 - Clinical Operations
+- Research & Development
 - Regulatory Affairs
-- Research & Development (R&D)
 - Manufacturing & CMC
-- Supply Chain & Procurement
-- Finance
+- Medical Affairs
+- Commercial & Sales Operations
+- Procurement
 - Strategy & Corporate Development
-- Data & Technology
-- People & HR
-- Legal & Compliance
+- Lab Operations
+- Technology & Systems
+- AI & Machine Learning
+- Marketing
 
 Based on what the seller company does and who they're trying to reach, which 3-5 business areas within the target company are most likely to:
 1. Be involved in purchasing decisions for this type of product/service

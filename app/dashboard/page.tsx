@@ -5,17 +5,14 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { supabase } from '@/lib/supabase';
-import { getDisplayName } from '@/lib/auth-helpers';
-
 export default function DashboardPage() {
-  const { user, loading, logout } = useAuth();
+  const { user, loading } = useAuth();
   const router = useRouter();
   const [analyses, setAnalyses] = useState<any[]>([]);
   const [loadingAnalyses, setLoadingAnalyses] = useState(true);
   const [icps, setIcps] = useState<any[]>([]);
   const [loadingIcps, setLoadingIcps] = useState(true);
 
-  const firstName = user ? getDisplayName(user) : '';
 
   useEffect(() => {
     if (!loading && !user) {
@@ -80,24 +77,6 @@ export default function DashboardPage() {
       <AppSidebar />
       
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Top Bar */}
-        <div className="bg-gray-50 px-6 py-4">
-          <div className="flex items-center justify-end">
-            <div className="flex items-center space-x-4">
-              <span className="text-sm text-gray-600">Welcome, {firstName}</span>
-              <button
-                onClick={async () => {
-                  await logout();
-                  router.push('/');
-                }}
-                className="text-sm text-gray-600 hover:text-gray-900"
-              >
-                Logout
-              </button>
-            </div>
-          </div>
-        </div>
-
         {/* Content Area */}
         <div className="flex-1 overflow-auto p-6">
           <div className="max-w-6xl mx-auto">

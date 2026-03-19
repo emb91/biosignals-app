@@ -4,7 +4,6 @@ import { useAuth } from '@/context/AuthContext';
 import { useRouter, useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
-import { getDisplayName } from '@/lib/auth-helpers';
 import { toast, Toaster } from 'sonner';
 import {
   DndContext,
@@ -117,11 +116,10 @@ function SortableSignalPill({ id, name, onRemove }: SortableSignalPillProps) {
 }
 
 export default function ICPEditPage() {
-  const { user, loading, logout } = useAuth();
+  const { user, loading } = useAuth();
   const router = useRouter();
   const params = useParams();
   const icpId = params.id as string;
-  const firstName = user ? getDisplayName(user) : '';
 
   interface ExampleCompany {
     url: string;
@@ -478,24 +476,6 @@ export default function ICPEditPage() {
       <AppSidebar />
       
       <div className="flex-1 flex flex-col min-h-0">
-        {/* Top Bar */}
-        <div className="bg-gray-50 px-6 py-3 flex-shrink-0">
-          <div className="flex items-center justify-end">
-            <div className="flex items-center space-x-4">
-              <span className="text-sm text-gray-600">Welcome, {firstName}</span>
-              <button
-                onClick={async () => {
-                  await logout();
-                  router.push('/');
-                }}
-                className="text-sm text-gray-600 hover:text-gray-900"
-              >
-                Logout
-              </button>
-            </div>
-          </div>
-        </div>
-
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto p-4">
           <div className="max-w-3xl mx-auto">
@@ -737,7 +717,7 @@ export default function ICPEditPage() {
                   <div className="space-y-5">
                     <div>
                       <h2 className="text-lg font-semibold text-gray-900 mb-1">Which signals matter most to you?</h2>
-                      <p className="text-sm text-gray-500">We track all buying signals in the background. Tell us which ones you trust most so we can learn your preferences over time. Not sure? Leave our suggestions as they are. You can update this any time.</p>
+                      <p className="text-sm text-gray-500">We've suggested the most relevant ones based on your profile. You can have up to 5, swap any out by deselecting one and choosing another. You can update this any time.</p>
                     </div>
 
                     {isLoadingSignals ? (

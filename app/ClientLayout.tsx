@@ -7,7 +7,7 @@ import { ScrollToTop } from "@/components/scroll-to-top"
 import { SiteFooter } from "@/components/site-footer"
 
 // Routes that are part of the authenticated app (no header/footer)
-const APP_ROUTES = ['/dashboard', '/companies', '/my-profile', '/results', '/signals', '/upload', '/contacts']
+const APP_ROUTES = ['/dashboard', '/companies', '/my-profile', '/results', '/signals', '/upload', '/personas', '/contacts']
 
 export default function ClientLayout({
   children,
