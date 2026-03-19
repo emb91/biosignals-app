@@ -47,24 +47,25 @@ ${sellerDescription}
 TARGET COMPANY PROFILE:
 ${targetDescription}
 
-FUNCTIONS BEING TARGETED:
+BUSINESS AREAS BEING TARGETED:
 ${selectedFunctions?.join(', ') || 'Not specified'}
 
 Available seniority levels (use EXACTLY these names):
-- C-Suite (CEO / CSO / CMO / COO)
-- VP Level
-- Director Level
+- C-Level
+- VP / SVP
+- Director
 - Head of / Senior Manager
 - Manager
+- Individual Contributor
 
 Based on the target company profile, which 2-4 seniority levels are most appropriate to target?
 
 Consider:
-- A Series A startup with 10-50 employees rarely has VP-level roles outside of co-founders
+- A Series A startup with 10-50 employees rarely has VP / SVP roles outside of founders
 - Larger pharma companies have deep hierarchies where Directors often drive vendor decisions
 - Grant-funded academic spinouts may have flatter structures
-- The functions selected affect which seniority levels have purchasing authority
-- Earlier stage companies often require C-Suite involvement for significant purchases
+- The selected business areas affect which seniority levels have purchasing authority
+- Earlier stage companies often require C-Level involvement for significant purchases
 
 Return ONLY a JSON array of seniority level names from the list above. No explanation, no markdown. Do not include em dashes in your response.`;
 

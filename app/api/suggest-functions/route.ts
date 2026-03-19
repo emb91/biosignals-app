@@ -45,7 +45,7 @@ export async function POST(request: Request) {
     // Build target company description
     const targetDescription = buildTargetDescription(targetCompanyProfile);
 
-    const prompt = `You are helping a sales team identify the right functions to target within a potential customer company.
+    const prompt = `You are helping a sales team identify the right business areas to target within a potential customer company.
 
 SELLER COMPANY:
 ${sellerDescription}
@@ -53,27 +53,31 @@ ${sellerDescription}
 TARGET COMPANY PROFILE:
 ${targetDescription}
 
-Available functions to choose from (use EXACTLY these names):
-- C-Suite & Leadership
+Available business areas to choose from (use EXACTLY these names):
+- Executive / Leadership
+- Commercial & Sales
 - Business Development & Partnerships
-- Clinical Operations
-- Research & Development
-- Manufacturing & CMC
-- Regulatory Affairs
-- Finance & Procurement
+- Marketing
 - Medical Affairs
-- Lab Operations
-- Commercial & Sales Operations
-- Technology & Systems
+- Clinical Operations
+- Regulatory Affairs
+- Research & Development (R&D)
+- Manufacturing & CMC
+- Supply Chain & Procurement
+- Finance
+- Strategy & Corporate Development
+- Data & Technology
+- People & HR
+- Legal & Compliance
 
-Based on what the seller company does and who they're trying to reach, which 3-5 functions within the target company are most likely to:
+Based on what the seller company does and who they're trying to reach, which 3-5 business areas within the target company are most likely to:
 1. Be involved in purchasing decisions for this type of product/service
 2. Have budget authority or influence over procurement
 3. Experience the pain points that the seller's offering addresses
 
 Consider the company size and stage when making recommendations. A 10-person startup won't have dedicated Medical Affairs or Data Science teams.
 
-Return ONLY a JSON array of function names from the list above. No explanation, no markdown. Do not include em dashes in your response.`;
+Return ONLY a JSON array of business area names from the list above. No explanation, no markdown. Do not include em dashes in your response.`;
 
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',

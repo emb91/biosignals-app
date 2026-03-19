@@ -4,11 +4,17 @@ import { NextResponse } from 'next/server';
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { companyType, functions, seniority } = body;
+    const {
+      companyType,
+      selectedBusinessArea,
+      selectedBusinessAreas,
+      seniority,
+      availableTitles,
+    } = body;
 
-    if (!functions?.length || !seniority?.length) {
+    if (!selectedBusinessArea || !availableTitles?.length || !seniority?.length) {
       return NextResponse.json(
-        { error: 'Functions and seniority are required' },
+        { error: 'Business area, seniority, and available titles are required' },
         { status: 400 }
       );
     }
@@ -24,7 +30,17 @@ export async function POST(request: Request) {
       apiKey: process.env.ANTHROPIC_API_KEY,
     });
 
-    const prompt = `A life science company sells to ${companyType || 'biotech and pharmaceutical'} companies. Their ideal contact is someone in ${functions.join(', ')} at ${seniority.join(', ')} level. List the 5 most common specific job titles that match this profile. Return as a JSON array of strings, no preamble, no markdown. Do not include em dashes in your response.`;
+    const prompt = `A life science company sells to ${companyType || 'biotech and pharmaceutical'} companies.
+
+Target business area: ${selectedBusinessArea}
+Selected business areas overall: ${(selectedBusinessAreas || []).join(', ') || selectedBusinessArea}
+Selected seniority levels: ${seniority.join(', ')}
+
+Available specific roles for this business area (use ONLY roles from this list):
+${availableTitles.map((title: string) => `- ${title}`).join('\n')}
+
+Pick the 2-5 most appropriate specific roles from the list above for this target profile.
+Return ONLY a JSON array of strings. No explanation, no markdown. Do not include em dashes in your response.`;
 
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
@@ -46,7 +62,9 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({ titles });
+    const validTitles = titles.filter((title) => availableTitles.includes(title));
+
+    return NextResponse.json({ titles: validTitles });
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error('Error suggesting roles:', errorMessage);

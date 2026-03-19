@@ -54,6 +54,23 @@ export async function POST(request: Request) {
 
     const body = await request.json();
 
+    // Check if a contact profile already exists for this company
+    if (body.icpId) {
+      const { data: existingContact } = await supabase
+        .from('contacts')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('icp_id', body.icpId)
+        .single();
+
+      if (existingContact) {
+        return NextResponse.json(
+          { error: 'A contact profile already exists for this company. Please edit the existing profile instead.', existingContactId: existingContact.id },
+          { status: 409 }
+        );
+      }
+    }
+
     // Calculate weights for functions based on their position (priority order)
     const weightedFunctions = assignFunctionWeights(body.functions || []);
 

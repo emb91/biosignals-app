@@ -149,8 +149,8 @@ export default function ContactsPage() {
           <div className="max-w-4xl mx-auto">
             {/* Header */}
             <div className="mb-6">
-              <h1 className="text-2xl font-bold text-gray-900">Contact Profiles</h1>
-              <p className="text-gray-600 mt-1">Each contact profile defines a type of person to reach out to at your target companies. Create as many as you like.</p>
+              <h1 className="text-2xl font-bold text-gray-900">Add Contacts to Your Target Companies</h1>
+              <p className="text-gray-600 mt-1">Define the types of people you want to reach at each company you’ve added. These profiles will be used to find and match relevant contacts.</p>
             </div>
 
             {/* Contacts List */}

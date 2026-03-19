@@ -6,23 +6,6 @@ import { useEffect, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { getDisplayName } from '@/lib/auth-helpers';
 import { toast, Toaster } from 'sonner';
-import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  DragEndEvent,
-} from '@dnd-kit/core';
-import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  horizontalListSortingStrategy,
-  useSortable,
-} from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
 
 interface CompanyProfile {
   id: string;
@@ -43,82 +26,169 @@ interface SellerProfile {
   bad_fit: string | string[];
 }
 
+interface ContactProfile {
+  id: string;
+  icp_id: string | null;
+}
+
 const FUNCTION_OPTIONS = [
-  "C-Suite & Leadership",
+  "Executive / Leadership",
+  "Commercial & Sales",
   "Business Development & Partnerships",
-  "Clinical Operations",
-  "Research & Development",
-  "Manufacturing & CMC",
-  "Regulatory Affairs",
-  "Finance & Procurement",
+  "Marketing",
   "Medical Affairs",
-  "Lab Operations",
-  "Commercial & Sales Operations",
-  "Technology & Systems"
+  "Clinical Operations",
+  "Regulatory Affairs",
+  "Research & Development (R&D)",
+  "Manufacturing & CMC",
+  "Supply Chain & Procurement",
+  "Finance",
+  "Strategy & Corporate Development",
+  "Data & Technology",
+  "People & HR",
+  "Legal & Compliance"
 ];
 
 const SENIORITY_OPTIONS = [
-  "C-Suite (CEO / CSO / CMO / COO)",
-  "VP Level",
-  "Director Level",
+  "C-Level",
+  "VP / SVP",
+  "Director",
   "Head of / Senior Manager",
-  "Manager"
+  "Manager",
+  "Individual Contributor"
 ];
 
-interface SortableFunctionPillProps {
-  id: string;
-  name: string;
-  onRemove: () => void;
+const SPECIFIC_ROLE_OPTIONS: Record<string, string[]> = {
+  "Executive / Leadership": [
+    "Chief Executive Officer (CEO)",
+    "Chief Operating Officer (COO)",
+    "Chief Financial Officer (CFO)",
+    "Chief Medical Officer (CMO)",
+    "Chief Scientific Officer (CSO)",
+    "Chief Commercial Officer (CCO)",
+    "Chief Technology Officer (CTO)",
+    "Chief Data Officer (CDO)",
+  ],
+  "Commercial & Sales": [
+    "VP Sales",
+    "VP Commercial",
+    "Head of Sales",
+    "Sales Director",
+    "Sales Manager",
+    "Account Manager",
+    "Account Executive",
+    "Sales Representative",
+  ],
+  "Business Development & Partnerships": [
+    "VP Business Development",
+    "Head of Business Development",
+    "Director of Business Development",
+    "Head of Partnerships",
+    "Business Development Manager",
+    "Partnerships Manager",
+    "Business Development Representative",
+  ],
+  "Marketing": [
+    "Chief Marketing Officer",
+    "VP Marketing",
+    "Head of Marketing",
+    "Marketing Director",
+    "Marketing Manager",
+    "Growth Marketing Manager",
+    "Marketing Specialist",
+  ],
+  "Medical Affairs": [
+    "Chief Medical Officer",
+    "VP Medical Affairs",
+    "Medical Director",
+  ],
+  "Clinical Operations": [
+    "VP Clinical Operations",
+    "Head of Clinical Operations",
+    "Director of Clinical Operations",
+    "Clinical Operations Manager",
+    "Clinical Trial Manager",
+    "Clinical Research Associate",
+  ],
+  "Regulatory Affairs": [
+    "VP Regulatory Affairs",
+    "Head of Regulatory Affairs",
+    "Director of Regulatory Affairs",
+    "Regulatory Affairs Manager",
+    "Regulatory Affairs Associate",
+  ],
+  "Research & Development (R&D)": [
+    "Chief Scientific Officer",
+    "VP R&D",
+    "Head of Research",
+    "Principal Scientist",
+    "Research Scientist",
+    "Senior Scientist",
+    "Associate Scientist",
+  ],
+  "Manufacturing & CMC": [
+    "VP Manufacturing",
+    "Head of CMC",
+    "Director of Manufacturing",
+    "Manufacturing Manager",
+    "CMC Manager",
+    "Process Engineer",
+  ],
+  "Finance": [
+    "Chief Financial Officer",
+    "VP Finance",
+    "Finance Director",
+    "Finance Manager",
+    "Financial Analyst",
+  ],
+  "Strategy & Corporate Development": [
+    "VP Strategy",
+    "Head of Corporate Development",
+    "Director of Strategy",
+    "Strategy Manager",
+    "Corporate Development Manager",
+    "Strategy Analyst",
+  ],
+  "Data & Technology": [
+    "Chief Technology Officer",
+    "VP Engineering",
+    "Head of Data Science",
+    "Engineering Manager",
+    "Data Science Manager",
+    "Software Engineer",
+    "Data Scientist",
+  ],
+  "People & HR": [
+    "Chief People Officer",
+    "VP HR",
+    "Head of People",
+    "HR Manager",
+    "People Operations Manager",
+    "HR Business Partner",
+  ],
+  "Legal & Compliance": [
+    "Chief Legal Officer",
+    "Head of Legal",
+    "Compliance Director",
+    "Legal Counsel",
+    "Compliance Manager",
+    "Compliance Analyst",
+  ],
+};
+
+function inferRoleSeniority(role: string): string {
+  const lower = role.toLowerCase();
+  if (lower.includes('chief')) return 'C-Level';
+  if (lower.includes('vp') || lower.includes('svp')) return 'VP / SVP';
+  if (lower.includes('director')) return 'Director';
+  if (lower.includes('head of') || lower.includes('head ')) return 'Head of / Senior Manager';
+  if (lower.includes('manager')) return 'Manager';
+  return 'Individual Contributor';
 }
 
-function SortableFunctionPill({ id, name, onRemove }: SortableFunctionPillProps) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id });
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-  };
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className={`px-3 py-1.5 rounded-full text-sm bg-arcova-teal text-white flex items-center gap-1.5 ${isDragging ? 'shadow-lg' : ''}`}
-    >
-      {/* Drag handle */}
-      <span
-        {...attributes}
-        {...listeners}
-        className="cursor-grab active:cursor-grabbing"
-      >
-        <svg className="w-3 h-3 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 8h16M4 16h16" />
-        </svg>
-      </span>
-      {name}
-      <button
-        type="button"
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          onRemove();
-        }}
-        className="ml-1 hover:bg-white/20 rounded-full p-0.5"
-      >
-        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-        </svg>
-      </button>
-    </div>
-  );
+function roleMatchesSelectedSeniority(role: string, selectedSeniority: string[]): boolean {
+  if (selectedSeniority.length === 0) return true;
+  return selectedSeniority.includes(inferRoleSeniority(role));
 }
 
 export default function ContactNewPage() {
@@ -135,39 +205,32 @@ export default function ContactNewPage() {
     name: '',
     functions: [] as string[],
     seniorityLevels: [] as string[],
+    jobTitles: [] as string[],
   });
   const [customFunction, setCustomFunction] = useState('');
+  const [customRole, setCustomRole] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isGeneratingFunctions, setIsGeneratingFunctions] = useState(false);
   const [isGeneratingSeniority, setIsGeneratingSeniority] = useState(false);
+  const [isGeneratingRoles, setIsGeneratingRoles] = useState(false);
   const [isGeneratingName, setIsGeneratingName] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [showAllFunctions, setShowAllFunctions] = useState(false);
+  const [autoSuggestedRoleAreas, setAutoSuggestedRoleAreas] = useState<string[]>([]);
+  const [companyContactsMap, setCompanyContactsMap] = useState<Record<string, string>>({});
+  const [showAlreadyAddedModal, setShowAlreadyAddedModal] = useState(false);
+  const [modalCompanyId, setModalCompanyId] = useState<string | null>(null);
 
   const selectedCompany = companyProfiles.find(c => c.id === selectedCompanyId);
-
-  const sensors = useSensors(
-    useSensor(PointerSensor),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
+  const combinedRoleOptions = Array.from(
+    new Set(
+      formData.functions.flatMap((area) =>
+        (SPECIFIC_ROLE_OPTIONS[area] || []).filter((role) =>
+          roleMatchesSelectedSeniority(role, formData.seniorityLevels)
+        )
+      )
+    )
   );
-
-  const handleFunctionDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-
-    if (over && active.id !== over.id) {
-      setFormData(prev => {
-        const oldIndex = prev.functions.indexOf(active.id as string);
-        const newIndex = prev.functions.indexOf(over.id as string);
-
-        return {
-          ...prev,
-          functions: arrayMove(prev.functions, oldIndex, newIndex),
-        };
-      });
-    }
-  };
 
   useEffect(() => {
     if (!loading && !user) {
@@ -178,10 +241,11 @@ export default function ContactNewPage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // Fetch both company profiles and seller profile in parallel
-        const [companiesRes, sellerRes] = await Promise.all([
+        // Fetch company profiles, seller profile, and existing contacts in parallel
+        const [companiesRes, sellerRes, contactsRes] = await Promise.all([
           fetch('/api/companies'),
           fetch('/api/user-company-profile'),
+          fetch('/api/contacts'),
         ]);
         
         if (companiesRes.ok) {
@@ -192,6 +256,19 @@ export default function ContactNewPage() {
         if (sellerRes.ok) {
           const data = await sellerRes.json();
           setSellerProfile(data.data || null);
+        }
+
+        // Build a map of company IDs to their first contact profile ID
+        if (contactsRes.ok) {
+          const contactsData = await contactsRes.json();
+          const contacts: ContactProfile[] = contactsData.data || [];
+          const contactsMap: Record<string, string> = {};
+          contacts.forEach((contact) => {
+            if (contact.icp_id && !contactsMap[contact.icp_id]) {
+              contactsMap[contact.icp_id] = contact.id;
+            }
+          });
+          setCompanyContactsMap(contactsMap);
         }
       } catch (error) {
         console.error('Error fetching data:', error);
@@ -207,12 +284,30 @@ export default function ContactNewPage() {
   }, [user]);
 
   const handleSelectCompany = async (companyId: string) => {
+    // Check if this company already has contacts
+    if (companyContactsMap[companyId]) {
+      setModalCompanyId(companyId);
+      setShowAlreadyAddedModal(true);
+      return;
+    }
+
     setSelectedCompanyId(companyId);
     const company = companyProfiles.find(c => c.id === companyId);
     if (company) {
       setCurrentSection(2);
       await generateSuggestedFunctions(company);
     }
+  };
+
+  const handleEditExistingContact = () => {
+    if (modalCompanyId) {
+      const contactId = companyContactsMap[modalCompanyId];
+      if (contactId) {
+        router.push(`/contacts/${contactId}/edit`);
+      }
+    }
+    setShowAlreadyAddedModal(false);
+    setModalCompanyId(null);
   };
 
   const generateSuggestedFunctions = async (company: CompanyProfile) => {
@@ -307,15 +402,83 @@ export default function ContactNewPage() {
     }
   };
 
+  const generateSuggestedRolesForAllAreas = async (force = false) => {
+    if (!selectedCompany || formData.functions.length === 0 || formData.seniorityLevels.length === 0) return;
+
+    // Cast wide by default: preselect all known roles across selected business areas.
+    const allAvailableTitles = formData.functions.flatMap((area) =>
+      (SPECIFIC_ROLE_OPTIONS[area] || []).filter((role) =>
+        roleMatchesSelectedSeniority(role, formData.seniorityLevels)
+      )
+    );
+    if (allAvailableTitles.length > 0) {
+      setFormData(prev => ({
+        ...prev,
+        jobTitles: [...new Set([...prev.jobTitles, ...allAvailableTitles])],
+      }));
+    }
+
+    const areasToSuggest = formData.functions.filter((area) => {
+      const availableTitles = (SPECIFIC_ROLE_OPTIONS[area] || []).filter((role) =>
+        roleMatchesSelectedSeniority(role, formData.seniorityLevels)
+      );
+      return availableTitles.length > 0 && (force || !autoSuggestedRoleAreas.includes(area));
+    });
+
+    if (areasToSuggest.length === 0) return;
+
+    setIsGeneratingRoles(true);
+    try {
+      const allSuggestedTitles: string[] = [];
+
+      for (const businessArea of areasToSuggest) {
+        const availableTitles = (SPECIFIC_ROLE_OPTIONS[businessArea] || []).filter((role) =>
+          roleMatchesSelectedSeniority(role, formData.seniorityLevels)
+        );
+        const response = await fetch('/api/suggest-roles', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            companyType: selectedCompany.company_type,
+            selectedBusinessArea: businessArea,
+            selectedBusinessAreas: formData.functions,
+            seniority: formData.seniorityLevels,
+            availableTitles,
+          }),
+        });
+
+        if (!response.ok) continue;
+
+        const data = await response.json();
+        if (data.titles && Array.isArray(data.titles)) {
+          const cleanedTitles = data.titles
+            .filter((title: string) => typeof title === 'string' && availableTitles.includes(title.trim()))
+            .map((title: string) => title.trim());
+          allSuggestedTitles.push(...cleanedTitles);
+        }
+      }
+
+      if (allSuggestedTitles.length > 0) {
+        setFormData(prev => ({
+          ...prev,
+          jobTitles: [...new Set([...prev.jobTitles, ...allSuggestedTitles])],
+        }));
+      }
+    } catch (error) {
+      console.error('Error generating roles across business areas:', error);
+    } finally {
+      setAutoSuggestedRoleAreas(prev => [...new Set([...prev, ...areasToSuggest])]);
+      setIsGeneratingRoles(false);
+    }
+  };
+
   const handleFunctionToggle = (func: string) => {
     setFormData(prev => {
       const current = prev.functions;
       if (current.includes(func)) {
         return { ...prev, functions: current.filter(f => f !== func) };
-      } else if (current.length < 5) {
-        return { ...prev, functions: [...current, func] };
       }
-      return prev;
+      return { ...prev, functions: [...current, func] };
     });
   };
 
@@ -323,11 +486,7 @@ export default function ContactNewPage() {
     const func = customFunction.trim();
     if (!func) return;
     if (formData.functions.includes(func)) {
-      toast.error('Function already added');
-      return;
-    }
-    if (formData.functions.length >= 5) {
-      toast.error('Maximum 5 functions allowed');
+      toast.error('Business area already added');
       return;
     }
     setFormData(prev => ({
@@ -348,6 +507,30 @@ export default function ContactNewPage() {
     });
   };
 
+  const handleRoleToggle = (role: string) => {
+    setFormData(prev => {
+      const current = prev.jobTitles;
+      if (current.includes(role)) {
+        return { ...prev, jobTitles: current.filter(r => r !== role) };
+      }
+      return { ...prev, jobTitles: [...current, role] };
+    });
+  };
+
+  const handleAddCustomRole = () => {
+    const role = customRole.trim();
+    if (!role) return;
+    if (formData.jobTitles.includes(role)) {
+      toast.error('Specific role already added');
+      return;
+    }
+    setFormData(prev => ({
+      ...prev,
+      jobTitles: [...prev.jobTitles, role],
+    }));
+    setCustomRole('');
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -358,7 +541,7 @@ export default function ContactNewPage() {
     }
 
     if (formData.functions.length === 0) {
-      toast.error('Please select at least one function');
+      toast.error('Please select at least one business area');
       setCurrentSection(2);
       return;
     }
@@ -366,6 +549,12 @@ export default function ContactNewPage() {
     if (formData.seniorityLevels.length === 0) {
       toast.error('Please select at least one seniority level');
       setCurrentSection(3);
+      return;
+    }
+
+    if (formData.jobTitles.length === 0) {
+      toast.error('Please select at least one specific role');
+      setCurrentSection(4);
       return;
     }
 
@@ -383,12 +572,27 @@ export default function ContactNewPage() {
         body: JSON.stringify({
           ...formData,
           icpId: selectedCompanyId,
-          jobTitles: [],
         }),
       });
 
+      const data = await response.json();
+
       if (!response.ok) {
-        throw new Error('Failed to save contact profile');
+        // Handle case where contact already exists for this company
+        if (response.status === 409 && data.existingContactId) {
+          toast.error('A contact profile already exists for this company.');
+          router.push(`/contacts/${data.existingContactId}/edit`);
+          return;
+        }
+        throw new Error(data.error || 'Failed to save contact profile');
+      }
+      
+      // Update the contacts map so the badge shows on the company card
+      if (selectedCompanyId && data.data?.id) {
+        setCompanyContactsMap(prev => ({
+          ...prev,
+          [selectedCompanyId]: data.data.id,
+        }));
       }
 
       setShowSuccessModal(true);
@@ -406,7 +610,8 @@ export default function ContactNewPage() {
       case 1: return selectedCompanyId ? 'complete' : 'incomplete';
       case 2: return formData.functions.length > 0 ? 'complete' : 'incomplete';
       case 3: return formData.seniorityLevels.length > 0 ? 'complete' : 'incomplete';
-      case 4: return formData.name ? 'complete' : 'incomplete';
+      case 4: return formData.jobTitles.length > 0 ? 'complete' : 'incomplete';
+      case 5: return formData.name ? 'complete' : 'incomplete';
       default: return 'incomplete';
     }
   };
@@ -417,6 +622,10 @@ export default function ContactNewPage() {
       await generateSuggestedSeniority();
     } else if (currentSection === 3) {
       setCurrentSection(4);
+      setAutoSuggestedRoleAreas([]);
+      await generateSuggestedRolesForAllAreas(true);
+    } else if (currentSection === 4) {
+      setCurrentSection(5);
       await generateProfileName();
     } else {
       setCurrentSection(currentSection + 1);
@@ -464,7 +673,7 @@ export default function ContactNewPage() {
             {/* Progress Bar */}
             <div className="mb-6">
               <div className="flex items-center justify-between">
-                {[1, 2, 3, 4].map((step) => (
+                {[1, 2, 3, 4, 5].map((step) => (
                   <div key={step} className="flex items-center">
                     <button
                       type="button"
@@ -490,7 +699,7 @@ export default function ContactNewPage() {
                         step
                       )}
                     </button>
-                    {step < 4 && (
+                    {step < 5 && (
                       <div className={`flex-1 h-0.5 mx-1 ${
                         getSectionStatus(step) === 'complete' ? 'bg-arcova-teal/30' : 'bg-gray-200'
                       }`} />
@@ -500,9 +709,10 @@ export default function ContactNewPage() {
               </div>
               <div className="flex justify-between mt-2 text-xs text-gray-500">
                 <span className={currentSection === 1 ? 'text-arcova-teal font-medium' : ''}>Company</span>
-                <span className={currentSection === 2 ? 'text-arcova-teal font-medium' : ''}>Function</span>
+                <span className={currentSection === 2 ? 'text-arcova-teal font-medium' : ''}>Business Areas</span>
                 <span className={currentSection === 3 ? 'text-arcova-teal font-medium' : ''}>Seniority</span>
-                <span className={currentSection === 4 ? 'text-arcova-teal font-medium' : ''}>Name</span>
+                <span className={currentSection === 4 ? 'text-arcova-teal font-medium' : ''}>Specific Roles</span>
+                <span className={currentSection === 5 ? 'text-arcova-teal font-medium' : ''}>Name</span>
               </div>
             </div>
 
@@ -513,8 +723,8 @@ export default function ContactNewPage() {
                 {currentSection === 1 && (
                   <div className="space-y-4">
                     <div>
-                      <h2 className="text-lg font-semibold text-gray-900 mb-1">Who is your ideal contact?</h2>
-                      <p className="text-sm text-gray-500 mb-4">Select a company profile to define contacts for.</p>
+                      <h2 className="text-lg font-semibold text-gray-900 mb-1">Let's define your target contacts</h2>
+                      <p className="text-sm text-gray-500 mb-4">Choose a target company, then define the people you want to target within it.</p>
                     </div>
 
                     {loadingProfiles ? (
@@ -540,65 +750,67 @@ export default function ContactNewPage() {
                       </div>
                     ) : (
                       <div className="space-y-3">
-                        {companyProfiles.map((company) => (
-                          <button
-                            key={company.id}
-                            type="button"
-                            onClick={() => handleSelectCompany(company.id)}
-                            className={`w-full text-left p-4 rounded-lg border-2 transition-colors ${
-                              selectedCompanyId === company.id
-                                ? 'border-arcova-teal bg-arcova-teal/5'
-                                : 'border-gray-200 hover:border-arcova-teal/50'
-                            }`}
-                          >
-                            <div className="flex items-start justify-between">
-                              <div className="flex-1">
-                                <h3 className="font-semibold text-gray-900">{company.name}</h3>
-                                <p className="text-sm text-gray-600 mt-1">{company.company_type}</p>
-                                <div className="flex flex-wrap gap-1.5 mt-2">
-                                  {company.therapeutic_areas?.slice(0, 2).map((area) => (
-                                    <span key={area} className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs">
-                                      {area}
-                                    </span>
-                                  ))}
-                                  {company.funding_stages?.slice(0, 1).map((stage) => (
-                                    <span key={stage} className="px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-xs">
-                                      {stage}
-                                    </span>
-                                  ))}
-                                  {company.company_sizes?.slice(0, 1).map((size) => (
-                                    <span key={size} className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs">
-                                      {size} employees
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-                              {selectedCompanyId === company.id && (
-                                <div className="ml-3 flex-shrink-0">
-                                  <div className="w-6 h-6 bg-arcova-teal rounded-full flex items-center justify-center">
-                                    <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
-                                    </svg>
+                        {companyProfiles.map((company) => {
+                          const hasContacts = !!companyContactsMap[company.id];
+                          return (
+                            <button
+                              key={company.id}
+                              type="button"
+                              onClick={() => handleSelectCompany(company.id)}
+                              className={`w-full text-left p-4 rounded-lg border-2 transition-colors relative ${
+                                selectedCompanyId === company.id
+                                  ? 'border-arcova-teal bg-arcova-teal/5'
+                                  : 'border-gray-200 hover:border-arcova-teal/50'
+                              }`}
+                            >
+                              {hasContacts && (
+                                <span className="absolute top-3 right-3 px-2 py-0.5 bg-arcova-teal text-white text-xs font-medium rounded-full flex items-center gap-1">
+                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                                  </svg>
+                                  Contacts added
+                                </span>
+                              )}
+                              <div className="flex items-start justify-between">
+                                <div className="flex-1">
+                                  <h3 className="font-semibold text-gray-900">{company.name}</h3>
+                                  <p className="text-sm text-gray-600 mt-1">{company.company_type}</p>
+                                  <div className="flex flex-wrap gap-1.5 mt-2">
+                                    {company.therapeutic_areas?.slice(0, 2).map((area) => (
+                                      <span key={area} className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs">
+                                        {area}
+                                      </span>
+                                    ))}
+                                    {company.funding_stages?.slice(0, 1).map((stage) => (
+                                      <span key={stage} className="px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-xs">
+                                        {stage}
+                                      </span>
+                                    ))}
+                                    {company.company_sizes?.slice(0, 1).map((size) => (
+                                      <span key={size} className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs">
+                                        {size} employees
+                                      </span>
+                                    ))}
                                   </div>
                                 </div>
-                              )}
-                            </div>
-                          </button>
-                        ))}
+                              </div>
+                            </button>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
                 )}
 
-                {/* Section 2: Function */}
+                {/* Section 2: Business areas */}
                 {currentSection === 2 && (
                   <div className="space-y-4">
                     <div>
                       <h2 className="text-lg font-semibold text-gray-900 mb-1">
-                        Which functions do you want to reach at {selectedCompany?.name || 'this company type'}?
+                        Which business areas should we target?
                       </h2>
                       <p className="text-sm text-gray-500 mb-4">
-                        We've pre-selected based on your company profile and target customers. Select up to 5.
+                        These are suggested based on your setup. Select all that matter.
                       </p>
                     </div>
 
@@ -609,43 +821,29 @@ export default function ContactNewPage() {
                       </div>
                     ) : (
                       <>
-                        {/* Selected functions displayed as draggable, prioritized pills */}
+                        {/* Selected business areas */}
                         {formData.functions.length > 0 && (
-                          <div className="space-y-2">
-                            <p className="text-xs text-gray-500">Drag to reorder by priority (1 = highest)</p>
-                            <DndContext
-                              sensors={sensors}
-                              collisionDetection={closestCenter}
-                              onDragEnd={handleFunctionDragEnd}
-                            >
-                              <SortableContext
-                                items={formData.functions}
-                                strategy={horizontalListSortingStrategy}
+                          <div className="flex flex-wrap gap-2">
+                            {formData.functions.map((func) => (
+                              <button
+                                key={func}
+                                type="button"
+                                onClick={() => handleFunctionToggle(func)}
+                                className="px-3 py-1.5 rounded-full text-sm bg-arcova-teal text-white hover:bg-arcova-teal/90 transition-colors"
                               >
-                                <div className="flex flex-wrap gap-2">
-                                  {formData.functions.map((func, index) => (
-                                    <div key={func} className="flex items-center gap-1">
-                                      <span className="text-xs text-gray-400 font-medium w-4">{index + 1}.</span>
-                                      <SortableFunctionPill
-                                        id={func}
-                                        name={func}
-                                        onRemove={() => handleFunctionToggle(func)}
-                                      />
-                                    </div>
-                                  ))}
-                                </div>
-                              </SortableContext>
-                            </DndContext>
+                                {func} ×
+                              </button>
+                            ))}
                           </div>
                         )}
 
-                        {/* See all functions toggle */}
+                        {/* See all business areas toggle */}
                         <button
                           type="button"
                           onClick={() => setShowAllFunctions(!showAllFunctions)}
                           className="text-sm text-gray-600 hover:text-gray-900 flex items-center gap-1"
                         >
-                          {showAllFunctions ? 'Hide all functions' : 'See all functions'}
+                          {showAllFunctions ? 'Hide all business areas' : 'See all business areas'}
                           <svg
                             className={`w-4 h-4 transition-transform ${showAllFunctions ? 'rotate-180' : ''}`}
                             fill="none"
@@ -656,24 +854,20 @@ export default function ContactNewPage() {
                           </svg>
                         </button>
 
-                        {/* All functions (collapsible) */}
+                        {/* All business areas (collapsible) */}
                         {showAllFunctions && (
                           <div className="space-y-4 pt-2 border-t border-gray-200">
                             <div className="flex flex-wrap gap-2">
                               {FUNCTION_OPTIONS.map((func) => {
                                 const isSelected = formData.functions.includes(func);
-                                const isDisabled = !isSelected && formData.functions.length >= 5;
                                 return (
                                   <button
                                     key={func}
                                     type="button"
                                     onClick={() => handleFunctionToggle(func)}
-                                    disabled={isDisabled}
                                     className={`px-4 py-2 rounded-full text-sm transition-colors ${
                                       isSelected
                                         ? 'bg-arcova-teal text-white'
-                                        : isDisabled
-                                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                                         : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                                     }`}
                                   >
@@ -685,7 +879,7 @@ export default function ContactNewPage() {
 
                             {/* Other - custom input */}
                             <div className="pt-3 border-t border-gray-200">
-                              <label className="text-sm text-gray-600 mb-2 block">Other function not listed?</label>
+                              <label className="text-sm text-gray-600 mb-2 block">Other business area not listed?</label>
                               <div className="flex gap-2">
                                 <input
                                   type="text"
@@ -697,14 +891,13 @@ export default function ContactNewPage() {
                                       handleAddCustomFunction();
                                     }
                                   }}
-                                  placeholder="Enter custom function"
-                                  disabled={formData.functions.length >= 5}
-                                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-arcova-teal focus:border-transparent text-sm disabled:bg-gray-100 disabled:text-gray-400"
+                                  placeholder="Enter custom business area"
+                                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-arcova-teal focus:border-transparent text-sm"
                                 />
                                 <button
                                   type="button"
                                   onClick={handleAddCustomFunction}
-                                  disabled={!customFunction.trim() || formData.functions.length >= 5}
+                                  disabled={!customFunction.trim()}
                                   className="px-4 py-2 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors disabled:opacity-50 text-sm"
                                 >
                                   Add
@@ -716,9 +909,7 @@ export default function ContactNewPage() {
                       </>
                     )}
 
-                    <p className="text-xs text-gray-500 mt-2">
-                      {formData.functions.length}/5 selected
-                    </p>
+                    <p className="text-xs text-gray-500 mt-2">{formData.functions.length} selected</p>
                   </div>
                 )}
 
@@ -726,9 +917,9 @@ export default function ContactNewPage() {
                 {currentSection === 3 && (
                   <div className="space-y-4">
                     <div>
-                      <h2 className="text-lg font-semibold text-gray-900 mb-1">Which seniority levels are worth your time?</h2>
+                      <h2 className="text-lg font-semibold text-gray-900 mb-1">Which seniority levels should we target?</h2>
                       <p className="text-sm text-gray-500 mb-4">
-                        We've pre-selected based on your company profile and functions.
+                        These are suggested based on your setup. Adjust as needed.
                       </p>
                     </div>
 
@@ -758,8 +949,94 @@ export default function ContactNewPage() {
                   </div>
                 )}
 
-                {/* Section 4: Name */}
+                {/* Section 4: Specific roles */}
                 {currentSection === 4 && (
+                  <div className="space-y-4">
+                    <div>
+                      <h2 className="text-lg font-semibold text-gray-900 mb-1">Which specific roles should we target?</h2>
+                      <p className="text-sm text-gray-500 mb-4">
+                        These are suggested based on your setup. Select all that matter.
+                      </p>
+                    </div>
+
+                    {isGeneratingRoles ? (
+                      <div className="flex items-center gap-2 text-gray-500 py-8 justify-center">
+                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-arcova-teal"></div>
+                        <span>Selecting the best specific roles...</span>
+                      </div>
+                    ) : (
+                      <>
+                        {formData.functions.map((area) => {
+                          const areaRoles = (SPECIFIC_ROLE_OPTIONS[area] || []).filter((role) =>
+                            roleMatchesSelectedSeniority(role, formData.seniorityLevels)
+                          );
+                          if (areaRoles.length === 0) return null;
+
+                          return (
+                            <div key={area} className="pt-2 border-t border-gray-200">
+                              <h3 className="text-sm font-medium text-gray-900 mb-2">{area}</h3>
+                              <div className="flex flex-wrap gap-2">
+                                {areaRoles.map((role) => {
+                                  const isSelected = formData.jobTitles.includes(role);
+                                  return (
+                                    <button
+                                      key={`${area}-${role}`}
+                                      type="button"
+                                      onClick={() => handleRoleToggle(role)}
+                                      className={`px-4 py-2 rounded-full text-sm transition-colors ${
+                                        isSelected
+                                          ? 'bg-arcova-teal text-white'
+                                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                      }`}
+                                    >
+                                      {role}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+
+                        {combinedRoleOptions.length === 0 && (
+                          <p className="text-sm text-gray-500">
+                            No predefined role suggestions are available for the selected business areas yet. You can add a custom role below.
+                          </p>
+                        )}
+
+                        <div className="pt-3 border-t border-gray-200">
+                          <label className="text-sm text-gray-600 mb-2 block">Add a specific role</label>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={customRole}
+                              onChange={(e) => setCustomRole(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  handleAddCustomRole();
+                                }
+                              }}
+                              placeholder="e.g., Director of Clinical Operations"
+                              className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-arcova-teal focus:border-transparent text-sm"
+                            />
+                            <button
+                              type="button"
+                              onClick={handleAddCustomRole}
+                              disabled={!customRole.trim()}
+                              className="px-4 py-2 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors disabled:opacity-50 text-sm"
+                            >
+                              Add
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* Section 5: Name */}
+                {currentSection === 5 && (
                   <div className="space-y-4">
                     <div>
                       <h2 className="text-lg font-semibold text-gray-900 mb-1">Name this contact profile</h2>
@@ -790,12 +1067,16 @@ export default function ContactNewPage() {
                           <span className="ml-2 text-gray-900">{selectedCompany?.name || 'None selected'}</span>
                         </div>
                         <div>
-                          <span className="text-gray-500">Functions:</span>
+                          <span className="text-gray-500">Business Areas:</span>
                           <span className="ml-2 text-gray-900">{formData.functions.join(', ') || 'None selected'}</span>
                         </div>
                         <div>
                           <span className="text-gray-500">Seniority:</span>
                           <span className="ml-2 text-gray-900">{formData.seniorityLevels.join(', ') || 'None selected'}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-500">Specific Roles:</span>
+                          <span className="ml-2 text-gray-900">{formData.jobTitles.join(', ') || 'None selected'}</span>
                         </div>
                       </div>
                     </div>
@@ -817,7 +1098,7 @@ export default function ContactNewPage() {
                     Back
                   </button>
                   
-                  {currentSection < 4 ? (
+                  {currentSection < 5 ? (
                     <button
                       type="button"
                       onClick={(e) => {
@@ -827,8 +1108,11 @@ export default function ContactNewPage() {
                       disabled={
                         (currentSection === 1 && !selectedCompanyId) ||
                         (currentSection === 2 && formData.functions.length === 0) ||
+                        (currentSection === 3 && formData.seniorityLevels.length === 0) ||
+                        (currentSection === 4 && formData.jobTitles.length === 0) ||
                         isGeneratingFunctions ||
-                        isGeneratingSeniority
+                        isGeneratingSeniority ||
+                        isGeneratingRoles
                       }
                       className="px-6 py-2 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors disabled:opacity-50"
                     >
@@ -877,7 +1161,9 @@ export default function ContactNewPage() {
                   setShowSuccessModal(false);
                   setCurrentSection(1);
                   setSelectedCompanyId(null);
-                  setFormData({ name: '', functions: [], seniorityLevels: [] });
+                  setFormData({ name: '', functions: [], seniorityLevels: [], jobTitles: [] });
+                  setAutoSuggestedRoleAreas([]);
+                  setCustomRole('');
                 }}
                 className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
               >
@@ -891,6 +1177,40 @@ export default function ContactNewPage() {
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
                 </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Already Added Modal */}
+      {showAlreadyAddedModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-8 max-w-md mx-4 text-center">
+            <div className="w-16 h-16 bg-arcova-teal/10 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-arcova-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <h2 className="text-2xl font-semibold text-gray-900 mb-2">Contacts already added</h2>
+            <p className="text-gray-600 mb-6">
+              You've already set up contacts for this company. Click edit to view or add more.
+            </p>
+            <div className="flex flex-col gap-3 items-center">
+              <button
+                onClick={handleEditExistingContact}
+                className="w-full sm:w-auto px-6 py-2 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors"
+              >
+                Edit
+              </button>
+              <button
+                onClick={() => {
+                  setShowAlreadyAddedModal(false);
+                  setModalCompanyId(null);
+                }}
+                className="text-gray-500 hover:text-gray-700 text-sm"
+              >
+                Cancel
               </button>
             </div>
           </div>

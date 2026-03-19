@@ -6,23 +6,6 @@ import { useEffect, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { getDisplayName } from '@/lib/auth-helpers';
 import { toast, Toaster } from 'sonner';
-import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  DragEndEvent,
-} from '@dnd-kit/core';
-import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  horizontalListSortingStrategy,
-  useSortable,
-} from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
 
 interface CompanyProfile {
   id: string;
@@ -36,81 +19,31 @@ interface CompanyProfile {
 }
 
 const FUNCTION_OPTIONS = [
-  "C-Suite & Leadership",
+  "Executive / Leadership",
+  "Commercial & Sales",
   "Business Development & Partnerships",
-  "Clinical Operations",
-  "Research & Development",
-  "Manufacturing & CMC",
-  "Regulatory Affairs",
-  "Finance & Procurement",
+  "Marketing",
   "Medical Affairs",
-  "Lab Operations",
-  "Commercial & Sales Operations",
-  "Technology & Systems"
+  "Clinical Operations",
+  "Regulatory Affairs",
+  "Research & Development (R&D)",
+  "Manufacturing & CMC",
+  "Supply Chain & Procurement",
+  "Finance",
+  "Strategy & Corporate Development",
+  "Data & Technology",
+  "People & HR",
+  "Legal & Compliance"
 ];
 
 const SENIORITY_OPTIONS = [
-  "C-Suite (CEO / CSO / CMO / COO)",
-  "VP Level",
-  "Director Level",
+  "C-Level",
+  "VP / SVP",
+  "Director",
   "Head of / Senior Manager",
-  "Manager"
+  "Manager",
+  "Individual Contributor"
 ];
-
-interface SortableFunctionPillProps {
-  id: string;
-  name: string;
-  onRemove: () => void;
-}
-
-function SortableFunctionPill({ id, name, onRemove }: SortableFunctionPillProps) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id });
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-  };
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className={`px-3 py-1.5 rounded-full text-sm bg-arcova-teal text-white flex items-center gap-1.5 ${isDragging ? 'shadow-lg' : ''}`}
-    >
-      <span
-        {...attributes}
-        {...listeners}
-        className="cursor-grab active:cursor-grabbing"
-      >
-        <svg className="w-3 h-3 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 8h16M4 16h16" />
-        </svg>
-      </span>
-      {name}
-      <button
-        type="button"
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          onRemove();
-        }}
-        className="ml-1 hover:bg-white/20 rounded-full p-0.5"
-      >
-        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-        </svg>
-      </button>
-    </div>
-  );
-}
 
 export default function ContactEditPage() {
   const { user, loading, logout } = useAuth();
@@ -119,7 +52,7 @@ export default function ContactEditPage() {
   const contactId = params.id as string;
   const firstName = user ? getDisplayName(user) : '';
 
-  const [currentSection, setCurrentSection] = useState(1);
+  const [currentSection, setCurrentSection] = useState(2);
   const [companyProfiles, setCompanyProfiles] = useState<CompanyProfile[]>([]);
   const [loadingData, setLoadingData] = useState(true);
   const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
@@ -133,29 +66,6 @@ export default function ContactEditPage() {
   const [showAllFunctions, setShowAllFunctions] = useState(false);
 
   const selectedCompany = companyProfiles.find(c => c.id === selectedCompanyId);
-
-  const sensors = useSensors(
-    useSensor(PointerSensor),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
-  );
-
-  const handleFunctionDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-
-    if (over && active.id !== over.id) {
-      setFormData(prev => {
-        const oldIndex = prev.functions.indexOf(active.id as string);
-        const newIndex = prev.functions.indexOf(over.id as string);
-
-        return {
-          ...prev,
-          functions: arrayMove(prev.functions, oldIndex, newIndex),
-        };
-      });
-    }
-  };
 
   useEffect(() => {
     if (!loading && !user) {
@@ -215,19 +125,13 @@ export default function ContactEditPage() {
     }
   }, [user, contactId, router]);
 
-  const handleSelectCompany = (companyId: string) => {
-    setSelectedCompanyId(companyId);
-  };
-
   const handleFunctionToggle = (func: string) => {
     setFormData(prev => {
       const current = prev.functions;
       if (current.includes(func)) {
         return { ...prev, functions: current.filter(f => f !== func) };
-      } else if (current.length < 5) {
-        return { ...prev, functions: [...current, func] };
       }
-      return prev;
+      return { ...prev, functions: [...current, func] };
     });
   };
 
@@ -235,11 +139,7 @@ export default function ContactEditPage() {
     const func = customFunction.trim();
     if (!func) return;
     if (formData.functions.includes(func)) {
-      toast.error('Function already added');
-      return;
-    }
-    if (formData.functions.length >= 5) {
-      toast.error('Maximum 5 functions allowed');
+      toast.error('Business area already added');
       return;
     }
     setFormData(prev => ({
@@ -263,14 +163,8 @@ export default function ContactEditPage() {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!selectedCompanyId) {
-      toast.error('Please select a company profile');
-      setCurrentSection(1);
-      return;
-    }
-
     if (formData.functions.length === 0) {
-      toast.error('Please select at least one function');
+      toast.error('Please select at least one business area');
       setCurrentSection(2);
       return;
     }
@@ -316,7 +210,6 @@ export default function ContactEditPage() {
   const getSectionStatus = (section: number): 'complete' | 'incomplete' | 'current' => {
     if (section === currentSection) return 'current';
     switch (section) {
-      case 1: return selectedCompanyId ? 'complete' : 'incomplete';
       case 2: return formData.functions.length > 0 ? 'complete' : 'incomplete';
       case 3: return formData.seniorityLevels.length > 0 ? 'complete' : 'incomplete';
       case 4: return formData.name ? 'complete' : 'incomplete';
@@ -362,10 +255,18 @@ export default function ContactEditPage() {
         {/* Content Area */}
         <div className="flex-1 overflow-auto p-6">
           <div className="max-w-3xl mx-auto">
+            {/* Linked Company Profile Display */}
+            {selectedCompany && (
+              <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Editing contacts for</p>
+                <p className="font-medium text-gray-900">{selectedCompany.name}</p>
+              </div>
+            )}
+
             {/* Progress Bar */}
             <div className="mb-6">
               <div className="flex items-center justify-between">
-                {[1, 2, 3, 4].map((step) => (
+                {[2, 3, 4].map((step, index) => (
                   <div key={step} className="flex items-center">
                     <button
                       type="button"
@@ -383,10 +284,10 @@ export default function ContactEditPage() {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
                         </svg>
                       ) : (
-                        step
+                        index + 1
                       )}
                     </button>
-                    {step < 4 && (
+                    {index < 2 && (
                       <div className={`flex-1 h-0.5 mx-1 ${
                         getSectionStatus(step) === 'complete' ? 'bg-arcova-teal/30' : 'bg-gray-200'
                       }`} />
@@ -395,8 +296,7 @@ export default function ContactEditPage() {
                 ))}
               </div>
               <div className="flex justify-between mt-2 text-xs text-gray-500">
-                <span className={currentSection === 1 ? 'text-arcova-teal font-medium' : ''}>Company</span>
-                <span className={currentSection === 2 ? 'text-arcova-teal font-medium' : ''}>Function</span>
+                <span className={currentSection === 2 ? 'text-arcova-teal font-medium' : ''}>Business Areas</span>
                 <span className={currentSection === 3 ? 'text-arcova-teal font-medium' : ''}>Seniority</span>
                 <span className={currentSection === 4 ? 'text-arcova-teal font-medium' : ''}>Name</span>
               </div>
@@ -405,113 +305,39 @@ export default function ContactEditPage() {
             {/* Form */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
               <form onSubmit={handleSave}>
-                {/* Section 1: Select Company Profile */}
-                {currentSection === 1 && (
-                  <div className="space-y-4">
-                    <div>
-                      <h2 className="text-lg font-semibold text-gray-900 mb-1">Edit Contact Profile</h2>
-                      <p className="text-sm text-gray-500 mb-4">Select a company profile for this contact.</p>
-                    </div>
-
-                    <div className="space-y-3">
-                      {companyProfiles.map((company) => (
-                        <button
-                          key={company.id}
-                          type="button"
-                          onClick={() => handleSelectCompany(company.id)}
-                          className={`w-full text-left p-4 rounded-lg border-2 transition-colors ${
-                            selectedCompanyId === company.id
-                              ? 'border-arcova-teal bg-arcova-teal/5'
-                              : 'border-gray-200 hover:border-arcova-teal/50'
-                          }`}
-                        >
-                          <div className="flex items-start justify-between">
-                            <div className="flex-1">
-                              <h3 className="font-semibold text-gray-900">{company.name}</h3>
-                              <p className="text-sm text-gray-600 mt-1">{company.company_type}</p>
-                              <div className="flex flex-wrap gap-1.5 mt-2">
-                                {company.therapeutic_areas?.slice(0, 2).map((area) => (
-                                  <span key={area} className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs">
-                                    {area}
-                                  </span>
-                                ))}
-                                {company.funding_stages?.slice(0, 1).map((stage) => (
-                                  <span key={stage} className="px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-xs">
-                                    {stage}
-                                  </span>
-                                ))}
-                                {company.company_sizes?.slice(0, 1).map((size) => (
-                                  <span key={size} className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs">
-                                    {size} employees
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                            {selectedCompanyId === company.id && (
-                              <div className="ml-3 flex-shrink-0">
-                                <div className="w-6 h-6 bg-arcova-teal rounded-full flex items-center justify-center">
-                                  <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
-                                  </svg>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Section 2: Function */}
+                {/* Section 2: Business Areas */}
                 {currentSection === 2 && (
                   <div className="space-y-4">
                     <div>
-                      <h2 className="text-lg font-semibold text-gray-900 mb-1">
-                        Which functions do you want to reach at {selectedCompany?.name || 'this company type'}?
-                      </h2>
+                      <h2 className="text-lg font-semibold text-gray-900 mb-1">Which business areas should we target?</h2>
                       <p className="text-sm text-gray-500 mb-4">
-                        Select up to 5 functions.
+                        These are suggested based on your setup. Select all that matter.
                       </p>
                     </div>
 
-                    {/* Selected functions displayed as draggable, prioritized pills */}
+                    {/* Selected business areas */}
                     {formData.functions.length > 0 && (
-                      <div className="space-y-2">
-                        <p className="text-xs text-gray-500">Drag to reorder by priority (1 = highest)</p>
-                        <DndContext
-                          sensors={sensors}
-                          collisionDetection={closestCenter}
-                          onDragEnd={handleFunctionDragEnd}
-                        >
-                          <SortableContext
-                            items={formData.functions}
-                            strategy={horizontalListSortingStrategy}
+                      <div className="flex flex-wrap gap-2">
+                        {formData.functions.map((func) => (
+                          <button
+                            key={func}
+                            type="button"
+                            onClick={() => handleFunctionToggle(func)}
+                            className="px-3 py-1.5 rounded-full text-sm bg-arcova-teal text-white hover:bg-arcova-teal/90 transition-colors"
                           >
-                            <div className="flex flex-wrap gap-2">
-                              {formData.functions.map((func, index) => (
-                                <div key={func} className="flex items-center gap-1">
-                                  <span className="text-xs text-gray-400 font-medium w-4">{index + 1}.</span>
-                                  <SortableFunctionPill
-                                    id={func}
-                                    name={func}
-                                    onRemove={() => handleFunctionToggle(func)}
-                                  />
-                                </div>
-                              ))}
-                            </div>
-                          </SortableContext>
-                        </DndContext>
+                            {func} ×
+                          </button>
+                        ))}
                       </div>
                     )}
 
-                    {/* See all functions toggle */}
+                    {/* See all business areas toggle */}
                     <button
                       type="button"
                       onClick={() => setShowAllFunctions(!showAllFunctions)}
                       className="text-sm text-gray-600 hover:text-gray-900 flex items-center gap-1"
                     >
-                      {showAllFunctions ? 'Hide all functions' : 'See all functions'}
+                      {showAllFunctions ? 'Hide all business areas' : 'See all business areas'}
                       <svg
                         className={`w-4 h-4 transition-transform ${showAllFunctions ? 'rotate-180' : ''}`}
                         fill="none"
@@ -522,24 +348,20 @@ export default function ContactEditPage() {
                       </svg>
                     </button>
 
-                    {/* All functions (collapsible) */}
+                    {/* All business areas (collapsible) */}
                     {showAllFunctions && (
                       <div className="space-y-4 pt-2 border-t border-gray-200">
                         <div className="flex flex-wrap gap-2">
                           {FUNCTION_OPTIONS.map((func) => {
                             const isSelected = formData.functions.includes(func);
-                            const isDisabled = !isSelected && formData.functions.length >= 5;
                             return (
                               <button
                                 key={func}
                                 type="button"
                                 onClick={() => handleFunctionToggle(func)}
-                                disabled={isDisabled}
                                 className={`px-4 py-2 rounded-full text-sm transition-colors ${
                                   isSelected
                                     ? 'bg-arcova-teal text-white'
-                                    : isDisabled
-                                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                                 }`}
                               >
@@ -551,7 +373,7 @@ export default function ContactEditPage() {
 
                         {/* Other - custom input */}
                         <div className="pt-3 border-t border-gray-200">
-                          <label className="text-sm text-gray-600 mb-2 block">Other function not listed?</label>
+                          <label className="text-sm text-gray-600 mb-2 block">Other business area not listed?</label>
                           <div className="flex gap-2">
                             <input
                               type="text"
@@ -563,14 +385,13 @@ export default function ContactEditPage() {
                                   handleAddCustomFunction();
                                 }
                               }}
-                              placeholder="Enter custom function"
-                              disabled={formData.functions.length >= 5}
-                              className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-arcova-teal focus:border-transparent text-sm disabled:bg-gray-100 disabled:text-gray-400"
+                              placeholder="Enter custom business area"
+                              className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-arcova-teal focus:border-transparent text-sm"
                             />
                             <button
                               type="button"
                               onClick={handleAddCustomFunction}
-                              disabled={!customFunction.trim() || formData.functions.length >= 5}
+                              disabled={!customFunction.trim()}
                               className="px-4 py-2 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors disabled:opacity-50 text-sm"
                             >
                               Add
@@ -580,9 +401,7 @@ export default function ContactEditPage() {
                       </div>
                     )}
 
-                    <p className="text-xs text-gray-500 mt-2">
-                      {formData.functions.length}/5 selected
-                    </p>
+                    <p className="text-xs text-gray-500 mt-2">{formData.functions.length} selected</p>
                   </div>
                 )}
 
@@ -658,7 +477,7 @@ export default function ContactEditPage() {
                     type="button"
                     onClick={(e) => {
                       e.preventDefault();
-                      if (currentSection > 1) {
+                      if (currentSection > 2) {
                         setCurrentSection(currentSection - 1);
                       } else {
                         router.push('/contacts');
@@ -666,7 +485,7 @@ export default function ContactEditPage() {
                     }}
                     className="px-4 py-2 text-gray-600 hover:text-gray-900 transition-colors"
                   >
-                    {currentSection === 1 ? 'Cancel' : 'Back'}
+                    {currentSection === 2 ? 'Cancel' : 'Back'}
                   </button>
                   
                   {currentSection < 4 ? (
@@ -676,10 +495,7 @@ export default function ContactEditPage() {
                         e.preventDefault();
                         setCurrentSection(currentSection + 1);
                       }}
-                      disabled={
-                        (currentSection === 1 && !selectedCompanyId) ||
-                        (currentSection === 2 && formData.functions.length === 0)
-                      }
+                      disabled={currentSection === 2 && formData.functions.length === 0}
                       className="px-6 py-2 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors disabled:opacity-50"
                     >
                       Next

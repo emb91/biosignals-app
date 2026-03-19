@@ -8,7 +8,7 @@ export async function POST(request: Request) {
 
     if (!selectedFunctions?.length || !selectedSeniority?.length) {
       return NextResponse.json(
-        { error: 'Functions and seniority are required' },
+        { error: 'Business areas and seniority are required' },
         { status: 400 }
       );
     }
@@ -32,27 +32,33 @@ export async function POST(request: Request) {
 
     // Simplify seniority for the name
     const simplifySeniority = (levels: string[]): string => {
-      if (levels.includes('C-Suite (CEO / CSO / CMO / COO)')) return 'C-Suite';
-      if (levels.includes('VP Level')) return 'VP-level';
-      if (levels.includes('Director Level')) return 'Director-level';
+      if (levels.includes('C-Level')) return 'C-level';
+      if (levels.includes('VP / SVP')) return 'VP/SVP-level';
+      if (levels.includes('Director')) return 'Director-level';
       if (levels.includes('Head of / Senior Manager')) return 'Senior';
+      if (levels.includes('Manager')) return 'Manager-level';
+      if (levels.includes('Individual Contributor')) return 'IC-level';
       return levels[0]?.replace(' Level', '-level') || '';
     };
 
-    // Simplify functions for the name
+    // Simplify business areas for the name
     const simplifyFunctions = (funcs: string[]): string => {
       const shortNames: Record<string, string> = {
-        'C-Suite & Leadership': 'Leadership',
+        'Executive / Leadership': 'Leadership',
+        'Commercial & Sales': 'Commercial',
         'Business Development & Partnerships': 'BD',
+        'Marketing': 'Marketing',
         'Clinical Operations': 'Clinical',
-        'Research & Development': 'R&D',
-        'Manufacturing & CMC': 'CMC',
         'Regulatory Affairs': 'Regulatory',
-        'Finance & Procurement': 'Finance',
+        'Research & Development (R&D)': 'R&D',
+        'Manufacturing & CMC': 'CMC',
+        'Supply Chain & Procurement': 'Supply Chain',
+        'Finance': 'Finance',
+        'Strategy & Corporate Development': 'Strategy',
+        'Data & Technology': 'Data & Tech',
+        'People & HR': 'People',
+        'Legal & Compliance': 'Legal',
         'Medical Affairs': 'Medical Affairs',
-        'Lab Operations': 'Lab Ops',
-        'Commercial & Sales Operations': 'Commercial',
-        'Technology & Systems': 'Tech',
       };
       return funcs.slice(0, 2).map(f => shortNames[f] || f).join(' & ');
     };
@@ -70,7 +76,7 @@ export async function POST(request: Request) {
 Target company type: ${companyPart}
 ${companySize ? `Company size: ${companySize} employees` : ''}
 Selected seniority levels: ${selectedSeniority.join(', ')}
-Selected functions: ${selectedFunctions.join(', ')}
+Selected business areas: ${selectedFunctions.join(', ')}
 
 Create a name like:
 - "VP-level Clinical & BD at Series A Oncology Biotech"
@@ -80,7 +86,7 @@ Create a name like:
 The name should be:
 - Under 60 characters
 - Start with the seniority level
-- Include 1-2 key functions
+- Include 1-2 key business areas
 - Reference the company type/stage if space allows
 
 Return ONLY the name, nothing else. No quotes, no explanation. Do not include em dashes in your response.`;
