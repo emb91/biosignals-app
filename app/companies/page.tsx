@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { toast, Toaster } from 'sonner';
+import { getSignalDisplayName } from '@/lib/signal-display-names';
 
 interface ICP {
   id: string;
@@ -15,6 +16,7 @@ interface ICP {
   development_stages: string[];
   company_sizes: string[];
   funding_stages: string[];
+  signals: string[];
   created_at: string;
 }
 
@@ -56,7 +58,7 @@ export default function ICPManagerPage() {
   }, [user]);
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this ICP?')) return;
+    if (!confirm('Are you sure you want to delete this company profile? Any associated persona will also be deleted.')) return;
 
     setDeletingId(id);
     try {
@@ -66,7 +68,7 @@ export default function ICPManagerPage() {
 
       if (response.ok) {
         setIcps(icps.filter(icp => icp.id !== id));
-        toast.success('ICP deleted successfully');
+        toast.success('Company profile and associated persona deleted');
       } else {
         toast.error('Failed to delete ICP');
       }
@@ -304,6 +306,24 @@ export default function ICPManagerPage() {
                                   ))
                                 ) : (
                                   <span className="text-xs text-gray-400">Any</span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Signals */}
+                            <div>
+                              <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
+                                Signals
+                              </h4>
+                              <div className="flex flex-wrap gap-1">
+                                {icp.signals?.length > 0 ? (
+                                  icp.signals.map((signal) => (
+                                    <span key={signal} className="px-2 py-1 bg-emerald-100 text-emerald-700 rounded text-xs">
+                                      {getSignalDisplayName(signal)}
+                                    </span>
+                                  ))
+                                ) : (
+                                  <span className="text-xs text-gray-400">Not set</span>
                                 )}
                               </div>
                             </div>

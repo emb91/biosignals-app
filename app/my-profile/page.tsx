@@ -343,7 +343,7 @@ export default function CompanyAnalysisPage() {
                     type="text"
                     value={websiteUrl}
                     onChange={(e) => setWebsiteUrl(e.target.value)}
-                    placeholder="Enter company website (e.g., acme.com)"
+                    placeholder="Enter company website (e.g. acme.com)"
                     className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-arcova-teal focus:border-transparent"
                     disabled={isAnalyzing}
                   />

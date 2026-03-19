@@ -19,6 +19,7 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { getSignalDisplayName } from '@/lib/signal-display-names';
 
 // --- Constants ---
 
@@ -808,7 +809,7 @@ export default function PersonaForm({
           {mode === 'create' && currentSection === 1 && (
             <div className="space-y-4">
               <div>
-                <h2 className="text-lg font-semibold text-gray-900 mb-1">Define a buyer persona</h2>
+                <h2 className="text-lg font-semibold text-gray-900 mb-1">Define your buyers</h2>
                 <p className="text-sm text-gray-500 mb-4">Select a target company, then tell us who you typically sell to there.</p>
               </div>
 
@@ -1084,7 +1085,7 @@ export default function PersonaForm({
                           handleAddCustomRole();
                         }
                       }}
-                      placeholder="e.g., Director of Clinical Operations"
+                      placeholder="e.g. Director of Clinical Operations"
                       className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-arcova-teal focus:border-transparent text-sm"
                     />
                     <button
@@ -1114,7 +1115,7 @@ export default function PersonaForm({
                   type="text"
                   value={formData.name}
                   onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                  placeholder="e.g., VP at Oncology Biotech"
+                  placeholder="e.g. VP at Oncology Biotech"
                   className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-arcova-teal focus:border-transparent"
                 />
                 <button
@@ -1205,7 +1206,7 @@ export default function PersonaForm({
                                   <span className="text-xs text-gray-400 font-medium w-4">{index + 1}.</span>
                                   <SortableSignalPill
                                     id={signalId}
-                                    name={signal.name}
+                                    name={getSignalDisplayName(signal.id, signal.name)}
                                     onRemove={() => handleSignalToggle(signalId)}
                                   />
                                 </div>
@@ -1260,7 +1261,7 @@ export default function PersonaForm({
                                         : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                                     }`}
                                   >
-                                    {signal.name}
+                                    {getSignalDisplayName(signal.id, signal.name)}
                                   </button>
                                 );
                               })}

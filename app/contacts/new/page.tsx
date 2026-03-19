@@ -112,26 +112,62 @@ export default function ContactNewPage() {
 
   if (!user) return null;
 
+  const hasProfile = Boolean(sellerProfile && typeof sellerProfile.company_name === 'string' && sellerProfile.company_name.trim());
+  const hasCompanies = companyProfiles.length > 0;
+  const missingProfile = !hasProfile;
+  const missingCompanies = !hasCompanies;
+
   return (
     <div className="flex h-screen bg-gray-50">
       <AppSidebar />
 
       <div className="flex-1 flex flex-col overflow-hidden">
         <div className="flex-1 overflow-auto p-6">
-          <PersonaForm
-            key={formKey}
-            mode="create"
-            companyProfiles={companyProfiles}
-            sellerProfile={sellerProfile}
-            companyContactsMap={companyContactsMap}
-            onSave={handleSave}
-            onCancel={() => router.push('/personas')}
-            onEditExisting={(contactId) => router.push(`/personas/${contactId}/edit`)}
-          />
+          {!missingProfile && !missingCompanies ? (
+            <PersonaForm
+              key={formKey}
+              mode="create"
+              companyProfiles={companyProfiles}
+              sellerProfile={sellerProfile}
+              companyContactsMap={companyContactsMap}
+              onSave={handleSave}
+              onCancel={() => router.push('/personas')}
+              onEditExisting={(contactId) => router.push(`/personas/${contactId}/edit`)}
+            />
+          ) : null}
         </div>
       </div>
 
       <Toaster position="top-center" richColors />
+
+      {(missingProfile || missingCompanies) && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-8 max-w-lg mx-4 text-center">
+            <h2 className="text-2xl font-semibold text-gray-900 mb-2">Complete setup before adding personas</h2>
+            <p className="text-gray-600 mb-6">
+              {missingProfile && missingCompanies
+                ? 'You cannot add a persona until you fill out My Profile and add at least one company.'
+                : missingProfile
+                ? 'You cannot add a persona until you fill out My Profile.'
+                : 'You cannot add a persona until you add at least one company profile.'}
+            </p>
+            <div className="flex flex-col sm:flex-row gap-3 justify-center">
+              <button
+                onClick={() => router.push('/dashboard')}
+                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Back to dashboard
+              </button>
+              <button
+                onClick={() => router.push(missingProfile ? '/my-profile' : '/companies/new')}
+                className="px-4 py-2 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors"
+              >
+                {missingProfile ? 'Go to My Profile' : 'Add a company'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showSuccessModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -147,19 +183,16 @@ export default function ContactNewPage() {
             </p>
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
               <button
-                onClick={() => {
-                  setShowSuccessModal(false);
-                  setFormKey(prev => prev + 1);
-                }}
+                onClick={() => router.push('/personas')}
                 className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
               >
-                Add another profile
+                View all personas
               </button>
               <button
-                onClick={() => router.push('/personas')}
+                onClick={() => router.push('/results')}
                 className="px-4 py-2 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors flex items-center justify-center gap-1"
               >
-                View all personas
+                Get leads
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
                 </svg>

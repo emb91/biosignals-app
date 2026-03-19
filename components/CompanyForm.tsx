@@ -19,6 +19,7 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { getSignalDisplayName } from '@/lib/signal-display-names';
 
 // --- Constants ---
 
@@ -692,7 +693,7 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
                                   <span className="text-xs text-gray-400 font-medium w-4">{index + 1}.</span>
                                   <SortableSignalPill
                                     id={signalId}
-                                    name={signal.name}
+                                    name={getSignalDisplayName(signal.id, signal.name)}
                                     onRemove={() => handleSignalToggle(signalId)}
                                   />
                                 </div>
@@ -749,7 +750,7 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
                                         : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                                     }`}
                                   >
-                                    {signal.name}
+                                    {getSignalDisplayName(signal.id, signal.name)}
                                   </button>
                                 );
                               })}
@@ -786,7 +787,7 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
                       handleAddCompany();
                     }
                   }}
-                  placeholder="Enter company website (e.g., company.com)"
+                  placeholder="Enter company website (e.g. company.com)"
                   className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-arcova-teal focus:border-transparent text-sm"
                   disabled={formData.exampleCompanies.length >= 3 || isAnalyzingCompany}
                 />

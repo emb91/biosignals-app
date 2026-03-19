@@ -5,14 +5,102 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { supabase } from '@/lib/supabase';
+import { getSignalDisplayName } from '@/lib/signal-display-names';
+type SetupStep = {
+  id: 'profile' | 'companies' | 'personas' | 'signals';
+  label: string;
+  completed: boolean;
+  actionPath: string;
+};
+
+type IcpRecord = {
+  id: string;
+  name: string | null;
+  company_type?: string | null;
+  therapeutic_areas?: string[] | null;
+  modalities?: string[] | null;
+  development_stages?: string[] | null;
+  company_sizes?: string[] | null;
+  funding_stages?: string[] | null;
+  example_companies?: string[] | null;
+  signals?: string[] | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+type ContactRecord = {
+  id: string;
+  name: string;
+  icp_id?: string | null;
+  signals?: string[] | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  status?: string | null;
+};
+
+type SignalEvent = {
+  id: string;
+  label: string;
+  signalType: string;
+  timestamp: string;
+  href: string;
+};
+
+type TopLead = {
+  id: string;
+  name: string;
+  priorityScore: number;
+  latestSignalType: string;
+  latestSignalAt: string;
+  href: string;
+};
+
+type FollowUpReminder = {
+  id: string;
+  contactName: string;
+  companyName: string;
+  updatedAt: string;
+};
+
+const TEAL = '#1D9E75';
+const MILLIS_IN_DAY = 1000 * 60 * 60 * 24;
+
+const hasSignals = (signals?: string[] | null) => Array.isArray(signals) && signals.length > 0;
+
+const formatTimeAgo = (isoTimestamp?: string | null) => {
+  if (!isoTimestamp) return 'just now';
+  const now = Date.now();
+  const then = new Date(isoTimestamp).getTime();
+  const diff = Math.max(0, now - then);
+
+  const minutes = Math.floor(diff / (1000 * 60));
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} min ago`;
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hr ago`;
+
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} day${days === 1 ? '' : 's'} ago`;
+
+  const months = Math.floor(days / 30);
+  return `${months} mo ago`;
+};
+
+const daysSince = (isoTimestamp?: string | null) => {
+  if (!isoTimestamp) return 999;
+  return Math.floor((Date.now() - new Date(isoTimestamp).getTime()) / MILLIS_IN_DAY);
+};
+
 export default function DashboardPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
-  const [analyses, setAnalyses] = useState<any[]>([]);
-  const [loadingAnalyses, setLoadingAnalyses] = useState(true);
-  const [icps, setIcps] = useState<any[]>([]);
-  const [loadingIcps, setLoadingIcps] = useState(true);
 
+  const [isLoadingDashboard, setIsLoadingDashboard] = useState(true);
+  const [steps, setSteps] = useState<SetupStep[]>([]);
+  const [newSignals, setNewSignals] = useState<SignalEvent[]>([]);
+  const [topLeads, setTopLeads] = useState<TopLead[]>([]);
+  const [followUpReminders, setFollowUpReminders] = useState<FollowUpReminder[]>([]);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -21,46 +109,141 @@ export default function DashboardPage() {
   }, [user, loading, router]);
 
   useEffect(() => {
-    const fetchAnalyses = async () => {
+    const fetchDashboardData = async () => {
       if (!user) return;
-      
-      try {
-        const { data, error } = await supabase
-          .from('company_analyses')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('analyzed_at', { ascending: false });
 
-        if (error) throw error;
-        setAnalyses(data || []);
+      try {
+        const [{ data: profileData, error: profileError }, { data: icpsData, error: icpsError }, { data: contactsData, error: contactsError }] =
+          await Promise.all([
+            supabase.from('company_analyses').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
+            supabase.from('icps').select('*').eq('user_id', user.id).order('updated_at', { ascending: false }),
+            supabase.from('contacts').select('*').eq('user_id', user.id).order('updated_at', { ascending: false }),
+          ]);
+
+        if (profileError) throw profileError;
+        if (icpsError) throw icpsError;
+        if (contactsError) throw contactsError;
+
+        const icps = (icpsData || []) as IcpRecord[];
+        const contacts = (contactsData || []) as ContactRecord[];
+
+        const profileComplete = !!profileData;
+        const companiesComplete = icps.length > 0;
+        const personasComplete = contacts.length > 0;
+        const signalsComplete = icps.some((icp) => hasSignals(icp.signals)) || contacts.some((contact) => hasSignals(contact.signals));
+
+        const checklistSteps: SetupStep[] = [
+          { id: 'profile', label: 'My Profile', completed: profileComplete, actionPath: '/my-profile' },
+          { id: 'companies', label: 'Target Companies', completed: companiesComplete, actionPath: '/companies' },
+          { id: 'personas', label: 'Buyer Personas', completed: personasComplete, actionPath: '/personas' },
+          { id: 'signals', label: 'Signals', completed: signalsComplete, actionPath: '/companies' },
+        ];
+        setSteps(checklistSteps);
+
+        const lastSignInAt = user.last_sign_in_at ? new Date(user.last_sign_in_at).getTime() : 0;
+        const signalEvents: SignalEvent[] = [];
+
+        icps.forEach((icp) => {
+          if (!hasSignals(icp.signals) || !icp.updated_at) return;
+          const updatedAt = new Date(icp.updated_at).getTime();
+          if (updatedAt <= lastSignInAt) return;
+
+          signalEvents.push({
+            id: `icp-${icp.id}`,
+            label: icp.name || 'Unnamed company profile',
+            signalType: getSignalDisplayName(icp.signals?.[0]),
+            timestamp: icp.updated_at,
+            href: `/companies/${icp.id}/edit`,
+          });
+        });
+
+        contacts.forEach((contact) => {
+          if (!hasSignals(contact.signals) || !contact.updated_at) return;
+          const updatedAt = new Date(contact.updated_at).getTime();
+          if (updatedAt <= lastSignInAt) return;
+
+          signalEvents.push({
+            id: `contact-${contact.id}`,
+            label: contact.name || 'Unnamed contact',
+            signalType: getSignalDisplayName(contact.signals?.[0]),
+            timestamp: contact.updated_at,
+            href: `/personas/${contact.id}/edit`,
+          });
+        });
+
+        signalEvents.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        setNewSignals(signalEvents.slice(0, 5));
+
+        const leads: TopLead[] = icps.map((icp) => {
+          const linkedContacts = contacts.filter((contact) => contact.icp_id === icp.id);
+          const linkedSignalsCount = linkedContacts.reduce((sum, contact) => sum + (contact.signals?.length || 0), 0);
+          const icpSignalsCount = icp.signals?.length || 0;
+
+          const fitInputs = [
+            !!icp.company_type,
+            (icp.therapeutic_areas?.length || 0) > 0,
+            (icp.modalities?.length || 0) > 0,
+            (icp.development_stages?.length || 0) > 0,
+            (icp.company_sizes?.length || 0) > 0,
+            (icp.funding_stages?.length || 0) > 0,
+            (icp.example_companies?.length || 0) > 0,
+          ];
+          const fitScore = Math.round((fitInputs.filter(Boolean).length / fitInputs.length) * 100);
+
+          const newestTimestamp = [icp.updated_at, ...linkedContacts.map((c) => c.updated_at)].filter(Boolean).sort().reverse()[0] || icp.created_at || new Date().toISOString();
+          const recencyDays = daysSince(newestTimestamp);
+          const recencyScore = recencyDays <= 7 ? 100 : recencyDays <= 30 ? 70 : 40;
+          const signalScore = Math.min(100, icpSignalsCount * 20 + linkedSignalsCount * 12);
+          const contactScore = Math.min(100, linkedContacts.length * 25);
+          const intentScore = Math.round(signalScore * 0.5 + recencyScore * 0.3 + contactScore * 0.2);
+
+          const priorityScore = Math.round((fitScore * intentScore) / 100);
+          const latestSignalType = getSignalDisplayName(icp.signals?.[0]);
+
+          return {
+            id: icp.id,
+            name: icp.name || 'Unnamed company profile',
+            priorityScore,
+            latestSignalType,
+            latestSignalAt: newestTimestamp,
+            href: `/companies/${icp.id}/edit`,
+          };
+        });
+
+        leads.sort((a, b) => {
+          if (b.priorityScore !== a.priorityScore) return b.priorityScore - a.priorityScore;
+          return new Date(b.latestSignalAt).getTime() - new Date(a.latestSignalAt).getTime();
+        });
+        setTopLeads(leads.slice(0, 5));
+
+        const reminders = contacts
+          .filter((contact) => {
+            const status = (contact.status || '').toLowerCase();
+            return status === 'follow up' && daysSince(contact.updated_at) > 7;
+          })
+          .slice(0, 3)
+          .map((contact) => {
+            const company = icps.find((icp) => icp.id === contact.icp_id);
+            return {
+              id: contact.id,
+              contactName: contact.name || 'Unnamed contact',
+              companyName: company?.name || 'Unknown company',
+              updatedAt: contact.updated_at || new Date().toISOString(),
+            };
+          });
+
+        setFollowUpReminders(reminders);
       } catch (error) {
-        console.error('Error fetching analyses:', error);
+        console.error('Error loading dashboard data:', error);
       } finally {
-        setLoadingAnalyses(false);
+        setIsLoadingDashboard(false);
       }
     };
 
-    const fetchIcps = async () => {
-      if (!user) return;
-      
-      try {
-        const response = await fetch('/api/companies');
-        if (response.ok) {
-          const result = await response.json();
-          setIcps(result.data || []);
-        }
-      } catch (error) {
-        console.error('Error fetching ICPs:', error);
-      } finally {
-        setLoadingIcps(false);
-      }
-    };
-
-    fetchAnalyses();
-    fetchIcps();
+    fetchDashboardData();
   }, [user]);
 
-  if (loading) {
+  if (loading || isLoadingDashboard) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-arcova-teal"></div>
@@ -68,172 +251,181 @@ export default function DashboardPage() {
     );
   }
 
-  if (!user) {
-    return null;
-  }
+  if (!user) return null;
+
+  const completedSteps = steps.filter((step) => step.completed).length;
+  const isLiveMode = completedSteps === 4;
 
   return (
     <div className="flex h-screen bg-gray-50">
       <AppSidebar />
-      
+
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Content Area */}
         <div className="flex-1 overflow-auto p-6">
           <div className="max-w-6xl mx-auto">
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8">
-              <div>
-                <h2 className="text-3xl font-bold text-gray-900 mb-4">
-                  Welcome to Your Dashboard
-                </h2>
-                <p className="text-lg text-gray-600 mb-8">
-                  Your personalized overview of ICP configurations, data insights, and analytics.
-                </p>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  <button
-                    onClick={() => router.push('/my-profile')}
-                    className="bg-arcova-teal/10 rounded-lg p-6 hover:bg-arcova-teal/20 transition-colors text-left"
-                  >
-                    <h3 className="text-lg font-semibold text-arcova-darkblue mb-2">Your Company</h3>
-                    <p className="text-lg font-bold text-arcova-blue truncate">
-                      {loadingAnalyses ? '...' : analyses.length > 0 ? (analyses[0]?.company_name || analyses[0]?.domain || 'Your Company') : 'Not started'}
-                    </p>
-                    <p className="text-sm text-arcova-blue">
-                      {analyses.length > 0 ? 'Click to view or edit' : 'Click to get started'}
-                    </p>
-                  </button>
+              {!isLiveMode ? (
+                <div>
+                  <h1 className="text-3xl font-bold text-gray-900">Welcome to Arcova</h1>
+                  <p className="text-lg text-gray-600 mt-2">Complete your setup to start seeing leads.</p>
 
-                  <div className="bg-arcova-mint/20 rounded-lg p-6">
-                    <h3 className="text-lg font-semibold text-arcova-darkblue mb-2">Recent Activity</h3>
-                    <p className="text-lg font-bold text-arcova-blue">
-                      {loadingAnalyses ? '...' : analyses.length > 0 ? 'Active' : 'None'}
-                    </p>
-                    <p className="text-sm text-arcova-darkblue/70">Latest analysis status</p>
-                  </div>
-
-                  <div className="bg-arcova-beige/30 rounded-lg p-6">
-                    <h3 className="text-lg font-semibold text-arcova-darkblue mb-2">Last Analysis</h3>
-                    <p className="text-lg font-bold text-arcova-blue">
-                      {loadingAnalyses ? '...' : analyses.length > 0 ? 'Recent' : 'Never'}
-                    </p>
-                    <p className="text-sm text-arcova-darkblue/70">Get started with new analysis</p>
-                  </div>
-                </div>
-
-                {/* Your ICPs Section */}
-                <div className="mt-8">
-                  <div className="bg-white rounded-lg border border-gray-200 p-6">
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-xl font-semibold text-gray-900 text-left">Your ICPs</h3>
-                      <button
-                        onClick={() => router.push('/companies')}
-                        className="text-sm text-arcova-teal hover:text-arcova-teal/80"
-                      >
-                        Manage ICPs →
-                      </button>
+                  <div className="mt-6 mb-8">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-sm font-medium text-gray-700">{completedSteps} of 4 steps complete</p>
                     </div>
-                    
-                    {loadingIcps ? (
-                      <p className="text-gray-500 text-sm">Loading...</p>
-                    ) : icps.length === 0 ? (
-                      <div className="text-center py-6">
-                        <p className="text-gray-500 text-sm mb-3">No ICPs created yet</p>
-                        <button
-                          onClick={() => router.push('/companies/new')}
-                          className="text-sm text-arcova-teal hover:underline"
-                        >
-                          + Create your first ICP
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="space-y-2">
-                        {icps.slice(0, 3).map((icp) => (
+                    <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all duration-300"
+                        style={{ width: `${(completedSteps / 4) * 100}%`, backgroundColor: TEAL }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    {steps.map((step) => (
+                      <div
+                        key={step.id}
+                        className={`rounded-lg border p-4 flex items-center justify-between ${
+                          step.completed ? 'bg-gray-50 border-gray-200 opacity-80' : 'bg-white border-gray-200'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          {step.completed ? (
+                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full text-white" style={{ backgroundColor: TEAL }}>
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                              </svg>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full border border-gray-300 text-gray-400">
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+                              </svg>
+                            </span>
+                          )}
+                          <p className={`text-base ${step.completed ? 'text-gray-600' : 'text-gray-900 font-semibold'}`}>{step.label}</p>
+                        </div>
+
+                        {step.completed ? (
+                          <span className="text-sm text-gray-500">Completed</span>
+                        ) : (
                           <button
-                            key={icp.id}
-                            onClick={() => router.push('/companies')}
-                            className="w-full flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-arcova-teal/5 transition-colors text-left"
+                            onClick={() => router.push(step.actionPath)}
+                            className="text-sm font-semibold px-3 py-1.5 rounded-md text-white hover:opacity-90 transition-opacity"
+                            style={{ backgroundColor: TEAL }}
                           >
-                            <div>
-                              <p className="font-medium text-gray-900 text-sm">{icp.name || 'Unnamed ICP'}</p>
-                              <p className="text-xs text-gray-500">
-                                {[
-                                  icp.company_type,
-                                  icp.therapeutic_areas?.[0],
-                                  icp.funding_stages?.[0]
-                                ].filter(Boolean).join(' · ') || 'No criteria set'}
-                              </p>
-                            </div>
-                            <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
-                            </svg>
+                            Set up →
                           </button>
-                        ))}
-                        {icps.length > 3 && (
-                          <p className="text-xs text-gray-500 text-center pt-2">
-                            +{icps.length - 3} more ICPs
-                          </p>
                         )}
                       </div>
-                    )}
+                    ))}
                   </div>
                 </div>
+              ) : (
+                <div className="space-y-8">
+                  <div>
+                    <h1 className="text-3xl font-bold text-gray-900">Here&apos;s what&apos;s happened since you last logged in.</h1>
+                  </div>
 
-                {analyses.length > 0 && (
-                  <div className="mt-8">
-                    <div className="bg-white rounded-lg border border-gray-200 p-6">
-                      <h3 className="text-xl font-semibold text-gray-900 mb-4 text-left">Recent Activity</h3>
+                  <div className="rounded-lg border border-gray-200 p-6 bg-white">
+                    <h2 className="text-xl font-semibold text-gray-900 mb-4">New signals</h2>
+
+                    {newSignals.length === 0 ? (
+                      <p className="text-sm text-gray-500">No new signals since your last visit. Check back tomorrow.</p>
+                    ) : (
                       <div className="space-y-3">
-                        {analyses.slice(0, 3).map((analysis, index) => {
-                          const activityDate = analysis.analyzed_at 
-                            ? new Date(analysis.analyzed_at)
-                            : new Date();
-                          
-                          const isToday = activityDate.toDateString() === new Date().toDateString();
-                          const dateDisplay = isToday 
-                            ? `Today at ${activityDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-                            : activityDate.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
-
-                          return (
-                            <div key={analysis.id || index} className="grid grid-cols-3 items-center p-3 bg-gray-50 rounded-lg text-sm text-gray-700">
-                              <p>
-                                {analysis.company_name || analysis.domain || 'Your Company'} company details summarized
-                              </p>
-                              <p className="text-center">
-                                {dateDisplay}
-                              </p>
-                              <div className="text-right">
-                                <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full">
-                                  Completed
-                                </span>
-                              </div>
+                        {newSignals.map((item) => (
+                          <div key={item.id} className="flex items-center justify-between gap-4 text-sm">
+                            <div className="min-w-0">
+                              <button
+                                onClick={() => router.push(item.href)}
+                                className="font-semibold text-gray-900 hover:underline truncate"
+                              >
+                                {item.label}
+                              </button>
+                              <span className="text-gray-500"> {' - '} {item.signalType}</span>
                             </div>
-                          );
-                        })}
+                            <p className="text-gray-500 whitespace-nowrap">{formatTimeAgo(item.timestamp)}</p>
+                          </div>
+                        ))}
                       </div>
+                    )}
+
+                    <div className="mt-4 flex justify-end">
+                      <button
+                        onClick={() => router.push('/customer-signals')}
+                        className="text-sm font-medium hover:opacity-80"
+                        style={{ color: TEAL }}
+                      >
+                        See all signals →
+                      </button>
                     </div>
                   </div>
-                )}
 
-                <div className="mt-12">
-                  <div className="bg-gray-50 rounded-lg p-8">
-                    <h3 className="text-xl font-semibold text-gray-900 mb-4">
-                      {analyses.length === 0 ? 'Get Started' : 'Next Step'}
-                    </h3>
-                    <p className="text-gray-600 mb-6">
-                      {analyses.length === 0 
-                        ? 'Create your first company analysis to start generating insights.'
-                        : 'Define your Ideal Customer Profile (ICP) to start finding the right leads.'
-                      }
-                    </p>
-                    <button
-                      onClick={() => router.push(analyses.length === 0 ? '/my-profile' : '/companies')}
-                      className="bg-arcova-teal hover:bg-arcova-teal/90 text-white px-6 py-3 rounded-lg font-semibold transition-colors"
-                    >
-                      {analyses.length === 0 ? 'Start Company Analysis' : 'Setup Your ICP'}
-                    </button>
+                  <div className="rounded-lg border border-gray-200 p-6 bg-white">
+                    <h2 className="text-xl font-semibold text-gray-900 mb-4">Top leads right now</h2>
+
+                    {topLeads.length === 0 ? (
+                      <p className="text-sm text-gray-500">No ranked leads yet. Complete more setup details to improve scoring.</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {topLeads.map((lead) => (
+                          <div key={lead.id} className="flex items-center justify-between gap-4 text-sm">
+                            <div className="min-w-0">
+                              <button onClick={() => router.push(lead.href)} className="font-semibold text-gray-900 hover:underline truncate">
+                                {lead.name}
+                              </button>
+                              <p className="text-gray-500 truncate">
+                                {lead.latestSignalType} · {formatTimeAgo(lead.latestSignalAt)}
+                              </p>
+                            </div>
+                            <span className="px-2.5 py-1 rounded-full text-xs font-semibold text-white" style={{ backgroundColor: TEAL }}>
+                              {lead.priorityScore}%
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="mt-4 flex justify-end">
+                      <button
+                        onClick={() => router.push('/results')}
+                        className="text-sm font-medium hover:opacity-80"
+                        style={{ color: TEAL }}
+                      >
+                        See all leads →
+                      </button>
+                    </div>
                   </div>
+
+                  {followUpReminders.length > 0 && (
+                    <div className="rounded-lg border border-gray-200 p-6 bg-white">
+                      <h2 className="text-xl font-semibold text-gray-900 mb-4">Follow up reminders</h2>
+                      <div className="space-y-3">
+                        {followUpReminders.map((item) => (
+                          <div key={item.id} className="flex items-center justify-between gap-4 text-sm">
+                            <div className="min-w-0">
+                              <p className="font-semibold text-gray-900 truncate">{item.contactName}</p>
+                              <p className="text-gray-500 truncate">{item.companyName}</p>
+                            </div>
+                            <p className="text-gray-500 whitespace-nowrap">Last updated {daysSince(item.updatedAt)} days ago</p>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="mt-4 flex justify-end">
+                        <button
+                          onClick={() => router.push('/results')}
+                          className="text-sm font-medium hover:opacity-80"
+                          style={{ color: TEAL }}
+                        >
+                          See all contacts →
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
+              )}
             </div>
           </div>
         </div>

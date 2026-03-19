@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
@@ -27,9 +28,14 @@ const navigation: NavItem[] = [
     icon: LayoutDashboard,
   },
   {
-    name: 'My Profile',
-    href: '/my-profile',
-    icon: User,
+    name: 'Signals',
+    href: '/customer-signals',
+    icon: Radio,
+  },
+  {
+    name: 'Leads',
+    href: '/results',
+    icon: Users,
   },
   {
     name: 'Companies',
@@ -42,14 +48,9 @@ const navigation: NavItem[] = [
     icon: UserCircle,
   },
   {
-    name: 'Signals',
-    href: '/customer-signals',
-    icon: Radio,
-  },
-  {
-    name: 'Leads',
-    href: '/results',
-    icon: Users,
+    name: 'My Profile',
+    href: '/my-profile',
+    icon: User,
   },
   {
     name: 'Settings',
@@ -60,9 +61,58 @@ const navigation: NavItem[] = [
 
 export default function AppSidebar() {
   const pathname = usePathname();
+  const [showCompaniesDot, setShowCompaniesDot] = useState(false);
+  const [showPersonasDot, setShowPersonasDot] = useState(false);
+  const [showMyProfileDot, setShowMyProfileDot] = useState(false);
 
   const isActive = (href: string) => {
     return pathname === href;
+  };
+
+  useEffect(() => {
+    const loadCompletionStatus = async () => {
+      try {
+        const [companiesRes, personasRes, profileRes] = await Promise.all([
+          fetch('/api/companies'),
+          fetch('/api/contacts'),
+          fetch('/api/user-company-profile'),
+        ]);
+
+        if (companiesRes.ok) {
+          const companiesResult = await companiesRes.json();
+          const companies = companiesResult.data || [];
+          setShowCompaniesDot(companies.length === 0);
+        }
+
+        if (personasRes.ok) {
+          const personasResult = await personasRes.json();
+          const personas = personasResult.data || [];
+          setShowPersonasDot(personas.length === 0);
+        }
+
+        if (profileRes.ok) {
+          const profileResult = await profileRes.json();
+          const profile = profileResult.data;
+          const hasCompletedProfile = Boolean(
+            profile &&
+            typeof profile.company_name === 'string' &&
+            profile.company_name.trim()
+          );
+          setShowMyProfileDot(!hasCompletedProfile);
+        }
+      } catch (error) {
+        console.error('Error loading sidebar completion status:', error);
+      }
+    };
+
+    loadCompletionStatus();
+  }, []);
+
+  const shouldShowDot = (itemName: string) => {
+    if (itemName === 'Companies') return showCompaniesDot;
+    if (itemName === 'Personas') return showPersonasDot;
+    if (itemName === 'My Profile') return showMyProfileDot;
+    return false;
   };
 
   return (
@@ -95,7 +145,12 @@ export default function AppSidebar() {
                     : "text-white hover:bg-arcova-mint/20 hover:text-white"
                 )}
               >
-                <item.icon className="w-5 h-5" />
+                <div className="relative">
+                  <item.icon className="w-5 h-5" />
+                  {shouldShowDot(item.name) && (
+                    <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-[#EF4444] shadow-[0_0_8px_#EF4444]" />
+                  )}
+                </div>
                 <span>{item.name}</span>
               </Link>
             </div>

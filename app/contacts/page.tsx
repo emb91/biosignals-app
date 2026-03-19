@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { toast, Toaster } from 'sonner';
+import { getSignalDisplayName } from '@/lib/signal-display-names';
 
 interface Contact {
   id: string;
@@ -12,6 +13,7 @@ interface Contact {
   functions: string[];
   seniority_levels: string[];
   job_titles: string[];
+  signals: string[];
   icp_id: string | null;
   created_at: string;
   updated_at: string;
@@ -217,7 +219,7 @@ export default function ContactsPage() {
                     {/* Expanded Details */}
                     {expandedId === contact.id && (
                       <div className="px-4 pb-4 border-t border-gray-100 pt-4">
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                           <div>
                             <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Teams</h4>
                             <div className="flex flex-wrap gap-1">
@@ -246,6 +248,20 @@ export default function ContactsPage() {
                                   {title}
                                 </span>
                               ))}
+                            </div>
+                          </div>
+                          <div>
+                            <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Signals</h4>
+                            <div className="flex flex-wrap gap-1">
+                              {contact.signals?.length > 0 ? (
+                                contact.signals.map((signal) => (
+                                  <span key={signal} className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full text-xs">
+                                    {getSignalDisplayName(signal)}
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="text-xs text-gray-400">Not set</span>
+                              )}
                             </div>
                           </div>
                         </div>
