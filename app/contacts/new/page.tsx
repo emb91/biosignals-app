@@ -31,7 +31,7 @@ interface ContactProfile {
 }
 
 const FUNCTION_OPTIONS = [
-  "C-Suite & Leadership",
+  "Executive Leadership",
   "Business Development & Partnerships",
   "Clinical Operations",
   "Research & Development",
@@ -57,16 +57,8 @@ const SENIORITY_OPTIONS = [
 ];
 
 const SPECIFIC_ROLE_OPTIONS: Record<string, string[]> = {
-  "C-Suite & Leadership": [
+  "Executive Leadership": [
     "Chief Executive Officer",
-    "Chief Scientific Officer",
-    "Chief Medical Officer",
-    "Chief Operating Officer",
-    "Chief Financial Officer",
-    "Chief Commercial Officer",
-    "Chief Revenue Officer",
-    "Chief Marketing Officer",
-    "Chief Technology Officer",
     "President",
     "Founder / Co-Founder",
   ],
@@ -88,6 +80,7 @@ const SPECIFIC_ROLE_OPTIONS: Record<string, string[]> = {
     "Clinical Research Associate",
   ],
   "Research & Development": [
+    "Chief Scientific Officer",
     "VP R&D",
     "Director of R&D",
     "Head of Research",
@@ -104,6 +97,7 @@ const SPECIFIC_ROLE_OPTIONS: Record<string, string[]> = {
     "Regulatory Affairs Associate",
   ],
   "Manufacturing & CMC": [
+    "Chief Operating Officer",
     "VP Manufacturing",
     "Head of CMC",
     "Director of Manufacturing",
@@ -112,6 +106,7 @@ const SPECIFIC_ROLE_OPTIONS: Record<string, string[]> = {
     "Process Engineer",
   ],
   "Medical Affairs": [
+    "Chief Medical Officer",
     "VP Medical Affairs",
     "Head of Medical Affairs",
     "Director of Medical Affairs",
@@ -119,6 +114,8 @@ const SPECIFIC_ROLE_OPTIONS: Record<string, string[]> = {
     "Medical Affairs Manager",
   ],
   "Commercial & Sales Operations": [
+    "Chief Commercial Officer",
+    "Chief Revenue Officer",
     "VP Sales",
     "VP Commercial",
     "Head of Sales",
@@ -137,6 +134,7 @@ const SPECIFIC_ROLE_OPTIONS: Record<string, string[]> = {
     "Alliance Manager",
   ],
   "Strategy & Corporate Development": [
+    "Chief Financial Officer",
     "VP Strategy",
     "Head of Corporate Development",
     "Director of Strategy",
@@ -155,6 +153,7 @@ const SPECIFIC_ROLE_OPTIONS: Record<string, string[]> = {
     "Equipment Manager",
   ],
   "Technology & Systems": [
+    "Chief Technology Officer",
     "VP of Technology",
     "VP Engineering",
     "Director of IT",
@@ -178,6 +177,7 @@ const SPECIFIC_ROLE_OPTIONS: Record<string, string[]> = {
     "Head of Computational Biology",
   ],
   "Marketing": [
+    "Chief Marketing Officer",
     "VP Marketing",
     "Head of Marketing",
     "Marketing Director",
@@ -189,7 +189,7 @@ const SPECIFIC_ROLE_OPTIONS: Record<string, string[]> = {
 
 function inferRoleSeniority(role: string): string {
   const lower = role.toLowerCase();
-  if (lower.includes('chief')) return 'C-Level';
+  if (lower.includes('chief') || lower.includes('president') || lower.includes('founder')) return 'C-Level';
   if (lower.includes('vp') || lower.includes('svp')) return 'VP / SVP';
   if (lower.includes('director')) return 'Director';
   if (lower.includes('head of') || lower.includes('head ')) return 'Head of / Senior Manager';
@@ -429,10 +429,20 @@ export default function ContactNewPage() {
   const handleFunctionToggle = (func: string) => {
     setFormData(prev => {
       const current = prev.functions;
-      if (current.includes(func)) {
-        return { ...prev, functions: current.filter(f => f !== func) };
-      }
-      return { ...prev, functions: [...current, func] };
+      const newFunctions = current.includes(func)
+        ? current.filter(f => f !== func)
+        : [...current, func];
+
+      const validRolesForNewFunctions = new Set(
+        newFunctions.flatMap(area =>
+          (SPECIFIC_ROLE_OPTIONS[area] || []).filter(role =>
+            roleMatchesSelectedSeniority(role, prev.seniorityLevels)
+          )
+        )
+      );
+      const stillValidRoles = prev.jobTitles.filter(role => validRolesForNewFunctions.has(role));
+
+      return { ...prev, functions: newFunctions, jobTitles: stillValidRoles };
     });
   };
 
@@ -453,11 +463,15 @@ export default function ContactNewPage() {
   const handleSeniorityToggle = (level: string) => {
     setFormData(prev => {
       const current = prev.seniorityLevels;
-      if (current.includes(level)) {
-        return { ...prev, seniorityLevels: current.filter(l => l !== level) };
-      } else {
-        return { ...prev, seniorityLevels: [...current, level] };
-      }
+      const newSeniority = current.includes(level)
+        ? current.filter(l => l !== level)
+        : [...current, level];
+
+      const stillValidRoles = prev.jobTitles.filter(role =>
+        roleMatchesSelectedSeniority(role, newSeniority)
+      );
+
+      return { ...prev, seniorityLevels: newSeniority, jobTitles: stillValidRoles };
     });
   };
 
@@ -646,7 +660,7 @@ export default function ContactNewPage() {
                 <span className={currentSection === 1 ? 'text-arcova-teal font-medium' : ''}>Company</span>
                 <span className={currentSection === 2 ? 'text-arcova-teal font-medium' : ''}>Teams</span>
                 <span className={currentSection === 3 ? 'text-arcova-teal font-medium' : ''}>Seniority</span>
-                <span className={currentSection === 4 ? 'text-arcova-teal font-medium' : ''}>Specific Roles</span>
+                <span className={currentSection === 4 ? 'text-arcova-teal font-medium' : ''}>Roles</span>
                 <span className={currentSection === 5 ? 'text-arcova-teal font-medium' : ''}>Name</span>
               </div>
             </div>
@@ -748,7 +762,7 @@ export default function ContactNewPage() {
                     {isGeneratingFunctions ? (
                       <div className="flex items-center gap-2 text-gray-500 py-8 justify-center">
                         <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-arcova-teal"></div>
-                        <span>Analyzing your company profile...</span>
+                        <span>Selecting relevant teams...</span>
                       </div>
                     ) : (
                       <>
@@ -848,7 +862,7 @@ export default function ContactNewPage() {
                     {isGeneratingSeniority ? (
                       <div className="flex items-center gap-2 text-gray-500 py-8 justify-center">
                         <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-arcova-teal"></div>
-                        <span>Analyzing best seniority levels...</span>
+                        <span>Selecting relevant seniority levels...</span>
                       </div>
                     ) : (
                       <div className="flex flex-wrap gap-2">
@@ -970,8 +984,8 @@ export default function ContactNewPage() {
                 {currentSection === 5 && (
                   <div className="space-y-4">
                     <div>
-                      <h2 className="text-lg font-semibold text-gray-900 mb-1">Name this buyer persona</h2>
-                      <p className="text-sm text-gray-500 mb-4">Keep it short, for example: VP at Oncology Biotech.</p>
+                      <h2 className="text-lg font-semibold text-gray-900 mb-1">Name this buyer segment</h2>
+                      <p className="text-sm text-gray-500 mb-4">Give this group a name so you can identify it easily. Click to generate one based on your selections.</p>
                     </div>
 
                     <div className="flex gap-2">
@@ -1021,7 +1035,7 @@ export default function ContactNewPage() {
                           <span className="ml-2 text-gray-900">{formData.seniorityLevels.join(', ') || 'None selected'}</span>
                         </div>
                         <div>
-                          <span className="text-gray-500">Specific Roles:</span>
+                          <span className="text-gray-500">Roles:</span>
                           <span className="ml-2 text-gray-900">{formData.jobTitles.join(', ') || 'None selected'}</span>
                         </div>
                       </div>

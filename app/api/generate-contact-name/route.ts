@@ -91,7 +91,7 @@ Company type summary: ${shortCompanyType}
 
 Rules:
 - Maximum 6 words
-- If 1-2 business areas selected, lead with the most descriptive area, do not use the seniority level as the lead word
+- If 1-2 business areas selected, usually lead with the most descriptive area
 - If 3 or more business areas selected, summarise broadly using terms like "Commercial & Scientific", "Multi-function", or "Cross-functional" rather than listing each area
 - Pick the most senior seniority level selected (${topSeniority}), do not list all seniority levels
 - Include the company type from the company profile but keep it short (for example: "Large Pharma", "Series A Biotech", "Grant-Funded Biopharma")
@@ -99,6 +99,12 @@ Rules:
 - Do not use ampersands more than once in the name
 - Do not include punctuation at the end
 - Do not include em dashes
+- Keep the meaning consistent, but vary phrasing naturally across repeated generations for the same inputs
+
+Use varied structures such as:
+- [Function] [Seniority] at [Company Type]
+- [Seniority] in [Function] at [Company Type]
+- [Function]-focused [Seniority] at [Company Type]
 
 Examples of good names:
 - Clinical & BD Directors at Series A Biotech
@@ -115,6 +121,7 @@ Return only the name, nothing else.`;
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 100,
+      temperature: 0.9,
       messages: [{ role: 'user', content: prompt }],
     });
 

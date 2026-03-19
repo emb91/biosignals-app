@@ -54,7 +54,7 @@ TARGET COMPANY PROFILE:
 ${targetDescription}
 
 Available business areas to choose from (use EXACTLY these names):
-- C-Suite & Leadership
+- Executive Leadership
 - Business Development & Partnerships
 - Clinical Operations
 - Research & Development

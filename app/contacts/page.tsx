@@ -129,8 +129,8 @@ export default function ContactsPage() {
           <div className="max-w-4xl mx-auto">
             {/* Header */}
             <div className="mb-6">
-              <h1 className="text-2xl font-bold text-gray-900">Add Buyer Personas to Your Target Companies</h1>
-              <p className="text-gray-600 mt-1">Define the types of people you want to reach at each company you’ve added. These personas will be used to find and match relevant contacts.</p>
+              <h1 className="text-2xl font-bold text-gray-900">Who do you sell to?</h1>
+              <p className="text-gray-600 mt-1">Define the types of people you typically target. We’ll use these to surface the right contacts at your target companies.</p>
             </div>
 
             {/* Contacts List */}

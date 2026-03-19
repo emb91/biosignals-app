@@ -18,7 +18,7 @@ interface CompanyProfile {
 }
 
 const FUNCTION_OPTIONS = [
-  "C-Suite & Leadership",
+  "Executive Leadership",
   "Business Development & Partnerships",
   "Clinical Operations",
   "Research & Development",
@@ -43,6 +43,152 @@ const SENIORITY_OPTIONS = [
   "Individual Contributor"
 ];
 
+const SPECIFIC_ROLE_OPTIONS: Record<string, string[]> = {
+  "Executive Leadership": [
+    "Chief Executive Officer",
+    "President",
+    "Founder / Co-Founder",
+  ],
+  "Business Development & Partnerships": [
+    "VP Business Development",
+    "Head of Business Development",
+    "Director of Business Development",
+    "Head of Partnerships",
+    "Business Development Manager",
+    "Partnerships Manager",
+    "Business Development Representative",
+  ],
+  "Clinical Operations": [
+    "VP Clinical Operations",
+    "Head of Clinical Operations",
+    "Director of Clinical Operations",
+    "Clinical Operations Manager",
+    "Clinical Trial Manager",
+    "Clinical Research Associate",
+  ],
+  "Research & Development": [
+    "Chief Scientific Officer",
+    "VP R&D",
+    "Director of R&D",
+    "Head of Research",
+    "Principal Scientist",
+    "Senior Scientist",
+    "Research Scientist",
+    "Associate Scientist",
+  ],
+  "Regulatory Affairs": [
+    "VP Regulatory Affairs",
+    "Head of Regulatory Affairs",
+    "Director of Regulatory Affairs",
+    "Regulatory Affairs Manager",
+    "Regulatory Affairs Associate",
+  ],
+  "Manufacturing & CMC": [
+    "Chief Operating Officer",
+    "VP Manufacturing",
+    "Head of CMC",
+    "Director of Manufacturing",
+    "Manufacturing Manager",
+    "CMC Manager",
+    "Process Engineer",
+  ],
+  "Medical Affairs": [
+    "Chief Medical Officer",
+    "VP Medical Affairs",
+    "Head of Medical Affairs",
+    "Director of Medical Affairs",
+    "Medical Science Liaison (MSL)",
+    "Medical Affairs Manager",
+  ],
+  "Commercial & Sales Operations": [
+    "Chief Commercial Officer",
+    "Chief Revenue Officer",
+    "VP Sales",
+    "VP Commercial",
+    "Head of Sales",
+    "Sales Director",
+    "Sales Manager",
+    "Account Manager",
+    "Account Executive",
+    "Sales Representative",
+  ],
+  "Procurement": [
+    "Head of Procurement",
+    "Director of Procurement",
+    "Procurement Manager",
+    "Vendor Manager",
+    "Head of Outsourcing",
+    "Alliance Manager",
+  ],
+  "Strategy & Corporate Development": [
+    "Chief Financial Officer",
+    "VP Strategy",
+    "Head of Corporate Development",
+    "Director of Strategy",
+    "Strategy Manager",
+    "Corporate Development Manager",
+    "Strategy Analyst",
+  ],
+  "Lab Operations": [
+    "Head of Lab Operations",
+    "Director of Lab Operations",
+    "Lab Manager",
+    "Senior Lab Manager",
+    "Laboratory Supervisor",
+    "Lab Operations Manager",
+    "Facilities Manager",
+    "Equipment Manager",
+  ],
+  "Technology & Systems": [
+    "Chief Technology Officer",
+    "VP of Technology",
+    "VP Engineering",
+    "Director of IT",
+    "Head of Informatics",
+    "Director of Bioinformatics",
+    "Head of Data Science",
+    "Engineering Manager",
+    "Data Science Manager",
+    "Software Engineer",
+    "Data Scientist",
+  ],
+  "AI & Machine Learning": [
+    "VP of AI",
+    "Head of AI",
+    "Director of AI/ML",
+    "Head of Machine Learning",
+    "Principal ML Engineer",
+    "ML Engineer",
+    "AI Research Scientist",
+    "Director of Computational Biology",
+    "Head of Computational Biology",
+  ],
+  "Marketing": [
+    "Chief Marketing Officer",
+    "VP Marketing",
+    "Head of Marketing",
+    "Marketing Director",
+    "Marketing Manager",
+    "Growth Marketing Manager",
+    "Marketing Specialist",
+  ],
+};
+
+function inferRoleSeniority(role: string): string {
+  const lower = role.toLowerCase();
+  if (lower.includes('chief') || lower.includes('president') || lower.includes('founder')) return 'C-Level';
+  if (lower.includes('vp') || lower.includes('svp')) return 'VP / SVP';
+  if (lower.includes('director')) return 'Director';
+  if (lower.includes('head of') || lower.includes('head ')) return 'Head of / Senior Manager';
+  if (lower.includes('manager')) return 'Manager';
+  return 'Individual Contributor';
+}
+
+function roleMatchesSelectedSeniority(role: string, selectedSeniority: string[]): boolean {
+  if (selectedSeniority.length === 0) return true;
+  return selectedSeniority.includes(inferRoleSeniority(role));
+}
+
 export default function ContactEditPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
@@ -57,12 +203,25 @@ export default function ContactEditPage() {
     name: '',
     functions: [] as string[],
     seniorityLevels: [] as string[],
+    jobTitles: [] as string[],
   });
   const [customFunction, setCustomFunction] = useState('');
+  const [customRole, setCustomRole] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [isGeneratingName, setIsGeneratingName] = useState(false);
   const [showAllFunctions, setShowAllFunctions] = useState(false);
 
   const selectedCompany = companyProfiles.find(c => c.id === selectedCompanyId);
+  const combinedRoleOptions = Array.from(
+    new Set(
+      formData.functions.flatMap((area) =>
+        (SPECIFIC_ROLE_OPTIONS[area] || []).filter((role) =>
+          roleMatchesSelectedSeniority(role, formData.seniorityLevels)
+        )
+      )
+    )
+  );
+  const additionalRoleOptions = formData.jobTitles.filter((role) => !combinedRoleOptions.includes(role));
 
   useEffect(() => {
     if (!loading && !user) {
@@ -97,6 +256,7 @@ export default function ContactEditPage() {
               name: contact.name || '',
               functions: functionNames,
               seniorityLevels: contact.seniority_levels || [],
+              jobTitles: contact.job_titles || [],
             });
             setSelectedCompanyId(contact.icp_id || null);
           }
@@ -125,10 +285,20 @@ export default function ContactEditPage() {
   const handleFunctionToggle = (func: string) => {
     setFormData(prev => {
       const current = prev.functions;
-      if (current.includes(func)) {
-        return { ...prev, functions: current.filter(f => f !== func) };
-      }
-      return { ...prev, functions: [...current, func] };
+      const newFunctions = current.includes(func)
+        ? current.filter(f => f !== func)
+        : [...current, func];
+
+      const validRolesForNewFunctions = new Set(
+        newFunctions.flatMap(area =>
+          (SPECIFIC_ROLE_OPTIONS[area] || []).filter(role =>
+            roleMatchesSelectedSeniority(role, prev.seniorityLevels)
+          )
+        )
+      );
+      const stillValidRoles = prev.jobTitles.filter(role => validRolesForNewFunctions.has(role));
+
+      return { ...prev, functions: newFunctions, jobTitles: stillValidRoles };
     });
   };
 
@@ -149,12 +319,72 @@ export default function ContactEditPage() {
   const handleSeniorityToggle = (level: string) => {
     setFormData(prev => {
       const current = prev.seniorityLevels;
-      if (current.includes(level)) {
-        return { ...prev, seniorityLevels: current.filter(l => l !== level) };
-      } else {
-        return { ...prev, seniorityLevels: [...current, level] };
-      }
+      const newSeniority = current.includes(level)
+        ? current.filter(l => l !== level)
+        : [...current, level];
+
+      const stillValidRoles = prev.jobTitles.filter(role =>
+        roleMatchesSelectedSeniority(role, newSeniority)
+      );
+
+      return { ...prev, seniorityLevels: newSeniority, jobTitles: stillValidRoles };
     });
+  };
+
+  const handleRoleToggle = (role: string) => {
+    setFormData(prev => {
+      const current = prev.jobTitles;
+      if (current.includes(role)) {
+        return { ...prev, jobTitles: current.filter(r => r !== role) };
+      }
+      return { ...prev, jobTitles: [...current, role] };
+    });
+  };
+
+  const handleAddCustomRole = () => {
+    const role = customRole.trim();
+    if (!role) return;
+    if (formData.jobTitles.includes(role)) {
+      toast.error('Role already added');
+      return;
+    }
+    setFormData(prev => ({
+      ...prev,
+      jobTitles: [...prev.jobTitles, role],
+    }));
+    setCustomRole('');
+  };
+
+  const generateProfileName = async () => {
+    if (!selectedCompany || formData.functions.length === 0 || formData.seniorityLevels.length === 0) return;
+
+    setIsGeneratingName(true);
+    try {
+      const response = await fetch('/api/generate-contact-name', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetCompanyProfile: selectedCompany,
+          selectedFunctions: formData.functions,
+          selectedSeniority: formData.seniorityLevels,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.name) {
+          setFormData(prev => ({
+            ...prev,
+            name: data.name,
+          }));
+        }
+      }
+    } catch (error) {
+      console.error('Error generating name:', error);
+      toast.error('Failed to generate name');
+    } finally {
+      setIsGeneratingName(false);
+    }
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -172,6 +402,12 @@ export default function ContactEditPage() {
       return;
     }
 
+    if (formData.jobTitles.length === 0) {
+      toast.error('Please select at least one role');
+      setCurrentSection(4);
+      return;
+    }
+
     if (!formData.name.trim()) {
       toast.error('Please enter a name for this buyer persona');
       return;
@@ -186,7 +422,6 @@ export default function ContactEditPage() {
         body: JSON.stringify({
           ...formData,
           icpId: selectedCompanyId,
-          jobTitles: [],
         }),
       });
 
@@ -209,7 +444,8 @@ export default function ContactEditPage() {
     switch (section) {
       case 2: return formData.functions.length > 0 ? 'complete' : 'incomplete';
       case 3: return formData.seniorityLevels.length > 0 ? 'complete' : 'incomplete';
-      case 4: return formData.name ? 'complete' : 'incomplete';
+      case 4: return formData.jobTitles.length > 0 ? 'complete' : 'incomplete';
+      case 5: return formData.name ? 'complete' : 'incomplete';
       default: return 'incomplete';
     }
   };
@@ -236,16 +472,28 @@ export default function ContactEditPage() {
           <div className="max-w-3xl mx-auto">
             {/* Linked Company Profile Display */}
             {selectedCompany && (
-              <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
-                <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Editing persona for</p>
-                <p className="font-medium text-gray-900">{selectedCompany.name}</p>
+              <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200 flex items-center justify-between">
+                <div>
+                  <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Editing persona for</p>
+                  <p className="font-medium text-gray-900">{selectedCompany.name}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => router.push('/personas')}
+                  className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded-lg transition-colors flex items-center gap-1"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                  Exit
+                </button>
               </div>
             )}
 
             {/* Progress Bar */}
             <div className="mb-6">
               <div className="flex items-center justify-between">
-                {[2, 3, 4].map((step, index) => (
+                {[2, 3, 4, 5].map((step, index) => (
                   <div key={step} className="flex items-center">
                     <button
                       type="button"
@@ -266,7 +514,7 @@ export default function ContactEditPage() {
                         index + 1
                       )}
                     </button>
-                    {index < 2 && (
+                    {index < 3 && (
                       <div className={`flex-1 h-0.5 mx-1 ${
                         getSectionStatus(step) === 'complete' ? 'bg-arcova-teal/30' : 'bg-gray-200'
                       }`} />
@@ -277,7 +525,8 @@ export default function ContactEditPage() {
               <div className="flex justify-between mt-2 text-xs text-gray-500">
                 <span className={currentSection === 2 ? 'text-arcova-teal font-medium' : ''}>Teams</span>
                 <span className={currentSection === 3 ? 'text-arcova-teal font-medium' : ''}>Seniority</span>
-                <span className={currentSection === 4 ? 'text-arcova-teal font-medium' : ''}>Name</span>
+                <span className={currentSection === 4 ? 'text-arcova-teal font-medium' : ''}>Roles</span>
+                <span className={currentSection === 5 ? 'text-arcova-teal font-medium' : ''}>Name</span>
               </div>
             </div>
 
@@ -406,21 +655,138 @@ export default function ContactEditPage() {
                   </div>
                 )}
 
-                {/* Section 4: Name */}
+                {/* Section 4: Roles */}
                 {currentSection === 4 && (
                   <div className="space-y-4">
                     <div>
-                      <h2 className="text-lg font-semibold text-gray-900 mb-1">Name this buyer persona</h2>
-                      <p className="text-sm text-gray-500 mb-4">Update the name if needed.</p>
+                      <h2 className="text-lg font-semibold text-gray-900 mb-1">Which roles are you typically trying to reach?</h2>
+                      <p className="text-sm text-gray-500 mb-4">Select all that apply. We've suggested the most relevant ones based on your teams and seniority selections. Remove any that don't fit or add your own.</p>
                     </div>
 
-                    <input
-                      type="text"
-                      value={formData.name}
-                      onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                      placeholder="e.g., VP-level BD at Series A Oncology Biotech"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-arcova-teal focus:border-transparent"
-                    />
+                    <>
+                        {formData.functions.map((area) => {
+                          const areaRoles = (SPECIFIC_ROLE_OPTIONS[area] || []).filter((role) =>
+                            roleMatchesSelectedSeniority(role, formData.seniorityLevels)
+                          );
+                          if (areaRoles.length === 0) return null;
+
+                          return (
+                            <div key={area} className="pt-2 border-t border-gray-200">
+                              <h3 className="text-sm font-medium text-gray-900 mb-2">{area}</h3>
+                              <div className="flex flex-wrap gap-2">
+                                {areaRoles.map((role) => {
+                                  const isSelected = formData.jobTitles.includes(role);
+                                  return (
+                                    <button
+                                      key={`${area}-${role}`}
+                                      type="button"
+                                      onClick={() => handleRoleToggle(role)}
+                                      className={`px-4 py-2 rounded-full text-sm transition-colors ${
+                                        isSelected
+                                          ? 'bg-arcova-teal text-white'
+                                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                      }`}
+                                    >
+                                      {role}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+
+                        {additionalRoleOptions.length > 0 && (
+                          <div className="pt-2 border-t border-gray-200">
+                            <h3 className="text-sm font-medium text-gray-900 mb-2">Additional Roles</h3>
+                            <div className="flex flex-wrap gap-2">
+                              {additionalRoleOptions.map((role) => (
+                                <button
+                                  key={`additional-${role}`}
+                                  type="button"
+                                  onClick={() => handleRoleToggle(role)}
+                                  className="px-3 py-1.5 rounded-full text-sm bg-arcova-teal text-white hover:bg-arcova-teal/90 transition-colors"
+                                >
+                                  {role} ×
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {combinedRoleOptions.length === 0 && (
+                          <p className="text-sm text-gray-500">
+                            No predefined role suggestions are available for the selected business areas yet. You can add a custom role below.
+                          </p>
+                        )}
+
+                        <div className="pt-3 border-t border-gray-200">
+                          <label className="text-sm text-gray-600 mb-2 block">Add a specific role</label>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={customRole}
+                              onChange={(e) => setCustomRole(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  handleAddCustomRole();
+                                }
+                              }}
+                              placeholder="e.g., Director of Clinical Operations"
+                              className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-arcova-teal focus:border-transparent text-sm"
+                            />
+                            <button
+                              type="button"
+                              onClick={handleAddCustomRole}
+                              disabled={!customRole.trim()}
+                              className="px-4 py-2 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors disabled:opacity-50 text-sm"
+                            >
+                              Add
+                            </button>
+                          </div>
+                        </div>
+                    </>
+                  </div>
+                )}
+
+                {/* Section 5: Name */}
+                {currentSection === 5 && (
+                  <div className="space-y-4">
+                    <div>
+                      <h2 className="text-lg font-semibold text-gray-900 mb-1">Name this buyer segment</h2>
+                      <p className="text-sm text-gray-500 mb-4">Give this group a name so you can identify it easily. Click to generate one based on your selections.</p>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={formData.name}
+                        onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+                        placeholder="e.g., VP at Oncology Biotech"
+                        className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-arcova-teal focus:border-transparent"
+                      />
+                      <button
+                        type="button"
+                        onClick={generateProfileName}
+                        disabled={isGeneratingName}
+                        className="px-4 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors flex items-center gap-2 disabled:opacity-50"
+                      >
+                        {isGeneratingName ? (
+                          <>
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-600"></div>
+                            <span>Generating...</span>
+                          </>
+                        ) : (
+                          <>
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                            </svg>
+                            <span>Generate</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
 
                     {/* Summary */}
                     <div className="mt-6 p-4 bg-gray-50 rounded-lg">
@@ -437,6 +803,10 @@ export default function ContactEditPage() {
                         <div>
                           <span className="text-gray-500">Seniority:</span>
                           <span className="ml-2 text-gray-900">{formData.seniorityLevels.join(', ') || 'None selected'}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-500">Roles:</span>
+                          <span className="ml-2 text-gray-900">{formData.jobTitles.join(', ') || 'None selected'}</span>
                         </div>
                       </div>
                     </div>
@@ -460,14 +830,18 @@ export default function ContactEditPage() {
                     {currentSection === 2 ? 'Cancel' : 'Back'}
                   </button>
                   
-                  {currentSection < 4 ? (
+                  {currentSection < 5 ? (
                     <button
                       type="button"
                       onClick={(e) => {
                         e.preventDefault();
                         setCurrentSection(currentSection + 1);
                       }}
-                      disabled={currentSection === 2 && formData.functions.length === 0}
+                      disabled={
+                        (currentSection === 2 && formData.functions.length === 0) ||
+                        (currentSection === 3 && formData.seniorityLevels.length === 0) ||
+                        (currentSection === 4 && formData.jobTitles.length === 0)
+                      }
                       className="px-6 py-2 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors disabled:opacity-50"
                     >
                       Next
