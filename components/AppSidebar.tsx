@@ -66,7 +66,9 @@ export default function AppSidebar() {
   const [showMyProfileDot, setShowMyProfileDot] = useState(false);
 
   const isActive = (href: string) => {
-    return pathname === href;
+    if (pathname === href) return true;
+    if (href === '/dashboard') return false;
+    return pathname.startsWith(`${href}/`);
   };
 
   useEffect(() => {

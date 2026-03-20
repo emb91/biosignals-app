@@ -164,14 +164,13 @@ const DEFAULT_FORM_DATA: CompanyFormData = {
   exampleCompanies: [],
 };
 
-const TRACKING_LOCKED_SIGNAL_IDS = [
+const ENGAGEMENT_LOCKED_SIGNAL_IDS = [
   'attended_your_webinar_or_event',
   'visited_your_website',
   'downloaded_your_content',
   'clicked_your_linkedin_ad',
   'demo_requested',
   'inbound_enquiry',
-  'responded_to_a_previous_outreach',
 ];
 
 const CRM_LOCKED_SIGNAL_IDS = [
@@ -180,6 +179,7 @@ const CRM_LOCKED_SIGNAL_IDS = [
   'renewal_coming_up',
   'lapsed_customer',
   'open_opportunity_in_crm',
+  'responded_to_a_previous_outreach',
 ];
 
 // --- Main Component ---
@@ -200,9 +200,9 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
     () => new Map(lockedSignals.map((signal) => [signal.id, signal])),
     [lockedSignals]
   );
-  const trackingLockedSignals = useMemo(
+  const engagementLockedSignals = useMemo(
     () =>
-      TRACKING_LOCKED_SIGNAL_IDS.map((id) => lockedSignalById.get(id)).filter(
+      ENGAGEMENT_LOCKED_SIGNAL_IDS.map((id) => lockedSignalById.get(id)).filter(
         (signal): signal is LockedSignal => Boolean(signal)
       ),
     [lockedSignalById]
@@ -322,18 +322,8 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
     }
   };
 
-  const getContactUsUrl = (signal: LockedSignal) => {
-    const details = [
-      'Locked signal request from Company profile',
-      `Signal: ${signal.name} (${signal.id})`,
-      `ICP name: ${formData.name || 'Not provided'}`,
-      `Company type: ${formData.companyType || 'Not provided'}`,
-      `Company sizes: ${formData.companySizes.length > 0 ? formData.companySizes.join(', ') : 'Not provided'}`,
-      `Therapeutic areas: ${formData.therapeuticAreas.length > 0 ? formData.therapeuticAreas.join(', ') : 'Not provided'}`,
-      `Modalities: ${formData.modalities.length > 0 ? formData.modalities.join(', ') : 'Not provided'}`,
-      `Development stages: ${formData.developmentStages.length > 0 ? formData.developmentStages.join(', ') : 'Not provided'}`,
-      `Funding stages: ${formData.fundingStages.length > 0 ? formData.fundingStages.join(', ') : 'Not provided'}`,
-    ].join('\n');
+  const getContactUsUrl = (_signal: LockedSignal) => {
+    const details = 'Company enterprise signal request';
 
     const params = new URLSearchParams({
       notes: details,
@@ -787,9 +777,9 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
                   <div>
                     <div className="space-y-3">
                       <div>
-                        <p className="text-xs text-[#9CA3AF] mb-2">Connect your tracking</p>
+                        <p className="text-xs text-[#9CA3AF] mb-2">Engagement signals</p>
                         <div className="flex flex-wrap gap-2">
-                          {trackingLockedSignals.map((signal) => (
+                          {engagementLockedSignals.map((signal) => (
                             <button
                               key={signal.id}
                               type="button"
@@ -802,7 +792,7 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
                         </div>
                       </div>
                       <div>
-                        <p className="text-xs text-[#9CA3AF] mb-2">Connect your CRM</p>
+                        <p className="text-xs text-[#9CA3AF] mb-2">CRM signals</p>
                         <div className="flex flex-wrap gap-2">
                           {crmLockedSignals.map((signal) => (
                             <button

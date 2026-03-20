@@ -50,6 +50,24 @@ const SENIORITY_OPTIONS = [
   "Individual Contributor"
 ];
 const CAL_BOOKING_URL = 'https://cal.com/emma-arcova/45-min-meeting';
+const ENGAGEMENT_LOCKED_SIGNAL_IDS = [
+  'downloaded_your_content',
+  'attended_your_webinar_or_event',
+  'clicked_your_linkedin_ad',
+  'demo_requested',
+  'inbound_enquiry',
+  'followed_your_company',
+  'engaged_with_your_content',
+  'commented_on_your_post',
+  'shared_your_content',
+  'viewed_your_profile',
+];
+const CRM_LOCKED_SIGNAL_IDS = [
+  'previously_contacted_by_your_team',
+  'meeting_previously_booked',
+  'went_dark_after_engagement',
+  'met_at_conference_or_tradeshow',
+];
 
 const SPECIFIC_ROLE_OPTIONS: Record<string, string[]> = {
   "Executive Leadership": [
@@ -344,7 +362,24 @@ export default function PersonaForm({
   const [lockedSignals] = useState<LockedSignal[]>(() => getRandomLockedSignals());
   const [lockedSignalModal, setLockedSignalModal] = useState<LockedSignal | null>(null);
   const [showAllSignals, setShowAllSignals] = useState(false);
-
+  const lockedSignalById = useMemo(
+    () => new Map(lockedSignals.map((signal) => [signal.id, signal])),
+    [lockedSignals]
+  );
+  const engagementLockedSignals = useMemo(
+    () =>
+      ENGAGEMENT_LOCKED_SIGNAL_IDS.map((id) => lockedSignalById.get(id)).filter(
+        (signal): signal is LockedSignal => Boolean(signal)
+      ),
+    [lockedSignalById]
+  );
+  const crmLockedSignals = useMemo(
+    () =>
+      CRM_LOCKED_SIGNAL_IDS.map((id) => lockedSignalById.get(id)).filter(
+        (signal): signal is LockedSignal => Boolean(signal)
+      ),
+    [lockedSignalById]
+  );
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, {
@@ -570,13 +605,13 @@ export default function PersonaForm({
     setIsLoadingSignals(true);
     try {
       if (formData.signals.length > 0) {
-        const response = await fetch('/api/recommend-signals');
+        const response = await fetch('/api/recommend-persona-signals');
         if (response.ok) {
           const result = await response.json();
           setAllSignals(result.all || []);
         }
       } else {
-        const response = await fetch('/api/recommend-signals', {
+        const response = await fetch('/api/recommend-persona-signals', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(formData),
@@ -588,7 +623,7 @@ export default function PersonaForm({
           const recommendedIds = (result.recommended || []).map((s: Signal) => s.id);
           setFormData(prev => ({ ...prev, signals: recommendedIds }));
         } else {
-          const fallbackResponse = await fetch('/api/recommend-signals');
+          const fallbackResponse = await fetch('/api/recommend-persona-signals');
           if (fallbackResponse.ok) {
             const fallback = await fallbackResponse.json();
             setAllSignals(fallback.all || []);
@@ -629,16 +664,8 @@ export default function PersonaForm({
     }
   };
 
-  const getContactUsUrl = (signal: LockedSignal) => {
-    const details = [
-      'Locked signal request from Persona profile',
-      `Signal: ${signal.name} (${signal.id})`,
-      `Persona name: ${formData.name || 'Not provided'}`,
-      `Company profile: ${selectedCompany?.name || 'Not provided'}`,
-      `Functions: ${formData.functions.length > 0 ? formData.functions.join(', ') : 'Not provided'}`,
-      `Seniority: ${formData.seniorityLevels.length > 0 ? formData.seniorityLevels.join(', ') : 'Not provided'}`,
-      `Roles: ${formData.jobTitles.length > 0 ? formData.jobTitles.join(', ') : 'Not provided'}`,
-    ].join('\n');
+  const getContactUsUrl = (_signal: LockedSignal) => {
+    const details = 'Persona enterprise signal request';
 
     const params = new URLSearchParams({
       notes: details,
@@ -1259,19 +1286,36 @@ export default function PersonaForm({
                     )}
                   </div>
 
-                  <div>
-                    <p className="text-xs text-[#9CA3AF] mb-2">Additional signals</p>
-                    <div className="flex flex-wrap gap-2">
-                      {lockedSignals.map((signal) => (
-                        <button
-                          key={signal.id}
-                          type="button"
-                          onClick={() => handleLockedSignalClick(signal)}
-                          className="px-3 py-1.5 rounded-full text-sm transition-colors bg-gray-100 text-gray-700 hover:bg-gray-200"
-                        >
-                          {getSignalDisplayName(signal.id, signal.name)}
-                        </button>
-                      ))}
+                  <div className="space-y-3">
+                    <div>
+                      <p className="text-xs text-[#9CA3AF] mb-2">Engagement signals</p>
+                      <div className="flex flex-wrap gap-2">
+                        {engagementLockedSignals.map((signal) => (
+                          <button
+                            key={signal.id}
+                            type="button"
+                            onClick={() => handleLockedSignalClick(signal)}
+                            className="px-3 py-1.5 rounded-full text-sm transition-colors bg-gray-100 text-gray-700 hover:bg-gray-200"
+                          >
+                            {getSignalDisplayName(signal.id, signal.name)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-xs text-[#9CA3AF] mb-2">CRM signals</p>
+                      <div className="flex flex-wrap gap-2">
+                        {crmLockedSignals.map((signal) => (
+                          <button
+                            key={signal.id}
+                            type="button"
+                            onClick={() => handleLockedSignalClick(signal)}
+                            className="px-3 py-1.5 rounded-full text-sm transition-colors bg-gray-100 text-gray-700 hover:bg-gray-200"
+                          >
+                            {getSignalDisplayName(signal.id, signal.name)}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
 
