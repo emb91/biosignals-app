@@ -25,7 +25,7 @@ const ALL_SIGNALS = [
   { id: 'job_surge', name: 'Job postings surge', category: 'Hiring & Team' },
   
   // Corporate & Strategic
-  { id: 'company_founded', name: 'Company founded', category: 'Corporate & Strategic' },
+  { id: 'new_product_launch', name: 'New product launch', category: 'Corporate & Strategic' },
   { id: 'new_facility', name: 'New office or facility', category: 'Corporate & Strategic' },
   { id: 'conference_presentation', name: 'Conference presentation or poster', category: 'Corporate & Strategic' },
   { id: 'publication', name: 'Publication in peer-reviewed journal', category: 'Corporate & Strategic' },

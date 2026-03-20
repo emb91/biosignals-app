@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import {
   DndContext,
@@ -20,6 +20,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { getSignalDisplayName } from '@/lib/signal-display-names';
+import { getRandomLockedSignals, type LockedSignal } from '@/lib/locked-signals';
 
 // --- Constants ---
 
@@ -58,6 +59,7 @@ const COMPANY_SIZE_OPTIONS = [
 const FUNDING_STAGE_OPTIONS = [
   "Pre-seed", "Seed", "Series A", "Series B", "Series C", "Series D+", "Public", "Grant-funded"
 ];
+const CAL_BOOKING_URL = 'https://cal.com/emma-arcova/45-min-meeting';
 
 // --- Types ---
 
@@ -162,6 +164,24 @@ const DEFAULT_FORM_DATA: CompanyFormData = {
   exampleCompanies: [],
 };
 
+const TRACKING_LOCKED_SIGNAL_IDS = [
+  'attended_your_webinar_or_event',
+  'visited_your_website',
+  'downloaded_your_content',
+  'clicked_your_linkedin_ad',
+  'demo_requested',
+  'inbound_enquiry',
+  'responded_to_a_previous_outreach',
+];
+
+const CRM_LOCKED_SIGNAL_IDS = [
+  'previously_contacted_by_your_team',
+  'meeting_previously_booked',
+  'renewal_coming_up',
+  'lapsed_customer',
+  'open_opportunity_in_crm',
+];
+
 // --- Main Component ---
 
 export default function CompanyForm({ mode, initialData, onSave, onCancel }: CompanyFormProps) {
@@ -173,7 +193,27 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
   const [isAnalyzingCompany, setIsAnalyzingCompany] = useState(false);
   const [isLoadingSignals, setIsLoadingSignals] = useState(false);
   const [allSignals, setAllSignals] = useState<Signal[]>([]);
+  const [lockedSignals] = useState<LockedSignal[]>(() => getRandomLockedSignals(undefined, 'company'));
+  const [lockedSignalModal, setLockedSignalModal] = useState<LockedSignal | null>(null);
   const [showAllSignals, setShowAllSignals] = useState(false);
+  const lockedSignalById = useMemo(
+    () => new Map(lockedSignals.map((signal) => [signal.id, signal])),
+    [lockedSignals]
+  );
+  const trackingLockedSignals = useMemo(
+    () =>
+      TRACKING_LOCKED_SIGNAL_IDS.map((id) => lockedSignalById.get(id)).filter(
+        (signal): signal is LockedSignal => Boolean(signal)
+      ),
+    [lockedSignalById]
+  );
+  const crmLockedSignals = useMemo(
+    () =>
+      CRM_LOCKED_SIGNAL_IDS.map((id) => lockedSignalById.get(id)).filter(
+        (signal): signal is LockedSignal => Boolean(signal)
+      ),
+    [lockedSignalById]
+  );
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -264,6 +304,43 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
         ? prev.signals.filter(id => id !== signalId)
         : [...prev.signals, signalId]
     }));
+  };
+
+  const handleLockedSignalClick = async (signal: LockedSignal) => {
+    setLockedSignalModal(signal);
+    try {
+      await fetch('/api/locked-signal-clicks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          signalId: signal.id,
+          signalName: signal.name,
+        }),
+      });
+    } catch {
+      // Intentionally silent background logging.
+    }
+  };
+
+  const getContactUsUrl = (signal: LockedSignal) => {
+    const details = [
+      'Locked signal request from Company profile',
+      `Signal: ${signal.name} (${signal.id})`,
+      `ICP name: ${formData.name || 'Not provided'}`,
+      `Company type: ${formData.companyType || 'Not provided'}`,
+      `Company sizes: ${formData.companySizes.length > 0 ? formData.companySizes.join(', ') : 'Not provided'}`,
+      `Therapeutic areas: ${formData.therapeuticAreas.length > 0 ? formData.therapeuticAreas.join(', ') : 'Not provided'}`,
+      `Modalities: ${formData.modalities.length > 0 ? formData.modalities.join(', ') : 'Not provided'}`,
+      `Development stages: ${formData.developmentStages.length > 0 ? formData.developmentStages.join(', ') : 'Not provided'}`,
+      `Funding stages: ${formData.fundingStages.length > 0 ? formData.fundingStages.join(', ') : 'Not provided'}`,
+    ].join('\n');
+
+    const params = new URLSearchParams({
+      notes: details,
+      description: details,
+    });
+
+    return `${CAL_BOOKING_URL}?${params.toString()}`;
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -707,6 +784,41 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
                     )}
                   </div>
 
+                  <div>
+                    <div className="space-y-3">
+                      <div>
+                        <p className="text-xs text-[#9CA3AF] mb-2">Connect your tracking</p>
+                        <div className="flex flex-wrap gap-2">
+                          {trackingLockedSignals.map((signal) => (
+                            <button
+                              key={signal.id}
+                              type="button"
+                              onClick={() => handleLockedSignalClick(signal)}
+                              className="px-3 py-1.5 rounded-full text-sm transition-colors bg-gray-100 text-gray-700 hover:bg-gray-200"
+                            >
+                              {getSignalDisplayName(signal.id, signal.name)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-xs text-[#9CA3AF] mb-2">Connect your CRM</p>
+                        <div className="flex flex-wrap gap-2">
+                          {crmLockedSignals.map((signal) => (
+                            <button
+                              key={signal.id}
+                              type="button"
+                              onClick={() => handleLockedSignalClick(signal)}
+                              className="px-3 py-1.5 rounded-full text-sm transition-colors bg-gray-100 text-gray-700 hover:bg-gray-200"
+                            >
+                              {getSignalDisplayName(signal.id, signal.name)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* See all signals toggle */}
                   <button
                     type="button"
@@ -732,20 +844,21 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
                           <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">{category}</h4>
                           <div className="flex flex-wrap gap-2">
                             {allSignals
-                              .filter(s => s.category === category)
+                              .filter(
+                                (s) => s.category === category && !formData.signals.includes(s.id)
+                              )
                               .map((signal) => {
-                                const isSelected = formData.signals.includes(signal.id);
-                                const isDisabled = !isSelected && formData.signals.length >= 5;
+                                const isDisabled = formData.signals.length >= 5;
                                 return (
                                   <button
                                     key={signal.id}
                                     type="button"
-                                    onClick={() => !isDisabled && handleSignalToggle(signal.id)}
+                                    onClick={() => {
+                                      if (!isDisabled) handleSignalToggle(signal.id);
+                                    }}
                                     disabled={isDisabled}
                                     className={`px-3 py-1.5 rounded-full text-sm transition-colors ${
-                                      isSelected
-                                        ? 'bg-arcova-teal text-white'
-                                        : isDisabled
+                                      isDisabled
                                         ? 'bg-gray-100 text-gray-300 cursor-not-allowed'
                                         : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                                     }`}
@@ -950,6 +1063,36 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
           </div>
         </form>
       </div>
+
+      {lockedSignalModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-8 max-w-md mx-4 text-center">
+            <h2 className="text-2xl font-semibold text-gray-900 mb-2">
+              Unlock {lockedSignalModal.name}
+            </h2>
+            <p className="text-gray-600 mb-6">
+              This signal requires a custom integration with your tracking setup or CRM. Get in touch and we'll help you set it up.
+            </p>
+            <div className="flex flex-col gap-3 items-center">
+              <a
+                href={getContactUsUrl(lockedSignalModal)}
+                target="_blank"
+                rel="noreferrer"
+                className="w-full sm:w-auto px-6 py-2 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors"
+              >
+                Contact us
+              </a>
+              <button
+                type="button"
+                onClick={() => setLockedSignalModal(null)}
+                className="text-gray-500 hover:text-gray-700 text-sm"
+              >
+                Maybe later
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
