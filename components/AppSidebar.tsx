@@ -9,6 +9,7 @@ import {
   Target, 
   UserCircle,
   Radio, 
+  FileUp,
   Users, 
   Settings, 
   User,
@@ -26,6 +27,11 @@ const navigation: NavItem[] = [
     name: 'Dashboard',
     href: '/dashboard',
     icon: LayoutDashboard,
+  },
+  {
+    name: 'Import',
+    href: '/import',
+    icon: FileUp,
   },
   {
     name: 'Signals',
@@ -64,6 +70,7 @@ export default function AppSidebar() {
   const [showCompaniesDot, setShowCompaniesDot] = useState(false);
   const [showPersonasDot, setShowPersonasDot] = useState(false);
   const [showMyProfileDot, setShowMyProfileDot] = useState(false);
+  const [showImportDot, setShowImportDot] = useState(false);
 
   const isActive = (href: string) => {
     if (pathname === href) return true;
@@ -74,10 +81,11 @@ export default function AppSidebar() {
   useEffect(() => {
     const loadCompletionStatus = async () => {
       try {
-        const [companiesRes, personasRes, profileRes] = await Promise.all([
+        const [companiesRes, personasRes, profileRes, importRes] = await Promise.all([
           fetch('/api/companies'),
           fetch('/api/contacts'),
           fetch('/api/user-company-profile'),
+          fetch('/api/import-ready'),
         ]);
 
         if (companiesRes.ok) {
@@ -102,6 +110,11 @@ export default function AppSidebar() {
           );
           setShowMyProfileDot(!hasCompletedProfile);
         }
+
+        if (importRes.ok) {
+          const importResult = await importRes.json();
+          setShowImportDot(Boolean(importResult.ready));
+        }
       } catch (error) {
         console.error('Error loading sidebar completion status:', error);
       }
@@ -114,6 +127,7 @@ export default function AppSidebar() {
     if (itemName === 'Companies') return showCompaniesDot;
     if (itemName === 'Personas') return showPersonasDot;
     if (itemName === 'My Profile') return showMyProfileDot;
+    if (itemName === 'Import') return showImportDot;
     return false;
   };
 

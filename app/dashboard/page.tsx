@@ -7,7 +7,7 @@ import AppSidebar from '@/components/AppSidebar';
 import { supabase } from '@/lib/supabase';
 import { getSignalDisplayName } from '@/lib/signal-display-names';
 type SetupStep = {
-  id: 'profile' | 'companies' | 'personas' | 'signals';
+  id: 'profile' | 'companies' | 'personas' | 'import' | 'signals';
   label: string;
   completed: boolean;
   actionPath: string;
@@ -101,6 +101,7 @@ export default function DashboardPage() {
   const [newSignals, setNewSignals] = useState<SignalEvent[]>([]);
   const [topLeads, setTopLeads] = useState<TopLead[]>([]);
   const [followUpReminders, setFollowUpReminders] = useState<FollowUpReminder[]>([]);
+  const [showImportReadyBanner, setShowImportReadyBanner] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -113,16 +114,23 @@ export default function DashboardPage() {
       if (!user) return;
 
       try {
-        const [{ data: profileData, error: profileError }, { data: icpsData, error: icpsError }, { data: contactsData, error: contactsError }] =
+        const [
+          { data: profileData, error: profileError },
+          { data: icpsData, error: icpsError },
+          { data: contactsData, error: contactsError },
+          { data: importData, error: importError },
+        ] =
           await Promise.all([
             supabase.from('company_analyses').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
             supabase.from('icps').select('*').eq('user_id', user.id).order('updated_at', { ascending: false }),
             supabase.from('contacts').select('*').eq('user_id', user.id).order('updated_at', { ascending: false }),
+            supabase.from('raw_uploads').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
           ]);
 
         if (profileError) throw profileError;
         if (icpsError) throw icpsError;
         if (contactsError) throw contactsError;
+        if (importError) throw importError;
 
         const icps = (icpsData || []) as IcpRecord[];
         const contacts = (contactsData || []) as ContactRecord[];
@@ -130,12 +138,14 @@ export default function DashboardPage() {
         const profileComplete = !!profileData;
         const companiesComplete = icps.length > 0;
         const personasComplete = contacts.length > 0;
+        const importComplete = !!importData;
         const signalsComplete = icps.some((icp) => hasSignals(icp.signals)) || contacts.some((contact) => hasSignals(contact.signals));
 
         const checklistSteps: SetupStep[] = [
           { id: 'profile', label: 'My Profile', completed: profileComplete, actionPath: '/my-profile' },
           { id: 'companies', label: 'Target Companies', completed: companiesComplete, actionPath: '/companies' },
           { id: 'personas', label: 'Buyer Personas', completed: personasComplete, actionPath: '/personas' },
+          { id: 'import', label: 'Upload your CSV', completed: importComplete, actionPath: '/import' },
           { id: 'signals', label: 'Signals', completed: signalsComplete, actionPath: '/companies' },
         ];
         setSteps(checklistSteps);
@@ -243,6 +253,22 @@ export default function DashboardPage() {
     fetchDashboardData();
   }, [user]);
 
+  useEffect(() => {
+    const loadImportReadyStatus = async () => {
+      if (!user) return;
+      try {
+        const response = await fetch('/api/import-ready');
+        if (!response.ok) return;
+        const result = await response.json();
+        setShowImportReadyBanner(Boolean(result.ready));
+      } catch (error) {
+        console.error('Error loading import-ready status:', error);
+      }
+    };
+
+    loadImportReadyStatus();
+  }, [user]);
+
   if (loading || isLoadingDashboard) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -254,7 +280,7 @@ export default function DashboardPage() {
   if (!user) return null;
 
   const completedSteps = steps.filter((step) => step.completed).length;
-  const isLiveMode = completedSteps === 4;
+  const isLiveMode = completedSteps === steps.length && steps.length > 0;
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -264,6 +290,18 @@ export default function DashboardPage() {
         <div className="flex-1 overflow-auto p-6">
           <div className="max-w-6xl mx-auto">
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8">
+              {showImportReadyBanner && (
+                <div className="mb-6 rounded-lg border border-arcova-teal/30 bg-arcova-teal/10 p-4 flex items-center justify-between gap-4">
+                  <p className="text-sm font-medium text-gray-900">Your contacts are ready - view your leads.</p>
+                  <button
+                    onClick={() => router.push('/results')}
+                    className="text-sm font-semibold text-arcova-teal hover:opacity-80"
+                  >
+                    View leads
+                  </button>
+                </div>
+              )}
+
               {!isLiveMode ? (
                 <div>
                   <h1 className="text-3xl font-bold text-gray-900">Welcome to Arcova</h1>
@@ -271,12 +309,12 @@ export default function DashboardPage() {
 
                   <div className="mt-6 mb-8">
                     <div className="flex items-center justify-between mb-2">
-                      <p className="text-sm font-medium text-gray-700">{completedSteps} of 4 steps complete</p>
+                      <p className="text-sm font-medium text-gray-700">{completedSteps} of {steps.length} steps complete</p>
                     </div>
                     <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
                       <div
                         className="h-full rounded-full transition-all duration-300"
-                        style={{ width: `${(completedSteps / 4) * 100}%`, backgroundColor: TEAL }}
+                        style={{ width: `${steps.length > 0 ? (completedSteps / steps.length) * 100 : 0}%`, backgroundColor: TEAL }}
                       />
                     </div>
                   </div>
