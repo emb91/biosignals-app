@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 import { assignFunctionWeights } from '@/lib/signal-weights';
+import { rescoreAllContactsForUser } from '@/lib/rescore';
 
 export async function GET() {
   try {
@@ -16,7 +17,7 @@ export async function GET() {
     }
 
     const { data, error } = await supabase
-      .from('contacts')
+      .from('personas')
       .select('*')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false });
@@ -57,7 +58,7 @@ export async function POST(request: Request) {
     // Check if a contact profile already exists for this company
     if (body.icpId) {
       const { data: existingContact } = await supabase
-        .from('contacts')
+        .from('personas')
         .select('id')
         .eq('user_id', user.id)
         .eq('icp_id', body.icpId)
@@ -87,7 +88,7 @@ export async function POST(request: Request) {
     };
 
     const { data, error } = await supabase
-      .from('contacts')
+      .from('personas')
       .insert(contactData)
       .select()
       .single();
@@ -99,6 +100,11 @@ export async function POST(request: Request) {
         { status: 500 }
       );
     }
+
+    // Fire-and-forget rescore: new persona means existing contacts need re-evaluation.
+    rescoreAllContactsForUser(user.id).catch((err) =>
+      console.error('[contacts POST] Background rescore failed:', err)
+    );
 
     return NextResponse.json({ data });
   } catch (error) {

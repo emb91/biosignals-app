@@ -123,7 +123,7 @@ export default function DashboardPage() {
           await Promise.all([
             supabase.from('company_analyses').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
             supabase.from('icps').select('*').eq('user_id', user.id).order('updated_at', { ascending: false }),
-            supabase.from('contacts').select('*').eq('user_id', user.id).order('updated_at', { ascending: false }),
+            supabase.from('personas').select('*').eq('user_id', user.id).order('updated_at', { ascending: false }),
             supabase.from('raw_uploads').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
           ]);
 

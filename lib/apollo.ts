@@ -1,0 +1,351 @@
+type ApolloLookupInput = {
+  full_name?: string;
+  first_name?: string;
+  last_name?: string;
+  company_name?: string;
+  company_domain?: string;
+  job_title?: string;
+  email?: string;
+  linkedin_url?: string;
+  location?: string;
+};
+
+type ApolloEmployment = {
+  current?: boolean | null;
+  end_date?: string | null;
+  organization_id?: string | null;
+  organization_name?: string | null;
+  start_date?: string | null;
+  title?: string | null;
+};
+
+type ApolloOrganization = {
+  id?: string;
+  name?: string;
+  website_url?: string | null;
+  linkedin_url?: string | null;
+  primary_domain?: string | null;
+  industry?: string | null;
+  estimated_num_employees?: number | null;
+  founded_year?: number | null;
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
+  short_description?: string | null;
+  total_funding?: number | null;
+  latest_funding_round_date?: string | null;
+  latest_funding_stage?: string | null;
+  funding_events?: unknown[] | null;
+  technology_names?: string[] | null;
+  current_technologies?: unknown[] | null;
+  organization_headcount_six_month_growth?: number | null;
+  organization_headcount_twelve_month_growth?: number | null;
+  organization_headcount_twenty_four_month_growth?: number | null;
+};
+
+type ApolloPerson = {
+  id?: string;
+  first_name?: string | null;
+  last_name?: string | null;
+  name?: string | null;
+  linkedin_url?: string | null;
+  title?: string | null;
+  photo_url?: string | null;
+  headline?: string | null;
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
+  formatted_address?: string | null;
+  email?: string | null;
+  email_status?: string | null;
+  seniority?: string | null;
+  employment_history?: ApolloEmployment[] | null;
+  organization?: ApolloOrganization | null;
+};
+
+type ApolloMatchResponse = {
+  person?: ApolloPerson | null;
+  request_id?: string | number;
+};
+
+type ApolloLookupRoute =
+  | 'linkedin'
+  | 'email_domain'
+  | 'email_name'
+  | 'email'
+  | 'name_domain'
+  | 'name_organization'
+  | 'unknown';
+
+export type ApolloEnrichmentResult = {
+  full_name?: string;
+  first_name?: string;
+  last_name?: string;
+  email?: string;
+  linkedin_url?: string;
+  profile_photo_url?: string;
+  job_title?: string;
+  headline?: string;
+  location?: string;
+  city?: string;
+  country?: string;
+  company_name?: string;
+  company_domain?: string;
+  company_linkedin_url?: string;
+  company_description?: string;
+  company_industry?: string;
+  company_employee_count?: number;
+  company_founded_year?: number;
+  company_hq_city?: string;
+  company_hq_country?: string;
+  company_funding_stage?: string;
+  company_total_funding_usd?: number;
+  company_latest_funding_date?: string;
+  raw_person_response?: unknown;
+  raw_person?: unknown;
+  raw_company?: unknown;
+  apollo_person_response_raw?: unknown;
+  apollo_person_raw?: unknown;
+  apollo_organization_raw?: unknown;
+  apollo_lookup_metadata?: {
+    provider: 'apollo';
+    lookup_route: ApolloLookupRoute;
+    submitted_fields: string[];
+    matched_role_source?: 'employment_history_company_match' | 'top_level_person' | null;
+    email_status?: string | null;
+    request_id?: string | number | null;
+  };
+};
+
+function getApolloApiKey(): string {
+  const apiKey = process.env.APOLLO_API_KEY;
+  if (!apiKey) {
+    throw new Error('Missing APOLLO_API_KEY');
+  }
+  return apiKey;
+}
+
+function normalizeDomain(value?: string | null): string | undefined {
+  if (!value) return undefined;
+  return value.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '');
+}
+
+function normalizeString(value?: string | null): string {
+  return (value || '').trim().toLowerCase();
+}
+
+function fullNameFromInput(input: ApolloLookupInput): string {
+  if (input.full_name?.trim()) return input.full_name.trim();
+  return `${input.first_name || ''} ${input.last_name || ''}`.trim();
+}
+
+function splitFullName(fullName?: string | null): { first_name?: string; last_name?: string } {
+  const value = (fullName || '').trim();
+  if (!value) return {};
+
+  const tokens = value.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return {};
+  if (tokens.length === 1) return { first_name: tokens[0] };
+
+  return {
+    first_name: tokens[0],
+    last_name: tokens.slice(1).join(' '),
+  };
+}
+
+function normalizeNameToken(value?: string | null): string {
+  return normalizeString(value).replace(/[^a-z]/g, '');
+}
+
+function resolveInputName(input: ApolloLookupInput) {
+  const full_name = fullNameFromInput(input) || undefined;
+  const split = splitFullName(full_name);
+
+  return {
+    full_name,
+    first_name: input.first_name?.trim() || split.first_name,
+    last_name: input.last_name?.trim() || split.last_name,
+  };
+}
+
+function resolveApolloName(person?: ApolloPerson | null) {
+  const full_name = person?.name?.trim() || undefined;
+  const split = splitFullName(full_name);
+
+  return {
+    full_name,
+    first_name: person?.first_name?.trim() || split.first_name,
+    last_name: person?.last_name?.trim() || split.last_name,
+  };
+}
+
+function shouldPreserveInputName(
+  inputName: ReturnType<typeof resolveInputName>,
+  apolloName: ReturnType<typeof resolveApolloName>
+): boolean {
+  if (!inputName.full_name || !inputName.last_name || !apolloName.full_name || !apolloName.last_name) {
+    return false;
+  }
+
+  const inputLast = normalizeNameToken(inputName.last_name);
+  const apolloLast = normalizeNameToken(apolloName.last_name);
+
+  if (!inputLast || !apolloLast) return false;
+
+  return inputLast.length > 1 && apolloLast.length === 1 && inputLast.startsWith(apolloLast);
+}
+
+function companyMatches(candidate?: string | null, input?: string | null): boolean {
+  const candidateValue = normalizeString(candidate);
+  const inputValue = normalizeString(input);
+  if (!candidateValue || !inputValue) return false;
+  return candidateValue === inputValue || candidateValue.includes(inputValue) || inputValue.includes(candidateValue);
+}
+
+function selectRelevantEmployment(person: ApolloPerson, input: ApolloLookupInput): ApolloEmployment | null {
+  const history = person.employment_history || [];
+  const companyName = input.company_name;
+
+  if (companyName) {
+    const matchingCurrent = history.find(
+      (job) => job.current && companyMatches(job.organization_name, companyName)
+    );
+    if (matchingCurrent) return matchingCurrent;
+
+    const matchingAny = history.find((job) => companyMatches(job.organization_name, companyName));
+    if (matchingAny) return matchingAny;
+  }
+
+  return history.find((job) => job.current && job.title) || null;
+}
+
+function buildMatchParams(input: ApolloLookupInput): { params: URLSearchParams; submittedFields: string[] } {
+  const params = new URLSearchParams();
+  const submittedFields: string[] = [];
+  const fullName = fullNameFromInput(input);
+  const domain = normalizeDomain(input.company_domain);
+
+  const addParam = (key: string, value?: string | null) => {
+    if (!value?.trim()) return;
+    params.set(key, value.trim());
+    submittedFields.push(key);
+  };
+
+  addParam('email', input.email);
+  addParam('linkedin_url', input.linkedin_url);
+  addParam('name', fullName);
+  addParam('domain', domain);
+  addParam('organization_name', input.company_name);
+
+  return { params, submittedFields };
+}
+
+function getLookupRoute(input: ApolloLookupInput): ApolloLookupRoute {
+  const hasEmail = Boolean(input.email?.trim());
+  const hasLinkedin = Boolean(input.linkedin_url?.trim());
+  const hasName = Boolean(fullNameFromInput(input));
+  const hasDomain = Boolean(normalizeDomain(input.company_domain));
+  const hasCompanyName = Boolean(input.company_name?.trim());
+
+  if (hasLinkedin) return 'linkedin';
+  if (hasEmail && hasDomain) return 'email_domain';
+  if (hasEmail && hasName) return 'email_name';
+  if (hasEmail) return 'email';
+  if (hasName && hasDomain) return 'name_domain';
+  if (hasName && hasCompanyName) return 'name_organization';
+  return 'unknown';
+}
+
+async function matchPerson(input: ApolloLookupInput) {
+  const { params, submittedFields } = buildMatchParams(input);
+  if (submittedFields.length === 0) {
+    return {
+      payload: null,
+      person: null,
+      submittedFields,
+    };
+  }
+
+  const url = `https://api.apollo.io/api/v1/people/match?${params.toString()}`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'x-api-key': getApolloApiKey(),
+      'cache-control': 'no-cache',
+    },
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '');
+    throw new Error(`Apollo people/match failed (${response.status}): ${errorText.slice(0, 300)}`);
+  }
+
+  const payload = (await response.json()) as ApolloMatchResponse;
+  return {
+    payload,
+    person: payload.person || null,
+    submittedFields,
+  };
+}
+
+function joinLocation(...parts: Array<string | null | undefined>): string | undefined {
+  const cleaned = parts.map((part) => part?.trim()).filter((part): part is string => Boolean(part));
+  return cleaned.length > 0 ? cleaned.join(', ') : undefined;
+}
+
+export async function enrichContactWithApollo(input: ApolloLookupInput): Promise<ApolloEnrichmentResult> {
+  const match = await matchPerson(input);
+  const person = match.person;
+  const organization = person?.organization || null;
+  const relevantEmployment = person ? selectRelevantEmployment(person, input) : null;
+  const inputName = resolveInputName(input);
+  const apolloName = resolveApolloName(person);
+  const preserveInputName = shouldPreserveInputName(inputName, apolloName);
+  const matchedRoleSource = relevantEmployment
+    ? 'employment_history_company_match'
+    : person
+    ? 'top_level_person'
+    : null;
+
+  return {
+    full_name: preserveInputName ? inputName.full_name : apolloName.full_name || inputName.full_name,
+    first_name: preserveInputName ? inputName.first_name : apolloName.first_name || inputName.first_name,
+    last_name: preserveInputName ? inputName.last_name : apolloName.last_name || inputName.last_name,
+    email: person?.email || input.email,
+    linkedin_url: person?.linkedin_url || input.linkedin_url,
+    profile_photo_url: person?.photo_url || undefined,
+    job_title: relevantEmployment?.title || person?.title || input.job_title,
+    headline: person?.headline || undefined,
+    location: person?.formatted_address || input.location,
+    city: person?.city || undefined,
+    country: person?.country || undefined,
+    company_name: relevantEmployment?.organization_name || organization?.name || input.company_name,
+    company_domain: normalizeDomain(organization?.primary_domain || input.company_domain),
+    company_linkedin_url: organization?.linkedin_url || undefined,
+    company_description: organization?.short_description || undefined,
+    company_industry: organization?.industry || undefined,
+    company_employee_count: organization?.estimated_num_employees || undefined,
+    company_founded_year: organization?.founded_year || undefined,
+    company_hq_city: organization?.city || undefined,
+    company_hq_country: organization?.country || undefined,
+    company_funding_stage: organization?.latest_funding_stage || undefined,
+    company_total_funding_usd: organization?.total_funding || undefined,
+    company_latest_funding_date: organization?.latest_funding_round_date || undefined,
+    raw_person_response: match.payload,
+    raw_person: person,
+    raw_company: organization,
+    apollo_person_response_raw: match.payload,
+    apollo_person_raw: person,
+    apollo_organization_raw: organization,
+    apollo_lookup_metadata: {
+      provider: 'apollo',
+      lookup_route: getLookupRoute(input),
+      submitted_fields: match.submittedFields,
+      matched_role_source: matchedRoleSource,
+      email_status: person?.email_status ?? null,
+      request_id: match.payload?.request_id ?? null,
+    },
+  };
+}

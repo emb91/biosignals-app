@@ -17,7 +17,7 @@ export async function GET() {
       .from('raw_uploads')
       .select('id', { count: 'exact', head: true })
       .eq('user_id', user.id)
-      .eq('status', 'complete');
+      .eq('status', 'enriched');
 
     if (error) {
       console.error('Error loading import-ready status:', error);
