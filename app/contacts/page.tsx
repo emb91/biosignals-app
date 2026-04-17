@@ -132,7 +132,7 @@ export default function ContactsPage() {
             {/* Header */}
             <div className="mb-6">
               <h1 className="text-2xl font-bold text-gray-900">Who do you sell to?</h1>
-              <p className="text-gray-600 mt-1">Define the types of people you typically target. We’ll use these to surface the right contacts at your target companies.</p>
+              <p className="text-gray-600 mt-1">Define the people you typically sell to. We’ll characterize these groups of people (personas) here, and use these profiles to surface the right contacts at your target companies.</p>
             </div>
 
             {/* Contacts List */}

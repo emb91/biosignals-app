@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 import { assignFunctionWeights } from '@/lib/signal-weights';
+import { rescoreAllContactsForUser } from '@/lib/rescore';
 
 export async function GET(
   request: Request,
@@ -20,7 +21,7 @@ export async function GET(
     }
 
     const { data, error } = await supabase
-      .from('contacts')
+      .from('personas')
       .select('*')
       .eq('id', id)
       .eq('user_id', user.id)
@@ -83,7 +84,7 @@ export async function PUT(
     };
 
     const { data, error } = await supabase
-      .from('contacts')
+      .from('personas')
       .update(contactData)
       .eq('id', id)
       .eq('user_id', user.id)
@@ -97,6 +98,12 @@ export async function PUT(
         { status: 500 }
       );
     }
+
+    // Fire-and-forget rescore: persona changed, so all contacts need re-evaluation.
+    // We don't await this — the UI can show stale scores briefly while rescoring runs.
+    rescoreAllContactsForUser(user.id).catch((err) =>
+      console.error('[contacts PUT] Background rescore failed:', err)
+    );
 
     return NextResponse.json({ data });
   } catch (error) {
@@ -126,7 +133,7 @@ export async function DELETE(
     }
 
     const { error } = await supabase
-      .from('contacts')
+      .from('personas')
       .delete()
       .eq('id', id)
       .eq('user_id', user.id);

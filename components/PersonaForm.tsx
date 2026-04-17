@@ -19,36 +19,15 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { BUSINESS_AREA_OPTIONS, SENIORITY_LEVEL_OPTIONS } from '@/lib/arcova-taxonomy';
 import { getSignalDisplayName } from '@/lib/signal-display-names';
 import { getRandomLockedSignals, type LockedSignal } from '@/lib/locked-signals';
 
 // --- Constants ---
 
-const FUNCTION_OPTIONS = [
-  "Executive Leadership",
-  "Business Development & Partnerships",
-  "Clinical Operations",
-  "Research & Development",
-  "Regulatory Affairs",
-  "Manufacturing & CMC",
-  "Medical Affairs",
-  "Commercial & Sales Operations",
-  "Procurement",
-  "Strategy & Corporate Development",
-  "Lab Operations",
-  "Technology & Systems",
-  "AI & Machine Learning",
-  "Marketing"
-];
+const FUNCTION_OPTIONS: string[] = [...BUSINESS_AREA_OPTIONS];
 
-const SENIORITY_OPTIONS = [
-  "C-Level",
-  "VP / SVP",
-  "Director",
-  "Head of / Senior Manager",
-  "Manager",
-  "Individual Contributor"
-];
+const SENIORITY_OPTIONS: string[] = [...SENIORITY_LEVEL_OPTIONS];
 const CAL_BOOKING_URL = 'https://cal.com/emma-arcova/45-min-meeting';
 const ENGAGEMENT_LOCKED_SIGNAL_IDS = [
   'downloaded_your_content',
