@@ -60,6 +60,15 @@ type MinimalSupabase = {
 
 const normalize = (value: string | null | undefined) => (value || '').trim().toLowerCase();
 
+function isMissingColumnError(error: unknown): boolean {
+  const message =
+    error && typeof error === 'object' && 'message' in error
+      ? String((error as { message?: unknown }).message || '')
+      : '';
+
+  return message.includes('column') && message.includes('does not exist');
+}
+
 function isDuplicateContact(record: EnrichedImportRecord, existing: ExistingContact): boolean {
   const rLinkedin = normalize(record.linkedin_url);
   const rEmail = normalize(record.email);
@@ -217,6 +226,13 @@ export async function ingestEnrichedRecords(
         apollo_person_raw: record.apollo_person_raw ?? null,
         apollo_organization_raw: record.apollo_organization_raw ?? null,
         apollo_lookup_metadata: record.apollo_lookup_metadata ?? null,
+        contact_discovery_status: 'completed',
+        email_status: record.email ? 'candidate' : 'missing',
+        email_status_reasoning: record.email
+          ? 'Candidate email from contact discovery. Current company alignment not resolved yet.'
+          : 'No email returned during contact discovery.',
+        linkedin_resolution_status: 'pending',
+        profile_enrichment_status: 'pending',
         fit_score: 0,
         fit_score_reasoning: 'Not scored yet.',
         fit_score_matched_on: [],
@@ -228,12 +244,30 @@ export async function ingestEnrichedRecords(
         updated_at: new Date().toISOString(),
       };
 
-      const upsertResult = (await supabase
+      let upsertResult = (await supabase
         .from('contacts')
         .upsert(contactPayload, {
           onConflict: 'user_id,linkedin_url',
           ignoreDuplicates: false,
         })) as { error?: unknown };
+
+      if (upsertResult.error && isMissingColumnError(upsertResult.error)) {
+        const {
+          contact_discovery_status,
+          email_status,
+          email_status_reasoning,
+          linkedin_resolution_status,
+          profile_enrichment_status,
+          ...legacyCompatiblePayload
+        } = contactPayload;
+
+        upsertResult = (await supabase
+          .from('contacts')
+          .upsert(legacyCompatiblePayload, {
+            onConflict: 'user_id,linkedin_url',
+            ignoreDuplicates: false,
+          })) as { error?: unknown };
+      }
 
       if (upsertResult.error) {
         throw upsertResult.error;

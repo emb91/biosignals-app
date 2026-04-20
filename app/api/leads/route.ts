@@ -1,6 +1,15 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 
+function isMissingColumnError(error: unknown): boolean {
+  const message =
+    error && typeof error === 'object' && 'message' in error
+      ? String((error as { message?: unknown }).message || '')
+      : '';
+
+  return message.includes('column') && message.includes('does not exist');
+}
+
 export async function GET(request: Request) {
   try {
     const supabase = await createClient();
@@ -20,25 +29,42 @@ export async function GET(request: Request) {
 
     const offset = (page - 1) * pageSize;
 
-    let query = supabase
-      .from('contacts')
-      .select(
-        'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, email, linkedin_url, fit_score, intent_score, priority_score, source, created_at, updated_at',
-        { count: 'exact' }
-      )
-      .eq('user_id', user.id);
+    const runQuery = (selectClause: string) => {
+      let query = supabase
+        .from('contacts')
+        .select(selectClause, { count: 'exact' })
+        .eq('user_id', user.id);
 
-    if (search) {
-      query = query.or(
-        `full_name.ilike.%${search}%,company_name.ilike.%${search}%,job_title.ilike.%${search}%`
-      );
+      if (search) {
+        query = query.or(
+          `full_name.ilike.%${search}%,company_name.ilike.%${search}%,job_title.ilike.%${search}%`
+        );
+      }
+
+      return query
+        .order('priority_score', { ascending: false, nullsFirst: false })
+        .order('fit_score', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false })
+        .range(offset, offset + pageSize - 1);
+    };
+
+    const primarySelect =
+      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, email_status, email_status_reasoning, linkedin_url, profile_photo_url, headline, location, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, fit_score, intent_score, priority_score, source, created_at, updated_at';
+    const fallbackSelect =
+      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, linkedin_url, profile_photo_url, headline, location, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, fit_score, intent_score, priority_score, source, created_at, updated_at';
+
+    let { data, error, count } = await runQuery(primarySelect);
+
+    if (error && isMissingColumnError(error)) {
+      const fallbackResult = await runQuery(fallbackSelect);
+      data = (fallbackResult.data || []).map((row) => ({
+        ...row,
+        email_status: null,
+        email_status_reasoning: null,
+      }));
+      error = fallbackResult.error;
+      count = fallbackResult.count;
     }
-
-    const { data, error, count } = await query
-      .order('priority_score', { ascending: false, nullsFirst: false })
-      .order('fit_score', { ascending: false, nullsFirst: false })
-      .order('created_at', { ascending: false })
-      .range(offset, offset + pageSize - 1);
 
     if (error) {
       console.error('Error fetching leads:', error);

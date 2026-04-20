@@ -111,7 +111,9 @@ export type ApolloEnrichmentResult = {
     provider: 'apollo';
     lookup_route: ApolloLookupRoute;
     submitted_fields: string[];
-    matched_role_source?: 'employment_history_company_match' | 'top_level_person' | null;
+    matched_role_source?: null;
+    role_resolution_status?: 'pending';
+    employment_history_count?: number;
     email_status?: string | null;
     request_id?: string | number | null;
   };
@@ -195,30 +197,6 @@ function shouldPreserveInputName(
   return inputLast.length > 1 && apolloLast.length === 1 && inputLast.startsWith(apolloLast);
 }
 
-function companyMatches(candidate?: string | null, input?: string | null): boolean {
-  const candidateValue = normalizeString(candidate);
-  const inputValue = normalizeString(input);
-  if (!candidateValue || !inputValue) return false;
-  return candidateValue === inputValue || candidateValue.includes(inputValue) || inputValue.includes(candidateValue);
-}
-
-function selectRelevantEmployment(person: ApolloPerson, input: ApolloLookupInput): ApolloEmployment | null {
-  const history = person.employment_history || [];
-  const companyName = input.company_name;
-
-  if (companyName) {
-    const matchingCurrent = history.find(
-      (job) => job.current && companyMatches(job.organization_name, companyName)
-    );
-    if (matchingCurrent) return matchingCurrent;
-
-    const matchingAny = history.find((job) => companyMatches(job.organization_name, companyName));
-    if (matchingAny) return matchingAny;
-  }
-
-  return history.find((job) => job.current && job.title) || null;
-}
-
 function buildMatchParams(input: ApolloLookupInput): { params: URLSearchParams; submittedFields: string[] } {
   const params = new URLSearchParams();
   const submittedFields: string[] = [];
@@ -299,40 +277,35 @@ export async function enrichContactWithApollo(input: ApolloLookupInput): Promise
   const match = await matchPerson(input);
   const person = match.person;
   const organization = person?.organization || null;
-  const relevantEmployment = person ? selectRelevantEmployment(person, input) : null;
+  const employmentHistory = person?.employment_history || [];
   const inputName = resolveInputName(input);
   const apolloName = resolveApolloName(person);
   const preserveInputName = shouldPreserveInputName(inputName, apolloName);
-  const matchedRoleSource = relevantEmployment
-    ? 'employment_history_company_match'
-    : person
-    ? 'top_level_person'
-    : null;
 
   return {
     full_name: preserveInputName ? inputName.full_name : apolloName.full_name || inputName.full_name,
     first_name: preserveInputName ? inputName.first_name : apolloName.first_name || inputName.first_name,
     last_name: preserveInputName ? inputName.last_name : apolloName.last_name || inputName.last_name,
     email: person?.email || input.email,
-    linkedin_url: person?.linkedin_url || input.linkedin_url,
+    linkedin_url: person?.linkedin_url || undefined,
     profile_photo_url: person?.photo_url || undefined,
-    job_title: relevantEmployment?.title || person?.title || input.job_title,
+    job_title: undefined,
     headline: person?.headline || undefined,
     location: person?.formatted_address || input.location,
     city: person?.city || undefined,
     country: person?.country || undefined,
-    company_name: relevantEmployment?.organization_name || organization?.name || input.company_name,
-    company_domain: normalizeDomain(organization?.primary_domain || input.company_domain),
-    company_linkedin_url: organization?.linkedin_url || undefined,
-    company_description: organization?.short_description || undefined,
-    company_industry: organization?.industry || undefined,
-    company_employee_count: organization?.estimated_num_employees || undefined,
-    company_founded_year: organization?.founded_year || undefined,
-    company_hq_city: organization?.city || undefined,
-    company_hq_country: organization?.country || undefined,
-    company_funding_stage: organization?.latest_funding_stage || undefined,
-    company_total_funding_usd: organization?.total_funding || undefined,
-    company_latest_funding_date: organization?.latest_funding_round_date || undefined,
+    company_name: undefined,
+    company_domain: undefined,
+    company_linkedin_url: undefined,
+    company_description: undefined,
+    company_industry: undefined,
+    company_employee_count: undefined,
+    company_founded_year: undefined,
+    company_hq_city: undefined,
+    company_hq_country: undefined,
+    company_funding_stage: undefined,
+    company_total_funding_usd: undefined,
+    company_latest_funding_date: undefined,
     raw_person_response: match.payload,
     raw_person: person,
     raw_company: organization,
@@ -343,7 +316,9 @@ export async function enrichContactWithApollo(input: ApolloLookupInput): Promise
       provider: 'apollo',
       lookup_route: getLookupRoute(input),
       submitted_fields: match.submittedFields,
-      matched_role_source: matchedRoleSource,
+      matched_role_source: null,
+      role_resolution_status: 'pending',
+      employment_history_count: employmentHistory.length,
       email_status: person?.email_status ?? null,
       request_id: match.payload?.request_id ?? null,
     },

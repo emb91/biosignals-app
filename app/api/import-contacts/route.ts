@@ -1,6 +1,7 @@
 import { after, NextResponse } from 'next/server';
 import { enrichContact } from '@/lib/enrichment-provider';
 import { ingestEnrichedRecords, type EnrichedImportRecord } from '@/lib/import-ingestion';
+import { runContactResolutionPipelineForContact } from '@/lib/contact-resolution-pipeline';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { createClient } from '@/lib/supabase-server';
 
@@ -143,10 +144,15 @@ function parseLocation(location?: string) {
 
 function hasConfidentEnrichment(result: EnrichmentCandidate, fallback: NormalisedRow): boolean {
   const fullName = (result.full_name || fallback.full_name || '').trim();
-  const contactDetail = (result.email || fallback.email || result.linkedin_url || fallback.linkedin_url || '').trim();
-  const companySignal = (result.company_domain || result.company_name || fallback.company_domain || fallback.company_name || '').trim();
+  const contactDetail = (
+    result.email ||
+    fallback.email ||
+    result.linkedin_url ||
+    fallback.linkedin_url ||
+    ''
+  ).trim();
 
-  return Boolean(fullName && contactDetail && companySignal);
+  return Boolean(fullName && contactDetail);
 }
 
 async function refreshBatchProgress(
@@ -270,31 +276,14 @@ async function processQueuedRowsInBackground(params: {
           first_name: enrichmentResult.first_name || (rawData.first_name as string) || '',
           last_name: enrichmentResult.last_name || (rawData.last_name as string) || '',
           email: enrichmentResult.email || row.email || '',
-          linkedin_url: enrichmentResult.linkedin_url || row.linkedin_url || '',
+          // Apollo/Fiber output is the only pass-1 LinkedIn truth. Uploaded CSV LinkedIn stays in
+          // raw_data as a pass-2 hint and should not be promoted into contacts directly.
+          linkedin_url: enrichmentResult.linkedin_url || '',
           profile_photo_url: enrichmentResult.profile_photo_url,
-          job_title: enrichmentResult.job_title || (rawData.job_title as string) || '',
           headline: enrichmentResult.headline,
           location: finalLocation,
           city: parsedLocation.city || undefined,
           country: parsedLocation.country || undefined,
-          company_name: enrichmentResult.company_name || row.company_name || '',
-          company_domain: enrichmentResult.company_domain || (rawData.company_domain as string) || '',
-          company_linkedin_url:
-            enrichmentResult.company_linkedin_url || (rawData.company_linkedin_url as string) || '',
-          company_description: enrichmentResult.company_description,
-          company_industry: enrichmentResult.company_industry,
-          company_sub_industry: enrichmentResult.company_sub_industry,
-          company_employee_count: enrichmentResult.company_employee_count,
-          company_employee_range: enrichmentResult.company_employee_range,
-          company_founded_year: enrichmentResult.company_founded_year,
-          company_hq_city: enrichmentResult.company_hq_city,
-          company_hq_country: enrichmentResult.company_hq_country,
-          company_funding_stage: enrichmentResult.company_funding_stage,
-          company_total_funding_usd: enrichmentResult.company_total_funding_usd,
-          company_latest_funding_date: enrichmentResult.company_latest_funding_date,
-          company_therapeutic_areas: enrichmentResult.company_therapeutic_areas,
-          company_modalities: enrichmentResult.company_modalities,
-          company_clinical_stage: enrichmentResult.company_clinical_stage,
           raw_person_response: enrichmentResult.raw_person_response,
           raw_company_response: enrichmentResult.raw_company_response,
           raw_person: enrichmentResult.raw_person,
@@ -323,6 +312,24 @@ async function processQueuedRowsInBackground(params: {
         admin as unknown as Parameters<typeof ingestEnrichedRecords>[0],
         enrichedRecords
       );
+
+      const { data: insertedContacts } = await admin
+        .from('contacts')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('batch_id', batchId);
+
+      for (const contact of insertedContacts || []) {
+        const contactId = (contact as { id?: string }).id;
+        if (!contactId) continue;
+        await runContactResolutionPipelineForContact(
+          admin as unknown as Parameters<typeof runContactResolutionPipelineForContact>[0],
+          {
+            contactId,
+            userId,
+          }
+        );
+      }
     }
 
     await refreshBatchProgress(admin, batchId);
@@ -440,24 +447,34 @@ export async function POST(request: Request) {
       return true;
     });
 
+    const quotaHeldIds: string[] = [];
+    const rowsToEnrich = pendingRows;
+
     if (duplicateIds.length > 0) {
       await supabase.from('raw_uploads').update({ status: 'duplicate' }).in('id', duplicateIds);
     }
 
-    const pendingIds = pendingRows.map((row) => row.id as string);
+    if (quotaHeldIds.length > 0) {
+      await supabase
+        .from('raw_uploads')
+        .update({ status: 'failed', enriched_at: new Date().toISOString() })
+        .in('id', quotaHeldIds);
+    }
+
+    const pendingIds = rowsToEnrich.map((row) => row.id as string);
     if (pendingIds.length > 0) {
       await supabase.from('raw_uploads').update({ status: 'enriching' }).in('id', pendingIds);
     }
 
     await supabase
       .from('upload_batches')
-      .update({ duplicate_rows: duplicateIds.length })
+      .update({ duplicate_rows: duplicateIds.length, failed_rows: quotaHeldIds.length })
       .eq('id', batchId);
 
-    if (pendingRows.length === 0) {
+    if (rowsToEnrich.length === 0) {
       await refreshBatchProgress(createAdminClient(), batchId);
     } else {
-      const queuedRows = pendingRows.map((row) => ({
+      const queuedRows = rowsToEnrich.map((row) => ({
         id: row.id as string,
         full_name: row.full_name as string | null,
         email: row.email as string | null,
@@ -486,6 +503,7 @@ export async function POST(request: Request) {
       batchId,
       totalUploaded: rows.length,
       duplicatesRemoved: duplicateIds.length,
+      heldBackByQuota: quotaHeldIds.length,
       beingEnriched: pendingIds.length,
       complete: 0,
       failed: 0,
