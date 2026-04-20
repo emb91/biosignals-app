@@ -362,7 +362,7 @@ async function generateContactBio(params: {
     .map((e) => `- ${e.title || 'Unknown role'} at ${e.company_name || 'Unknown'} (${[e.start_date, e.end_date].filter(Boolean).join(' – ')})`)
     .join('\n');
 
-  const prompt = `You are writing a brief professional bio for a B2B sales team reviewing a prospect.
+  const prompt = `You are writing an ultra-concise prospect snapshot for a B2B sales team.
 
 Contact: ${fullName || 'Unknown'}
 Current role: ${currentTitle || '—'} at ${currentCompany || '—'}
@@ -370,18 +370,18 @@ LinkedIn headline: ${headline || '—'}
 Work history:
 ${historyText || '— No history available'}
 
-Write exactly 2–3 bullet points (plain text, no markdown bullet characters) that summarise:
-1. Who this person is professionally and what they do now
-2. Relevant background that makes them interesting as a prospect
-3. Any notable career arc or expertise
+Write exactly 3 bullet points (plain text, no markdown bullet characters, no labels). Each bullet must be 10–14 words maximum — tight, factual, telegraphic. Cover:
+1. Current role and focus
+2. Relevant prior background
+3. Why they are an interesting prospect
 
-Be concise, factual, and written for a salesperson doing pre-call research. Return only the bullet points, one per line, no preamble.`;
+Return only the 3 bullets, one per line, no preamble, no punctuation at end.`;
 
   try {
     const client = new Anthropic({ apiKey });
     const message = await client.messages.create({
       model: 'claude-haiku-4-5',
-      max_tokens: 300,
+      max_tokens: 120,
       messages: [{ role: 'user', content: prompt }],
     });
 
@@ -719,10 +719,12 @@ export async function runContactResolutionPipelineForContact(
       employmentHistory: resolved.employmentHistory,
     });
 
-    // Step 3b: company enrichment — scrape the company LinkedIn page if we have a URL
+    // Step 3b: company enrichment — once we have an Apify-resolved profile,
+    // use its current-company LinkedIn URL as the trigger for company scraping.
+    // Apollo/Apify alignment is retained as debug metadata only, not a gate.
     let companyFirmographics = resolved.firmographics;
     let apifyCompanyRaw: Record<string, unknown> | null = null;
-    if (resolved.currentCompanyLinkedinUrl && alignment.alignment !== 'low') {
+    if (resolved.currentCompanyLinkedinUrl) {
       try {
         apifyCompanyRaw = await runApifyCompanyEnrichment(resolved.currentCompanyLinkedinUrl);
         if (apifyCompanyRaw) {
@@ -755,15 +757,12 @@ export async function runContactResolutionPipelineForContact(
       resolvedCurrentCompanyDomain: resolvedDomainFromCompany,
     });
 
-    const companyId =
-      alignment.alignment !== 'low'
-        ? await upsertResolvedCompany(supabase, userId, {
-            companyName: resolved.currentCompanyName,
-            companyDomain: resolved.currentCompanyDomain,
-            linkedinUrl: resolved.currentCompanyLinkedinUrl,
-            firmographics: companyFirmographics,
-          })
-        : null;
+    const companyId = await upsertResolvedCompany(supabase, userId, {
+      companyName: resolved.currentCompanyName,
+      companyDomain: resolved.currentCompanyDomain,
+      linkedinUrl: resolved.currentCompanyLinkedinUrl,
+      firmographics: companyFirmographics,
+    });
 
     const profileEnrichmentStatus = alignment.alignment === 'low' ? 'ambiguous' : 'completed';
     const updatePayload: Record<string, unknown> = {
@@ -802,17 +801,15 @@ export async function runContactResolutionPipelineForContact(
       updated_at: new Date().toISOString(),
     };
 
-    if (alignment.alignment !== 'low') {
-      updatePayload.job_title = resolved.currentJobTitle;
-      updatePayload.company_name = resolved.currentCompanyName;
-      // Only overwrite company_domain if enrichment actually returned one.
-      if (resolvedDomainFromCompany) {
-        updatePayload.company_domain = resolvedDomainFromCompany;
-        updatePayload.resolved_current_company_domain = resolvedDomainFromCompany;
-      }
-      updatePayload.company_linkedin_url = resolved.currentCompanyLinkedinUrl;
-      updatePayload.company_id = companyId;
+    updatePayload.job_title = resolved.currentJobTitle;
+    updatePayload.company_name = resolved.currentCompanyName;
+    // Only overwrite company_domain if enrichment actually returned one.
+    if (resolvedDomainFromCompany) {
+      updatePayload.company_domain = resolvedDomainFromCompany;
+      updatePayload.resolved_current_company_domain = resolvedDomainFromCompany;
     }
+    updatePayload.company_linkedin_url = resolved.currentCompanyLinkedinUrl;
+    updatePayload.company_id = companyId;
 
     await supabase.from('contacts').update(updatePayload).eq('user_id', userId).eq('id', contactId);
 

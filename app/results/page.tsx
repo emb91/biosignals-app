@@ -10,12 +10,14 @@ import {
   Search,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Pencil,
   Trash2,
   X,
   ExternalLink,
   Link,
-  ChevronRight as ChevronRightIcon,
+  Briefcase,
+  RotateCw,
 } from 'lucide-react';
 
 interface EmploymentHistoryItem {
@@ -85,23 +87,7 @@ type EditableLeadFields = {
 };
 
 const PAGE_SIZE = 50;
-
-const ENRICHING_MESSAGES = [
-  'Searching LinkedIn',
-  'Cross-referencing',
-  'Thinking hard',
-  'Pontificating',
-  'Connecting the dots',
-  'Deliberating',
-  'Consulting the oracle',
-  'Ruminating',
-  'Running the numbers',
-  'Reading between the lines',
-  'Planning your outreach',
-  'Analysing',
-  'Doing research',
-  'Deep in thought',
-];
+const MAX_VISIBLE_WORK_HISTORY = 5;
 
 const formatLastUpdated = (iso: string | null): string => {
   if (!iso) return '—';
@@ -127,17 +113,18 @@ export default function LeadsPage() {
   const [editingFields, setEditingFields] = useState<EditableLeadFields | null>(null);
   const [savingLeadId, setSavingLeadId] = useState<string | null>(null);
   const [deletingLeadId, setDeletingLeadId] = useState<string | null>(null);
+  const [refreshingLeadId, setRefreshingLeadId] = useState<string | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [selectedPreview, setSelectedPreview] = useState<'contact' | 'company'>('contact');
-  const [enrichingMsgIdx, setEnrichingMsgIdx] = useState(0);
+  const [isWorkHistoryExpanded, setIsWorkHistoryExpanded] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) router.push('/login');
   }, [user, loading, router]);
 
-  const fetchLeads = useCallback(async () => {
+  const fetchLeads = useCallback(async (silent = false) => {
     if (!user) return;
-    setLoadingLeads(true);
+    if (!silent) setLoadingLeads(true);
     try {
       const params = new URLSearchParams({
         page: String(page),
@@ -159,7 +146,7 @@ export default function LeadsPage() {
     } catch (err) {
       console.error('Error fetching leads:', err);
     } finally {
-      setLoadingLeads(false);
+      if (!silent) setLoadingLeads(false);
     }
   }, [user, page, search]);
 
@@ -174,6 +161,10 @@ export default function LeadsPage() {
     }, 350);
     return () => clearTimeout(timer);
   }, [searchInput]);
+
+  useEffect(() => {
+    setIsWorkHistoryExpanded(false);
+  }, [selectedLeadId, selectedPreview]);
 
   const startEditingLead = (lead: Lead) => {
     setEditingLeadId(lead.id);
@@ -263,6 +254,40 @@ export default function LeadsPage() {
     }
   };
 
+  const rerunEnrichment = async (leadId: string) => {
+    setRefreshingLeadId(leadId);
+    setLeads((prev) =>
+      prev.map((lead) =>
+        lead.id === leadId
+          ? {
+              ...lead,
+              linkedin_resolution_status: 'processing',
+              profile_enrichment_status: 'pending',
+            }
+          : lead
+      )
+    );
+
+    try {
+      const response = await fetch(`/api/enrich/${leadId}`, {
+        method: 'POST',
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to refresh enrichment.');
+      }
+
+      await fetchLeads(true);
+    } catch (error) {
+      console.error('Error refreshing enrichment:', error);
+      await fetchLeads(true);
+      window.alert('Could not refresh enrichment for this lead. Please try again.');
+    } finally {
+      setRefreshingLeadId(null);
+    }
+  };
+
   const isEnriching = (lead: Lead) =>
     ['pending', 'processing'].includes(lead.linkedin_resolution_status || '') ||
     ['pending', 'processing'].includes(lead.profile_enrichment_status || '');
@@ -272,24 +297,16 @@ export default function LeadsPage() {
   // Auto-poll every 5s while any contact is still being enriched
   useEffect(() => {
     if (!anyEnriching) return;
-    const interval = setInterval(() => { fetchLeads(); }, 5000);
+    const interval = setInterval(() => { fetchLeads(true); }, 5000);
     return () => clearInterval(interval);
   }, [anyEnriching, fetchLeads]);
-
-  // Cycle status messages every 1.8s while enriching
-  useEffect(() => {
-    if (!anyEnriching) return;
-    const interval = setInterval(() => {
-      setEnrichingMsgIdx((i) => (i + 1) % ENRICHING_MESSAGES.length);
-    }, 1800);
-    return () => clearInterval(interval);
-  }, [anyEnriching]);
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
   const selectedLead = leads.find((lead) => lead.id === selectedLeadId) || null;
   const isEditingSelected = selectedLead ? editingLeadId === selectedLead.id : false;
   const isSavingSelected = selectedLead ? savingLeadId === selectedLead.id : false;
   const isDeletingSelected = selectedLead ? deletingLeadId === selectedLead.id : false;
+  const isRefreshingSelected = selectedLead ? refreshingLeadId === selectedLead.id : false;
 
   if (loading) {
     return (
@@ -314,7 +331,7 @@ export default function LeadsPage() {
                 <h1 className="text-2xl font-bold text-gray-900">Leads</h1>
                 <p className="text-gray-600 mt-1">
                   {total > 0
-                    ? `${total.toLocaleString()} contact${total !== 1 ? 's' : ''} ready to review`
+                    ? `${total.toLocaleString()} contact${total !== 1 ? 's' : ''} ready to review. Click the contact or company icons on any row to preview enriched details.`
                     : 'Your imported contacts will appear here once they are ready to review'}
                 </p>
                 </div>
@@ -368,14 +385,13 @@ export default function LeadsPage() {
                 <p className="text-gray-500">No leads matching &ldquo;{search}&rdquo;</p>
               </div>
             ) : (
-              <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+              <div className={`grid gap-4 ${selectedLeadId ? 'xl:grid-cols-[minmax(0,1fr)_360px]' : ''}`}>
                 {/* ── Leads table ── */}
                 <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-                  <div className="grid grid-cols-[0.8fr_1.4fr_1.4fr_0.85fr_0.85fr] gap-1 px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide">
+                  <div className="grid grid-cols-[0.95fr_0.8fr_1.65fr_3.5rem] gap-1 px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide">
                     <span>Name</span>
                     <span>Job title</span>
                     <span>Company</span>
-                    <span></span>
                     <span></span>
                   </div>
 
@@ -388,23 +404,33 @@ export default function LeadsPage() {
                         return (
                           <div
                             key={lead.id}
-                            className="px-4 py-3 flex items-center justify-between border-b border-gray-50 last:border-0"
+                            onClick={() => {
+                              setSelectedLeadId(lead.id);
+                              setSelectedPreview('contact');
+                              cancelEditingLead();
+                            }}
+                            className={`grid grid-cols-[0.95fr_0.8fr_1.65fr_3.5rem] gap-1 px-4 py-3 items-center cursor-pointer transition-all duration-150 border-b border-gray-50 last:border-0 ${
+                              isSelected
+                                ? 'bg-arcova-teal/10 border-l-2 border-arcova-teal'
+                                : 'border-l-2 border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30'
+                            }`}
                           >
-                            {/* Name — left */}
-                            <p className="text-sm font-medium text-gray-400 truncate">
-                              {lead.full_name ||
-                                [lead.first_name, lead.last_name].filter(Boolean).join(' ') ||
-                                '—'}
-                            </p>
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-gray-400 truncate">
+                                {lead.full_name ||
+                                  [lead.first_name, lead.last_name].filter(Boolean).join(' ') ||
+                                  '—'}
+                              </p>
+                            </div>
 
-                            {/* Logo + cycling message — right */}
-                            <div className="flex items-center gap-3 flex-shrink-0">
-                              <span
-                                key={enrichingMsgIdx}
-                                className="text-xs text-gray-400 italic animate-fade-in"
-                              >
-                                {ENRICHING_MESSAGES[enrichingMsgIdx]}…
-                              </span>
+                            <div className="col-span-2 min-w-0 pr-3">
+                              <div className="relative h-2.5 overflow-hidden rounded-full bg-slate-200/80">
+                                <div className="arcova-enrichment-progress absolute inset-y-0 left-0 rounded-full" />
+                                <div className="arcova-enrichment-glow absolute inset-y-0 left-0 w-16 rounded-full" />
+                              </div>
+                            </div>
+
+                            <div className="flex items-center justify-center">
                               <ArcovaLoader size={28} />
                             </div>
                           </div>
@@ -414,7 +440,12 @@ export default function LeadsPage() {
                       return (
                         <div
                           key={lead.id}
-                          className={`grid grid-cols-[0.8fr_1.4fr_1.4fr_0.85fr_0.85fr] gap-1 px-4 py-3 items-center cursor-pointer transition-all duration-150 opacity-100 ${
+                          onClick={() => {
+                            setSelectedLeadId(lead.id);
+                            setSelectedPreview('contact');
+                            cancelEditingLead();
+                          }}
+                          className={`grid grid-cols-[0.95fr_0.8fr_1.65fr_3.5rem] gap-1 px-4 py-3 items-center cursor-pointer transition-all duration-150 opacity-100 ${
                             isSelected
                               ? 'bg-arcova-teal/10 border-l-2 border-arcova-teal'
                               : 'border-l-2 border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30'
@@ -443,7 +474,7 @@ export default function LeadsPage() {
 
                           {/* Job title */}
                           <div className="min-w-0">
-                            <p className="text-sm text-gray-700 truncate">
+                            <p className="text-xs text-gray-700 line-clamp-2 leading-snug">
                               {lead.resolved_current_job_title || lead.job_title || '—'}
                             </p>
                           </div>
@@ -451,47 +482,28 @@ export default function LeadsPage() {
                           {/* Company */}
                           <div className="min-w-0">
                             <p className="text-sm text-gray-700 truncate">
-                              {lead.resolved_current_company_name || lead.company_name || '—'}
+                              {((n) => n.length > 30 ? n.slice(0, 30) + '…' : n)(lead.resolved_current_company_name || lead.company_name || '—')}
                             </p>
                           </div>
 
-                          {/* Contact details button */}
-                          <div className="min-w-0">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSelectedLeadId(lead.id);
-                                setSelectedPreview('contact');
-                                cancelEditingLead();
-                              }}
-                              className={`inline-flex w-full items-center justify-between gap-1 whitespace-nowrap rounded-md border px-2.5 py-1.5 text-xs transition-colors ${
-                                isSelected && selectedPreview === 'contact'
-                                  ? 'border-arcova-teal bg-arcova-teal/10 text-arcova-teal'
-                                  : 'border-gray-200 text-gray-700 hover:border-arcova-teal/40 hover:text-arcova-teal'
-                              }`}
-                            >
-                              <span className="truncate">Contact</span>
-                              <ChevronRightIcon className="w-3.5 h-3.5 flex-shrink-0" />
-                            </button>
-                          </div>
-
                           {/* Company details button */}
-                          <div className="min-w-0">
+                          <div className="min-w-0 pl-2">
                             <button
                               type="button"
-                              onClick={() => {
+                              onClick={(e) => {
+                                e.stopPropagation();
                                 setSelectedLeadId(lead.id);
                                 setSelectedPreview('company');
                                 cancelEditingLead();
                               }}
-                              className={`inline-flex w-full items-center justify-between gap-1 whitespace-nowrap rounded-md border px-2.5 py-1.5 text-xs transition-colors ${
+                              className={`inline-flex w-full items-center justify-center rounded-md border p-1.5 transition-colors ${
                                 isSelected && selectedPreview === 'company'
-                                  ? 'border-arcova-teal bg-arcova-teal/10 text-arcova-teal'
-                                  : 'border-gray-200 text-gray-700 hover:border-arcova-teal/40 hover:text-arcova-teal'
+                                  ? 'border-arcova-teal bg-arcova-teal text-white'
+                                  : 'border-arcova-teal/40 bg-arcova-teal/10 text-arcova-teal hover:bg-arcova-teal hover:text-white hover:border-arcova-teal'
                               }`}
+                              title="Company details"
                             >
-                              <span className="truncate">Company</span>
-                              <ChevronRightIcon className="w-3.5 h-3.5 flex-shrink-0" />
+                              <Briefcase className="w-5 h-5" />
                             </button>
                           </div>
                         </div>
@@ -529,6 +541,7 @@ export default function LeadsPage() {
                 </div>
 
                 {/* ── Detail panel ── */}
+                {selectedLeadId && (
                 <aside className="bg-white rounded-lg shadow-sm border border-gray-200 min-h-[520px]">
                   {selectedLead ? (
                     <div className="h-full flex flex-col">
@@ -674,7 +687,7 @@ export default function LeadsPage() {
                                     (selectedLead.email_status === 'candidate' ||
                                       selectedLead.email_status === 'stale_suspected') && (
                                       <p className="text-xs text-amber-700 mt-1">
-                                        This email may be outdated — use LinkedIn for primary outreach.
+                                        This email may be outdated.
                                       </p>
                                     )}
                                 </div>
@@ -703,7 +716,10 @@ export default function LeadsPage() {
                                       Work history
                                     </h3>
                                     <div className="space-y-3">
-                                      {selectedLead.resolved_employment_history.map((job, i) => (
+                                      {(isWorkHistoryExpanded
+                                        ? selectedLead.resolved_employment_history
+                                        : selectedLead.resolved_employment_history.slice(0, MAX_VISIBLE_WORK_HISTORY)
+                                      ).map((job, i) => (
                                         <div key={i} className="flex gap-3">
                                           <div className="mt-1.5 flex-shrink-0">
                                             <div
@@ -728,6 +744,22 @@ export default function LeadsPage() {
                                         </div>
                                       ))}
                                     </div>
+                                    {selectedLead.resolved_employment_history.length > MAX_VISIBLE_WORK_HISTORY && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setIsWorkHistoryExpanded((prev) => !prev)}
+                                        className="inline-flex items-center gap-1.5 text-sm font-medium text-arcova-teal hover:text-arcova-teal/80 transition-colors"
+                                      >
+                                        <ChevronDown
+                                          className={`w-4 h-4 transition-transform ${isWorkHistoryExpanded ? 'rotate-180' : ''}`}
+                                        />
+                                        {isWorkHistoryExpanded
+                                          ? 'Show fewer roles'
+                                          : `Show ${
+                                              selectedLead.resolved_employment_history.length - MAX_VISIBLE_WORK_HISTORY
+                                            } more roles`}
+                                      </button>
+                                    )}
                                   </section>
                                 )}
                             </>
@@ -843,6 +875,21 @@ export default function LeadsPage() {
                           {formatLastUpdated(selectedLead.updated_at || selectedLead.created_at)}
                         </p>
 
+                        <div className="space-y-2">
+                          <p className="text-xs text-gray-500">
+                            If this enrichment looks stalled, you can manually run it again here.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => rerunEnrichment(selectedLead.id)}
+                            disabled={isRefreshingSelected || isEditingSelected}
+                            className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-arcova-teal/5 px-4 py-2 text-sm font-medium text-arcova-teal hover:bg-arcova-teal/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          >
+                            <RotateCw className={`w-4 h-4 ${isRefreshingSelected ? 'animate-spin' : ''}`} />
+                            {isRefreshingSelected ? 'Refreshing enrichment…' : 'Refresh enrichment'}
+                          </button>
+                        </div>
+
                         {selectedPreview === 'contact' && (
                           isEditingSelected ? (
                             <div className="flex gap-2">
@@ -886,25 +933,70 @@ export default function LeadsPage() {
                         )}
                       </div>
                     </div>
-                  ) : (
-                    <div className="h-full flex flex-col items-center justify-center px-8 text-center">
-                      <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mb-4">
-                        <ChevronRightIcon className="w-5 h-5 text-gray-400" />
-                      </div>
-                      <h2 className="text-lg font-semibold text-gray-900">Open details</h2>
-                      <p className="text-sm text-gray-500 mt-2 max-w-xs">
-                        Click <span className="font-medium text-gray-700">Contact</span> or{' '}
-                        <span className="font-medium text-gray-700">Company</span> on any row to
-                        preview the enriched details.
-                      </p>
-                    </div>
-                  )}
+                  ) : null}
                 </aside>
+                )}
               </div>
             )}
           </div>
         </div>
       </div>
+      <style jsx>{`
+        .arcova-enrichment-progress {
+          width: 100%;
+          background: linear-gradient(90deg, rgba(12, 205, 205, 0.16) 0%, rgba(12, 205, 205, 0.72) 72%, rgba(13, 53, 71, 0.85) 100%);
+          transform-origin: left center;
+          animation: arcova-row-progress 2.9s ease-in-out infinite;
+        }
+
+        .arcova-enrichment-glow {
+          background: linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.72) 48%, rgba(255, 255, 255, 0) 100%);
+          animation: arcova-row-glow 2.9s ease-in-out infinite;
+        }
+
+        @keyframes arcova-row-progress {
+          0% {
+            opacity: 0.28;
+            transform: scaleX(0.04);
+          }
+
+          55% {
+            opacity: 0.9;
+            transform: scaleX(0.62);
+          }
+
+          82% {
+            opacity: 0.95;
+            transform: scaleX(1);
+          }
+
+          100% {
+            opacity: 0.22;
+            transform: scaleX(0.04);
+          }
+        }
+
+        @keyframes arcova-row-glow {
+          0% {
+            opacity: 0;
+            transform: translateX(-4rem);
+          }
+
+          20% {
+            opacity: 0.7;
+          }
+
+          82% {
+            opacity: 0.85;
+            transform: translateX(calc(100% - 4rem));
+          }
+
+          100% {
+            opacity: 0;
+            transform: translateX(calc(100% - 4rem));
+          }
+        }
+      `}</style>
     </div>
   );
 }
