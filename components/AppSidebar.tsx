@@ -4,15 +4,17 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
-import { 
-  LayoutDashboard, 
-  Target, 
+import {
+  LayoutDashboard,
+  Target,
   UserCircle,
-  Radio, 
+  Radio,
   FileUp,
-  Users, 
-  Settings, 
+  Users,
+  Settings,
   User,
+  Wrench,
+  ChevronDown,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -22,47 +24,21 @@ interface NavItem {
   icon: React.ComponentType<{ className?: string }>;
 }
 
-const navigation: NavItem[] = [
-  {
-    name: 'Dashboard',
-    href: '/dashboard',
-    icon: LayoutDashboard,
-  },
-  {
-    name: 'Import',
-    href: '/import',
-    icon: FileUp,
-  },
-  {
-    name: 'Signals',
-    href: '/customer-signals',
-    icon: Radio,
-  },
-  {
-    name: 'Leads',
-    href: '/results',
-    icon: Users,
-  },
-  {
-    name: 'Companies',
-    href: '/companies',
-    icon: Target,
-  },
-  {
-    name: 'Personas',
-    href: '/personas',
-    icon: UserCircle,
-  },
-  {
-    name: 'My Profile',
-    href: '/my-profile',
-    icon: User,
-  },
-  {
-    name: 'Settings',
-    href: '/settings',
-    icon: Settings,
-  },
+const setupItems: NavItem[] = [
+  { name: 'Companies', href: '/companies', icon: Target },
+  { name: 'Personas', href: '/personas', icon: UserCircle },
+  { name: 'My Profile', href: '/my-profile', icon: User },
+];
+
+const topNavigation: NavItem[] = [
+  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+  { name: 'Import', href: '/import', icon: FileUp },
+  { name: 'Signals', href: '/customer-signals', icon: Radio },
+  { name: 'Leads', href: '/results', icon: Users },
+];
+
+const bottomNavigation: NavItem[] = [
+  { name: 'Settings', href: '/settings', icon: Settings },
 ];
 
 export default function AppSidebar() {
@@ -77,6 +53,13 @@ export default function AppSidebar() {
     if (href === '/dashboard') return false;
     return pathname.startsWith(`${href}/`);
   };
+
+  const setupActive = setupItems.some((item) => isActive(item.href));
+  const [setupOpen, setSetupOpen] = useState(setupActive);
+
+  useEffect(() => {
+    if (setupActive) setSetupOpen(true);
+  }, [setupActive]);
 
   useEffect(() => {
     const loadCompletionStatus = async () => {
@@ -123,6 +106,8 @@ export default function AppSidebar() {
     loadCompletionStatus();
   }, []);
 
+  const setupDotVisible = showCompaniesDot || showPersonasDot || showMyProfileDot;
+
   const shouldShowDot = (itemName: string) => {
     if (itemName === 'Companies') return showCompaniesDot;
     if (itemName === 'Personas') return showPersonasDot;
@@ -131,17 +116,39 @@ export default function AppSidebar() {
     return false;
   };
 
+  const renderNavItem = (item: NavItem) => (
+    <div key={item.name}>
+      <Link
+        href={item.href}
+        className={cn(
+          "flex items-center space-x-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+          isActive(item.href)
+            ? "bg-arcova-teal text-white"
+            : "text-white hover:bg-arcova-mint/20 hover:text-white"
+        )}
+      >
+        <div className="relative">
+          <item.icon className="w-5 h-5" />
+          {shouldShowDot(item.name) && (
+            <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-[#EF4444] shadow-[0_0_8px_#EF4444]" />
+          )}
+        </div>
+        <span>{item.name}</span>
+      </Link>
+    </div>
+  );
+
   return (
     <div className="flex h-screen bg-white">
       <div className="w-64 bg-arcova-darkblue border-r border-arcova-mint/20 flex flex-col">
         {/* Logo */}
         <div className="p-6 border-b border-arcova-mint/20">
           <Link href="/" className="flex items-center space-x-2">
-            <Image 
-              src="/images/network-og.png" 
-              alt="Arcova" 
-              width={32} 
-              height={32} 
+            <Image
+              src="/images/network-og.png"
+              alt="Arcova"
+              width={32}
+              height={32}
               className="rounded-lg"
             />
             <span className="text-white font-semibold text-lg">arcova</span>
@@ -150,27 +157,41 @@ export default function AppSidebar() {
 
         {/* Navigation */}
         <nav className="flex-1 p-4 space-y-2">
-          {navigation.map((item) => (
-            <div key={item.name}>
-              <Link
-                href={item.href}
-                className={cn(
-                  "flex items-center space-x-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-                  isActive(item.href)
-                    ? "bg-arcova-teal text-white"
-                    : "text-white hover:bg-arcova-mint/20 hover:text-white"
-                )}
-              >
+          {topNavigation.map(renderNavItem)}
+
+          {/* Setup group */}
+          <div>
+            <button
+              onClick={() => setSetupOpen((o) => !o)}
+              className={cn(
+                "w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                setupActive
+                  ? "bg-arcova-teal text-white"
+                  : "text-white hover:bg-arcova-mint/20"
+              )}
+            >
+              <div className="flex items-center space-x-3">
                 <div className="relative">
-                  <item.icon className="w-5 h-5" />
-                  {shouldShowDot(item.name) && (
+                  <Wrench className="w-5 h-5" />
+                  {setupDotVisible && !setupOpen && (
                     <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-[#EF4444] shadow-[0_0_8px_#EF4444]" />
                   )}
                 </div>
-                <span>{item.name}</span>
-              </Link>
-            </div>
-          ))}
+                <span>Setup</span>
+              </div>
+              <ChevronDown
+                className={cn("w-4 h-4 transition-transform duration-200", setupOpen && "rotate-180")}
+              />
+            </button>
+
+            {setupOpen && (
+              <div className="mt-1 ml-4 space-y-1 border-l border-arcova-mint/20 pl-3">
+                {setupItems.map(renderNavItem)}
+              </div>
+            )}
+          </div>
+
+          {bottomNavigation.map(renderNavItem)}
         </nav>
       </div>
     </div>
