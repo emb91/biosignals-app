@@ -215,6 +215,7 @@ export async function ingestEnrichedRecords(
         country: record.country || parsedLocation.country,
         company_name: record.company_name || null,
         company_domain: record.company_domain?.trim().toLowerCase() || null,
+        apollo_company_domain: record.company_domain?.trim().toLowerCase() || null,
         company_linkedin_url: record.company_linkedin_url || null,
         company_id: companyId,
         fiber_person_response_raw: record.raw_person_response ?? null,

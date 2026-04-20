@@ -1,7 +1,8 @@
 // Enrichment pipeline — three steps:
 // contact discovery   = Apollo identity/contact (already stored before this runs)
 // linkedin resolution = Claude web search for LinkedIn URL
-// profile enrichment  = Apify LinkedIn profile scrape
+// profile enrichment  = Apify LinkedIn profile scrape + company scrape + LLM bio summary
+import Anthropic from '@anthropic-ai/sdk';
 import { resolveLinkedinUrl, type LinkedinResolutionResult } from '@/lib/linkedin-url-resolver';
 
 type MinimalSupabase = {
@@ -214,6 +215,7 @@ function compareApolloAndApify(params: {
 }
 
 const HARVESTAPI_ACTOR = 'harvestapi~linkedin-profile-scraper';
+const HARVESTAPI_COMPANY_ACTOR = 'harvestapi~linkedin-company';
 
 async function runApifyProfileEnrichment(linkedinUrl: string): Promise<Record<string, unknown> | null> {
   const apiKey = process.env.APIFY_API_KEY;
@@ -251,28 +253,185 @@ async function runApifyProfileEnrichment(linkedinUrl: string): Promise<Record<st
   return getObject(payload);
 }
 
+async function runApifyCompanyEnrichment(
+  companyLinkedinUrl: string
+): Promise<Record<string, unknown> | null> {
+  const apiKey = process.env.APIFY_API_KEY;
+  if (!apiKey) throw new Error('Missing APIFY_API_KEY');
+
+  const response = await fetch(
+    `https://api.apify.com/v2/acts/${HARVESTAPI_COMPANY_ACTOR}/run-sync-get-dataset-items`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ companies: [companyLinkedinUrl] }),
+    }
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '');
+    throw new Error(`Apify company enrichment failed (${response.status}): ${errorText.slice(0, 300)}`);
+  }
+
+  const payload = (await response.json()) as unknown;
+  if (Array.isArray(payload)) return getObject(payload[0]);
+  return getObject(payload);
+}
+
+function extractCompanyFirmographics(raw: Record<string, unknown> | null): Record<string, unknown> {
+  if (!raw) return {};
+
+  const locations = arrayFromUnknown(raw.locations || raw.officeLocations);
+  const hq = locations
+    .map((l) => getObject(l))
+    .find((l) => l?.isHeadquarter || l?.headquarter) || getObject(locations[0]);
+
+  const website = normalizeString(raw.website || raw.websiteUrl || raw.url || '');
+  const domain = website ? normalizeDomain(website) : null;
+
+  const specialties = arrayFromUnknown(raw.specialties || raw.specialities)
+    .map((s) => normalizeString(s))
+    .filter(Boolean);
+
+  return {
+    description: normalizeString(raw.description || raw.overview || raw.about || '') || null,
+    tagline: normalizeString(raw.tagline || raw.slogan || '') || null,
+    website: website || null,
+    domain: domain || null,
+    logo_url: normalizeString(raw.logo || raw.logoUrl || raw.logoResolutionResult || '') || null,
+    follower_count: typeof raw.followerCount === 'number' ? raw.followerCount
+      : typeof raw.followersCount === 'number' ? raw.followersCount
+      : null,
+    employee_count: typeof raw.employeeCount === 'number' ? raw.employeeCount
+      : typeof raw.staffCount === 'number' ? raw.staffCount
+      : null,
+    employee_range: normalizeString(raw.employeeCountRange || raw.staffCountRange || '') || null,
+    industry: normalizeString(raw.industry || raw.industries || '') || null,
+    founded_year: typeof raw.foundedYear === 'number' ? raw.foundedYear
+      : typeof raw.founded === 'number' ? raw.founded
+      : null,
+    hq_city: getFirstString(hq, ['city', 'cityName']) || null,
+    hq_country: getFirstString(hq, ['country', 'countryName', 'countryCode']) || null,
+    specialties: specialties.length > 0 ? specialties : null,
+    linkedin_url: normalizeString(raw.url || raw.linkedinUrl || '') || null,
+  };
+}
+
+async function summariseCompanyBio(description: string): Promise<string | null> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey || !description.trim()) return null;
+
+  try {
+    const client = new Anthropic({ apiKey });
+    const message = await client.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 200,
+      messages: [
+        {
+          role: 'user',
+          content: `Summarise the following company description into 1–3 concise sentences for a B2B sales context. Focus on what the company does, who it serves, and any distinctive positioning. Return only the summary, no preamble.\n\n${description}`,
+        },
+      ],
+    });
+
+    const block = message.content[0];
+    return block.type === 'text' ? block.text.trim() : null;
+  } catch (err) {
+    console.warn('Company bio summarisation failed (non-fatal):', err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+async function generateContactBio(params: {
+  fullName: string | null;
+  currentTitle: string | null;
+  currentCompany: string | null;
+  headline: string | null;
+  employmentHistory: NormalizedEmployment[];
+}): Promise<string[] | null> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return null;
+
+  const { fullName, currentTitle, currentCompany, headline, employmentHistory } = params;
+  if (!currentTitle && !currentCompany && employmentHistory.length === 0) return null;
+
+  const historyText = employmentHistory
+    .map((e) => `- ${e.title || 'Unknown role'} at ${e.company_name || 'Unknown'} (${[e.start_date, e.end_date].filter(Boolean).join(' – ')})`)
+    .join('\n');
+
+  const prompt = `You are writing a brief professional bio for a B2B sales team reviewing a prospect.
+
+Contact: ${fullName || 'Unknown'}
+Current role: ${currentTitle || '—'} at ${currentCompany || '—'}
+LinkedIn headline: ${headline || '—'}
+Work history:
+${historyText || '— No history available'}
+
+Write exactly 2–3 bullet points (plain text, no markdown bullet characters) that summarise:
+1. Who this person is professionally and what they do now
+2. Relevant background that makes them interesting as a prospect
+3. Any notable career arc or expertise
+
+Be concise, factual, and written for a salesperson doing pre-call research. Return only the bullet points, one per line, no preamble.`;
+
+  try {
+    const client = new Anthropic({ apiKey });
+    const message = await client.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 300,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const block = message.content[0];
+    if (block.type !== 'text') return null;
+
+    const bullets = block.text
+      .split('\n')
+      .map((l) => l.replace(/^[-•*]\s*/, '').trim())
+      .filter(Boolean);
+
+    return bullets.length > 0 ? bullets : null;
+  } catch (err) {
+    console.warn('Contact bio generation failed (non-fatal):', err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
 async function upsertResolvedCompany(
   supabase: MinimalSupabase,
   userId: string,
   input: {
     companyName?: string | null;
     companyDomain?: string | null;
+    linkedinUrl?: string | null;
     firmographics: Record<string, unknown>;
   }
 ): Promise<string | null> {
-  const domain = normalizeDomain(input.companyDomain);
+  const domain =
+    normalizeDomain(input.firmographics.domain as string | null) ||
+    normalizeDomain(input.companyDomain);
   if (!domain) return null;
 
-  const payload = {
+  const payload: Record<string, unknown> = {
     user_id: userId,
     domain,
     company_name: input.companyName || null,
-    website: `https://${domain}`,
-    industry: getFirstString(input.firmographics, ['industry']) || null,
-    employee_range: getFirstString(input.firmographics, ['employee_band']) || null,
-    headquarters_city: getFirstString(input.firmographics, ['hq_city']) || null,
-    headquarters_country: getFirstString(input.firmographics, ['hq_country']) || null,
-    funding_stage: getFirstString(input.firmographics, ['funding_stage']) || null,
+    linkedin_url: input.linkedinUrl || null,
+    website: (input.firmographics.website as string | null) || `https://${domain}`,
+    description: (input.firmographics.description as string | null) || null,
+    tagline: (input.firmographics.tagline as string | null) || null,
+    logo_url: (input.firmographics.logo_url as string | null) || null,
+    follower_count: (input.firmographics.follower_count as number | null) || null,
+    industry: (input.firmographics.industry as string | null) || null,
+    employee_count: (input.firmographics.employee_count as number | null) || null,
+    employee_range: (input.firmographics.employee_range as string | null) || null,
+    founded_year: (input.firmographics.founded_year as number | null) || null,
+    headquarters_city: (input.firmographics.hq_city as string | null) || null,
+    headquarters_country: (input.firmographics.hq_country as string | null) || null,
+    specialties: (input.firmographics.specialties as string[] | null) || null,
     source: 'harvestapi',
     last_enriched_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -293,6 +452,8 @@ function buildResolvedContext(params: {
 }): {
   currentCompanyName: string | null;
   currentCompanyDomain: string | null;
+  /** Domain known from enrichment only — null when not returned by harvestapi. Used for email alignment. */
+  resolvedCompanyDomainForEmailCheck: string | null;
   currentJobTitle: string | null;
   currentCompanyLinkedinUrl: string | null;
   location: string | null;
@@ -335,7 +496,13 @@ function buildResolvedContext(params: {
   // harvestapi gives `photo` as the top-level profile photo URL
   const profilePhotoUrl = getFirstString(profile, ['photo']) || null;
 
-  // Domain: harvestapi doesn't return it directly, fall back to contact/email
+  // Domain: harvestapi doesn't return company domain directly.
+  // For email alignment we must NOT fall back to the imported contact domain — if we
+  // don't know the current company's domain from enrichment, treat it as unknown so
+  // assessEmailStatus returns 'candidate' rather than incorrectly 'aligned_current'.
+  // For storage / company lookup we allow the imported domain as a best-effort fallback.
+  const resolvedCompanyDomainForEmailCheck: string | null = null; // harvestapi never returns domain
+
   const companyDomain =
     normalizeDomain(params.contact.company_domain) ||
     (params.contact.email ? normalizeDomain(params.contact.email.split('@')[1]) : null);
@@ -343,6 +510,7 @@ function buildResolvedContext(params: {
   return {
     currentCompanyName,
     currentCompanyDomain: companyDomain,
+    resolvedCompanyDomainForEmailCheck,
     currentJobTitle,
     currentCompanyLinkedinUrl,
     location,
@@ -376,9 +544,12 @@ function assessEmailStatus(params: {
   }
 
   if (!currentDomain) {
+    const companyClause = params.resolvedCurrentCompanyName
+      ? ` Current company appears to be ${params.resolvedCurrentCompanyName}, but domain is not confirmed — cannot verify alignment.`
+      : ' Current-company domain has not been resolved yet.';
     return {
       status: 'candidate',
-      reasoning: 'Candidate email found, but current-company alignment has not been resolved yet.',
+      reasoning: `Candidate email found.${companyClause}`,
     };
   }
 
@@ -539,10 +710,49 @@ export async function runContactResolutionPipelineForContact(
       contact: typedContact,
       apifyProfile,
     });
+    // Generate contact bio from profile data
+    const contactBio = await generateContactBio({
+      fullName: typedContact.full_name,
+      currentTitle: resolved.currentJobTitle,
+      currentCompany: resolved.currentCompanyName,
+      headline: resolved.headline,
+      employmentHistory: resolved.employmentHistory,
+    });
+
+    // Step 3b: company enrichment — scrape the company LinkedIn page if we have a URL
+    let companyFirmographics = resolved.firmographics;
+    let apifyCompanyRaw: Record<string, unknown> | null = null;
+    if (resolved.currentCompanyLinkedinUrl && alignment.alignment !== 'low') {
+      try {
+        apifyCompanyRaw = await runApifyCompanyEnrichment(resolved.currentCompanyLinkedinUrl);
+        if (apifyCompanyRaw) {
+          const extracted = extractCompanyFirmographics(apifyCompanyRaw);
+          const bioSummary = extracted.description
+            ? await summariseCompanyBio(extracted.description as string)
+            : null;
+          companyFirmographics = {
+            ...companyFirmographics,
+            ...extracted,
+            bio_summary: bioSummary,
+          };
+        }
+      } catch (companyErr) {
+        // Non-fatal — log and continue without company data
+        console.warn('Company enrichment failed (non-fatal):', companyErr instanceof Error ? companyErr.message : companyErr);
+      }
+    }
+
+    // If company scrape returned a domain, use it for email alignment (never use the imported domain)
+    const resolvedDomainFromCompany =
+      normalizeDomain(companyFirmographics.domain as string | null) ||
+      resolved.resolvedCompanyDomainForEmailCheck;
+
     const emailAssessment = assessEmailStatus({
       email: typedContact.email,
       resolvedCurrentCompanyName: resolved.currentCompanyName,
-      resolvedCurrentCompanyDomain: resolved.currentCompanyDomain,
+      // Prefer domain from company scrape; fall back to profile enrichment result.
+      // Never use the imported company_domain — that would cause false alignment.
+      resolvedCurrentCompanyDomain: resolvedDomainFromCompany,
     });
 
     const companyId =
@@ -550,7 +760,8 @@ export async function runContactResolutionPipelineForContact(
         ? await upsertResolvedCompany(supabase, userId, {
             companyName: resolved.currentCompanyName,
             companyDomain: resolved.currentCompanyDomain,
-            firmographics: resolved.firmographics,
+            linkedinUrl: resolved.currentCompanyLinkedinUrl,
+            firmographics: companyFirmographics,
           })
         : null;
 
@@ -573,14 +784,19 @@ export async function runContactResolutionPipelineForContact(
       },
       profile_enrichment_alignment_metadata: alignment,
       resolved_current_company_name: resolved.currentCompanyName,
-      resolved_current_company_domain: resolved.currentCompanyDomain,
+      // Only store a domain against the resolved company if we actually got one from enrichment.
+      // The fallback (imported company_domain / email domain) lives on the contact row already
+      // and must NOT be attributed to the resolved company — it would create false email alignment.
+      resolved_current_company_domain: resolved.resolvedCompanyDomainForEmailCheck,
       resolved_current_job_title: resolved.currentJobTitle,
       resolved_employment_history: resolved.employmentHistory,
-      resolved_company_firmographics: resolved.firmographics,
+      resolved_company_firmographics: companyFirmographics,
+      apify_company_raw: apifyCompanyRaw,
       // Pull fresher contact-level fields from LinkedIn scrape
       headline: resolved.headline,
       location: resolved.location || typedContact.location,
       profile_photo_url: resolved.profilePhotoUrl || null,
+      contact_bio: contactBio,
       email_status: emailAssessment.status,
       email_status_reasoning: emailAssessment.reasoning,
       updated_at: new Date().toISOString(),
@@ -589,7 +805,11 @@ export async function runContactResolutionPipelineForContact(
     if (alignment.alignment !== 'low') {
       updatePayload.job_title = resolved.currentJobTitle;
       updatePayload.company_name = resolved.currentCompanyName;
-      updatePayload.company_domain = resolved.currentCompanyDomain;
+      // Only overwrite company_domain if enrichment actually returned one.
+      if (resolvedDomainFromCompany) {
+        updatePayload.company_domain = resolvedDomainFromCompany;
+        updatePayload.resolved_current_company_domain = resolvedDomainFromCompany;
+      }
       updatePayload.company_linkedin_url = resolved.currentCompanyLinkedinUrl;
       updatePayload.company_id = companyId;
     }
