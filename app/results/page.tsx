@@ -610,7 +610,7 @@ export default function LeadsPage() {
               <div className={`grid gap-4 ${selectedLeadId ? 'xl:grid-cols-[minmax(0,1fr)_360px]' : ''}`}>
                 {/* ── Leads table ── */}
                 <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-                  <div className="grid grid-cols-[0.95fr_0.8fr_1.65fr_3.5rem] gap-1 px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide">
+                  <div className="grid grid-cols-[0.8fr_1fr_1.65fr_3.5rem] gap-1 px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide">
                     <span>Name</span>
                     <span>Job title</span>
                     <span>Company</span>
@@ -632,7 +632,7 @@ export default function LeadsPage() {
                               setSelectedPreview('contact');
                               cancelEditingLead();
                             }}
-                            className={`grid grid-cols-[0.95fr_0.8fr_1.65fr_3.5rem] gap-1 px-4 py-3 items-center cursor-pointer transition-all duration-150 border-b border-gray-50 last:border-0 ${
+                            className={`grid grid-cols-[0.8fr_1fr_1.65fr_3.5rem] gap-1 px-4 py-3 items-center cursor-pointer transition-all duration-150 border-b border-gray-50 last:border-0 ${
                               isSelected
                                 ? 'bg-arcova-teal/10 border-l-2 border-arcova-teal'
                                 : 'border-l-2 border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30'
@@ -680,7 +680,7 @@ export default function LeadsPage() {
                             setSelectedPreview('contact');
                             cancelEditingLead();
                           }}
-                          className={`grid grid-cols-[0.95fr_0.8fr_1.65fr_3.5rem] gap-1 px-4 py-3 items-center cursor-pointer transition-all duration-150 opacity-100 ${
+                          className={`grid grid-cols-[0.8fr_1fr_1.65fr_3.5rem] gap-1 px-4 py-3 items-center cursor-pointer transition-all duration-150 opacity-100 ${
                             isSelected
                               ? 'bg-arcova-teal/10 border-l-2 border-arcova-teal'
                               : 'border-l-2 border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30'
@@ -709,8 +709,8 @@ export default function LeadsPage() {
 
                           {/* Job title */}
                           <div className="min-w-0">
-                            <p className="text-xs text-gray-700 line-clamp-2 leading-snug">
-                              {lead.resolved_current_job_title || lead.job_title || '—'}
+                            <p className="text-xs text-gray-700 truncate leading-snug">
+                              {((t) => t.length > 30 ? t.slice(0, 30) + '…' : t)(lead.resolved_current_job_title || lead.job_title || '—')}
                             </p>
                           </div>
 
@@ -724,7 +724,7 @@ export default function LeadsPage() {
                               return href ? (
                                 <a href={href} target="_blank" rel="noopener noreferrer"
                                   onClick={(e) => e.stopPropagation()}
-                                  className="text-sm text-arcova-teal hover:underline truncate block">
+                                  className="text-sm text-arcova-teal hover:underline truncate max-w-full inline-block">
                                   {truncated}
                                 </a>
                               ) : (
@@ -1110,14 +1110,13 @@ export default function LeadsPage() {
 
                                 {/* Links */}
                                 {companyLinkedIn && (
-                                  <div className="flex flex-col gap-1.5">
-                                    {companyLinkedIn && (
-                                      <a href={companyLinkedIn} target="_blank" rel="noopener noreferrer"
-                                        className="inline-flex items-center gap-1.5 text-arcova-teal hover:underline text-xs">
-                                        <Link className="w-3 h-3" />
-                                        LinkedIn page
-                                      </a>
-                                    )}
+                                  <div>
+                                    <p className="text-gray-400 text-xs">LinkedIn</p>
+                                    <a href={companyLinkedIn} target="_blank" rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1 text-arcova-teal hover:underline text-xs break-all mt-0.5">
+                                      {companyLinkedIn}
+                                      <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                                    </a>
                                   </div>
                                 )}
 

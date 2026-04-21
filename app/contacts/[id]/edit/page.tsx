@@ -86,9 +86,9 @@ export default function ContactEditPage() {
       body: JSON.stringify(data),
     });
 
-    if (!response.ok) throw new Error('Failed to update buyer persona');
+    if (!response.ok) throw new Error('Failed to update team');
 
-    toast.success('Buyer persona updated');
+    toast.success('Team updated');
     router.push('/personas');
   };
 

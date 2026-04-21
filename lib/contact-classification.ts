@@ -10,6 +10,7 @@ export type ClassificationInput = {
   job_title?: string | null;
   headline?: string | null;
   company_name?: string | null;
+  previous_titles?: string[] | null; // senior titles from employment history for seniority context
 };
 
 export type ClassificationResult = {
@@ -24,20 +25,29 @@ async function classifyBatch(inputs: ClassificationInput[]): Promise<Classificat
 Return ONLY valid JSON as an array with exactly ${inputs.length} objects in order.
 
 For each contact:
-- standardize the job title into clean, full words
-- choose seniority_level as exactly one of: ${SENIORITY_LEVEL_OPTIONS.join(', ')}
-- choose business_area as exactly one of: ${BUSINESS_AREA_OPTIONS.join(', ')}
+- standardize the job title into clean, full words (e.g. "VP, BD & Partnerships APAC" → "VP Business Development & Partnerships")
+- choose seniority_level as exactly one of: ${SENIORITY_LEVEL_OPTIONS.join(', ')} — seniority should almost always map to one of these; use null only if completely impossible to determine
+  - use previous roles as seniority context but exercise judgement: a career VP who is now a "Sr. Specialist" could have taken a step down (e.g. after a layoff) or could be in a senior individual contributor role at a large company — consider both possibilities and pick the most likely level given the trajectory
+  - do not blindly inherit the prior title's level, but do not ignore it either — a step from VP/Senior Director to a "Sr." specialist role most likely lands at Director or Head of / Senior Manager, not Manager or Individual Contributor
+- choose business_area as the best matching option from: ${BUSINESS_AREA_OPTIONS.join(', ')} — if the team/function does not clearly map to any of these, use null rather than forcing a poor fit
 - use headline as extra context when title is ambiguous
-- if you are unsure, still choose the best matching taxonomy option
 
 Contacts:
 ${inputs
   .map(
-    (input, index) => `Contact ${index + 1}
-Name: ${input.full_name || 'Unknown'}
-Job title: ${input.job_title || 'Unknown'}
-Headline: ${input.headline || 'Unknown'}
-Company: ${input.company_name || 'Unknown'}`
+    (input, index) => {
+      const lines = [
+        `Contact ${index + 1}`,
+        `Name: ${input.full_name || 'Unknown'}`,
+        `Job title: ${input.job_title || 'Unknown'}`,
+        `Headline: ${input.headline || 'Unknown'}`,
+        `Company: ${input.company_name || 'Unknown'}`,
+      ];
+      if (input.previous_titles?.length) {
+        lines.push(`Previous roles: ${input.previous_titles.join(', ')}`);
+      }
+      return lines.join('\n');
+    }
   )
   .join('\n\n')}
 

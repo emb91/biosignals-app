@@ -144,7 +144,7 @@ export default function DashboardPage() {
         const checklistSteps: SetupStep[] = [
           { id: 'profile', label: 'My Profile', completed: profileComplete, actionPath: '/my-profile' },
           { id: 'companies', label: 'Target Companies', completed: companiesComplete, actionPath: '/companies' },
-          { id: 'personas', label: 'Buyer Personas', completed: personasComplete, actionPath: '/personas' },
+          { id: 'personas', label: 'Teams', completed: personasComplete, actionPath: '/personas' },
           { id: 'import', label: 'Upload your CSV', completed: importComplete, actionPath: '/import' },
           { id: 'signals', label: 'Signals', completed: signalsComplete, actionPath: '/companies' },
         ];

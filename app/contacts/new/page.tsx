@@ -85,11 +85,11 @@ export default function ContactNewPage() {
 
     if (!response.ok) {
       if (response.status === 409 && result.existingContactId) {
-        toast.error('A persona already exists for this company.');
+        toast.error('A team already exists for this company.');
         router.push(`/personas/${result.existingContactId}/edit`);
         return;
       }
-      throw new Error(result.error || 'Failed to save persona');
+      throw new Error(result.error || 'Failed to save team');
     }
 
     if (data.icpId && result.data?.id) {
@@ -143,13 +143,13 @@ export default function ContactNewPage() {
       {(missingProfile || missingCompanies) && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-xl p-8 max-w-lg mx-4 text-center">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-2">Complete setup before adding personas</h2>
+            <h2 className="text-2xl font-semibold text-gray-900 mb-2">Complete setup before adding teams</h2>
             <p className="text-gray-600 mb-6">
               {missingProfile && missingCompanies
-                ? 'You cannot add a persona until you fill out My Profile and add at least one company.'
+                ? 'You cannot add a team until you fill out My Profile and add at least one company.'
                 : missingProfile
-                ? 'You cannot add a persona until you fill out My Profile.'
-                : 'You cannot add a persona until you add at least one company profile.'}
+                ? 'You cannot add a team until you fill out My Profile.'
+                : 'You cannot add a team until you add at least one company profile.'}
             </p>
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
               <button
@@ -177,7 +177,7 @@ export default function ContactNewPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
               </svg>
             </div>
-            <h2 className="text-2xl font-semibold text-gray-900 mb-2">Buyer persona saved</h2>
+            <h2 className="text-2xl font-semibold text-gray-900 mb-2">Team saved</h2>
             <p className="text-gray-600 mb-6">
               We'll use this to find the right people at your target companies.
             </p>
@@ -186,7 +186,7 @@ export default function ContactNewPage() {
                 onClick={() => router.push('/personas')}
                 className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
               >
-                View all personas
+                View all teams
               </button>
               <button
                 onClick={() => router.push('/results')}

@@ -76,7 +76,7 @@ export default function ContactsPage() {
         }
       } catch (error) {
         console.error('Error fetching data:', error);
-        toast.error('Failed to load buyer personas');
+        toast.error('Failed to load teams');
       } finally {
         setLoadingContacts(false);
       }
@@ -88,7 +88,7 @@ export default function ContactsPage() {
   }, [user]);
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this buyer persona?')) {
+    if (!confirm('Are you sure you want to delete this team?')) {
       return;
     }
 
@@ -99,13 +99,13 @@ export default function ContactsPage() {
 
       if (response.ok) {
         setContacts(contacts.filter(c => c.id !== id));
-        toast.success('Buyer persona deleted');
+        toast.success('Team deleted');
       } else {
         throw new Error('Failed to delete');
       }
     } catch (error) {
       console.error('Error deleting contact:', error);
-      toast.error('Failed to delete buyer persona');
+      toast.error('Failed to delete team');
     }
   };
 
@@ -132,7 +132,7 @@ export default function ContactsPage() {
             {/* Header */}
             <div className="mb-6">
               <h1 className="text-2xl font-bold text-gray-900">Who do you sell to?</h1>
-              <p className="text-gray-600 mt-1">Define the people you typically sell to. We’ll characterize these groups of people (personas) here, and use these profiles to surface the right contacts at your target companies.</p>
+              <p className="text-gray-600 mt-1">Define the teams you typically sell to at a given company. First select a company type.</p>
             </div>
 
             {/* Contacts List */}
@@ -147,17 +147,20 @@ export default function ContactsPage() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
                   </svg>
                 </div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">No buyer personas yet</h3>
-                <p className="text-gray-500 mb-6">Get started by defining your first buyer persona.</p>
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">No teams yet</h3>
+                <p className="text-gray-500 mb-6">Get started by defining your first team.</p>
                 <button
                   onClick={() => router.push('/personas/new')}
                   className="px-6 py-3 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors"
                 >
-                  + Create new persona
+                  + Define new team
                 </button>
               </div>
             ) : (
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                <div className="mb-5">
+                  <h2 className="text-lg font-semibold text-gray-900">These are the teams you typically sell to</h2>
+                </div>
                 <div className="space-y-4">
                   {contacts.map((contact) => (
                     <div
@@ -275,7 +278,7 @@ export default function ContactsPage() {
                     onClick={() => router.push('/personas/new')}
                     className="w-full border-2 border-dashed border-gray-300 rounded-lg p-4 text-gray-500 hover:border-arcova-teal hover:text-arcova-teal transition-colors flex items-center justify-center mt-4"
                   >
-                    + Create new persona
+                    + Define new team
                   </button>
                 </div>
               </div>

@@ -5,6 +5,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { enrichOrganizationWithApollo } from '@/lib/apollo';
 import { resolveLinkedinUrl, type LinkedinResolutionResult } from '@/lib/linkedin-url-resolver';
+import { classifyContacts } from '@/lib/contact-classification';
 
 type MinimalSupabase = {
   from: (table: string) => any;
@@ -945,6 +946,28 @@ export async function runContactResolutionPipelineForContact(
     }
     updatePayload.company_linkedin_url = resolved.currentCompanyLinkedinUrl;
     updatePayload.company_id = companyId;
+
+    try {
+      const previousTitles = (resolved.employmentHistory ?? [])
+        .filter((h: { current?: boolean; title?: string | null }) => !h.current && h.title)
+        .map((h: { title: string }) => h.title)
+        .slice(0, 5);
+
+      const [classification] = await classifyContacts([{
+        full_name: typedContact.full_name,
+        job_title: resolved.currentJobTitle,
+        headline: resolved.headline,
+        company_name: resolved.currentCompanyName,
+        previous_titles: previousTitles.length ? previousTitles : null,
+      }]);
+      if (classification) {
+        updatePayload.job_title_standardised = classification.job_title_standardised;
+        updatePayload.seniority_level = classification.seniority_level;
+        updatePayload.business_area = classification.business_area;
+      }
+    } catch (err) {
+      console.warn('[enrichment] contact classification failed (non-fatal):', err instanceof Error ? err.message : err);
+    }
 
     await supabase.from('contacts').update(updatePayload).eq('user_id', userId).eq('id', contactId);
 

@@ -58,7 +58,7 @@ export default function ICPManagerPage() {
   }, [user]);
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this company profile? Any associated persona will also be deleted.')) return;
+    if (!confirm('Are you sure you want to delete this company profile? Any associated team will also be deleted.')) return;
 
     setDeletingId(id);
     try {
@@ -68,7 +68,7 @@ export default function ICPManagerPage() {
 
       if (response.ok) {
         setIcps(icps.filter(icp => icp.id !== id));
-        toast.success('Company profile and associated persona deleted');
+        toast.success('Company profile and associated team deleted');
       } else {
         toast.error('Failed to delete ICP');
       }
@@ -136,11 +136,14 @@ export default function ICPManagerPage() {
                   onClick={() => router.push('/companies/new')}
                   className="px-6 py-3 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors"
                 >
-                  + Create new company profile
+                  + Define new target company
                 </button>
               </div>
             ) : (
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                <div className="mb-5">
+                  <h2 className="text-lg font-semibold text-gray-900">These are the companies you typically sell to</h2>
+                </div>
                 <div className="space-y-4">
                   {/* ICP Cards */}
                   {icps.map((icp) => (
@@ -338,7 +341,7 @@ export default function ICPManagerPage() {
                     onClick={() => router.push('/companies/new')}
                     className="w-full border-2 border-dashed border-gray-300 rounded-lg p-4 text-gray-500 hover:border-arcova-teal hover:text-arcova-teal transition-colors flex items-center justify-center"
                   >
-                    + Create new company profile
+                    + Define new target company
                   </button>
                 </div>
               </div>

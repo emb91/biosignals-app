@@ -26,7 +26,7 @@ interface NavItem {
 
 const setupItems: NavItem[] = [
   { name: 'Companies', href: '/companies', icon: Target },
-  { name: 'Personas', href: '/personas', icon: UserCircle },
+  { name: 'Teams', href: '/personas', icon: UserCircle },
   { name: 'My Profile', href: '/my-profile', icon: User },
 ];
 
@@ -110,7 +110,7 @@ export default function AppSidebar() {
 
   const shouldShowDot = (itemName: string) => {
     if (itemName === 'Companies') return showCompaniesDot;
-    if (itemName === 'Personas') return showPersonasDot;
+    if (itemName === 'Teams') return showPersonasDot;
     if (itemName === 'My Profile') return showMyProfileDot;
     if (itemName === 'Import') return showImportDot;
     return false;

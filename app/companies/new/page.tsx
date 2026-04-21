@@ -116,7 +116,7 @@ export default function ICPNewPage() {
             </div>
             <h2 className="text-2xl font-semibold text-gray-900 mb-2">Your ICP is ready</h2>
             <p className="text-gray-600 mb-6">
-              We'll use this to surface the most relevant accounts and buyer personas for you.
+              We'll use this to surface the most relevant accounts and teams for you.
             </p>
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
               <button
@@ -129,7 +129,7 @@ export default function ICPNewPage() {
                 onClick={() => router.push('/contacts/new')}
                 className="px-4 py-2 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors flex items-center justify-center gap-1"
               >
-                Add a persona
+                Add a team
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
                 </svg>
