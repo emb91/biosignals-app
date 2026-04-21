@@ -1,8 +1,9 @@
 // Enrichment pipeline — three steps:
 // contact discovery   = Apollo identity/contact (already stored before this runs)
 // linkedin resolution = Claude web search for LinkedIn URL
-// profile enrichment  = Apify LinkedIn profile scrape + company scrape + LLM bio summary
+// profile enrichment  = Apify LinkedIn profile scrape + company scrape + Apollo company enrich + LLM bio summary
 import Anthropic from '@anthropic-ai/sdk';
+import { enrichOrganizationWithApollo } from '@/lib/apollo';
 import { resolveLinkedinUrl, type LinkedinResolutionResult } from '@/lib/linkedin-url-resolver';
 
 type MinimalSupabase = {
@@ -289,7 +290,8 @@ function extractCompanyFirmographics(raw: Record<string, unknown> | null): Recor
     .map((l) => getObject(l))
     .find((l) => l?.isHeadquarter || l?.headquarter) || getObject(locations[0]);
 
-  const website = normalizeString(raw.website || raw.websiteUrl || raw.url || '');
+  // raw.url is the LinkedIn company page URL — do not use it as the company website.
+  const website = normalizeString(raw.website || raw.websiteUrl || '');
   const domain = website ? normalizeDomain(website) : null;
 
   const specialties = arrayFromUnknown(raw.specialties || raw.specialities)
@@ -320,6 +322,54 @@ function extractCompanyFirmographics(raw: Record<string, unknown> | null): Recor
   };
 }
 
+function buildPreferredCompanyFirmographics(params: {
+  apifyFirmographics: Record<string, unknown>;
+  apolloFirmographics: Record<string, unknown> | null;
+}): Record<string, unknown> {
+  const { apifyFirmographics, apolloFirmographics } = params;
+
+  // Apollo is preferred only for selected structured firmographics that are
+  // generally stronger there. Apify remains the preferred source for company
+  // bio/presentation fields such as description, bio summary, tagline, LinkedIn
+  // URL, followers, logo, website, specialties, and the LinkedIn-derived
+  // company identity itself.
+  return {
+    ...apifyFirmographics,
+    industry:
+      (apolloFirmographics?.industry as string | null) ||
+      (apifyFirmographics.industry as string | null) ||
+      null,
+    employee_count:
+      (apolloFirmographics?.employee_count as number | null) ??
+      (apifyFirmographics.employee_count as number | null) ??
+      null,
+    founded_year:
+      (apolloFirmographics?.founded_year as number | null) ??
+      (apifyFirmographics.founded_year as number | null) ??
+      null,
+    hq_city:
+      (apolloFirmographics?.hq_city as string | null) ||
+      (apifyFirmographics.hq_city as string | null) ||
+      null,
+    hq_country:
+      (apolloFirmographics?.hq_country as string | null) ||
+      (apifyFirmographics.hq_country as string | null) ||
+      null,
+    funding_stage:
+      (apolloFirmographics?.funding_stage as string | null) ||
+      (apifyFirmographics.funding_stage as string | null) ||
+      null,
+    total_funding_usd:
+      (apolloFirmographics?.total_funding_usd as number | null) ??
+      (apifyFirmographics.total_funding_usd as number | null) ??
+      null,
+    latest_funding_date:
+      (apolloFirmographics?.latest_funding_date as string | null) ||
+      (apifyFirmographics.latest_funding_date as string | null) ||
+      null,
+  };
+}
+
 async function summariseCompanyBio(description: string): Promise<string | null> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey || !description.trim()) return null;
@@ -332,13 +382,27 @@ async function summariseCompanyBio(description: string): Promise<string | null> 
       messages: [
         {
           role: 'user',
-          content: `Summarise the following company description into 1–3 concise sentences for a B2B sales context. Focus on what the company does, who it serves, and any distinctive positioning. Return only the summary, no preamble.\n\n${description}`,
+          content: `Summarise the following company description into exactly 3 bullet points for a B2B sales context. Each bullet must be 10–15 words maximum — tight and factual. Cover: what the company does, who it serves, and their distinctive positioning or advantage. Return only the 3 bullets as plain text, one per line, no leading dashes or numbers, no preamble.\n\n${description}`,
         },
       ],
     });
 
     const block = message.content[0];
-    return block.type === 'text' ? block.text.trim() : null;
+    if (block.type !== 'text') return null;
+
+    const raw = block.text.trim();
+    // Model sometimes returns newline-separated bullets, sometimes a paragraph.
+    // Normalise to 3 newline-separated sentences either way.
+    const lines = raw.includes('\n')
+      ? raw.split('\n')
+      : raw.split(/(?<=\.)\s+(?=[A-Z])/);
+
+    const bullets = lines
+      .map((l) => l.replace(/^[-•*\d.)]\s*/, '').trim())
+      .filter(Boolean)
+      .slice(0, 3);
+
+    return bullets.length > 0 ? bullets.join('\n') : null;
   } catch (err) {
     console.warn('Company bio summarisation failed (non-fatal):', err instanceof Error ? err.message : err);
     return null;
@@ -408,6 +472,7 @@ async function upsertResolvedCompany(
     companyDomain?: string | null;
     linkedinUrl?: string | null;
     firmographics: Record<string, unknown>;
+    source: string;
   }
 ): Promise<string | null> {
   const domain =
@@ -422,17 +487,20 @@ async function upsertResolvedCompany(
     linkedin_url: input.linkedinUrl || null,
     website: (input.firmographics.website as string | null) || `https://${domain}`,
     description: (input.firmographics.description as string | null) || null,
+    bio_summary: (input.firmographics.bio_summary as string | null) || null,
     tagline: (input.firmographics.tagline as string | null) || null,
     logo_url: (input.firmographics.logo_url as string | null) || null,
     follower_count: (input.firmographics.follower_count as number | null) || null,
     industry: (input.firmographics.industry as string | null) || null,
     employee_count: (input.firmographics.employee_count as number | null) || null,
     employee_range: (input.firmographics.employee_range as string | null) || null,
+    funding_stage: (input.firmographics.funding_stage as string | null) || null,
+    funding_amount: (input.firmographics.total_funding_usd as number | null) || null,
     founded_year: (input.firmographics.founded_year as number | null) || null,
     headquarters_city: (input.firmographics.hq_city as string | null) || null,
     headquarters_country: (input.firmographics.hq_country as string | null) || null,
     specialties: (input.firmographics.specialties as string[] | null) || null,
-    source: 'harvestapi',
+    source: input.source,
     last_enriched_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
@@ -615,7 +683,7 @@ export async function runContactResolutionPipelineForContact(
 
     const rawData = rawUploadData?.raw_data || {};
     const apolloPerson = getObject(typedContact.apollo_person_raw);
-    const apolloOrganization = getObject(typedContact.apollo_organization_raw);
+    let apolloOrganization = getObject(typedContact.apollo_organization_raw);
     const searchCompanyName =
       (rawData.company_name as string | undefined) ||
       typedContact.company_name ||
@@ -672,7 +740,7 @@ export async function runContactResolutionPipelineForContact(
           linkedin_resolution_summary: resolvedLinkedin.search_summary || null,
           linkedin_resolution_status: 'completed',
           linkedin_resolution_completed_at: new Date().toISOString(),
-          profile_enrichment_status: 'pending',
+          profile_enrichment_status: 'skipped',
           updated_at: new Date().toISOString(),
         })
         .eq('user_id', userId)
@@ -722,18 +790,22 @@ export async function runContactResolutionPipelineForContact(
     // Step 3b: company enrichment — once we have an Apify-resolved profile,
     // use its current-company LinkedIn URL as the trigger for company scraping.
     // Apollo/Apify alignment is retained as debug metadata only, not a gate.
-    let companyFirmographics = resolved.firmographics;
+    let apifyCompanyFirmographics = resolved.firmographics;
     let apifyCompanyRaw: Record<string, unknown> | null = null;
+    let apolloCompanyFirmographics: Record<string, unknown> | null = null;
+    let apifyCompanyFirmographicsRefreshedAt: string | null = null;
+    let apolloCompanyFirmographicsRefreshedAt: string | null = null;
     if (resolved.currentCompanyLinkedinUrl) {
       try {
         apifyCompanyRaw = await runApifyCompanyEnrichment(resolved.currentCompanyLinkedinUrl);
+        apifyCompanyFirmographicsRefreshedAt = new Date().toISOString();
         if (apifyCompanyRaw) {
           const extracted = extractCompanyFirmographics(apifyCompanyRaw);
           const bioSummary = extracted.description
             ? await summariseCompanyBio(extracted.description as string)
             : null;
-          companyFirmographics = {
-            ...companyFirmographics,
+          apifyCompanyFirmographics = {
+            ...apifyCompanyFirmographics,
             ...extracted,
             bio_summary: bioSummary,
           };
@@ -743,6 +815,59 @@ export async function runContactResolutionPipelineForContact(
         console.warn('Company enrichment failed (non-fatal):', companyErr instanceof Error ? companyErr.message : companyErr);
       }
     }
+
+    // Step 3c: Apollo company enrichment — after Apify company enrichment, use the
+    // resolved company domain to pull structured firmographics such as funding details.
+    const apolloCompanyDomain =
+      normalizeDomain(apifyCompanyFirmographics.domain as string | null) ||
+      normalizeDomain(resolved.currentCompanyDomain) ||
+      normalizeDomain(getFirstString(apolloOrganization, ['primary_domain', 'website_url'])) ||
+      null;
+
+    const BLOCKED_DOMAINS = new Set(['linkedin.com', 'facebook.com', 'twitter.com', 'instagram.com']);
+    const apolloCompanyDomainClean =
+      apolloCompanyDomain && !BLOCKED_DOMAINS.has(apolloCompanyDomain) ? apolloCompanyDomain : null;
+    const apolloCompanyName = resolved.currentCompanyName || null;
+    const apolloCompanyLinkedinUrl = resolved.currentCompanyLinkedinUrl || null;
+
+    if (apolloCompanyLinkedinUrl || apolloCompanyDomainClean || apolloCompanyName) {
+      try {
+        const apolloCompany = await enrichOrganizationWithApollo({
+          company_domain: apolloCompanyDomainClean,
+          company_name: apolloCompanyName,
+          company_linkedin_url: apolloCompanyLinkedinUrl,
+        });
+        apolloCompanyFirmographicsRefreshedAt = new Date().toISOString();
+        apolloCompanyFirmographics = {
+          name: apolloCompany.company_name || null,
+          domain: apolloCompany.company_domain || null,
+          linkedin_url: apolloCompany.company_linkedin_url || null,
+          description: apolloCompany.company_description || null,
+          industry: apolloCompany.company_industry || null,
+          employee_count: apolloCompany.company_employee_count ?? null,
+          founded_year: apolloCompany.company_founded_year ?? null,
+          hq_city: apolloCompany.company_hq_city || null,
+          hq_country: apolloCompany.company_hq_country || null,
+          funding_stage: apolloCompany.company_funding_stage || null,
+          total_funding_usd: apolloCompany.company_total_funding_usd ?? null,
+          latest_funding_date: apolloCompany.company_latest_funding_date || null,
+        };
+
+        if (apolloCompany.raw_company) {
+          apolloOrganization = getObject(apolloCompany.raw_company) || apolloOrganization;
+        }
+      } catch (apolloCompanyErr) {
+        console.warn(
+          'Apollo company enrichment failed (non-fatal):',
+          apolloCompanyErr instanceof Error ? apolloCompanyErr.message : apolloCompanyErr
+        );
+      }
+    }
+
+    const companyFirmographics = buildPreferredCompanyFirmographics({
+      apifyFirmographics: apifyCompanyFirmographics,
+      apolloFirmographics: apolloCompanyFirmographics,
+    });
 
     // If company scrape returned a domain, use it for email alignment (never use the imported domain)
     const resolvedDomainFromCompany =
@@ -757,11 +882,16 @@ export async function runContactResolutionPipelineForContact(
       resolvedCurrentCompanyDomain: resolvedDomainFromCompany,
     });
 
+    const companySource =
+      apolloCompanyFirmographics !== null && apifyCompanyRaw !== null ? 'harvestapi+apollo' :
+      apolloCompanyFirmographics !== null ? 'apollo' : 'harvestapi';
+
     const companyId = await upsertResolvedCompany(supabase, userId, {
       companyName: resolved.currentCompanyName,
       companyDomain: resolved.currentCompanyDomain,
       linkedinUrl: resolved.currentCompanyLinkedinUrl,
       firmographics: companyFirmographics,
+      source: companySource,
     });
 
     const profileEnrichmentStatus = alignment.alignment === 'low' ? 'ambiguous' : 'completed';
@@ -781,6 +911,7 @@ export async function runContactResolutionPipelineForContact(
         linkedin_url: resolvedLinkedin.linkedin_url,
         linkedin_resolution_source: resolvedLinkedin.source,
       },
+      apollo_organization_raw: apolloOrganization,
       profile_enrichment_alignment_metadata: alignment,
       resolved_current_company_name: resolved.currentCompanyName,
       // Only store a domain against the resolved company if we actually got one from enrichment.
@@ -789,6 +920,10 @@ export async function runContactResolutionPipelineForContact(
       resolved_current_company_domain: resolved.resolvedCompanyDomainForEmailCheck,
       resolved_current_job_title: resolved.currentJobTitle,
       resolved_employment_history: resolved.employmentHistory,
+      apollo_company_firmographics: apolloCompanyFirmographics,
+      apollo_company_firmographics_refreshed_at: apolloCompanyFirmographicsRefreshedAt,
+      apify_company_firmographics: apifyCompanyFirmographics,
+      apify_company_firmographics_refreshed_at: apifyCompanyFirmographicsRefreshedAt,
       resolved_company_firmographics: companyFirmographics,
       apify_company_raw: apifyCompanyRaw,
       // Pull fresher contact-level fields from LinkedIn scrape

@@ -43,6 +43,10 @@ type ApolloOrganization = {
   organization_headcount_twenty_four_month_growth?: number | null;
 };
 
+type ApolloOrganizationEnrichResponse = {
+  organization?: ApolloOrganization | null;
+};
+
 type ApolloPerson = {
   id?: string;
   first_name?: string | null;
@@ -119,6 +123,22 @@ export type ApolloEnrichmentResult = {
   };
 };
 
+export type ApolloOrganizationEnrichmentResult = {
+  company_name?: string;
+  company_domain?: string;
+  company_linkedin_url?: string;
+  company_description?: string;
+  company_industry?: string;
+  company_employee_count?: number;
+  company_founded_year?: number;
+  company_hq_city?: string;
+  company_hq_country?: string;
+  company_funding_stage?: string;
+  company_total_funding_usd?: number;
+  company_latest_funding_date?: string;
+  raw_company?: unknown;
+};
+
 function getApolloApiKey(): string {
   const apiKey = process.env.APOLLO_API_KEY;
   if (!apiKey) {
@@ -130,6 +150,12 @@ function getApolloApiKey(): string {
 function normalizeDomain(value?: string | null): string | undefined {
   if (!value) return undefined;
   return value.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '');
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
 function normalizeString(value?: string | null): string {
@@ -271,6 +297,71 @@ async function matchPerson(input: ApolloLookupInput) {
 function joinLocation(...parts: Array<string | null | undefined>): string | undefined {
   const cleaned = parts.map((part) => part?.trim()).filter((part): part is string => Boolean(part));
   return cleaned.length > 0 ? cleaned.join(', ') : undefined;
+}
+
+export async function enrichOrganizationWithApollo(input: {
+  company_domain?: string | null;
+  company_name?: string | null;
+  company_linkedin_url?: string | null;
+}): Promise<ApolloOrganizationEnrichmentResult> {
+  const domain = normalizeDomain(input.company_domain);
+  const name = input.company_name?.trim() || undefined;
+  const linkedinUrl = input.company_linkedin_url?.trim() || undefined;
+  if (!domain && !name && !linkedinUrl) {
+    return {};
+  }
+
+  const params = new URLSearchParams();
+  if (domain) params.set('domain', domain);
+  if (name) params.set('name', name);
+  if (linkedinUrl) params.set('linkedin_url', linkedinUrl);
+
+  const response = await fetch(
+    `https://api.apollo.io/api/v1/organizations/enrich?${params.toString()}`,
+    {
+      method: 'GET',
+      headers: {
+        accept: 'application/json',
+        'x-api-key': getApolloApiKey(),
+        'cache-control': 'no-cache',
+      },
+    }
+  );
+
+  if (!response.ok) {
+    // 404/422 mean Apollo doesn't have this org — treat as not found rather than error.
+    if (response.status === 404 || response.status === 422) {
+      return {};
+    }
+    const errorText = await response.text().catch(() => '');
+    throw new Error(`Apollo organization enrich failed (${response.status}): ${errorText.slice(0, 300)}`);
+  }
+
+  const payload = (await response.json()) as ApolloOrganizationEnrichResponse | ApolloOrganization | unknown;
+  const payloadRecord = asRecord(payload);
+  const organization =
+    (payloadRecord?.organization as ApolloOrganization | null | undefined) ||
+    (payloadRecord as ApolloOrganization | null);
+
+  if (!organization) {
+    return {};
+  }
+
+  return {
+    company_name: organization.name || undefined,
+    company_domain: normalizeDomain(organization.primary_domain || organization.website_url || domain),
+    company_linkedin_url: organization.linkedin_url || undefined,
+    company_description: organization.short_description || undefined,
+    company_industry: organization.industry || undefined,
+    company_employee_count: organization.estimated_num_employees ?? undefined,
+    company_founded_year: organization.founded_year ?? undefined,
+    company_hq_city: organization.city || undefined,
+    company_hq_country: organization.country || undefined,
+    company_funding_stage: organization.latest_funding_stage || undefined,
+    company_total_funding_usd: organization.total_funding ?? undefined,
+    company_latest_funding_date: organization.latest_funding_round_date || undefined,
+    raw_company: organization,
+  };
 }
 
 export async function enrichContactWithApollo(input: ApolloLookupInput): Promise<ApolloEnrichmentResult> {

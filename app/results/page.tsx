@@ -28,6 +28,28 @@ interface EmploymentHistoryItem {
   current: boolean;
 }
 
+interface CompanyFirmographics {
+  name?: string | null;
+  description?: string | null;
+  bio_summary?: string | null;
+  tagline?: string | null;
+  website?: string | null;
+  domain?: string | null;
+  logo_url?: string | null;
+  follower_count?: number | null;
+  employee_count?: number | null;
+  employee_range?: string | null;
+  industry?: string | null;
+  founded_year?: number | null;
+  hq_city?: string | null;
+  hq_country?: string | null;
+  specialties?: string[] | null;
+  linkedin_url?: string | null;
+  funding_stage?: string | null;
+  total_funding_usd?: number | null;
+  latest_funding_date?: string | null;
+}
+
 interface Lead {
   id: string;
   full_name: string | null;
@@ -51,23 +73,11 @@ interface Lead {
   resolved_current_company_domain: string | null;
   resolved_current_job_title: string | null;
   resolved_employment_history: EmploymentHistoryItem[] | null;
-  resolved_company_firmographics: {
-    description?: string | null;
-    bio_summary?: string | null;
-    tagline?: string | null;
-    website?: string | null;
-    domain?: string | null;
-    logo_url?: string | null;
-    follower_count?: number | null;
-    employee_count?: number | null;
-    employee_range?: string | null;
-    industry?: string | null;
-    founded_year?: number | null;
-    hq_city?: string | null;
-    hq_country?: string | null;
-    specialties?: string[] | null;
-    linkedin_url?: string | null;
-  } | null;
+  resolved_company_firmographics: CompanyFirmographics | null;
+  apollo_company_firmographics: CompanyFirmographics | null;
+  apollo_company_firmographics_refreshed_at: string | null;
+  apify_company_firmographics: CompanyFirmographics | null;
+  apify_company_firmographics_refreshed_at: string | null;
   contact_bio: string[] | null;
   contact_discovery_status: string | null;
   linkedin_resolution_status: string | null;
@@ -86,6 +96,20 @@ type EditableLeadFields = {
   email: string;
 };
 
+type EnrichmentStageKey =
+  | 'queued'
+  | 'linkedin_processing'
+  | 'linkedin_resolved'
+  | 'profile_processing'
+  | 'complete'
+  | 'stopped';
+
+type EnrichmentVisualState = {
+  stageKey: EnrichmentStageKey;
+  startedAt: number;
+  startPercent: number;
+};
+
 const PAGE_SIZE = 50;
 const MAX_VISIBLE_WORK_HISTORY = 5;
 
@@ -97,6 +121,124 @@ const formatLastUpdated = (iso: string | null): string => {
     day: 'numeric',
     year: 'numeric',
   });
+};
+
+const formatCurrencyShort = (amount: number | null | undefined): string => {
+  if (amount == null) return '—';
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+    notation: amount >= 1_000_000 ? 'compact' : 'standard',
+  }).format(amount);
+};
+
+const getDisplayedCompanyFirmographics = (lead: Lead | null): CompanyFirmographics | null => {
+  if (!lead) return null;
+
+  const apifyFirmographics = lead.apify_company_firmographics || lead.resolved_company_firmographics || null;
+  const apolloFirmographics = lead.apollo_company_firmographics || null;
+
+  if (!apifyFirmographics && !apolloFirmographics) {
+    return null;
+  }
+
+  // Apollo is preferred only for selected structured firmographics.
+  // Apify remains authoritative for LinkedIn-derived presentation fields such
+  // as company bio, LinkedIn URL, followers, logo, website, specialties, and
+  // the LinkedIn-resolved company identity.
+  return {
+    ...(apifyFirmographics || {}),
+    industry: apolloFirmographics?.industry || apifyFirmographics?.industry || null,
+    employee_count: apolloFirmographics?.employee_count ?? apifyFirmographics?.employee_count ?? null,
+    founded_year: apolloFirmographics?.founded_year ?? apifyFirmographics?.founded_year ?? null,
+    hq_city: apolloFirmographics?.hq_city || apifyFirmographics?.hq_city || null,
+    hq_country: apolloFirmographics?.hq_country || apifyFirmographics?.hq_country || null,
+    funding_stage: apolloFirmographics?.funding_stage || apifyFirmographics?.funding_stage || null,
+    total_funding_usd:
+      apolloFirmographics?.total_funding_usd ?? apifyFirmographics?.total_funding_usd ?? null,
+    latest_funding_date:
+      apolloFirmographics?.latest_funding_date || apifyFirmographics?.latest_funding_date || null,
+  };
+};
+
+const getCompanyFirmographicsLastRefresh = (lead: Lead | null): string | null => {
+  if (!lead) return null;
+
+  return [lead.apollo_company_firmographics_refreshed_at, lead.apify_company_firmographics_refreshed_at]
+    .filter((value): value is string => Boolean(value))
+    .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] || null;
+};
+
+const getEnrichmentStage = (lead: Lead): {
+  key: EnrichmentStageKey;
+  label: string;
+  floor: number;
+  ceiling: number;
+  paceMs: number;
+} => {
+  const linkedinStatus = lead.linkedin_resolution_status || 'pending';
+  const profileStatus = lead.profile_enrichment_status || 'pending';
+
+  if (profileStatus === 'completed' || profileStatus === 'ambiguous') {
+    return { key: 'complete', label: 'Enrichment complete', floor: 100, ceiling: 100, paceMs: 1 };
+  }
+
+  if (profileStatus === 'failed' || profileStatus === 'blocked') {
+    return { key: 'stopped', label: 'Enrichment stopped', floor: 100, ceiling: 100, paceMs: 1 };
+  }
+
+  if (profileStatus === 'processing') {
+    return {
+      key: 'profile_processing',
+      label: 'Enriching profile and company details',
+      floor: 68,
+      ceiling: 94,
+      paceMs: 12000,
+    };
+  }
+
+  if (linkedinStatus === 'completed' && profileStatus === 'pending') {
+    return {
+      key: 'linkedin_resolved',
+      label: 'LinkedIn resolved, enrichment queued',
+      floor: 48,
+      ceiling: 66,
+      paceMs: 7000,
+    };
+  }
+
+  if (linkedinStatus === 'processing') {
+    return {
+      key: 'linkedin_processing',
+      label: 'Resolving LinkedIn profile',
+      floor: 16,
+      ceiling: 46,
+      paceMs: 10000,
+    };
+  }
+
+  return {
+    key: 'queued',
+    label: 'Queued for enrichment',
+    floor: 6,
+    ceiling: 18,
+    paceMs: 6000,
+  };
+};
+
+const getInterpolatedEnrichmentPercent = (
+  startPercent: number,
+  stage: ReturnType<typeof getEnrichmentStage>,
+  elapsedMs: number
+): number => {
+  if (stage.floor >= stage.ceiling) {
+    return stage.ceiling;
+  }
+
+  const safeStart = Math.min(Math.max(startPercent, stage.floor), stage.ceiling);
+  const progress = 1 - Math.exp(-Math.max(elapsedMs, 0) / stage.paceMs);
+  return safeStart + (stage.ceiling - safeStart) * progress;
 };
 
 export default function LeadsPage() {
@@ -117,6 +259,8 @@ export default function LeadsPage() {
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [selectedPreview, setSelectedPreview] = useState<'contact' | 'company'>('contact');
   const [isWorkHistoryExpanded, setIsWorkHistoryExpanded] = useState(false);
+  const [enrichmentVisuals, setEnrichmentVisuals] = useState<Record<string, EnrichmentVisualState>>({});
+  const [progressNow, setProgressNow] = useState(() => Date.now());
 
   useEffect(() => {
     if (!loading && !user) router.push('/login');
@@ -294,6 +438,82 @@ export default function LeadsPage() {
 
   const anyEnriching = leads.some(isEnriching);
 
+  useEffect(() => {
+    const now = Date.now();
+    setEnrichmentVisuals((previous) => {
+      const next: Record<string, EnrichmentVisualState> = {};
+
+      for (const lead of leads) {
+        if (!isEnriching(lead)) continue;
+
+        const stage = getEnrichmentStage(lead);
+        const prior = previous[lead.id];
+
+        if (prior && prior.stageKey === stage.key) {
+          next[lead.id] = prior;
+          continue;
+        }
+
+        const priorPercent = prior
+          ? getInterpolatedEnrichmentPercent(
+              prior.startPercent,
+              getEnrichmentStage({ ...lead, linkedin_resolution_status: '', profile_enrichment_status: '' } as Lead),
+              0
+            )
+          : stage.floor;
+
+        const carriedPercent = prior
+          ? getInterpolatedEnrichmentPercent(
+              prior.startPercent,
+              {
+                ...getEnrichmentStage(lead),
+                key: prior.stageKey,
+                label: stage.label,
+                floor: prior.startPercent,
+                ceiling: Math.max(prior.startPercent, stage.floor),
+                paceMs: 1,
+              },
+              now - prior.startedAt
+            )
+          : stage.floor;
+
+        next[lead.id] = {
+          stageKey: stage.key,
+          startedAt: now,
+          startPercent: Math.max(stage.floor, prior ? Math.max(priorPercent, carriedPercent) : stage.floor),
+        };
+      }
+
+      return next;
+    });
+  }, [leads]);
+
+  useEffect(() => {
+    if (!anyEnriching) return;
+    setProgressNow(Date.now());
+    const interval = setInterval(() => {
+      setProgressNow(Date.now());
+    }, 900);
+    return () => clearInterval(interval);
+  }, [anyEnriching]);
+
+  const getEnrichmentProgress = (lead: Lead): { percent: number; label: string } => {
+    const stage = getEnrichmentStage(lead);
+    const visual = enrichmentVisuals[lead.id];
+
+    if (!visual || visual.stageKey !== stage.key) {
+      return { percent: Math.round(stage.floor), label: stage.label };
+    }
+
+    const percent = getInterpolatedEnrichmentPercent(
+      visual.startPercent,
+      stage,
+      progressNow - visual.startedAt
+    );
+
+    return { percent: Math.round(percent), label: stage.label };
+  };
+
   // Auto-poll every 5s while any contact is still being enriched
   useEffect(() => {
     if (!anyEnriching) return;
@@ -303,6 +523,8 @@ export default function LeadsPage() {
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
   const selectedLead = leads.find((lead) => lead.id === selectedLeadId) || null;
+  const selectedCompanyFirmographics = getDisplayedCompanyFirmographics(selectedLead);
+  const selectedCompanyFirmographicsLastRefresh = getCompanyFirmographicsLastRefresh(selectedLead);
   const isEditingSelected = selectedLead ? editingLeadId === selectedLead.id : false;
   const isSavingSelected = selectedLead ? savingLeadId === selectedLead.id : false;
   const isDeletingSelected = selectedLead ? deletingLeadId === selectedLead.id : false;
@@ -399,6 +621,7 @@ export default function LeadsPage() {
                     {leads.map((lead) => {
                       const isSelected = selectedLeadId === lead.id;
                       const enriching = isEnriching(lead);
+                      const enrichmentProgress = getEnrichmentProgress(lead);
 
                       if (enriching) {
                         return (
@@ -421,12 +644,24 @@ export default function LeadsPage() {
                                   [lead.first_name, lead.last_name].filter(Boolean).join(' ') ||
                                   '—'}
                               </p>
+                              <p className="mt-1 text-[11px] text-gray-400 truncate">
+                                {enrichmentProgress.label}
+                              </p>
                             </div>
 
                             <div className="col-span-2 min-w-0 pr-3">
-                              <div className="relative h-2.5 overflow-hidden rounded-full bg-slate-200/80">
-                                <div className="arcova-enrichment-progress absolute inset-y-0 left-0 rounded-full" />
-                                <div className="arcova-enrichment-glow absolute inset-y-0 left-0 w-16 rounded-full" />
+                              <div className="flex items-center gap-3">
+                                <div className="relative h-2.5 flex-1 overflow-hidden rounded-full bg-slate-200/80">
+                                  <div
+                                    className="arcova-enrichment-progress absolute inset-y-0 left-0 rounded-full transition-[width] duration-700 ease-out"
+                                    style={{ width: `${enrichmentProgress.percent}%` }}
+                                  >
+                                    <div className="arcova-enrichment-glow absolute inset-y-0 right-0 w-14 rounded-full" />
+                                  </div>
+                                </div>
+                                <span className="text-[11px] font-medium tabular-nums text-gray-400">
+                                  {enrichmentProgress.percent}%
+                                </span>
                               </div>
                             </div>
 
@@ -481,9 +716,21 @@ export default function LeadsPage() {
 
                           {/* Company */}
                           <div className="min-w-0">
-                            <p className="text-sm text-gray-700 truncate">
-                              {((n) => n.length > 30 ? n.slice(0, 30) + '…' : n)(lead.resolved_current_company_name || lead.company_name || '—')}
-                            </p>
+                            {(() => {
+                              const name = lead.resolved_current_company_name || lead.company_name || '—';
+                              const truncated = name.length > 30 ? name.slice(0, 30) + '…' : name;
+                              const domain = lead.resolved_company_firmographics?.domain || lead.company_domain;
+                              const href = lead.resolved_company_firmographics?.website || (domain ? `https://${domain}` : null);
+                              return href ? (
+                                <a href={href} target="_blank" rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="text-sm text-arcova-teal hover:underline truncate block">
+                                  {truncated}
+                                </a>
+                              ) : (
+                                <p className="text-sm text-gray-700 truncate">{truncated}</p>
+                              );
+                            })()}
                           </div>
 
                           {/* Company details button */}
@@ -568,6 +815,16 @@ export default function LeadsPage() {
                               {selectedLead.headline}
                             </p>
                           )}
+                          {selectedPreview === 'company' && (() => {
+                            const domain = selectedCompanyFirmographics?.domain || selectedLead.company_domain;
+                            const href = selectedCompanyFirmographics?.website || (domain ? `https://${domain}` : null);
+                            return domain && href ? (
+                              <a href={href} target="_blank" rel="noopener noreferrer"
+                                className="text-xs text-arcova-teal hover:underline mt-1 inline-block">
+                                {domain}
+                              </a>
+                            ) : null;
+                          })()}
                         </div>
 
                         {/* Photo / logo + close (right side) */}
@@ -590,9 +847,9 @@ export default function LeadsPage() {
                             )
                           ) : (
                             /* Company logo */
-                            selectedLead.resolved_company_firmographics?.logo_url ? (
+                            selectedCompanyFirmographics?.logo_url ? (
                               <img
-                                src={selectedLead.resolved_company_firmographics.logo_url}
+                                src={selectedCompanyFirmographics.logo_url}
                                 alt=""
                                 className="w-16 h-16 rounded-xl object-contain bg-gray-50 border border-gray-100 p-1"
                               />
@@ -767,7 +1024,7 @@ export default function LeadsPage() {
                         ) : (
                           /* ── Company view ── */
                           (() => {
-                            const f = selectedLead.resolved_company_firmographics;
+                            const f = selectedCompanyFirmographics;
                             // Domain: only show what Apify actually returned — never the Apollo/CSV-imported domain
                             const apifyDomain = f?.domain || null;
                             const website = f?.website || null;
@@ -781,9 +1038,19 @@ export default function LeadsPage() {
                                 {(f?.bio_summary || f?.description) ? (
                                   <div>
                                     <p className="text-gray-400 text-xs mb-1">About</p>
-                                    <p className="text-sm text-gray-700 leading-relaxed">
-                                      {f.bio_summary || f.description}
-                                    </p>
+                                    <ul className="space-y-1.5 pb-1">
+                                      {(f.bio_summary ?? f.description ?? '')
+                                        .split('\n')
+                                        .map((s: string) => s.trim())
+                                        .filter(Boolean)
+                                        .slice(0, 3)
+                                        .map((bullet: string, i: number) => (
+                                          <li key={i} className="flex gap-2 text-sm text-gray-700 leading-snug">
+                                            <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-arcova-teal flex-shrink-0" />
+                                            {bullet}
+                                          </li>
+                                        ))}
+                                    </ul>
                                   </div>
                                 ) : (
                                   <p className="text-xs text-gray-400 italic">Company bio will appear after enrichment runs.</p>
@@ -805,10 +1072,18 @@ export default function LeadsPage() {
                                       <p className="text-gray-900 text-sm mt-0.5">{f.follower_count.toLocaleString()}</p>
                                     </div>
                                   )}
-                                  {f?.industry && (
+                                  {f?.funding_stage && (
                                     <div>
-                                      <p className="text-gray-400 text-xs">Industry</p>
-                                      <p className="text-gray-900 text-sm mt-0.5">{f.industry}</p>
+                                      <p className="text-gray-400 text-xs">Funding stage</p>
+                                      <p className="text-gray-900 text-sm mt-0.5">{f.funding_stage}</p>
+                                    </div>
+                                  )}
+                                  {f?.total_funding_usd != null && (
+                                    <div>
+                                      <p className="text-gray-400 text-xs">Total funding</p>
+                                      <p className="text-gray-900 text-sm mt-0.5">
+                                        {formatCurrencyShort(f.total_funding_usd)}
+                                      </p>
                                     </div>
                                   )}
                                   {f?.founded_year && (
@@ -817,30 +1092,25 @@ export default function LeadsPage() {
                                       <p className="text-gray-900 text-sm mt-0.5">{f.founded_year}</p>
                                     </div>
                                   )}
+                                  {f?.latest_funding_date && (
+                                    <div>
+                                      <p className="text-gray-400 text-xs">Latest funding</p>
+                                      <p className="text-gray-900 text-sm mt-0.5">
+                                        {formatLastUpdated(f.latest_funding_date)}
+                                      </p>
+                                    </div>
+                                  )}
                                   {hq && (
                                     <div>
                                       <p className="text-gray-400 text-xs">HQ</p>
                                       <p className="text-gray-900 text-sm mt-0.5">{hq}</p>
                                     </div>
                                   )}
-                                  {apifyDomain && (
-                                    <div>
-                                      <p className="text-gray-400 text-xs">Domain</p>
-                                      <p className="text-gray-900 text-sm mt-0.5">{apifyDomain}</p>
-                                    </div>
-                                  )}
                                 </div>
 
                                 {/* Links */}
-                                {(website || companyLinkedIn) && (
+                                {companyLinkedIn && (
                                   <div className="flex flex-col gap-1.5">
-                                    {website && (
-                                      <a href={website} target="_blank" rel="noopener noreferrer"
-                                        className="inline-flex items-center gap-1.5 text-arcova-teal hover:underline text-xs">
-                                        <ExternalLink className="w-3 h-3" />
-                                        {website.replace(/^https?:\/\//, '')}
-                                      </a>
-                                    )}
                                     {companyLinkedIn && (
                                       <a href={companyLinkedIn} target="_blank" rel="noopener noreferrer"
                                         className="inline-flex items-center gap-1.5 text-arcova-teal hover:underline text-xs">
@@ -851,16 +1121,10 @@ export default function LeadsPage() {
                                   </div>
                                 )}
 
-                                {/* Specialties */}
-                                {f?.specialties && f.specialties.length > 0 && (
-                                  <div>
-                                    <p className="text-gray-400 text-xs mb-1.5">Specialties</p>
-                                    <div className="flex flex-wrap gap-1.5">
-                                      {f.specialties.slice(0, 8).map((s, i) => (
-                                        <span key={i} className="inline-block rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">{s}</span>
-                                      ))}
-                                    </div>
-                                  </div>
+                                {selectedCompanyFirmographicsLastRefresh && (
+                                  <p className="text-xs text-gray-400">
+                                    Firmographics refreshed {formatLastUpdated(selectedCompanyFirmographicsLastRefresh)}
+                                  </p>
                                 )}
                               </div>
                             );
@@ -943,57 +1207,60 @@ export default function LeadsPage() {
       </div>
       <style jsx>{`
         .arcova-enrichment-progress {
-          width: 100%;
-          background: linear-gradient(90deg, rgba(12, 205, 205, 0.16) 0%, rgba(12, 205, 205, 0.72) 72%, rgba(13, 53, 71, 0.85) 100%);
-          transform-origin: left center;
-          animation: arcova-row-progress 2.9s ease-in-out infinite;
+          min-width: 1.25rem;
+          background: linear-gradient(90deg, rgba(12, 205, 205, 0.24) 0%, rgba(12, 205, 205, 0.78) 68%, rgba(13, 53, 71, 0.9) 100%);
+          box-shadow:
+            inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+            0 0 0.35rem rgba(12, 205, 205, 0.16);
+          animation: arcova-row-throb 2.2s ease-in-out infinite;
+          will-change: opacity, filter, box-shadow;
         }
 
         .arcova-enrichment-glow {
-          background: linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.72) 48%, rgba(255, 255, 255, 0) 100%);
-          animation: arcova-row-glow 2.9s ease-in-out infinite;
+          background: linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.82) 50%, rgba(255, 255, 255, 0) 100%);
+          animation: arcova-row-glow 1.8s ease-in-out infinite;
         }
 
-        @keyframes arcova-row-progress {
+        @keyframes arcova-row-throb {
           0% {
-            opacity: 0.28;
-            transform: scaleX(0.04);
+            opacity: 0.82;
+            filter: saturate(0.96) brightness(0.98);
+            box-shadow:
+              inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+              0 0 0.25rem rgba(12, 205, 205, 0.14);
           }
 
-          55% {
-            opacity: 0.9;
-            transform: scaleX(0.62);
-          }
-
-          82% {
-            opacity: 0.95;
-            transform: scaleX(1);
+          50% {
+            opacity: 1;
+            filter: saturate(1.08) brightness(1.08);
+            box-shadow:
+              inset 0 0 0 1px rgba(255, 255, 255, 0.16),
+              0 0 0.65rem rgba(12, 205, 205, 0.28);
           }
 
           100% {
-            opacity: 0.22;
-            transform: scaleX(0.04);
+            opacity: 0.82;
+            filter: saturate(0.96) brightness(0.98);
+            box-shadow:
+              inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+              0 0 0.25rem rgba(12, 205, 205, 0.14);
           }
         }
 
         @keyframes arcova-row-glow {
           0% {
-            opacity: 0;
-            transform: translateX(-4rem);
+            opacity: 0.22;
+            transform: translateX(-0.85rem);
           }
 
-          20% {
-            opacity: 0.7;
-          }
-
-          82% {
-            opacity: 0.85;
-            transform: translateX(calc(100% - 4rem));
+          50% {
+            opacity: 0.8;
+            transform: translateX(0);
           }
 
           100% {
-            opacity: 0;
-            transform: translateX(calc(100% - 4rem));
+            opacity: 0.22;
+            transform: translateX(0.85rem);
           }
         }
       `}</style>
