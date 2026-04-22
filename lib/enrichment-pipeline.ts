@@ -982,13 +982,18 @@ export async function runContactResolutionPipelineForContact(
       source: companySource,
     });
 
+    const canonicalCompanyDomainForFunding =
+      normalizeDomain(apifyCompanyFirmographics.domain as string | null) ||
+      normalizeDomain(resolved.currentCompanyDomain) ||
+      null;
+
     // Resolve canonical funding before flipping the lead to completed so the UI
     // never settles on an intermediate Apollo funding stage.
     if (companyId) {
       await runCompanyMonitor(supabase, {
         company_id: companyId,
         company_name: resolved.currentCompanyName ?? '',
-        domain: resolved.currentCompanyDomain ?? null,
+        domain: canonicalCompanyDomainForFunding,
         apollo_funding_stage: (apolloCompanyFirmographics?.funding_stage as string | null) ?? null,
         apollo_total_funding_usd: (apolloCompanyFirmographics?.total_funding_usd as number | null) ?? null,
         apollo_latest_funding_date: (apolloCompanyFirmographics?.latest_funding_date as string | null) ?? null,

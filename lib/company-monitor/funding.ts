@@ -42,6 +42,7 @@ export type FundingInput = {
 
 export type FundingResult = {
   funding_stage: FundingStage | null;     // normalised to our taxonomy
+  funding_status_label: string | null;    // display-ready non-taxonomy result when needed
   total_funding_usd: number | null;
   latest_funding_date: string | null;
   source: 'apollo' | 'web_search' | null; // where the result came from
@@ -60,6 +61,10 @@ function parseOptionalNumber(value: unknown): number | null {
 }
 
 function parseOptionalDate(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function parseOptionalStatusLabel(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
@@ -116,11 +121,18 @@ Search for "[company name] funding round", "[company name] raises", and "[compan
 Return ONLY valid JSON:
 {
   "funding_stage": "<one of the taxonomy options or null>",
+  "funding_status_label": "<short display label like 'Venture capital fund', 'Venture - Series Unknown', 'Private company', or null>",
   "total_funding_usd": <number or null>,
   "latest_funding_date": "<YYYY-MM-DD or null>",
   "confidence": "<high|medium|low>",
   "raw_finding": "<one sentence summary of what you found>"
-}`;
+}
+
+Rules for funding_status_label:
+- If funding_stage is one of the taxonomy values, funding_status_label may repeat that value
+- If funding_stage is null but you can still determine a useful non-taxonomy status, return a short label taken from the evidence
+- Prefer source language like "Venture capital fund" or "Venture - Series Unknown" over invented paraphrases
+- Return null only if you genuinely cannot determine any useful funding status`;
 
   const message = await client.messages.create({
     model: MODEL,
@@ -145,6 +157,7 @@ Return ONLY valid JSON:
   if (!jsonMatch) {
     return {
       funding_stage: null,
+      funding_status_label: null,
       total_funding_usd: null,
       latest_funding_date: null,
       source: 'web_search',
@@ -156,6 +169,7 @@ Return ONLY valid JSON:
 
   const parsed = JSON.parse(jsonMatch[0]) as {
     funding_stage?: string | null;
+    funding_status_label?: string | null;
     total_funding_usd?: number | string | null;
     latest_funding_date?: string | null;
     confidence?: string;
@@ -168,6 +182,9 @@ Return ONLY valid JSON:
 
   return {
     funding_stage: stage,
+    funding_status_label:
+      parseOptionalStatusLabel(parsed.funding_status_label) ??
+      stage,
     total_funding_usd: parseOptionalNumber(parsed.total_funding_usd),
     latest_funding_date: parseOptionalDate(parsed.latest_funding_date),
     source: 'web_search',
@@ -191,6 +208,7 @@ export async function resolveFundingStage(input: FundingInput): Promise<FundingR
   if (apolloMapped) {
     return {
       funding_stage: apolloMapped,
+      funding_status_label: apolloMapped,
       total_funding_usd: input.apollo_total_funding_usd ?? null,
       latest_funding_date: input.apollo_latest_funding_date ?? null,
       source: 'apollo',

@@ -51,6 +51,7 @@ export type CompanyMonitorResult = {
     updated: boolean;
     previous: string | null;
     current: string | null;
+    status_label: string | null;
     source: string | null;
     confidence: string;
     summary: string | null;
@@ -86,7 +87,7 @@ export async function runCompanyMonitor(
     const currentResult = await supabase
       .from('companies')
       .select(
-        'funding_stage, total_funding_usd, latest_funding_date, funding_data_source'
+        'funding_stage, funding_status_label, total_funding_usd, latest_funding_date, funding_data_source'
       )
       .eq('id', input.company_id)
       .maybeSingle();
@@ -102,6 +103,11 @@ export async function runCompanyMonitor(
 
     const previousStage = current?.funding_stage ?? null;
     const nextFundingStage = funding.funding_stage ?? previousStage;
+    const nextFundingStatusLabel =
+      funding.funding_status_label ??
+      nextFundingStage ??
+      current?.funding_status_label ??
+      null;
     const nextTotalFundingUsd =
       funding.total_funding_usd ??
       input.apollo_total_funding_usd ??
@@ -119,6 +125,7 @@ export async function runCompanyMonitor(
       funding_resolution_confidence: funding.confidence,
       funding_resolution_summary: funding.raw_finding,
       funding_resolution_last_error: null,
+      funding_status_label: nextFundingStatusLabel,
       updated_at: new Date().toISOString(),
       total_funding_usd: nextTotalFundingUsd,
       latest_funding_date: nextLatestFundingDate,
@@ -148,6 +155,7 @@ export async function runCompanyMonitor(
       updated: changed && !!funding.funding_stage,
       previous: previousStage,
       current: nextFundingStage,
+      status_label: nextFundingStatusLabel,
       source: funding.source,
       confidence: funding.confidence,
       summary: funding.raw_finding,

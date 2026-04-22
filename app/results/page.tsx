@@ -95,8 +95,11 @@ interface Lead {
     logo_url: string | null;
     follower_count: number | null;
     funding_stage: string | null;
+    funding_status_label: string | null;
     total_funding_usd: number | null;
     funding_data_source: string | null;
+    funding_resolution_confidence: string | null;
+    funding_resolution_summary: string | null;
     founded_year: number | null;
     headquarters_city: string | null;
     headquarters_country: string | null;
@@ -189,6 +192,29 @@ const getDisplayedCompanyFirmographics = (lead: Lead | null): CompanyFirmographi
 const getCompanyFirmographicsLastRefresh = (lead: Lead | null): string | null => {
   if (!lead) return null;
   return lead.companies?.last_enriched_at || null;
+};
+
+const normalizeInlineText = (value: string | null | undefined): string | null => {
+  if (!value) return null;
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  return normalized || null;
+};
+
+const getFundingStatusDisplay = (
+  company: Lead['companies'] | null
+): { heading: 'Funding stage' | 'Funding status'; value: string } | null => {
+  const stage = normalizeInlineText(company?.funding_stage);
+  if (stage) {
+    return {
+      heading: 'Funding stage',
+      value: stage,
+    };
+  }
+
+  const statusLabel = normalizeInlineText(company?.funding_status_label);
+  if (!statusLabel) return null;
+
+  return { heading: 'Funding status', value: statusLabel };
 };
 
 const getEnrichmentStage = (lead: Lead): {
@@ -1085,6 +1111,7 @@ export default function LeadsPage() {
                             const companyLinkedIn = f?.linkedin_url || selectedLead.company_linkedin_url;
                             const hqParts = [f?.hq_city, f?.hq_country].filter(Boolean);
                             const hq = hqParts.join(', ') || null;
+                            const fundingStatus = getFundingStatusDisplay(selectedLead.companies);
 
                             return (
                               <div className="space-y-4">
@@ -1126,10 +1153,10 @@ export default function LeadsPage() {
                                       <p className="text-gray-900 text-sm mt-0.5">{f.follower_count.toLocaleString()}</p>
                                     </div>
                                   )}
-                                  {f?.funding_stage && (
+                                  {fundingStatus && (
                                     <div>
-                                      <p className="text-gray-400 text-xs">Funding stage</p>
-                                      <p className="text-gray-900 text-sm mt-0.5">{f.funding_stage}</p>
+                                      <p className="text-gray-400 text-xs">{fundingStatus.heading}</p>
+                                      <p className="text-gray-900 text-sm mt-0.5">{fundingStatus.value}</p>
                                     </div>
                                   )}
                                   {f?.total_funding_usd != null && (

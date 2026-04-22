@@ -60,6 +60,77 @@ type MinimalSupabase = {
 
 const normalize = (value: string | null | undefined) => (value || '').trim().toLowerCase();
 
+function normalizeString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function formatSupabaseErrorMessage(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+
+  const candidate = error as {
+    message?: unknown;
+    details?: unknown;
+    hint?: unknown;
+  };
+
+  const parts = [candidate.message, candidate.details, candidate.hint]
+    .map((value) => (typeof value === 'string' ? value.trim() : ''))
+    .filter(Boolean);
+
+  return parts.length > 0 ? parts.join(' | ') : null;
+}
+
+function pickCanonicalString(...values: unknown[]): string | null {
+  for (const value of values) {
+    const normalized = normalizeString(value);
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
+function pickCanonicalNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value.replace(/[$,]/g, '').trim());
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return null;
+}
+
+function pickCanonicalStringArray(...values: unknown[]): string[] | null {
+  for (const value of values) {
+    if (!Array.isArray(value)) continue;
+
+    const normalized = value
+      .map((item) => normalizeString(item))
+      .filter(Boolean);
+
+    if (normalized.length > 0) return normalized;
+  }
+
+  return null;
+}
+
+type ExistingCompany = {
+  id: string;
+  company_name: string | null;
+  linkedin_url: string | null;
+  description: string | null;
+  industry: string | null;
+  sub_industry: string | null;
+  employee_count: number | string | null;
+  employee_range: string | null;
+  founded_year: number | string | null;
+  headquarters_city: string | null;
+  headquarters_country: string | null;
+  therapeutic_areas: string[] | null;
+  modalities: string[] | null;
+  clinical_stage: string | null;
+  source: string | null;
+};
+
 function isMissingColumnError(error: unknown): boolean {
   const message =
     error && typeof error === 'object' && 'message' in error
@@ -112,42 +183,79 @@ async function upsertCompany(
   const domain = record.company_domain?.trim().toLowerCase();
   if (!domain) return null;
 
+  const context = `user=${userId} domain=${domain}`;
+
+  const existing = await supabase
+    .from('companies')
+    .select(
+      'id, company_name, linkedin_url, description, industry, sub_industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_country, therapeutic_areas, modalities, clinical_stage, source'
+    )
+    .eq('user_id', userId)
+    .eq('domain', domain)
+    .maybeSingle();
+
+  const existingError = formatSupabaseErrorMessage(existing?.error);
+  if (existingError) {
+    throw new Error(`[import-ingestion] Failed to look up company (${context}): ${existingError}`);
+  }
+
+  const existingCompany = (existing?.data as ExistingCompany | null) || null;
+  const now = new Date().toISOString();
   const companyPayload = {
     user_id: userId,
     domain,
-    company_name: record.company_name || null,
-    website: domain ? `https://${domain}` : null,
-    description: record.company_description || null,
-    industry: record.company_industry || null,
-    sub_industry: record.company_sub_industry || null,
-    employee_count: record.company_employee_count || null,
-    employee_range: record.company_employee_range || null,
-    founded_year: record.company_founded_year || null,
-    headquarters_city: record.company_hq_city || null,
-    headquarters_country: record.company_hq_country || null,
-    funding_stage: record.company_funding_stage || null,
-    total_funding_usd: record.company_total_funding_usd || null,
-    latest_funding_date: record.company_latest_funding_date || null,
-    therapeutic_areas: record.company_therapeutic_areas || null,
-    modalities: record.company_modalities || null,
-    clinical_stage: record.company_clinical_stage || null,
-    source: record.enrichment_provider || 'imported',
-    last_enriched_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
+    company_name: pickCanonicalString(record.company_name, existingCompany?.company_name),
+    linkedin_url: pickCanonicalString(record.company_linkedin_url, existingCompany?.linkedin_url),
+    description: pickCanonicalString(record.company_description, existingCompany?.description),
+    industry: pickCanonicalString(record.company_industry, existingCompany?.industry),
+    sub_industry: pickCanonicalString(record.company_sub_industry, existingCompany?.sub_industry),
+    employee_count: pickCanonicalNumber(record.company_employee_count, existingCompany?.employee_count),
+    employee_range: pickCanonicalString(record.company_employee_range, existingCompany?.employee_range),
+    founded_year: pickCanonicalNumber(record.company_founded_year, existingCompany?.founded_year),
+    headquarters_city: pickCanonicalString(record.company_hq_city, existingCompany?.headquarters_city),
+    headquarters_country: pickCanonicalString(
+      record.company_hq_country,
+      existingCompany?.headquarters_country
+    ),
+    therapeutic_areas: pickCanonicalStringArray(
+      record.company_therapeutic_areas,
+      existingCompany?.therapeutic_areas
+    ),
+    modalities: pickCanonicalStringArray(record.company_modalities, existingCompany?.modalities),
+    clinical_stage: pickCanonicalString(record.company_clinical_stage, existingCompany?.clinical_stage),
+    source: record.enrichment_provider || existingCompany?.source || 'imported',
+    last_enriched_at: now,
+    updated_at: now,
   };
 
-  const result = (await supabase
+  if (existingCompany?.id) {
+    const updateResult = await supabase
+      .from('companies')
+      .update(companyPayload)
+      .eq('id', existingCompany.id);
+
+    const updateError = formatSupabaseErrorMessage(updateResult?.error);
+    if (updateError) {
+      throw new Error(
+        `[import-ingestion] Failed to update canonical company row (${context} id=${existingCompany.id}): ${updateError}`
+      );
+    }
+
+    return existingCompany.id;
+  }
+
+  const insertResult = (await supabase
     .from('companies')
-    .upsert(companyPayload, { onConflict: 'user_id,domain', ignoreDuplicates: false })
+    .insert(companyPayload)
     .select('id')
     .single()) as { data: Record<string, unknown> | null; error?: unknown };
 
-  if (result.error) {
-    console.error('[import-ingestion] Company upsert failed:', domain, result.error);
-    return null;
+  const insertError = formatSupabaseErrorMessage(insertResult?.error);
+  if (insertError) {
+    throw new Error(`[import-ingestion] Failed to insert canonical company row (${context}): ${insertError}`);
   }
 
-  return (result.data?.id as string) ?? null;
+  return (insertResult.data?.id as string) ?? null;
 }
 
 export async function ingestEnrichedRecords(
