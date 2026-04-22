@@ -3,11 +3,14 @@
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import AppSidebar from '@/components/AppSidebar';
+import SetupShell from '@/components/SetupShell';
+import { useSetupState } from '@/lib/use-setup-state';
 import { supabase } from '@/lib/supabase';
 export default function CompanyAnalysisPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const setupState = useSetupState();
+  const inSetup = !setupState.setupComplete;
   const [websiteUrl, setWebsiteUrl] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResults, setAnalysisResults] = useState<any>(null);
@@ -313,9 +316,7 @@ export default function CompanyAnalysisPage() {
   const sections = getSections();
 
   return (
-    <div className="flex h-screen bg-gray-50">
-      <AppSidebar />
-      
+    <SetupShell inSetup={inSetup} step={1}>
       <div className="flex-1 flex flex-col min-h-0">
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto p-4">
@@ -600,6 +601,6 @@ export default function CompanyAnalysisPage() {
           </div>
         </div>
       </div>
-    </div>
+    </SetupShell>
   );
 }

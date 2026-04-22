@@ -3,7 +3,8 @@
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import AppSidebar from '@/components/AppSidebar';
+import SetupShell from '@/components/SetupShell';
+import { useSetupState } from '@/lib/use-setup-state';
 import { toast, Toaster } from 'sonner';
 import { getSignalDisplayName } from '@/lib/signal-display-names';
 
@@ -27,6 +28,8 @@ interface CompanyProfile {
 export default function ContactsPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const setupState = useSetupState();
+  const inSetup = !setupState.setupComplete;
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [companyProfiles, setCompanyProfiles] = useState<CompanyProfile[]>([]);
   const [loadingContacts, setLoadingContacts] = useState(true);
@@ -122,17 +125,31 @@ export default function ContactsPage() {
   }
 
   return (
-    <div className="flex h-screen bg-gray-50">
-      <AppSidebar />
-      
+    <SetupShell inSetup={inSetup} step={3}>
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Content Area */}
         <div className="flex-1 overflow-auto p-6">
           <div className="max-w-4xl mx-auto">
             {/* Header */}
-            <div className="mb-6">
-              <h1 className="text-2xl font-bold text-gray-900">Who do you sell to?</h1>
-              <p className="text-gray-600 mt-1">Define the teams you typically sell to at a given company. First select a company type.</p>
+            <div className="mb-6 flex items-start justify-between gap-4">
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900">Who do you sell to?</h1>
+                <p className="text-gray-600 mt-1">Define the teams you typically sell to at a given company. First select a company type.</p>
+              </div>
+              {/* Finish setup button — only shown in setup mode once at least one team exists */}
+              {inSetup && contacts.length > 0 && (
+                <button
+                  onClick={() => {
+                    toast.success("You're all set! You can add more target companies and teams anytime from Settings.", {
+                      duration: 6000,
+                    });
+                    router.push('/import');
+                  }}
+                  className="shrink-0 px-5 py-2.5 bg-arcova-teal text-white font-semibold rounded-lg hover:bg-arcova-teal/90 transition-colors text-sm"
+                >
+                  Finish setup →
+                </button>
+              )}
             </div>
 
             {/* Contacts List */}
@@ -287,6 +304,6 @@ export default function ContactsPage() {
         </div>
       </div>
       <Toaster position="top-center" richColors />
-    </div>
+    </SetupShell>
   );
 }

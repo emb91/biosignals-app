@@ -141,6 +141,20 @@ export default function DashboardPage() {
         const importComplete = !!importData;
         const signalsComplete = icps.some((icp) => hasSignals(icp.signals)) || contacts.some((contact) => hasSignals(contact.signals));
 
+        // Re-entry guard: send users to their next incomplete setup step
+        if (!profileComplete) {
+          router.replace('/my-profile');
+          return;
+        }
+        if (!companiesComplete) {
+          router.replace('/companies');
+          return;
+        }
+        if (!personasComplete) {
+          router.replace('/personas');
+          return;
+        }
+
         const checklistSteps: SetupStep[] = [
           { id: 'profile', label: 'My Profile', completed: profileComplete, actionPath: '/my-profile' },
           { id: 'companies', label: 'Target Companies', completed: companiesComplete, actionPath: '/companies' },

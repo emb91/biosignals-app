@@ -3,7 +3,8 @@
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import AppSidebar from '@/components/AppSidebar';
+import SetupShell from '@/components/SetupShell';
+import { useSetupState } from '@/lib/use-setup-state';
 import { toast, Toaster } from 'sonner';
 import { getSignalDisplayName } from '@/lib/signal-display-names';
 
@@ -23,6 +24,8 @@ interface ICP {
 export default function ICPManagerPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const setupState = useSetupState();
+  const inSetup = !setupState.setupComplete;
 
   const [icps, setIcps] = useState<ICP[]>([]);
   const [loadingIcps, setLoadingIcps] = useState(true);
@@ -109,17 +112,26 @@ export default function ICPManagerPage() {
   }
 
   return (
-    <div className="flex h-screen bg-gray-50">
-      <AppSidebar />
-      
+    <SetupShell inSetup={inSetup} step={2}>
       <div className="flex-1 flex flex-col min-h-0">
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto p-6">
           <div className="max-w-4xl mx-auto">
             {/* Header */}
-            <div className="mb-6">
-              <h1 className="text-2xl font-bold text-gray-900">Which companies do you sell to?</h1>
-              <p className="text-gray-600 mt-1">Tell us about the companies you sell to. We'll use these to find and score the best accounts for you. Create as many as you like.</p>
+            <div className="mb-6 flex items-start justify-between gap-4">
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900">Which companies do you sell to?</h1>
+                <p className="text-gray-600 mt-1">Tell us about the companies you sell to. We&apos;ll use these to find and score the best accounts for you. Create as many as you like.</p>
+              </div>
+              {/* Continue button — only shown in setup mode once at least one ICP exists */}
+              {inSetup && icps.length > 0 && (
+                <button
+                  onClick={() => router.push('/personas')}
+                  className="shrink-0 px-5 py-2.5 bg-arcova-teal text-white font-semibold rounded-lg hover:bg-arcova-teal/90 transition-colors text-sm"
+                >
+                  Next →
+                </button>
+              )}
             </div>
 
             {/* Main Content */}
@@ -350,6 +362,6 @@ export default function ICPManagerPage() {
         </div>
       </div>
       <Toaster position="top-center" richColors />
-    </div>
+    </SetupShell>
   );
 }

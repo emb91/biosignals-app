@@ -73,11 +73,6 @@ interface Lead {
   resolved_current_company_domain: string | null;
   resolved_current_job_title: string | null;
   resolved_employment_history: EmploymentHistoryItem[] | null;
-  resolved_company_firmographics: CompanyFirmographics | null;
-  apollo_company_firmographics: CompanyFirmographics | null;
-  apollo_company_firmographics_refreshed_at: string | null;
-  apify_company_firmographics: CompanyFirmographics | null;
-  apify_company_firmographics_refreshed_at: string | null;
   contact_bio: string[] | null;
   contact_discovery_status: string | null;
   linkedin_resolution_status: string | null;
@@ -88,6 +83,33 @@ interface Lead {
   source: string;
   created_at: string;
   updated_at: string | null;
+  company_id: string | null;
+  companies: {
+    company_name: string | null;
+    domain: string | null;
+    website: string | null;
+    linkedin_url: string | null;
+    description: string | null;
+    bio_summary: string | null;
+    tagline: string | null;
+    logo_url: string | null;
+    follower_count: number | null;
+    funding_stage: string | null;
+    total_funding_usd: number | null;
+    funding_data_source: string | null;
+    founded_year: number | null;
+    headquarters_city: string | null;
+    headquarters_country: string | null;
+    specialties: string[] | null;
+    therapeutic_areas: string[] | null;
+    modalities: string[] | null;
+    clinical_stage: string | null;
+    employee_count: number | null;
+    employee_range: string | null;
+    industry: string | null;
+    latest_funding_date: string | null;
+    last_enriched_at: string | null;
+  } | null;
 }
 
 type EditableLeadFields = {
@@ -136,38 +158,37 @@ const formatCurrencyShort = (amount: number | null | undefined): string => {
 const getDisplayedCompanyFirmographics = (lead: Lead | null): CompanyFirmographics | null => {
   if (!lead) return null;
 
-  const apifyFirmographics = lead.apify_company_firmographics || lead.resolved_company_firmographics || null;
-  const apolloFirmographics = lead.apollo_company_firmographics || null;
-
-  if (!apifyFirmographics && !apolloFirmographics) {
+  const company = lead.companies;
+  if (!company && !lead.resolved_current_company_name && !lead.company_name) {
     return null;
   }
 
-  // Apollo is preferred only for selected structured firmographics.
-  // Apify remains authoritative for LinkedIn-derived presentation fields such
-  // as company bio, LinkedIn URL, followers, logo, website, specialties, and
-  // the LinkedIn-resolved company identity.
   return {
-    ...(apifyFirmographics || {}),
-    industry: apolloFirmographics?.industry || apifyFirmographics?.industry || null,
-    employee_count: apolloFirmographics?.employee_count ?? apifyFirmographics?.employee_count ?? null,
-    founded_year: apolloFirmographics?.founded_year ?? apifyFirmographics?.founded_year ?? null,
-    hq_city: apolloFirmographics?.hq_city || apifyFirmographics?.hq_city || null,
-    hq_country: apolloFirmographics?.hq_country || apifyFirmographics?.hq_country || null,
-    funding_stage: apolloFirmographics?.funding_stage || apifyFirmographics?.funding_stage || null,
-    total_funding_usd:
-      apolloFirmographics?.total_funding_usd ?? apifyFirmographics?.total_funding_usd ?? null,
-    latest_funding_date:
-      apolloFirmographics?.latest_funding_date || apifyFirmographics?.latest_funding_date || null,
+    name: company?.company_name || lead.resolved_current_company_name || lead.company_name || null,
+    description: company?.description || null,
+    bio_summary: company?.bio_summary || null,
+    tagline: company?.tagline || null,
+    website: company?.website || null,
+    domain: company?.domain || lead.resolved_current_company_domain || lead.company_domain || null,
+    logo_url: company?.logo_url || null,
+    follower_count: company?.follower_count ?? null,
+    employee_count: company?.employee_count ?? null,
+    employee_range: company?.employee_range ?? null,
+    industry: company?.industry || null,
+    founded_year: company?.founded_year ?? null,
+    hq_city: company?.headquarters_city || null,
+    hq_country: company?.headquarters_country || null,
+    specialties: company?.specialties || null,
+    linkedin_url: company?.linkedin_url || lead.company_linkedin_url || null,
+    funding_stage: company?.funding_stage || null,
+    total_funding_usd: company?.total_funding_usd ?? null,
+    latest_funding_date: company?.latest_funding_date || null,
   };
 };
 
 const getCompanyFirmographicsLastRefresh = (lead: Lead | null): string | null => {
   if (!lead) return null;
-
-  return [lead.apollo_company_firmographics_refreshed_at, lead.apify_company_firmographics_refreshed_at]
-    .filter((value): value is string => Boolean(value))
-    .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] || null;
+  return lead.companies?.last_enriched_at || null;
 };
 
 const getEnrichmentStage = (lead: Lead): {
@@ -191,7 +212,7 @@ const getEnrichmentStage = (lead: Lead): {
   if (profileStatus === 'processing') {
     return {
       key: 'profile_processing',
-      label: 'Enriching profile and company details',
+      label: 'Resolving company data',
       floor: 68,
       ceiling: 94,
       paceMs: 12000,
@@ -201,7 +222,7 @@ const getEnrichmentStage = (lead: Lead): {
   if (linkedinStatus === 'completed' && profileStatus === 'pending') {
     return {
       key: 'linkedin_resolved',
-      label: 'LinkedIn resolved, enrichment queued',
+      label: 'Gathering company details',
       floor: 48,
       ceiling: 66,
       paceMs: 7000,
@@ -211,7 +232,7 @@ const getEnrichmentStage = (lead: Lead): {
   if (linkedinStatus === 'processing') {
     return {
       key: 'linkedin_processing',
-      label: 'Resolving LinkedIn profile',
+      label: 'Finding LinkedIn contact',
       floor: 16,
       ceiling: 46,
       paceMs: 10000,
@@ -225,6 +246,29 @@ const getEnrichmentStage = (lead: Lead): {
     ceiling: 18,
     paceMs: 6000,
   };
+};
+
+const getEnrichmentLabel = (
+  stage: ReturnType<typeof getEnrichmentStage>,
+  percent: number
+): string => {
+  if (stage.key === 'complete' || stage.key === 'stopped' || stage.key === 'queued') {
+    return stage.label;
+  }
+
+  if (stage.key === 'linkedin_processing') {
+    return percent < 32 ? 'Finding LinkedIn contact' : 'Building contact profile';
+  }
+
+  if (stage.key === 'linkedin_resolved') {
+    return percent < 58 ? 'Gathering company details' : 'Building company profile';
+  }
+
+  if (stage.key === 'profile_processing') {
+    return percent < 84 ? 'Resolving company data' : 'Finalizing enrichment';
+  }
+
+  return stage.label;
 };
 
 const getInterpolatedEnrichmentPercent = (
@@ -502,7 +546,8 @@ export default function LeadsPage() {
     const visual = enrichmentVisuals[lead.id];
 
     if (!visual || visual.stageKey !== stage.key) {
-      return { percent: Math.round(stage.floor), label: stage.label };
+      const percent = Math.round(stage.floor);
+      return { percent, label: getEnrichmentLabel(stage, percent) };
     }
 
     const percent = getInterpolatedEnrichmentPercent(
@@ -511,7 +556,8 @@ export default function LeadsPage() {
       progressNow - visual.startedAt
     );
 
-    return { percent: Math.round(percent), label: stage.label };
+    const roundedPercent = Math.round(percent);
+    return { percent: roundedPercent, label: getEnrichmentLabel(stage, roundedPercent) };
   };
 
   // Auto-poll every 5s while any contact is still being enriched
@@ -717,10 +763,15 @@ export default function LeadsPage() {
                           {/* Company */}
                           <div className="min-w-0">
                             {(() => {
-                              const name = lead.resolved_current_company_name || lead.company_name || '—';
+                              const companyFirmographics = getDisplayedCompanyFirmographics(lead);
+                              const name =
+                                companyFirmographics?.name ||
+                                lead.resolved_current_company_name ||
+                                lead.company_name ||
+                                '—';
                               const truncated = name.length > 30 ? name.slice(0, 30) + '…' : name;
-                              const domain = lead.resolved_company_firmographics?.domain || lead.company_domain;
-                              const href = lead.resolved_company_firmographics?.website || (domain ? `https://${domain}` : null);
+                              const domain = companyFirmographics?.domain || lead.company_domain;
+                              const href = companyFirmographics?.website || (domain ? `https://${domain}` : null);
                               return href ? (
                                 <a href={href} target="_blank" rel="noopener noreferrer"
                                   onClick={(e) => e.stopPropagation()}
@@ -806,7 +857,8 @@ export default function LeadsPage() {
                                   .join(' ') ||
                                 selectedLead.full_name ||
                                 'Selected contact'
-                              : selectedLead.resolved_current_company_name ||
+                              : selectedCompanyFirmographics?.name ||
+                                selectedLead.resolved_current_company_name ||
                                 selectedLead.company_name ||
                                 'Selected company'}
                           </h2>
@@ -816,7 +868,10 @@ export default function LeadsPage() {
                             </p>
                           )}
                           {selectedPreview === 'company' && (() => {
-                            const domain = selectedCompanyFirmographics?.domain || selectedLead.company_domain;
+                            const domain =
+                              selectedCompanyFirmographics?.domain ||
+                              selectedLead.resolved_current_company_domain ||
+                              selectedLead.company_domain;
                             const href = selectedCompanyFirmographics?.website || (domain ? `https://${domain}` : null);
                             return domain && href ? (
                               <a href={href} target="_blank" rel="noopener noreferrer"
@@ -834,10 +889,10 @@ export default function LeadsPage() {
                               <img
                                 src={selectedLead.profile_photo_url}
                                 alt=""
-                                className="w-16 h-16 rounded-full object-cover"
+                                className="w-16 h-16 rounded-xl object-cover"
                               />
                             ) : (
-                              <div className="w-16 h-16 rounded-full bg-gray-200 flex items-center justify-center text-lg font-medium text-gray-500">
+                              <div className="w-16 h-16 rounded-xl bg-gray-200 flex items-center justify-center text-lg font-medium text-gray-500">
                                 {(
                                   selectedLead.first_name?.[0] ||
                                   selectedLead.full_name?.[0] ||
@@ -856,6 +911,7 @@ export default function LeadsPage() {
                             ) : (
                               <div className="w-16 h-16 rounded-xl bg-gray-100 flex items-center justify-center text-xl font-semibold text-gray-400">
                                 {(
+                                  selectedCompanyFirmographics?.name?.[0] ||
                                   selectedLead.resolved_current_company_name?.[0] ||
                                   selectedLead.company_name?.[0] ||
                                   '?'
@@ -1025,8 +1081,6 @@ export default function LeadsPage() {
                           /* ── Company view ── */
                           (() => {
                             const f = selectedCompanyFirmographics;
-                            // Domain: only show what Apify actually returned — never the Apollo/CSV-imported domain
-                            const apifyDomain = f?.domain || null;
                             const website = f?.website || null;
                             const companyLinkedIn = f?.linkedin_url || selectedLead.company_linkedin_url;
                             const hqParts = [f?.hq_city, f?.hq_country].filter(Boolean);
@@ -1094,7 +1148,7 @@ export default function LeadsPage() {
                                   )}
                                   {f?.latest_funding_date && (
                                     <div>
-                                      <p className="text-gray-400 text-xs">Latest funding</p>
+                                      <p className="text-gray-400 text-xs">Latest Funding Round</p>
                                       <p className="text-gray-900 text-sm mt-0.5">
                                         {formatLastUpdated(f.latest_funding_date)}
                                       </p>
@@ -1109,6 +1163,17 @@ export default function LeadsPage() {
                                 </div>
 
                                 {/* Links */}
+                                {website && (
+                                  <div>
+                                    <p className="text-gray-400 text-xs">Website</p>
+                                    <a href={website} target="_blank" rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1 text-arcova-teal hover:underline text-xs break-all mt-0.5">
+                                      {website}
+                                      <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                                    </a>
+                                  </div>
+                                )}
+
                                 {companyLinkedIn && (
                                   <div>
                                     <p className="text-gray-400 text-xs">LinkedIn</p>

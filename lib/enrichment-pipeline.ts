@@ -6,6 +6,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { enrichOrganizationWithApollo } from '@/lib/apollo';
 import { resolveLinkedinUrl, type LinkedinResolutionResult } from '@/lib/linkedin-url-resolver';
 import { classifyContacts } from '@/lib/contact-classification';
+import { runCompanyMonitor } from '@/lib/company-monitor';
 
 type MinimalSupabase = {
   from: (table: string) => any;
@@ -77,6 +78,76 @@ function getObject(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function formatSupabaseErrorMessage(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+
+  const candidate = error as {
+    message?: unknown;
+    details?: unknown;
+    hint?: unknown;
+  };
+
+  const parts = [candidate.message, candidate.details, candidate.hint]
+    .map((value) => (typeof value === 'string' ? value.trim() : ''))
+    .filter(Boolean);
+
+  return parts.length > 0 ? parts.join(' | ') : null;
+}
+
+type CanonicalCompanyRow = {
+  id: string;
+  company_name: string | null;
+  website: string | null;
+  linkedin_url: string | null;
+  description: string | null;
+  bio_summary: string | null;
+  tagline: string | null;
+  logo_url: string | null;
+  follower_count: number | string | null;
+  industry: string | null;
+  employee_count: number | string | null;
+  employee_range: string | null;
+  founded_year: number | string | null;
+  headquarters_city: string | null;
+  headquarters_country: string | null;
+  specialties: string[] | null;
+};
+
+function pickCanonicalString(...values: unknown[]): string | null {
+  for (const value of values) {
+    const normalized = normalizeString(value);
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
+function pickCanonicalNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value.replace(/[$,]/g, '').trim());
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return null;
+}
+
+function pickCanonicalStringArray(...values: unknown[]): string[] | null {
+  for (const value of values) {
+    if (!Array.isArray(value)) continue;
+
+    const normalized = value
+      .map((item) => normalizeString(item))
+      .filter(Boolean);
+
+    if (normalized.length > 0) {
+      return normalized;
+    }
+  }
+
+  return null;
 }
 
 function getFirstString(record: Record<string, unknown> | null, keys: string[]): string {
@@ -323,54 +394,6 @@ function extractCompanyFirmographics(raw: Record<string, unknown> | null): Recor
   };
 }
 
-function buildPreferredCompanyFirmographics(params: {
-  apifyFirmographics: Record<string, unknown>;
-  apolloFirmographics: Record<string, unknown> | null;
-}): Record<string, unknown> {
-  const { apifyFirmographics, apolloFirmographics } = params;
-
-  // Apollo is preferred only for selected structured firmographics that are
-  // generally stronger there. Apify remains the preferred source for company
-  // bio/presentation fields such as description, bio summary, tagline, LinkedIn
-  // URL, followers, logo, website, specialties, and the LinkedIn-derived
-  // company identity itself.
-  return {
-    ...apifyFirmographics,
-    industry:
-      (apolloFirmographics?.industry as string | null) ||
-      (apifyFirmographics.industry as string | null) ||
-      null,
-    employee_count:
-      (apolloFirmographics?.employee_count as number | null) ??
-      (apifyFirmographics.employee_count as number | null) ??
-      null,
-    founded_year:
-      (apolloFirmographics?.founded_year as number | null) ??
-      (apifyFirmographics.founded_year as number | null) ??
-      null,
-    hq_city:
-      (apolloFirmographics?.hq_city as string | null) ||
-      (apifyFirmographics.hq_city as string | null) ||
-      null,
-    hq_country:
-      (apolloFirmographics?.hq_country as string | null) ||
-      (apifyFirmographics.hq_country as string | null) ||
-      null,
-    funding_stage:
-      (apolloFirmographics?.funding_stage as string | null) ||
-      (apifyFirmographics.funding_stage as string | null) ||
-      null,
-    total_funding_usd:
-      (apolloFirmographics?.total_funding_usd as number | null) ??
-      (apifyFirmographics.total_funding_usd as number | null) ??
-      null,
-    latest_funding_date:
-      (apolloFirmographics?.latest_funding_date as string | null) ||
-      (apifyFirmographics.latest_funding_date as string | null) ||
-      null,
-  };
-}
-
 async function summariseCompanyBio(description: string): Promise<string | null> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey || !description.trim()) return null;
@@ -469,50 +492,118 @@ async function upsertResolvedCompany(
   supabase: MinimalSupabase,
   userId: string,
   input: {
-    companyName?: string | null;
-    companyDomain?: string | null;
-    linkedinUrl?: string | null;
-    firmographics: Record<string, unknown>;
+    resolvedCompanyName?: string | null;
+    resolvedCompanyDomain?: string | null;
+    resolvedCompanyLinkedinUrl?: string | null;
+    apifyFirmographics: Record<string, unknown>;
+    apolloFirmographics: Record<string, unknown> | null;
     source: string;
   }
 ): Promise<string | null> {
   const domain =
-    normalizeDomain(input.firmographics.domain as string | null) ||
-    normalizeDomain(input.companyDomain);
+    normalizeDomain(input.apifyFirmographics.domain as string | null) ||
+    normalizeDomain(input.resolvedCompanyDomain);
   if (!domain) return null;
+
+  const context = `user=${userId} domain=${domain}`;
+
+  // Check if a row already exists for this user+domain
+  const existing = await supabase
+    .from('companies')
+    .select(
+      'id, company_name, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_country, specialties'
+    )
+    .eq('user_id', userId)
+    .eq('domain', domain)
+    .maybeSingle();
+
+  const existingError = formatSupabaseErrorMessage(existing?.error);
+  if (existingError) {
+    throw new Error(`[companies] Failed to look up existing company row (${context}): ${existingError}`);
+  }
+
+  const existingCompany = (existing?.data as CanonicalCompanyRow | null) || null;
+  const existingId = existingCompany?.id;
+  const apifyFirmographics = input.apifyFirmographics;
+  const apolloFirmographics = input.apolloFirmographics || null;
 
   const payload: Record<string, unknown> = {
     user_id: userId,
     domain,
-    company_name: input.companyName || null,
-    linkedin_url: input.linkedinUrl || null,
-    website: (input.firmographics.website as string | null) || `https://${domain}`,
-    description: (input.firmographics.description as string | null) || null,
-    bio_summary: (input.firmographics.bio_summary as string | null) || null,
-    tagline: (input.firmographics.tagline as string | null) || null,
-    logo_url: (input.firmographics.logo_url as string | null) || null,
-    follower_count: (input.firmographics.follower_count as number | null) || null,
-    industry: (input.firmographics.industry as string | null) || null,
-    employee_count: (input.firmographics.employee_count as number | null) || null,
-    employee_range: (input.firmographics.employee_range as string | null) || null,
-    funding_stage: (input.firmographics.funding_stage as string | null) || null,
-    funding_amount: (input.firmographics.total_funding_usd as number | null) || null,
-    founded_year: (input.firmographics.founded_year as number | null) || null,
-    headquarters_city: (input.firmographics.hq_city as string | null) || null,
-    headquarters_country: (input.firmographics.hq_country as string | null) || null,
-    specialties: (input.firmographics.specialties as string[] | null) || null,
+    company_name: pickCanonicalString(input.resolvedCompanyName, existingCompany?.company_name),
+    linkedin_url: pickCanonicalString(
+      input.resolvedCompanyLinkedinUrl,
+      apifyFirmographics.linkedin_url,
+      existingCompany?.linkedin_url
+    ),
+    website: pickCanonicalString(apifyFirmographics.website, existingCompany?.website),
+    description: pickCanonicalString(apifyFirmographics.description, existingCompany?.description),
+    bio_summary: pickCanonicalString(apifyFirmographics.bio_summary, existingCompany?.bio_summary),
+    tagline: pickCanonicalString(apifyFirmographics.tagline, existingCompany?.tagline),
+    logo_url: pickCanonicalString(apifyFirmographics.logo_url, existingCompany?.logo_url),
+    follower_count: pickCanonicalNumber(apifyFirmographics.follower_count, existingCompany?.follower_count),
+    industry: pickCanonicalString(
+      apolloFirmographics?.industry,
+      apifyFirmographics.industry,
+      existingCompany?.industry
+    ),
+    employee_count: pickCanonicalNumber(
+      apolloFirmographics?.employee_count,
+      apifyFirmographics.employee_count,
+      existingCompany?.employee_count
+    ),
+    employee_range: pickCanonicalString(apifyFirmographics.employee_range, existingCompany?.employee_range),
+    founded_year: pickCanonicalNumber(
+      apolloFirmographics?.founded_year,
+      apifyFirmographics.founded_year,
+      existingCompany?.founded_year
+    ),
+    headquarters_city: pickCanonicalString(
+      apolloFirmographics?.hq_city,
+      apifyFirmographics.hq_city,
+      existingCompany?.headquarters_city
+    ),
+    headquarters_country: pickCanonicalString(
+      apolloFirmographics?.hq_country,
+      apifyFirmographics.hq_country,
+      existingCompany?.headquarters_country
+    ),
+    specialties: pickCanonicalStringArray(apifyFirmographics.specialties, existingCompany?.specialties),
     source: input.source,
     last_enriched_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
 
-  const result = await supabase
+  if (existingId) {
+    // Update the existing row
+    const updated = await supabase.from('companies').update(payload).eq('id', existingId);
+    const updateError = formatSupabaseErrorMessage(updated?.error);
+    if (updateError) {
+      throw new Error(
+        `[companies] Failed to update canonical company row (${context} id=${existingId}): ${updateError}`
+      );
+    }
+    return existingId;
+  }
+
+  // Insert a new row and return its id
+  const inserted = await supabase
     .from('companies')
-    .upsert(payload, { onConflict: 'user_id,domain', ignoreDuplicates: false })
+    .insert({ ...payload })
     .select('id')
     .maybeSingle();
 
-  return (result?.data?.id as string | undefined) || null;
+  const insertError = formatSupabaseErrorMessage(inserted?.error);
+  if (insertError) {
+    throw new Error(`[companies] Failed to insert canonical company row (${context}): ${insertError}`);
+  }
+
+  const insertedId = inserted?.data?.id as string | undefined;
+  if (!insertedId) {
+    throw new Error(`[companies] Company upsert returned no id (${context})`);
+  }
+
+  return insertedId;
 }
 
 function buildResolvedContext(params: {
@@ -865,14 +956,9 @@ export async function runContactResolutionPipelineForContact(
       }
     }
 
-    const companyFirmographics = buildPreferredCompanyFirmographics({
-      apifyFirmographics: apifyCompanyFirmographics,
-      apolloFirmographics: apolloCompanyFirmographics,
-    });
-
     // If company scrape returned a domain, use it for email alignment (never use the imported domain)
     const resolvedDomainFromCompany =
-      normalizeDomain(companyFirmographics.domain as string | null) ||
+      normalizeDomain(apifyCompanyFirmographics.domain as string | null) ||
       resolved.resolvedCompanyDomainForEmailCheck;
 
     const emailAssessment = assessEmailStatus({
@@ -888,12 +974,26 @@ export async function runContactResolutionPipelineForContact(
       apolloCompanyFirmographics !== null ? 'apollo' : 'harvestapi';
 
     const companyId = await upsertResolvedCompany(supabase, userId, {
-      companyName: resolved.currentCompanyName,
-      companyDomain: resolved.currentCompanyDomain,
-      linkedinUrl: resolved.currentCompanyLinkedinUrl,
-      firmographics: companyFirmographics,
+      resolvedCompanyName: resolved.currentCompanyName,
+      resolvedCompanyDomain: resolved.currentCompanyDomain,
+      resolvedCompanyLinkedinUrl: resolved.currentCompanyLinkedinUrl,
+      apifyFirmographics: apifyCompanyFirmographics,
+      apolloFirmographics: apolloCompanyFirmographics,
       source: companySource,
     });
+
+    // Resolve canonical funding before flipping the lead to completed so the UI
+    // never settles on an intermediate Apollo funding stage.
+    if (companyId) {
+      await runCompanyMonitor(supabase, {
+        company_id: companyId,
+        company_name: resolved.currentCompanyName ?? '',
+        domain: resolved.currentCompanyDomain ?? null,
+        apollo_funding_stage: (apolloCompanyFirmographics?.funding_stage as string | null) ?? null,
+        apollo_total_funding_usd: (apolloCompanyFirmographics?.total_funding_usd as number | null) ?? null,
+        apollo_latest_funding_date: (apolloCompanyFirmographics?.latest_funding_date as string | null) ?? null,
+      });
+    }
 
     const profileEnrichmentStatus = alignment.alignment === 'low' ? 'ambiguous' : 'completed';
     const updatePayload: Record<string, unknown> = {
@@ -925,7 +1025,6 @@ export async function runContactResolutionPipelineForContact(
       apollo_company_firmographics_refreshed_at: apolloCompanyFirmographicsRefreshedAt,
       apify_company_firmographics: apifyCompanyFirmographics,
       apify_company_firmographics_refreshed_at: apifyCompanyFirmographicsRefreshedAt,
-      resolved_company_firmographics: companyFirmographics,
       apify_company_raw: apifyCompanyRaw,
       // Pull fresher contact-level fields from LinkedIn scrape
       headline: resolved.headline,
@@ -950,7 +1049,7 @@ export async function runContactResolutionPipelineForContact(
     try {
       const previousTitles = (resolved.employmentHistory ?? [])
         .filter((h: { current?: boolean; title?: string | null }) => !h.current && h.title)
-        .map((h: { title: string }) => h.title)
+        .map((h: { title?: string | null }) => h.title as string)
         .slice(0, 5);
 
       const [classification] = await classifyContacts([{

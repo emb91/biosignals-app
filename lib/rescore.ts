@@ -43,7 +43,13 @@ type ContactRow = {
   seniority_level: string | null;
   business_area: string | null;
   company_name: string | null;
+  companies: {
+    company_name: string | null;
+  }[] | null;
 };
+
+const getCanonicalCompanyName = (contact: ContactRow): string | null =>
+  contact.companies?.[0]?.company_name || contact.company_name;
 
 // ─── Core ─────────────────────────────────────────────────────────────────────
 
@@ -76,7 +82,9 @@ export async function rescoreAllContactsForUser(userId: string): Promise<Rescore
   while (true) {
     const { data: contacts, error: fetchError } = await supabase
       .from('contacts')
-      .select('id, full_name, job_title, job_title_standardised, headline, seniority_level, business_area, company_name')
+      .select(
+        'id, full_name, job_title, job_title_standardised, headline, seniority_level, business_area, company_name, companies(company_name)'
+      )
       .eq('user_id', userId)
       .range(page * CONTACT_PAGE_SIZE, (page + 1) * CONTACT_PAGE_SIZE - 1)
       .order('created_at', { ascending: true });
@@ -95,7 +103,7 @@ export async function rescoreAllContactsForUser(userId: string): Promise<Rescore
       headline: c.headline,
       seniority_level: c.seniority_level,
       business_area: c.business_area,
-      company_name: c.company_name,
+      company_name: getCanonicalCompanyName(c),
     }));
 
     // 3. Score via LLM
