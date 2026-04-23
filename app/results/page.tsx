@@ -30,6 +30,7 @@ interface EmploymentHistoryItem {
 
 interface CompanyFirmographics {
   name?: string | null;
+  company_type?: string | null;
   description?: string | null;
   bio_summary?: string | null;
   tagline?: string | null;
@@ -48,6 +49,8 @@ interface CompanyFirmographics {
   funding_stage?: string | null;
   total_funding_usd?: number | null;
   latest_funding_date?: string | null;
+  therapeutic_areas?: string[] | null;
+  modalities?: string[] | null;
 }
 
 interface Lead {
@@ -94,6 +97,8 @@ interface Lead {
     tagline: string | null;
     logo_url: string | null;
     follower_count: number | null;
+    company_type: string | null;
+    company_type_display: string | null;
     funding_stage: string | null;
     funding_status_label: string | null;
     total_funding_usd: number | null;
@@ -168,6 +173,7 @@ const getDisplayedCompanyFirmographics = (lead: Lead | null): CompanyFirmographi
 
   return {
     name: company?.company_name || lead.resolved_current_company_name || lead.company_name || null,
+    company_type: company?.company_type || company?.company_type_display || null,
     description: company?.description || null,
     bio_summary: company?.bio_summary || null,
     tagline: company?.tagline || null,
@@ -186,6 +192,8 @@ const getDisplayedCompanyFirmographics = (lead: Lead | null): CompanyFirmographi
     funding_stage: company?.funding_stage || null,
     total_funding_usd: company?.total_funding_usd ?? null,
     latest_funding_date: company?.latest_funding_date || null,
+    therapeutic_areas: company?.therapeutic_areas || null,
+    modalities: company?.modalities || null,
   };
 };
 
@@ -215,6 +223,24 @@ const getFundingStatusDisplay = (
   if (!statusLabel) return null;
 
   return { heading: 'Funding status', value: statusLabel };
+};
+
+const renderTaxonomyPills = (values: string[] | null | undefined) => {
+  const cleaned = (values || []).map((value) => value.trim()).filter(Boolean);
+  if (cleaned.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap gap-1.5 mt-1.5">
+      {cleaned.map((value) => (
+        <span
+          key={value}
+          className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-1 text-xs font-medium text-arcova-teal"
+        >
+          {value}
+        </span>
+      ))}
+    </div>
+  );
 };
 
 const getEnrichmentStage = (lead: Lead): {
@@ -716,12 +742,15 @@ export default function LeadsPage() {
                                   [lead.first_name, lead.last_name].filter(Boolean).join(' ') ||
                                   '—'}
                               </p>
-                              <p className="mt-1 text-[11px] text-gray-400 truncate">
-                                {enrichmentProgress.label}
+                            </div>
+
+                            <div className="min-w-0">
+                              <p className="text-xs text-gray-400 truncate leading-snug">
+                                {enrichmentProgress.label}...
                               </p>
                             </div>
 
-                            <div className="col-span-2 min-w-0 pr-3">
+                            <div className="min-w-0 pr-3">
                               <div className="flex items-center gap-3">
                                 <div className="relative h-2.5 flex-1 overflow-hidden rounded-full bg-slate-200/80">
                                   <div
@@ -1115,6 +1144,29 @@ export default function LeadsPage() {
 
                             return (
                               <div className="space-y-4">
+                                {!!(f?.company_type || f?.therapeutic_areas?.length || f?.modalities?.length) && (
+                                  <div className="space-y-3 rounded-xl border border-gray-100 bg-gray-50/70 p-3">
+                                    {f.company_type && (
+                                      <div>
+                                        <p className="text-gray-400 text-xs">Company type</p>
+                                        <p className="text-gray-900 text-sm mt-0.5">{f.company_type}</p>
+                                      </div>
+                                    )}
+                                    {f.therapeutic_areas?.length ? (
+                                      <div>
+                                        <p className="text-gray-400 text-xs">Therapeutic areas</p>
+                                        {renderTaxonomyPills(f.therapeutic_areas)}
+                                      </div>
+                                    ) : null}
+                                    {f.modalities?.length ? (
+                                      <div>
+                                        <p className="text-gray-400 text-xs">Modalities</p>
+                                        {renderTaxonomyPills(f.modalities)}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                )}
+
                                 {/* Bio — LLM summary preferred, raw description as fallback */}
                                 {(f?.bio_summary || f?.description) ? (
                                   <div>

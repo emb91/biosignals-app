@@ -34,6 +34,7 @@ export type CompanyTaxonomyInput = {
 
 export type CompanyTaxonomyResult = {
   company_type: CompanyType | null;
+  company_type_display: string | null;
   therapeutic_areas: TherapeuticArea[];
   modalities: Modality[];
   source: 'llm' | null;
@@ -149,6 +150,7 @@ function normalizeConfidence(value: unknown): CompanyTaxonomyResult['confidence'
 
 function parseTaxonomyJson(text: string): {
   company_type?: unknown;
+  company_type_display?: unknown;
   therapeutic_areas?: unknown;
   modalities?: unknown;
   confidence?: unknown;
@@ -167,6 +169,7 @@ function parseTaxonomyJson(text: string): {
 export function normalizeCompanyTaxonomyResult(
   parsed: {
     company_type?: unknown;
+    company_type_display?: unknown;
     therapeutic_areas?: unknown;
     modalities?: unknown;
     confidence?: unknown;
@@ -175,6 +178,8 @@ export function normalizeCompanyTaxonomyResult(
   checkedAt = new Date().toISOString()
 ): CompanyTaxonomyResult {
   const companyType = canonicalizeCompanyType(parsed?.company_type);
+  const rawDisplay = normalizeString(parsed?.company_type_display);
+  const companyTypeDisplay = rawDisplay || (companyType ?? null);
   const therapeuticAreas = canonicalizeArray(parsed?.therapeutic_areas, canonicalizeTherapeuticArea);
   const modalities = expandModalitiesWithParents(
     canonicalizeArray(parsed?.modalities, canonicalizeModality)
@@ -182,6 +187,7 @@ export function normalizeCompanyTaxonomyResult(
 
   return {
     company_type: companyType,
+    company_type_display: companyTypeDisplay,
     therapeutic_areas: therapeuticAreas,
     modalities,
     source: parsed ? 'llm' : null,
@@ -204,6 +210,14 @@ export async function resolveCompanyTaxonomy(
     websiteContext ? `Website context:\n${websiteContext}` : '',
   ].filter(Boolean);
 
+  const VENDOR_TYPES = new Set([
+    'CDMO',
+    'CRO',
+    'Life Science Tools & Instruments',
+    'Contract Lab & Testing Services',
+    'Digital Health & Informatics',
+  ]);
+
   const prompt = `You classify life sciences companies into Arcova's controlled taxonomy.
 
 Company: ${input.company_name}
@@ -221,21 +235,35 @@ ${MODALITY_OPTIONS.map((option) => `- ${option}`).join('\n')}
 Evidence:
 ${evidenceParts.join('\n\n') || 'No scraped evidence available.'}
 
-Instructions:
-1. Use the evidence and, if needed, web search for the company domain/name.
-2. Map messy language and synonyms into the allowed values only.
-3. Therapeutic areas must be disease/problem spaces, not technologies.
-4. Modalities are product or technology approaches. If a specific modality applies, include its parent too when relevant, e.g. Cell Therapy and CAR-T.
-5. Return all relevant therapeutic areas and modalities, strongest first.
-6. If uncertain, return empty arrays or null rather than inventing labels.
+Classification rules:
+
+Step 1 — Determine company_type from the evidence.
+
+Step 2 — Determine classification mode based on company_type:
+- THERAPEUTIC MODE: company_type is Biotech / Biopharma, Pharma, Medical Device, Diagnostics, or Academic Spinout.
+  → Classify therapeutic_areas and modalities from the company's OWN pipeline, assets, platform, or indications.
+- VENDOR MODE: company_type is CDMO, CRO, Life Science Tools & Instruments, Contract Lab & Testing Services, or Digital Health & Informatics.
+  → Classify therapeutic_areas and modalities from the CUSTOMER SEGMENTS and LAB WORKFLOWS the company serves — not from what the company itself does.
+  → Example: a lab monitoring company serving cell therapy and gene therapy labs should return those as modalities, even though it makes no therapies itself.
+  → Prefer a populated classification over blank fields when customer-side evidence supports it.
+- UNKNOWN / OTHER: use any concrete signal from website or enrichment. Explain reasoning.
+
+Step 3 — Apply these rules to all modes:
+- Therapeutic areas must be disease/problem spaces, not technologies.
+- Modalities are product/technology approaches. If a specific modality applies, include its parent too (e.g. CAR-T → also Cell Therapy).
+- Return all relevant values, strongest first. In vendor mode, include all customer segments with supporting evidence.
+- If evidence is weak, return fewer values with lower confidence — do not fabricate.
+- Always populate company_type_display with a short human-readable label (e.g. "Venture Capital", "Lab Monitoring Software", "Management Consulting"). If company_type matches, use the same value.
+- Always populate evidence_summary with one sentence explaining what the classification is based on, and whether it reflects the company's own work or its served customer segments.
 
 Return ONLY valid JSON:
 {
   "company_type": "<one allowed company_type or null>",
+  "company_type_display": "<short human-readable label, always populated>",
   "therapeutic_areas": ["<allowed therapeutic area>", "..."],
   "modalities": ["<allowed modality>", "..."],
   "confidence": "<high|medium|low>",
-  "evidence_summary": "<one sentence explaining the strongest evidence>"
+  "evidence_summary": "<one sentence — what evidence was used and whether classification reflects own pipeline or served customers>"
 }`;
 
   const message = await client.messages.create({

@@ -38,6 +38,15 @@ function formatSupabaseErrorMessage(error: unknown): string | null {
   return parts.length > 0 ? parts.join(' | ') : null;
 }
 
+function isMissingColumnError(error: unknown): boolean {
+  const message =
+    error && typeof error === 'object' && 'message' in error
+      ? String((error as { message?: unknown }).message || '')
+      : '';
+
+  return message.includes('column') && message.includes('does not exist');
+}
+
 export type CompanyMonitorInput = {
   company_id: string;
   company_name: string;
@@ -222,11 +231,19 @@ export async function runCompanyMonitor(
 
     const taxonomy = await resolveCompanyTaxonomy(taxonomyInput);
 
-    const currentResult = await supabase
+    let currentResult = await supabase
       .from('companies')
-      .select('company_type, therapeutic_areas, modalities')
+      .select('company_type, company_type_display, therapeutic_areas, modalities')
       .eq('id', input.company_id)
       .maybeSingle();
+
+    if (currentResult?.error && isMissingColumnError(currentResult.error)) {
+      currentResult = await supabase
+        .from('companies')
+        .select('company_type, therapeutic_areas:therapeutic_area, modalities:modality')
+        .eq('id', input.company_id)
+        .maybeSingle();
+    }
 
     const currentError = formatSupabaseErrorMessage(currentResult?.error);
     if (currentError) {
@@ -237,12 +254,15 @@ export async function runCompanyMonitor(
 
     const current = currentResult?.data;
     const previousCompanyType = typeof current?.company_type === 'string' ? current.company_type : null;
+    const previousCompanyTypeDisplay = typeof current?.company_type_display === 'string' ? current.company_type_display : null;
     const previousTherapeuticAreas = normalizeStringArray(current?.therapeutic_areas);
     const previousModalities = normalizeStringArray(current?.modalities);
     const canOverwrite = taxonomy.confidence !== 'low';
 
     const nextCompanyType =
       canOverwrite && taxonomy.company_type ? taxonomy.company_type : previousCompanyType;
+    const nextCompanyTypeDisplay =
+      canOverwrite && taxonomy.company_type_display ? taxonomy.company_type_display : previousCompanyTypeDisplay;
     const nextTherapeuticAreas =
       canOverwrite && taxonomy.therapeutic_areas.length > 0
         ? taxonomy.therapeutic_areas
@@ -252,19 +272,36 @@ export async function runCompanyMonitor(
 
     const changed =
       nextCompanyType !== previousCompanyType ||
+      nextCompanyTypeDisplay !== previousCompanyTypeDisplay ||
       !arraysEqual(nextTherapeuticAreas, previousTherapeuticAreas) ||
       !arraysEqual(nextModalities, previousModalities);
 
     if (changed) {
-      const updateResult = await supabase
+      let updateResult = await supabase
         .from('companies')
         .update({
           company_type: nextCompanyType,
+          company_type_display: nextCompanyTypeDisplay,
           therapeutic_areas: nextTherapeuticAreas,
           modalities: nextModalities,
+          taxonomy_evidence_summary: taxonomy.evidence_summary,
           updated_at: new Date().toISOString(),
         })
         .eq('id', input.company_id);
+
+      if (updateResult?.error && isMissingColumnError(updateResult.error)) {
+        updateResult = await supabase
+          .from('companies')
+          .update({
+            company_type: nextCompanyType,
+            company_type_display: nextCompanyTypeDisplay,
+            therapeutic_area: nextTherapeuticAreas,
+            modality: nextModalities,
+            taxonomy_evidence_summary: taxonomy.evidence_summary,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', input.company_id);
+      }
 
       const updateError = formatSupabaseErrorMessage(updateResult?.error);
       if (updateError) {
