@@ -7,6 +7,7 @@ import {
   extractApifyFirmographics,
   normalizeLinkedInCompanyUrl,
 } from '@/lib/my-company-enrichment';
+import { resolveCompanyTaxonomy } from '@/lib/company-monitor/taxonomy';
 
 function normalizeDomain(value?: string | null): string | null {
   const trimmed = (value ?? '').trim().toLowerCase();
@@ -79,7 +80,31 @@ export async function POST(request: NextRequest) {
 
     const apify = extractApifyFirmographics(apifyRaw);
 
-    // ── Step 4: Merge — narrative + firmographics ─────────────────────────────
+    // ── Step 4: Taxonomy — dedicated LLM with canonical allowed values ─────────
+    // Uses the same resolveCompanyTaxonomy used for leads, so company_type,
+    // therapeutic_areas, modalities, and development_stages are constrained to
+    // Arcova's controlled taxonomy (not free-text from Claude web_search).
+    const companyNameForTaxonomy =
+      typeof narrative.company_name === 'string' ? narrative.company_name :
+      typeof apollo.company_name === 'string' ? apollo.company_name : '';
+
+    let taxonomy: Awaited<ReturnType<typeof resolveCompanyTaxonomy>> | null = null;
+    if (companyNameForTaxonomy || domain) {
+      console.log('[analyze-and-store] Running taxonomy classification');
+      taxonomy = await resolveCompanyTaxonomy({
+        company_name: companyNameForTaxonomy,
+        domain,
+        apify_company_firmographics: apifyRaw,
+        apollo_company_firmographics: Object.keys(apollo).length > 0
+          ? (apollo as Record<string, unknown>)
+          : null,
+      }).catch((err: unknown) => {
+        console.error('[analyze-and-store] Taxonomy failed:', err);
+        return null;
+      });
+    }
+
+    // ── Step 5: Merge ─────────────────────────────────────────────────────────
     // Preference: Apollo for business/funding data; Apify for social/LinkedIn data.
     // Claude supplies all narrative array fields.
     const { linkedin_url: _claudeLinkedin, ...narrativeRest } = narrative;
@@ -113,12 +138,27 @@ export async function POST(request: NextRequest) {
       tagline: apify.tagline ?? null,
       specialties: apify.specialties ?? null,
 
+      // Taxonomy (canonical values from resolveCompanyTaxonomy)
+      company_type: taxonomy?.company_type ?? null,
+      company_type_display: taxonomy?.company_type_display ?? null,
+      therapeutic_areas: taxonomy?.therapeutic_areas ?? null,
+      modalities: taxonomy?.modalities ?? null,
+      development_stages: taxonomy?.development_stages ?? null,
+
+      // Company ownership / funding status from Claude (handles public companies Apollo can't)
+      company_status: typeof narrative.company_status === 'string' ? narrative.company_status : null,
+
+      // Structured competitors (name + url) from Claude
+      competitors_enriched: Array.isArray(narrative.competitors_enriched)
+        ? narrative.competitors_enriched
+        : null,
+
       // Raw blobs
       apollo_firmographics: Object.keys(apollo).length > 0 ? apollo : null,
       apify_firmographics: apifyRaw,
     };
 
-    // ── Step 5: Upsert into company_analyses ──────────────────────────────────
+    // ── Step 6: Upsert into company_analyses ──────────────────────────────────
     const { data: existing } = await supabase
       .from('company_analyses')
       .select('id')

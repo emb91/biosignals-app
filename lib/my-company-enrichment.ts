@@ -70,16 +70,16 @@ Return ONLY valid JSON in this exact structure. Every array field must have 2–
   "linkedin_url": "https://www.linkedin.com/company/... or null if not found",
   "description": ["What the company does in plain terms", "..."],
   "products_services": ["Key product or service", "..."],
-  "target_customers": ["Customer segment they sell to", "..."],
+  "target_customers": ["Short 1–3 word label, e.g. Oncologists, Health Systems, Biopharma — NO full sentences"],
   "value_propositions": ["Core value proposition", "..."],
   "industries": ["Industry they operate in", "..."],
   "technologies": ["Key technology or platform they use or sell", "..."],
-  "competitors": ["Named competitor", "..."],
+  "competitors_enriched": [{"name": "Competitor name", "url": "https://their-website.com"}, {"name": "Another competitor", "url": "https://..."}],
   "unique_characteristics": ["What makes them different", "..."],
   "business_model": ["How they generate revenue", "..."],
   "operating_environment": ["Market or regulatory context they operate in", "..."],
   "market_summary": ["Summary of their market position", "..."],
-  "customers_we_serve": ["Type of customer they serve", "..."],
+  "customers_we_serve": ["Short 1–3 word label for a customer type, e.g. Oncologists, Health Systems, Biopharma, CROs — NO full sentences"],
   "why_customers_buy": ["Key reason a buyer chooses them", "..."],
   "differentiated_value": ["Specific differentiator vs alternatives", "..."],
   "status_quo": ["What buyers typically do today without this solution", "..."],
@@ -88,12 +88,8 @@ Return ONLY valid JSON in this exact structure. Every array field must have 2–
   "customer_benefits": ["Concrete benefit a customer gets", "..."],
   "good_fit": ["Characteristic of an ideal customer", "..."],
   "bad_fit": ["Characteristic of a poor-fit customer", "..."],
-  "therapeutic_areas": ["Therapeutic area this company operates in or serves, e.g. Oncology, Rare Disease — or null if not a life sciences company"],
-  "modalities": ["Drug or technology modality, e.g. Small Molecule, Biologics, Cell & Gene Therapy, ADC — or null if not applicable"],
-  "development_stages": ["Clinical development stage relevant to this company, e.g. Preclinical, Phase I, Phase II, Commercial — or null if not applicable"]
+  "company_status": "Public (NASDAQ: GH) — or Private — Series B — or Bootstrapped — one short phrase describing ownership and funding status"
 }
-
-For therapeutic_areas, modalities, and development_stages: only populate if the company is in or sells to life sciences / biopharma / medtech. Return an empty array [] if not applicable — do NOT guess or fabricate.
 
 Company website: ${website}
 
@@ -110,7 +106,7 @@ Return ONLY the JSON object. No markdown, no explanation.`;
         type: 'web_search_20250305',
         name: 'web_search',
         max_uses: 8,
-      } as Parameters<typeof client.messages.create>[0]['tools'][0],
+      } as unknown as Parameters<typeof client.messages.create>[0] extends { tools?: Array<infer T> } ? T : never,
     ],
   });
 

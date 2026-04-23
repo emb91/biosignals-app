@@ -21,6 +21,11 @@ export interface PanelPersonaData {
   seniority: string[];
 }
 
+export interface CompetitorItem {
+  name: string;
+  url?: string;
+}
+
 export interface PanelMyCompanyData {
   companyName?: string;
   website?: string;
@@ -28,6 +33,14 @@ export interface PanelMyCompanyData {
   tagline?: string;
   linkedinUrl?: string;
   description?: string[];
+  customersWeServe?: string[];
+  valuePropositions?: string[];
+  goodFit?: string[];
+  badFit?: string[];
+  competitorsEnriched?: CompetitorItem[];
+  companyStatus?: string;
+  companyType?: string;
+  companyTypeDisplay?: string;
   therapeuticAreas?: string[];
   modalities?: string[];
   developmentStages?: string[];
@@ -194,7 +207,7 @@ function CardShell({
         <button
           type="button"
           onClick={onToggle}
-          className="w-full text-left border-b border-white/10 hover:bg-white/[0.03] transition-colors rounded-t-2xl"
+          className="w-full text-left border-b border-white/10 hover:bg-white/[0.08] transition-colors rounded-t-2xl"
         >
           {header}
         </button>
@@ -207,6 +220,47 @@ function CardShell({
 }
 
 // ── Card 1 — Your company ──────────────────────────────────────────────────
+
+function SubSection({
+  label,
+  open,
+  onToggle,
+  children,
+}: {
+  label: string;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-xl border border-white/10 overflow-hidden">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-white/[0.08] transition-colors"
+      >
+        <span className="text-xs font-semibold text-white/60">{label}</span>
+        {open
+          ? <ChevronUp className="h-3 w-3 text-white/30 shrink-0" />
+          : <ChevronDown className="h-3 w-3 text-white/30 shrink-0" />}
+      </button>
+      {open && <div className="px-3 pb-3 space-y-2">{children}</div>}
+    </div>
+  );
+}
+
+function BulletList({ items, max = 4 }: { items: string[]; max?: number }) {
+  return (
+    <ul className="space-y-1.5">
+      {items.slice(0, max).map((item, i) => (
+        <li key={i} className="flex gap-1.5 text-xs text-white/70 leading-snug">
+          <span className="mt-[5px] h-1 w-1 shrink-0 rounded-full bg-arcova-teal/60" />
+          {item}
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
@@ -230,18 +284,34 @@ function ProfileCard({
   collapsed?: boolean;
   onToggle?: () => void;
 }) {
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({
+    about: true,
+    customers: true,
+    valueProps: false,
+    firmographics: false,
+    social: false,
+    competitors: false,
+  });
+  const toggleSection = (key: string) =>
+    setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
+
   const {
     companyName, website, logoUrl, tagline, linkedinUrl,
-    description, therapeuticAreas, modalities, developmentStages,
+    description, customersWeServe, valuePropositions, goodFit, badFit,
+    companyType, companyTypeDisplay, companyStatus, competitorsEnriched,
+    therapeuticAreas, modalities, developmentStages,
     employeeCount, employeeRange, followerCount, foundedYear,
     fundingStage, totalFundingUsd, hqCity, hqCountry,
   } = myCompany;
 
   const displayDomain = website?.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
   const hq = [hqCity, hqCountry].filter(Boolean).join(', ') || null;
-  const hasTaxonomy = (therapeuticAreas?.length ?? 0) > 0 || (modalities?.length ?? 0) > 0 || (developmentStages?.length ?? 0) > 0;
-  const hasStats = employeeCount || employeeRange || followerCount != null || fundingStage || totalFundingUsd != null || foundedYear || hq;
-  const descriptionBullets = (description ?? []).filter(Boolean).slice(0, 3);
+
+  const hasAbout = !!description?.[0] || !!companyType || (therapeuticAreas?.length ?? 0) > 0 || (modalities?.length ?? 0) > 0;
+  const hasCustomers = (customersWeServe?.length ?? 0) > 0 || (goodFit?.length ?? 0) > 0 || (badFit?.length ?? 0) > 0;
+  const hasValueProps = (valuePropositions?.length ?? 0) > 0;
+  const hasFirmographics = !!(employeeCount || employeeRange || foundedYear || hq || fundingStage || totalFundingUsd != null || companyStatus);
+  const hasSocial = !!(followerCount != null || linkedinUrl);
 
   return (
     <CardShell icon={Building2} label="Your company" status={status} collapsed={collapsed} onToggle={onToggle}>
@@ -262,11 +332,11 @@ function ProfileCard({
       )}
 
       {status !== 'pending' && !analysisLoading && (
-        <div className="space-y-3">
+        <div className="space-y-2">
 
-          {/* Header — logo + name + website */}
+          {/* Always-visible header — logo + name + domain + tagline */}
           {(companyName || website) && (
-            <div className="flex items-start gap-2.5">
+            <div className="flex items-start gap-2.5 pb-1">
               {logoUrl && (
                 <img src={logoUrl} alt="" className="h-8 w-8 shrink-0 rounded-lg object-contain bg-white/10 p-0.5" />
               )}
@@ -284,12 +354,21 @@ function ProfileCard({
             </div>
           )}
 
-          {/* Taxonomy — therapeutic areas, modalities, dev stages */}
-          {hasTaxonomy && (
-            <div className="space-y-2 rounded-xl border border-white/10 bg-white/[0.04] p-3">
+          {/* About — description + company type + TA + modalities */}
+          {hasAbout && (
+            <SubSection label="About" open={openSections.about} onToggle={() => toggleSection('about')}>
+              {description?.[0] && (
+                <p className="text-xs text-white/70 leading-snug">{description[0]}</p>
+              )}
+              {(companyTypeDisplay ?? companyType) && (
+                <div>
+                  <p className="mb-1 text-xs text-white/40">Company type</p>
+                  <Tag label={companyTypeDisplay ?? companyType!} />
+                </div>
+              )}
               {(therapeuticAreas?.length ?? 0) > 0 && (
                 <div>
-                  <p className="mb-1.5 text-xs text-white/40">Therapeutic areas</p>
+                  <p className="mb-1 text-xs text-white/40">Therapeutic areas</p>
                   <div className="flex flex-wrap gap-1">
                     {therapeuticAreas!.map((t) => <Tag key={t} label={t} />)}
                   </div>
@@ -297,7 +376,7 @@ function ProfileCard({
               )}
               {(modalities?.length ?? 0) > 0 && (
                 <div>
-                  <p className="mb-1.5 text-xs text-white/40">Modalities</p>
+                  <p className="mb-1 text-xs text-white/40">Modalities</p>
                   <div className="flex flex-wrap gap-1">
                     {modalities!.map((m) => <Tag key={m} label={m} />)}
                   </div>
@@ -305,59 +384,107 @@ function ProfileCard({
               )}
               {(developmentStages?.length ?? 0) > 0 && (
                 <div>
-                  <p className="mb-1.5 text-xs text-white/40">Development stages</p>
+                  <p className="mb-1 text-xs text-white/40">Development stages</p>
                   <div className="flex flex-wrap gap-1">
                     {developmentStages!.map((s) => <Tag key={s} label={s} />)}
                   </div>
                 </div>
               )}
-            </div>
+            </SubSection>
           )}
 
-          {/* About — description bullets */}
-          {descriptionBullets.length > 0 && (
-            <div>
-              <p className="mb-1.5 text-xs text-white/40">About</p>
-              <ul className="space-y-1.5">
-                {descriptionBullets.map((bullet, i) => (
-                  <li key={i} className="flex gap-1.5 text-xs text-white/70 leading-snug">
-                    <span className="mt-[5px] h-1 w-1 shrink-0 rounded-full bg-arcova-teal/60" />
-                    {bullet}
-                  </li>
+          {/* Our customers — pills + good/bad fit */}
+          {hasCustomers && (
+            <SubSection label="Customers" open={openSections.customers} onToggle={() => toggleSection('customers')}>
+              {(customersWeServe?.length ?? 0) > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {customersWeServe!.map((c, i) => (
+                    <Tag key={i} label={c} />
+                  ))}
+                </div>
+              )}
+              {((goodFit?.length ?? 0) > 0 || (badFit?.length ?? 0) > 0) && (
+                <div className="space-y-2 border-t border-white/10 pt-2 mt-1">
+                  {(goodFit?.length ?? 0) > 0 && (
+                    <div>
+                      <p className="mb-1 text-xs text-white/40">Good fit</p>
+                      <BulletList items={goodFit!} max={3} />
+                    </div>
+                  )}
+                  {(badFit?.length ?? 0) > 0 && (
+                    <div>
+                      <p className="mb-1 text-xs text-white/40">Not a fit</p>
+                      <BulletList items={badFit!} max={3} />
+                    </div>
+                  )}
+                </div>
+              )}
+            </SubSection>
+          )}
+
+          {/* Value propositions */}
+          {hasValueProps && (
+            <SubSection label="Value props" open={openSections.valueProps} onToggle={() => toggleSection('valueProps')}>
+              <BulletList items={valuePropositions!} max={5} />
+            </SubSection>
+          )}
+
+          {/* Competitors */}
+          {(competitorsEnriched?.length ?? 0) > 0 && (
+            <SubSection label="Competitors" open={openSections.competitors} onToggle={() => toggleSection('competitors')}>
+              <div className="space-y-1.5">
+                {competitorsEnriched!.map((c, i) => (
+                  c.url ? (
+                    <a key={i} href={c.url} target="_blank" rel="noopener noreferrer"
+                      className="flex items-center gap-1 text-xs font-medium text-arcova-teal hover:underline">
+                      {c.name}
+                      <ExternalLink className="h-2.5 w-2.5 shrink-0" />
+                    </a>
+                  ) : (
+                    <p key={i} className="text-xs font-medium text-white/80">{c.name}</p>
+                  )
                 ))}
-              </ul>
-            </div>
+              </div>
+            </SubSection>
           )}
 
-          {/* Stats grid */}
-          {hasStats && (
-            <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
-              {(employeeCount || employeeRange) && (
-                <Stat label="Employees"
-                  value={employeeCount ? employeeCount.toLocaleString() : employeeRange!} />
-              )}
-              {followerCount != null && (
-                <Stat label="Followers" value={followerCount.toLocaleString()} />
-              )}
-              {fundingStage && <Stat label="Funding stage" value={fundingStage} />}
-              {totalFundingUsd != null && (
-                <Stat label="Total funding" value={formatCurrencyShort(totalFundingUsd)} />
-              )}
-              {foundedYear && <Stat label="Founded" value={String(foundedYear)} />}
-              {hq && <Stat label="HQ" value={hq} />}
-            </div>
+          {/* Firmographics */}
+          {hasFirmographics && (
+            <SubSection label="Firmographics" open={openSections.firmographics} onToggle={() => toggleSection('firmographics')}>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
+                {(employeeCount || employeeRange) && (
+                  <Stat label="Employees" value={employeeCount ? employeeCount.toLocaleString() : employeeRange!} />
+                )}
+                {foundedYear && <Stat label="Founded" value={String(foundedYear)} />}
+                {hq && <Stat label="HQ" value={hq} />}
+                {companyStatus && <Stat label="Status" value={companyStatus} />}
+                {fundingStage && <Stat label="Funding stage" value={fundingStage} />}
+                {totalFundingUsd != null && (
+                  <Stat label="Total funding" value={formatCurrencyShort(totalFundingUsd)} />
+                )}
+              </div>
+            </SubSection>
           )}
 
-          {/* LinkedIn link */}
-          {linkedinUrl && (
-            <div>
-              <p className="text-xs text-white/40">LinkedIn</p>
-              <a href={linkedinUrl} target="_blank" rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-xs text-arcova-teal hover:underline mt-0.5 break-all">
-                {linkedinUrl.replace('https://www.linkedin.com/company/', '').replace(/\/$/, '')}
-                <ExternalLink className="h-2.5 w-2.5 shrink-0" />
-              </a>
-            </div>
+          {/* Social */}
+          {hasSocial && (
+            <SubSection label="Social" open={openSections.social} onToggle={() => toggleSection('social')}>
+              <div className="space-y-2.5">
+                {followerCount != null && (
+                  <Stat label="LinkedIn followers" value={followerCount.toLocaleString()} />
+                )}
+                {linkedinUrl && (
+                  <div>
+                    <p className="text-xs text-white/40">LinkedIn</p>
+                    <a href={linkedinUrl} target="_blank" rel="noopener noreferrer"
+                      className="mt-0.5 inline-flex items-center gap-1 text-xs text-arcova-teal hover:underline break-all">
+                      {linkedinUrl.replace('https://www.linkedin.com/company/', '').replace(/\/$/, '')}
+                      <ExternalLink className="h-2.5 w-2.5 shrink-0" />
+                    </a>
+                  </div>
+                )}
+              </div>
+            </SubSection>
           )}
 
         </div>

@@ -1028,7 +1028,7 @@ export default function SetupFlow({
           setEditingFindingsData(existingAnalysis as Record<string, unknown>);
         }
         if (existingIcps.length > 0) {
-          const icp = existingIcps[0] as Record<string, unknown>;
+          const icp = existingIcps[0] as unknown as Record<string, unknown>;
           setSavedIcpName(typeof icp.name === 'string' ? icp.name : '');
           setPanelCompany({
             companyType: typeof icp.company_type === 'string' ? icp.company_type : '',
@@ -1236,6 +1236,16 @@ export default function SetupFlow({
   const showResultsActions = Boolean(isResultsStep && resultsPanelData);
   const visibleMessages = thread.filter((m) => m.kind !== 'results');
   const analysedUrlForPanel = lastAnalyzedUrlRef.current ?? '';
+  // Used only by the inline findings edit form (not the side panel)
+  const findingsSections = resultsPanelData
+    ? FINDINGS_SECTION_CONFIG
+        .map((section) => ({
+          ...section,
+          items: parseSectionItems(resultsPanelData[section.key]),
+        }))
+        .filter((section) => section.items.length > 0)
+    : [];
+
   // ── Welcome splash ────────────────────────────────────────────────────────
 
   if (thinking && thread.length === 0) {
@@ -1694,6 +1704,28 @@ export default function SetupFlow({
     tagline: getStr(resultsPanelData?.tagline),
     linkedinUrl: getStr(resultsPanelData?.linkedin_url),
     description: getStrArr(resultsPanelData?.description),
+    customersWeServe: getStrArr(resultsPanelData?.customers_we_serve),
+    valuePropositions: getStrArr(resultsPanelData?.value_propositions),
+    goodFit: getStrArr(resultsPanelData?.good_fit),
+    badFit: getStrArr(resultsPanelData?.bad_fit),
+    competitorsEnriched: Array.isArray(resultsPanelData?.competitors_enriched)
+      ? (resultsPanelData.competitors_enriched as import('@/components/SetupProfilePanel').CompetitorItem[])
+      : undefined,
+    companyStatus: (() => {
+      const stage = getStr(resultsPanelData?.funding_stage);
+      const total = getNum(resultsPanelData?.total_funding_usd);
+      const fmtUsd = (usd: number) => {
+        if (usd >= 1e9) return `$${(usd / 1e9).toFixed(1)}B`;
+        if (usd >= 1e6) return `$${(usd / 1e6).toFixed(0)}M`;
+        if (usd >= 1e3) return `$${(usd / 1e3).toFixed(0)}K`;
+        return `$${usd}`;
+      };
+      if (stage && total != null) return `${stage} · ${fmtUsd(total)}`;
+      if (stage) return stage;
+      return getStr(resultsPanelData?.company_status);
+    })(),
+    companyType: getStr(resultsPanelData?.company_type),
+    companyTypeDisplay: getStr(resultsPanelData?.company_type_display),
     therapeuticAreas: getStrArr(resultsPanelData?.therapeutic_areas),
     modalities: getStrArr(resultsPanelData?.modalities),
     developmentStages: getStrArr(resultsPanelData?.development_stages),
@@ -1756,7 +1788,7 @@ export default function SetupFlow({
           </div>
         </div>
       )}
-      <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 gap-5 p-4 sm:p-6">
+      <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 items-center gap-5 p-4 sm:p-6">
         {/* Chat column */}
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex h-[min(56rem,calc(100dvh-12rem))] min-h-[20rem] w-full flex-col">
