@@ -207,7 +207,7 @@ function CardShell({
         <button
           type="button"
           onClick={onToggle}
-          className="w-full text-left border-b border-white/10 hover:bg-white/[0.08] transition-colors rounded-t-2xl"
+          className="w-full text-left border-b border-white/10 hover:bg-white/[0.15] transition-colors rounded-t-2xl"
         >
           {header}
         </button>
@@ -233,16 +233,18 @@ function SubSection({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-white/10 overflow-hidden">
+    <div className={`rounded-xl overflow-hidden transition-colors ${
+      open ? 'border border-white/10 bg-white/[0.06]' : 'bg-white/[0.18] hover:bg-white/[0.22]'
+    }`}>
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-white/[0.08] transition-colors"
+        className="flex w-full items-center justify-between px-3 py-2 text-left transition-colors"
       >
-        <span className="text-xs font-semibold text-white/60">{label}</span>
+        <span className={`text-xs font-semibold ${open ? 'text-white/60' : 'text-white'}`}>{label}</span>
         {open
-          ? <ChevronUp className="h-3 w-3 text-white/30 shrink-0" />
-          : <ChevronDown className="h-3 w-3 text-white/30 shrink-0" />}
+          ? <ChevronUp className="h-3 w-3 text-white/60 shrink-0" />
+          : <ChevronDown className="h-3 w-3 text-white shrink-0" />}
       </button>
       {open && <div className="px-3 pb-3 space-y-2">{children}</div>}
     </div>
@@ -262,11 +264,12 @@ function BulletList({ items, max = 4 }: { items: string[]; max?: number }) {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, subValue }: { label: string; value: string; subValue?: string }) {
   return (
     <div>
       <p className="text-xs text-white/40">{label}</p>
-      <p className="mt-0.5 text-sm text-white/80">{value}</p>
+      <p className="mt-0.5 text-sm text-white/80 leading-tight">{value}</p>
+      {subValue && <p className="text-xs text-white/80 leading-tight">{subValue}</p>}
     </div>
   );
 }
@@ -285,8 +288,8 @@ function ProfileCard({
   onToggle?: () => void;
 }) {
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
-    about: true,
-    customers: true,
+    about: false,
+    customers: false,
     valueProps: false,
     firmographics: false,
     social: false,
@@ -305,12 +308,11 @@ function ProfileCard({
   } = myCompany;
 
   const displayDomain = website?.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
-  const hq = [hqCity, hqCountry].filter(Boolean).join(', ') || null;
 
   const hasAbout = !!description?.[0] || !!companyType || (therapeuticAreas?.length ?? 0) > 0 || (modalities?.length ?? 0) > 0;
   const hasCustomers = (customersWeServe?.length ?? 0) > 0 || (goodFit?.length ?? 0) > 0 || (badFit?.length ?? 0) > 0;
   const hasValueProps = (valuePropositions?.length ?? 0) > 0;
-  const hasFirmographics = !!(employeeCount || employeeRange || foundedYear || hq || fundingStage || totalFundingUsd != null || companyStatus);
+  const hasFirmographics = !!(employeeCount || employeeRange || foundedYear || hqCity || fundingStage || totalFundingUsd != null || companyStatus);
   const hasSocial = !!(followerCount != null || linkedinUrl);
 
   return (
@@ -393,6 +395,29 @@ function ProfileCard({
             </SubSection>
           )}
 
+          {/* Firmographics */}
+          {hasFirmographics && (
+            <SubSection label="Firmographics" open={openSections.firmographics} onToggle={() => toggleSection('firmographics')}>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
+                {(employeeCount || employeeRange) && (
+                  <Stat label="Employees" value={employeeCount ? employeeCount.toLocaleString() : employeeRange!} />
+                )}
+                {foundedYear && <Stat label="Founded" value={String(foundedYear)} />}
+                {hqCity && <Stat label="HQ" value={hqCity} subValue={hqCountry ?? undefined} />}
+                {companyStatus && (() => {
+                  const match = companyStatus.match(/^([^(]+)\s*\(([^)]+)\)\s*$/);
+                  return match
+                    ? <Stat label="Status" value={match[1].trim()} subValue={match[2].trim()} />
+                    : <Stat label="Status" value={companyStatus} />;
+                })()}
+                {fundingStage && <Stat label="Funding stage" value={fundingStage} />}
+                {totalFundingUsd != null && (
+                  <Stat label="Total funding" value={formatCurrencyShort(totalFundingUsd)} />
+                )}
+              </div>
+            </SubSection>
+          )}
+
           {/* Our customers — pills + good/bad fit */}
           {hasCustomers && (
             <SubSection label="Customers" open={openSections.customers} onToggle={() => toggleSection('customers')}>
@@ -422,13 +447,6 @@ function ProfileCard({
             </SubSection>
           )}
 
-          {/* Value propositions */}
-          {hasValueProps && (
-            <SubSection label="Value props" open={openSections.valueProps} onToggle={() => toggleSection('valueProps')}>
-              <BulletList items={valuePropositions!} max={5} />
-            </SubSection>
-          )}
-
           {/* Competitors */}
           {(competitorsEnriched?.length ?? 0) > 0 && (
             <SubSection label="Competitors" open={openSections.competitors} onToggle={() => toggleSection('competitors')}>
@@ -448,21 +466,10 @@ function ProfileCard({
             </SubSection>
           )}
 
-          {/* Firmographics */}
-          {hasFirmographics && (
-            <SubSection label="Firmographics" open={openSections.firmographics} onToggle={() => toggleSection('firmographics')}>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
-                {(employeeCount || employeeRange) && (
-                  <Stat label="Employees" value={employeeCount ? employeeCount.toLocaleString() : employeeRange!} />
-                )}
-                {foundedYear && <Stat label="Founded" value={String(foundedYear)} />}
-                {hq && <Stat label="HQ" value={hq} />}
-                {companyStatus && <Stat label="Status" value={companyStatus} />}
-                {fundingStage && <Stat label="Funding stage" value={fundingStage} />}
-                {totalFundingUsd != null && (
-                  <Stat label="Total funding" value={formatCurrencyShort(totalFundingUsd)} />
-                )}
-              </div>
+          {/* Value propositions */}
+          {hasValueProps && (
+            <SubSection label="Value props" open={openSections.valueProps} onToggle={() => toggleSection('valueProps')}>
+              <BulletList items={valuePropositions!} max={5} />
             </SubSection>
           )}
 
@@ -478,7 +485,7 @@ function ProfileCard({
                     <p className="text-xs text-white/40">LinkedIn</p>
                     <a href={linkedinUrl} target="_blank" rel="noopener noreferrer"
                       className="mt-0.5 inline-flex items-center gap-1 text-xs text-arcova-teal hover:underline break-all">
-                      {linkedinUrl.replace('https://www.linkedin.com/company/', '').replace(/\/$/, '')}
+                      {linkedinUrl.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')}
                       <ExternalLink className="h-2.5 w-2.5 shrink-0" />
                     </a>
                   </div>
