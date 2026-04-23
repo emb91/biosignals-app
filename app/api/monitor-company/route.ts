@@ -41,13 +41,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Company not found' }, { status: 404 });
     }
 
-    // Pull Apollo funding data from a contact linked to this company —
-    // the companies table doesn't store this directly yet
+    // Pull scraped/enriched company context from a contact linked to this company.
     const { data: linkedContact } = await supabase
       .from('contacts')
-      .select('apollo_company_firmographics')
+      .select('apollo_company_firmographics, apify_company_firmographics, apollo_organization_raw')
       .eq('company_id', company_id)
-      .not('apollo_company_firmographics', 'is', null)
       .limit(1)
       .maybeSingle();
 
@@ -60,6 +58,11 @@ export async function POST(request: Request) {
       apollo_funding_stage: (apolloFirmo?.funding_stage as string | null) ?? null,
       apollo_total_funding_usd: (apolloFirmo?.total_funding_usd as number | null) ?? null,
       apollo_latest_funding_date: (apolloFirmo?.latest_funding_date as string | null) ?? null,
+      apify_company_firmographics:
+        (linkedContact?.apify_company_firmographics as Record<string, unknown> | null) ?? null,
+      apollo_company_firmographics: apolloFirmo,
+      apollo_organization_raw:
+        (linkedContact?.apollo_organization_raw as Record<string, unknown> | null) ?? null,
     });
 
     return NextResponse.json({ success: true, result });

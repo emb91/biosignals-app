@@ -11,10 +11,10 @@ import { useSetupState, getNextSetupPath } from "@/lib/use-setup-state"
 import { Toaster } from "sonner"
 
 // Routes that are part of the authenticated app (no header/footer)
-const APP_ROUTES = ['/dashboard', '/companies', '/contact', '/contacts', '/find-more-leads', '/import', '/my-profile', '/personas', '/results', '/signals', '/upload']
+const APP_ROUTES = ['/dashboard', '/companies', '/contact', '/contacts', '/find-more-leads', '/import', '/arcova-setup', '/my-profile', '/personas', '/results', '/signals', '/upload']
 
 // Routes that are part of the setup flow — the guard does NOT redirect away from these
-const SETUP_ROUTES = ['/my-profile', '/companies', '/personas']
+const SETUP_ROUTES = ['/arcova-setup']
 
 // App routes that are NOT setup pages — the guard redirects to setup from here if needed
 const NON_SETUP_APP_ROUTES = APP_ROUTES.filter(
@@ -30,15 +30,7 @@ function SetupGuard({ children }: { children: React.ReactNode }) {
   const isNonSetupAppRoute = NON_SETUP_APP_ROUTES.some((r) => pathname.startsWith(r))
 
   // Compute the next step path from primitive values (avoids object-ref churn)
-  const nextSetupPath: string | null = setupComplete
-    ? null
-    : !step1Complete
-    ? '/my-profile'
-    : !step2Complete
-    ? '/companies'
-    : !step3Complete
-    ? '/personas'
-    : '/import'
+  const nextSetupPath: string | null = setupComplete ? null : '/arcova-setup'
 
   useEffect(() => {
     // Wait for both auth and setup state to resolve
@@ -52,6 +44,19 @@ function SetupGuard({ children }: { children: React.ReactNode }) {
 
     router.replace(nextSetupPath)
   }, [authLoading, setupLoading, setupComplete, nextSetupPath, user, isNonSetupAppRoute, pathname, router])
+
+  // Still waiting for auth or setup state — render nothing to avoid a flash of the
+  // wrong page before the redirect fires.
+  if (authLoading || setupLoading) {
+    return <div className="min-h-screen bg-gray-50" />
+  }
+
+  // Redirect is about to fire (effect hasn't run yet this tick) — keep the blank.
+  const redirectImminent =
+    !!user && isNonSetupAppRoute && !setupComplete && !!nextSetupPath && pathname !== nextSetupPath
+  if (redirectImminent) {
+    return <div className="min-h-screen bg-gray-50" />
+  }
 
   return <>{children}</>
 }

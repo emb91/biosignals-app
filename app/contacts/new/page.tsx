@@ -159,10 +159,10 @@ export default function ContactNewPage() {
                 Back to dashboard
               </button>
               <button
-                onClick={() => router.push(missingProfile ? '/my-profile' : '/companies/new')}
+                onClick={() => router.push(missingProfile ? '/arcova-setup' : '/companies/new')}
                 className="px-4 py-2 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors"
               >
-                {missingProfile ? 'Go to My Profile' : 'Add a company'}
+                {missingProfile ? 'Go to setup' : 'Add a company'}
               </button>
             </div>
           </div>

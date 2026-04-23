@@ -7,6 +7,7 @@
  *
  * Current modules:
  *   - funding: resolves funding stage from Apollo + web search
+ *   - taxonomy: maps company evidence into Arcova's canonical company taxonomy
  *
  * Planned modules (slot in here when ready):
  *   - clinical_trials: polls ClinicalTrials.gov for pipeline changes
@@ -15,6 +16,7 @@
  */
 
 import { resolveFundingStage, type FundingInput } from './funding';
+import { resolveCompanyTaxonomy, type CompanyTaxonomyInput } from './taxonomy';
 
 type MinimalSupabase = {
   from: (table: string) => any;
@@ -43,6 +45,9 @@ export type CompanyMonitorInput = {
   apollo_funding_stage?: string | null;
   apollo_total_funding_usd?: number | null;
   apollo_latest_funding_date?: string | null;
+  apify_company_firmographics?: Record<string, unknown> | null;
+  apollo_company_firmographics?: Record<string, unknown> | null;
+  apollo_organization_raw?: Record<string, unknown> | null;
 };
 
 export type CompanyMonitorResult = {
@@ -58,8 +63,27 @@ export type CompanyMonitorResult = {
     total_funding_usd: number | null;
     latest_funding_date: string | null;
   };
+  taxonomy?: {
+    updated: boolean;
+    company_type: string | null;
+    therapeutic_areas: string[];
+    modalities: string[];
+    confidence: string;
+    summary: string | null;
+  };
   errors: string[];
 };
+
+function normalizeStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : [];
+}
+
+function arraysEqual(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
+}
 
 export async function runCompanyMonitor(
   supabase: MinimalSupabase,
@@ -184,6 +208,84 @@ export async function runCompanyMonitor(
     }
 
     result.errors.push(`funding: ${msg}`);
+  }
+
+  // ── Taxonomy module ────────────────────────────────────────────────────────
+  try {
+    const taxonomyInput: CompanyTaxonomyInput = {
+      company_name: input.company_name,
+      domain: input.domain,
+      apify_company_firmographics: input.apify_company_firmographics,
+      apollo_company_firmographics: input.apollo_company_firmographics,
+      apollo_organization_raw: input.apollo_organization_raw,
+    };
+
+    const taxonomy = await resolveCompanyTaxonomy(taxonomyInput);
+
+    const currentResult = await supabase
+      .from('companies')
+      .select('company_type, therapeutic_areas, modalities')
+      .eq('id', input.company_id)
+      .maybeSingle();
+
+    const currentError = formatSupabaseErrorMessage(currentResult?.error);
+    if (currentError) {
+      throw new Error(
+        `[company-monitor] Failed to load canonical taxonomy state for company ${input.company_id}: ${currentError}`
+      );
+    }
+
+    const current = currentResult?.data;
+    const previousCompanyType = typeof current?.company_type === 'string' ? current.company_type : null;
+    const previousTherapeuticAreas = normalizeStringArray(current?.therapeutic_areas);
+    const previousModalities = normalizeStringArray(current?.modalities);
+    const canOverwrite = taxonomy.confidence !== 'low';
+
+    const nextCompanyType =
+      canOverwrite && taxonomy.company_type ? taxonomy.company_type : previousCompanyType;
+    const nextTherapeuticAreas =
+      canOverwrite && taxonomy.therapeutic_areas.length > 0
+        ? taxonomy.therapeutic_areas
+        : previousTherapeuticAreas;
+    const nextModalities =
+      canOverwrite && taxonomy.modalities.length > 0 ? taxonomy.modalities : previousModalities;
+
+    const changed =
+      nextCompanyType !== previousCompanyType ||
+      !arraysEqual(nextTherapeuticAreas, previousTherapeuticAreas) ||
+      !arraysEqual(nextModalities, previousModalities);
+
+    if (changed) {
+      const updateResult = await supabase
+        .from('companies')
+        .update({
+          company_type: nextCompanyType,
+          therapeutic_areas: nextTherapeuticAreas,
+          modalities: nextModalities,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', input.company_id);
+
+      const updateError = formatSupabaseErrorMessage(updateResult?.error);
+      if (updateError) {
+        throw new Error(
+          `[company-monitor] Failed to persist canonical taxonomy state for company ${input.company_id}: ${updateError}`
+        );
+      }
+    }
+
+    result.taxonomy = {
+      updated: changed,
+      company_type: nextCompanyType,
+      therapeutic_areas: nextTherapeuticAreas,
+      modalities: nextModalities,
+      confidence: taxonomy.confidence,
+      summary: taxonomy.evidence_summary,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[company-monitor] taxonomy module failed for ${input.company_name}:`, msg);
+    result.errors.push(`taxonomy: ${msg}`);
   }
 
   // ── Future modules slot in here ─────────────────────────────────────────────

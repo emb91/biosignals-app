@@ -997,6 +997,9 @@ export async function runContactResolutionPipelineForContact(
         apollo_funding_stage: (apolloCompanyFirmographics?.funding_stage as string | null) ?? null,
         apollo_total_funding_usd: (apolloCompanyFirmographics?.total_funding_usd as number | null) ?? null,
         apollo_latest_funding_date: (apolloCompanyFirmographics?.latest_funding_date as string | null) ?? null,
+        apify_company_firmographics: apifyCompanyFirmographics,
+        apollo_company_firmographics: apolloCompanyFirmographics,
+        apollo_organization_raw: apolloOrganization,
       });
     }
 

@@ -21,7 +21,7 @@ export type SetupState = {
  * Once all steps are done, returns '/import'.
  */
 export function getNextSetupPath(state: Omit<SetupState, 'loading'>): string {
-  if (!state.step1Complete) return '/my-profile';
+  if (!state.step1Complete) return '/arcova-setup';
   if (!state.step2Complete) return '/companies';
   if (!state.step3Complete) return '/personas';
   return '/import';

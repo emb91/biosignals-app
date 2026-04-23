@@ -143,7 +143,7 @@ export default function DashboardPage() {
 
         // Re-entry guard: send users to their next incomplete setup step
         if (!profileComplete) {
-          router.replace('/my-profile');
+          router.replace('/arcova-setup');
           return;
         }
         if (!companiesComplete) {
@@ -156,7 +156,7 @@ export default function DashboardPage() {
         }
 
         const checklistSteps: SetupStep[] = [
-          { id: 'profile', label: 'My Profile', completed: profileComplete, actionPath: '/my-profile' },
+          { id: 'profile', label: 'My Profile', completed: profileComplete, actionPath: '/arcova-setup' },
           { id: 'companies', label: 'Target Companies', completed: companiesComplete, actionPath: '/companies' },
           { id: 'personas', label: 'Teams', completed: personasComplete, actionPath: '/personas' },
           { id: 'import', label: 'Upload your CSV', completed: importComplete, actionPath: '/import' },

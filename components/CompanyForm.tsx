@@ -21,48 +21,20 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { getSignalDisplayName } from '@/lib/signal-display-names';
 import { getRandomLockedSignals, type LockedSignal } from '@/lib/locked-signals';
+import {
+  COMPANY_SIZE_OPTIONS,
+  COMPANY_TYPE_OPTIONS,
+  DEVELOPMENT_STAGE_OPTIONS,
+  FUNDING_STAGE_OPTIONS,
+  MODALITY_OPTIONS,
+  THERAPEUTIC_AREA_OPTIONS,
+} from '@/lib/arcova-taxonomy';
 
 // --- Constants ---
-
-const COMPANY_TYPE_OPTIONS = [
-  { value: "Biotech / Biopharma", description: "Early to mid-stage companies developing novel therapeutics" },
-  { value: "Pharma", description: "Large established pharmaceutical companies" },
-  { value: "Academic Spinout", description: "University-originated companies and research institutes" },
-  { value: "CDMO", description: "Contract development and manufacturing organisations" },
-  { value: "CRO", description: "Contract research organisations" },
-  { value: "Medical Device", description: "Device and diagnostics companies" },
-];
-
-const THERAPEUTIC_AREA_OPTIONS = [
-  "Oncology", "Rare Disease", "Neuroscience", "Immunology", "Cardiovascular",
-  "Infectious Disease", "Metabolic Disease", "Cell & Gene Therapy",
-  "RNA/Oligonucleotides", "Ophthalmology", "Other"
-];
-
-const MODALITY_OPTIONS = [
-  "Small Molecule", "Biologic (Antibody)", "Bispecific Antibody", "ADC",
-  "Cell Therapy", "Gene Therapy", "RNA Therapy", "Peptide", "Oligonucleotide",
-  "Radiopharmaceutical", "Protein / Enzyme Replacement", "Gene Editing (CRISPR)",
-  "Microbiome", "Biosimilar", "Vaccine",
-  "Diagnostics", "Liquid Biopsy", "Digital Therapeutics",
-  "AI/ML Platform", "Drug Discovery Platform", "Biomarker", "Imaging"
-];
-
-const DEVELOPMENT_STAGE_OPTIONS = [
-  "Preclinical", "Phase I", "Phase II", "Phase III", "Commercial", "All stages"
-];
 
 const EXPLICIT_DEVELOPMENT_STAGE_OPTIONS = DEVELOPMENT_STAGE_OPTIONS.filter(
   (stage) => stage !== 'All stages'
 );
-
-const COMPANY_SIZE_OPTIONS = [
-  "1–10", "11–50", "51–200", "201–500", "500+"
-];
-
-const FUNDING_STAGE_OPTIONS = [
-  "Pre-seed", "Seed", "Series A", "Series B", "Series C", "Series D+", "Public", "Grant-funded"
-];
 const CAL_BOOKING_URL = 'https://cal.com/emma-arcova/45-min-meeting';
 
 // --- Types ---
@@ -753,7 +725,7 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
                 />
                 <button
                   type="button"
-                  onClick={generateName}
+                  onClick={() => generateName()}
                   disabled={isGeneratingName}
                   className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm flex items-center gap-2 disabled:opacity-50"
                 >

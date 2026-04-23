@@ -27,7 +27,7 @@ interface NavItem {
 const setupItems: NavItem[] = [
   { name: 'Companies', href: '/companies', icon: Target },
   { name: 'Teams', href: '/personas', icon: UserCircle },
-  { name: 'My Profile', href: '/my-profile', icon: User },
+  { name: 'Arcova Setup', href: '/arcova-setup', icon: User },
 ];
 
 const topNavigation: NavItem[] = [
@@ -41,7 +41,15 @@ const bottomNavigation: NavItem[] = [
   { name: 'Settings', href: '/settings', icon: Settings },
 ];
 
-export default function AppSidebar() {
+interface AppSidebarProps {
+  /**
+   * When true, hide the rest of the app nav and show setup as a single focus state
+   * (no links to profile / companies / teams so first-time users stay in the guided flow).
+   */
+  setupFlowOnly?: boolean;
+}
+
+export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
   const pathname = usePathname();
   const [showCompaniesDot, setShowCompaniesDot] = useState(false);
   const [showPersonasDot, setShowPersonasDot] = useState(false);
@@ -157,41 +165,57 @@ export default function AppSidebar() {
 
         {/* Navigation */}
         <nav className="flex-1 p-4 space-y-2">
-          {topNavigation.map(renderNavItem)}
-
-          {/* Setup group */}
-          <div>
-            <button
-              onClick={() => setSetupOpen((o) => !o)}
-              className={cn(
-                "w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-                setupActive
-                  ? "bg-arcova-teal text-white"
-                  : "text-white hover:bg-arcova-mint/20"
-              )}
-            >
-              <div className="flex items-center space-x-3">
-                <div className="relative">
-                  <Wrench className="w-5 h-5" />
-                  {setupDotVisible && !setupOpen && (
-                    <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-[#EF4444] shadow-[0_0_8px_#EF4444]" />
-                  )}
+          {setupFlowOnly ? (
+            <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-3">
+              <div className="flex items-start gap-3">
+                <Wrench className="mt-0.5 h-5 w-5 shrink-0 text-arcova-teal" aria-hidden />
+                <div>
+                  <p className="text-sm font-semibold text-white">Setup</p>
+                  <p className="mt-1 text-xs leading-relaxed text-white/60">
+                    Stay in the chat to finish. The rest of the app opens when setup is complete.
+                  </p>
                 </div>
-                <span>Setup</span>
               </div>
-              <ChevronDown
-                className={cn("w-4 h-4 transition-transform duration-200", setupOpen && "rotate-180")}
-              />
-            </button>
+            </div>
+          ) : (
+            <>
+              {topNavigation.map(renderNavItem)}
 
-            {setupOpen && (
-              <div className="mt-1 ml-4 space-y-1 border-l border-arcova-mint/20 pl-3">
-                {setupItems.map(renderNavItem)}
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setSetupOpen((o) => !o)}
+                  className={cn(
+                    'w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                    setupActive
+                      ? 'bg-arcova-teal text-white'
+                      : 'text-white hover:bg-arcova-mint/20'
+                  )}
+                >
+                  <div className="flex items-center space-x-3">
+                    <div className="relative">
+                      <Wrench className="w-5 h-5" />
+                      {setupDotVisible && !setupOpen && (
+                        <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-[#EF4444] shadow-[0_0_8px_#EF4444]" />
+                      )}
+                    </div>
+                    <span>Setup</span>
+                  </div>
+                  <ChevronDown
+                    className={cn('w-4 h-4 transition-transform duration-200', setupOpen && 'rotate-180')}
+                  />
+                </button>
+
+                {setupOpen && (
+                  <div className="mt-1 ml-4 space-y-1 border-l border-arcova-mint/20 pl-3">
+                    {setupItems.map(renderNavItem)}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
 
-          {bottomNavigation.map(renderNavItem)}
+              {bottomNavigation.map(renderNavItem)}
+            </>
+          )}
         </nav>
       </div>
     </div>

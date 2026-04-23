@@ -96,10 +96,10 @@ export default function ICPNewPage() {
                 Back to dashboard
               </button>
               <button
-                onClick={() => router.push('/my-profile')}
+                onClick={() => router.push('/arcova-setup')}
                 className="px-4 py-2 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors"
               >
-                Go to My Profile
+                Go to setup
               </button>
             </div>
           </div>
