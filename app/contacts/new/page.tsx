@@ -37,7 +37,7 @@ export default function ContactNewPage() {
     const fetchData = async () => {
       try {
         const [companiesRes, sellerRes, contactsRes] = await Promise.all([
-          fetch('/api/companies'),
+          fetch('/api/company-criteria'),
           fetch('/api/user-company-profile'),
           fetch('/api/contacts'),
         ]);
@@ -159,7 +159,7 @@ export default function ContactNewPage() {
                 Back to dashboard
               </button>
               <button
-                onClick={() => router.push(missingProfile ? '/arcova-setup' : '/companies/new')}
+                onClick={() => router.push(missingProfile ? '/arcova-setup' : '/company-criteria/new')}
                 className="px-4 py-2 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors"
               >
                 {missingProfile ? 'Go to setup' : 'Add a company'}

@@ -65,7 +65,7 @@ export default function ContactsPage() {
       try {
         const [contactsRes, companiesRes] = await Promise.all([
           fetch('/api/contacts'),
-          fetch('/api/companies'),
+          fetch('/api/company-criteria'),
         ]);
         
         if (contactsRes.ok) {

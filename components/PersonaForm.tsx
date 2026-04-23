@@ -885,7 +885,7 @@ export default function PersonaForm({
                         Every current company already has a team. Add one more company profile, then come back here to create another.
                       </p>
                       <a
-                        href="/companies/new"
+                        href="/company-criteria/new"
                         className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-amber-900 hover:text-amber-950"
                       >
                         Add another company

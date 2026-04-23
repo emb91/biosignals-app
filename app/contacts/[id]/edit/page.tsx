@@ -33,7 +33,7 @@ export default function ContactEditPage() {
       try {
         const [contactRes, companiesRes] = await Promise.all([
           fetch(`/api/contacts/${contactId}`),
-          fetch('/api/companies'),
+          fetch('/api/company-criteria'),
         ]);
 
         if (contactRes.ok) {

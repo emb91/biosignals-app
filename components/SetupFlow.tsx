@@ -312,7 +312,7 @@ export default function SetupFlow({
   const inputRef = useRef<HTMLInputElement>(null);
   const availableCompanyProfiles = companyProfiles.filter((company) => !companyContactsMap[company.id]);
   const resolvedCompletePath =
-    onCompletePath ?? (entryPoint === 'full' ? '/import' : entryPoint === 'target-company' ? '/companies' : '/personas');
+    onCompletePath ?? (entryPoint === 'full' ? '/import' : entryPoint === 'target-company' ? '/company-criteria' : '/personas');
 
   const parseSectionItems = useCallback((value: unknown): string[] => {
     if (Array.isArray(value)) {
@@ -475,7 +475,7 @@ export default function SetupFlow({
     });
     const { name } = nameRes.ok ? await nameRes.json() : { name: `${d.companyType} Profile` };
 
-    const saveRes = await fetch('/api/companies', {
+    const saveRes = await fetch('/api/company-criteria', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name,
@@ -808,7 +808,7 @@ export default function SetupFlow({
         });
         if (displayParts.length) await sayBeats(displayParts);
         setPhase('done');
-        setTimeout(() => router.push('/companies/new'), 2200);
+        setTimeout(() => router.push('/company-criteria/new'), 2200);
         return;
       }
 

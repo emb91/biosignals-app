@@ -43,7 +43,7 @@ export default function ICPManagerPage() {
       if (!user) return;
 
       try {
-        const response = await fetch('/api/companies');
+        const response = await fetch('/api/company-criteria');
         if (response.ok) {
           const result = await response.json();
           setIcps(result.data || []);
@@ -65,7 +65,7 @@ export default function ICPManagerPage() {
 
     setDeletingId(id);
     try {
-      const response = await fetch(`/api/companies/${id}`, {
+      const response = await fetch(`/api/company-criteria/${id}`, {
         method: 'DELETE',
       });
 
@@ -145,7 +145,7 @@ export default function ICPManagerPage() {
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">No target company profiles yet</h3>
                 <p className="text-gray-500 mb-6">Get started by defining your first target company type.</p>
                 <button
-                  onClick={() => router.push('/companies/new')}
+                  onClick={() => router.push('/company-criteria/new')}
                   className="px-6 py-3 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors"
                 >
                   + Define new target company
@@ -195,7 +195,7 @@ export default function ICPManagerPage() {
                           </div>
                           <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                             <button
-                              onClick={() => router.push(`/companies/${icp.id}/edit`)}
+                              onClick={() => router.push(`/company-criteria/${icp.id}/edit`)}
                               className="p-2 text-arcova-teal hover:bg-arcova-teal/10 rounded transition-colors"
                             >
                               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -350,7 +350,7 @@ export default function ICPManagerPage() {
 
                   {/* Create New Button */}
                   <button
-                    onClick={() => router.push('/companies/new')}
+                    onClick={() => router.push('/company-criteria/new')}
                     className="w-full border-2 border-dashed border-gray-300 rounded-lg p-4 text-gray-500 hover:border-arcova-teal hover:text-arcova-teal transition-colors flex items-center justify-center"
                   >
                     + Define new target company

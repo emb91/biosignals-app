@@ -41,7 +41,7 @@ export default function ICPNewPage() {
   }, [user]);
 
   const handleSave = async (formData: CompanyFormData) => {
-    const response = await fetch('/api/companies', {
+    const response = await fetch('/api/company-criteria', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -74,7 +74,7 @@ export default function ICPNewPage() {
               key={formKey}
               mode="create"
               onSave={handleSave}
-              onCancel={() => router.push('/companies')}
+              onCancel={() => router.push('/company-criteria')}
             />
           ) : null}
         </div>
@@ -120,7 +120,7 @@ export default function ICPNewPage() {
             </p>
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
               <button
-                onClick={() => router.push('/companies')}
+                onClick={() => router.push('/company-criteria')}
                 className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
               >
                 View your companies

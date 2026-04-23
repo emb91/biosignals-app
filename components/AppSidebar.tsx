@@ -25,7 +25,7 @@ interface NavItem {
 }
 
 const setupItems: NavItem[] = [
-  { name: 'Companies', href: '/companies', icon: Target },
+  { name: 'Company Criteria', href: '/company-criteria', icon: Target },
   { name: 'Teams', href: '/personas', icon: UserCircle },
   { name: 'Arcova Setup', href: '/arcova-setup', icon: User },
 ];
@@ -73,7 +73,7 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
     const loadCompletionStatus = async () => {
       try {
         const [companiesRes, personasRes, profileRes, importRes] = await Promise.all([
-          fetch('/api/companies'),
+          fetch('/api/company-criteria'),
           fetch('/api/contacts'),
           fetch('/api/user-company-profile'),
           fetch('/api/import-ready'),

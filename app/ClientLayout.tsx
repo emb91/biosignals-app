@@ -11,7 +11,7 @@ import { useSetupState, getNextSetupPath } from "@/lib/use-setup-state"
 import { Toaster } from "sonner"
 
 // Routes that are part of the authenticated app (no header/footer)
-const APP_ROUTES = ['/dashboard', '/companies', '/contact', '/contacts', '/find-more-leads', '/import', '/arcova-setup', '/my-profile', '/personas', '/results', '/signals', '/upload']
+const APP_ROUTES = ['/dashboard', '/company-criteria', '/contact', '/contacts', '/find-more-leads', '/import', '/arcova-setup', '/my-profile', '/personas', '/results', '/signals', '/upload']
 
 // Routes that are part of the setup flow — the guard does NOT redirect away from these
 const SETUP_ROUTES = ['/arcova-setup']

@@ -147,7 +147,7 @@ export default function DashboardPage() {
           return;
         }
         if (!companiesComplete) {
-          router.replace('/companies');
+          router.replace('/company-criteria');
           return;
         }
         if (!personasComplete) {
@@ -157,10 +157,10 @@ export default function DashboardPage() {
 
         const checklistSteps: SetupStep[] = [
           { id: 'profile', label: 'My Profile', completed: profileComplete, actionPath: '/arcova-setup' },
-          { id: 'companies', label: 'Target Companies', completed: companiesComplete, actionPath: '/companies' },
+          { id: 'companies', label: 'Target Companies', completed: companiesComplete, actionPath: '/company-criteria' },
           { id: 'personas', label: 'Teams', completed: personasComplete, actionPath: '/personas' },
           { id: 'import', label: 'Upload your CSV', completed: importComplete, actionPath: '/import' },
-          { id: 'signals', label: 'Signals', completed: signalsComplete, actionPath: '/companies' },
+          { id: 'signals', label: 'Signals', completed: signalsComplete, actionPath: '/company-criteria' },
         ];
         setSteps(checklistSteps);
 
@@ -177,7 +177,7 @@ export default function DashboardPage() {
             label: icp.name || 'Unnamed company profile',
             signalType: getSignalDisplayName(icp.signals?.[0]),
             timestamp: icp.updated_at,
-            href: `/companies/${icp.id}/edit`,
+            href: `/company-criteria/${icp.id}/edit`,
           });
         });
 
@@ -230,7 +230,7 @@ export default function DashboardPage() {
             priorityScore,
             latestSignalType,
             latestSignalAt: newestTimestamp,
-            href: `/companies/${icp.id}/edit`,
+            href: `/company-criteria/${icp.id}/edit`,
           };
         });
 

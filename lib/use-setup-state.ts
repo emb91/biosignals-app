@@ -22,7 +22,7 @@ export type SetupState = {
  */
 export function getNextSetupPath(state: Omit<SetupState, 'loading'>): string {
   if (!state.step1Complete) return '/arcova-setup';
-  if (!state.step2Complete) return '/companies';
+  if (!state.step2Complete) return '/company-criteria';
   if (!state.step3Complete) return '/personas';
   return '/import';
 }
