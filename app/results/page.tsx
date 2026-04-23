@@ -51,6 +51,7 @@ interface CompanyFirmographics {
   latest_funding_date?: string | null;
   therapeutic_areas?: string[] | null;
   modalities?: string[] | null;
+  development_stages?: string[] | null;
 }
 
 interface Lead {
@@ -111,6 +112,7 @@ interface Lead {
     specialties: string[] | null;
     therapeutic_areas: string[] | null;
     modalities: string[] | null;
+    development_stages: string[] | null;
     clinical_stage: string | null;
     employee_count: number | null;
     employee_range: string | null;
@@ -194,6 +196,7 @@ const getDisplayedCompanyFirmographics = (lead: Lead | null): CompanyFirmographi
     latest_funding_date: company?.latest_funding_date || null,
     therapeutic_areas: company?.therapeutic_areas || null,
     modalities: company?.modalities || null,
+    development_stages: company?.development_stages || null,
   };
 };
 
@@ -620,6 +623,7 @@ export default function LeadsPage() {
   }, [anyEnriching, fetchLeads]);
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
+  const showSearchInput = total > 0 || searchInput.trim().length > 0 || search.trim().length > 0;
   const selectedLead = leads.find((lead) => lead.id === selectedLeadId) || null;
   const selectedCompanyFirmographics = getDisplayedCompanyFirmographics(selectedLead);
   const selectedCompanyFirmographicsLastRefresh = getCompanyFirmographicsLastRefresh(selectedLead);
@@ -667,12 +671,12 @@ export default function LeadsPage() {
               )}
             </div>
 
-            {total > 0 && (
+            {showSearchInput && (
               <div className="mb-4 relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                 <input
                   type="text"
-                  placeholder="Search by name, company or job title…"
+                  placeholder="Search by name, company, job title, company type, therapeutic area, modality or development stage…"
                   value={searchInput}
                   onChange={(e) => setSearchInput(e.target.value)}
                   className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-arcova-teal/30 bg-white"
@@ -1144,7 +1148,7 @@ export default function LeadsPage() {
 
                             return (
                               <div className="space-y-4">
-                                {!!(f?.company_type || f?.therapeutic_areas?.length || f?.modalities?.length) && (
+                                {!!(f?.company_type || f?.therapeutic_areas?.length || f?.modalities?.length || f?.development_stages?.length) && (
                                   <div className="space-y-3 rounded-xl border border-gray-100 bg-gray-50/70 p-3">
                                     {f.company_type && (
                                       <div>
@@ -1162,6 +1166,12 @@ export default function LeadsPage() {
                                       <div>
                                         <p className="text-gray-400 text-xs">Modalities</p>
                                         {renderTaxonomyPills(f.modalities)}
+                                      </div>
+                                    ) : null}
+                                    {f.development_stages?.length ? (
+                                      <div>
+                                        <p className="text-gray-400 text-xs">Development stage</p>
+                                        {renderTaxonomyPills(f.development_stages)}
                                       </div>
                                     ) : null}
                                   </div>

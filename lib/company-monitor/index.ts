@@ -233,7 +233,7 @@ export async function runCompanyMonitor(
 
     let currentResult = await supabase
       .from('companies')
-      .select('company_type, company_type_display, therapeutic_areas, modalities')
+      .select('company_type, company_type_display, therapeutic_areas, modalities, development_stages')
       .eq('id', input.company_id)
       .maybeSingle();
 
@@ -257,6 +257,7 @@ export async function runCompanyMonitor(
     const previousCompanyTypeDisplay = typeof current?.company_type_display === 'string' ? current.company_type_display : null;
     const previousTherapeuticAreas = normalizeStringArray(current?.therapeutic_areas);
     const previousModalities = normalizeStringArray(current?.modalities);
+    const previousDevelopmentStages = normalizeStringArray(current?.development_stages);
     const canOverwrite = taxonomy.confidence !== 'low';
 
     const nextCompanyType =
@@ -269,12 +270,17 @@ export async function runCompanyMonitor(
         : previousTherapeuticAreas;
     const nextModalities =
       canOverwrite && taxonomy.modalities.length > 0 ? taxonomy.modalities : previousModalities;
+    const nextDevelopmentStages =
+      canOverwrite && taxonomy.development_stages.length > 0
+        ? taxonomy.development_stages
+        : previousDevelopmentStages;
 
     const changed =
       nextCompanyType !== previousCompanyType ||
       nextCompanyTypeDisplay !== previousCompanyTypeDisplay ||
       !arraysEqual(nextTherapeuticAreas, previousTherapeuticAreas) ||
-      !arraysEqual(nextModalities, previousModalities);
+      !arraysEqual(nextModalities, previousModalities) ||
+      !arraysEqual(nextDevelopmentStages, previousDevelopmentStages);
 
     if (changed) {
       let updateResult = await supabase
@@ -284,6 +290,7 @@ export async function runCompanyMonitor(
           company_type_display: nextCompanyTypeDisplay,
           therapeutic_areas: nextTherapeuticAreas,
           modalities: nextModalities,
+          development_stages: nextDevelopmentStages,
           taxonomy_evidence_summary: taxonomy.evidence_summary,
           updated_at: new Date().toISOString(),
         })
@@ -297,6 +304,7 @@ export async function runCompanyMonitor(
             company_type_display: nextCompanyTypeDisplay,
             therapeutic_area: nextTherapeuticAreas,
             modality: nextModalities,
+            development_stages: nextDevelopmentStages,
             taxonomy_evidence_summary: taxonomy.evidence_summary,
             updated_at: new Date().toISOString(),
           })

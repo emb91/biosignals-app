@@ -117,6 +117,18 @@ export async function GET(request: Request) {
 
     const offset = (page - 1) * pageSize;
 
+    // Find company IDs matching taxonomy search terms (company type, TA, modality)
+    let taxonomyCompanyIds: string[] = [];
+    if (search) {
+      const { data: taxonomyMatches } = await supabase
+        .from('companies')
+        .select('id')
+        .or(
+          `company_type.ilike.%${search}%,company_type_display.ilike.%${search}%,therapeutic_areas.cs.{"${search}"},modalities.cs.{"${search}"},development_stages.cs.{"${search}"}`
+        );
+      taxonomyCompanyIds = (taxonomyMatches || []).map((c) => c.id as string).filter(Boolean);
+    }
+
     const runQuery = (selectClause: string) => {
       let query = supabase
         .from('contacts')
@@ -124,9 +136,12 @@ export async function GET(request: Request) {
         .eq('user_id', user.id);
 
       if (search) {
-        query = query.or(
-          `full_name.ilike.%${search}%,company_name.ilike.%${search}%,job_title.ilike.%${search}%`
-        );
+        const contactFilter = `full_name.ilike.%${search}%,company_name.ilike.%${search}%,job_title.ilike.%${search}%`;
+        const filter =
+          taxonomyCompanyIds.length > 0
+            ? `${contactFilter},company_id.in.(${taxonomyCompanyIds.join(',')})`
+            : contactFilter;
+        query = query.or(filter);
       }
 
       return query
@@ -139,11 +154,11 @@ export async function GET(request: Request) {
     const baseLeadSelect =
       'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, email_status, email_status_reasoning, linkedin_url, profile_photo_url, headline, location, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, intent_score, priority_score, source, created_at, updated_at, company_id';
     const companySelectCore =
-      'companies(company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_country, specialties, company_type, company_type_display, funding_stage, funding_status_label, total_funding_usd, latest_funding_date, funding_data_source, therapeutic_areas, modalities, clinical_stage, last_enriched_at)';
+      'companies(company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_country, specialties, company_type, company_type_display, funding_stage, funding_status_label, total_funding_usd, latest_funding_date, funding_data_source, therapeutic_areas, modalities, development_stages, clinical_stage, last_enriched_at)';
     const companySelectStable =
-      'companies(company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_country, specialties, company_type, company_type_display, funding_stage, total_funding_usd, latest_funding_date, funding_data_source, therapeutic_areas, modalities, clinical_stage, last_enriched_at)';
+      'companies(company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_country, specialties, company_type, company_type_display, funding_stage, total_funding_usd, latest_funding_date, funding_data_source, therapeutic_areas, modalities, development_stages, clinical_stage, last_enriched_at)';
     const companySelectWithFundingDebug =
-      'companies(company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_country, specialties, company_type, company_type_display, funding_stage, funding_status_label, total_funding_usd, latest_funding_date, funding_data_source, funding_resolution_confidence, funding_resolution_summary, clinical_stage, therapeutic_areas, modalities, last_enriched_at)';
+      'companies(company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_country, specialties, company_type, company_type_display, funding_stage, funding_status_label, total_funding_usd, latest_funding_date, funding_data_source, funding_resolution_confidence, funding_resolution_summary, clinical_stage, therapeutic_areas, modalities, development_stages, last_enriched_at)';
     const companySelectCoreLegacyTaxonomy =
       'companies(company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_country, specialties, company_type, funding_stage, funding_status_label, total_funding_usd, latest_funding_date, funding_data_source, therapeutic_areas:therapeutic_area, modalities:modality, clinical_stage, last_enriched_at)';
     const companySelectStableLegacyTaxonomy =

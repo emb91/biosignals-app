@@ -9,6 +9,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import {
   COMPANY_TYPE_OPTIONS,
+  DEVELOPMENT_STAGE_OPTIONS,
   MODALITY_OPTIONS,
   THERAPEUTIC_AREA_OPTIONS,
   canonicalizeCompanyType,
@@ -16,6 +17,7 @@ import {
   canonicalizeTherapeuticArea,
   expandModalitiesWithParents,
   type CompanyType,
+  type DevelopmentStage,
   type Modality,
   type TherapeuticArea,
 } from '@/lib/arcova-taxonomy';
@@ -37,6 +39,7 @@ export type CompanyTaxonomyResult = {
   company_type_display: string | null;
   therapeutic_areas: TherapeuticArea[];
   modalities: Modality[];
+  development_stages: DevelopmentStage[];
   source: 'llm' | null;
   confidence: 'high' | 'medium' | 'low';
   evidence_summary: string | null;
@@ -73,7 +76,14 @@ async function fetchWebsiteContext(domain?: string | null): Promise<string | nul
   const normalizedDomain = normalizeDomain(domain);
   if (!normalizedDomain) return null;
 
-  const urls = [`https://${normalizedDomain}`, `https://${normalizedDomain}/pipeline`, `https://${normalizedDomain}/about`];
+  const urls = [
+    `https://${normalizedDomain}`,
+    `https://${normalizedDomain}/pipeline`,
+    `https://${normalizedDomain}/about`,
+    `https://${normalizedDomain}/programs`,
+    `https://${normalizedDomain}/clinical-trials`,
+    `https://${normalizedDomain}/science`,
+  ];
   const chunks: string[] = [];
 
   for (const url of urls) {
@@ -148,11 +158,22 @@ function normalizeConfidence(value: unknown): CompanyTaxonomyResult['confidence'
   return value === 'high' || value === 'medium' || value === 'low' ? value : 'low';
 }
 
+function canonicalizeDevelopmentStage(value: unknown): DevelopmentStage | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  return (
+    (DEVELOPMENT_STAGE_OPTIONS as readonly string[]).find(
+      (opt) => opt.toLowerCase() === normalized
+    ) as DevelopmentStage | undefined
+  ) ?? null;
+}
+
 function parseTaxonomyJson(text: string): {
   company_type?: unknown;
   company_type_display?: unknown;
   therapeutic_areas?: unknown;
   modalities?: unknown;
+  development_stages?: unknown;
   confidence?: unknown;
   evidence_summary?: unknown;
 } | null {
@@ -172,6 +193,7 @@ export function normalizeCompanyTaxonomyResult(
     company_type_display?: unknown;
     therapeutic_areas?: unknown;
     modalities?: unknown;
+    development_stages?: unknown;
     confidence?: unknown;
     evidence_summary?: unknown;
   } | null,
@@ -184,12 +206,14 @@ export function normalizeCompanyTaxonomyResult(
   const modalities = expandModalitiesWithParents(
     canonicalizeArray(parsed?.modalities, canonicalizeModality)
   );
+  const developmentStages = canonicalizeArray(parsed?.development_stages, canonicalizeDevelopmentStage);
 
   return {
     company_type: companyType,
     company_type_display: companyTypeDisplay,
     therapeutic_areas: therapeuticAreas,
     modalities,
+    development_stages: developmentStages,
     source: parsed ? 'llm' : null,
     confidence: normalizeConfidence(parsed?.confidence),
     evidence_summary: normalizeString(parsed?.evidence_summary) || null,
@@ -232,6 +256,9 @@ ${THERAPEUTIC_AREA_OPTIONS.map((option) => `- ${option}`).join('\n')}
 Allowed modalities values:
 ${MODALITY_OPTIONS.map((option) => `- ${option}`).join('\n')}
 
+Allowed development_stages values:
+${DEVELOPMENT_STAGE_OPTIONS.map((option) => `- ${option}`).join('\n')}
+
 Evidence:
 ${evidenceParts.join('\n\n') || 'No scraped evidence available.'}
 
@@ -255,6 +282,7 @@ Step 3 — Apply these rules to all modes:
 - If evidence is weak, return fewer values with lower confidence — do not fabricate.
 - Always populate company_type_display with a short human-readable label (e.g. "Venture Capital", "Lab Monitoring Software", "Management Consulting"). If company_type matches, use the same value.
 - Always populate evidence_summary with one sentence explaining what the classification is based on, and whether it reflects the company's own work or its served customer segments.
+- For development_stages: only populate for Biotech / Biopharma, Pharma, Academic Spinout, Academic / Research Institute, CRO, and CDMO. Leave empty for all other company types. For therapeutic developers (Biotech / Biopharma, Pharma, Academic Spinout), you MUST use web search to find their current clinical trial phase — search for "[company name] clinical trial phase" or "[company name] pipeline" to get up-to-date information. Do not rely on scraped website content alone as it is frequently outdated. For Academic / Research Institute, always use ["Preclinical"] without searching. For CROs and CDMOs, infer from the trial phases or manufacturing stages they serve. If a company spans multiple stages, include all that apply. Use "All stages" only for large organisations clearly operating across the full development spectrum. Always classify the most advanced stage the company has reached.
 
 Return ONLY valid JSON:
 {
@@ -262,6 +290,7 @@ Return ONLY valid JSON:
   "company_type_display": "<short human-readable label, always populated>",
   "therapeutic_areas": ["<allowed therapeutic area>", "..."],
   "modalities": ["<allowed modality>", "..."],
+  "development_stages": ["<allowed development stage>", "..."],
   "confidence": "<high|medium|low>",
   "evidence_summary": "<one sentence — what evidence was used and whether classification reflects own pipeline or served customers>"
 }`;
@@ -274,7 +303,7 @@ Return ONLY valid JSON:
       {
         type: 'web_search_20250305',
         name: 'web_search',
-        max_uses: evidenceParts.length >= 2 ? 1 : 3,
+        max_uses: 3,
       } as Parameters<typeof client.messages.create>[0]['tools'] extends Array<infer T> ? T : never,
     ],
   });
