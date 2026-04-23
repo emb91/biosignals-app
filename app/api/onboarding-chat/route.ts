@@ -6,6 +6,31 @@ const client = new Anthropic();
 
 const TOOLS: Anthropic.Tool[] = [
   {
+    name: 'confirm_transition',
+    description:
+      "Call this when the user has clearly and unambiguously expressed that they want to move to a different setup step — e.g. they say they are happy with their profile and want to continue, or they explicitly want to start fresh. Do NOT call this speculatively. When called, a confirmation button appears in the UI alongside your text response. Choose the target that best matches their intent.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        target: {
+          type: 'string',
+          enum: ['proceed_to_customer_url', 'confirm_own_company', 'resume_continue', 'restart'],
+          description: [
+            "'proceed_to_customer_url': user wants to move on to entering a target customer company URL.",
+            "'confirm_own_company': user is confirming their own company analysis looks right (same as clicking 'Looks right').",
+            "'resume_continue': user wants to continue from where they left off (same as the resume continue button).",
+            "'restart': user wants to start the whole setup fresh.",
+          ].join(' '),
+        },
+        button_label: {
+          type: 'string',
+          description: "Short label for the confirmation button shown to the user. Examples: 'Continue to target companies →', 'Yes, looks right →', 'Pick up where I left off →', 'Start fresh →'",
+        },
+      },
+      required: ['target', 'button_label'],
+    },
+  },
+  {
     name: 'capture_name',
     description:
       "Call this as soon as you have the user's first name or preferred name they want you to use, before you ask for their company domain or website.",
@@ -23,16 +48,21 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'begin_analysis',
     description:
-      "Call this once you have the user's company website URL or bare domain. They may send it as soon as they are ready after your opening beats; you do not need a separate 'ready' message if the URL is clear. This triggers the business analysis.",
+      "Call this once you have a website URL or bare domain to analyse. Set analysis_type to 'own_company' when you are collecting the user's own company URL (first-time setup or explicit restart). Set analysis_type to 'target_customer' when the user's own company profile is already set up and you are collecting a target customer or prospect company URL. If the account context shows their company is already stored, always use 'target_customer'.",
     input_schema: {
       type: 'object' as const,
       properties: {
         website_url: {
           type: 'string',
-          description: 'The company website URL (e.g. https://acme.com)',
+          description: 'The website URL to analyse (e.g. https://acme.com)',
+        },
+        analysis_type: {
+          type: 'string',
+          enum: ['own_company', 'target_customer'],
+          description: "Use 'own_company' only when collecting the user's own company URL. Use 'target_customer' when collecting a target customer or prospect URL.",
         },
       },
-      required: ['website_url'],
+      required: ['website_url', 'analysis_type'],
     },
   },
 ];
@@ -46,7 +76,57 @@ function buildScriptedOnboardingSegments(displayName: string): string[] {
   ];
 }
 
-function buildSystemPrompt(firstName?: string): string {
+interface AccountContext {
+  companyName?: string;
+  companyWebsite?: string;
+  companyDescription?: string[];
+  icps?: Array<{ name: string; companyType: string; therapeuticAreas: string[]; companySizes: string[]; fundingStages: string[] }>;
+  personas?: Array<{ name: string; functions: string[]; seniority: string[] }>;
+}
+
+function buildAccountContextBlock(ctx: AccountContext): string {
+  if (!ctx.companyName && (!ctx.icps || ctx.icps.length === 0)) return '';
+
+  const lines: string[] = ['The following data is already stored in this user\'s Arcova account. Use it to answer any questions they have about what\'s saved — do not say you don\'t have access to it.'];
+
+  if (ctx.companyName) {
+    lines.push(`\nTheir company: ${ctx.companyName} (${ctx.companyWebsite ?? 'no website recorded'})`);
+    if (ctx.companyDescription && ctx.companyDescription.length > 0) {
+      lines.push(`Description: ${ctx.companyDescription.slice(0, 2).join(' ')}`);
+    }
+  }
+
+  if (ctx.icps && ctx.icps.length > 0) {
+    lines.push(`\nTarget company profiles (${ctx.icps.length}):`);
+    for (const icp of ctx.icps) {
+      lines.push(`- "${icp.name}": ${icp.companyType}, TAs: ${icp.therapeuticAreas.join(', ') || 'none'}, sizes: ${icp.companySizes.join(', ') || 'none'}, funding: ${icp.fundingStages.join(', ') || 'none'}`);
+    }
+  }
+
+  if (ctx.personas && ctx.personas.length > 0) {
+    lines.push(`\nBuying groups (${ctx.personas.length}):`);
+    for (const p of ctx.personas) {
+      lines.push(`- "${p.name}": functions: ${p.functions.join(', ') || 'none'}, seniority: ${p.seniority.join(', ') || 'none'}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+function buildSystemPrompt(firstName?: string, phase?: string, accountCtx?: AccountContext): string {
+  const name = firstName?.trim() || 'the user';
+  const accountBlock = accountCtx ? buildAccountContextBlock(accountCtx) : '';
+
+  if (phase === 'customer_url_input') {
+    return `You are Arcova. ${firstName ? `The user's name is ${firstName}.` : ''} Their own company profile is already set up. Now you need the website URL of one of their best existing customers or a target account they'd like to land — so you can map their ideal customer profile.
+
+If they send a clear website or bare domain, call begin_analysis immediately. Bare domains like bioora.com count.
+
+If they are unsure or ask for help, respond conversationally: help them think of a specific example customer (a company name, a type of company). Ask one short question to guide them. Do not treat non-URL text as a domain.
+
+${accountBlock ? `${accountBlock}\n` : ''}Style: short sentences. One idea per sentence. No bullet points. No mention of tools, APIs, or backends.`;
+  }
+
   const nameContext = firstName
     ? `You already know the user's preferred name: ${firstName}. Do NOT ask for their name again unless they explicitly correct it.`
     : `You do not know the user's preferred name yet. Ask naturally what they'd like you to call them first. Do not ask for their company domain or website until after you have a preferred name and have called capture_name.`;
@@ -57,7 +137,7 @@ Your job is a short setup so they can use Arcova to find and prioritise the righ
 
 ${nameContext}
 
-What they are building when one sentence helps: their company profile, then target company profiles, then one full buying group per target company (functions and seniority involved in buying in one profile, not several disconnected "teams" for the same company).
+${accountBlock ? `${accountBlock}\n` : ''}What they are building when one sentence helps: their company profile, then target company profiles, then one full buying group per target company (functions and seniority involved in buying in one profile, not several disconnected "teams" for the same company).
 
 The product shows a fixed welcome in two bubbles (greet plus a short domain ask only) when their name is already known, or right after capture_name succeeds. Follow the thread the client sends you. Do not repeat that welcome unless they clearly ask you to.
 
@@ -65,15 +145,21 @@ If their preferred name is still missing: one short message only, ask what to ca
 
 If they send a clear website or bare domain, call begin_analysis immediately. If they only say they are ready without a URL, one short message: ask for their company domain when they are ready.
 
-If they give a clear preferred name ("call me Emma"), accept it and move on. Do not ask "is that correct?"
+If they give a clear preferred name ("call me ${name}"), accept it and move on. Do not ask "is that correct?"
 
-Allowed topics: what Arcova does, why you need their name or domain, what this setup enables, how long it takes, what happens next.
+If they seem unsure about or do not know their company website: this is fine and common. Ask what their company is called — you can usually work out the domain from the name. Do not treat this as off-topic or keep repeating the URL request. Help them get there with one natural follow-up question.
 
-Out of scope: if they go off-topic, one short sentence, then back to the next step. No brainstorming, roleplay, or long tangents.
+If what they sent is clearly not a website and they have not expressed any confusion (e.g. they are testing the chat or joking): one friendly sentence acknowledging it, then ask for the company domain or name.
+
+CRITICAL — analysis_type rule: If the account context above shows their company is already stored (companyName is present), their own company profile is done. Do NOT ask for their company URL again. Instead, confirm their profile looks good and ask for a target customer or prospect company URL. When calling begin_analysis in this situation, always set analysis_type to 'target_customer'. Only use analysis_type 'own_company' when you are genuinely collecting their own company URL for the first time (no company in account context, or they explicitly said they want to redo their own profile from scratch).
+
+Allowed topics: what Arcova does, why you need their name or domain, what this setup enables, how long it takes, what happens next. If they ask what data is stored for them, answer using the account data above — be specific and accurate.
+
+Out of scope: if they go on a genuine tangent (brainstorming, roleplay, unrelated topics), one brief sentence, then redirect to the next step.
 
 Style: short sentences. No bullet points in spoken replies. No mention of tools, APIs, models, prompts, or backends.
 
-Tool rules: call capture_name as soon as you have a usable preferred name. Call begin_analysis as soon as you have a website or bare domain. Bare domains like arcova.app count.`;
+Tool rules: call capture_name as soon as you have a usable preferred name. Call begin_analysis as soon as you have a website or bare domain. Bare domains like arcova.app count. Call confirm_transition when the user clearly wants to advance to a different step — e.g. they say their profile is fine and they want to move on, they want to continue from where they left off, or they want to start fresh. Always pair it with a short natural sentence.`;
 }
 
 function buildNarrationSystemPrompt(): string {
@@ -115,7 +201,8 @@ type ConversationMessage =
 
 type OnboardingAction =
   | { type: 'capture_name'; first_name: string }
-  | { type: 'begin_analysis'; website_url: string };
+  | { type: 'begin_analysis'; website_url: string; analysis_type: 'own_company' | 'target_customer' }
+  | { type: 'confirm_transition'; target: 'proceed_to_customer_url' | 'confirm_own_company' | 'resume_continue' | 'restart'; button_label: string };
 
 function normalizeWebsiteUrl(value: string): string {
   const trimmed = value.trim();
@@ -142,6 +229,70 @@ function buildToolResult(
   };
 }
 
+async function fetchAccountContext(supabase: Awaited<ReturnType<typeof createClient>>, userId: string): Promise<AccountContext> {
+  try {
+    const [analysisResult, icpsResult, personasResult] = await Promise.all([
+      supabase
+        .from('company_analyses')
+        .select('company_name, website, description')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from('icps')
+        .select('name, company_type, therapeutic_areas, company_sizes, funding_stages')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('personas')
+        .select('name, functions, seniority_levels')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false }),
+    ]);
+
+    const ctx: AccountContext = {};
+
+    if (analysisResult.data) {
+      ctx.companyName = analysisResult.data.company_name ?? undefined;
+      ctx.companyWebsite = analysisResult.data.website ?? undefined;
+      ctx.companyDescription = Array.isArray(analysisResult.data.description) ? analysisResult.data.description : undefined;
+    }
+
+    if (icpsResult.data && icpsResult.data.length > 0) {
+      ctx.icps = icpsResult.data.map((icp) => ({
+        name: icp.name ?? '',
+        companyType: icp.company_type ?? '',
+        therapeuticAreas: Array.isArray(icp.therapeutic_areas) ? icp.therapeutic_areas : [],
+        companySizes: Array.isArray(icp.company_sizes) ? icp.company_sizes : [],
+        fundingStages: Array.isArray(icp.funding_stages) ? icp.funding_stages : [],
+      }));
+    }
+
+    if (personasResult.data && personasResult.data.length > 0) {
+      ctx.personas = personasResult.data.map((p) => {
+        const rawFunctions = Array.isArray(p.functions) ? p.functions : [];
+        const functionNames = rawFunctions.map((f: unknown) => {
+          if (typeof f === 'string') {
+            try { return (JSON.parse(f) as { name?: string }).name ?? f; } catch { return f; }
+          }
+          if (typeof f === 'object' && f !== null && 'name' in f) return String((f as { name: unknown }).name);
+          return String(f);
+        });
+        return {
+          name: p.name ?? '',
+          functions: functionNames,
+          seniority: Array.isArray(p.seniority_levels) ? p.seniority_levels : [],
+        };
+      });
+    }
+
+    return ctx;
+  } catch {
+    return {};
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const supabase = await createClient();
@@ -163,6 +314,7 @@ export async function POST(request: Request) {
     };
 
     const resolvedMode = mode ?? 'conversation';
+    const accountCtx = await fetchAccountContext(supabase, user.id);
 
     /** Known name, first load: scripted bubbles only (no model, no delimiter leakage). */
     if (resolvedMode === 'conversation' && firstName?.trim() && messages.length === 0) {
@@ -209,7 +361,7 @@ export async function POST(request: Request) {
       const response = await client.messages.create({
         model: 'claude-haiku-4-5',
         max_tokens: 256,
-        system: buildSystemPrompt(firstName),
+        system: buildSystemPrompt(firstName, phase, accountCtx),
         messages: conversation,
         tools: TOOLS,
       });
@@ -223,6 +375,10 @@ export async function POST(request: Request) {
         break;
       }
 
+      // Capture any text the model included alongside tool calls
+      const textAlongside = getAssistantText(response.content);
+      if (textAlongside && !finalText) finalText = textAlongside;
+
       conversation.push({
         role: 'assistant',
         content: response.content,
@@ -231,6 +387,28 @@ export async function POST(request: Request) {
       const toolResults: Anthropic.ToolResultBlockParam[] = [];
 
       for (const toolUse of toolUses) {
+        if (toolUse.name === 'confirm_transition') {
+          const toolInput = toolUse.input as { target?: unknown; button_label?: unknown };
+          const target = typeof toolInput.target === 'string' ? toolInput.target : '';
+          const buttonLabel = typeof toolInput.button_label === 'string' ? toolInput.button_label : 'Continue →';
+
+          if (target) {
+            actions.push({
+              type: 'confirm_transition',
+              target: target as 'proceed_to_customer_url' | 'confirm_own_company' | 'resume_continue' | 'restart',
+              button_label: buttonLabel,
+            });
+          }
+
+          toolResults.push(
+            buildToolResult(
+              toolUse,
+              'Done. Now write one short, warm, conversational sentence about what happens next — as if you are just talking to them. Do NOT mention "confirm", "button", "click", or any UI element. Sound natural, not robotic.',
+            )
+          );
+          continue;
+        }
+
         if (toolUse.name === 'capture_name') {
           const toolInput = toolUse.input as { first_name?: unknown };
           const firstNameInput =
@@ -252,13 +430,15 @@ export async function POST(request: Request) {
         }
 
         if (toolUse.name === 'begin_analysis') {
-          const toolInput = toolUse.input as { website_url?: unknown };
+          const toolInput = toolUse.input as { website_url?: unknown; analysis_type?: unknown };
           const rawWebsite =
             typeof toolInput.website_url === 'string' ? toolInput.website_url : '';
           const websiteUrl = normalizeWebsiteUrl(rawWebsite);
+          const analysisType: 'own_company' | 'target_customer' =
+            toolInput.analysis_type === 'target_customer' ? 'target_customer' : 'own_company';
 
           if (websiteUrl) {
-            actions.push({ type: 'begin_analysis', website_url: websiteUrl });
+            actions.push({ type: 'begin_analysis', website_url: websiteUrl, analysis_type: analysisType });
           }
 
           toolResults.push(

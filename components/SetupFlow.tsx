@@ -16,10 +16,12 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { ArcovaLoader } from '@/components/ArcovaLoader';
+import SetupProfilePanel, { type PanelCompanyData, type PanelPersonaData } from '@/components/SetupProfilePanel';
 import {
   BUSINESS_AREA_OPTIONS,
   COMPANY_SIZE_OPTIONS,
   COMPANY_TYPE_OPTIONS,
+  DEVELOPMENT_STAGE_OPTIONS,
   FUNDING_STAGE_OPTIONS,
   MODALITY_OPTIONS,
   SENIORITY_LEVEL_OPTIONS,
@@ -41,8 +43,12 @@ const SENIORITY_OPTIONS = [...SENIORITY_LEVEL_OPTIONS] as string[];
 
 type Phase =
   | 'greeting'
+  | 'resume_prompt'
   | 'analysis_loading'
   | 'analysis_results'
+  | 'customer_url_input'
+  | 'customer_url_loading'
+  | 'customer_url_review'
   | 'company_select'
   | 'company_type'
   | 'company_size'
@@ -94,7 +100,8 @@ type ApiMsg =
 
 type OnboardingAction =
   | { type: 'capture_name'; first_name: string }
-  | { type: 'begin_analysis'; website_url: string };
+  | { type: 'begin_analysis'; website_url: string; analysis_type?: 'own_company' | 'target_customer' }
+  | { type: 'confirm_transition'; target: 'proceed_to_customer_url' | 'confirm_own_company' | 'resume_continue' | 'restart'; button_label: string };
 
 type ApiOnboardingJson = {
   text?: string;
@@ -223,14 +230,14 @@ function ChipGrid({
             onClick={() => onToggle(o.value)}
             className={`w-full rounded-xl border-2 p-3 text-left text-base transition-all ${
               selected.includes(o.value)
-                ? 'border-arcova-teal bg-arcova-teal/5'
-                : 'border-gray-200 bg-white hover:border-gray-300'
+                ? 'border-arcova-teal bg-arcova-teal/10'
+                : 'border-white/15 bg-white/[0.06] hover:border-white/30'
             }`}
           >
-            <p className={`font-medium ${selected.includes(o.value) ? 'text-arcova-teal' : 'text-gray-900'}`}>
+            <p className={`font-medium ${selected.includes(o.value) ? 'text-arcova-teal' : 'text-white/85'}`}>
               {o.value}
             </p>
-            {o.description && <p className="mt-0.5 text-sm text-gray-500">{o.description}</p>}
+            {o.description && <p className="mt-0.5 text-sm text-white/45">{o.description}</p>}
           </button>
         ))}
       </div>
@@ -246,7 +253,7 @@ function ChipGrid({
           className={`rounded-full px-3 py-2 text-base transition-colors ${
             selected.includes(o)
               ? 'bg-arcova-teal text-white'
-              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              : 'bg-white/10 text-white/75 hover:bg-white/15'
           }`}
         >
           {o}
@@ -285,10 +292,34 @@ export default function SetupFlow({
   const [inputValue, setInputVal] = useState('');
   const [chipSel, setChipSel] = useState<string[]>([]);
   const [loadMsg, setLoadMsg] = useState('Visiting your website…');
+  const [customerUrlLoadMsg, setCustomerUrlLoadMsg] = useState('Visiting the website…');
   const [analysisError, setAnalysisError] = useState('');
+  const [resumeStep, setResumeStep] = useState<'customer_url_input' | 'persona_functions' | null>(null);
+  const [pendingTransition, setPendingTransition] = useState<{
+    target: 'proceed_to_customer_url' | 'confirm_own_company' | 'resume_continue' | 'restart';
+    buttonLabel: string;
+  } | null>(null);
+  const [reviewDraft, setReviewDraft] = useState({
+    companyType: '',
+    therapeuticAreas: [] as string[],
+    modalities: [] as string[],
+    developmentStages: [] as string[],
+    companySizes: [] as string[],
+    fundingStages: [] as string[],
+  });
+  const [reviewedCompanyName, setReviewedCompanyName] = useState('');
   const [editingFindings, setEditingFindings] = useState(false);
   const [editingFindingsData, setEditingFindingsData] = useState<Record<string, unknown> | null>(null);
   const [savingFindings, setSavingFindings] = useState(false);
+
+  // ── Panel state (mirrors refs so the profile panel re-renders live) ───────
+  const [panelCompany, setPanelCompany] = useState<PanelCompanyData>({
+    companyType: '', companySizes: [], therapeuticAreas: [],
+    modalities: [], developmentStages: [], fundingStages: [],
+  });
+  const [panelPersona, setPanelPersona] = useState<PanelPersonaData>({ functions: [], seniority: [] });
+  const [savedIcpName, setSavedIcpName] = useState('');
+  const [savedPersonaName, setSavedPersonaName] = useState('');
 
   // ── Accumulated form data (refs avoid stale closure in async callbacks) ──
   const companyRef = useRef({
@@ -345,6 +376,20 @@ export default function SetupFlow({
   useEffect(() => {
     if (inputEnabled) inputRef.current?.focus();
   }, [inputEnabled]);
+
+  // Keep panelCompany in sync with reviewDraft while the user edits it
+  useEffect(() => {
+    if (phase === 'customer_url_review') {
+      setPanelCompany({
+        companyType: reviewDraft.companyType,
+        companySizes: reviewDraft.companySizes,
+        therapeuticAreas: reviewDraft.therapeuticAreas,
+        modalities: reviewDraft.modalities,
+        developmentStages: reviewDraft.developmentStages,
+        fundingStages: reviewDraft.fundingStages,
+      });
+    }
+  }, [reviewDraft, phase]);
 
   // ── Thread helpers ────────────────────────────────────────────────────────
 
@@ -474,6 +519,7 @@ export default function SetupFlow({
       body: JSON.stringify(d),
     });
     const { name } = nameRes.ok ? await nameRes.json() : { name: `${d.companyType} Profile` };
+    setSavedIcpName(name);
 
     const saveRes = await fetch('/api/company-criteria', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -502,7 +548,7 @@ export default function SetupFlow({
       extra: {
         role: 'user',
         content:
-          '[System: the target company profile has been saved. Briefly confirm it and introduce the next part: defining the full buying group for this profile, meaning all functions and seniority levels involved in buying, in one combined profile. Keep it to 2 sentences.]',
+          '[System: the target company profile has been saved. Briefly confirm it and introduce the next part: defining the buying team for this profile, meaning all functions and seniority levels involved in buying. Add that they can always add more company profiles later. Keep it to 2 sentences.]',
       },
     });
     if (displayParts.length) await sayBeats(displayParts);
@@ -518,6 +564,7 @@ export default function SetupFlow({
 
     const personaName =
       p.functions.length > 0 ? `Buying group: ${p.functions[0]}` : 'Buying group';
+    setSavedPersonaName(personaName);
 
     await fetch('/api/contacts', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -558,16 +605,40 @@ export default function SetupFlow({
   };
 
   const handleContinue = useCallback((selection: string[]) => {
-    // Store into refs
+    // Store into refs and mirror into panel state for live rendering
     switch (phase) {
-      case 'company_type': companyRef.current.companyType = selection[0] ?? ''; break;
-      case 'company_size': companyRef.current.companySizes = selection; break;
-      case 'company_ta': companyRef.current.therapeuticAreas = selection; break;
-      case 'company_modality': companyRef.current.modalities = selection; break;
-      case 'company_stage': companyRef.current.developmentStages = selection; break;
-      case 'company_funding': companyRef.current.fundingStages = selection; break;
-      case 'persona_functions': personaRef.current.functions = selection; break;
-      case 'persona_seniority': personaRef.current.seniority = selection; break;
+      case 'company_type':
+        companyRef.current.companyType = selection[0] ?? '';
+        setPanelCompany((p) => ({ ...p, companyType: selection[0] ?? '' }));
+        break;
+      case 'company_size':
+        companyRef.current.companySizes = selection;
+        setPanelCompany((p) => ({ ...p, companySizes: selection }));
+        break;
+      case 'company_ta':
+        companyRef.current.therapeuticAreas = selection;
+        setPanelCompany((p) => ({ ...p, therapeuticAreas: selection }));
+        break;
+      case 'company_modality':
+        companyRef.current.modalities = selection;
+        setPanelCompany((p) => ({ ...p, modalities: selection }));
+        break;
+      case 'company_stage':
+        companyRef.current.developmentStages = selection;
+        setPanelCompany((p) => ({ ...p, developmentStages: selection }));
+        break;
+      case 'company_funding':
+        companyRef.current.fundingStages = selection;
+        setPanelCompany((p) => ({ ...p, fundingStages: selection }));
+        break;
+      case 'persona_functions':
+        personaRef.current.functions = selection;
+        setPanelPersona((p) => ({ ...p, functions: selection }));
+        break;
+      case 'persona_seniority':
+        personaRef.current.seniority = selection;
+        setPanelPersona((p) => ({ ...p, seniority: selection }));
+        break;
     }
 
     // Record user selection as a bubble
@@ -593,26 +664,181 @@ export default function SetupFlow({
   const handleResultsConfirmed = useCallback(async () => {
     pushText('user', 'Looks right');
     setThread((p) => p.filter((m) => m.kind !== 'results'));
-    // Claude transition → company ICP step
     const { displayParts } = await askClaude({
       mode: 'narration',
       extra: {
         role: 'user',
         content:
-          "[System: the user confirmed their company profile looks right. Now briefly transition to the next step: defining target company profiles, meaning the kinds of accounts they sell to. Keep it 1-2 sentences, be encouraging.]",
+          "[System: the user confirmed their own company profile looks right. Now transition to the next step: ask them to enter the website URL of one of their best customers or a target account. Keep it 1-2 sentences, be encouraging.]",
       },
     });
     if (displayParts.length) await sayBeats(displayParts);
-    await advanceTo('company_type');
-  }, [askClaude, advanceTo]); // eslint-disable-line react-hooks/exhaustive-deps
+    setPhase('customer_url_input');
+    setInput(true);
+  }, [askClaude]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Handle company analysis ───────────────────────────────────────────────
+  // ── Progress step navigation ──────────────────────────────────────────────
+
+  const handleGoToStep = useCallback(async (stepIndex: number) => {
+    if (stepIndex === 0) {
+      // Back to profile — restart own company URL
+      icpIdRef.current = null;
+      setResumeStep(null);
+      const { displayParts } = await askClaude({
+        mode: 'narration',
+        extra: {
+          role: 'user',
+          content: '[System: the user wants to go back and redo their company profile. One sentence: acknowledge and ask them to enter their company website URL.]',
+        },
+      });
+      if (displayParts.length) await sayBeats(displayParts);
+      setPhase('greeting');
+      setInput(true);
+    } else if (stepIndex === 1) {
+      // Back to target companies — restart customer URL
+      const { displayParts } = await askClaude({
+        mode: 'narration',
+        extra: {
+          role: 'user',
+          content: '[System: the user wants to go back and update their target company profile. One sentence: acknowledge and ask them to enter a customer company URL.]',
+        },
+      });
+      if (displayParts.length) await sayBeats(displayParts);
+      setPhase('customer_url_input');
+      setInput(true);
+    }
+  }, [askClaude]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Resume prompt handlers ────────────────────────────────────────────────
+
+  const handleResumeContinue = useCallback(async () => {
+    pushText('user', 'Continue where I left off');
+    if (resumeStep === 'persona_functions') {
+      const { displayParts } = await askClaude({
+        mode: 'narration',
+        extra: {
+          role: 'user',
+          content: '[System: the user wants to continue. One sentence: confirm and say you are picking up at the buying team step.]',
+        },
+      });
+      if (displayParts.length) await sayBeats(displayParts);
+      await advanceTo('persona_functions');
+    } else {
+      const { displayParts } = await askClaude({
+        mode: 'narration',
+        extra: {
+          role: 'user',
+          content: '[System: the user wants to continue. One sentence: confirm and ask them to enter a target customer company URL so you can map their ICP.]',
+        },
+      });
+      if (displayParts.length) await sayBeats(displayParts);
+      setPhase('customer_url_input');
+      setInput(true);
+    }
+  }, [resumeStep, askClaude, advanceTo]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleResumeRestart = useCallback(async () => {
+    pushText('user', 'Start again');
+    icpIdRef.current = null;
+    setResumeStep(null);
+    const { displayParts } = await askClaude({
+      mode: 'narration',
+      extra: {
+        role: 'user',
+        content: '[System: the user wants to start fresh. One sentence: acknowledge and ask them to enter their company website URL to begin.]',
+      },
+    });
+    if (displayParts.length) await sayBeats(displayParts);
+    setPhase('greeting');
+    setInput(true);
+  }, [askClaude]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Handle LLM-surfaced transition confirmation ───────────────────────────
+
+  const handleConfirmTransition = useCallback(async () => {
+    const t = pendingTransition;
+    setPendingTransition(null);
+    if (!t) return;
+
+    switch (t.target) {
+      case 'resume_continue':
+        await handleResumeContinue();
+        break;
+      case 'restart':
+        await handleResumeRestart();
+        break;
+      case 'proceed_to_customer_url':
+        setPhase('customer_url_input');
+        setInput(true);
+        break;
+      case 'confirm_own_company':
+        await handleResultsConfirmed();
+        break;
+    }
+  }, [pendingTransition, handleResumeContinue, handleResumeRestart, handleResultsConfirmed]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Handle customer URL analysis (ICP step) ──────────────────────────────
+
+  const handleCustomerUrlAnalyse = useCallback(async (rawUrl: string) => {
+    const trimmed = rawUrl.trim();
+    const normalized = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+    setInput(false);
+    setPhase('customer_url_loading');
+
+    const msgs = ['Visiting the website…', 'Scanning for details…', 'Analysing content…', 'Building profile…'];
+    let mi = 0;
+    setCustomerUrlLoadMsg(msgs[0]);
+    const interval = setInterval(() => { mi = (mi + 1) % msgs.length; setCustomerUrlLoadMsg(msgs[mi]); }, 2500);
+
+    try {
+      const res = await fetch('/api/analyze-example-company', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: normalized }),
+      });
+      clearInterval(interval);
+      if (!res.ok) throw new Error('Analysis failed');
+
+      const data = await res.json();
+      const name = data.companyName || normalized.replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '');
+      setReviewedCompanyName(name);
+
+      const draft = {
+        companyType: data.companyType ?? '',
+        therapeuticAreas: data.therapeuticAreas ?? [],
+        modalities: data.modality ?? [],
+        developmentStages: data.developmentStage ? [data.developmentStage] : [],
+        companySizes: data.companySize ? [data.companySize] : [],
+        fundingStages: data.fundingStage ? [data.fundingStage] : [],
+      };
+      setReviewDraft(draft);
+
+      const { displayParts } = await askClaude({
+        mode: 'narration',
+        extra: {
+          role: 'user',
+          content: `[System: analysis of the customer company "${name}" is complete. One sentence: tell the user you've mapped out a suggested profile and they should review the selections below — add or remove to match the broader category of accounts they target.]`,
+        },
+      });
+      if (displayParts.length) await sayBeats(displayParts);
+
+      setPhase('customer_url_review');
+    } catch {
+      clearInterval(interval);
+      await say("Couldn't analyse that URL — check it's correct and try again.");
+      setPhase('customer_url_input');
+      setInput(true);
+    }
+  }, [askClaude]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Handle own-company analysis ───────────────────────────────────────────
 
   const runAnalysis = useCallback(async (url: string) => {
     const trimmed = url.trim();
     const normalized = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
     lastAnalyzedUrlRef.current = normalized;
     setThread((p) => p.filter((m) => m.kind !== 'results'));
+    setAnalysisError('');
     setPhase('analysis_loading');
     setInput(false);
 
@@ -743,10 +969,11 @@ export default function SetupFlow({
 
     setInputVal('');
     setInput(false);
+    setPendingTransition(null);
     pushText('user', text);
 
     const response = await askClaude({
-      mode: phase === 'greeting' ? 'conversation' : 'phase_help',
+      mode: phase === 'greeting' || phase === 'customer_url_input' ? 'conversation' : 'phase_help',
       phase,
       extra: { role: 'user', content: text },
     });
@@ -761,12 +988,26 @@ export default function SetupFlow({
     );
 
     if (beginAnalysis?.website_url) {
-      await runAnalysis(beginAnalysis.website_url);
+      const isCustomer =
+        phase === 'customer_url_input' ||
+        beginAnalysis.analysis_type === 'target_customer';
+      if (isCustomer) {
+        await handleCustomerUrlAnalyse(beginAnalysis.website_url);
+      } else {
+        await runAnalysis(beginAnalysis.website_url);
+      }
       return;
     }
 
+    const transition = response.actions.find(
+      (a): a is Extract<OnboardingAction, { type: 'confirm_transition' }> => a.type === 'confirm_transition'
+    );
+    if (transition) {
+      setPendingTransition({ target: transition.target, buttonLabel: transition.button_label });
+    }
+
     setInput(true);
-  }, [inputValue, inputEnabled, phase, askClaude, runAnalysis]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [inputValue, inputEnabled, phase, askClaude, runAnalysis, handleCustomerUrlAnalyse]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Mount: start the conversation (entry point chooses opening phase) ──
 
@@ -776,9 +1017,79 @@ export default function SetupFlow({
 
     (async () => {
       if (entryPoint === 'full') {
-        const { displayParts } = await askClaude();
+        // Decision tree: check what the user has already completed and resume from the right step.
+        const [analysesRes, icpRes, personaRes] = await Promise.all([
+          fetch('/api/user-analyses'),
+          fetch('/api/company-criteria'),
+          fetch('/api/contacts'),
+        ]);
+        const existingAnalysis = analysesRes.ok ? ((await analysesRes.json())?.analyses?.[0] ?? null) : null;
+        const existingIcps: TargetCompanyProfile[] = icpRes.ok ? ((await icpRes.json())?.data ?? []) : [];
+        const existingPersonas = personaRes.ok ? ((await personaRes.json())?.data ?? []) : [];
+
+        // Pre-populate the profile panel with whatever is already stored
+        if (existingAnalysis) {
+          setEditingFindingsData(existingAnalysis as Record<string, unknown>);
+        }
+        if (existingIcps.length > 0) {
+          const icp = existingIcps[0] as Record<string, unknown>;
+          setSavedIcpName(typeof icp.name === 'string' ? icp.name : '');
+          setPanelCompany({
+            companyType: typeof icp.company_type === 'string' ? icp.company_type : '',
+            companySizes: Array.isArray(icp.company_sizes) ? (icp.company_sizes as string[]) : [],
+            therapeuticAreas: Array.isArray(icp.therapeutic_areas) ? (icp.therapeutic_areas as string[]) : [],
+            modalities: Array.isArray(icp.modalities) ? (icp.modalities as string[]) : [],
+            developmentStages: Array.isArray(icp.development_stages) ? (icp.development_stages as string[]) : [],
+            fundingStages: Array.isArray(icp.funding_stages) ? (icp.funding_stages as string[]) : [],
+          });
+        }
+        if (existingPersonas.length > 0) {
+          const persona = existingPersonas[0] as Record<string, unknown>;
+          const rawFns = Array.isArray(persona.functions) ? persona.functions : [];
+          const fnNames = rawFns.map((f: unknown) => {
+            if (typeof f === 'string') {
+              try { return (JSON.parse(f) as { name?: string }).name ?? f; } catch { return f as string; }
+            }
+            if (typeof f === 'object' && f !== null && 'name' in f) return String((f as { name: unknown }).name);
+            return String(f);
+          });
+          setSavedPersonaName(typeof persona.name === 'string' ? persona.name : 'Buying group');
+          setPanelPersona({
+            functions: fnNames,
+            seniority: Array.isArray(persona.seniority_levels) ? (persona.seniority_levels as string[]) : [],
+          });
+        }
+
+        // Leg 1: nothing stored — start from the beginning
+        if (!existingAnalysis) {
+          const { displayParts } = await askClaude();
+          if (displayParts.length) await sayBeats(displayParts);
+          setInput(true);
+          return;
+        }
+
+        // Legs 2–4: something exists — show resume prompt
+        let resumeTarget: 'customer_url_input' | 'persona_functions' = 'customer_url_input';
+        let resumeContext = 'your company profile is set up';
+
+        if (existingIcps.length > 0) {
+          const icp = existingIcps[0];
+          icpIdRef.current = icp.id;
+          resumeTarget = 'persona_functions';
+          resumeContext = `your company profile and target company profile ("${icp.name}") are both set up`;
+        }
+
+        setResumeStep(resumeTarget);
+
+        const { displayParts } = await askClaude({
+          mode: 'narration',
+          extra: {
+            role: 'user',
+            content: `[System: ${resumeContext}. One sentence: acknowledge you can see they started setup before and ask if they'd like to continue where they left off or start again.]`,
+          },
+        });
         if (displayParts.length) await sayBeats(displayParts);
-        setInput(true);
+        setPhase('resume_prompt');
         return;
       }
 
@@ -877,6 +1188,7 @@ export default function SetupFlow({
   const widget = WIDGET[phase];
   const showChatBar =
     phase === 'greeting' ||
+    phase === 'customer_url_input' ||
     phase === 'company_select' ||
     phase === 'company_type' ||
     phase === 'company_size' ||
@@ -887,6 +1199,40 @@ export default function SetupFlow({
     phase === 'persona_functions' ||
     phase === 'persona_seniority';
   const isSaving = phase === 'company_saving' || phase === 'persona_saving' || phase === 'done';
+  const isCustomerUrlLoading = phase === 'customer_url_loading';
+
+  const SETUP_STEPS = [
+    { label: 'Your profile', phases: ['greeting', 'analysis_loading', 'analysis_results', 'resume_prompt'] as Phase[] },
+    { label: 'Target companies', phases: ['customer_url_input', 'customer_url_loading', 'customer_url_review', 'company_type', 'company_size', 'company_ta', 'company_modality', 'company_stage', 'company_funding', 'company_saving'] as Phase[] },
+    { label: 'Buying team', phases: ['persona_functions', 'persona_seniority', 'persona_saving', 'done'] as Phase[] },
+  ];
+  const currentStepIndex = SETUP_STEPS.findIndex((s) => s.phases.includes(phase));
+  const showProgress = entryPoint === 'full' && currentStepIndex >= 0;
+  const isCustomerUrlReview = phase === 'customer_url_review';
+  const isReviewValid =
+    reviewDraft.companyType !== '' &&
+    reviewDraft.therapeuticAreas.length > 0 &&
+    reviewDraft.modalities.length > 0;
+
+  const toggleReview = (
+    field: keyof Pick<typeof reviewDraft, 'therapeuticAreas' | 'modalities' | 'developmentStages' | 'companySizes' | 'fundingStages'>
+  ) => (value: string) =>
+    setReviewDraft((prev) => ({
+      ...prev,
+      [field]: prev[field].includes(value)
+        ? prev[field].filter((v) => v !== value)
+        : [...prev[field], value],
+    }));
+
+  const handleReviewConfirm = async () => {
+    companyRef.current.companyType = reviewDraft.companyType;
+    companyRef.current.therapeuticAreas = reviewDraft.therapeuticAreas;
+    companyRef.current.modalities = reviewDraft.modalities;
+    companyRef.current.developmentStages = reviewDraft.developmentStages;
+    companyRef.current.companySizes = reviewDraft.companySizes;
+    companyRef.current.fundingStages = reviewDraft.fundingStages;
+    await saveIcp();
+  };
 
   const isResultsStep = phase === 'analysis_results';
   const resultsEntry = thread.find((m): m is ResultsMsg => m.kind === 'results');
@@ -961,6 +1307,22 @@ export default function SetupFlow({
 
           {thinking && <ThinkingDots />}
 
+          {isCustomerUrlLoading && !thinking && (
+            <div className="flex items-start gap-3">
+              <AgentAvatar />
+              <div className="rounded-2xl rounded-tl-none border border-gray-200 bg-white px-4 py-3 shadow-sm">
+                <div className="flex items-center gap-2">
+                  <div className="flex gap-1">
+                    {[0, 150, 300].map((d) => (
+                      <div key={d} className="h-1.5 w-1.5 animate-bounce rounded-full bg-arcova-teal/70" style={{ animationDelay: `${d}ms` }} />
+                    ))}
+                  </div>
+                  <span className="text-base text-gray-600">{customerUrlLoadMsg}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
           {phase === 'analysis_loading' && !thinking && (
             <div className="flex items-start gap-3">
               <AgentAvatar />
@@ -1003,8 +1365,169 @@ export default function SetupFlow({
         </div>
       </div>
 
-      {(showChatBar || widget || showResultsActions) && !isSaving && (
-        <div className="shrink-0 space-y-3 border-t border-white/25 bg-white/[0.94] px-4 py-3 backdrop-blur-sm">
+      {(showChatBar || widget || showResultsActions || phase === 'resume_prompt') && !isSaving && (
+        <div className="shrink-0 space-y-3 border-t border-white/10 bg-arcova-darkblue px-4 py-3">
+          {pendingTransition && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void handleConfirmTransition()}
+                className="rounded-xl bg-arcova-teal px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/90"
+              >
+                {pendingTransition.buttonLabel}
+              </button>
+              <button
+                type="button"
+                onClick={() => setPendingTransition(null)}
+                className="text-sm text-white/40 transition-colors hover:text-white/70"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
+          {phase === 'resume_prompt' && (
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => void handleResumeContinue()}
+                className="rounded-xl bg-arcova-teal px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/90"
+              >
+                Continue where I left off →
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleResumeRestart()}
+                className="rounded-xl border border-white/20 px-5 py-2.5 text-sm font-semibold text-white/70 transition-colors hover:bg-white/[0.08]"
+              >
+                Start again
+              </button>
+            </div>
+          )}
+
+          {isCustomerUrlReview && (
+            <div className="space-y-4 max-h-96 overflow-y-auto pr-1">
+              <p className="text-sm text-white/50">
+                Based on <span className="font-medium text-white/80">{reviewedCompanyName}</span>. Add or remove to match the broader category you target.
+              </p>
+
+              {/* Company type */}
+              <div className="space-y-1.5">
+                <p className="text-sm font-semibold text-white/60">Company type</p>
+                {!reviewDraft.companyType && <p className="text-xs font-medium text-amber-600">Select a company type</p>}
+                <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
+                  {COMPANY_TYPE_OPTIONS.map((o) => (
+                    <button
+                      key={o.value}
+                      type="button"
+                      onClick={() => setReviewDraft((p) => ({ ...p, companyType: p.companyType === o.value ? '' : o.value }))}
+                      className={`w-full rounded-lg border-2 px-3 py-2 text-left text-sm transition-all ${
+                        reviewDraft.companyType === o.value
+                          ? 'border-arcova-teal bg-arcova-teal/10'
+                          : 'border-white/15 bg-white/[0.06] hover:border-white/30'
+                      }`}
+                    >
+                      <span className={`font-medium ${reviewDraft.companyType === o.value ? 'text-arcova-teal' : 'text-white/80'}`}>{o.value}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Therapeutic areas */}
+              <div className="space-y-1.5">
+                <p className="text-sm font-semibold text-white/60">Therapeutic areas</p>
+                {reviewDraft.therapeuticAreas.length === 0 && <p className="text-xs font-medium text-amber-400">Select at least one</p>}
+                <div className="flex flex-wrap gap-2">
+                  {THERAPEUTIC_AREA_OPTIONS.map((o) => (
+                    <button key={o} type="button" onClick={() => toggleReview('therapeuticAreas')(o)}
+                      className={`rounded-full px-3 py-1.5 text-sm transition-colors ${reviewDraft.therapeuticAreas.includes(o) ? 'bg-arcova-teal text-white' : 'bg-white/10 text-white/70 hover:bg-white/20'}`}>
+                      {o}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Modalities */}
+              <div className="space-y-1.5">
+                <p className="text-sm font-semibold text-white/60">Modalities</p>
+                {reviewDraft.modalities.length === 0 && <p className="text-xs font-medium text-amber-400">Select at least one</p>}
+                <div className="flex flex-wrap gap-2">
+                  {MODALITY_OPTIONS.map((o) => (
+                    <button key={o} type="button" onClick={() => toggleReview('modalities')(o)}
+                      className={`rounded-full px-3 py-1.5 text-sm transition-colors ${reviewDraft.modalities.includes(o) ? 'bg-arcova-teal text-white' : 'bg-white/10 text-white/70 hover:bg-white/20'}`}>
+                      {o}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Development stage */}
+              <div className="space-y-1.5">
+                <p className="text-sm font-semibold text-white/60">Development stage</p>
+                {reviewDraft.developmentStages.length === 0 && <p className="text-xs font-medium text-amber-400">Select applicable stages</p>}
+                <div className="flex flex-wrap gap-2">
+                  {DEVELOPMENT_STAGE_OPTIONS.map((o) => (
+                    <button key={o} type="button" onClick={() => toggleReview('developmentStages')(o)}
+                      className={`rounded-full px-3 py-1.5 text-sm transition-colors ${reviewDraft.developmentStages.includes(o) ? 'bg-arcova-teal text-white' : 'bg-white/10 text-white/70 hover:bg-white/20'}`}>
+                      {o}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Company size */}
+              <div className="space-y-1.5">
+                <p className="text-sm font-semibold text-white/60">Company size</p>
+                {reviewDraft.companySizes.length === 0 && <p className="text-xs font-medium text-amber-400">Select typical sizes</p>}
+                <div className="flex flex-wrap gap-2">
+                  {COMPANY_SIZE_OPTIONS.map((o) => (
+                    <button key={o} type="button" onClick={() => toggleReview('companySizes')(o)}
+                      className={`rounded-full px-3 py-1.5 text-sm transition-colors ${reviewDraft.companySizes.includes(o) ? 'bg-arcova-teal text-white' : 'bg-white/10 text-white/70 hover:bg-white/20'}`}>
+                      {o}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Funding stage */}
+              <div className="space-y-1.5">
+                <p className="text-sm font-semibold text-white/60">Funding stage</p>
+                {reviewDraft.fundingStages.length === 0 && <p className="text-xs font-medium text-amber-400">Select typical funding stages</p>}
+                <div className="flex flex-wrap gap-2">
+                  {FUNDING_STAGE_OPTIONS.map((o) => (
+                    <button key={o} type="button" onClick={() => toggleReview('fundingStages')(o)}
+                      className={`rounded-full px-3 py-1.5 text-sm transition-colors ${reviewDraft.fundingStages.includes(o) ? 'bg-arcova-teal text-white' : 'bg-white/10 text-white/70 hover:bg-white/20'}`}>
+                      {o}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-1 border-t border-white/10">
+                <button
+                  type="button"
+                  onClick={() => { setPhase('customer_url_input'); setInput(true); }}
+                  className="text-sm text-white/40 hover:text-white/70"
+                >
+                  ← Try a different URL
+                </button>
+                <div className="space-y-1 text-right">
+                  {!isReviewValid && (
+                    <p className="text-xs text-amber-600">Company type, therapeutic area, and modality required</p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void handleReviewConfirm()}
+                    disabled={!isReviewValid}
+                    className="rounded-xl bg-arcova-teal px-5 py-2.5 text-base font-semibold text-white transition-colors hover:bg-arcova-teal/90 disabled:opacity-30"
+                  >
+                    Save ICP →
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {phase === 'company_select' && (
             <div className="space-y-2">
               {availableCompanyProfiles.map((c) => (
@@ -1034,7 +1557,7 @@ export default function SetupFlow({
                       <button
                         type="button"
                         onClick={() => setChipSel([])}
-                        className="text-sm text-gray-400 transition-colors hover:text-gray-600"
+                        className="text-sm text-white/40 transition-colors hover:text-white/70"
                       >
                         Clear
                       </button>
@@ -1054,11 +1577,7 @@ export default function SetupFlow({
             </div>
           )}
 
-          {showChatBar && phase !== 'greeting' && (
-            <p className="text-sm text-gray-500">Question on this step? Ask below.</p>
-          )}
-
-          {showChatBar && (
+          {showChatBar && !pendingTransition && (
             <form onSubmit={handleSend} className="flex gap-2">
               <input
                 ref={inputRef}
@@ -1069,8 +1588,10 @@ export default function SetupFlow({
                 placeholder={
                   inputEnabled
                     ? phase === 'greeting'
-                      ? 'Company domain or URL…'
-                      : 'Ask a question…'
+                      ? 'e.g. arcova.app'
+                      : phase === 'customer_url_input'
+                      ? 'e.g. guardanthealth.com'
+                      : 'Ask anything…'
                     : ''
                 }
                 className="flex-1 rounded-xl border border-gray-300 bg-white px-4 py-3 text-base text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-arcova-teal disabled:bg-gray-50 disabled:opacity-50"
@@ -1129,41 +1650,36 @@ export default function SetupFlow({
                   </div>
                 </div>
               ) : (
-                <>
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                    <button
-                      type="button"
-                      onClick={() => void handleResultsConfirmed()}
-                      className="rounded-xl bg-arcova-teal px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/90"
-                    >
-                      Looks right →
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleReanalyseFromPanel}
-                      className="rounded-xl border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
-                    >
-                      Re-analyse this site
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleAnalyseDifferentWebsite()}
-                      className="rounded-xl border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
-                    >
-                      Analyse a different site
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleAnalysisNotRight()}
-                      className="rounded-xl border border-transparent px-4 py-2 text-sm font-semibold text-gray-600 transition-colors hover:border-gray-300 hover:bg-gray-50 sm:ml-auto"
-                    >
-                      Not quite right
-                    </button>
-                  </div>
-                  <p className="text-xs text-gray-500">
-                    Source analysed: <span className="font-mono text-gray-700">{analysedUrlForPanel.replace(/^https?:\/\//i, '').replace(/\/$/, '')}</span>
-                  </p>
-                </>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <button
+                    type="button"
+                    onClick={() => void handleResultsConfirmed()}
+                    className="rounded-xl bg-arcova-teal px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/90"
+                  >
+                    Looks right →
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleReanalyseFromPanel}
+                    className="rounded-xl border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
+                  >
+                    Re-analyse this site
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleAnalyseDifferentWebsite()}
+                    className="rounded-xl border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
+                  >
+                    Analyse a different site
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleAnalysisNotRight()}
+                    className="rounded-xl border border-transparent px-4 py-2 text-sm font-semibold text-gray-600 transition-colors hover:border-gray-300 hover:bg-gray-50 sm:ml-auto"
+                  >
+                    Not quite right
+                  </button>
+                </div>
               )}
             </div>
           )}
@@ -1172,13 +1688,82 @@ export default function SetupFlow({
     </div>
   );
 
+  const panelCompanyName = typeof resultsPanelData?.company_name === 'string' ? resultsPanelData.company_name : undefined;
+  const panelCompanyWebsite = typeof resultsPanelData?.website === 'string' ? resultsPanelData.website : undefined;
+
   return (
     <div className={`flex min-h-0 flex-1 flex-col ${SETUP_CHAT_SURROUND}`}>
-      <div
-        className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col items-center justify-center p-4 sm:p-6"
-      >
-        <div className="flex h-[min(56rem,calc(100dvh-12rem))] w-full min-h-[20rem] flex-col">
-          {chatColumn}
+      {showProgress && (
+        <div className="shrink-0 border-b border-white/10 px-6 py-4">
+          <div className="mx-auto flex max-w-6xl items-center justify-between">
+            <div className="flex items-center gap-2">
+              {SETUP_STEPS.map((step, i) => {
+                const isComplete = i < currentStepIndex;
+                const isCurrent = i === currentStepIndex;
+                const canGoBack = isComplete && !isSaving;
+                return (
+                  <div key={step.label} className="flex items-center gap-2">
+                    {i > 0 && (
+                      <div className={`h-px w-8 ${isComplete || isCurrent ? 'bg-arcova-teal/50' : 'bg-white/15'}`} />
+                    )}
+                    <button
+                      type="button"
+                      disabled={!canGoBack}
+                      onClick={() => canGoBack && void handleGoToStep(i)}
+                      className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
+                        isCurrent
+                          ? 'bg-arcova-teal text-white'
+                          : isComplete
+                          ? 'text-white/70 hover:text-white cursor-pointer'
+                          : 'text-white/30 cursor-default'
+                      }`}
+                    >
+                      <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                        isCurrent ? 'bg-white/20' : isComplete ? 'bg-white/10' : 'bg-white/5'
+                      }`}>
+                        {i + 1}
+                      </span>
+                      {step.label}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleResumeRestart()}
+              className="text-sm text-white/40 hover:text-white/70 transition-colors"
+            >
+              Start again
+            </button>
+          </div>
+        </div>
+      )}
+      <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 gap-5 p-4 sm:p-6">
+        {/* Chat column */}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex h-[min(56rem,calc(100dvh-12rem))] min-h-[20rem] w-full flex-col">
+            {chatColumn}
+          </div>
+        </div>
+
+        {/* Profile panel — visible on lg+ */}
+        <div className="hidden lg:flex lg:w-72 xl:w-80 shrink-0 flex-col">
+          <div className="h-[min(56rem,calc(100dvh-12rem))] overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <SetupProfilePanel
+              phase={phase}
+              companyName={panelCompanyName}
+              companyWebsite={panelCompanyWebsite}
+              findingsSections={findingsSections}
+              analysisLoading={phase === 'analysis_loading'}
+              reviewedCompanyName={reviewedCompanyName}
+              savedIcpName={savedIcpName}
+              panelCompany={panelCompany}
+              chipSel={chipSel}
+              panelPersona={panelPersona}
+              savedPersonaName={savedPersonaName}
+            />
+          </div>
         </div>
       </div>
     </div>

@@ -6,6 +6,9 @@ import { useEffect, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { Toaster } from 'sonner';
 import CompanyForm, { type CompanyFormData } from '@/components/CompanyForm';
+import UrlFirstICPFlow from '@/components/UrlFirstICPFlow';
+
+type EntryMode = 'url' | 'form';
 
 export default function ICPNewPage() {
   const { user, loading } = useAuth();
@@ -14,6 +17,7 @@ export default function ICPNewPage() {
   const [formKey, setFormKey] = useState(0);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [hasProfile, setHasProfile] = useState(false);
+  const [entryMode, setEntryMode] = useState<EntryMode>('url');
 
   useEffect(() => {
     if (!loading && !user) {
@@ -70,12 +74,50 @@ export default function ICPNewPage() {
       <div className="flex-1 flex flex-col min-h-0">
         <div className="flex-1 overflow-y-auto p-4">
           {hasProfile ? (
-            <CompanyForm
-              key={formKey}
-              mode="create"
-              onSave={handleSave}
-              onCancel={() => router.push('/company-criteria')}
-            />
+            <div className="max-w-2xl mx-auto space-y-6 py-4">
+              <div>
+                <h1 className="text-xl font-semibold text-gray-900">New target company profile</h1>
+                <p className="mt-1 text-sm text-gray-500">Define the kind of accounts you sell to.</p>
+              </div>
+
+              <div className="flex gap-1 rounded-xl bg-gray-100 p-1 w-fit">
+                <button
+                  type="button"
+                  onClick={() => setEntryMode('url')}
+                  className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-colors ${
+                    entryMode === 'url'
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  Enter an example company
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEntryMode('form')}
+                  className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-colors ${
+                    entryMode === 'form'
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  Answer questions
+                </button>
+              </div>
+
+              <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+                {entryMode === 'url' ? (
+                  <UrlFirstICPFlow onComplete={() => setShowSuccessModal(true)} />
+                ) : (
+                  <CompanyForm
+                    key={formKey}
+                    mode="create"
+                    onSave={handleSave}
+                    onCancel={() => router.push('/company-criteria')}
+                  />
+                )}
+              </div>
+            </div>
           ) : null}
         </div>
       </div>
