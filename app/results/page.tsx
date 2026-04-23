@@ -28,6 +28,32 @@ interface EmploymentHistoryItem {
   current: boolean;
 }
 
+interface CompanyFirmographics {
+  name?: string | null;
+  company_type?: string | null;
+  description?: string | null;
+  bio_summary?: string | null;
+  tagline?: string | null;
+  website?: string | null;
+  domain?: string | null;
+  logo_url?: string | null;
+  follower_count?: number | null;
+  employee_count?: number | null;
+  employee_range?: string | null;
+  industry?: string | null;
+  founded_year?: number | null;
+  hq_city?: string | null;
+  hq_country?: string | null;
+  specialties?: string[] | null;
+  linkedin_url?: string | null;
+  funding_stage?: string | null;
+  total_funding_usd?: number | null;
+  latest_funding_date?: string | null;
+  therapeutic_areas?: string[] | null;
+  modalities?: string[] | null;
+  development_stages?: string[] | null;
+}
+
 interface Lead {
   id: string;
   full_name: string | null;
@@ -51,23 +77,6 @@ interface Lead {
   resolved_current_company_domain: string | null;
   resolved_current_job_title: string | null;
   resolved_employment_history: EmploymentHistoryItem[] | null;
-  resolved_company_firmographics: {
-    description?: string | null;
-    bio_summary?: string | null;
-    tagline?: string | null;
-    website?: string | null;
-    domain?: string | null;
-    logo_url?: string | null;
-    follower_count?: number | null;
-    employee_count?: number | null;
-    employee_range?: string | null;
-    industry?: string | null;
-    founded_year?: number | null;
-    hq_city?: string | null;
-    hq_country?: string | null;
-    specialties?: string[] | null;
-    linkedin_url?: string | null;
-  } | null;
   contact_bio: string[] | null;
   contact_discovery_status: string | null;
   linkedin_resolution_status: string | null;
@@ -78,12 +87,59 @@ interface Lead {
   source: string;
   created_at: string;
   updated_at: string | null;
+  company_id: string | null;
+  companies: {
+    company_name: string | null;
+    domain: string | null;
+    website: string | null;
+    linkedin_url: string | null;
+    description: string | null;
+    bio_summary: string | null;
+    tagline: string | null;
+    logo_url: string | null;
+    follower_count: number | null;
+    company_type: string | null;
+    company_type_display: string | null;
+    funding_stage: string | null;
+    funding_status_label: string | null;
+    total_funding_usd: number | null;
+    funding_data_source: string | null;
+    funding_resolution_confidence: string | null;
+    funding_resolution_summary: string | null;
+    founded_year: number | null;
+    headquarters_city: string | null;
+    headquarters_country: string | null;
+    specialties: string[] | null;
+    therapeutic_areas: string[] | null;
+    modalities: string[] | null;
+    development_stages: string[] | null;
+    clinical_stage: string | null;
+    employee_count: number | null;
+    employee_range: string | null;
+    industry: string | null;
+    latest_funding_date: string | null;
+    last_enriched_at: string | null;
+  } | null;
 }
 
 type EditableLeadFields = {
   first_name: string;
   last_name: string;
   email: string;
+};
+
+type EnrichmentStageKey =
+  | 'queued'
+  | 'linkedin_processing'
+  | 'linkedin_resolved'
+  | 'profile_processing'
+  | 'complete'
+  | 'stopped';
+
+type EnrichmentVisualState = {
+  stageKey: EnrichmentStageKey;
+  startedAt: number;
+  startPercent: number;
 };
 
 const PAGE_SIZE = 50;
@@ -97,6 +153,191 @@ const formatLastUpdated = (iso: string | null): string => {
     day: 'numeric',
     year: 'numeric',
   });
+};
+
+const formatCurrencyShort = (amount: number | null | undefined): string => {
+  if (amount == null) return '—';
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+    notation: amount >= 1_000_000 ? 'compact' : 'standard',
+  }).format(amount);
+};
+
+const getDisplayedCompanyFirmographics = (lead: Lead | null): CompanyFirmographics | null => {
+  if (!lead) return null;
+
+  const company = lead.companies;
+  if (!company && !lead.resolved_current_company_name && !lead.company_name) {
+    return null;
+  }
+
+  return {
+    name: company?.company_name || lead.resolved_current_company_name || lead.company_name || null,
+    company_type: company?.company_type || company?.company_type_display || null,
+    description: company?.description || null,
+    bio_summary: company?.bio_summary || null,
+    tagline: company?.tagline || null,
+    website: company?.website || null,
+    domain: company?.domain || lead.resolved_current_company_domain || lead.company_domain || null,
+    logo_url: company?.logo_url || null,
+    follower_count: company?.follower_count ?? null,
+    employee_count: company?.employee_count ?? null,
+    employee_range: company?.employee_range ?? null,
+    industry: company?.industry || null,
+    founded_year: company?.founded_year ?? null,
+    hq_city: company?.headquarters_city || null,
+    hq_country: company?.headquarters_country || null,
+    specialties: company?.specialties || null,
+    linkedin_url: company?.linkedin_url || lead.company_linkedin_url || null,
+    funding_stage: company?.funding_stage || null,
+    total_funding_usd: company?.total_funding_usd ?? null,
+    latest_funding_date: company?.latest_funding_date || null,
+    therapeutic_areas: company?.therapeutic_areas || null,
+    modalities: company?.modalities || null,
+    development_stages: company?.development_stages || null,
+  };
+};
+
+const getCompanyFirmographicsLastRefresh = (lead: Lead | null): string | null => {
+  if (!lead) return null;
+  return lead.companies?.last_enriched_at || null;
+};
+
+const normalizeInlineText = (value: string | null | undefined): string | null => {
+  if (!value) return null;
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  return normalized || null;
+};
+
+const getFundingStatusDisplay = (
+  company: Lead['companies'] | null
+): { heading: 'Funding stage' | 'Funding status'; value: string } | null => {
+  const stage = normalizeInlineText(company?.funding_stage);
+  if (stage) {
+    return {
+      heading: 'Funding stage',
+      value: stage,
+    };
+  }
+
+  const statusLabel = normalizeInlineText(company?.funding_status_label);
+  if (!statusLabel) return null;
+
+  return { heading: 'Funding status', value: statusLabel };
+};
+
+const renderTaxonomyPills = (values: string[] | null | undefined) => {
+  const cleaned = (values || []).map((value) => value.trim()).filter(Boolean);
+  if (cleaned.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap gap-1.5 mt-1.5">
+      {cleaned.map((value) => (
+        <span
+          key={value}
+          className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-1 text-xs font-medium text-arcova-teal"
+        >
+          {value}
+        </span>
+      ))}
+    </div>
+  );
+};
+
+const getEnrichmentStage = (lead: Lead): {
+  key: EnrichmentStageKey;
+  label: string;
+  floor: number;
+  ceiling: number;
+  paceMs: number;
+} => {
+  const linkedinStatus = lead.linkedin_resolution_status || 'pending';
+  const profileStatus = lead.profile_enrichment_status || 'pending';
+
+  if (profileStatus === 'completed' || profileStatus === 'ambiguous') {
+    return { key: 'complete', label: 'Enrichment complete', floor: 100, ceiling: 100, paceMs: 1 };
+  }
+
+  if (profileStatus === 'failed' || profileStatus === 'blocked') {
+    return { key: 'stopped', label: 'Enrichment stopped', floor: 100, ceiling: 100, paceMs: 1 };
+  }
+
+  if (profileStatus === 'processing') {
+    return {
+      key: 'profile_processing',
+      label: 'Resolving company data',
+      floor: 68,
+      ceiling: 94,
+      paceMs: 12000,
+    };
+  }
+
+  if (linkedinStatus === 'completed' && profileStatus === 'pending') {
+    return {
+      key: 'linkedin_resolved',
+      label: 'Gathering company details',
+      floor: 48,
+      ceiling: 66,
+      paceMs: 7000,
+    };
+  }
+
+  if (linkedinStatus === 'processing') {
+    return {
+      key: 'linkedin_processing',
+      label: 'Finding LinkedIn contact',
+      floor: 16,
+      ceiling: 46,
+      paceMs: 10000,
+    };
+  }
+
+  return {
+    key: 'queued',
+    label: 'Queued for enrichment',
+    floor: 6,
+    ceiling: 18,
+    paceMs: 6000,
+  };
+};
+
+const getEnrichmentLabel = (
+  stage: ReturnType<typeof getEnrichmentStage>,
+  percent: number
+): string => {
+  if (stage.key === 'complete' || stage.key === 'stopped' || stage.key === 'queued') {
+    return stage.label;
+  }
+
+  if (stage.key === 'linkedin_processing') {
+    return percent < 32 ? 'Finding LinkedIn contact' : 'Building contact profile';
+  }
+
+  if (stage.key === 'linkedin_resolved') {
+    return percent < 58 ? 'Gathering company details' : 'Building company profile';
+  }
+
+  if (stage.key === 'profile_processing') {
+    return percent < 84 ? 'Resolving company data' : 'Finalizing enrichment';
+  }
+
+  return stage.label;
+};
+
+const getInterpolatedEnrichmentPercent = (
+  startPercent: number,
+  stage: ReturnType<typeof getEnrichmentStage>,
+  elapsedMs: number
+): number => {
+  if (stage.floor >= stage.ceiling) {
+    return stage.ceiling;
+  }
+
+  const safeStart = Math.min(Math.max(startPercent, stage.floor), stage.ceiling);
+  const progress = 1 - Math.exp(-Math.max(elapsedMs, 0) / stage.paceMs);
+  return safeStart + (stage.ceiling - safeStart) * progress;
 };
 
 export default function LeadsPage() {
@@ -117,6 +358,8 @@ export default function LeadsPage() {
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [selectedPreview, setSelectedPreview] = useState<'contact' | 'company'>('contact');
   const [isWorkHistoryExpanded, setIsWorkHistoryExpanded] = useState(false);
+  const [enrichmentVisuals, setEnrichmentVisuals] = useState<Record<string, EnrichmentVisualState>>({});
+  const [progressNow, setProgressNow] = useState(() => Date.now());
 
   useEffect(() => {
     if (!loading && !user) router.push('/login');
@@ -294,6 +537,84 @@ export default function LeadsPage() {
 
   const anyEnriching = leads.some(isEnriching);
 
+  useEffect(() => {
+    const now = Date.now();
+    setEnrichmentVisuals((previous) => {
+      const next: Record<string, EnrichmentVisualState> = {};
+
+      for (const lead of leads) {
+        if (!isEnriching(lead)) continue;
+
+        const stage = getEnrichmentStage(lead);
+        const prior = previous[lead.id];
+
+        if (prior && prior.stageKey === stage.key) {
+          next[lead.id] = prior;
+          continue;
+        }
+
+        const priorPercent = prior
+          ? getInterpolatedEnrichmentPercent(
+              prior.startPercent,
+              getEnrichmentStage({ ...lead, linkedin_resolution_status: '', profile_enrichment_status: '' } as Lead),
+              0
+            )
+          : stage.floor;
+
+        const carriedPercent = prior
+          ? getInterpolatedEnrichmentPercent(
+              prior.startPercent,
+              {
+                ...getEnrichmentStage(lead),
+                key: prior.stageKey,
+                label: stage.label,
+                floor: prior.startPercent,
+                ceiling: Math.max(prior.startPercent, stage.floor),
+                paceMs: 1,
+              },
+              now - prior.startedAt
+            )
+          : stage.floor;
+
+        next[lead.id] = {
+          stageKey: stage.key,
+          startedAt: now,
+          startPercent: Math.max(stage.floor, prior ? Math.max(priorPercent, carriedPercent) : stage.floor),
+        };
+      }
+
+      return next;
+    });
+  }, [leads]);
+
+  useEffect(() => {
+    if (!anyEnriching) return;
+    setProgressNow(Date.now());
+    const interval = setInterval(() => {
+      setProgressNow(Date.now());
+    }, 900);
+    return () => clearInterval(interval);
+  }, [anyEnriching]);
+
+  const getEnrichmentProgress = (lead: Lead): { percent: number; label: string } => {
+    const stage = getEnrichmentStage(lead);
+    const visual = enrichmentVisuals[lead.id];
+
+    if (!visual || visual.stageKey !== stage.key) {
+      const percent = Math.round(stage.floor);
+      return { percent, label: getEnrichmentLabel(stage, percent) };
+    }
+
+    const percent = getInterpolatedEnrichmentPercent(
+      visual.startPercent,
+      stage,
+      progressNow - visual.startedAt
+    );
+
+    const roundedPercent = Math.round(percent);
+    return { percent: roundedPercent, label: getEnrichmentLabel(stage, roundedPercent) };
+  };
+
   // Auto-poll every 5s while any contact is still being enriched
   useEffect(() => {
     if (!anyEnriching) return;
@@ -302,7 +623,10 @@ export default function LeadsPage() {
   }, [anyEnriching, fetchLeads]);
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
+  const showSearchInput = total > 0 || searchInput.trim().length > 0 || search.trim().length > 0;
   const selectedLead = leads.find((lead) => lead.id === selectedLeadId) || null;
+  const selectedCompanyFirmographics = getDisplayedCompanyFirmographics(selectedLead);
+  const selectedCompanyFirmographicsLastRefresh = getCompanyFirmographicsLastRefresh(selectedLead);
   const isEditingSelected = selectedLead ? editingLeadId === selectedLead.id : false;
   const isSavingSelected = selectedLead ? savingLeadId === selectedLead.id : false;
   const isDeletingSelected = selectedLead ? deletingLeadId === selectedLead.id : false;
@@ -347,12 +671,12 @@ export default function LeadsPage() {
               )}
             </div>
 
-            {total > 0 && (
+            {showSearchInput && (
               <div className="mb-4 relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                 <input
                   type="text"
-                  placeholder="Search by name, company or job title…"
+                  placeholder="Search by name, company, job title, company type, therapeutic area, modality or development stage…"
                   value={searchInput}
                   onChange={(e) => setSearchInput(e.target.value)}
                   className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-arcova-teal/30 bg-white"
@@ -388,7 +712,7 @@ export default function LeadsPage() {
               <div className={`grid gap-4 ${selectedLeadId ? 'xl:grid-cols-[minmax(0,1fr)_360px]' : ''}`}>
                 {/* ── Leads table ── */}
                 <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-                  <div className="grid grid-cols-[0.95fr_0.8fr_1.65fr_3.5rem] gap-1 px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide">
+                  <div className="grid grid-cols-[0.8fr_1fr_1.65fr_3.5rem] gap-1 px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide">
                     <span>Name</span>
                     <span>Job title</span>
                     <span>Company</span>
@@ -399,6 +723,7 @@ export default function LeadsPage() {
                     {leads.map((lead) => {
                       const isSelected = selectedLeadId === lead.id;
                       const enriching = isEnriching(lead);
+                      const enrichmentProgress = getEnrichmentProgress(lead);
 
                       if (enriching) {
                         return (
@@ -409,7 +734,7 @@ export default function LeadsPage() {
                               setSelectedPreview('contact');
                               cancelEditingLead();
                             }}
-                            className={`grid grid-cols-[0.95fr_0.8fr_1.65fr_3.5rem] gap-1 px-4 py-3 items-center cursor-pointer transition-all duration-150 border-b border-gray-50 last:border-0 ${
+                            className={`grid grid-cols-[0.8fr_1fr_1.65fr_3.5rem] gap-1 px-4 py-3 items-center cursor-pointer transition-all duration-150 border-b border-gray-50 last:border-0 ${
                               isSelected
                                 ? 'bg-arcova-teal/10 border-l-2 border-arcova-teal'
                                 : 'border-l-2 border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30'
@@ -423,10 +748,25 @@ export default function LeadsPage() {
                               </p>
                             </div>
 
-                            <div className="col-span-2 min-w-0 pr-3">
-                              <div className="relative h-2.5 overflow-hidden rounded-full bg-slate-200/80">
-                                <div className="arcova-enrichment-progress absolute inset-y-0 left-0 rounded-full" />
-                                <div className="arcova-enrichment-glow absolute inset-y-0 left-0 w-16 rounded-full" />
+                            <div className="min-w-0">
+                              <p className="text-xs text-gray-400 truncate leading-snug">
+                                {enrichmentProgress.label}...
+                              </p>
+                            </div>
+
+                            <div className="min-w-0 pr-3">
+                              <div className="flex items-center gap-3">
+                                <div className="relative h-2.5 flex-1 overflow-hidden rounded-full bg-slate-200/80">
+                                  <div
+                                    className="arcova-enrichment-progress absolute inset-y-0 left-0 rounded-full transition-[width] duration-700 ease-out"
+                                    style={{ width: `${enrichmentProgress.percent}%` }}
+                                  >
+                                    <div className="arcova-enrichment-glow absolute inset-y-0 right-0 w-14 rounded-full" />
+                                  </div>
+                                </div>
+                                <span className="text-[11px] font-medium tabular-nums text-gray-400">
+                                  {enrichmentProgress.percent}%
+                                </span>
                               </div>
                             </div>
 
@@ -445,7 +785,7 @@ export default function LeadsPage() {
                             setSelectedPreview('contact');
                             cancelEditingLead();
                           }}
-                          className={`grid grid-cols-[0.95fr_0.8fr_1.65fr_3.5rem] gap-1 px-4 py-3 items-center cursor-pointer transition-all duration-150 opacity-100 ${
+                          className={`grid grid-cols-[0.8fr_1fr_1.65fr_3.5rem] gap-1 px-4 py-3 items-center cursor-pointer transition-all duration-150 opacity-100 ${
                             isSelected
                               ? 'bg-arcova-teal/10 border-l-2 border-arcova-teal'
                               : 'border-l-2 border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30'
@@ -474,16 +814,33 @@ export default function LeadsPage() {
 
                           {/* Job title */}
                           <div className="min-w-0">
-                            <p className="text-xs text-gray-700 line-clamp-2 leading-snug">
-                              {lead.resolved_current_job_title || lead.job_title || '—'}
+                            <p className="text-xs text-gray-700 truncate leading-snug">
+                              {((t) => t.length > 30 ? t.slice(0, 30) + '…' : t)(lead.resolved_current_job_title || lead.job_title || '—')}
                             </p>
                           </div>
 
                           {/* Company */}
                           <div className="min-w-0">
-                            <p className="text-sm text-gray-700 truncate">
-                              {((n) => n.length > 30 ? n.slice(0, 30) + '…' : n)(lead.resolved_current_company_name || lead.company_name || '—')}
-                            </p>
+                            {(() => {
+                              const companyFirmographics = getDisplayedCompanyFirmographics(lead);
+                              const name =
+                                companyFirmographics?.name ||
+                                lead.resolved_current_company_name ||
+                                lead.company_name ||
+                                '—';
+                              const truncated = name.length > 30 ? name.slice(0, 30) + '…' : name;
+                              const domain = companyFirmographics?.domain || lead.company_domain;
+                              const href = companyFirmographics?.website || (domain ? `https://${domain}` : null);
+                              return href ? (
+                                <a href={href} target="_blank" rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="text-sm text-arcova-teal hover:underline truncate max-w-full inline-block">
+                                  {truncated}
+                                </a>
+                              ) : (
+                                <p className="text-sm text-gray-700 truncate">{truncated}</p>
+                              );
+                            })()}
                           </div>
 
                           {/* Company details button */}
@@ -559,7 +916,8 @@ export default function LeadsPage() {
                                   .join(' ') ||
                                 selectedLead.full_name ||
                                 'Selected contact'
-                              : selectedLead.resolved_current_company_name ||
+                              : selectedCompanyFirmographics?.name ||
+                                selectedLead.resolved_current_company_name ||
                                 selectedLead.company_name ||
                                 'Selected company'}
                           </h2>
@@ -568,6 +926,19 @@ export default function LeadsPage() {
                               {selectedLead.headline}
                             </p>
                           )}
+                          {selectedPreview === 'company' && (() => {
+                            const domain =
+                              selectedCompanyFirmographics?.domain ||
+                              selectedLead.resolved_current_company_domain ||
+                              selectedLead.company_domain;
+                            const href = selectedCompanyFirmographics?.website || (domain ? `https://${domain}` : null);
+                            return domain && href ? (
+                              <a href={href} target="_blank" rel="noopener noreferrer"
+                                className="text-xs text-arcova-teal hover:underline mt-1 inline-block">
+                                {domain}
+                              </a>
+                            ) : null;
+                          })()}
                         </div>
 
                         {/* Photo / logo + close (right side) */}
@@ -577,10 +948,10 @@ export default function LeadsPage() {
                               <img
                                 src={selectedLead.profile_photo_url}
                                 alt=""
-                                className="w-16 h-16 rounded-full object-cover"
+                                className="w-16 h-16 rounded-xl object-cover"
                               />
                             ) : (
-                              <div className="w-16 h-16 rounded-full bg-gray-200 flex items-center justify-center text-lg font-medium text-gray-500">
+                              <div className="w-16 h-16 rounded-xl bg-gray-200 flex items-center justify-center text-lg font-medium text-gray-500">
                                 {(
                                   selectedLead.first_name?.[0] ||
                                   selectedLead.full_name?.[0] ||
@@ -590,15 +961,16 @@ export default function LeadsPage() {
                             )
                           ) : (
                             /* Company logo */
-                            selectedLead.resolved_company_firmographics?.logo_url ? (
+                            selectedCompanyFirmographics?.logo_url ? (
                               <img
-                                src={selectedLead.resolved_company_firmographics.logo_url}
+                                src={selectedCompanyFirmographics.logo_url}
                                 alt=""
                                 className="w-16 h-16 rounded-xl object-contain bg-gray-50 border border-gray-100 p-1"
                               />
                             ) : (
                               <div className="w-16 h-16 rounded-xl bg-gray-100 flex items-center justify-center text-xl font-semibold text-gray-400">
                                 {(
+                                  selectedCompanyFirmographics?.name?.[0] ||
                                   selectedLead.resolved_current_company_name?.[0] ||
                                   selectedLead.company_name?.[0] ||
                                   '?'
@@ -767,23 +1139,61 @@ export default function LeadsPage() {
                         ) : (
                           /* ── Company view ── */
                           (() => {
-                            const f = selectedLead.resolved_company_firmographics;
-                            // Domain: only show what Apify actually returned — never the Apollo/CSV-imported domain
-                            const apifyDomain = f?.domain || null;
+                            const f = selectedCompanyFirmographics;
                             const website = f?.website || null;
                             const companyLinkedIn = f?.linkedin_url || selectedLead.company_linkedin_url;
                             const hqParts = [f?.hq_city, f?.hq_country].filter(Boolean);
                             const hq = hqParts.join(', ') || null;
+                            const fundingStatus = getFundingStatusDisplay(selectedLead.companies);
 
                             return (
                               <div className="space-y-4">
+                                {!!(f?.company_type || f?.therapeutic_areas?.length || f?.modalities?.length || f?.development_stages?.length) && (
+                                  <div className="space-y-3 rounded-xl border border-gray-100 bg-gray-50/70 p-3">
+                                    {f.company_type && (
+                                      <div>
+                                        <p className="text-gray-400 text-xs">Company type</p>
+                                        <p className="text-gray-900 text-sm mt-0.5">{f.company_type}</p>
+                                      </div>
+                                    )}
+                                    {f.therapeutic_areas?.length ? (
+                                      <div>
+                                        <p className="text-gray-400 text-xs">Therapeutic areas</p>
+                                        {renderTaxonomyPills(f.therapeutic_areas)}
+                                      </div>
+                                    ) : null}
+                                    {f.modalities?.length ? (
+                                      <div>
+                                        <p className="text-gray-400 text-xs">Modalities</p>
+                                        {renderTaxonomyPills(f.modalities)}
+                                      </div>
+                                    ) : null}
+                                    {f.development_stages?.length ? (
+                                      <div>
+                                        <p className="text-gray-400 text-xs">Development stage</p>
+                                        {renderTaxonomyPills(f.development_stages)}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                )}
+
                                 {/* Bio — LLM summary preferred, raw description as fallback */}
                                 {(f?.bio_summary || f?.description) ? (
                                   <div>
                                     <p className="text-gray-400 text-xs mb-1">About</p>
-                                    <p className="text-sm text-gray-700 leading-relaxed">
-                                      {f.bio_summary || f.description}
-                                    </p>
+                                    <ul className="space-y-1.5 pb-1">
+                                      {(f.bio_summary ?? f.description ?? '')
+                                        .split('\n')
+                                        .map((s: string) => s.trim())
+                                        .filter(Boolean)
+                                        .slice(0, 3)
+                                        .map((bullet: string, i: number) => (
+                                          <li key={i} className="flex gap-2 text-sm text-gray-700 leading-snug">
+                                            <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-arcova-teal flex-shrink-0" />
+                                            {bullet}
+                                          </li>
+                                        ))}
+                                    </ul>
                                   </div>
                                 ) : (
                                   <p className="text-xs text-gray-400 italic">Company bio will appear after enrichment runs.</p>
@@ -805,10 +1215,18 @@ export default function LeadsPage() {
                                       <p className="text-gray-900 text-sm mt-0.5">{f.follower_count.toLocaleString()}</p>
                                     </div>
                                   )}
-                                  {f?.industry && (
+                                  {fundingStatus && (
                                     <div>
-                                      <p className="text-gray-400 text-xs">Industry</p>
-                                      <p className="text-gray-900 text-sm mt-0.5">{f.industry}</p>
+                                      <p className="text-gray-400 text-xs">{fundingStatus.heading}</p>
+                                      <p className="text-gray-900 text-sm mt-0.5">{fundingStatus.value}</p>
+                                    </div>
+                                  )}
+                                  {f?.total_funding_usd != null && (
+                                    <div>
+                                      <p className="text-gray-400 text-xs">Total funding</p>
+                                      <p className="text-gray-900 text-sm mt-0.5">
+                                        {formatCurrencyShort(f.total_funding_usd)}
+                                      </p>
                                     </div>
                                   )}
                                   {f?.founded_year && (
@@ -817,50 +1235,49 @@ export default function LeadsPage() {
                                       <p className="text-gray-900 text-sm mt-0.5">{f.founded_year}</p>
                                     </div>
                                   )}
+                                  {f?.latest_funding_date && (
+                                    <div>
+                                      <p className="text-gray-400 text-xs">Latest Funding Round</p>
+                                      <p className="text-gray-900 text-sm mt-0.5">
+                                        {formatLastUpdated(f.latest_funding_date)}
+                                      </p>
+                                    </div>
+                                  )}
                                   {hq && (
                                     <div>
                                       <p className="text-gray-400 text-xs">HQ</p>
                                       <p className="text-gray-900 text-sm mt-0.5">{hq}</p>
                                     </div>
                                   )}
-                                  {apifyDomain && (
-                                    <div>
-                                      <p className="text-gray-400 text-xs">Domain</p>
-                                      <p className="text-gray-900 text-sm mt-0.5">{apifyDomain}</p>
-                                    </div>
-                                  )}
                                 </div>
 
                                 {/* Links */}
-                                {(website || companyLinkedIn) && (
-                                  <div className="flex flex-col gap-1.5">
-                                    {website && (
-                                      <a href={website} target="_blank" rel="noopener noreferrer"
-                                        className="inline-flex items-center gap-1.5 text-arcova-teal hover:underline text-xs">
-                                        <ExternalLink className="w-3 h-3" />
-                                        {website.replace(/^https?:\/\//, '')}
-                                      </a>
-                                    )}
-                                    {companyLinkedIn && (
-                                      <a href={companyLinkedIn} target="_blank" rel="noopener noreferrer"
-                                        className="inline-flex items-center gap-1.5 text-arcova-teal hover:underline text-xs">
-                                        <Link className="w-3 h-3" />
-                                        LinkedIn page
-                                      </a>
-                                    )}
+                                {website && (
+                                  <div>
+                                    <p className="text-gray-400 text-xs">Website</p>
+                                    <a href={website} target="_blank" rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1 text-arcova-teal hover:underline text-xs break-all mt-0.5">
+                                      {website}
+                                      <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                                    </a>
                                   </div>
                                 )}
 
-                                {/* Specialties */}
-                                {f?.specialties && f.specialties.length > 0 && (
+                                {companyLinkedIn && (
                                   <div>
-                                    <p className="text-gray-400 text-xs mb-1.5">Specialties</p>
-                                    <div className="flex flex-wrap gap-1.5">
-                                      {f.specialties.slice(0, 8).map((s, i) => (
-                                        <span key={i} className="inline-block rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">{s}</span>
-                                      ))}
-                                    </div>
+                                    <p className="text-gray-400 text-xs">LinkedIn</p>
+                                    <a href={companyLinkedIn} target="_blank" rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1 text-arcova-teal hover:underline text-xs break-all mt-0.5">
+                                      {companyLinkedIn}
+                                      <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                                    </a>
                                   </div>
+                                )}
+
+                                {selectedCompanyFirmographicsLastRefresh && (
+                                  <p className="text-xs text-gray-400">
+                                    Firmographics refreshed {formatLastUpdated(selectedCompanyFirmographicsLastRefresh)}
+                                  </p>
                                 )}
                               </div>
                             );
@@ -943,57 +1360,60 @@ export default function LeadsPage() {
       </div>
       <style jsx>{`
         .arcova-enrichment-progress {
-          width: 100%;
-          background: linear-gradient(90deg, rgba(12, 205, 205, 0.16) 0%, rgba(12, 205, 205, 0.72) 72%, rgba(13, 53, 71, 0.85) 100%);
-          transform-origin: left center;
-          animation: arcova-row-progress 2.9s ease-in-out infinite;
+          min-width: 1.25rem;
+          background: linear-gradient(90deg, rgba(12, 205, 205, 0.24) 0%, rgba(12, 205, 205, 0.78) 68%, rgba(13, 53, 71, 0.9) 100%);
+          box-shadow:
+            inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+            0 0 0.35rem rgba(12, 205, 205, 0.16);
+          animation: arcova-row-throb 2.2s ease-in-out infinite;
+          will-change: opacity, filter, box-shadow;
         }
 
         .arcova-enrichment-glow {
-          background: linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.72) 48%, rgba(255, 255, 255, 0) 100%);
-          animation: arcova-row-glow 2.9s ease-in-out infinite;
+          background: linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.82) 50%, rgba(255, 255, 255, 0) 100%);
+          animation: arcova-row-glow 1.8s ease-in-out infinite;
         }
 
-        @keyframes arcova-row-progress {
+        @keyframes arcova-row-throb {
           0% {
-            opacity: 0.28;
-            transform: scaleX(0.04);
+            opacity: 0.82;
+            filter: saturate(0.96) brightness(0.98);
+            box-shadow:
+              inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+              0 0 0.25rem rgba(12, 205, 205, 0.14);
           }
 
-          55% {
-            opacity: 0.9;
-            transform: scaleX(0.62);
-          }
-
-          82% {
-            opacity: 0.95;
-            transform: scaleX(1);
+          50% {
+            opacity: 1;
+            filter: saturate(1.08) brightness(1.08);
+            box-shadow:
+              inset 0 0 0 1px rgba(255, 255, 255, 0.16),
+              0 0 0.65rem rgba(12, 205, 205, 0.28);
           }
 
           100% {
-            opacity: 0.22;
-            transform: scaleX(0.04);
+            opacity: 0.82;
+            filter: saturate(0.96) brightness(0.98);
+            box-shadow:
+              inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+              0 0 0.25rem rgba(12, 205, 205, 0.14);
           }
         }
 
         @keyframes arcova-row-glow {
           0% {
-            opacity: 0;
-            transform: translateX(-4rem);
+            opacity: 0.22;
+            transform: translateX(-0.85rem);
           }
 
-          20% {
-            opacity: 0.7;
-          }
-
-          82% {
-            opacity: 0.85;
-            transform: translateX(calc(100% - 4rem));
+          50% {
+            opacity: 0.8;
+            transform: translateX(0);
           }
 
           100% {
-            opacity: 0;
-            transform: translateX(calc(100% - 4rem));
+            opacity: 0.22;
+            transform: translateX(0.85rem);
           }
         }
       `}</style>

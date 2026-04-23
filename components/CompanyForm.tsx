@@ -21,44 +21,20 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { getSignalDisplayName } from '@/lib/signal-display-names';
 import { getRandomLockedSignals, type LockedSignal } from '@/lib/locked-signals';
+import {
+  COMPANY_SIZE_OPTIONS,
+  COMPANY_TYPE_OPTIONS,
+  DEVELOPMENT_STAGE_OPTIONS,
+  FUNDING_STAGE_OPTIONS,
+  MODALITY_OPTIONS,
+  THERAPEUTIC_AREA_OPTIONS,
+} from '@/lib/arcova-taxonomy';
 
 // --- Constants ---
 
-const COMPANY_TYPE_OPTIONS = [
-  { value: "Biotech / Biopharma", description: "Early to mid-stage companies developing novel therapeutics" },
-  { value: "Pharma", description: "Large established pharmaceutical companies" },
-  { value: "Academic Spinout", description: "University-originated companies and research institutes" },
-  { value: "CDMO", description: "Contract development and manufacturing organisations" },
-  { value: "CRO", description: "Contract research organisations" },
-  { value: "Medical Device", description: "Device and diagnostics companies" },
-];
-
-const THERAPEUTIC_AREA_OPTIONS = [
-  "Oncology", "Rare Disease", "Neuroscience", "Immunology", "Cardiovascular",
-  "Infectious Disease", "Metabolic Disease", "Cell & Gene Therapy",
-  "RNA/Oligonucleotides", "Ophthalmology", "Other"
-];
-
-const MODALITY_OPTIONS = [
-  "Small Molecule", "Biologic (Antibody)", "Bispecific Antibody", "ADC",
-  "Cell Therapy", "Gene Therapy", "RNA Therapy", "Peptide", "Oligonucleotide",
-  "Radiopharmaceutical", "Protein / Enzyme Replacement", "Gene Editing (CRISPR)",
-  "Microbiome", "Biosimilar", "Vaccine",
-  "Diagnostics", "Liquid Biopsy", "Digital Therapeutics",
-  "AI/ML Platform", "Drug Discovery Platform", "Biomarker", "Imaging"
-];
-
-const DEVELOPMENT_STAGE_OPTIONS = [
-  "Preclinical", "Phase I", "Phase II", "Phase III", "Commercial", "All stages"
-];
-
-const COMPANY_SIZE_OPTIONS = [
-  "1–10", "11–50", "51–200", "201–500", "500+"
-];
-
-const FUNDING_STAGE_OPTIONS = [
-  "Pre-seed", "Seed", "Series A", "Series B", "Series C", "Series D+", "Public", "Grant-funded"
-];
+const EXPLICIT_DEVELOPMENT_STAGE_OPTIONS = DEVELOPMENT_STAGE_OPTIONS.filter(
+  (stage) => stage !== 'All stages'
+);
 const CAL_BOOKING_URL = 'https://cal.com/emma-arcova/45-min-meeting';
 
 // --- Types ---
@@ -164,6 +140,12 @@ const DEFAULT_FORM_DATA: CompanyFormData = {
   exampleCompanies: [],
 };
 
+function normalizeDevelopmentStages(stages: string[] | undefined): string[] {
+  if (!stages || stages.length === 0) return [];
+  if (stages.includes('All stages')) return [...EXPLICIT_DEVELOPMENT_STAGE_OPTIONS];
+  return stages;
+}
+
 const ENGAGEMENT_LOCKED_SIGNAL_IDS = [
   'attended_your_webinar_or_event',
   'visited_your_website',
@@ -186,7 +168,14 @@ const CRM_LOCKED_SIGNAL_IDS = [
 
 export default function CompanyForm({ mode, initialData, onSave, onCancel }: CompanyFormProps) {
   const [currentSection, setCurrentSection] = useState(1);
-  const [formData, setFormData] = useState<CompanyFormData>(initialData ?? DEFAULT_FORM_DATA);
+  const [formData, setFormData] = useState<CompanyFormData>(
+    initialData
+      ? {
+          ...initialData,
+          developmentStages: normalizeDevelopmentStages(initialData.developmentStages),
+        }
+      : DEFAULT_FORM_DATA
+  );
   const [companyUrl, setCompanyUrl] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isGeneratingName, setIsGeneratingName] = useState(false);
@@ -266,14 +255,19 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
     }
   };
 
-  const navigateToSection = (section: number) => {
+  const navigateToSection = async (section: number) => {
+    if (section === 6 && !formData.name.trim() && !isGeneratingName) {
+      await generateName({ silent: true });
+    }
     if (section === 7) loadSignals();
     setCurrentSection(section);
   };
 
   // --- Handlers ---
 
-  const generateName = async () => {
+  const generateName = async ({ silent = false }: { silent?: boolean } = {}) => {
+    if (!formData.companyType || isGeneratingName) return;
+
     setIsGeneratingName(true);
     try {
       const response = await fetch('/api/generate-icp-name', {
@@ -285,7 +279,9 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
       if (response.ok) {
         const result = await response.json();
         setFormData(prev => ({ ...prev, name: result.name }));
-        toast.success('Name generated!');
+        if (!silent) {
+          toast.success('Name generated!');
+        }
       } else {
         toast.error('Failed to generate name');
       }
@@ -345,6 +341,29 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
   };
 
   const handleMultiSelect = (field: 'therapeuticAreas' | 'modalities' | 'developmentStages' | 'companySizes' | 'fundingStages', value: string) => {
+    if (field === 'developmentStages') {
+      const currentArray = normalizeDevelopmentStages(formData.developmentStages);
+
+      if (value === 'All stages') {
+        const allSelected = EXPLICIT_DEVELOPMENT_STAGE_OPTIONS.every((stage) => currentArray.includes(stage));
+        setFormData((prev) => ({
+          ...prev,
+          developmentStages: allSelected ? [] : [...EXPLICIT_DEVELOPMENT_STAGE_OPTIONS],
+        }));
+        return;
+      }
+
+      const nextStages = currentArray.includes(value)
+        ? currentArray.filter((item) => item !== value)
+        : [...currentArray, value];
+
+      setFormData((prev) => ({
+        ...prev,
+        developmentStages: nextStages,
+      }));
+      return;
+    }
+
     const currentArray = formData[field];
     if (currentArray.includes(value)) {
       setFormData(prev => ({ ...prev, [field]: currentArray.filter(item => item !== value) }));
@@ -454,7 +473,7 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
     }
   };
 
-  const handleNext = (e: React.MouseEvent) => {
+  const handleNext = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     if (currentSection === 1 && !formData.companyType) {
@@ -465,7 +484,7 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
       toast.error('Please enter an ICP name');
       return;
     }
-    navigateToSection(currentSection + 1);
+    await navigateToSection(currentSection + 1);
   };
 
   return (
@@ -640,18 +659,28 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
               <p className="text-sm text-gray-500 mb-4">Which stages are most relevant to you?</p>
               <div className="flex flex-wrap gap-2">
                 {DEVELOPMENT_STAGE_OPTIONS.map((stage) => (
+                  (() => {
+                    const selectedStages = normalizeDevelopmentStages(formData.developmentStages);
+                    const isSelected =
+                      stage === 'All stages'
+                        ? EXPLICIT_DEVELOPMENT_STAGE_OPTIONS.every((option) => selectedStages.includes(option))
+                        : selectedStages.includes(stage);
+
+                    return (
                   <button
                     key={stage}
                     type="button"
                     onClick={() => handleMultiSelect('developmentStages', stage)}
                     className={`px-3 py-1.5 rounded-full text-sm transition-colors ${
-                      formData.developmentStages.includes(stage)
+                      isSelected
                         ? 'bg-arcova-teal text-white'
                         : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                     }`}
                   >
                     {stage}
                   </button>
+                    );
+                  })()
                 ))}
               </div>
             </div>
@@ -696,7 +725,7 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
                 />
                 <button
                   type="button"
-                  onClick={generateName}
+                  onClick={() => generateName()}
                   disabled={isGeneratingName}
                   className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm flex items-center gap-2 disabled:opacity-50"
                 >

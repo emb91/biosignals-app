@@ -1,177 +1,200 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
+import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@/lib/supabase-server';
+import { enrichOrganizationWithApollo } from '@/lib/apollo';
+import {
+  analyseCompanyWithClaude,
+  scrapeLinkedInCompany,
+  extractApifyFirmographics,
+  normalizeLinkedInCompanyUrl,
+} from '@/lib/my-company-enrichment';
+import { resolveCompanyTaxonomy } from '@/lib/company-monitor/taxonomy';
+
+function normalizeDomain(value?: string | null): string | null {
+  const trimmed = (value ?? '').trim().toLowerCase();
+  if (!trimmed) return null;
+  return trimmed
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .replace(/\/.*$/, '');
+}
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createClient()
-    
-    // Get authenticated user
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    
+    const supabase = await createClient();
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
+
     if (authError || !user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { website } = await request.json()
-
+    const { website } = await request.json() as { website?: string };
     if (!website) {
-      return NextResponse.json(
-        { error: 'Website URL is required' },
-        { status: 400 }
-      )
+      return NextResponse.json({ error: 'Website URL is required' }, { status: 400 });
     }
 
-    const n8nWebhookUrl = process.env.N8N_COMPANY_ANALYSIS_WEBHOOK
-    
-    if (!n8nWebhookUrl) {
-      return NextResponse.json(
-        { error: 'Analysis service is not configured' },
-        { status: 500 }
-      )
+    const domain = normalizeDomain(website);
+    console.log('[analyze-and-store] Analysing', website, '| domain:', domain);
+
+    // ── Step 1: Claude web_search + Apollo org enrich in parallel ─────────────
+    const [claudeResult, apolloResult] = await Promise.allSettled([
+      analyseCompanyWithClaude(website),
+      enrichOrganizationWithApollo({ company_domain: domain }),
+    ]);
+
+    const narrative =
+      claudeResult.status === 'fulfilled' ? claudeResult.value : {};
+    const apollo =
+      apolloResult.status === 'fulfilled' ? apolloResult.value : {};
+
+    if (claudeResult.status === 'rejected') {
+      console.error('[analyze-and-store] Claude failed:', claudeResult.reason);
+    }
+    if (apolloResult.status === 'rejected') {
+      console.error('[analyze-and-store] Apollo failed:', apolloResult.reason);
     }
 
-    // Call n8n with timeout
-    console.log('Calling n8n webhook:', n8nWebhookUrl)
-    
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 300000) // 5 minute timeout
-    
-    const response = await fetch(n8nWebhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ website }),
-      signal: controller.signal,
-    })
-    
-    clearTimeout(timeoutId)
+    // ── Step 2: Resolve LinkedIn URL — Apollo first, Claude fallback ──────────
+    const linkedinUrl =
+      normalizeLinkedInCompanyUrl(
+        typeof apollo.company_linkedin_url === 'string' ? apollo.company_linkedin_url : null,
+      ) ??
+      normalizeLinkedInCompanyUrl(
+        typeof narrative.linkedin_url === 'string' ? narrative.linkedin_url : null,
+      );
 
-    if (!response.ok) {
-      const errorText = await response.text()
-      console.error('n8n webhook failed:', response.status, errorText)
-      return NextResponse.json(
-        { error: `Analysis service failed: ${response.status}` },
-        { status: 502 }
-      )
+    // ── Step 3: Apify LinkedIn scrape (sequential — needs LinkedIn URL) ────────
+    let apifyRaw: Record<string, unknown> | null = null;
+
+    if (linkedinUrl) {
+      console.log('[analyze-and-store] Scraping LinkedIn:', linkedinUrl);
+      apifyRaw = await scrapeLinkedInCompany(linkedinUrl).catch((err: unknown) => {
+        console.error('[analyze-and-store] Apify failed:', err);
+        return null;
+      });
+    } else {
+      console.log('[analyze-and-store] No LinkedIn URL found — skipping Apify');
     }
 
-    const rawData = await response.json()
-    console.log('Raw n8n response:', JSON.stringify(rawData, null, 2))
-    
-    // Parse n8n response - handle Anthropic's response format
-    let analysisData
-    
-    // Anthropic format: [{ content: [{ type: "text", text: "```json\n{...}\n```" }] }]
-    if (rawData[0]?.content?.[0]?.text) {
-      const textContent = rawData[0].content[0].text
-      // Extract JSON from markdown code block
-      const jsonMatch = textContent.match(/```json\n?([\s\S]*?)\n?```/)
-      if (jsonMatch) {
-        try {
-          analysisData = JSON.parse(jsonMatch[1])
-        } catch (e) {
-          console.error('Failed to parse JSON from code block:', e)
-        }
-      }
-      // Try parsing the whole text if no code block
-      if (!analysisData) {
-        try {
-          analysisData = JSON.parse(textContent)
-        } catch (e) {
-          console.error('Failed to parse text as JSON:', e)
-        }
-      }
-    }
-    // OpenAI format: [{ message: { content: ... } }]
-    else if (rawData[0]?.message?.content) {
-      const content = rawData[0].message.content
-      if (typeof content === 'string') {
-        const jsonMatch = content.match(/```json\n?([\s\S]*?)\n?```/)
-        if (jsonMatch) {
-          try {
-            analysisData = JSON.parse(jsonMatch[1])
-          } catch (e) {
-            analysisData = JSON.parse(content)
-          }
-        } else {
-          analysisData = JSON.parse(content)
-        }
-      } else {
-        analysisData = content
-      }
-    }
-    // Direct JSON format
-    else if (rawData[0]?.json) {
-      analysisData = rawData[0].json
-    } else if (rawData[0] && typeof rawData[0] === 'object' && !rawData[0].content) {
-      analysisData = rawData[0]
-    } else if (rawData && typeof rawData === 'object' && !Array.isArray(rawData)) {
-      analysisData = rawData
+    const apify = extractApifyFirmographics(apifyRaw);
+
+    // ── Step 4: Taxonomy — dedicated LLM with canonical allowed values ─────────
+    // Uses the same resolveCompanyTaxonomy used for leads, so company_type,
+    // therapeutic_areas, modalities, and development_stages are constrained to
+    // Arcova's controlled taxonomy (not free-text from Claude web_search).
+    const companyNameForTaxonomy =
+      typeof narrative.company_name === 'string' ? narrative.company_name :
+      typeof apollo.company_name === 'string' ? apollo.company_name : '';
+
+    let taxonomy: Awaited<ReturnType<typeof resolveCompanyTaxonomy>> | null = null;
+    if (companyNameForTaxonomy || domain) {
+      console.log('[analyze-and-store] Running taxonomy classification');
+      taxonomy = await resolveCompanyTaxonomy({
+        company_name: companyNameForTaxonomy,
+        domain,
+        apify_company_firmographics: apifyRaw,
+        apollo_company_firmographics: Object.keys(apollo).length > 0
+          ? (apollo as Record<string, unknown>)
+          : null,
+      }).catch((err: unknown) => {
+        console.error('[analyze-and-store] Taxonomy failed:', err);
+        return null;
+      });
     }
 
-    if (!analysisData || Object.keys(analysisData).length === 0) {
-      console.error('Could not parse analysis data from response')
-      return NextResponse.json(
-        { error: 'Invalid response from analysis service' },
-        { status: 500 }
-      )
-    }
-    
-    console.log('Parsed analysis data:', JSON.stringify(analysisData, null, 2))
+    // ── Step 5: Merge ─────────────────────────────────────────────────────────
+    // Preference: Apollo for business/funding data; Apify for social/LinkedIn data.
+    // Claude supplies all narrative array fields.
+    const { linkedin_url: _claudeLinkedin, ...narrativeRest } = narrative;
+    void _claudeLinkedin;
 
-    // Check if user already has an analysis
+    const mergedData = {
+      // Narrative (Claude)
+      ...narrativeRest,
+
+      // Meta
+      website,
+      domain,
+      analyzed_at: new Date().toISOString(),
+      status: 'completed',
+
+      // Resolved LinkedIn URL
+      linkedin_url: linkedinUrl ?? null,
+
+      // Firmographic scalars
+      employee_count: apollo.company_employee_count ?? apify.employee_count ?? null,
+      employee_range: apify.employee_range ?? null,
+      follower_count: apify.follower_count ?? null,
+      founded_year: apollo.company_founded_year ?? apify.founded_year ?? null,
+      funding_stage: apollo.company_funding_stage ?? null,
+      total_funding_usd: apollo.company_total_funding_usd ?? null,
+      latest_funding_date: apollo.company_latest_funding_date ?? null,
+      hq_city: apollo.company_hq_city ?? apify.hq_city ?? null,
+      hq_country: apollo.company_hq_country ?? apify.hq_country ?? null,
+      industry: apollo.company_industry ?? apify.industry ?? null,
+      logo_url: apify.logo_url ?? null,
+      tagline: apify.tagline ?? null,
+      specialties: apify.specialties ?? null,
+
+      // Taxonomy (canonical values from resolveCompanyTaxonomy)
+      company_type: taxonomy?.company_type ?? null,
+      company_type_display: taxonomy?.company_type_display ?? null,
+      therapeutic_areas: taxonomy?.therapeutic_areas ?? null,
+      modalities: taxonomy?.modalities ?? null,
+      development_stages: taxonomy?.development_stages ?? null,
+
+      // Company ownership / funding status from Claude (handles public companies Apollo can't)
+      company_status: typeof narrative.company_status === 'string' ? narrative.company_status : null,
+
+      // Structured competitors (name + url) from Claude
+      competitors_enriched: Array.isArray(narrative.competitors_enriched)
+        ? narrative.competitors_enriched
+        : null,
+
+      // Raw blobs
+      apollo_firmographics: Object.keys(apollo).length > 0 ? apollo : null,
+      apify_firmographics: apifyRaw,
+    };
+
+    // ── Step 6: Upsert into company_analyses ──────────────────────────────────
     const { data: existing } = await supabase
       .from('company_analyses')
       .select('id')
       .eq('user_id', user.id)
       .limit(1)
-      .maybeSingle()
+      .maybeSingle();
 
-    let result
+    let result;
     if (existing) {
-      // Update existing
       const { data, error } = await supabase
         .from('company_analyses')
-        .update({
-          ...analysisData,
-          website,
-          analyzed_at: new Date().toISOString(),
-          status: 'completed',
-        })
+        .update(mergedData)
         .eq('id', existing.id)
         .select()
-        .single()
-      
-      if (error) throw error
-      result = data
+        .single();
+      if (error) throw error;
+      result = data;
     } else {
-      // Insert new
       const { data, error } = await supabase
         .from('company_analyses')
-        .insert({
-          user_id: user.id,
-          user_email: user.email,
-          ...analysisData,
-          website,
-          analyzed_at: new Date().toISOString(),
-          status: 'completed',
-        })
+        .insert({ user_id: user.id, user_email: user.email, ...mergedData })
         .select()
-        .single()
-      
-      if (error) throw error
-      result = data
+        .single();
+      if (error) throw error;
+      result = data;
     }
 
-    return NextResponse.json(result)
+    console.log('[analyze-and-store] Done. employee_count:', result.employee_count,
+      'follower_count:', result.follower_count, 'funding_stage:', result.funding_stage);
 
+    return NextResponse.json(result);
   } catch (error) {
-    console.error('Error in API route:', error)
+    console.error('[analyze-and-store] Error:', error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Internal server error' },
-      { status: 500 }
-    )
+      { status: 500 },
+    );
   }
 }

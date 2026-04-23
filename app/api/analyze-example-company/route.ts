@@ -1,5 +1,57 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { NextResponse } from 'next/server';
+import {
+  COMPANY_SIZE_OPTIONS,
+  COMPANY_TYPE_OPTIONS,
+  DEVELOPMENT_STAGE_OPTIONS,
+  FUNDING_STAGE_OPTIONS,
+  MODALITY_OPTIONS,
+  THERAPEUTIC_AREA_OPTIONS,
+  canonicalizeCompanyType,
+  canonicalizeModality,
+  canonicalizeTherapeuticArea,
+  expandModalitiesWithParents,
+} from '@/lib/arcova-taxonomy';
+
+function canonicalizeArray<T extends string>(
+  value: unknown,
+  canonicalize: (item: unknown) => T | null
+): T[] {
+  const items = Array.isArray(value) ? value : typeof value === 'string' ? [value] : [];
+  const result: T[] = [];
+
+  for (const item of items) {
+    const canonical = canonicalize(item);
+    if (canonical && !result.includes(canonical)) result.push(canonical);
+  }
+
+  return result;
+}
+
+function normalizeAnalysisData(
+  analysisData: Record<string, unknown>,
+  url: string
+): Record<string, unknown> {
+  const modalities = expandModalitiesWithParents(
+    canonicalizeArray(analysisData.modality || analysisData.modalities, canonicalizeModality)
+  );
+  const therapeuticAreas = canonicalizeArray(
+    analysisData.therapeutic_area || analysisData.therapeuticArea || analysisData.therapeutic_areas,
+    canonicalizeTherapeuticArea
+  );
+
+  return {
+    companyName: analysisData.company_name || analysisData.companyName || extractCompanyNameFromUrl(url),
+    therapeuticArea: therapeuticAreas[0] || null,
+    therapeuticAreas,
+    modality: modalities,
+    fundingStage: analysisData.funding_stage || analysisData.fundingStage || null,
+    companySize: analysisData.company_size || analysisData.companySize || analysisData.headcount || null,
+    developmentStage:
+      analysisData.development_stage || analysisData.developmentStage || analysisData.pipeline_stage || null,
+    companyType: canonicalizeCompanyType(analysisData.company_type || analysisData.companyType),
+  };
+}
 
 export async function POST(request: Request) {
   try {
@@ -73,16 +125,7 @@ export async function POST(request: Request) {
         }
 
         if (analysisData) {
-          // Map the response to our expected format
-          return NextResponse.json({
-            companyName: analysisData.company_name || analysisData.companyName || extractCompanyNameFromUrl(url),
-            therapeuticArea: analysisData.therapeutic_area || analysisData.therapeuticArea || null,
-            modality: analysisData.modality || null,
-            fundingStage: analysisData.funding_stage || analysisData.fundingStage || null,
-            companySize: analysisData.company_size || analysisData.companySize || analysisData.headcount || null,
-            developmentStage: analysisData.development_stage || analysisData.developmentStage || analysisData.pipeline_stage || null,
-            companyType: analysisData.company_type || analysisData.companyType || null,
-          });
+          return NextResponse.json(normalizeAnalysisData(analysisData, url));
         }
       } catch (n8nError) {
         console.error('n8n workflow error, falling back to direct analysis:', n8nError);
@@ -141,11 +184,12 @@ Based on the URL${pageContent ? ' and website content' : ''}, infer the followin
 Return a JSON object with these fields:
 {
   "companyName": "The company name (required, infer from URL if needed)",
-  "therapeuticArea": "Primary therapeutic area (e.g., Oncology, Neuroscience, Rare Disease, Immunology, Cardiovascular, Infectious Disease) or null",
-  "modality": "Primary drug modality (e.g., Small Molecule, Antibody, Bispecific, ADC, Cell Therapy, Gene Therapy, RNA Therapy, Peptide) or null",
-  "fundingStage": "Funding stage (e.g., Pre-seed, Seed, Series A, Series B, Series C, Series D+, Public, Grant-funded) or null",
-  "companySize": "Headcount range (e.g., 1-10, 11-50, 51-200, 201-500, 500+) or null",
-  "developmentStage": "Most advanced pipeline stage (e.g., Preclinical, Phase I, Phase II, Phase III, Commercial) or null"
+  "therapeuticAreas": ["All relevant values from: ${THERAPEUTIC_AREA_OPTIONS.join(', ')}"],
+  "modality": ["All relevant values from: ${MODALITY_OPTIONS.join(', ')}"],
+  "fundingStage": "Funding stage from: ${FUNDING_STAGE_OPTIONS.join(', ')} or null",
+  "companySize": "Headcount range from: ${COMPANY_SIZE_OPTIONS.join(', ')} or null",
+  "developmentStage": "Most advanced pipeline stage from: ${DEVELOPMENT_STAGE_OPTIONS.join(', ')} or null",
+  "companyType": "Company type from: ${COMPANY_TYPE_OPTIONS.map((option) => option.value).join(', ')} or null"
 }
 
 Do not include em dashes in your response.
@@ -171,7 +215,7 @@ Return ONLY the JSON object, no explanation or markdown formatting.`;
       }
     }
 
-    return NextResponse.json(companyData);
+    return NextResponse.json(normalizeAnalysisData(companyData, url));
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error('Error analyzing company:', errorMessage);

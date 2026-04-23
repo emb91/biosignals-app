@@ -952,7 +952,7 @@ export default function ImportPage() {
                     </p>
                     <p className="mt-2 text-sm text-gray-600">
                       {enoughHighFitLeads
-                        ? 'You have enough high-fit leads to start working this persona in outreach.'
+                        ? 'You have enough high-fit leads to start working this team in outreach.'
                         : `Most outreach programs need ${HIGH_FIT_TARGET}+ high-fit leads to see consistent results.`}
                     </p>
 
@@ -968,7 +968,7 @@ export default function ImportPage() {
                           href="/find-more-leads"
                           className="px-4 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:border-gray-400 hover:text-gray-900 transition-colors"
                         >
-                          Find more leads matching this persona →
+                          Find more leads matching this team →
                         </Link>
                       )}
                     </div>

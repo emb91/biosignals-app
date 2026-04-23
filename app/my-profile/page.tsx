@@ -3,11 +3,15 @@
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import AppSidebar from '@/components/AppSidebar';
+import SetupShell from '@/components/SetupShell';
+import SetupFlow from '@/components/SetupFlow';
+import { useSetupState } from '@/lib/use-setup-state';
 import { supabase } from '@/lib/supabase';
 export default function CompanyAnalysisPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const setupState = useSetupState();
+  const inSetup = !setupState.setupComplete;
   const [websiteUrl, setWebsiteUrl] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResults, setAnalysisResults] = useState<any>(null);
@@ -62,34 +66,27 @@ export default function CompanyAnalysisPage() {
     loadExistingAnalysis();
   }, [user]);
 
-  const handleAnalyze = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!websiteUrl.trim()) return;
-
-    let formattedUrl = websiteUrl.trim();
-    if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
-      formattedUrl = 'https://' + formattedUrl;
-    }
-
+  // Core analysis function — called by both the welcome step and the re-analyze form.
+  const runAnalysis = async (formattedUrl: string) => {
     setIsAnalyzing(true);
     setError('');
-    
-    const messages = [
+
+    const loadingMessages = [
       'Thinking...',
       'Visiting your website...',
       'Scanning for details...',
-      'Analyzing content...',
-      'Building your profile...'
+      'Analysing content...',
+      'Building your profile...',
     ];
-    
+
     let messageIndex = 0;
-    setLoadingMessage(messages[0]);
-    
+    setLoadingMessage(loadingMessages[0]);
+
     const messageInterval = setInterval(() => {
-      messageIndex = (messageIndex + 1) % messages.length;
-      setLoadingMessage(messages[messageIndex]);
+      messageIndex = (messageIndex + 1) % loadingMessages.length;
+      setLoadingMessage(loadingMessages[messageIndex]);
     }, 3000);
-    
+
     try {
       const response = await fetch('/api/analyze-and-store', {
         method: 'POST',
@@ -106,15 +103,13 @@ export default function CompanyAnalysisPage() {
       setAnalysisResults(data);
       setEditedResults(data);
       setShowAnalyzeForm(false);
-
     } catch (err) {
       console.error('Error:', err);
-      
+
       let userMessage = 'Something went wrong. Please try again.';
-      
+
       if (err instanceof Error) {
         const errorMsg = err.message.toLowerCase();
-        
         if (errorMsg.includes('503') || errorMsg.includes('502') || errorMsg.includes('forbidden')) {
           userMessage = "This website is blocking our requests. Try a different company website!";
         } else if (errorMsg.includes('timeout')) {
@@ -123,12 +118,22 @@ export default function CompanyAnalysisPage() {
           userMessage = "Your session expired. Please refresh the page.";
         }
       }
-      
+
       setError(userMessage);
     } finally {
       clearInterval(messageInterval);
       setIsAnalyzing(false);
     }
+  };
+
+  const handleAnalyze = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!websiteUrl.trim()) return;
+    let formattedUrl = websiteUrl.trim();
+    if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
+      formattedUrl = 'https://' + formattedUrl;
+    }
+    await runAnalysis(formattedUrl);
   };
 
   const toggleEditSection = (sectionKey: string) => {
@@ -252,7 +257,7 @@ export default function CompanyAnalysisPage() {
   const handleConfirmNext = async () => {
     if (!editedResults?.id || !user) {
       setShowConfirmModal(false);
-      router.push('/companies');
+      router.push('/company-criteria');
       return;
     }
 
@@ -269,7 +274,7 @@ export default function CompanyAnalysisPage() {
       }
 
       setShowConfirmModal(false);
-      router.push('/companies');
+      router.push('/company-criteria');
     } catch (err) {
       console.error('Error saving:', err);
       setError('Failed to save changes');
@@ -279,7 +284,7 @@ export default function CompanyAnalysisPage() {
     }
   };
 
-  if (loading || loadingExisting) {
+  if (loading || loadingExisting || setupState.loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-arcova-teal"></div>
@@ -290,6 +295,15 @@ export default function CompanyAnalysisPage() {
   if (!user) {
     return null;
   }
+
+  // Derive first name from Supabase auth metadata or email prefix
+  const firstName = (() => {
+    const meta = user.user_metadata as Record<string, unknown> | undefined;
+    const fullName = String(meta?.full_name || meta?.name || '').trim();
+    if (fullName) return fullName.split(' ')[0];
+    const emailPrefix = (user.email || '').split('@')[0];
+    return emailPrefix ? emailPrefix.charAt(0).toUpperCase() + emailPrefix.slice(1) : '';
+  })();
 
   // Helper to format array data for display
   const formatArrayValue = (value: any): string[] => {
@@ -313,19 +327,31 @@ export default function CompanyAnalysisPage() {
   const sections = getSections();
 
   return (
-    <div className="flex h-screen bg-gray-50">
-      <AppSidebar />
-      
+    <SetupShell
+      inSetup={inSetup}
+      step={1}
+      setupUserGreeting={firstName || undefined}
+      hideSetupProgress={inSetup && !analysisResults && !showAnalyzeForm}
+    >
       <div className="flex-1 flex flex-col min-h-0">
-        {/* Content Area */}
+
+        {/* ── First-time welcome: conversational chat flow ─────────── */}
+        {!analysisResults && !showAnalyzeForm && (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <SetupFlow firstName={firstName} />
+          </div>
+        )}
+
+        {/* Content Area (results + re-analyze form) */}
+        {(analysisResults || showAnalyzeForm) && (
         <div className="flex-1 overflow-y-auto p-4">
           <div className="max-w-4xl mx-auto">
-            {/* URL Input Form - only show when no results or user clicked Re-analyze */}
-            {(!analysisResults || showAnalyzeForm) && (
+            {/* Re-analyze form — only shown when user clicks "Re-analyze" */}
+            {showAnalyzeForm && (
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-8">
                 <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-2xl font-bold text-gray-900">Company Analysis</h2>
-                  {showAnalyzeForm && analysisResults && (
+                  <h2 className="text-2xl font-bold text-gray-900">Re-analyse your company</h2>
+                  {analysisResults && (
                     <button
                       onClick={() => setShowAnalyzeForm(false)}
                       className="text-sm text-gray-500 hover:text-gray-700"
@@ -335,15 +361,15 @@ export default function CompanyAnalysisPage() {
                   )}
                 </div>
                 <p className="text-gray-600 mb-6">
-                  Let's analyze your business model. Please enter your company website.
+                  Enter your company website and I&apos;ll update your profile.
                 </p>
-                
+
                 <form onSubmit={handleAnalyze} className="flex gap-4">
                   <input
                     type="text"
                     value={websiteUrl}
                     onChange={(e) => setWebsiteUrl(e.target.value)}
-                    placeholder="Enter company website (e.g. acme.com)"
+                    placeholder="yourcompany.com"
                     className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-arcova-teal focus:border-transparent"
                     disabled={isAnalyzing}
                   />
@@ -352,20 +378,18 @@ export default function CompanyAnalysisPage() {
                     disabled={isAnalyzing || !websiteUrl.trim()}
                     className="px-6 py-3 bg-arcova-teal text-white font-semibold rounded-lg hover:bg-arcova-teal/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
-                    {isAnalyzing ? loadingMessage : 'Analyze'}
+                    {isAnalyzing ? loadingMessage : 'Analyse'}
                   </button>
                 </form>
 
                 {error && (
-                  <div className="mt-4 p-4 bg-red-50 text-red-700 rounded-lg">
-                    {error}
-                  </div>
+                  <div className="mt-4 p-4 bg-red-50 text-red-700 rounded-lg">{error}</div>
                 )}
               </div>
             )}
 
-            {/* Loading State */}
-            {isAnalyzing && (
+            {/* Loading State (re-analyze) */}
+            {isAnalyzing && showAnalyzeForm && (
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-arcova-teal mx-auto mb-4"></div>
                 <p className="text-lg text-gray-600">{loadingMessage}</p>
@@ -599,7 +623,8 @@ export default function CompanyAnalysisPage() {
 
           </div>
         </div>
+        )}
       </div>
-    </div>
+    </SetupShell>
   );
 }

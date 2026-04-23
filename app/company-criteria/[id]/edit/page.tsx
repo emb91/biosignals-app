@@ -27,7 +27,7 @@ export default function ICPEditPage() {
       if (!user || !icpId) return;
 
       try {
-        const response = await fetch(`/api/companies/${icpId}`);
+        const response = await fetch(`/api/company-criteria/${icpId}`);
         if (response.ok) {
           const result = await response.json();
           if (result.data) {
@@ -66,12 +66,12 @@ export default function ICPEditPage() {
           }
         } else {
           toast.error('ICP not found');
-          router.push('/companies');
+          router.push('/company-criteria');
         }
       } catch (error) {
         console.error('Error loading ICP:', error);
         toast.error('Failed to load ICP');
-        router.push('/companies');
+        router.push('/company-criteria');
       } finally {
         setLoadingIcp(false);
       }
@@ -83,7 +83,7 @@ export default function ICPEditPage() {
   }, [user, icpId, router]);
 
   const handleSave = async (formData: CompanyFormData) => {
-    const response = await fetch(`/api/companies/${icpId}`, {
+    const response = await fetch(`/api/company-criteria/${icpId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -95,7 +95,7 @@ export default function ICPEditPage() {
     if (!response.ok) throw new Error('Failed to save ICP');
 
     toast.success('ICP updated successfully');
-    router.push('/companies');
+    router.push('/company-criteria');
   };
 
   if (loading || loadingIcp) {
@@ -117,7 +117,7 @@ export default function ICPEditPage() {
             mode="edit"
             initialData={initialData}
             onSave={handleSave}
-            onCancel={() => router.push('/companies')}
+            onCancel={() => router.push('/company-criteria')}
           />
         </div>
       </div>

@@ -367,6 +367,9 @@ export default function PersonaForm({
   );
 
   const selectedCompany = companyProfiles.find(c => c.id === selectedCompanyId);
+  const availableCompanyCount = companyProfiles.filter((company) => !companyContactsMap?.[company.id]).length;
+  const allCompaniesAlreadyHavePersonas =
+    mode === 'create' && companyProfiles.length > 0 && availableCompanyCount === 0;
 
   const combinedRoleOptions = Array.from(
     new Set(
@@ -723,18 +726,18 @@ export default function PersonaForm({
       }
 
       if (!formData.name.trim()) {
-        toast.error('Please enter a name for this buyer persona');
+        toast.error('Please enter a name for this team');
         return;
       }
     }
 
     setIsSaving(true);
     try {
-      const saveName = formData.name.trim() || `Draft persona at ${selectedCompany?.name || 'selected company'}`;
+      const saveName = formData.name.trim() || `Draft team at ${selectedCompany?.name || 'selected company'}`;
       await onSave({ ...formData, name: saveName, icpId: selectedCompanyId });
     } catch (error) {
-      console.error('Error saving persona:', error);
-      toast.error('Failed to save persona. Please try again.');
+      console.error('Error saving team:', error);
+      toast.error('Failed to save team. Please try again.');
     } finally {
       setIsSaving(false);
     }
@@ -754,12 +757,12 @@ export default function PersonaForm({
 
     setIsSaving(true);
     try {
-      const saveName = formData.name.trim() || `Draft persona at ${selectedCompany?.name || 'selected company'}`;
+      const saveName = formData.name.trim() || `Draft team at ${selectedCompany?.name || 'selected company'}`;
       await onSave({ ...formData, name: saveName, icpId: selectedCompanyId });
       onCancel();
     } catch (error) {
-      console.error('Error saving persona draft:', error);
-      toast.error('Failed to save persona. Please try again.');
+      console.error('Error saving team draft:', error);
+      toast.error('Failed to save team. Please try again.');
     } finally {
       setIsSaving(false);
     }
@@ -787,7 +790,7 @@ export default function PersonaForm({
         <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200 flex items-center justify-between">
           <div>
             <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">
-              {mode === 'edit' ? 'Editing persona for' : 'Creating buyer segment for'}
+              {mode === 'edit' ? 'Editing team for' : 'Creating team for'}
             </p>
             <p className="font-medium text-gray-900">{selectedCompany.name}</p>
           </div>
@@ -855,7 +858,7 @@ export default function PersonaForm({
             <div className="space-y-4">
               <div>
                 <h2 className="text-lg font-semibold text-gray-900 mb-1">Define your buyers</h2>
-                <p className="text-sm text-gray-500 mb-4">Select a target company, then tell us who you typically sell to there.</p>
+                <p className="text-sm text-gray-500 mb-4">Select one of your saved company profiles, then define the team you typically sell to there.</p>
               </div>
 
               {companyProfiles.length === 0 ? (
@@ -866,10 +869,33 @@ export default function PersonaForm({
                     </svg>
                   </div>
                   <h3 className="text-lg font-medium text-gray-900 mb-2">No company profiles yet</h3>
-                  <p className="text-gray-500 mb-4">Create a company profile first to define personas for it.</p>
+                  <p className="text-gray-500 mb-4">Create a company profile first to define teams for it.</p>
                 </div>
               ) : (
                 <div className="space-y-3">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Saved Company Profiles</p>
+                    <p className="mt-1 text-sm text-gray-500">These are the company types you defined in the previous form.</p>
+                  </div>
+
+                  {allCompaniesAlreadyHavePersonas && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+                      <p className="text-sm font-medium text-amber-900">You’ll need another company profile to create a new team.</p>
+                      <p className="mt-1 text-sm text-amber-800">
+                        Every current company already has a team. Add one more company profile, then come back here to create another.
+                      </p>
+                      <a
+                        href="/company-criteria/new"
+                        className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-amber-900 hover:text-amber-950"
+                      >
+                        Add another company
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
+                        </svg>
+                      </a>
+                    </div>
+                  )}
+
                   {companyProfiles.map((company) => {
                     const hasContacts = !!companyContactsMap?.[company.id];
                     return (
@@ -882,13 +908,13 @@ export default function PersonaForm({
                             ? 'border-arcova-teal bg-arcova-teal/5'
                             : 'border-gray-200 hover:border-arcova-teal/50'
                         }`}
-                      >
-                        {hasContacts && (
-                          <span className="absolute top-3 right-3 px-2 py-0.5 bg-arcova-teal text-white text-xs font-medium rounded-full flex items-center gap-1">
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                        >
+                          {hasContacts && (
+                            <span className="absolute top-3 right-3 px-2 py-0.5 bg-arcova-teal text-white text-xs font-medium rounded-full flex items-center gap-1">
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
                             </svg>
-                            Contacts added
+                            Team added
                           </span>
                         )}
                         <div className="flex items-start justify-between">
@@ -914,6 +940,11 @@ export default function PersonaForm({
                             </div>
                           </div>
                         </div>
+                        {hasContacts && (
+                          <p className="mt-3 text-xs text-gray-500">
+                            This company already has a team. Add another company profile if you want to create a new one.
+                          </p>
+                        )}
                       </button>
                     );
                   })}
@@ -1468,9 +1499,9 @@ export default function PersonaForm({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
               </svg>
             </div>
-            <h2 className="text-2xl font-semibold text-gray-900 mb-2">Persona already added</h2>
+            <h2 className="text-2xl font-semibold text-gray-900 mb-2">Team already added</h2>
             <p className="text-gray-600 mb-6">
-              You've already set up a persona for this company. Click edit to view or update it.
+              You've already set up a team for this company. Click edit to view or update it.
             </p>
             <div className="flex flex-col gap-3 items-center">
               <button

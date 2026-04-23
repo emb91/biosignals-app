@@ -141,12 +141,26 @@ export default function DashboardPage() {
         const importComplete = !!importData;
         const signalsComplete = icps.some((icp) => hasSignals(icp.signals)) || contacts.some((contact) => hasSignals(contact.signals));
 
+        // Re-entry guard: send users to their next incomplete setup step
+        if (!profileComplete) {
+          router.replace('/arcova-setup');
+          return;
+        }
+        if (!companiesComplete) {
+          router.replace('/company-criteria');
+          return;
+        }
+        if (!personasComplete) {
+          router.replace('/personas');
+          return;
+        }
+
         const checklistSteps: SetupStep[] = [
-          { id: 'profile', label: 'My Profile', completed: profileComplete, actionPath: '/my-profile' },
-          { id: 'companies', label: 'Target Companies', completed: companiesComplete, actionPath: '/companies' },
-          { id: 'personas', label: 'Buyer Personas', completed: personasComplete, actionPath: '/personas' },
+          { id: 'profile', label: 'My company', completed: profileComplete, actionPath: '/arcova-setup' },
+          { id: 'companies', label: 'Target Companies', completed: companiesComplete, actionPath: '/company-criteria' },
+          { id: 'personas', label: 'Teams', completed: personasComplete, actionPath: '/personas' },
           { id: 'import', label: 'Upload your CSV', completed: importComplete, actionPath: '/import' },
-          { id: 'signals', label: 'Signals', completed: signalsComplete, actionPath: '/companies' },
+          { id: 'signals', label: 'Signals', completed: signalsComplete, actionPath: '/company-criteria' },
         ];
         setSteps(checklistSteps);
 
@@ -163,7 +177,7 @@ export default function DashboardPage() {
             label: icp.name || 'Unnamed company profile',
             signalType: getSignalDisplayName(icp.signals?.[0]),
             timestamp: icp.updated_at,
-            href: `/companies/${icp.id}/edit`,
+            href: `/company-criteria/${icp.id}/edit`,
           });
         });
 
@@ -216,7 +230,7 @@ export default function DashboardPage() {
             priorityScore,
             latestSignalType,
             latestSignalAt: newestTimestamp,
-            href: `/companies/${icp.id}/edit`,
+            href: `/company-criteria/${icp.id}/edit`,
           };
         });
 

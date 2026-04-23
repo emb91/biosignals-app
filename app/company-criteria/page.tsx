@@ -3,7 +3,8 @@
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import AppSidebar from '@/components/AppSidebar';
+import SetupShell from '@/components/SetupShell';
+import { useSetupState } from '@/lib/use-setup-state';
 import { toast, Toaster } from 'sonner';
 import { getSignalDisplayName } from '@/lib/signal-display-names';
 
@@ -23,6 +24,8 @@ interface ICP {
 export default function ICPManagerPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const setupState = useSetupState();
+  const inSetup = !setupState.setupComplete;
 
   const [icps, setIcps] = useState<ICP[]>([]);
   const [loadingIcps, setLoadingIcps] = useState(true);
@@ -40,7 +43,7 @@ export default function ICPManagerPage() {
       if (!user) return;
 
       try {
-        const response = await fetch('/api/companies');
+        const response = await fetch('/api/company-criteria');
         if (response.ok) {
           const result = await response.json();
           setIcps(result.data || []);
@@ -58,17 +61,17 @@ export default function ICPManagerPage() {
   }, [user]);
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this company profile? Any associated persona will also be deleted.')) return;
+    if (!confirm('Are you sure you want to delete this company profile? Any associated team will also be deleted.')) return;
 
     setDeletingId(id);
     try {
-      const response = await fetch(`/api/companies/${id}`, {
+      const response = await fetch(`/api/company-criteria/${id}`, {
         method: 'DELETE',
       });
 
       if (response.ok) {
         setIcps(icps.filter(icp => icp.id !== id));
-        toast.success('Company profile and associated persona deleted');
+        toast.success('Company profile and associated team deleted');
       } else {
         toast.error('Failed to delete ICP');
       }
@@ -109,17 +112,26 @@ export default function ICPManagerPage() {
   }
 
   return (
-    <div className="flex h-screen bg-gray-50">
-      <AppSidebar />
-      
+    <SetupShell inSetup={inSetup} step={2}>
       <div className="flex-1 flex flex-col min-h-0">
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto p-6">
           <div className="max-w-4xl mx-auto">
             {/* Header */}
-            <div className="mb-6">
-              <h1 className="text-2xl font-bold text-gray-900">Which companies do you sell to?</h1>
-              <p className="text-gray-600 mt-1">Tell us about the companies you sell to. We'll use these to find and score the best accounts for you. Create as many as you like.</p>
+            <div className="mb-6 flex items-start justify-between gap-4">
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900">Which companies do you sell to?</h1>
+                <p className="text-gray-600 mt-1">Tell us about the companies you sell to. We&apos;ll use these to find and score the best accounts for you. Create as many as you like.</p>
+              </div>
+              {/* Continue button — only shown in setup mode once at least one ICP exists */}
+              {inSetup && icps.length > 0 && (
+                <button
+                  onClick={() => router.push('/personas')}
+                  className="shrink-0 px-5 py-2.5 bg-arcova-teal text-white font-semibold rounded-lg hover:bg-arcova-teal/90 transition-colors text-sm"
+                >
+                  Next →
+                </button>
+              )}
             </div>
 
             {/* Main Content */}
@@ -133,14 +145,17 @@ export default function ICPManagerPage() {
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">No target company profiles yet</h3>
                 <p className="text-gray-500 mb-6">Get started by defining your first target company type.</p>
                 <button
-                  onClick={() => router.push('/companies/new')}
+                  onClick={() => router.push('/company-criteria/new')}
                   className="px-6 py-3 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors"
                 >
-                  + Create new company profile
+                  + Define new target company
                 </button>
               </div>
             ) : (
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                <div className="mb-5">
+                  <h2 className="text-lg font-semibold text-gray-900">These are the companies you typically sell to</h2>
+                </div>
                 <div className="space-y-4">
                   {/* ICP Cards */}
                   {icps.map((icp) => (
@@ -180,7 +195,7 @@ export default function ICPManagerPage() {
                           </div>
                           <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                             <button
-                              onClick={() => router.push(`/companies/${icp.id}/edit`)}
+                              onClick={() => router.push(`/company-criteria/${icp.id}/edit`)}
                               className="p-2 text-arcova-teal hover:bg-arcova-teal/10 rounded transition-colors"
                             >
                               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -335,10 +350,10 @@ export default function ICPManagerPage() {
 
                   {/* Create New Button */}
                   <button
-                    onClick={() => router.push('/companies/new')}
+                    onClick={() => router.push('/company-criteria/new')}
                     className="w-full border-2 border-dashed border-gray-300 rounded-lg p-4 text-gray-500 hover:border-arcova-teal hover:text-arcova-teal transition-colors flex items-center justify-center"
                   >
-                    + Create new company profile
+                    + Define new target company
                   </button>
                 </div>
               </div>
@@ -347,6 +362,6 @@ export default function ICPManagerPage() {
         </div>
       </div>
       <Toaster position="top-center" richColors />
-    </div>
+    </SetupShell>
   );
 }
