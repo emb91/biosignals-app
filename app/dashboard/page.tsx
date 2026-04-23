@@ -156,7 +156,7 @@ export default function DashboardPage() {
         }
 
         const checklistSteps: SetupStep[] = [
-          { id: 'profile', label: 'My Profile', completed: profileComplete, actionPath: '/arcova-setup' },
+          { id: 'profile', label: 'My company', completed: profileComplete, actionPath: '/arcova-setup' },
           { id: 'companies', label: 'Target Companies', completed: companiesComplete, actionPath: '/company-criteria' },
           { id: 'personas', label: 'Teams', completed: personasComplete, actionPath: '/personas' },
           { id: 'import', label: 'Upload your CSV', completed: importComplete, actionPath: '/import' },

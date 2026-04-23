@@ -863,7 +863,7 @@ export default function SetupFlow({
         mode: 'narration',
         extra: {
           role: 'user',
-          content: `[System: analysis of ${normalized} is complete. Company: ${data.company_name ?? normalized}. Give a 1-sentence warm reaction and say you will share a quick findings summary in the chat.]`,
+          content: `[System: analysis of ${normalized} is complete. Company: ${data.company_name ?? normalized}. Give a 1-sentence warm reaction and tell them all the details are now showing in their company card on the right — no need to list anything out.]`,
         },
       });
       if (displayParts.length) await sayBeats(displayParts);
@@ -872,10 +872,6 @@ export default function SetupFlow({
       setThread((p) => [...p, { id: crypto.randomUUID(), kind: 'results', data }]);
       setPhase('analysis_results');
 
-      const findingsSummary = formatFindingsSummary(data as Record<string, unknown>);
-      if (findingsSummary.length > 0) {
-        await sayBeats(findingsSummary);
-      }
     } catch {
       clearInterval(interval);
       setAnalysisError("Couldn't analyse that website, maybe it's blocking us. Try another URL.");
@@ -1202,9 +1198,9 @@ export default function SetupFlow({
   const isCustomerUrlLoading = phase === 'customer_url_loading';
 
   const SETUP_STEPS = [
-    { label: 'Your profile', phases: ['greeting', 'analysis_loading', 'analysis_results', 'resume_prompt'] as Phase[] },
+    { label: 'Your company', phases: ['greeting', 'analysis_loading', 'analysis_results', 'resume_prompt'] as Phase[] },
     { label: 'Target companies', phases: ['customer_url_input', 'customer_url_loading', 'customer_url_review', 'company_type', 'company_size', 'company_ta', 'company_modality', 'company_stage', 'company_funding', 'company_saving'] as Phase[] },
-    { label: 'Buying team', phases: ['persona_functions', 'persona_seniority', 'persona_saving', 'done'] as Phase[] },
+    { label: 'Buying teams', phases: ['persona_functions', 'persona_seniority', 'persona_saving', 'done'] as Phase[] },
   ];
   const currentStepIndex = SETUP_STEPS.findIndex((s) => s.phases.includes(phase));
   const showProgress = entryPoint === 'full' && currentStepIndex >= 0;
@@ -1240,15 +1236,6 @@ export default function SetupFlow({
   const showResultsActions = Boolean(isResultsStep && resultsPanelData);
   const visibleMessages = thread.filter((m) => m.kind !== 'results');
   const analysedUrlForPanel = lastAnalyzedUrlRef.current ?? '';
-  const findingsSections = resultsPanelData
-    ? FINDINGS_SECTION_CONFIG
-        .map((section) => ({
-          ...section,
-          items: parseSectionItems(resultsPanelData[section.key]),
-        }))
-        .filter((section) => section.items.length > 0)
-    : [];
-
   // ── Welcome splash ────────────────────────────────────────────────────────
 
   if (thinking && thread.length === 0) {
@@ -1688,8 +1675,38 @@ export default function SetupFlow({
     </div>
   );
 
-  const panelCompanyName = typeof resultsPanelData?.company_name === 'string' ? resultsPanelData.company_name : undefined;
-  const panelCompanyWebsite = typeof resultsPanelData?.website === 'string' ? resultsPanelData.website : undefined;
+  function getNum(v: unknown): number | undefined {
+    return typeof v === 'number' ? v : undefined;
+  }
+  function getStr(v: unknown): string | undefined {
+    return typeof v === 'string' && v.trim() ? v.trim() : undefined;
+  }
+  function getStrArr(v: unknown): string[] | undefined {
+    if (!Array.isArray(v)) return undefined;
+    const filtered = v.filter((s): s is string => typeof s === 'string' && s.trim().length > 0);
+    return filtered.length > 0 ? filtered : undefined;
+  }
+
+  const myCompany: import('@/components/SetupProfilePanel').PanelMyCompanyData = {
+    companyName: getStr(resultsPanelData?.company_name),
+    website: getStr(resultsPanelData?.website),
+    logoUrl: getStr(resultsPanelData?.logo_url),
+    tagline: getStr(resultsPanelData?.tagline),
+    linkedinUrl: getStr(resultsPanelData?.linkedin_url),
+    description: getStrArr(resultsPanelData?.description),
+    therapeuticAreas: getStrArr(resultsPanelData?.therapeutic_areas),
+    modalities: getStrArr(resultsPanelData?.modalities),
+    developmentStages: getStrArr(resultsPanelData?.development_stages),
+    employeeCount: getNum(resultsPanelData?.employee_count),
+    employeeRange: getStr(resultsPanelData?.employee_range),
+    followerCount: getNum(resultsPanelData?.follower_count),
+    foundedYear: getNum(resultsPanelData?.founded_year),
+    fundingStage: getStr(resultsPanelData?.funding_stage),
+    totalFundingUsd: getNum(resultsPanelData?.total_funding_usd),
+    hqCity: getStr(resultsPanelData?.hq_city),
+    hqCountry: getStr(resultsPanelData?.hq_country),
+    industry: getStr(resultsPanelData?.industry),
+  };
 
   return (
     <div className={`flex min-h-0 flex-1 flex-col ${SETUP_CHAT_SURROUND}`}>
@@ -1752,9 +1769,7 @@ export default function SetupFlow({
           <div className="h-[min(56rem,calc(100dvh-12rem))] overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <SetupProfilePanel
               phase={phase}
-              companyName={panelCompanyName}
-              companyWebsite={panelCompanyWebsite}
-              findingsSections={findingsSections}
+              myCompany={myCompany}
               analysisLoading={phase === 'analysis_loading'}
               reviewedCompanyName={reviewedCompanyName}
               savedIcpName={savedIcpName}

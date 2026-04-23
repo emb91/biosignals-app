@@ -146,9 +146,9 @@ export default function ContactNewPage() {
             <h2 className="text-2xl font-semibold text-gray-900 mb-2">Complete setup before adding teams</h2>
             <p className="text-gray-600 mb-6">
               {missingProfile && missingCompanies
-                ? 'You cannot add a team until you fill out My Profile and add at least one company.'
+                ? 'You cannot add a team until you fill out My company and add at least one company.'
                 : missingProfile
-                ? 'You cannot add a team until you fill out My Profile.'
+                ? 'You cannot add a team until you fill out My company.'
                 : 'You cannot add a team until you add at least one company profile.'}
             </p>
             <div className="flex flex-col sm:flex-row gap-3 justify-center">

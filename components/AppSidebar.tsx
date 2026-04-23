@@ -119,7 +119,7 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
   const shouldShowDot = (itemName: string) => {
     if (itemName === 'Companies') return showCompaniesDot;
     if (itemName === 'Teams') return showPersonasDot;
-    if (itemName === 'My Profile') return showMyProfileDot;
+    if (itemName === 'My company') return showMyProfileDot;
     if (itemName === 'Import') return showImportDot;
     return false;
   };

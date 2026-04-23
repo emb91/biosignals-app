@@ -8,12 +8,12 @@ import { cn } from '@/lib/utils';
 const STEPS: { num: 1 | 2 | 3; label: string }[] = [
   { num: 1, label: 'Your company' },
   { num: 2, label: 'Target companies' },
-  { num: 3, label: 'Target teams' },
+  { num: 3, label: 'Buying teams' },
 ];
 
 /** Nav labels aligned with AppSidebar setup items */
 const PAGE_TITLE: Record<1 | 2 | 3, string> = {
-  1: 'My Profile',
+  1: 'My company',
   2: 'Companies',
   3: 'Teams',
 };
