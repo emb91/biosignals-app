@@ -16,7 +16,7 @@ export async function GET() {
 
     const { data, error } = await supabase
       .from('company_analyses')
-      .select('company_name, description, customers_we_serve, good_fit, bad_fit')
+      .select('company_name, description, customers_we_serve, good_fit, bad_fit, value_propositions, products_services, services, technologies, company_type, therapeutic_areas, modalities, development_stages, employee_count, funding_stage, hq_country')
       .eq('user_id', user.id)
       .limit(1)
       .maybeSingle();

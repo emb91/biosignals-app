@@ -7,6 +7,7 @@ import { enrichOrganizationWithApollo } from '@/lib/apollo';
 import { resolveLinkedinUrl, type LinkedinResolutionResult } from '@/lib/linkedin-url-resolver';
 import { classifyContacts } from '@/lib/contact-classification';
 import { runCompanyMonitor } from '@/lib/company-monitor';
+import { employeeCountToSizeBucket } from '@/lib/arcova-taxonomy';
 
 type MinimalSupabase = {
   from: (table: string) => any;
@@ -553,6 +554,10 @@ async function upsertResolvedCompany(
       existingCompany?.employee_count
     ),
     employee_range: pickCanonicalString(apifyFirmographics.employee_range, existingCompany?.employee_range),
+    company_size_bucket: employeeCountToSizeBucket(
+      pickCanonicalNumber(apolloFirmographics?.employee_count, apifyFirmographics.employee_count, existingCompany?.employee_count) ?? null,
+      pickCanonicalString(apifyFirmographics.employee_range, existingCompany?.employee_range) ?? null,
+    )[0] ?? null,
     founded_year: pickCanonicalNumber(
       apolloFirmographics?.founded_year,
       apifyFirmographics.founded_year,

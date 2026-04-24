@@ -72,6 +72,61 @@ html {
   scroll-behavior: smooth;
 }
 
+/* ── Arcova enrichment progress bar (shared: leads page + setup flow) ── */
+.arcova-enrichment-progress {
+  min-width: 1.25rem;
+  background: linear-gradient(90deg, rgba(12, 205, 205, 0.24) 0%, rgba(12, 205, 205, 0.78) 68%, rgba(13, 53, 71, 0.9) 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+    0 0 0.35rem rgba(12, 205, 205, 0.16);
+  animation: arcova-row-throb 2.2s ease-in-out infinite;
+  will-change: opacity, filter, box-shadow;
+}
+
+.arcova-enrichment-glow {
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.82) 50%, rgba(255, 255, 255, 0) 100%);
+  animation: arcova-row-glow 1.8s ease-in-out infinite;
+}
+
+@keyframes arcova-row-throb {
+  0% {
+    opacity: 0.82;
+    filter: saturate(0.96) brightness(0.98);
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+      0 0 0.25rem rgba(12, 205, 205, 0.14);
+  }
+  50% {
+    opacity: 1;
+    filter: saturate(1.12) brightness(1.06);
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.18),
+      0 0 0.65rem rgba(12, 205, 205, 0.38);
+  }
+  100% {
+    opacity: 0.82;
+    filter: saturate(0.96) brightness(0.98);
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+      0 0 0.25rem rgba(12, 205, 205, 0.14);
+  }
+}
+
+@keyframes arcova-row-glow {
+  0% {
+    opacity: 0.22;
+    transform: translateX(-0.85rem);
+  }
+  50% {
+    opacity: 0.8;
+    transform: translateX(0);
+  }
+  100% {
+    opacity: 0.22;
+    transform: translateX(0.85rem);
+  }
+}
+
 @layer base {
   * {
     @apply border-border;

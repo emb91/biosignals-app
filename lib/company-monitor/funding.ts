@@ -11,24 +11,12 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { FUNDING_STAGE_OPTIONS, type FundingStage } from '@/lib/arcova-taxonomy';
+
+export type { FundingStage };
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const MODEL = 'claude-sonnet-4-6';
-
-// ─── Taxonomy ─────────────────────────────────────────────────────────────────
-
-export const FUNDING_STAGE_OPTIONS = [
-  'Pre-seed',
-  'Seed',
-  'Series A',
-  'Series B',
-  'Series C',
-  'Series D+',
-  'Public',
-  'Grant-funded',
-] as const;
-
-export type FundingStage = (typeof FUNDING_STAGE_OPTIONS)[number];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

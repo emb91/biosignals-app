@@ -1,3 +1,5 @@
+import { employeeCountToSizeBucket, SENIORITY_LEVEL_OPTIONS, BUSINESS_AREA_OPTIONS } from '@/lib/arcova-taxonomy';
+
 export type EnrichedImportRecord = {
   raw_upload_id: string;
   batch_id?: string;
@@ -211,6 +213,10 @@ async function upsertCompany(
     sub_industry: pickCanonicalString(record.company_sub_industry, existingCompany?.sub_industry),
     employee_count: pickCanonicalNumber(record.company_employee_count, existingCompany?.employee_count),
     employee_range: pickCanonicalString(record.company_employee_range, existingCompany?.employee_range),
+    company_size_bucket: employeeCountToSizeBucket(
+      pickCanonicalNumber(record.company_employee_count, existingCompany?.employee_count) ?? null,
+      pickCanonicalString(record.company_employee_range, existingCompany?.employee_range) ?? null,
+    )[0] ?? null,
     founded_year: pickCanonicalNumber(record.company_founded_year, existingCompany?.founded_year),
     headquarters_city: pickCanonicalString(record.company_hq_city, existingCompany?.headquarters_city),
     headquarters_country: pickCanonicalString(
@@ -314,8 +320,12 @@ export async function ingestEnrichedRecords(
         profile_photo_url: record.profile_photo_url || null,
         job_title: record.job_title || null,
         job_title_standardised: record.job_title_standardised || null,
-        seniority_level: record.seniority_level || null,
-        business_area: record.business_area || null,
+        seniority_level: SENIORITY_LEVEL_OPTIONS.includes(record.seniority_level as never)
+          ? record.seniority_level
+          : null,
+        business_area: BUSINESS_AREA_OPTIONS.includes(record.business_area as never)
+          ? record.business_area
+          : null,
         headline: record.headline || null,
         years_in_current_role: record.years_in_current_role || null,
         location: record.location || null,
