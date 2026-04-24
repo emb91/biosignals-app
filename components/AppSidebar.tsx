@@ -26,7 +26,7 @@ interface NavItem {
 
 const setupItems: NavItem[] = [
   { name: 'Company Criteria', href: '/company-criteria', icon: Target },
-  { name: 'Teams', href: '/personas', icon: UserCircle },
+  { name: 'Buyer criteria', href: '/personas', icon: UserCircle },
   { name: 'Arcova Setup', href: '/arcova-setup', icon: User },
 ];
 
@@ -118,7 +118,7 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
 
   const shouldShowDot = (itemName: string) => {
     if (itemName === 'Companies') return showCompaniesDot;
-    if (itemName === 'Teams') return showPersonasDot;
+    if (itemName === 'Buyer criteria') return showPersonasDot;
     if (itemName === 'My company') return showMyProfileDot;
     if (itemName === 'Import') return showImportDot;
     return false;

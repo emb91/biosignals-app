@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import { supabase } from './supabase';
 import { useAuth } from '@/context/AuthContext';
 
@@ -29,6 +30,7 @@ export function getNextSetupPath(state: Omit<SetupState, 'loading'>): string {
 
 export function useSetupState(): SetupState {
   const { user } = useAuth();
+  const pathname = usePathname();
   const [state, setState] = useState<SetupState>({
     step1Complete: false,
     step2Complete: false,
@@ -90,7 +92,7 @@ export function useSetupState(): SetupState {
     return () => {
       cancelled = true;
     };
-  }, [user]);
+  }, [user, pathname]);
 
   return state;
 }

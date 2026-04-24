@@ -30,6 +30,38 @@ export async function GET() {
   }
 }
 
+export async function DELETE(request: Request) {
+  try {
+    const supabase = await createClient();
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { id } = await request.json() as { id?: string };
+    if (!id) {
+      return NextResponse.json({ error: 'id is required' }, { status: 400 });
+    }
+
+    const { error } = await supabase
+      .from('icps')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', user.id);
+
+    if (error) {
+      console.error('Error deleting ICP:', error);
+      return NextResponse.json({ error: 'Failed to delete ICP' }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Error in DELETE /api/company-criteria:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const supabase = await createClient();
@@ -57,6 +89,7 @@ export async function POST(request: Request) {
       funding_stages: body.fundingStages || [],
       signals: weightedSignals.map(s => JSON.stringify(s)),
       example_companies: body.exampleCompanies || [],
+      example_company_enrichment: body.exampleCompanyEnrichment ?? null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };

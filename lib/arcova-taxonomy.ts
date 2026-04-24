@@ -118,6 +118,36 @@ export const DEVELOPMENT_STAGE_OPTIONS = [
 
 export const COMPANY_SIZE_OPTIONS = ['1–10', '11–50', '51–200', '201–500', '500+'] as const;
 
+/**
+ * Maps a raw employee count (or a range string like "51-200") to the canonical
+ * COMPANY_SIZE_OPTIONS bucket. Returns a single-element array so it can be
+ * spread directly into companySizes[], or an empty array if both inputs are null.
+ */
+export function employeeCountToSizeBucket(
+  count: number | null | undefined,
+  range?: string | null,
+): string[] {
+  if (count != null && count > 0) {
+    if (count <= 10)  return ['1–10'];
+    if (count <= 50)  return ['11–50'];
+    if (count <= 200) return ['51–200'];
+    if (count <= 500) return ['201–500'];
+    return ['500+'];
+  }
+  // Fall back to range string e.g. "51-200", "201-500", "1001-5000"
+  if (range) {
+    const lower = parseInt(range.split(/[-–]/)[0].replace(/[^0-9]/g, ''), 10);
+    if (!isNaN(lower)) {
+      if (lower <= 10)  return ['1–10'];
+      if (lower <= 50)  return ['11–50'];
+      if (lower <= 200) return ['51–200'];
+      if (lower <= 500) return ['201–500'];
+      return ['500+'];
+    }
+  }
+  return [];
+}
+
 export const FUNDING_STAGE_OPTIONS = [
   'Pre-seed',
   'Seed',

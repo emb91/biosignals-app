@@ -69,7 +69,8 @@ Return ONLY valid JSON in this exact structure. Every array field must have 2–
   "company_name": "Official company name",
   "linkedin_url": "https://www.linkedin.com/company/... or null if not found",
   "description": ["What the company does in plain terms", "..."],
-  "products_services": ["Key product or service", "..."],
+  "products": ["Named product (e.g. Guardant360 CDx, Salesforce CRM)", "..."],
+  "services": ["Service offering (e.g. contract research, GMP manufacturing, clinical trials)", "..."],
   "target_customers": ["Short 1–3 word label, e.g. Oncologists, Health Systems, Biopharma — NO full sentences"],
   "value_propositions": ["Core value proposition", "..."],
   "industries": ["Industry they operate in", "..."],
@@ -234,4 +235,107 @@ export function normalizeLinkedInCompanyUrl(value: string | null | undefined): s
   } catch {
     return null;
   }
+}
+
+// ── 5. Condense long-form bullet arrays ───────────────────────────────────────
+
+/**
+ * Rewrites verbose enrichment arrays into concise UI-ready labels in a single LLM pass:
+ * - good_fit / bad_fit / value_propositions → 5–8 word phrases
+ * - products → short product name only (strip description after colon), max 5 words
+ * - services → concise service label (e.g. "Contract research services", "GMP biologics manufacturing")
+ * - technologies → 2–4 word label (e.g. "ctDNA sequencing", "NGS", "AI/ML analytics")
+ */
+export async function condenseBulletArrays({
+  company_name,
+  customers_we_serve,
+  good_fit,
+  bad_fit,
+  value_propositions,
+  products,
+  services,
+  technologies,
+}: {
+  company_name?: string;
+  customers_we_serve?: string[];
+  good_fit?: string[];
+  bad_fit?: string[];
+  value_propositions?: string[];
+  products?: string[];
+  services?: string[];
+  technologies?: string[];
+}): Promise<{
+  good_fit: string[];
+  bad_fit: string[];
+  value_propositions: string[];
+  products: string[];
+  services: string[];
+  technologies: string[];
+}> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error('Missing ANTHROPIC_API_KEY');
+
+  const client = new Anthropic({ apiKey });
+
+  const prompt = `You are condensing data for a B2B sales intelligence UI. Different fields have different rules:
+
+**good_fit / bad_fit / value_propositions** — rewrite each as a punchy phrase of 5–8 words. No full sentences, no leading dashes, drop filler like "companies that" or "organizations with".
+
+**products** — keep only the product name (max 5 words). Strip descriptions after a colon or dash (e.g. "Guardant360 CDx: FDA-approved liquid biopsy test…" → "Guardant360 CDx").
+
+**services** — keep a concise service label (max 5 words) that captures what is offered (e.g. "End-to-end contract research services for biopharma clients" → "Contract research services", "GMP biologics drug substance manufacturing" → "GMP biologics manufacturing"). Never drop the service type.
+
+**technologies** — reduce to a 2–4 word label. Use abbreviations where standard (NGS, ctDNA, AI/ML). E.g. "Next-Generation Sequencing (NGS) for comprehensive tumor mutation profiling from blood samples." → "NGS sequencing". "Circulating tumor DNA (ctDNA) digital sequencing for detection of somatic genomic alterations." → "ctDNA sequencing".
+${company_name ? `\nCompany: ${company_name}` : ''}
+${customers_we_serve?.length ? `Customer types (already shown elsewhere): ${customers_we_serve.join(', ')}` : ''}
+
+Return ONLY valid JSON — no markdown, no explanation:
+{
+  "good_fit": [...],
+  "bad_fit": [...],
+  "value_propositions": [...],
+  "products": [...],
+  "services": [...],
+  "technologies": [...]
+}
+
+Input:
+${JSON.stringify(
+    {
+      good_fit: good_fit ?? [],
+      bad_fit: bad_fit ?? [],
+      value_propositions: value_propositions ?? [],
+      products: products ?? [],
+      services: services ?? [],
+      technologies: technologies ?? [],
+    },
+    null,
+    2,
+  )}`;
+
+  const message = await client.messages.create({
+    model: ANALYSIS_MODEL,
+    max_tokens: 1536,
+    messages: [{ role: 'user', content: prompt }],
+  });
+
+  const text = message.content
+    .filter((b) => b.type === 'text')
+    .map((b) => (b as { type: 'text'; text: string }).text)
+    .join('');
+
+  const parsed = parseJson(text);
+  if (!parsed) throw new Error(`condenseBulletArrays: no JSON in response. Raw: ${text.slice(0, 300)}`);
+
+  const toArr = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+
+  return {
+    good_fit: toArr(parsed.good_fit),
+    bad_fit: toArr(parsed.bad_fit),
+    value_propositions: toArr(parsed.value_propositions),
+    products: toArr(parsed.products),
+    services: toArr(parsed.services),
+    technologies: toArr(parsed.technologies),
+  };
 }

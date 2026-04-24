@@ -12,105 +12,71 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { companyType, companySizes, therapeuticAreas, modalities, developmentStages, fundingStages } = body;
+    const {
+      companyType,
+      companySizes,
+      therapeuticAreas,
+      modalities,
+      developmentStages,
+      fundingStages,
+      exampleCompanyName,
+      exampleCompanyDescription,
+    } = body;
 
     const anthropic = new Anthropic({
       apiKey: process.env.ANTHROPIC_API_KEY,
     });
 
     const cleanupName = (text: string): string => {
-      const noTrailingPunctuation = text.replace(/[.!?,;:]+$/g, '');
-      const normalised = noTrailingPunctuation.replace(/\s+/g, ' ').trim();
-      const words = normalised.split(' ').slice(0, 5);
-      let output = words.join(' ');
-
-      const parts = output.split('&');
-      if (parts.length > 2) {
-        output = `${parts[0]}&${parts.slice(1).join(' and ')}`.replace(/\s+/g, ' ').trim();
-      }
-
-      return output;
+      return text.replace(/[.!?,;:]+$/g, '').replace(/\s+/g, ' ').trim();
     };
 
     const normaliseList = (values?: string[]) => (values || []).map(v => v.trim()).filter(Boolean);
     const ta = normaliseList(therapeuticAreas);
     const mod = normaliseList(modalities);
-    const stage = normaliseList(developmentStages);
-    const funding = normaliseList(fundingStages);
-    const size = normaliseList(companySizes);
-    const normalisedCompanyType = (companyType || 'Company').trim();
 
-    const singleCategoryOrder = ['therapeutic', 'modality', 'stage', 'funding'] as const;
-    const categoryMap: Record<(typeof singleCategoryOrder)[number], string[]> = {
-      therapeutic: ta,
-      modality: mod,
-      stage,
-      funding,
-    };
+    const fallbackName = [mod[0] || ta[0] || '', companyType || 'Company'].filter(Boolean).join(' ').trim() || 'Target Company Profile';
 
-    // Rule 1: if any category has exactly one selected value, use that single as the descriptor.
-    // Rule 2: if none have exactly one value, fall back to modality first.
-    const selectedSingleKey = singleCategoryOrder.find(key => categoryMap[key].length === 1);
-    const selectedDescriptor =
-      (selectedSingleKey ? categoryMap[selectedSingleKey][0] : '') ||
-      mod[0] ||
-      ta[0] ||
-      stage[0] ||
-      funding[0] ||
-      '';
+    const contextLines: string[] = [];
+    if (exampleCompanyName) contextLines.push(`Example company: ${exampleCompanyName}`);
+    if (exampleCompanyDescription) contextLines.push(`What they do: ${Array.isArray(exampleCompanyDescription) ? exampleCompanyDescription[0] : exampleCompanyDescription}`);
+    if (companyType) contextLines.push(`Company type: ${companyType}`);
+    if (ta.length) contextLines.push(`Therapeutic areas: ${ta.join(', ')}`);
+    if (mod.length) contextLines.push(`Modalities: ${mod.join(', ')}`);
+    if (developmentStages?.length) contextLines.push(`Development stages: ${normaliseList(developmentStages).join(', ')}`);
+    if (companySizes?.length) contextLines.push(`Typical size: ${normaliseList(companySizes).join(', ')}`);
+    if (fundingStages?.length) contextLines.push(`Funding: ${normaliseList(fundingStages).join(', ')}`);
 
-    const fallbackName = cleanupName(
-      `${selectedDescriptor ? `${selectedDescriptor} ` : ''}${normalisedCompanyType}`.trim()
-    ) || 'Target Company Profile';
+    const prompt = `You are naming an ICP (ideal customer profile) category for a life science sales team.
 
-    const prompt = `Generate a short name for a target company profile with these attributes:
+${contextLines.join('\n')}
 
-Company type: ${companyType || 'Not specified'}
-Therapeutic areas: ${therapeuticAreas?.join(', ') || 'Any'}
-Modalities: ${modalities?.join(', ') || 'Any'}
-Development stages: ${developmentStages?.join(', ') || 'Any'}
-Company sizes: ${companySizes?.join(', ') || 'Any'}
-Funding stages: ${fundingStages?.join(', ') || 'Any'}
+Write a 3–4 word name that describes the *category* of company this ICP represents — not the specific example company. Think of how a salesperson would say "we sell to ___". The name should be specific enough to be meaningful but broad enough to cover a category.
+
+Good examples:
+- Molecular Diagnostics Company
+- Oncology CDMO
+- Early-stage ADC Biotech
+- Rare Disease Gene Therapy Company
+- Large Commercial Pharma
+- Clinical-stage CRO
 
 Rules:
-- Maximum 5 words
-- Use exactly one descriptor plus the company type
-- Use this exact descriptor: ${selectedDescriptor || 'None'}
-- Use this exact company type: ${normalisedCompanyType}
-- If descriptor is provided, output format must be: "<descriptor> <company type>"
-- If descriptor is not provided, output format must be: "<company type>"
-- Do not include multiple descriptors
-- Never include company size or employee-count ranges in the name
-- Keep naming broad, avoid granular stacks of qualifiers
-- You may use "company" only when needed for natural phrasing (e.g. "Cardiovascular Pharma Company")
-- Do not use ampersands more than once in the name
-- Do not include punctuation at the end
-- Do not include em dashes
-- Return only the name, nothing else
-
-Examples of good names:
-- Cardiovascular Pharma Company
-- Oncology CDMO
-- Early-stage Biotech
-- ADC Biotech
-- Rare Disease CRO
-- Series A Biopharma`;
+- 3–4 words maximum
+- No punctuation at the end
+- No em dashes
+- Return only the name, nothing else`;
 
     const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 30,
-      temperature: 0.7,
-      system: 'You are a naming tool. Output only the name, nothing else. No explanation.',
+      model: 'claude-haiku-4-5',
+      max_tokens: 20,
+      temperature: 0.4,
+      system: 'Output only the ICP category name. Nothing else.',
       messages: [{ role: 'user', content: prompt }],
     });
 
     const rawName = (message.content[0] as { type: string; text: string }).text.trim();
-    let name = cleanupName(rawName) || fallbackName;
-
-    // Enforce company type inclusion.
-    if (!name.toLowerCase().includes(normalisedCompanyType.toLowerCase())) {
-      name = fallbackName;
-    }
+    const name = cleanupName(rawName) || fallbackName;
 
     return NextResponse.json({ name });
   } catch (error: unknown) {

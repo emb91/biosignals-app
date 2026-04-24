@@ -6,6 +6,7 @@ import {
   scrapeLinkedInCompany,
   extractApifyFirmographics,
   normalizeLinkedInCompanyUrl,
+  condenseBulletArrays,
 } from '@/lib/my-company-enrichment';
 import { resolveCompanyTaxonomy } from '@/lib/company-monitor/taxonomy';
 
@@ -80,34 +81,62 @@ export async function POST(request: NextRequest) {
 
     const apify = extractApifyFirmographics(apifyRaw);
 
-    // ── Step 4: Taxonomy — dedicated LLM with canonical allowed values ─────────
-    // Uses the same resolveCompanyTaxonomy used for leads, so company_type,
-    // therapeutic_areas, modalities, and development_stages are constrained to
-    // Arcova's controlled taxonomy (not free-text from Claude web_search).
+    // ── Step 4: Taxonomy + bullet condensing — run in parallel ───────────────
     const companyNameForTaxonomy =
       typeof narrative.company_name === 'string' ? narrative.company_name :
       typeof apollo.company_name === 'string' ? apollo.company_name : '';
 
-    let taxonomy: Awaited<ReturnType<typeof resolveCompanyTaxonomy>> | null = null;
-    if (companyNameForTaxonomy || domain) {
-      console.log('[analyze-and-store] Running taxonomy classification');
-      taxonomy = await resolveCompanyTaxonomy({
-        company_name: companyNameForTaxonomy,
-        domain,
-        apify_company_firmographics: apifyRaw,
-        apollo_company_firmographics: Object.keys(apollo).length > 0
-          ? (apollo as Record<string, unknown>)
-          : null,
-      }).catch((err: unknown) => {
-        console.error('[analyze-and-store] Taxonomy failed:', err);
-        return null;
-      });
-    }
+    console.log('[analyze-and-store] Running taxonomy + bullet condensing in parallel');
+    const [taxonomyResult, condensedResult] = await Promise.allSettled([
+      (companyNameForTaxonomy || domain)
+        ? resolveCompanyTaxonomy({
+            company_name: companyNameForTaxonomy,
+            domain,
+            apify_company_firmographics: apifyRaw,
+            apollo_company_firmographics: Object.keys(apollo).length > 0
+              ? (apollo as Record<string, unknown>)
+              : null,
+          })
+        : Promise.resolve(null),
+      condenseBulletArrays({
+        company_name: companyNameForTaxonomy || undefined,
+        customers_we_serve: Array.isArray(narrative.customers_we_serve)
+          ? (narrative.customers_we_serve as string[])
+          : undefined,
+        good_fit: Array.isArray(narrative.good_fit)
+          ? (narrative.good_fit as string[])
+          : undefined,
+        bad_fit: Array.isArray(narrative.bad_fit)
+          ? (narrative.bad_fit as string[])
+          : undefined,
+        value_propositions: Array.isArray(narrative.value_propositions)
+          ? (narrative.value_propositions as string[])
+          : undefined,
+        products: Array.isArray(narrative.products)
+          ? (narrative.products as string[])
+          : undefined,
+        services: Array.isArray(narrative.services)
+          ? (narrative.services as string[])
+          : undefined,
+        technologies: Array.isArray(narrative.technologies)
+          ? (narrative.technologies as string[])
+          : undefined,
+      }),
+    ]);
+
+    const taxonomy = taxonomyResult.status === 'fulfilled' ? taxonomyResult.value : null;
+    const condensed = condensedResult.status === 'fulfilled' ? condensedResult.value : null;
+
+    if (taxonomyResult.status === 'rejected')
+      console.error('[analyze-and-store] Taxonomy failed:', taxonomyResult.reason);
+    if (condensedResult.status === 'rejected')
+      console.error('[analyze-and-store] Bullet condensing failed:', condensedResult.reason);
 
     // ── Step 5: Merge ─────────────────────────────────────────────────────────
     // Preference: Apollo for business/funding data; Apify for social/LinkedIn data.
     // Claude supplies all narrative array fields.
-    const { linkedin_url: _claudeLinkedin, ...narrativeRest } = narrative;
+    const { linkedin_url: _claudeLinkedin, products: _products, services: _services, ...narrativeRest } = narrative;
+    void _products; void _services;
     void _claudeLinkedin;
 
     const mergedData = {
@@ -147,6 +176,22 @@ export async function POST(request: NextRequest) {
 
       // Company ownership / funding status from Claude (handles public companies Apollo can't)
       company_status: typeof narrative.company_status === 'string' ? narrative.company_status : null,
+
+      // Products / services / technologies — condensed labels if available, raw Claude fallback
+      products_services: condensed?.products?.length
+        ? condensed.products
+        : (Array.isArray(narrative.products) ? narrative.products : null),
+      services: condensed?.services?.length
+        ? condensed.services
+        : (Array.isArray(narrative.services) ? narrative.services : null),
+      technologies: condensed?.technologies?.length
+        ? condensed.technologies
+        : (Array.isArray(narrative.technologies) ? narrative.technologies : null),
+
+      // Condensed bullet arrays (or raw Claude fallback)
+      good_fit: condensed?.good_fit ?? (Array.isArray(narrative.good_fit) ? narrative.good_fit : null),
+      bad_fit: condensed?.bad_fit ?? (Array.isArray(narrative.bad_fit) ? narrative.bad_fit : null),
+      value_propositions: condensed?.value_propositions ?? (Array.isArray(narrative.value_propositions) ? narrative.value_propositions : null),
 
       // Structured competitors (name + url) from Claude
       competitors_enriched: Array.isArray(narrative.competitors_enriched)

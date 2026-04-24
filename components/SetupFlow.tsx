@@ -26,6 +26,7 @@ import {
   MODALITY_OPTIONS,
   SENIORITY_LEVEL_OPTIONS,
   THERAPEUTIC_AREA_OPTIONS,
+  employeeCountToSizeBucket,
 } from '@/lib/arcova-taxonomy';
 
 // ── Option lists ───────────────────────────────────────────────────────────
@@ -43,7 +44,6 @@ const SENIORITY_OPTIONS = [...SENIORITY_LEVEL_OPTIONS] as string[];
 
 type Phase =
   | 'greeting'
-  | 'resume_prompt'
   | 'analysis_loading'
   | 'analysis_results'
   | 'customer_url_input'
@@ -57,6 +57,8 @@ type Phase =
   | 'company_stage'
   | 'company_funding'
   | 'company_saving'
+  | 'buying_team_loading'
+  | 'buying_team_review'
   | 'persona_functions'
   | 'persona_seniority'
   | 'persona_saving'
@@ -101,7 +103,7 @@ type ApiMsg =
 type OnboardingAction =
   | { type: 'capture_name'; first_name: string }
   | { type: 'begin_analysis'; website_url: string; analysis_type?: 'own_company' | 'target_customer' }
-  | { type: 'confirm_transition'; target: 'proceed_to_customer_url' | 'confirm_own_company' | 'resume_continue' | 'restart'; button_label: string };
+  | { type: 'confirm_transition'; target: 'proceed_to_customer_url' | 'confirm_own_company' | 'restart'; button_label: string };
 
 type ApiOnboardingJson = {
   text?: string;
@@ -162,16 +164,14 @@ const SETUP_CHAT_CARD =
 
 function AgentAvatar() {
   return (
-    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-arcova-darkblue ring-2 ring-white/15">
-      <Image src="/images/network-og.png" alt="Arcova" width={20} height={20} className="rounded-full" />
-    </div>
+    <Image src="/images/network-og.png" alt="Arcova" width={36} height={36} className="h-9 w-9 shrink-0 rounded-full ring-2 ring-white/15 object-cover" />
   );
 }
 
 function ThinkingDots() {
   return (
     <div className="flex items-start gap-3">
-      <AgentAvatar />
+      <ArcovaLoader size={36} />
       <div className="rounded-2xl rounded-tl-none border border-gray-200 bg-white px-4 py-3 shadow-sm">
         <div className="flex gap-1 items-center h-4">
           {[0, 150, 300].map((d) => (
@@ -293,10 +293,15 @@ export default function SetupFlow({
   const [chipSel, setChipSel] = useState<string[]>([]);
   const [loadMsg, setLoadMsg] = useState('Visiting your website…');
   const [customerUrlLoadMsg, setCustomerUrlLoadMsg] = useState('Visiting the website…');
+  const [customerUrlProgressNow, setCustomerUrlProgressNow] = useState(0);
+  const customerUrlStartedAtRef = useRef<number | null>(null);
+  const [ownCompanyProgressNow, setOwnCompanyProgressNow] = useState(0);
+  const ownCompanyStartedAtRef = useRef<number | null>(null);
+  const [savingProgressNow, setSavingProgressNow] = useState(0);
+  const savingStartedAtRef = useRef<number | null>(null);
   const [analysisError, setAnalysisError] = useState('');
-  const [resumeStep, setResumeStep] = useState<'customer_url_input' | 'persona_functions' | null>(null);
   const [pendingTransition, setPendingTransition] = useState<{
-    target: 'proceed_to_customer_url' | 'confirm_own_company' | 'resume_continue' | 'restart';
+    target: 'proceed_to_customer_url' | 'confirm_own_company' | 'restart';
     buttonLabel: string;
   } | null>(null);
   const [reviewDraft, setReviewDraft] = useState({
@@ -308,9 +313,12 @@ export default function SetupFlow({
     fundingStages: [] as string[],
   });
   const [reviewedCompanyName, setReviewedCompanyName] = useState('');
+  const [enrichedTargetCompany, setEnrichedTargetCompany] = useState<import('@/lib/target-company-enrichment').TargetCompanyEnrichmentResult | null>(null);
   const [editingFindings, setEditingFindings] = useState(false);
   const [editingFindingsData, setEditingFindingsData] = useState<Record<string, unknown> | null>(null);
   const [savingFindings, setSavingFindings] = useState(false);
+  const [icpEditMode, setIcpEditMode] = useState(false);
+  const icpEditSnapshotRef = useRef<typeof reviewDraft | null>(null);
 
   // ── Panel state (mirrors refs so the profile panel re-renders live) ───────
   const [panelCompany, setPanelCompany] = useState<PanelCompanyData>({
@@ -328,12 +336,16 @@ export default function SetupFlow({
   });
   const personaRef = useRef({ functions: [] as string[], seniority: [] as string[] });
   const icpIdRef = useRef<string | null>(null);
+  const personaIdRef = useRef<string | null>(null);
+  const lastTargetUrlRef = useRef<string | null>(null);
   const selectedCompanyRef = useRef<TargetCompanyProfile | null>(null);
   const historyRef = useRef<ApiMsg[]>([]);
   const firstNameRef = useRef(firstName);
   const startedRef = useRef(false);
   /** Normalised URL for the last successful analyse-and-store run (re-analyse / panel header). */
   const lastAnalyzedUrlRef = useRef<string | null>(null);
+  const analysisAbortRef = useRef<AbortController | null>(null);
+  const preEditDataRef = useRef<Record<string, unknown> | null>(null);
 
   useEffect(() => {
     firstNameRef.current = firstName;
@@ -376,6 +388,49 @@ export default function SetupFlow({
   useEffect(() => {
     if (inputEnabled) inputRef.current?.focus();
   }, [inputEnabled]);
+
+  // Tick the customer-URL progress bar while enrichment is in flight
+  useEffect(() => {
+    if (phase !== 'customer_url_loading') {
+      customerUrlStartedAtRef.current = null;
+      return;
+    }
+    if (customerUrlStartedAtRef.current === null) {
+      customerUrlStartedAtRef.current = Date.now();
+    }
+    setCustomerUrlProgressNow(Date.now());
+    const interval = setInterval(() => setCustomerUrlProgressNow(Date.now()), 900);
+    return () => clearInterval(interval);
+  }, [phase]);
+
+  // Tick the own-company analysis progress bar
+  useEffect(() => {
+    if (phase !== 'analysis_loading') {
+      ownCompanyStartedAtRef.current = null;
+      return;
+    }
+    if (ownCompanyStartedAtRef.current === null) {
+      ownCompanyStartedAtRef.current = Date.now();
+    }
+    setOwnCompanyProgressNow(Date.now());
+    const interval = setInterval(() => setOwnCompanyProgressNow(Date.now()), 900);
+    return () => clearInterval(interval);
+  }, [phase]);
+
+  // Tick the saving progress bar (ICP + persona saves)
+  useEffect(() => {
+    const saving = phase === 'company_saving' || phase === 'persona_saving';
+    if (!saving) {
+      savingStartedAtRef.current = null;
+      return;
+    }
+    if (savingStartedAtRef.current === null) {
+      savingStartedAtRef.current = Date.now();
+    }
+    setSavingProgressNow(Date.now());
+    const interval = setInterval(() => setSavingProgressNow(Date.now()), 900);
+    return () => clearInterval(interval);
+  }, [phase]);
 
   // Keep panelCompany in sync with reviewDraft while the user edits it
   useEffect(() => {
@@ -533,6 +588,7 @@ export default function SetupFlow({
         fundingStages: d.fundingStages,
         signals: [],
         exampleCompanies: [],
+        exampleCompanyEnrichment: enrichedTargetCompany ?? undefined,
       }),
     });
 
@@ -542,19 +598,54 @@ export default function SetupFlow({
       icpIdRef.current = typeof row?.id === 'string' ? row.id : null;
     }
 
-    // Claude transition → persona step
+    // Generate buying team suggestions from seller + ICP profiles
+    setPhase('buying_team_loading');
+    const sellerData = editingFindingsData ?? {};
+    const icpData = companyRef.current;
+
+    const btRes = await fetch('/api/generate-buying-team', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        seller_company_name: sellerData.company_name,
+        seller_company_type: sellerData.company_type,
+        seller_therapeutic_areas: sellerData.therapeutic_areas,
+        seller_products_services: sellerData.products_services,
+        seller_services: sellerData.services,
+        seller_customers_we_serve: sellerData.customers_we_serve,
+        seller_value_propositions: sellerData.value_propositions,
+        icp_company_type: icpData.companyType,
+        icp_therapeutic_areas: icpData.therapeuticAreas,
+        icp_modalities: icpData.modalities,
+        icp_development_stages: icpData.developmentStages,
+        icp_company_sizes: icpData.companySizes,
+        example_company_name: reviewedCompanyName || undefined,
+      }),
+    }).catch(() => null);
+
+    if (btRes?.ok) {
+      const btData = await btRes.json() as { functions?: string[]; seniority_levels?: string[] };
+      const fns = btData.functions ?? [];
+      const sens = btData.seniority_levels ?? [];
+      personaRef.current.functions = fns;
+      personaRef.current.seniority = sens;
+      setPanelPersona((p) => ({ ...p, functions: fns, seniority: sens }));
+    }
+
+    // Claude narration — references example company + ICP type
     const { displayParts } = await askClaude({
       mode: 'narration',
       extra: {
         role: 'user',
-        content:
-          '[System: the target company profile has been saved. Briefly confirm it and introduce the next part: defining the buying team for this profile, meaning all functions and seniority levels involved in buying. Add that they can always add more company profiles later. Keep it to 2 sentences.]',
+        content: `[System: the target company profile has been saved. The example account used was "${reviewedCompanyName || 'the company they entered'}" — a ${icpData.companyType || 'target'} company. Based on that, buying team functions and seniority levels have been pre-filled. Tell the user: based on [example company] as their example account — a [company type] — here's who typically buys in accounts like this. Ask them to review and confirm, or adjust if needed. Keep it to 2 sentences, name the example company and its type.]`,
       },
     });
     if (displayParts.length) await sayBeats(displayParts);
 
-    await advanceTo('persona_functions');
-  }, [askClaude, advanceTo]); // eslint-disable-line react-hooks/exhaustive-deps
+    setChipSel([]);
+    setPhase('buying_team_review');
+    setInput(false);
+  }, [askClaude, advanceTo, editingFindingsData, reviewedCompanyName]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Save persona ──────────────────────────────────────────────────────────
 
@@ -566,7 +657,7 @@ export default function SetupFlow({
       p.functions.length > 0 ? `Buying group: ${p.functions[0]}` : 'Buying group';
     setSavedPersonaName(personaName);
 
-    await fetch('/api/contacts', {
+    const personaRes = await fetch('/api/contacts', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name: personaName,
@@ -577,6 +668,11 @@ export default function SetupFlow({
         icpId: icpIdRef.current,
       }),
     });
+    if (personaRes.ok) {
+      const saved = await personaRes.json();
+      const row = saved?.data ?? saved;
+      personaIdRef.current = typeof row?.id === 'string' ? row.id : null;
+    }
 
     // Claude wrap-up
     const { displayParts } = await askClaude({
@@ -669,7 +765,7 @@ export default function SetupFlow({
       extra: {
         role: 'user',
         content:
-          "[System: the user confirmed their own company profile looks right. Now transition to the next step: ask them to enter the website URL of one of their best customers or a target account. Keep it 1-2 sentences, be encouraging.]",
+          "[System: the user confirmed their own company profile looks right. Transition to step 2 in one short sentence — something like: \"Great, now let's build your target company list. Drop in a URL — a dream account or a company that looks like your best customer — and I'll profile it.\" Conversational, no bullet points, max 2 sentences.]",
       },
     });
     if (displayParts.length) await sayBeats(displayParts);
@@ -683,7 +779,6 @@ export default function SetupFlow({
     if (stepIndex === 0) {
       // Back to profile — restart own company URL
       icpIdRef.current = null;
-      setResumeStep(null);
       const { displayParts } = await askClaude({
         mode: 'narration',
         extra: {
@@ -700,7 +795,7 @@ export default function SetupFlow({
         mode: 'narration',
         extra: {
           role: 'user',
-          content: '[System: the user wants to go back and update their target company profile. One sentence: acknowledge and ask them to enter a customer company URL.]',
+          content: '[System: the user wants to go back and update their target company profile. One sentence: acknowledge and ask them to drop in a URL for a target account.]',
         },
       });
       if (displayParts.length) await sayBeats(displayParts);
@@ -709,38 +804,46 @@ export default function SetupFlow({
     }
   }, [askClaude]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Resume prompt handlers ────────────────────────────────────────────────
-
-  const handleResumeContinue = useCallback(async () => {
-    pushText('user', 'Continue where I left off');
-    if (resumeStep === 'persona_functions') {
-      const { displayParts } = await askClaude({
-        mode: 'narration',
-        extra: {
-          role: 'user',
-          content: '[System: the user wants to continue. One sentence: confirm and say you are picking up at the buying team step.]',
-        },
-      });
-      if (displayParts.length) await sayBeats(displayParts);
-      await advanceTo('persona_functions');
-    } else {
-      const { displayParts } = await askClaude({
-        mode: 'narration',
-        extra: {
-          role: 'user',
-          content: '[System: the user wants to continue. One sentence: confirm and ask them to enter a target customer company URL so you can map their ICP.]',
-        },
-      });
-      if (displayParts.length) await sayBeats(displayParts);
-      setPhase('customer_url_input');
-      setInput(true);
-    }
-  }, [resumeStep, askClaude, advanceTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleResumeRestart = useCallback(async () => {
     pushText('user', 'Start again');
+
+    // Delete ICP from DB
+    const icpId = icpIdRef.current;
+    if (icpId) {
+      try {
+        await fetch('/api/company-criteria', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: icpId }),
+        });
+      } catch {}
+    }
+
+    // Delete own-company analysis from DB
+    const analysisId = typeof editingFindingsData?.id === 'string' ? editingFindingsData.id : null;
+    if (analysisId) {
+      try {
+        await fetch(`/api/user-analyses?id=${analysisId}`, { method: 'DELETE' });
+      } catch {}
+    }
+
+    // Reset all local state
     icpIdRef.current = null;
-    setResumeStep(null);
+    lastTargetUrlRef.current = null;
+    lastAnalyzedUrlRef.current = null;
+    selectedCompanyRef.current = null;
+    setEnrichedTargetCompany(null);
+    setReviewedCompanyName('');
+    setReviewDraft({ companyType: '', therapeuticAreas: [], modalities: [], developmentStages: [], companySizes: [], fundingStages: [] });
+    setSavedIcpName('');
+    setSavedPersonaName('');
+    setPanelCompany({ companyType: '', companySizes: [], therapeuticAreas: [], modalities: [], developmentStages: [], fundingStages: [] });
+    setPanelPersona({ functions: [], seniority: [] });
+    setEditingFindings(false);
+    setEditingFindingsData(null);
+    setThread([]);
+
     const { displayParts } = await askClaude({
       mode: 'narration',
       extra: {
@@ -751,7 +854,7 @@ export default function SetupFlow({
     if (displayParts.length) await sayBeats(displayParts);
     setPhase('greeting');
     setInput(true);
-  }, [askClaude]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [askClaude, editingFindingsData]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Handle LLM-surfaced transition confirmation ───────────────────────────
 
@@ -761,9 +864,6 @@ export default function SetupFlow({
     if (!t) return;
 
     switch (t.target) {
-      case 'resume_continue':
-        await handleResumeContinue();
-        break;
       case 'restart':
         await handleResumeRestart();
         break;
@@ -775,17 +875,18 @@ export default function SetupFlow({
         await handleResultsConfirmed();
         break;
     }
-  }, [pendingTransition, handleResumeContinue, handleResumeRestart, handleResultsConfirmed]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pendingTransition, handleResumeRestart, handleResultsConfirmed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Handle customer URL analysis (ICP step) ──────────────────────────────
 
   const handleCustomerUrlAnalyse = useCallback(async (rawUrl: string) => {
     const trimmed = rawUrl.trim();
     const normalized = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+    lastTargetUrlRef.current = normalized;
     setInput(false);
     setPhase('customer_url_loading');
 
-    const msgs = ['Visiting the website…', 'Scanning for details…', 'Analysing content…', 'Building profile…'];
+    const msgs = ['Gathering account intelligence…', 'Verifying funding and headcount…', 'Scanning their LinkedIn…', 'Classifying company type…', 'Mapping to your ICP…', 'Checking recent news…', 'Reviewing their tech stack…', 'Analyzing hiring signals…', 'Estimating revenue range…', 'Almost there…'];
     let mi = 0;
     setCustomerUrlLoadMsg(msgs[0]);
     const interval = setInterval(() => { mi = (mi + 1) % msgs.length; setCustomerUrlLoadMsg(msgs[mi]); }, 2500);
@@ -799,30 +900,45 @@ export default function SetupFlow({
       clearInterval(interval);
       if (!res.ok) throw new Error('Analysis failed');
 
-      const data = await res.json();
-      const name = data.companyName || normalized.replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '');
+      const data = await res.json() as import('@/lib/target-company-enrichment').TargetCompanyEnrichmentResult;
+      const name = data.company_name || normalized.replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '');
       setReviewedCompanyName(name);
+      setEnrichedTargetCompany(data);
 
       const draft = {
-        companyType: data.companyType ?? '',
-        therapeuticAreas: data.therapeuticAreas ?? [],
-        modalities: data.modality ?? [],
-        developmentStages: data.developmentStage ? [data.developmentStage] : [],
-        companySizes: data.companySize ? [data.companySize] : [],
-        fundingStages: data.fundingStage ? [data.fundingStage] : [],
+        companyType: data.company_type ?? '',
+        therapeuticAreas: data.therapeutic_areas ?? [],
+        modalities: data.modalities ?? [],
+        developmentStages: data.development_stages ?? [],
+        companySizes: employeeCountToSizeBucket(data.employee_count, data.employee_range),
+        fundingStages: data.funding_stage ? [data.funding_stage] : [],
       };
       setReviewDraft(draft);
+
+      // Generate the ICP name now so it shows in the panel immediately
+      const nameRes = await fetch('/api/generate-icp-name', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...draft,
+          exampleCompanyName: data.company_name ?? name,
+          exampleCompanyDescription: data.description ?? undefined,
+        }),
+      });
+      const { name: icpName } = nameRes.ok ? await nameRes.json() : { name: `${draft.companyType || 'Target'} Profile` };
+      setSavedIcpName(icpName);
 
       const { displayParts } = await askClaude({
         mode: 'narration',
         extra: {
           role: 'user',
-          content: `[System: analysis of the customer company "${name}" is complete. One sentence: tell the user you've mapped out a suggested profile and they should review the selections below — add or remove to match the broader category of accounts they target.]`,
+          content: `[System: analysis of the customer company "${name}" is complete and we've auto-generated an ICP profile from it. One sentence: tell the user the profile is ready on the right — they can edit it before saving or just save it as is.]`,
         },
       });
       if (displayParts.length) await sayBeats(displayParts);
 
       setPhase('customer_url_review');
+      setInput(true);
     } catch {
       clearInterval(interval);
       await say("Couldn't analyse that URL — check it's correct and try again.");
@@ -833,16 +949,34 @@ export default function SetupFlow({
 
   // ── Handle own-company analysis ───────────────────────────────────────────
 
-  const runAnalysis = useCallback(async (url: string) => {
+  const ANALYSIS_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
+  const cancelAnalysis = useCallback(() => {
+    analysisAbortRef.current?.abort();
+    analysisAbortRef.current = null;
+    setPhase('greeting');
+    setInput(true);
+    setAnalysisError('');
+    setLoadMsg('');
+  }, []);
+
+  const runAnalysis = useCallback(async (url: string, isReenrich = false) => {
     const trimmed = url.trim();
     const normalized = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
     lastAnalyzedUrlRef.current = normalized;
     setThread((p) => p.filter((m) => m.kind !== 'results'));
     setAnalysisError('');
-    setPhase('analysis_loading');
     setInput(false);
 
-    const msgs = ['Thinking…', 'Visiting your website…', 'Scanning for details…', 'Analysing content…', 'Building your profile…'];
+    // Re-enrich: keep the phase as-is so cards 2 & 3 stay in their completed state.
+    // Fresh analysis: drive the phase through the loading screen.
+    if (!isReenrich) setPhase('analysis_loading');
+
+    const controller = new AbortController();
+    analysisAbortRef.current = controller;
+    const timeout = setTimeout(() => controller.abort(), ANALYSIS_TIMEOUT_MS);
+
+    const msgs = ['Researching your company…', 'Checking funding and headcount…', 'Looking up your LinkedIn…', 'Mapping to categories…', 'Putting it all together…', 'Building your profile…', 'Scanning recent news…', 'Reviewing your tech stack…', 'Analyzing your market position…', 'Identifying your company stage…', 'Detecting product signals…', 'Almost there…'];
     let mi = 0;
     setLoadMsg(msgs[0]);
     const interval = setInterval(() => { mi = (mi + 1) % msgs.length; setLoadMsg(msgs[mi]); }, 3000);
@@ -851,38 +985,48 @@ export default function SetupFlow({
       const res = await fetch('/api/analyze-and-store', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ website: normalized }),
+        signal: controller.signal,
       });
       clearInterval(interval);
+      clearTimeout(timeout);
+      analysisAbortRef.current = null;
       if (!res.ok) throw new Error('Analysis failed');
       const data = await res.json();
       setEditingFindings(false);
       setEditingFindingsData(data);
 
       // Claude comments on what it found
+      const narrationPrompt = isReenrich
+        ? `[System: re-enrichment of ${data.company_name ?? normalized} is complete. Give a single short sentence confirming the company profile has been refreshed with the latest data — no reaction, no praise, just a calm factual update.]`
+        : `[System: analysis of ${normalized} is complete. Company: ${data.company_name ?? normalized}. Give a 1-sentence warm reaction and tell them all the details are now showing in their company card on the right — no need to list anything out.]`;
       const { displayParts } = await askClaude({
         mode: 'narration',
-        extra: {
-          role: 'user',
-          content: `[System: analysis of ${normalized} is complete. Company: ${data.company_name ?? normalized}. Give a 1-sentence warm reaction and tell them all the details are now showing in their company card on the right — no need to list anything out.]`,
-        },
+        extra: { role: 'user', content: narrationPrompt },
       });
       if (displayParts.length) await sayBeats(displayParts);
 
       // Keep results on the thread for data + history; UI shows them in the side panel only.
       setThread((p) => [...p, { id: crypto.randomUUID(), kind: 'results', data }]);
-      setPhase('analysis_results');
-
-    } catch {
-      clearInterval(interval);
-      setAnalysisError("Couldn't analyse that website, maybe it's blocking us. Try another URL.");
-      setPhase('greeting');
+      if (!isReenrich) setPhase('analysis_results');
       setInput(true);
+
+    } catch (err) {
+      clearInterval(interval);
+      clearTimeout(timeout);
+      analysisAbortRef.current = null;
+      // Aborted (user cancel or timeout) — reset silently, don't show an error
+      if (err instanceof Error && err.name === 'AbortError') {
+        if (!isReenrich) { setPhase('greeting'); setInput(true); }
+        return;
+      }
+      setAnalysisError("Couldn't analyse that website, maybe it's blocking us. Try another URL.");
+      if (!isReenrich) { setPhase('greeting'); setInput(true); }
     }
   }, [askClaude, formatFindingsSummary]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleReanalyseFromPanel = useCallback(() => {
     const u = lastAnalyzedUrlRef.current;
-    if (u) void runAnalysis(u);
+    if (u) void runAnalysis(u, true);
   }, [runAnalysis]);
 
   const getLatestResultsData = useCallback((): Record<string, unknown> | null => {
@@ -893,11 +1037,150 @@ export default function SetupFlow({
     return null;
   }, [thread]);
 
+  const handleMyCompanyChange = useCallback((
+    field: keyof import('@/components/SetupProfilePanel').PanelMyCompanyData,
+    value: import('@/components/SetupProfilePanel').MyCompanyChangeValue,
+  ) => {
+    const keyMap: Partial<Record<string, string>> = {
+      description: 'description',
+      customersWeServe: 'customers_we_serve',
+      goodFit: 'good_fit',
+      badFit: 'bad_fit',
+      valuePropositions: 'value_propositions',
+      companyType: 'company_type',
+      companyTypeDisplay: 'company_type_display',
+      therapeuticAreas: 'therapeutic_areas',
+      modalities: 'modalities',
+      developmentStages: 'development_stages',
+      productsServices: 'products_services',
+      services: 'services',
+      technologies: 'technologies',
+      competitorsEnriched: 'competitors_enriched',
+      employeeCount: 'employee_count',
+      employeeRange: 'employee_range',
+      followerCount: 'follower_count',
+      foundedYear: 'founded_year',
+      fundingStage: 'funding_stage',
+      totalFundingUsd: 'total_funding_usd',
+      hqCity: 'hq_city',
+      hqCountry: 'hq_country',
+      companyStatus: 'company_status',
+      companyName: 'company_name',
+      website: 'website',
+      tagline: 'tagline',
+      linkedinUrl: 'linkedin_url',
+    };
+    const rawKey = keyMap[field as string] ?? field;
+    setEditingFindingsData((prev) => ({ ...(prev ?? {}), [rawKey]: value }));
+  }, []);
+
   const handleAnalysisNotRight = useCallback(async () => {
-    setEditingFindingsData((prev) => prev ?? getLatestResultsData());
+    const current = editingFindingsData ?? getLatestResultsData();
+    preEditDataRef.current = current;
+    setEditingFindingsData(current);
     setEditingFindings(true);
-    await say('No problem. I switched the findings panel into edit mode so you can adjust each section directly.');
-  }, [getLatestResultsData]); // eslint-disable-line react-hooks/exhaustive-deps
+    await say('Sure — edit any fields directly in the panel on the right, then hit Save when you\'re done.');
+  }, [editingFindingsData, getLatestResultsData]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleDeleteCompanyProfile = useCallback(async () => {
+    const data = editingFindingsData ?? getLatestResultsData();
+    const id = typeof data?.id === 'string' ? data.id : null;
+    if (id) {
+      try {
+        await fetch(`/api/user-analyses?id=${id}`, { method: 'DELETE' });
+      } catch {}
+    }
+    setEditingFindings(false);
+    setEditingFindingsData(null);
+    setThread([]);
+    historyRef.current = [];
+    lastAnalyzedUrlRef.current = null;
+    setPhase('greeting');
+    setInput(false);
+    const { displayParts } = await askClaude({
+      mode: 'narration',
+      extra: {
+        role: 'user',
+        content: '[System: the user deleted their company profile and wants to start that step fresh. One sentence: acknowledge and ask them to enter their company website URL to begin again.]',
+      },
+    });
+    if (displayParts.length) await sayBeats(displayParts);
+    setInput(true);
+  }, [editingFindingsData, getLatestResultsData, askClaude]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleReenrichIcp = useCallback(() => {
+    if (!lastTargetUrlRef.current) return;
+    icpIdRef.current = null;
+    void handleCustomerUrlAnalyse(lastTargetUrlRef.current);
+  }, [handleCustomerUrlAnalyse]);
+
+  const handleDeleteIcp = useCallback(async () => {
+    const id = icpIdRef.current;
+    if (id) {
+      try {
+        await fetch('/api/company-criteria', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id }),
+        });
+      } catch {}
+      icpIdRef.current = null;
+    }
+    setIcpEditMode(false);
+    setReviewDraft({ companyType: '', therapeuticAreas: [], modalities: [], developmentStages: [], companySizes: [], fundingStages: [] });
+    setReviewedCompanyName('');
+    setEnrichedTargetCompany(null);
+    setSavedIcpName('');
+    lastTargetUrlRef.current = null;
+    setPhase('customer_url_input');
+    setInput(true);
+    await say('Profile deleted. Drop in a URL or company name and I\'ll build a fresh one.');
+  }, [say]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleDeletePersona = useCallback(async () => {
+    const id = personaIdRef.current;
+    if (id) {
+      try { await fetch(`/api/contacts?id=${id}`, { method: 'DELETE' }); } catch {}
+      personaIdRef.current = null;
+    }
+    setPanelPersona({ functions: [], seniority: [] });
+    personaRef.current = { functions: [], seniority: [] };
+    setSavedPersonaName('');
+    setPhase('buying_team_review');
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleReenrichPersona = useCallback(async () => {
+    setPhase('buying_team_loading');
+    const sellerData = editingFindingsData ?? {};
+    const icpData = companyRef.current;
+    const btRes = await fetch('/api/generate-buying-team', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        seller_company_name: sellerData.company_name,
+        seller_company_type: sellerData.company_type,
+        seller_therapeutic_areas: sellerData.therapeutic_areas,
+        seller_products_services: sellerData.products_services,
+        seller_customers_we_serve: sellerData.customers_we_serve,
+        seller_value_propositions: sellerData.value_propositions,
+        icp_company_type: icpData.companyType,
+        icp_therapeutic_areas: icpData.therapeuticAreas,
+        icp_modalities: icpData.modalities,
+        icp_development_stages: icpData.developmentStages,
+        icp_company_sizes: icpData.companySizes,
+        example_company_name: reviewedCompanyName || undefined,
+      }),
+    }).catch(() => null);
+    if (btRes?.ok) {
+      const btData = await btRes.json() as { functions?: string[]; seniority_levels?: string[] };
+      const fns = btData.functions ?? [];
+      const sens = btData.seniority_levels ?? [];
+      personaRef.current.functions = fns;
+      personaRef.current.seniority = sens;
+      setPanelPersona({ functions: fns, seniority: sens });
+    }
+    setPhase('buying_team_review');
+  }, [editingFindingsData, reviewedCompanyName]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleAnalyseDifferentWebsite = useCallback(async () => {
     setThread((prev) => prev.filter((m) => m.kind !== 'results'));
@@ -909,21 +1192,10 @@ export default function SetupFlow({
     await say('Sure. Share the new company website and I will analyse that instead.');
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleFindingsSectionChange = useCallback((sectionKey: string, rawValue: string) => {
-    const lines = rawValue
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean);
-    setEditingFindingsData((prev) => ({
-      ...(prev ?? {}),
-      [sectionKey]: lines,
-    }));
-  }, []);
-
   const handleCancelFindingsEdit = useCallback(() => {
     setEditingFindings(false);
-    setEditingFindingsData(getLatestResultsData());
-  }, [getLatestResultsData]);
+    setEditingFindingsData(preEditDataRef.current);
+  }, []);
 
   const handleSaveFindingsEdit = useCallback(async () => {
     if (!editingFindingsData) return;
@@ -955,6 +1227,35 @@ export default function SetupFlow({
       setSavingFindings(false);
     }
   }, [editingFindingsData]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── ICP card inline edit handlers ────────────────────────────────────────
+
+  const handleEditIcp = useCallback(() => {
+    icpEditSnapshotRef.current = { ...reviewDraft };
+    setIcpEditMode(true);
+  }, [reviewDraft]);
+
+  const handleCancelIcp = useCallback(() => {
+    if (icpEditSnapshotRef.current) {
+      setReviewDraft(icpEditSnapshotRef.current);
+    }
+    setIcpEditMode(false);
+  }, []);
+
+  const handleSaveIcp = useCallback(async () => {
+    setIcpEditMode(false);
+    if (phase === 'customer_url_review') {
+      await handleReviewConfirm();
+    }
+  }, [phase]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleIcpFieldChange = useCallback((field: string, value: import('@/components/SetupProfilePanel').IcpChangeValue) => {
+    if (field === 'icpName') {
+      setSavedIcpName(value as string);
+    } else {
+      setReviewDraft((prev) => ({ ...prev, [field]: value }));
+    }
+  }, []);
 
   // ── Handle user text input (greeting phase) ───────────────────────────────
 
@@ -1026,21 +1327,37 @@ export default function SetupFlow({
         // Pre-populate the profile panel with whatever is already stored
         if (existingAnalysis) {
           setEditingFindingsData(existingAnalysis as Record<string, unknown>);
+          const storedWebsite = (existingAnalysis as Record<string, unknown>).website;
+          if (typeof storedWebsite === 'string' && storedWebsite) {
+            lastAnalyzedUrlRef.current = storedWebsite;
+          }
         }
         if (existingIcps.length > 0) {
           const icp = existingIcps[0] as unknown as Record<string, unknown>;
+          icpIdRef.current = (existingIcps[0] as TargetCompanyProfile).id;
           setSavedIcpName(typeof icp.name === 'string' ? icp.name : '');
-          setPanelCompany({
+          const taxonomy = {
             companyType: typeof icp.company_type === 'string' ? icp.company_type : '',
             companySizes: Array.isArray(icp.company_sizes) ? (icp.company_sizes as string[]) : [],
             therapeuticAreas: Array.isArray(icp.therapeutic_areas) ? (icp.therapeutic_areas as string[]) : [],
             modalities: Array.isArray(icp.modalities) ? (icp.modalities as string[]) : [],
             developmentStages: Array.isArray(icp.development_stages) ? (icp.development_stages as string[]) : [],
             fundingStages: Array.isArray(icp.funding_stages) ? (icp.funding_stages as string[]) : [],
-          });
+          };
+          setPanelCompany(taxonomy);
+          setReviewDraft(taxonomy);
+          // Keep companyRef in sync so buying-team generation can read it
+          companyRef.current = taxonomy;
+          const enrichment = icp.example_company_enrichment as import('@/lib/target-company-enrichment').TargetCompanyEnrichmentResult | null | undefined;
+          if (enrichment) {
+            setEnrichedTargetCompany(enrichment);
+            setReviewedCompanyName(typeof enrichment.company_name === 'string' ? enrichment.company_name : '');
+            if (enrichment.website) lastTargetUrlRef.current = enrichment.website;
+          }
         }
         if (existingPersonas.length > 0) {
           const persona = existingPersonas[0] as Record<string, unknown>;
+          if (typeof persona.id === 'string') personaIdRef.current = persona.id;
           const rawFns = Array.isArray(persona.functions) ? persona.functions : [];
           const fnNames = rawFns.map((f: unknown) => {
             if (typeof f === 'string') {
@@ -1056,7 +1373,7 @@ export default function SetupFlow({
           });
         }
 
-        // Leg 1: nothing stored — start from the beginning
+        // Leg 1: nothing stored — greet and ask for company URL
         if (!existingAnalysis) {
           const { displayParts } = await askClaude();
           if (displayParts.length) await sayBeats(displayParts);
@@ -1064,28 +1381,91 @@ export default function SetupFlow({
           return;
         }
 
-        // Legs 2–4: something exists — show resume prompt
-        let resumeTarget: 'customer_url_input' | 'persona_functions' = 'customer_url_input';
-        let resumeContext = 'your company profile is set up';
-
-        if (existingIcps.length > 0) {
-          const icp = existingIcps[0];
-          icpIdRef.current = icp.id;
-          resumeTarget = 'persona_functions';
-          resumeContext = `your company profile and target company profile ("${icp.name}") are both set up`;
+        // Leg 2: company done, no ICP — skip greeting, go straight to target company step
+        if (existingIcps.length === 0) {
+          const { displayParts } = await askClaude({
+            mode: 'narration',
+            extra: {
+              role: 'user',
+              content: '[System: the user\'s company profile is already set up. One sentence: acknowledge this and invite them to drop in a target account URL to define who they sell to.]',
+            },
+          });
+          if (displayParts.length) await sayBeats(displayParts);
+          setPhase('customer_url_input');
+          setInput(true);
+          return;
         }
 
-        setResumeStep(resumeTarget);
+        // Leg 3: company + ICP done, no persona — generate buying team and go straight to review
+        if (existingPersonas.length === 0) {
+          const { displayParts } = await askClaude({
+            mode: 'narration',
+            extra: {
+              role: 'user',
+              content: `[System: the user's company profile and target company profile are already set up. One sentence: acknowledge this and say you're generating their buying team suggestions now.]`,
+            },
+          });
+          if (displayParts.length) await sayBeats(displayParts);
 
+          setPhase('buying_team_loading');
+          const sellerData = existingAnalysis as Record<string, unknown>;
+          const icpData = companyRef.current;
+          const exampleName = typeof (existingIcps[0] as unknown as Record<string, unknown>).example_company_enrichment === 'object'
+            ? ((existingIcps[0] as unknown as Record<string, unknown>).example_company_enrichment as Record<string, unknown>)?.company_name as string | undefined
+            : undefined;
+
+          const btRes = await fetch('/api/generate-buying-team', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              seller_company_name: sellerData.company_name,
+              seller_company_type: sellerData.company_type,
+              seller_therapeutic_areas: sellerData.therapeutic_areas,
+              seller_products_services: sellerData.products_services,
+              seller_services: sellerData.services,
+              seller_customers_we_serve: sellerData.customers_we_serve,
+              seller_value_propositions: sellerData.value_propositions,
+              icp_company_type: icpData.companyType,
+              icp_therapeutic_areas: icpData.therapeuticAreas,
+              icp_modalities: icpData.modalities,
+              icp_development_stages: icpData.developmentStages,
+              icp_company_sizes: icpData.companySizes,
+              example_company_name: exampleName,
+            }),
+          }).catch(() => null);
+
+          if (btRes?.ok) {
+            const btData = await btRes.json() as { functions?: string[]; seniority_levels?: string[] };
+            const fns = btData.functions ?? [];
+            const sens = btData.seniority_levels ?? [];
+            personaRef.current.functions = fns;
+            personaRef.current.seniority = sens;
+            setPanelPersona({ functions: fns, seniority: sens });
+          }
+
+          const { displayParts: reviewParts } = await askClaude({
+            mode: 'narration',
+            extra: {
+              role: 'user',
+              content: `[System: buying team suggestions are ready. One sentence: tell the user the buying team is pre-filled in the card on the right — they can adjust the chips and hit "Looks right" when ready.]`,
+            },
+          });
+          if (reviewParts.length) await sayBeats(reviewParts);
+          setPhase('buying_team_review');
+          return;
+        }
+
+        // Leg 4: everything done — brief confirmation then redirect
         const { displayParts } = await askClaude({
           mode: 'narration',
           extra: {
             role: 'user',
-            content: `[System: ${resumeContext}. One sentence: acknowledge you can see they started setup before and ask if they'd like to continue where they left off or start again.]`,
+            content: '[System: setup is fully complete — company profile, target company profile, and buying team are all saved. One sentence: let the user know they\'re all set and you\'re taking them to their workspace.]',
           },
         });
         if (displayParts.length) await sayBeats(displayParts);
-        setPhase('resume_prompt');
+        setPhase('done');
+        setTimeout(() => router.push(resolvedCompletePath), 2200);
         return;
       }
 
@@ -1193,14 +1573,36 @@ export default function SetupFlow({
     phase === 'company_stage' ||
     phase === 'company_funding' ||
     phase === 'persona_functions' ||
-    phase === 'persona_seniority';
+    phase === 'persona_seniority' ||
+    phase === 'buying_team_review';
   const isSaving = phase === 'company_saving' || phase === 'persona_saving' || phase === 'done';
   const isCustomerUrlLoading = phase === 'customer_url_loading';
 
+  const customerUrlPercent = (() => {
+    if (!isCustomerUrlLoading || customerUrlStartedAtRef.current === null) return 0;
+    const elapsed = Math.max(customerUrlProgressNow - customerUrlStartedAtRef.current, 0);
+    const progress = 1 - Math.exp(-elapsed / 9000);
+    return Math.round(5 + (85 - 5) * progress);
+  })();
+
+  const ownCompanyPercent = (() => {
+    if (phase !== 'analysis_loading' || ownCompanyStartedAtRef.current === null) return 0;
+    const elapsed = Math.max(ownCompanyProgressNow - ownCompanyStartedAtRef.current, 0);
+    const progress = 1 - Math.exp(-elapsed / 11000);
+    return Math.round(5 + (85 - 5) * progress);
+  })();
+
+  const savingPercent = (() => {
+    if (!isSaving || savingStartedAtRef.current === null) return 0;
+    const elapsed = Math.max(savingProgressNow - savingStartedAtRef.current, 0);
+    const progress = 1 - Math.exp(-elapsed / 4000);
+    return Math.round(5 + (90 - 5) * progress);
+  })();
+
   const SETUP_STEPS = [
-    { label: 'Your company', phases: ['greeting', 'analysis_loading', 'analysis_results', 'resume_prompt'] as Phase[] },
+    { label: 'Your company', phases: ['greeting', 'analysis_loading', 'analysis_results'] as Phase[] },
     { label: 'Target companies', phases: ['customer_url_input', 'customer_url_loading', 'customer_url_review', 'company_type', 'company_size', 'company_ta', 'company_modality', 'company_stage', 'company_funding', 'company_saving'] as Phase[] },
-    { label: 'Buying teams', phases: ['persona_functions', 'persona_seniority', 'persona_saving', 'done'] as Phase[] },
+    { label: 'Buying teams', phases: ['buying_team_loading', 'buying_team_review', 'persona_functions', 'persona_seniority', 'persona_saving', 'done'] as Phase[] },
   ];
   const currentStepIndex = SETUP_STEPS.findIndex((s) => s.phases.includes(phase));
   const showProgress = entryPoint === 'full' && currentStepIndex >= 0;
@@ -1236,15 +1638,6 @@ export default function SetupFlow({
   const showResultsActions = Boolean(isResultsStep && resultsPanelData);
   const visibleMessages = thread.filter((m) => m.kind !== 'results');
   const analysedUrlForPanel = lastAnalyzedUrlRef.current ?? '';
-  // Used only by the inline findings edit form (not the side panel)
-  const findingsSections = resultsPanelData
-    ? FINDINGS_SECTION_CONFIG
-        .map((section) => ({
-          ...section,
-          items: parseSectionItems(resultsPanelData[section.key]),
-        }))
-        .filter((section) => section.items.length > 0)
-    : [];
 
   // ── Welcome splash ────────────────────────────────────────────────────────
 
@@ -1291,7 +1684,7 @@ export default function SetupFlow({
                 <AgentAvatar />
                 <div
                   className={`max-w-[min(100%,28rem)] rounded-2xl rounded-tl-none border border-gray-200 bg-white px-4 py-3 shadow-sm transition-opacity ${
-                    !isLastAssistant && i < visibleMessages.length - 2 ? 'opacity-55' : 'opacity-100'
+                    !isLastAssistant && i < visibleMessages.length - 2 ? 'opacity-55' : thinking && isLastAssistant ? 'opacity-100 animate-pulse' : 'opacity-100'
                   }`}
                 >
                   <p className="whitespace-pre-wrap text-base leading-relaxed text-gray-800">
@@ -1306,15 +1699,19 @@ export default function SetupFlow({
 
           {isCustomerUrlLoading && !thinking && (
             <div className="flex items-start gap-3">
-              <AgentAvatar />
-              <div className="rounded-2xl rounded-tl-none border border-gray-200 bg-white px-4 py-3 shadow-sm">
-                <div className="flex items-center gap-2">
-                  <div className="flex gap-1">
-                    {[0, 150, 300].map((d) => (
-                      <div key={d} className="h-1.5 w-1.5 animate-bounce rounded-full bg-arcova-teal/70" style={{ animationDelay: `${d}ms` }} />
-                    ))}
+              <ArcovaLoader size={36} />
+              <div className="rounded-2xl rounded-tl-none border border-gray-200 bg-white px-4 py-3 shadow-sm min-w-52">
+                <p className="mb-2.5 text-sm text-gray-500">{customerUrlLoadMsg}</p>
+                <div className="space-y-1.5">
+                  <div className="relative h-2 overflow-hidden rounded-full bg-slate-200/80">
+                    <div
+                      className="arcova-enrichment-progress absolute inset-y-0 left-0 rounded-full transition-[width] duration-700 ease-out"
+                      style={{ width: `${customerUrlPercent}%` }}
+                    >
+                      <div className="arcova-enrichment-glow absolute inset-y-0 right-0 w-10 rounded-full" />
+                    </div>
                   </div>
-                  <span className="text-base text-gray-600">{customerUrlLoadMsg}</span>
+                  <p className="text-right text-xs tabular-nums text-gray-400">{customerUrlPercent}%</p>
                 </div>
               </div>
             </div>
@@ -1322,34 +1719,60 @@ export default function SetupFlow({
 
           {phase === 'analysis_loading' && !thinking && (
             <div className="flex items-start gap-3">
-              <AgentAvatar />
-              <div className="rounded-2xl rounded-tl-none border border-gray-200 bg-white px-4 py-3 shadow-sm">
-                <div className="flex items-center gap-2">
-                  <div className="flex gap-1">
-                    {[0, 150, 300].map((d) => (
-                      <div key={d} className="h-1.5 w-1.5 animate-bounce rounded-full bg-arcova-teal/70" style={{ animationDelay: `${d}ms` }} />
-                    ))}
+              <ArcovaLoader size={36} />
+              <div className="rounded-2xl rounded-tl-none border border-gray-200 bg-white px-4 py-3 shadow-sm min-w-52">
+                <p className="mb-2.5 text-sm text-gray-500">{loadMsg}</p>
+                <div className="space-y-1.5">
+                  <div className="relative h-2 overflow-hidden rounded-full bg-slate-200/80">
+                    <div
+                      className="arcova-enrichment-progress absolute inset-y-0 left-0 rounded-full transition-[width] duration-700 ease-out"
+                      style={{ width: `${ownCompanyPercent}%` }}
+                    >
+                      <div className="arcova-enrichment-glow absolute inset-y-0 right-0 w-10 rounded-full" />
+                    </div>
                   </div>
-                  <span className="text-base text-gray-600">{loadMsg}</span>
+                  <p className="text-right text-xs tabular-nums text-gray-400">{ownCompanyPercent}%</p>
                 </div>
+                <button
+                  type="button"
+                  onClick={cancelAnalysis}
+                  className="mt-3 text-xs text-gray-400 hover:text-gray-600 transition-colors underline underline-offset-2"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {phase === 'buying_team_loading' && !thinking && (
+            <div className="flex items-start gap-3">
+              <ArcovaLoader size={36} />
+              <div className="rounded-2xl rounded-tl-none border border-gray-200 bg-white px-4 py-3 shadow-sm">
+                <span className="text-base text-gray-600">Inferring buying team…</span>
               </div>
             </div>
           )}
 
           {isSaving && !thinking && (
             <div className="flex items-start gap-3">
-              <AgentAvatar />
-              <div className="rounded-2xl rounded-tl-none border border-gray-200 bg-white px-4 py-3 shadow-sm">
-                <div className="flex items-center gap-2">
-                  <div className="flex gap-1">
-                    {[0, 150, 300].map((d) => (
-                      <div key={d} className="h-1.5 w-1.5 animate-bounce rounded-full bg-arcova-teal/70" style={{ animationDelay: `${d}ms` }} />
-                    ))}
+              <ArcovaLoader size={36} />
+              <div className="rounded-2xl rounded-tl-none border border-gray-200 bg-white px-4 py-3 shadow-sm min-w-52">
+                <p className="mb-2.5 text-sm text-gray-500">
+                  {phase === 'done' ? 'Redirecting…' : phase === 'persona_saving' ? 'Saving buying team…' : 'Saving profile…'}
+                </p>
+                {phase !== 'done' && (
+                  <div className="space-y-1.5">
+                    <div className="relative h-2 overflow-hidden rounded-full bg-slate-200/80">
+                      <div
+                        className="arcova-enrichment-progress absolute inset-y-0 left-0 rounded-full transition-[width] duration-700 ease-out"
+                        style={{ width: `${savingPercent}%` }}
+                      >
+                        <div className="arcova-enrichment-glow absolute inset-y-0 right-0 w-10 rounded-full" />
+                      </div>
+                    </div>
+                    <p className="text-right text-xs tabular-nums text-gray-400">{savingPercent}%</p>
                   </div>
-                  <span className="text-base text-gray-600">
-                    {phase === 'done' ? 'Redirecting…' : 'Saving…'}
-                  </span>
-                </div>
+                )}
               </div>
             </div>
           )}
@@ -1362,7 +1785,7 @@ export default function SetupFlow({
         </div>
       </div>
 
-      {(showChatBar || widget || showResultsActions || phase === 'resume_prompt') && !isSaving && (
+      {(showChatBar || widget || showResultsActions || isCustomerUrlReview) && !isSaving && (
         <div className="shrink-0 space-y-3 border-t border-white/10 bg-arcova-darkblue px-4 py-3">
           {pendingTransition && (
             <div className="flex items-center gap-2">
@@ -1383,144 +1806,36 @@ export default function SetupFlow({
             </div>
           )}
 
-          {phase === 'resume_prompt' && (
-            <div className="flex flex-col gap-2 sm:flex-row">
+
+          {phase === 'buying_team_review' && (
+            <div className="flex justify-end">
               <button
                 type="button"
-                onClick={() => void handleResumeContinue()}
-                className="rounded-xl bg-arcova-teal px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/90"
+                onClick={() => void savePersona()}
+                className="rounded-xl bg-arcova-teal px-5 py-2.5 text-base font-semibold text-white transition-colors hover:bg-arcova-teal/90"
               >
-                Continue where I left off →
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleResumeRestart()}
-                className="rounded-xl border border-white/20 px-5 py-2.5 text-sm font-semibold text-white/70 transition-colors hover:bg-white/[0.08]"
-              >
-                Start again
+                Looks right →
               </button>
             </div>
           )}
 
           {isCustomerUrlReview && (
-            <div className="space-y-4 max-h-96 overflow-y-auto pr-1">
-              <p className="text-sm text-white/50">
-                Based on <span className="font-medium text-white/80">{reviewedCompanyName}</span>. Add or remove to match the broader category you target.
-              </p>
-
-              {/* Company type */}
-              <div className="space-y-1.5">
-                <p className="text-sm font-semibold text-white/60">Company type</p>
-                {!reviewDraft.companyType && <p className="text-xs font-medium text-amber-600">Select a company type</p>}
-                <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
-                  {COMPANY_TYPE_OPTIONS.map((o) => (
-                    <button
-                      key={o.value}
-                      type="button"
-                      onClick={() => setReviewDraft((p) => ({ ...p, companyType: p.companyType === o.value ? '' : o.value }))}
-                      className={`w-full rounded-lg border-2 px-3 py-2 text-left text-sm transition-all ${
-                        reviewDraft.companyType === o.value
-                          ? 'border-arcova-teal bg-arcova-teal/10'
-                          : 'border-white/15 bg-white/[0.06] hover:border-white/30'
-                      }`}
-                    >
-                      <span className={`font-medium ${reviewDraft.companyType === o.value ? 'text-arcova-teal' : 'text-white/80'}`}>{o.value}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Therapeutic areas */}
-              <div className="space-y-1.5">
-                <p className="text-sm font-semibold text-white/60">Therapeutic areas</p>
-                {reviewDraft.therapeuticAreas.length === 0 && <p className="text-xs font-medium text-amber-400">Select at least one</p>}
-                <div className="flex flex-wrap gap-2">
-                  {THERAPEUTIC_AREA_OPTIONS.map((o) => (
-                    <button key={o} type="button" onClick={() => toggleReview('therapeuticAreas')(o)}
-                      className={`rounded-full px-3 py-1.5 text-sm transition-colors ${reviewDraft.therapeuticAreas.includes(o) ? 'bg-arcova-teal text-white' : 'bg-white/10 text-white/70 hover:bg-white/20'}`}>
-                      {o}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Modalities */}
-              <div className="space-y-1.5">
-                <p className="text-sm font-semibold text-white/60">Modalities</p>
-                {reviewDraft.modalities.length === 0 && <p className="text-xs font-medium text-amber-400">Select at least one</p>}
-                <div className="flex flex-wrap gap-2">
-                  {MODALITY_OPTIONS.map((o) => (
-                    <button key={o} type="button" onClick={() => toggleReview('modalities')(o)}
-                      className={`rounded-full px-3 py-1.5 text-sm transition-colors ${reviewDraft.modalities.includes(o) ? 'bg-arcova-teal text-white' : 'bg-white/10 text-white/70 hover:bg-white/20'}`}>
-                      {o}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Development stage */}
-              <div className="space-y-1.5">
-                <p className="text-sm font-semibold text-white/60">Development stage</p>
-                {reviewDraft.developmentStages.length === 0 && <p className="text-xs font-medium text-amber-400">Select applicable stages</p>}
-                <div className="flex flex-wrap gap-2">
-                  {DEVELOPMENT_STAGE_OPTIONS.map((o) => (
-                    <button key={o} type="button" onClick={() => toggleReview('developmentStages')(o)}
-                      className={`rounded-full px-3 py-1.5 text-sm transition-colors ${reviewDraft.developmentStages.includes(o) ? 'bg-arcova-teal text-white' : 'bg-white/10 text-white/70 hover:bg-white/20'}`}>
-                      {o}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Company size */}
-              <div className="space-y-1.5">
-                <p className="text-sm font-semibold text-white/60">Company size</p>
-                {reviewDraft.companySizes.length === 0 && <p className="text-xs font-medium text-amber-400">Select typical sizes</p>}
-                <div className="flex flex-wrap gap-2">
-                  {COMPANY_SIZE_OPTIONS.map((o) => (
-                    <button key={o} type="button" onClick={() => toggleReview('companySizes')(o)}
-                      className={`rounded-full px-3 py-1.5 text-sm transition-colors ${reviewDraft.companySizes.includes(o) ? 'bg-arcova-teal text-white' : 'bg-white/10 text-white/70 hover:bg-white/20'}`}>
-                      {o}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Funding stage */}
-              <div className="space-y-1.5">
-                <p className="text-sm font-semibold text-white/60">Funding stage</p>
-                {reviewDraft.fundingStages.length === 0 && <p className="text-xs font-medium text-amber-400">Select typical funding stages</p>}
-                <div className="flex flex-wrap gap-2">
-                  {FUNDING_STAGE_OPTIONS.map((o) => (
-                    <button key={o} type="button" onClick={() => toggleReview('fundingStages')(o)}
-                      className={`rounded-full px-3 py-1.5 text-sm transition-colors ${reviewDraft.fundingStages.includes(o) ? 'bg-arcova-teal text-white' : 'bg-white/10 text-white/70 hover:bg-white/20'}`}>
-                      {o}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between pt-1 border-t border-white/10">
+            <div className="space-y-3 rounded-xl border border-gray-200 bg-white p-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <button
                   type="button"
-                  onClick={() => { setPhase('customer_url_input'); setInput(true); }}
-                  className="text-sm text-white/40 hover:text-white/70"
+                  onClick={() => void handleReviewConfirm()}
+                  className="rounded-xl bg-arcova-teal px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/90"
                 >
-                  ← Try a different URL
+                  Looks right, save ICP →
                 </button>
-                <div className="space-y-1 text-right">
-                  {!isReviewValid && (
-                    <p className="text-xs text-amber-600">Company type, therapeutic area, and modality required</p>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => void handleReviewConfirm()}
-                    disabled={!isReviewValid}
-                    className="rounded-xl bg-arcova-teal px-5 py-2.5 text-base font-semibold text-white transition-colors hover:bg-arcova-teal/90 disabled:opacity-30"
-                  >
-                    Save ICP →
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => { setIcpEditMode(false); setPhase('customer_url_input'); setInput(true); }}
+                  className="rounded-xl border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
+                >
+                  Try a different company
+                </button>
               </div>
             </div>
           )}
@@ -1539,6 +1854,7 @@ export default function SetupFlow({
               ))}
             </div>
           )}
+
 
           {widget && (
             <div className="space-y-3">
@@ -1606,45 +1922,31 @@ export default function SetupFlow({
           {showResultsActions && (
             <div className="space-y-3 rounded-xl border border-gray-200 bg-white p-3">
               {editingFindings ? (
-                <div className="space-y-3">
-                  {findingsSections.map((section) => (
-                    <div key={section.key}>
-                      <p className="mb-1 text-sm font-medium text-gray-700">{section.label}</p>
-                      <textarea
-                        value={section.items.join('\n')}
-                        onChange={(e) => handleFindingsSectionChange(section.key, e.target.value)}
-                        rows={Math.max(3, Math.min(8, section.items.length + 1))}
-                        className="w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-arcova-teal"
-                        placeholder="One line per point"
-                      />
-                    </div>
-                  ))}
-                  <div className="flex flex-col gap-2 sm:flex-row">
-                    <button
-                      type="button"
-                      onClick={() => void handleSaveFindingsEdit()}
-                      disabled={savingFindings}
-                      className="rounded-xl bg-arcova-teal px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/90 disabled:opacity-50"
-                    >
-                      {savingFindings ? 'Saving…' : 'Save changes'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleCancelFindingsEdit}
-                      disabled={savingFindings}
-                      className="rounded-xl border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleReanalyseFromPanel}
-                      disabled={savingFindings}
-                      className="rounded-xl border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50 sm:ml-auto"
-                    >
-                      Re-analyse this site
-                    </button>
-                  </div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveFindingsEdit()}
+                    disabled={savingFindings}
+                    className="rounded-xl bg-arcova-teal px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/90 disabled:opacity-50"
+                  >
+                    {savingFindings ? 'Saving…' : 'Save changes'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCancelFindingsEdit}
+                    disabled={savingFindings}
+                    className="rounded-xl border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleReanalyseFromPanel}
+                    disabled={savingFindings}
+                    className="rounded-xl border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50 sm:ml-auto"
+                  >
+                    Re-analyse this site
+                  </button>
                 </div>
               ) : (
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -1729,6 +2031,9 @@ export default function SetupFlow({
     therapeuticAreas: getStrArr(resultsPanelData?.therapeutic_areas),
     modalities: getStrArr(resultsPanelData?.modalities),
     developmentStages: getStrArr(resultsPanelData?.development_stages),
+    productsServices: getStrArr(resultsPanelData?.products_services),
+    services: getStrArr(resultsPanelData?.services),
+    technologies: getStrArr(resultsPanelData?.technologies),
     employeeCount: getNum(resultsPanelData?.employee_count),
     employeeRange: getStr(resultsPanelData?.employee_range),
     followerCount: getNum(resultsPanelData?.follower_count),
@@ -1751,30 +2056,26 @@ export default function SetupFlow({
                 const isCurrent = i === currentStepIndex;
                 const canGoBack = isComplete && !isSaving;
                 return (
-                  <div key={step.label} className="flex items-center gap-2">
-                    {i > 0 && (
-                      <div className={`h-px w-8 ${isComplete || isCurrent ? 'bg-arcova-teal/50' : 'bg-white/15'}`} />
-                    )}
-                    <button
-                      type="button"
-                      disabled={!canGoBack}
-                      onClick={() => canGoBack && void handleGoToStep(i)}
-                      className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
-                        isCurrent
-                          ? 'bg-arcova-teal text-white'
-                          : isComplete
-                          ? 'text-white/70 hover:text-white cursor-pointer'
-                          : 'text-white/30 cursor-default'
-                      }`}
-                    >
-                      <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-                        isCurrent ? 'bg-white/20' : isComplete ? 'bg-white/10' : 'bg-white/5'
-                      }`}>
-                        {i + 1}
-                      </span>
-                      {step.label}
-                    </button>
-                  </div>
+                  <button
+                    key={step.label}
+                    type="button"
+                    disabled={!canGoBack}
+                    onClick={() => canGoBack && void handleGoToStep(i)}
+                    className={`flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
+                      isCurrent
+                        ? 'bg-arcova-teal text-white'
+                        : isComplete
+                        ? 'bg-white/10 text-white/70 hover:bg-white/15 hover:text-white cursor-pointer'
+                        : 'bg-white/5 text-white/30 cursor-default'
+                    }`}
+                  >
+                    <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                      isCurrent ? 'bg-white/20' : isComplete ? 'bg-white/10' : 'bg-white/5'
+                    }`}>
+                      {i + 1}
+                    </span>
+                    {step.label}
+                  </button>
                 );
               })}
             </div>
@@ -1803,12 +2104,46 @@ export default function SetupFlow({
               phase={phase}
               myCompany={myCompany}
               analysisLoading={phase === 'analysis_loading'}
+              editMode={editingFindings}
+              onMyCompanyChange={handleMyCompanyChange}
+              onEditCompany={resultsPanelData ? () => void handleAnalysisNotRight() : undefined}
+              onSaveEdit={editingFindings ? () => void handleSaveFindingsEdit() : undefined}
+              onCancelEdit={editingFindings ? handleCancelFindingsEdit : undefined}
+              onDeleteCompany={resultsPanelData ? () => void handleDeleteCompanyProfile() : undefined}
+              onReenrichCompany={resultsPanelData && !editingFindings ? handleReanalyseFromPanel : undefined}
               reviewedCompanyName={reviewedCompanyName}
+              enrichedTargetCompany={enrichedTargetCompany}
               savedIcpName={savedIcpName}
               panelCompany={panelCompany}
               chipSel={chipSel}
+              icpEditMode={icpEditMode}
+              onEditIcp={handleEditIcp}
+              onSaveIcp={() => void handleSaveIcp()}
+              onCancelIcp={handleCancelIcp}
+              onReenrichIcp={handleReenrichIcp}
+              onDeleteIcp={() => void handleDeleteIcp()}
+              onIcpFieldChange={handleIcpFieldChange}
               panelPersona={panelPersona}
               savedPersonaName={savedPersonaName}
+              onToggleBuyingTeamFn={(v) => {
+                const next = panelPersona.functions.includes(v)
+                  ? panelPersona.functions.filter((x) => x !== v)
+                  : [...panelPersona.functions, v];
+                personaRef.current.functions = next;
+                setPanelPersona((p) => ({ ...p, functions: next }));
+              }}
+              onToggleBuyingTeamSeniority={(v) => {
+                const next = panelPersona.seniority.includes(v)
+                  ? panelPersona.seniority.filter((x) => x !== v)
+                  : [...panelPersona.seniority, v];
+                personaRef.current.seniority = next;
+                setPanelPersona((p) => ({ ...p, seniority: next }));
+              }}
+              onConfirmBuyingTeam={() => void savePersona()}
+              onDeletePersona={() => void handleDeletePersona()}
+              onReenrichPersona={() => void handleReenrichPersona()}
+              buyingTeamExampleCompany={reviewedCompanyName || undefined}
+              buyingTeamIcpName={savedIcpName || undefined}
             />
           </div>
         </div>
