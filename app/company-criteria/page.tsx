@@ -138,7 +138,7 @@ function FieldRow({ label, items }: { label: string; items: string[] }) {
   if (!items?.length) return null;
   return (
     <div>
-      <p className="mb-1 text-xs text-white/40">{label}</p>
+      <p className="mb-1 text-xs text-white/85">{label}</p>
       <div className="flex flex-wrap gap-1.5">
         {items.map((t) => <Tag key={t} label={t} />)}
       </div>
@@ -162,7 +162,7 @@ function BulletList({ items }: { items: string[] }) {
 function Stat({ label, value, subValue }: { label: string; value: string; subValue?: string }) {
   return (
     <div>
-      <p className="text-xs text-white/40">{label}</p>
+      <p className="text-xs text-white/85">{label}</p>
       <p className="mt-0.5 text-sm text-white/80 leading-tight">{value}</p>
       {subValue && <p className="text-xs text-white/50 leading-tight">{subValue}</p>}
     </div>
@@ -190,10 +190,10 @@ function Segment({
         onClick={onToggle}
         className="flex w-full items-center justify-between px-3 py-2 text-left transition-colors"
       >
-        <span className={`text-xs font-semibold ${open ? 'text-white/60' : 'text-white'}`}>{label}</span>
+        <span className="text-xs font-semibold text-white">{label}</span>
         {open
           ? <ChevronUp className="h-3 w-3 text-white/60 shrink-0" />
-          : <ChevronDown className="h-3 w-3 text-white shrink-0" />}
+          : <ChevronDown className="h-3 w-3 text-white/60 shrink-0" />}
       </button>
       {open && <div className="px-3 pb-3 space-y-2">{children}</div>}
     </div>
@@ -511,7 +511,7 @@ function ICPCard({
 
           {editMode ? (
             <div className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 space-y-1.5">
-              <p className="text-xs text-white/40">ICP summary</p>
+              <p className="text-xs font-semibold text-white">Summary</p>
               <textarea
                 value={editData.icp_summary}
                 onChange={(e) => setEditData((prev) => ({ ...prev, icp_summary: e.target.value }))}
@@ -522,7 +522,7 @@ function ICPCard({
             </div>
           ) : (summaryLoading || icpSummary.length > 0) && (
             <div className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 space-y-1.5">
-              <p className="text-xs text-white/40">ICP summary</p>
+              <p className="text-xs font-semibold text-white">Summary</p>
               {summaryLoading ? (
                 <div className="h-3 w-3/4 rounded bg-white/10 animate-pulse" />
               ) : (
@@ -662,8 +662,7 @@ function ICPCard({
                 )}
                 {((icp.company_sizes.length > 0 || (icp.li_follower_sizes?.length ?? 0) > 0)
                   || !!(e?.company_status && extractFundingRaised(e.company_status))) && (
-                  <div className="space-y-2.5 border-t border-white/10 pt-2">
-                    <p className="text-xs text-white/40">Scale signals</p>
+                  <div className="space-y-2.5">
                     {icp.company_sizes.length > 0 && <FieldRow label="Company size" items={icp.company_sizes} />}
                     {(icp.li_follower_sizes?.length ?? 0) > 0 && (
                       <FieldRow label="LinkedIn follower base" items={icp.li_follower_sizes ?? []} />
@@ -836,7 +835,14 @@ function ICPCard({
               </Segment>
               {(persona?.job_titles?.length ?? 0) > 0 && (
                 <Segment label="Example titles" open={open.titles} onToggle={() => toggle('titles')}>
-                  <BulletList items={persona!.job_titles!} />
+                  <ul className="space-y-1">
+                    {persona!.job_titles!.map((t, i) => (
+                      <li key={i} className="flex items-center gap-1.5 text-xs text-white/70 leading-snug">
+                        <span className="h-1 w-1 shrink-0 rounded-full bg-white/70" />
+                        <span>{t}</span>
+                      </li>
+                    ))}
+                  </ul>
                 </Segment>
               )}
             </>
