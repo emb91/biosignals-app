@@ -57,12 +57,15 @@ export type TargetCompanyEnrichmentResult = {
   industry: string | null;
   specialties: string[] | null;
 
-  // Taxonomy (resolveCompanyTaxonomy — canonical Arcova values)
+  // Taxonomy (resolveCompanyTaxonomy — canonical Arcova values; PLANE A + PLANE B)
   company_type: string | null;
   company_type_display: string | null;
   therapeutic_areas: string[] | null;
   modalities: string[] | null;
   development_stages: string[] | null;
+  customer_therapeutic_areas: string[] | null;
+  customer_modalities: string[] | null;
+  customer_development_stages: string[] | null;
 
   // Raw blobs for downstream re-processing
   apollo_firmographics: Record<string, unknown> | null;
@@ -167,6 +170,9 @@ export async function enrichTargetCompany(
     therapeutic_areas: taxonomy?.therapeutic_areas ?? null,
     modalities: taxonomy?.modalities ?? null,
     development_stages: taxonomy?.development_stages ?? null,
+    customer_therapeutic_areas: taxonomy?.customer_therapeutic_areas ?? null,
+    customer_modalities: taxonomy?.customer_modalities ?? null,
+    customer_development_stages: taxonomy?.customer_development_stages ?? null,
 
     apollo_firmographics: Object.keys(apollo).length > 0 ? (apollo as Record<string, unknown>) : null,
     apify_firmographics: apifyRaw,

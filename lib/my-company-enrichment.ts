@@ -71,7 +71,7 @@ Return ONLY valid JSON in this exact structure. Every array field must have 2–
   "description": ["What the company does in plain terms", "..."],
   "products": ["Named product (e.g. Guardant360 CDx, Salesforce CRM)", "..."],
   "services": ["Service offering (e.g. contract research, GMP manufacturing, clinical trials)", "..."],
-  "target_customers": ["Short 1–3 word label, e.g. Oncologists, Health Systems, Biopharma — NO full sentences"],
+  "target_customers": ["Short 1–4 word segment label, e.g. Health Systems, Biopharma Companies, Lab Directors, Oncology Teams — NO full sentences"],
   "value_propositions": ["Core value proposition", "..."],
   "industries": ["Industry they operate in", "..."],
   "technologies": ["Key technology or platform they use or sell", "..."],
@@ -80,7 +80,7 @@ Return ONLY valid JSON in this exact structure. Every array field must have 2–
   "business_model": ["How they generate revenue", "..."],
   "operating_environment": ["Market or regulatory context they operate in", "..."],
   "market_summary": ["Summary of their market position", "..."],
-  "customers_we_serve": ["Short 1–3 word label for a customer type, e.g. Oncologists, Health Systems, Biopharma, CROs — NO full sentences"],
+  "customers_we_serve": ["Short 1–4 word customer segment label, e.g. Health Systems, CROs, Lab Directors, Oncology Teams — NO full sentences"],
   "why_customers_buy": ["Key reason a buyer chooses them", "..."],
   "differentiated_value": ["Specific differentiator vs alternatives", "..."],
   "status_quo": ["What buyers typically do today without this solution", "..."],
@@ -95,6 +95,33 @@ Return ONLY valid JSON in this exact structure. Every array field must have 2–
 Company website: ${website}
 
 For linkedin_url: search for their official LinkedIn company page and return the full URL (https://www.linkedin.com/company/...). Return null if you cannot find it with confidence.
+
+For target_customers and customers_we_serve:
+- Be evidence-led. Prefer segments explicitly named on the website, case studies, product pages, positioning pages, LinkedIn, or credible third-party sources.
+- Think in terms of primary segments first, then meaningful secondary segments.
+- Clearly distinguish customer organisation / account types from buyer / user types.
+- Include a mix of customer organisation / account types and buyer / user types when both are clearly relevant.
+- Cover both primary and meaningful secondary segments if the company clearly serves more than one type of customer.
+- Prefer broad, repeatable market segments over one-off job titles, vague words, or internal functions.
+- Good examples: "Biopharma Companies", "Academic Medical Centers", "Clinical Operations Teams", "Lab Directors".
+- Prefer organisation / account types like "Biopharma Companies" or "Academic Medical Centers" over raw industries like "Healthcare".
+- Prefer buyer / user groups like "Clinical Operations Teams" or "Lab Directors" over individual named titles unless those titles are the true segment.
+- Do NOT list competitors, partners, investors, regulators, or generic industries unless they are clearly customers.
+- Do NOT over-infer from the company's modality or therapeutic area alone.
+- If the evidence is weak, return fewer but higher-confidence segments rather than guessing.
+- Aim for the most complete high-confidence view of who buys from or uses this company, not just the single headline segment.
+
+For good_fit:
+- Return characteristics of companies, teams, or buyer contexts that are especially well matched to this seller.
+- Focus on attributes that make the company more likely to buy or get strong value.
+- Good examples: "Biotechs running distributed clinical trials", "Commercial teams with fragmented CRM workflows", "Labs scaling test volume".
+
+For bad_fit:
+- Return excluded or poor-fit segments that should usually NOT be targeted.
+- Include clear disqualifiers, not weak preferences.
+- Focus on companies, teams, buyer contexts, budgets, maturity levels, or use cases that are a poor fit for the seller.
+- Good examples: "Early pre-product startups with no sales team", "Hospitals needing full EHR replacement", "Teams with no in-house regulatory workflow".
+- Prefer specific exclusion logic over vague negatives like "small companies" unless the source clearly supports it.
 
 Return ONLY the JSON object. No markdown, no explanation.`;
 

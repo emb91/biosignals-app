@@ -173,6 +173,9 @@ export async function POST(request: NextRequest) {
       therapeutic_areas: taxonomy?.therapeutic_areas ?? null,
       modalities: taxonomy?.modalities ?? null,
       development_stages: taxonomy?.development_stages ?? null,
+      customer_therapeutic_areas: taxonomy?.customer_therapeutic_areas ?? null,
+      customer_modalities: taxonomy?.customer_modalities ?? null,
+      customer_development_stages: taxonomy?.customer_development_stages ?? null,
 
       // Company ownership / funding status from Claude (handles public companies Apollo can't)
       company_status: typeof narrative.company_status === 'string' ? narrative.company_status : null,

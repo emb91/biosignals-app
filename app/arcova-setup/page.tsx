@@ -5,9 +5,11 @@ import { useRouter } from 'next/navigation';
 import SetupShell from '@/components/SetupShell';
 import SetupFlow from '@/components/SetupFlow';
 import { useAuth } from '@/context/AuthContext';
+import { useSetupState } from '@/lib/use-setup-state';
 
 export default function ArcovaSetupPage() {
   const { user, loading } = useAuth();
+  const { step1Complete, loading: setupLoading } = useSetupState();
   const router = useRouter();
 
   useEffect(() => {
@@ -16,7 +18,13 @@ export default function ArcovaSetupPage() {
     }
   }, [loading, user, router]);
 
-  if (loading) {
+  useEffect(() => {
+    if (!setupLoading && step1Complete) {
+      router.replace('/dashboard');
+    }
+  }, [setupLoading, step1Complete, router]);
+
+  if (loading || setupLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-arcova-teal"></div>
@@ -25,6 +33,10 @@ export default function ArcovaSetupPage() {
   }
 
   if (!user) {
+    return null;
+  }
+
+  if (step1Complete) {
     return null;
   }
 

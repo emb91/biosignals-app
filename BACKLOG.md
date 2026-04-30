@@ -30,6 +30,12 @@
 - Explore subtle animation or motion to support the sense of analysis, reveal, and payoff without feeling gimmicky.
 - Rework underwhelming result moments so the user sees the transformation from raw input to resolved insight.
 
+## My Profile
+
+- Build a "My Profile" step in the setup flow, styled and structured like the My Company page.
+- Scrape and enrich data on the individual user (name, role, LinkedIn, background) rather than the company.
+- Store the output against the user record for use in positioning, outreach personalisation, and context-aware messaging later in the product.
+
 ## Onboarding flow
 
 - Redesign onboarding so it feels guided and sequential rather than optional and open-ended.
