@@ -1,4 +1,10 @@
 import { NextResponse } from 'next/server';
+import {
+  DEVELOPMENT_STAGE_OPTIONS,
+  canonicalizeCompanyType,
+  canonicalizeModality,
+  canonicalizeTherapeuticArea,
+} from '@/lib/arcova-taxonomy';
 import { createClient } from '@/lib/supabase-server';
 
 function isMissingColumnError(error: unknown): boolean {
@@ -15,6 +21,21 @@ type SupabaseClientLike = {
 };
 
 type LeadRow = Record<string, unknown>;
+
+function normalizeText(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[’']/g, "'")
+    .replace(/\s+/g, ' ');
+}
+
+function canonicalizeDevelopmentStage(value: string): string | null {
+  const normalized = normalizeText(value);
+  return (
+    DEVELOPMENT_STAGE_OPTIONS.find((option) => normalizeText(option) === normalized) ?? null
+  );
+}
 
 function normalizeCompanyRow(row: Record<string, unknown>): Record<string, unknown> {
   return {
@@ -120,12 +141,32 @@ export async function GET(request: Request) {
     // Find company IDs matching taxonomy search terms (company type, TA, modality)
     let taxonomyCompanyIds: string[] = [];
     if (search) {
+      const canonicalCompanyType = canonicalizeCompanyType(search);
+      const canonicalTherapeuticArea = canonicalizeTherapeuticArea(search);
+      const canonicalModality = canonicalizeModality(search);
+      const canonicalDevelopmentStage = canonicalizeDevelopmentStage(search);
+
+      const taxonomyFilters = [
+        `company_type.ilike.%${search}%`,
+        `company_type_display.ilike.%${search}%`,
+        canonicalCompanyType && canonicalCompanyType !== search
+          ? `company_type.ilike.%${canonicalCompanyType}%`
+          : null,
+        canonicalTherapeuticArea
+          ? `therapeutic_areas.cs.{"${canonicalTherapeuticArea}"}`
+          : null,
+        canonicalModality
+          ? `modalities.cs.{"${canonicalModality}"}`
+          : null,
+        canonicalDevelopmentStage
+          ? `development_stages.cs.{"${canonicalDevelopmentStage}"}`
+          : null,
+      ].filter(Boolean).join(',');
+
       const { data: taxonomyMatches } = await supabase
         .from('companies')
         .select('id')
-        .or(
-          `company_type.ilike.%${search}%,company_type_display.ilike.%${search}%,therapeutic_areas.cs.{"${search}"},modalities.cs.{"${search}"},development_stages.cs.{"${search}"}`
-        );
+        .or(taxonomyFilters);
       taxonomyCompanyIds = (taxonomyMatches || []).map((c) => c.id as string).filter(Boolean);
     }
 

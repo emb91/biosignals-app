@@ -48,6 +48,7 @@ export type TargetCompanyEnrichmentResult = {
   business_model: string[] | null;
   operating_environment: string[] | null;
   market_summary: string[] | null;
+  target_customers: string[] | null;
   customers_we_serve: string[] | null;
   why_customers_buy: string[] | null;
   differentiated_value: string[] | null;
@@ -172,6 +173,7 @@ export async function enrichTargetCompany(
     business_model: Array.isArray(narrative.business_model) ? narrative.business_model as string[] : null,
     operating_environment: Array.isArray(narrative.operating_environment) ? narrative.operating_environment as string[] : null,
     market_summary: Array.isArray(narrative.market_summary) ? narrative.market_summary as string[] : null,
+    target_customers: Array.isArray(narrative.target_customers) ? narrative.target_customers as string[] : null,
     customers_we_serve: Array.isArray(narrative.customers_we_serve) ? narrative.customers_we_serve as string[] : null,
     why_customers_buy: Array.isArray(narrative.why_customers_buy) ? narrative.why_customers_buy as string[] : null,
     differentiated_value: Array.isArray(narrative.differentiated_value) ? narrative.differentiated_value as string[] : null,

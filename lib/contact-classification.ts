@@ -25,7 +25,7 @@ async function classifyBatch(inputs: ClassificationInput[]): Promise<Classificat
 Return ONLY valid JSON as an array with exactly ${inputs.length} objects in order.
 
 For each contact:
-- standardize the job title into clean, full words (e.g. "VP, BD & Partnerships APAC" → "VP Business Development & Partnerships")
+- standardize the job title into clean, full words (e.g. "VP, BD APAC" → "VP Business Development APAC")
 - choose seniority_level as exactly one of: ${SENIORITY_LEVEL_OPTIONS.join(', ')} — seniority should almost always map to one of these; use null only if completely impossible to determine
   - use previous roles as seniority context but exercise judgement: a career VP who is now a "Sr. Specialist" could have taken a step down (e.g. after a layoff) or could be in a senior individual contributor role at a large company — consider both possibilities and pick the most likely level given the trajectory
   - do not blindly inherit the prior title's level, but do not ignore it either — a step from VP/Senior Director to a "Sr." specialist role most likely lands at Director or Head of / Senior Manager, not Manager or Individual Contributor

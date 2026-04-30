@@ -54,14 +54,19 @@ const SPECIFIC_ROLE_OPTIONS: Record<string, string[]> = {
     "President",
     "Founder / Co-Founder",
   ],
-  "Business Development & Partnerships": [
+  "Business Development": [
     "VP Business Development",
     "Head of Business Development",
     "Director of Business Development",
-    "Head of Partnerships",
     "Business Development Manager",
-    "Partnerships Manager",
     "Business Development Representative",
+  ],
+  "Partnerships": [
+    "Head of Partnerships",
+    "Director of Partnerships",
+    "Partnerships Manager",
+    "Strategic Partnerships Lead",
+    "Alliance Manager",
   ],
   "Clinical Operations": [
     "VP Clinical Operations",
@@ -105,7 +110,7 @@ const SPECIFIC_ROLE_OPTIONS: Record<string, string[]> = {
     "Medical Science Liaison (MSL)",
     "Medical Affairs Manager",
   ],
-  "Commercial & Sales Operations": [
+  "Commercial": [
     "Chief Commercial Officer",
     "Chief Revenue Officer",
     "VP Sales",
@@ -116,6 +121,14 @@ const SPECIFIC_ROLE_OPTIONS: Record<string, string[]> = {
     "Account Manager",
     "Account Executive",
     "Sales Representative",
+  ],
+  "Sales Operations": [
+    "VP Sales Operations",
+    "Director of Sales Operations",
+    "Head of Sales Operations",
+    "Sales Operations Manager",
+    "Revenue Operations Manager",
+    "Salesforce Administrator",
   ],
   "Procurement": [
     "Head of Procurement",

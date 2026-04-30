@@ -60,7 +60,7 @@ Return only the classification, nothing else.
 Classify into exactly one of these options (copy the text exactly — these must match the persona builder):
 ```
 Given the job title "{{job_title}}" at a life sciences / biopharma company, classify which team or function this person works in. Choose exactly one from:
-Executive Leadership, Business Development & Partnerships, Clinical Operations, Research & Development, Regulatory Affairs, Manufacturing & CMC, Medical Affairs, Commercial & Sales Operations, Procurement, Strategy & Corporate Development, Lab Operations, Technology & Systems, AI & Machine Learning, Marketing
+Executive Leadership, Business Development, Partnerships, Clinical Operations, Research & Development, Regulatory Affairs, Manufacturing & CMC, Medical Affairs, Commercial, Sales Operations, Procurement, Strategy & Corporate Development, Lab Operations, Technology & Systems, AI & Machine Learning, Data & Informatics, Quality & Compliance, Marketing
 
 Return only the classification, nothing else.
 ```

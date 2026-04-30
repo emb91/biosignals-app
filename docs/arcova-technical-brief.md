@@ -139,7 +139,7 @@ Seniority levels (exact strings):
 `C-Level`, `VP / SVP`, `Director`, `Head of / Senior Manager`, `Manager`, `Individual Contributor`
 
 Business areas / teams (exact strings):
-`Executive Leadership`, `Business Development & Partnerships`, `Clinical Operations`, `Research & Development`, `Regulatory Affairs`, `Manufacturing & CMC`, `Medical Affairs`, `Commercial & Sales Operations`, `Procurement`, `Strategy & Corporate Development`, `Lab Operations`, `Technology & Systems`, `AI & Machine Learning`, `Marketing`
+`Executive Leadership`, `Business Development`, `Partnerships`, `Clinical Operations`, `Research & Development`, `Regulatory Affairs`, `Manufacturing & CMC`, `Medical Affairs`, `Commercial`, `Sales Operations`, `Procurement`, `Strategy & Corporate Development`, `Lab Operations`, `Technology & Systems`, `AI & Machine Learning`, `Data & Informatics`, `Quality & Compliance`, `Marketing`
 
 These taxonomies must be used consistently in: LLM prompts, Clay/Fiber AI enrichment column prompts, persona form UI options, and scoring comparison logic.
 
@@ -191,7 +191,7 @@ Clay was configured to:
 > "Given the job title '{{job_title}}', classify the seniority as exactly one of: C-Level, VP / SVP, Director, Head of / Senior Manager, Manager, Individual Contributor. Return only the classification, nothing else."
 
 `business_area`:
-> "Given the job title '{{job_title}}' at a life sciences / biopharma company, classify which team or function this person works in. Choose exactly one from: Executive Leadership, Business Development & Partnerships, Clinical Operations, Research & Development, Regulatory Affairs, Manufacturing & CMC, Medical Affairs, Commercial & Sales Operations, Procurement, Strategy & Corporate Development, Lab Operations, Technology & Systems, AI & Machine Learning, Marketing. Return only the classification, nothing else."
+> "Given the job title '{{job_title}}' at a life sciences / biopharma company, classify which team or function this person works in. Choose exactly one from: Executive Leadership, Business Development, Partnerships, Clinical Operations, Research & Development, Regulatory Affairs, Manufacturing & CMC, Medical Affairs, Commercial, Sales Operations, Procurement, Strategy & Corporate Development, Lab Operations, Technology & Systems, AI & Machine Learning, Data & Informatics, Quality & Compliance, Marketing. Return only the classification, nothing else."
 
 `job_title_standardised`:
 > "Given the raw job title '{{job_title}}' at a life sciences company, return a clean standardised version. Expand abbreviations, remove location/region qualifiers, use full words. Return only the standardised title, nothing else."
