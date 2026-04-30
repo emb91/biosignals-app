@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { NextResponse } from 'next/server';
+import { BUSINESS_AREA_OPTIONS } from '@/lib/arcova-taxonomy';
 
 export async function POST(request: Request) {
   try {
@@ -54,20 +55,7 @@ TARGET COMPANY PROFILE:
 ${targetDescription}
 
 Available business areas to choose from (use EXACTLY these names):
-- Executive Leadership
-- Business Development & Partnerships
-- Clinical Operations
-- Research & Development
-- Regulatory Affairs
-- Manufacturing & CMC
-- Medical Affairs
-- Commercial & Sales Operations
-- Procurement
-- Strategy & Corporate Development
-- Lab Operations
-- Technology & Systems
-- AI & Machine Learning
-- Marketing
+${BUSINESS_AREA_OPTIONS.map((option) => `- ${option}`).join('\n')}
 
 Based on what the seller company does and who they're trying to reach, which 3-5 business areas within the target company are most likely to:
 1. Be involved in purchasing decisions for this type of product/service

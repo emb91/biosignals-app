@@ -43,3 +43,32 @@ export function splitCustomerSegments(items: string[]) {
     buyerTypes,
   };
 }
+
+export function resolveCustomerSegments(args: {
+  targetCustomers?: string[] | null;
+  customersWeServe?: string[] | null;
+  fallbackItems?: string[] | null;
+}) {
+  const targetCustomers = Array.isArray(args.targetCustomers)
+    ? args.targetCustomers.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : [];
+  const customersWeServe = Array.isArray(args.customersWeServe)
+    ? args.customersWeServe.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : [];
+  const fallbackItems = Array.isArray(args.fallbackItems)
+    ? args.fallbackItems.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : [];
+
+  if (targetCustomers.length > 0) {
+    return {
+      customerOrganizations: targetCustomers,
+      buyerTypes: customersWeServe,
+    };
+  }
+
+  if (customersWeServe.length > 0) {
+    return splitCustomerSegments(customersWeServe);
+  }
+
+  return splitCustomerSegments(fallbackItems);
+}

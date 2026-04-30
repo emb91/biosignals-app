@@ -1,29 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import {
+  BUSINESS_AREA_OPTIONS,
   COMPANY_SIZE_OPTIONS,
   employeeCountToSizeBucket,
   totalFundingToBracket,
 } from '@/lib/arcova-taxonomy';
 
 const MODEL = 'claude-sonnet-4-6';
-
-const BUSINESS_AREA_OPTIONS = [
-  'Executive Leadership',
-  'Business Development & Partnerships',
-  'Clinical Operations',
-  'Research & Development',
-  'Regulatory Affairs',
-  'Manufacturing & CMC',
-  'Medical Affairs',
-  'Commercial & Sales Operations',
-  'Procurement',
-  'Strategy & Corporate Development',
-  'Lab Operations',
-  'Technology & Systems',
-  'AI & Machine Learning',
-  'Marketing',
-] as const;
 
 const SENIORITY_LEVEL_OPTIONS = [
   'C-Level',

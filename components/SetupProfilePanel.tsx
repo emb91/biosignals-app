@@ -19,7 +19,7 @@ import {
   extractFundingStatus,
   extractFundingRaised,
 } from '@/lib/funding-display';
-import { splitCustomerSegments } from '@/lib/split-customer-segments';
+import { resolveCustomerSegments } from '@/lib/split-customer-segments';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -90,6 +90,7 @@ export interface PanelTargetCompanyData {
   tagline?: string | null;
   linkedin_url?: string | null;
   description?: string[] | null;
+  target_customers?: string[] | null;
   customers_we_serve?: string[] | null;
   value_propositions?: string[] | null;
   competitors_enriched?: CompetitorItem[] | null;
@@ -926,8 +927,7 @@ export function ProfileCard({
                     {followerCount != null && (
                       <Stat
                         label="LinkedIn followers"
-                        value={followerCount.toLocaleString()}
-                        subValue={followerCountToFollowerBucket(followerCount)[0]}
+                        value={String(followerCount)}
                       />
                     )}
                     {linkedinUrl && (
@@ -1142,7 +1142,11 @@ function TargetCard({
   const hasCompetitors = icpEditMode || (e?.competitors_enriched?.length ?? 0) > 0;
   const hasFirmographics = !!(e?.employee_count || e?.employee_range || e?.hq_city || e?.follower_count != null || e?.company_status || e?.total_funding_usd != null || e?.funding_stage);
   const hasModelledOnNarrative = !!(e?.description?.[0] || e?.customers_we_serve?.length || e?.value_propositions?.length || e?.follower_count != null || e?.linkedin_url);
-  const customerSegments = splitCustomerSegments(e?.customers_we_serve ?? []);
+  const customerSegments = resolveCustomerSegments({
+    targetCustomers: e?.target_customers ?? [],
+    customersWeServe: e?.customers_we_serve ?? [],
+    fallbackItems: e?.customers_we_serve ?? [],
+  });
 
   const displayDomain = e?.website?.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
 
@@ -1469,6 +1473,18 @@ function TargetCard({
                   <p className="text-xs text-white/40 mb-1">Funding summary</p>
                   <p className="text-xs leading-snug text-white/55">{e!.company_status}</p>
                 </div>
+              )}
+            </div>
+          )}
+
+          {(customerSegments.customerOrganizations.length > 0 || customerSegments.buyerTypes.length > 0) && (
+            <div className="border-t border-white/10 pt-2 mt-0.5 space-y-1.5">
+              <p className="text-xs text-white/40">Customer segments</p>
+              {customerSegments.customerOrganizations.length > 0 && (
+                <FieldRow label="Sells to" tags={customerSegments.customerOrganizations} />
+              )}
+              {customerSegments.buyerTypes.length > 0 && (
+                <FieldRow label="Sells to people like" tags={customerSegments.buyerTypes} />
               )}
             </div>
           )}

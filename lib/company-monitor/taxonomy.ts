@@ -266,8 +266,11 @@ export async function resolveCompanyTaxonomy(
 
 CRITICAL RULE — read this before anything else:
 If the company is a SaaS, data platform, sales intelligence tool, CRM, BI vendor, or any software-first business:
+  • company_type should usually be "SaaS" for commercial workflow, data, intelligence, GTM, CRM, or research software platforms.
+  • Use "Digital Health & Informatics" only when the software is fundamentally patient-facing, clinical, care-delivery, provider workflow, or healthcare informatics.
   • therapeutic_areas MUST be [] — disease areas seen on the website are their CUSTOMERS' areas, not theirs.
-  • modalities: only include software product categories (e.g. AI/ML Platform, Drug Discovery Platform). Drug modalities (Small Molecule, Cell Therapy, Gene Therapy, etc.) belong in customer_modalities, NOT here.
+  • modalities: only include software product categories (e.g. Sales Intelligence Platform, Market Intelligence Platform, AI/ML Platform, Drug Discovery Platform). Drug modalities (Small Molecule, Cell Therapy, Gene Therapy, etc.) belong in customer_modalities, NOT here.
+  • Do NOT use "AI/ML Platform" just because the website mentions AI features or algorithms. Use it only when the core product is meaningfully an AI/ML platform. Prefer a workflow/intelligence label when AI is just part of a sales, data, or intelligence product.
   • development_stages MUST be [] — they have no drug pipeline.
   • Put disease areas, drug modalities, and trial stages into customer_* fields instead.
 
@@ -275,9 +278,9 @@ WORKED EXAMPLE — sales intelligence / BI platform (e.g. a company like BioInte
 Website says: "We help oncology and neuroscience drug developers find leads. Our AI covers small molecule and cell therapy programs across Phase I–III."
 CORRECT output:
 {
-  "company_type": "Digital Health & Informatics",
+  "company_type": "SaaS",
   "therapeutic_areas": [],
-  "modalities": ["AI/ML Platform", "Drug Discovery Platform"],
+  "modalities": ["Sales Intelligence Platform", "Market Intelligence Platform"],
   "development_stages": [],
   "customer_therapeutic_areas": ["Oncology", "Neuroscience"],
   "customer_modalities": ["Small Molecule", "Cell Therapy"],
@@ -292,7 +295,9 @@ WRONG output (do NOT do this):
 
 PLANE A — THIS COMPANY (what THEY are / what THEY build):
 - therapeutic_areas, modalities, development_stages describe only the company's own science, regulated products, software product type, or organisational development stage.
-- SaaS / BI / data vendors: therapeutic_areas = [], drug modalities = [], development_stages = []. Only software-category modalities (AI/ML Platform, Drug Discovery Platform, Biomarker) may appear in own modalities.
+- SaaS / BI / data vendors: company_type is usually "SaaS"; therapeutic_areas = [], drug modalities = [], development_stages = []. Only software-category modalities (Sales Intelligence Platform, Market Intelligence Platform, AI/ML Platform, Drug Discovery Platform, Biomarker) may appear in own modalities.
+- If the product is a GTM, prospecting, sales, or intelligence tool for life sciences, prefer Sales/Market Intelligence labels over AI/ML Platform unless the site's primary claim is that it is itself an AI platform.
+- Reserve "Digital Health & Informatics" for companies whose core product is used in patient care, clinical decision support, provider workflow, healthcare operations, or digital therapeutics.
 - Biotech / Pharma / device / diagnostic developers: therapeutic_areas and modalities from their OWN pipeline; development_stages from their OWN assets/trials (use web search for current clinical phase).
 - CDMO / CRO / contract lab: PLANE A modalities and development_stages may reflect what THEY operationally handle; still split customer beachhead into PLANE B when the site describes WHO they sell to.
 

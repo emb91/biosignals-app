@@ -55,7 +55,7 @@ MODALITY_OPTIONS         // 30+ values: Small Molecule, CAR-T, mRNA, ADC, etc.
 DEVELOPMENT_STAGE_OPTIONS // Preclinical, Phase I, Phase II, Phase III, Commercial, All stages
 FUNDING_STAGE_OPTIONS    // Pre-seed → Public, Grant-funded
 COMPANY_SIZE_OPTIONS     // 1–10, 11–50, 51–200, 201–500, 500+
-BUSINESS_AREA_OPTIONS    // Executive Leadership, BD&P, Clinical Ops, R&D, etc.
+BUSINESS_AREA_OPTIONS    // Executive Leadership, Business Development, Partnerships, Clinical Ops, R&D, etc.
 SENIORITY_LEVEL_OPTIONS  // C-Level, VP/SVP, Director, Head of/Senior Manager, Manager, IC
 ```
 

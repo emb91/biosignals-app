@@ -71,7 +71,7 @@ Return ONLY valid JSON in this exact structure. Every array field must have 2–
   "description": ["What the company does in plain terms", "..."],
   "products": ["Named product (e.g. Guardant360 CDx, Salesforce CRM)", "..."],
   "services": ["Service offering (e.g. contract research, GMP manufacturing, clinical trials)", "..."],
-  "target_customers": ["Short 1–4 word segment label, e.g. Health Systems, Biopharma Companies, Lab Directors, Oncology Teams — NO full sentences"],
+  "target_customers": ["Short 1–4 word company/account segment label, e.g. Health Systems, Biopharma Companies, CROs, Academic Labs — NO teams or job titles"],
   "value_propositions": ["Core value proposition", "..."],
   "industries": ["Industry they operate in", "..."],
   "technologies": ["Key technology or platform they use or sell", "..."],
@@ -80,7 +80,7 @@ Return ONLY valid JSON in this exact structure. Every array field must have 2–
   "business_model": ["How they generate revenue", "..."],
   "operating_environment": ["Market or regulatory context they operate in", "..."],
   "market_summary": ["Summary of their market position", "..."],
-  "customers_we_serve": ["Short 1–4 word customer segment label, e.g. Health Systems, CROs, Lab Directors, Oncology Teams — NO full sentences"],
+  "customers_we_serve": ["Short 1–4 word buyer or team segment label, e.g. Lab Directors, Commercial Teams, Clinical Operations Teams — NO company types"],
   "why_customers_buy": ["Key reason a buyer chooses them", "..."],
   "differentiated_value": ["Specific differentiator vs alternatives", "..."],
   "status_quo": ["What buyers typically do today without this solution", "..."],
@@ -97,20 +97,25 @@ Company website: ${website}
 
 For linkedin_url: search for their official LinkedIn company page and return the full URL (https://www.linkedin.com/company/...). Return null if you cannot find it with confidence.
 
-For target_customers and customers_we_serve:
+For target_customers:
+- Return ONLY customer organisation / account types.
+- Good examples: "Biopharma Companies", "Academic Medical Centers", "Health Systems", "CROs".
+- Do NOT include teams, departments, functions, committees, or job titles here.
+- Prefer organisation / account types over raw industries like "Healthcare".
+
+For customers_we_serve:
+- Return ONLY buyer, user, or team types inside customer organisations.
+- Good examples: "Clinical Operations Teams", "Lab Directors", "Commercial Teams", "Procurement Leaders".
+- Do NOT include company types like "Biopharma Companies" or "Health Systems" here.
+- Prefer repeatable team or buyer groups over one-off named titles unless the title is the true segment.
+
+For both fields:
 - Be evidence-led. Prefer segments explicitly named on the website, case studies, product pages, positioning pages, LinkedIn, or credible third-party sources.
 - Think in terms of primary segments first, then meaningful secondary segments.
-- Clearly distinguish customer organisation / account types from buyer / user types.
-- Include a mix of customer organisation / account types and buyer / user types when both are clearly relevant.
 - Cover both primary and meaningful secondary segments if the company clearly serves more than one type of customer.
-- Prefer broad, repeatable market segments over one-off job titles, vague words, or internal functions.
-- Good examples: "Biopharma Companies", "Academic Medical Centers", "Clinical Operations Teams", "Lab Directors".
-- Prefer organisation / account types like "Biopharma Companies" or "Academic Medical Centers" over raw industries like "Healthcare".
-- Prefer buyer / user groups like "Clinical Operations Teams" or "Lab Directors" over individual named titles unless those titles are the true segment.
 - Do NOT list competitors, partners, investors, regulators, or generic industries unless they are clearly customers.
 - Do NOT over-infer from the company's modality or therapeutic area alone.
 - If the evidence is weak, return fewer but higher-confidence segments rather than guessing.
-- Aim for the most complete high-confidence view of who buys from or uses this company, not just the single headline segment.
 
 For good_fit:
 - Return characteristics of companies, teams, or buyer contexts that are especially well matched to this seller.

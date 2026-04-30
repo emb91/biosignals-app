@@ -26,7 +26,7 @@ import {
   extractFundingStatus,
   formatCurrencyShort,
 } from '@/lib/funding-display';
-import { splitCustomerSegments } from '@/lib/split-customer-segments';
+import { resolveCustomerSegments } from '@/lib/split-customer-segments';
 import type { CompetitorItem } from '@/components/SetupProfilePanel';
 import {
   BUSINESS_AREA_OPTIONS,
@@ -155,8 +155,8 @@ function AddTagSelect({ options, selected, onAdd, placeholder = 'Add…' }: {
 function FieldRow({ label, items }: { label: string; items: string[] }) {
   if (!items?.length) return null;
   return (
-    <div>
-      <p className="mb-1 text-xs text-white/85">{label}</p>
+    <div className="space-y-1">
+      <p className="text-xs font-semibold text-white">{label}</p>
       <div className="flex flex-wrap gap-1.5">
         {items.map((t) => <Tag key={t} label={t} />)}
       </div>
@@ -291,7 +291,11 @@ function ICPCard({
   const linkedInDisplay = e?.linkedin_url?.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
   const functions = persona?.functions?.map(parseFunctionName) ?? [];
   const seniority = persona?.seniority_levels ?? [];
-  const customerSegments = splitCustomerSegments(e?.customers_we_serve ?? []);
+  const customerSegments = resolveCustomerSegments({
+    targetCustomers: e?.target_customers ?? [],
+    customersWeServe: e?.customers_we_serve ?? [],
+    fallbackItems: e?.customers_we_serve ?? [],
+  });
   const referenceSummary = (e?.description?.[0] ?? '').trim();
 
   const hasModelledOnNarrative = Boolean(
@@ -562,15 +566,11 @@ function ICPCard({
                   </div>
                 </div>
               )}
-              {(customerSegments.customerOrganizations.length > 0 || customerSegments.buyerTypes.length > 0) && (
-                <div className="space-y-2">
-                  <FieldRow label="Sells to:" items={customerSegments.customerOrganizations} />
-                  <FieldRow label="Sells to people like" items={customerSegments.buyerTypes} />
-                </div>
-              )}
+              <FieldRow label="Sells to companies like" items={customerSegments.customerOrganizations} />
+              <FieldRow label="Sells to people like" items={customerSegments.buyerTypes} />
               {(e.competitors_enriched?.length ?? 0) > 0 && (
-                <div>
-                  <p className="mb-1 text-xs font-semibold text-white">Competitors</p>
+                <div className="space-y-1">
+                  <p className="text-xs font-semibold text-white">Competitors</p>
                   <div className="flex flex-wrap gap-1.5">
                     {e.competitors_enriched!.map((c, i) => {
                       const href = c.url?.trim() || `https://www.google.com/search?q=${encodeURIComponent(c.name)}`;
@@ -587,7 +587,7 @@ function ICPCard({
               )}
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-5">
               {(e.products?.length ?? 0) > 0 && (
                 <div>
                   <p className="mb-1 text-xs font-semibold text-white">Products</p>
@@ -723,6 +723,21 @@ function ICPCard({
             );
           })()}
 
+          {!editMode && (customerSegments.customerOrganizations.length > 0 || customerSegments.buyerTypes.length > 0) && (
+            <div className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 space-y-2.5">
+              {customerSegments.customerOrganizations.length > 0 && (
+                <div>
+                  <p className="mb-1 text-xs font-semibold text-white">Sells to companies like</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {customerSegments.customerOrganizations.map((item) => (
+                      <Tag key={item} label={item} />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {!editMode && (e?.competitors_enriched?.length ?? 0) > 0 && (
             <div className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 space-y-2">
               <p className="text-xs font-semibold text-white">Competitors</p>
@@ -813,17 +828,6 @@ function ICPCard({
             <Users className="h-3.5 w-3.5 text-arcova-teal shrink-0" />
             <p className="text-sm font-semibold text-white flex-1">Buying team</p>
           </div>
-
-          {!editMode && (customerSegments.customerOrganizations.length > 0 || customerSegments.buyerTypes.length > 0) && (
-            <div className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 space-y-2.5">
-              {customerSegments.customerOrganizations.length > 0 && (
-                <FieldRow label="Sells to" items={customerSegments.customerOrganizations} />
-              )}
-              {customerSegments.buyerTypes.length > 0 && (
-                <FieldRow label="Sells to people like:" items={customerSegments.buyerTypes} />
-              )}
-            </div>
-          )}
 
           {editMode ? (
             persona ? (
