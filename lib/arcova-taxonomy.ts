@@ -116,7 +116,19 @@ export const DEVELOPMENT_STAGE_OPTIONS = [
   'All stages',
 ] as const;
 
-export const COMPANY_SIZE_OPTIONS = ['1–10', '11–50', '51–200', '201–500', '500+'] as const;
+export const COMPANY_SIZE_OPTIONS = ['1–10', '11–50', '51–200', '201–500', '500–1,000', '1,000–10,000', '10,000–50,000', '50,000+'] as const;
+
+export const LI_FOLLOWER_OPTIONS = ['0–500', '500–1,000', '1,000–5,000', '5,000–10,000', '10,000–50,000', '50,000+'] as const;
+
+export function followerCountToFollowerBucket(count: number | null | undefined): string[] {
+  if (count == null || count < 0) return [];
+  if (count <= 500)    return ['0–500'];
+  if (count <= 1000)   return ['500–1,000'];
+  if (count <= 5000)   return ['1,000–5,000'];
+  if (count <= 10000)  return ['5,000–10,000'];
+  if (count <= 50000)  return ['10,000–50,000'];
+  return ['50,000+'];
+}
 
 /**
  * Maps a raw employee count (or a range string like "51-200") to the canonical
@@ -128,21 +140,27 @@ export function employeeCountToSizeBucket(
   range?: string | null,
 ): string[] {
   if (count != null && count > 0) {
-    if (count <= 10)  return ['1–10'];
-    if (count <= 50)  return ['11–50'];
-    if (count <= 200) return ['51–200'];
-    if (count <= 500) return ['201–500'];
-    return ['500+'];
+    if (count <= 10)    return ['1–10'];
+    if (count <= 50)    return ['11–50'];
+    if (count <= 200)   return ['51–200'];
+    if (count <= 500)   return ['201–500'];
+    if (count <= 1000)  return ['500–1,000'];
+    if (count <= 10000) return ['1,000–10,000'];
+    if (count <= 50000) return ['10,000–50,000'];
+    return ['50,000+'];
   }
   // Fall back to range string e.g. "51-200", "201-500", "1001-5000"
   if (range) {
-    const lower = parseInt(range.split(/[-–]/)[0].replace(/[^0-9]/g, ''), 10);
+    const lower = parseInt(range.split(/[-–]/)[0].replace(/[^0-9,]/g, '').replace(/,/g, ''), 10);
     if (!isNaN(lower)) {
-      if (lower <= 10)  return ['1–10'];
-      if (lower <= 50)  return ['11–50'];
-      if (lower <= 200) return ['51–200'];
-      if (lower <= 500) return ['201–500'];
-      return ['500+'];
+      if (lower <= 10)    return ['1–10'];
+      if (lower <= 50)    return ['11–50'];
+      if (lower <= 200)   return ['51–200'];
+      if (lower <= 500)   return ['201–500'];
+      if (lower <= 1000)  return ['500–1,000'];
+      if (lower <= 10000) return ['1,000–10,000'];
+      if (lower <= 50000) return ['10,000–50,000'];
+      return ['50,000+'];
     }
   }
   return [];
@@ -190,6 +208,7 @@ export type TherapeuticArea = (typeof THERAPEUTIC_AREA_OPTIONS)[number];
 export type Modality = (typeof MODALITY_OPTIONS)[number];
 export type DevelopmentStage = (typeof DEVELOPMENT_STAGE_OPTIONS)[number];
 export type CompanySize = (typeof COMPANY_SIZE_OPTIONS)[number];
+export type LiFollowerSize = (typeof LI_FOLLOWER_OPTIONS)[number];
 export type FundingStage = (typeof FUNDING_STAGE_OPTIONS)[number];
 export type BusinessArea = (typeof BUSINESS_AREA_OPTIONS)[number];
 export type SeniorityLevel = (typeof SENIORITY_LEVEL_OPTIONS)[number];
@@ -355,4 +374,57 @@ export function expandModalitiesWithParents(values: readonly Modality[]): Modali
   }
 
   return expanded;
+}
+
+/**
+ * Maps an Apollo funding stage string and/or total funding amount to a
+ * canonical FUNDING_STAGE_OPTIONS value.
+ *
+ * Apollo returns snake_case strings (e.g. "series_a", "pre_seed", "public").
+ * When stage is absent but total_funding_usd is known, the amount is bucketed.
+ */
+export function canonicalizeFundingStage(
+  stage: string | null | undefined,
+  totalFundingUsd: number | null | undefined,
+): FundingStage | null {
+  if (stage) {
+    const normalized = stage.trim().toLowerCase().replace(/[\s-]+/g, '_');
+    const stageMap: Record<string, FundingStage> = {
+      pre_seed: 'Pre-seed',
+      preseed: 'Pre-seed',
+      angel: 'Pre-seed',
+      seed: 'Seed',
+      series_a: 'Series A',
+      series_b: 'Series B',
+      series_c: 'Series C',
+      series_d: 'Series D+',
+      series_e: 'Series D+',
+      series_f: 'Series D+',
+      series_g: 'Series D+',
+      series_h: 'Series D+',
+      private_equity: 'Series D+',
+      growth: 'Series D+',
+      late_stage: 'Series D+',
+      ipo: 'Public',
+      public: 'Public',
+      post_ipo: 'Public',
+      grant: 'Grant-funded',
+      government_grant: 'Grant-funded',
+      sbir: 'Grant-funded',
+      sttr: 'Grant-funded',
+    };
+    if (stageMap[normalized]) return stageMap[normalized];
+  }
+
+  // Amount-based fallback when stage is absent or unmapped
+  if (totalFundingUsd != null && totalFundingUsd > 0) {
+    if (totalFundingUsd < 2_000_000)   return 'Pre-seed';
+    if (totalFundingUsd < 10_000_000)  return 'Seed';
+    if (totalFundingUsd < 30_000_000)  return 'Series A';
+    if (totalFundingUsd < 100_000_000) return 'Series B';
+    if (totalFundingUsd < 300_000_000) return 'Series C';
+    return 'Series D+';
+  }
+
+  return null;
 }

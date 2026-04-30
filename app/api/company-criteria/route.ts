@@ -74,21 +74,40 @@ export async function POST(request: Request) {
 
     const body = await request.json();
 
+    // Every ICP must be modelled on a reference company — the URL is the
+    // canonical input we re-enrich from. Reject the request early if missing
+    // so the NOT NULL DB constraint never has to.
+    const exampleCompanyUrl = typeof body.exampleCompanyUrl === 'string'
+      ? body.exampleCompanyUrl.trim()
+      : '';
+    if (!exampleCompanyUrl) {
+      return NextResponse.json(
+        { error: 'exampleCompanyUrl is required — every ICP must be modelled on a reference company' },
+        { status: 400 },
+      );
+    }
+
     // Calculate weights for signals based on their position (priority order)
     const weightedSignals = assignSignalWeights(body.signals || []);
-    
+
     const icpData = {
       user_id: user.id,
       user_email: user.email,
       name: body.name || '',
+      icp_summary: body.icpSummary || null,
       company_type: body.companyType || '',
       therapeutic_areas: body.therapeuticAreas || [],
       modalities: body.modalities || [],
       development_stages: body.developmentStages || [],
+      customer_therapeutic_areas: body.customerTherapeuticAreas ?? [],
+      customer_modalities: body.customerModalities ?? [],
+      customer_development_stages: body.customerDevelopmentStages ?? [],
       company_sizes: body.companySizes || [],
+      li_follower_sizes: body.liFollowerSizes || [],
       funding_stages: body.fundingStages || [],
       signals: weightedSignals.map(s => JSON.stringify(s)),
       example_companies: body.exampleCompanies || [],
+      example_company_url: exampleCompanyUrl,
       example_company_enrichment: body.exampleCompanyEnrichment ?? null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),

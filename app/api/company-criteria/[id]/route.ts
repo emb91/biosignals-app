@@ -53,19 +53,32 @@ export async function PUT(
 
     // Calculate weights for signals based on their position (priority order)
     const weightedSignals = assignSignalWeights(body.signals || []);
-    
-    const icpData = {
+
+    const icpData: Record<string, unknown> = {
       name: body.name || '',
+      icp_summary: body.icpSummary || null,
       company_type: body.companyType || '',
       therapeutic_areas: body.therapeuticAreas || [],
       modalities: body.modalities || [],
       development_stages: body.developmentStages || [],
+      customer_therapeutic_areas: body.customerTherapeuticAreas ?? [],
+      customer_modalities: body.customerModalities ?? [],
+      customer_development_stages: body.customerDevelopmentStages ?? [],
       company_sizes: body.companySizes || [],
+      li_follower_sizes: body.liFollowerSizes || [],
       funding_stages: body.fundingStages || [],
       signals: weightedSignals.map(s => JSON.stringify(s)),
       example_companies: body.exampleCompanies || [],
+      example_company_enrichment: body.exampleCompanyEnrichment ?? null,
       updated_at: new Date().toISOString(),
     };
+
+    // example_company_url is NOT NULL in the DB. Only update it if the client
+    // explicitly provides a non-empty value — partial edits (e.g. inline tag
+    // edits) shouldn't blank it out.
+    if (typeof body.exampleCompanyUrl === 'string' && body.exampleCompanyUrl.trim()) {
+      icpData.example_company_url = body.exampleCompanyUrl.trim();
+    }
 
     const { data, error } = await supabase
       .from('icps')
