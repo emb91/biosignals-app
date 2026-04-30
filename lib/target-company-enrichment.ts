@@ -40,10 +40,27 @@ export type TargetCompanyEnrichmentResult = {
 
   // Narrative (Claude)
   description: string[] | null;
+  products: string[] | null;
+  services: string[] | null;
+  technologies: string[] | null;
+  industries: string[] | null;
+  unique_characteristics: string[] | null;
+  business_model: string[] | null;
+  operating_environment: string[] | null;
+  market_summary: string[] | null;
   customers_we_serve: string[] | null;
+  why_customers_buy: string[] | null;
+  differentiated_value: string[] | null;
+  status_quo: string[] | null;
+  capabilities: string[] | null;
+  challenges_addressed: string[] | null;
+  customer_benefits: string[] | null;
+  good_fit: string[] | null;
+  bad_fit: string[] | null;
   value_propositions: string[] | null;
   competitors_enriched: { name: string; url?: string }[] | null;
   company_status: string | null;
+  arr_estimate: string | null;
 
   // Firmographics (Apollo / Apify)
   employee_count: number | null;
@@ -147,12 +164,29 @@ export async function enrichTargetCompany(
     linkedin_url: linkedinUrl ?? null,
 
     description: Array.isArray(narrative.description) ? narrative.description as string[] : null,
+    products: Array.isArray(narrative.products) ? narrative.products as string[] : null,
+    services: Array.isArray(narrative.services) ? narrative.services as string[] : null,
+    technologies: Array.isArray(narrative.technologies) ? narrative.technologies as string[] : null,
+    industries: Array.isArray(narrative.industries) ? narrative.industries as string[] : null,
+    unique_characteristics: Array.isArray(narrative.unique_characteristics) ? narrative.unique_characteristics as string[] : null,
+    business_model: Array.isArray(narrative.business_model) ? narrative.business_model as string[] : null,
+    operating_environment: Array.isArray(narrative.operating_environment) ? narrative.operating_environment as string[] : null,
+    market_summary: Array.isArray(narrative.market_summary) ? narrative.market_summary as string[] : null,
     customers_we_serve: Array.isArray(narrative.customers_we_serve) ? narrative.customers_we_serve as string[] : null,
+    why_customers_buy: Array.isArray(narrative.why_customers_buy) ? narrative.why_customers_buy as string[] : null,
+    differentiated_value: Array.isArray(narrative.differentiated_value) ? narrative.differentiated_value as string[] : null,
+    status_quo: Array.isArray(narrative.status_quo) ? narrative.status_quo as string[] : null,
+    capabilities: Array.isArray(narrative.capabilities) ? narrative.capabilities as string[] : null,
+    challenges_addressed: Array.isArray(narrative.challenges_addressed) ? narrative.challenges_addressed as string[] : null,
+    customer_benefits: Array.isArray(narrative.customer_benefits) ? narrative.customer_benefits as string[] : null,
+    good_fit: Array.isArray(narrative.good_fit) ? narrative.good_fit as string[] : null,
+    bad_fit: Array.isArray(narrative.bad_fit) ? narrative.bad_fit as string[] : null,
     value_propositions: Array.isArray(narrative.value_propositions) ? narrative.value_propositions as string[] : null,
     competitors_enriched: Array.isArray(narrative.competitors_enriched)
       ? narrative.competitors_enriched as { name: string; url?: string }[]
       : null,
     company_status: typeof narrative.company_status === 'string' ? narrative.company_status : null,
+    arr_estimate: typeof narrative.arr_estimate === 'string' ? narrative.arr_estimate : null,
 
     employee_count: apollo.company_employee_count ?? apify.employee_count ?? null,
     employee_range: apify.employee_range ?? null,

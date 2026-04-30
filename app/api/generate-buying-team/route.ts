@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import {
   COMPANY_SIZE_OPTIONS,
   employeeCountToSizeBucket,
+  totalFundingToBracket,
 } from '@/lib/arcova-taxonomy';
 
 const MODEL = 'claude-sonnet-4-6';
@@ -154,6 +155,7 @@ export async function POST(request: NextRequest) {
       /** From example-company enrichment (Apollo / LinkedIn) — drives realistic micro-company buying logic */
       icp_example_employee_count?: number | null;
       icp_example_employee_range?: string | null;
+      icp_example_total_funding_usd?: number | null;
       // Example company used to derive the ICP
       example_company_name?: string;
     };
@@ -174,10 +176,15 @@ export async function POST(request: NextRequest) {
             ? `Derived company-size bucket: "${headcountBucket}" (from ${headcountFrom === 'employee_data' ? 'recorded headcount' : 'ICP company size criteria'}).`
             : 'No reliable headcount signal — treat the target as organisationally lean unless other evidence implies scale.';
 
-    const fundingLine =
+    const fundingBracket = totalFundingToBracket(body.icp_example_total_funding_usd);
+    const fundingLine = [
       body.icp_funding_stages?.length
-        ? `Funding stage hint for the target account (may correlate with how many full-time specialist roles exist): ${body.icp_funding_stages.join(', ')}.`
-        : '';
+        ? `Funding stage (ICP criteria): ${body.icp_funding_stages.join(', ')}.`
+        : '',
+      fundingBracket
+        ? `Total funding raised by example target account: ${fundingBracket}. Use this to calibrate how many specialist roles plausibly exist.`
+        : '',
+    ].filter(Boolean).join(' ');
 
     const client = new Anthropic({ apiKey });
 

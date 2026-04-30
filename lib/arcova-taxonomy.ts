@@ -38,6 +38,10 @@ export const COMPANY_TYPE_OPTIONS = [
     value: 'Contract Lab & Testing Services',
     description: 'Contract analytical, bioanalytical, QC, stability, and environmental testing labs',
   },
+  {
+    value: 'SaaS',
+    description: 'Software-as-a-service companies outside of digital health',
+  },
 ] as const;
 
 export const THERAPEUTIC_AREA_OPTIONS = [
@@ -167,6 +171,7 @@ export function employeeCountToSizeBucket(
 }
 
 export const FUNDING_STAGE_OPTIONS = [
+  'Bootstrapped',
   'Pre-seed',
   'Seed',
   'Series A',
@@ -179,18 +184,22 @@ export const FUNDING_STAGE_OPTIONS = [
 
 export const BUSINESS_AREA_OPTIONS = [
   'Executive Leadership',
-  'Business Development & Partnerships',
+  'Business Development',
+  'Partnerships',
   'Clinical Operations',
   'Research & Development',
   'Regulatory Affairs',
   'Manufacturing & CMC',
   'Medical Affairs',
-  'Commercial & Sales Operations',
+  'Commercial',
+  'Sales Operations',
   'Procurement',
   'Strategy & Corporate Development',
   'Lab Operations',
   'Technology & Systems',
   'AI & Machine Learning',
+  'Data & Informatics',
+  'Quality & Compliance',
   'Marketing',
 ] as const;
 
@@ -386,10 +395,15 @@ export function expandModalitiesWithParents(values: readonly Modality[]): Modali
 export function canonicalizeFundingStage(
   stage: string | null | undefined,
   totalFundingUsd: number | null | undefined,
+  companyStatus?: string | null,
 ): FundingStage | null {
   if (stage) {
     const normalized = stage.trim().toLowerCase().replace(/[\s-]+/g, '_');
     const stageMap: Record<string, FundingStage> = {
+      bootstrapped: 'Bootstrapped',
+      bootstrap: 'Bootstrapped',
+      self_funded: 'Bootstrapped',
+      self_financed: 'Bootstrapped',
       pre_seed: 'Pre-seed',
       preseed: 'Pre-seed',
       angel: 'Pre-seed',
@@ -416,9 +430,13 @@ export function canonicalizeFundingStage(
     if (stageMap[normalized]) return stageMap[normalized];
   }
 
+  // Explicit zero or sub-$1M means bootstrapped — at that scale it's typically founder/F&F money, not an institutional round
+  if (totalFundingUsd === 0) return 'Bootstrapped';
+  if (totalFundingUsd != null && totalFundingUsd > 0 && totalFundingUsd < 1_000_000) return 'Bootstrapped';
+
   // Amount-based fallback when stage is absent or unmapped
   if (totalFundingUsd != null && totalFundingUsd > 0) {
-    if (totalFundingUsd < 2_000_000)   return 'Pre-seed';
+    if (totalFundingUsd < 3_000_000)   return 'Pre-seed';
     if (totalFundingUsd < 10_000_000)  return 'Seed';
     if (totalFundingUsd < 30_000_000)  return 'Series A';
     if (totalFundingUsd < 100_000_000) return 'Series B';
@@ -426,5 +444,85 @@ export function canonicalizeFundingStage(
     return 'Series D+';
   }
 
+  // Final fallback: scan free-text company_status for stage keywords
+  if (companyStatus) {
+    const s = companyStatus.toLowerCase();
+    if (/bootstrapp|self[\s-]?fund|self[\s-]?financ/.test(s)) return 'Bootstrapped';
+    if (/series\s*d|series\s*e|series\s*f|series\s*g|late[\s-]?stage|growth\s+(round|equity)/.test(s)) return 'Series D+';
+    if (/series\s*c\b/.test(s)) return 'Series C';
+    if (/series\s*b\b/.test(s)) return 'Series B';
+    if (/series\s*a\b/.test(s)) return 'Series A';
+    if (/\bseed\b/.test(s)) return 'Seed';
+    if (/pre[\s-]?seed|angel/.test(s)) return 'Pre-seed';
+    if (/\bipo\b|publicly\s+(traded|listed)|\bpublic\b/.test(s)) return 'Public';
+    if (/grant[\s-]?fund|sbir|sttr|government\s+grant/.test(s)) return 'Grant-funded';
+  }
+
   return null;
+}
+
+/**
+ * Returns a human-readable funding bracket string from a raw USD amount.
+ * Used to give the buying-team LLM richer context about company scale.
+ * e.g. 800_000 → "< $2M (Pre-seed / Bootstrapped)"
+ */
+export function totalFundingToBracket(totalFundingUsd: number | null | undefined): string | null {
+  if (totalFundingUsd == null) return null;
+  if (totalFundingUsd === 0)         return 'Bootstrapped (no external funding recorded)';
+  if (totalFundingUsd < 2_000_000)   return `< $2M (Pre-seed / early angel)`;
+  if (totalFundingUsd < 10_000_000)  return `$2M–$10M (Seed)`;
+  if (totalFundingUsd < 30_000_000)  return `$10M–$30M (Series A)`;
+  if (totalFundingUsd < 100_000_000) return `$30M–$100M (Series B)`;
+  if (totalFundingUsd < 300_000_000) return `$100M–$300M (Series C)`;
+  return `$300M+ (Series D+ / late-stage)`;
+}
+
+export const ARR_BUCKET_OPTIONS = [
+  'Pre-revenue',
+  '< $1M ARR',
+  '$1M–$5M ARR',
+  '$5M–$20M ARR',
+  '$20M–$50M ARR',
+  '$50M–$100M ARR',
+  '$100M+ ARR',
+] as const;
+
+export type ArrBucket = (typeof ARR_BUCKET_OPTIONS)[number];
+
+/**
+ * Parses Claude's free-text ARR estimate (e.g. "~$5M", "<$1M", "$10M–$20M")
+ * into a canonical ARR bucket. Returns null if the input can't be parsed.
+ */
+export function arrEstimateToBucket(estimate: string | null | undefined): ArrBucket | null {
+  if (!estimate) return null;
+  const s = estimate.toLowerCase().replace(/,/g, '');
+
+  // Pre-revenue signals
+  if (/pre[\s-]?revenue|no\s+revenue|not\s+yet\s+generat/.test(s)) return 'Pre-revenue';
+
+  // Extract the first meaningful dollar figure
+  const match = s.match(/([<>~≈]?\s*\$?\s*[\d.]+\s*[mbk]?)/i);
+  if (!match) return null;
+
+  const raw = match[1].replace(/\s/g, '');
+  const isLessThan = raw.startsWith('<');
+  const numStr = raw.replace(/[^0-9.]/g, '');
+  let value = parseFloat(numStr);
+  if (isNaN(value)) return null;
+
+  // Normalise to dollars
+  const lower = raw.toLowerCase();
+  if (lower.includes('b')) value *= 1_000_000_000;
+  else if (lower.includes('m')) value *= 1_000_000;
+  else if (lower.includes('k')) value *= 1_000;
+
+  // If "<$1M" treat as upper bound, shift down a bracket
+  if (isLessThan) value = value * 0.5;
+
+  if (value < 1_000_000)   return '< $1M ARR';
+  if (value < 5_000_000)   return '$1M–$5M ARR';
+  if (value < 20_000_000)  return '$5M–$20M ARR';
+  if (value < 50_000_000)  return '$20M–$50M ARR';
+  if (value < 100_000_000) return '$50M–$100M ARR';
+  return '$100M+ ARR';
 }
