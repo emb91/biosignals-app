@@ -2,629 +2,426 @@
 
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
-import SetupShell from '@/components/SetupShell';
-import SetupFlow from '@/components/SetupFlow';
-import { useSetupState } from '@/lib/use-setup-state';
+import { useEffect, useState, useCallback } from 'react';
+import { parseSSEStream } from '@/lib/sse';
+import AppSidebar from '@/components/AppSidebar';
+import { ProfileCard, type PanelMyCompanyData, type MyCompanyChangeValue, type CompetitorItem } from '@/components/SetupProfilePanel';
+import { Pencil, RefreshCw, Trash2, Save, X, AlertTriangle, Building2, ArrowRight } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-export default function CompanyAnalysisPage() {
+
+const FIELD_MAP: Record<string, string> = {
+  companyName: 'company_name',
+  website: 'website',
+  logoUrl: 'logo_url',
+  tagline: 'tagline',
+  linkedinUrl: 'linkedin_url',
+  description: 'description',
+  customersWeServe: 'customers_we_serve',
+  valuePropositions: 'value_propositions',
+  goodFit: 'good_fit',
+  badFit: 'bad_fit',
+  competitorsEnriched: 'competitors_enriched',
+  companyStatus: 'company_status',
+  companyType: 'company_type',
+  companyTypeDisplay: 'company_type_display',
+  therapeuticAreas: 'therapeutic_areas',
+  modalities: 'modalities',
+  developmentStages: 'development_stages',
+  productsServices: 'products_services',
+  services: 'services',
+  technologies: 'technologies',
+  employeeCount: 'employee_count',
+  employeeRange: 'employee_range',
+  followerCount: 'follower_count',
+  foundedYear: 'founded_year',
+  fundingStage: 'funding_stage',
+  totalFundingUsd: 'total_funding_usd',
+  hqCity: 'hq_city',
+  hqCountry: 'hq_country',
+  industry: 'industry',
+};
+
+function toMyCompany(d: Record<string, unknown>): PanelMyCompanyData {
+  const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
+  const num = (v: unknown) => (typeof v === 'number' ? v : undefined);
+  const arr = (v: unknown) => (Array.isArray(v) && v.length > 0 ? (v as string[]) : undefined);
+
+  return {
+    companyName: str(d.company_name),
+    website: str(d.website),
+    logoUrl: str(d.logo_url),
+    tagline: str(d.tagline),
+    linkedinUrl: str(d.linkedin_url),
+    description: arr(d.description) ?? (str(d.description) ? [d.description as string] : undefined),
+    customersWeServe: arr(d.customers_we_serve),
+    valuePropositions: arr(d.value_propositions),
+    goodFit: arr(d.good_fit),
+    badFit: arr(d.bad_fit),
+    competitorsEnriched: Array.isArray(d.competitors_enriched)
+      ? (d.competitors_enriched as CompetitorItem[])
+      : undefined,
+    companyStatus: str(d.company_status),
+    companyType: str(d.company_type),
+    companyTypeDisplay: str(d.company_type_display),
+    therapeuticAreas: arr(d.therapeutic_areas),
+    modalities: arr(d.modalities),
+    developmentStages: arr(d.development_stages),
+    productsServices: arr(d.products_services),
+    services: arr(d.services),
+    technologies: arr(d.technologies),
+    employeeCount: num(d.employee_count),
+    employeeRange: str(d.employee_range),
+    followerCount: num(d.follower_count),
+    foundedYear: num(d.founded_year),
+    fundingStage: str(d.funding_stage),
+    totalFundingUsd: num(d.total_funding_usd),
+    hqCity: str(d.hq_city),
+    hqCountry: str(d.hq_country),
+    industry: str(d.industry),
+  };
+}
+
+export default function MyProfilePage() {
   const { user, loading } = useAuth();
   const router = useRouter();
-  const setupState = useSetupState();
-  const inSetup = !setupState.setupComplete;
-  const [websiteUrl, setWebsiteUrl] = useState('');
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [analysisResults, setAnalysisResults] = useState<any>(null);
-  const [error, setError] = useState('');
-  const [loadingExisting, setLoadingExisting] = useState(true);
-  const [editedResults, setEditedResults] = useState<any>(null);
-  const [editingSections, setEditingSections] = useState<Set<string>>(new Set());
-  const [savingSection, setSavingSection] = useState<string | null>(null);
-  const [successSection, setSuccessSection] = useState<string | null>(null);
-  const [loadingMessage, setLoadingMessage] = useState('Thinking...');
-  const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const [isSavingAll, setIsSavingAll] = useState(false);
-  const [showAnalyzeForm, setShowAnalyzeForm] = useState(false);
-  const [isEditingCompanyName, setIsEditingCompanyName] = useState(false);
-  const [savingCompanyName, setSavingCompanyName] = useState(false);
 
+  const [analysisData, setAnalysisData] = useState<Record<string, unknown> | null>(null);
+  const [editedData, setEditedData] = useState<Record<string, unknown> | null>(null);
+  const [loadingData, setLoadingData] = useState(true);
+  const [editMode, setEditMode] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isReenriching, setIsReenriching] = useState(false);
+  const [reenrichMsg, setReenrichMsg] = useState('');
+  const [reenrichPct, setReenrichPct] = useState(0);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [showChangeInput, setShowChangeInput] = useState(false);
+  const [changeUrl, setChangeUrl] = useState('');
 
   useEffect(() => {
-    if (!loading && !user) {
-      router.push('/login');
-    }
-  }, [user, loading, router]);
+    if (!loading && !user) router.push('/login');
+  }, [loading, user, router]);
 
-  // Load existing analysis on mount
   useEffect(() => {
-    const loadExistingAnalysis = async () => {
-      if (!user) {
-        setLoadingExisting(false);
-        return;
-      }
-
+    if (!user) return;
+    (async () => {
       try {
-        const { data, error } = await supabase
+        const { data } = await supabase
           .from('company_analyses')
           .select('*')
           .eq('user_id', user.id)
           .limit(1)
           .maybeSingle();
-
-        if (data && !error) {
-          setAnalysisResults(data);
-          setEditedResults(data);
-          setWebsiteUrl(data.website || '');
+        if (data) {
+          setAnalysisData(data as Record<string, unknown>);
+          setEditedData(data as Record<string, unknown>);
         }
-      } catch (err) {
-        console.error('Error loading existing analysis:', err);
       } finally {
-        setLoadingExisting(false);
+        setLoadingData(false);
       }
-    };
-
-    loadExistingAnalysis();
+    })();
   }, [user]);
 
-  // Core analysis function — called by both the welcome step and the re-analyze form.
-  const runAnalysis = async (formattedUrl: string) => {
-    setIsAnalyzing(true);
-    setError('');
+  const handleChange = useCallback((field: keyof PanelMyCompanyData, value: MyCompanyChangeValue) => {
+    const rawKey = FIELD_MAP[field as string] ?? field;
+    setEditedData((prev) => ({ ...(prev ?? {}), [rawKey]: value }));
+  }, []);
 
-    const loadingMessages = [
-      'Thinking...',
-      'Visiting your website...',
-      'Scanning for details...',
-      'Analysing content...',
-      'Building your profile...',
-    ];
-
-    let messageIndex = 0;
-    setLoadingMessage(loadingMessages[0]);
-
-    const messageInterval = setInterval(() => {
-      messageIndex = (messageIndex + 1) % loadingMessages.length;
-      setLoadingMessage(loadingMessages[messageIndex]);
-    }, 3000);
-
+  const handleSave = async () => {
+    if (!editedData) return;
+    setIsSaving(true);
     try {
-      const response = await fetch('/api/analyze-and-store', {
+      const res = await fetch('/api/user-analyses', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editedData),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setAnalysisData(updated);
+        setEditedData(updated);
+      }
+    } finally {
+      setIsSaving(false);
+      setEditMode(false);
+    }
+  };
+
+  const handleCancel = () => {
+    setEditedData(analysisData);
+    setEditMode(false);
+  };
+
+  const handleDelete = async () => {
+    const id = typeof analysisData?.id === 'string' ? analysisData.id : null;
+    if (id) {
+      await fetch(`/api/user-analyses?id=${id}`, { method: 'DELETE' }).catch(() => {});
+    }
+    router.replace('/dashboard');
+  };
+
+  const runEnrichment = async (website: string) => {
+    const normalized = /^https?:\/\//i.test(website.trim()) ? website.trim() : `https://${website.trim()}`;
+    setIsReenriching(true);
+    setReenrichMsg('Researching your company…');
+    setReenrichPct(0);
+    try {
+      const res = await fetch('/api/analyze-and-store-stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ website: formattedUrl }),
+        body: JSON.stringify({ website: normalized }),
       });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Analysis failed');
-      }
-
-      setAnalysisResults(data);
-      setEditedResults(data);
-      setShowAnalyzeForm(false);
-    } catch (err) {
-      console.error('Error:', err);
-
-      let userMessage = 'Something went wrong. Please try again.';
-
-      if (err instanceof Error) {
-        const errorMsg = err.message.toLowerCase();
-        if (errorMsg.includes('503') || errorMsg.includes('502') || errorMsg.includes('forbidden')) {
-          userMessage = "This website is blocking our requests. Try a different company website!";
-        } else if (errorMsg.includes('timeout')) {
-          userMessage = "This is taking longer than expected. Try again in a moment!";
-        } else if (errorMsg.includes('unauthorized')) {
-          userMessage = "Your session expired. Please refresh the page.";
+      if (!res.ok) return;
+      let finalData: Record<string, unknown> | null = null;
+      for await (const { event, data } of parseSSEStream(res)) {
+        if (event === 'step_claude') {
+          setReenrichMsg('Website analysed ✓  Checking company database…');
+          setReenrichPct(30);
+        } else if (event === 'step_apollo') {
+          setReenrichMsg('Company data retrieved ✓  Scanning LinkedIn…');
+          setReenrichPct(55);
+        } else if (event === 'step_apify') {
+          setReenrichMsg('LinkedIn scanned ✓  Classifying company…');
+          setReenrichPct(75);
+        } else if (event === 'step_taxonomy') {
+          setReenrichMsg('Classified ✓  Finishing up…');
+          setReenrichPct(92);
+        } else if (event === 'done') {
+          finalData = data;
         }
       }
-
-      setError(userMessage);
+      if (finalData) {
+        setAnalysisData(finalData);
+        setEditedData(finalData);
+      }
     } finally {
-      clearInterval(messageInterval);
-      setIsAnalyzing(false);
+      setIsReenriching(false);
+      setReenrichMsg('');
+      setReenrichPct(0);
     }
   };
 
-  const handleAnalyze = async (e: React.FormEvent) => {
+  const handleReenrich = async () => {
+    const website = typeof analysisData?.website === 'string' ? analysisData.website : null;
+    if (!website) return;
+    await runEnrichment(website);
+  };
+
+  const handleChangeCompanySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!websiteUrl.trim()) return;
-    let formattedUrl = websiteUrl.trim();
-    if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
-      formattedUrl = 'https://' + formattedUrl;
-    }
-    await runAnalysis(formattedUrl);
+    const url = changeUrl.trim();
+    if (!url) return;
+    setShowChangeInput(false);
+    setChangeUrl('');
+    await runEnrichment(url);
   };
 
-  const toggleEditSection = (sectionKey: string) => {
-    setEditingSections(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(sectionKey)) {
-        newSet.delete(sectionKey);
-        setEditedResults(analysisResults);
-      } else {
-        newSet.add(sectionKey);
-      }
-      return newSet;
-    });
-  };
-
-  const handleSaveSection = async (sectionKey: string) => {
-    if (!editedResults?.id || !user) return;
-
-    setSavingSection(sectionKey);
-    setError('');
-
-    try {
-      const response = await fetch('/api/user-analyses', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editedResults),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to save changes');
-      }
-
-      const updatedData = await response.json();
-      setAnalysisResults(updatedData);
-      setSuccessSection(sectionKey);
-      
-      setEditingSections(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(sectionKey);
-        return newSet;
-      });
-      
-      setTimeout(() => setSuccessSection(null), 3000);
-    } catch (err) {
-      console.error('Error saving section:', err);
-      setError('Failed to save changes');
-    } finally {
-      setSavingSection(null);
-    }
-  };
-
-  const handleCancelSection = (sectionKey: string) => {
-    setEditedResults(analysisResults);
-    setEditingSections(prev => {
-      const newSet = new Set(prev);
-      newSet.delete(sectionKey);
-      return newSet;
-    });
-  };
-
-  const handleFieldChange = (fieldPath: string, value: any) => {
-    setEditedResults((prev: any) => ({
-      ...prev,
-      [fieldPath]: value
-    }));
-  };
-
-  const handleArrayItemChange = (fieldPath: string, index: number, value: string) => {
-    setEditedResults((prev: any) => ({
-      ...prev,
-      [fieldPath]: prev[fieldPath].map((item: string, i: number) => 
-        i === index ? value : item
-      )
-    }));
-  };
-
-  const handleAddArrayItem = (fieldPath: string) => {
-    setEditedResults((prev: any) => ({
-      ...prev,
-      [fieldPath]: [...(prev[fieldPath] || []), '']
-    }));
-  };
-
-  const handleRemoveArrayItem = (fieldPath: string, index: number) => {
-    setEditedResults((prev: any) => ({
-      ...prev,
-      [fieldPath]: prev[fieldPath].filter((_: any, i: number) => i !== index)
-    }));
-  };
-
-  const handleNextClick = () => {
-    setShowConfirmModal(true);
-  };
-
-  const handleSaveCompanyName = async () => {
-    if (!editedResults?.id || !user) return;
-
-    setSavingCompanyName(true);
-    try {
-      const response = await fetch('/api/user-analyses', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editedResults),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to save changes');
-      }
-
-      const updatedData = await response.json();
-      setAnalysisResults(updatedData);
-      setIsEditingCompanyName(false);
-    } catch (err) {
-      console.error('Error saving company name:', err);
-      setError('Failed to save company name');
-    } finally {
-      setSavingCompanyName(false);
-    }
-  };
-
-  const handleConfirmNext = async () => {
-    if (!editedResults?.id || !user) {
-      setShowConfirmModal(false);
-      router.push('/company-criteria');
-      return;
-    }
-
-    setIsSavingAll(true);
-    try {
-      const response = await fetch('/api/user-analyses', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editedResults),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to save changes');
-      }
-
-      setShowConfirmModal(false);
-      router.push('/company-criteria');
-    } catch (err) {
-      console.error('Error saving:', err);
-      setError('Failed to save changes');
-      setShowConfirmModal(false);
-    } finally {
-      setIsSavingAll(false);
-    }
-  };
-
-  if (loading || loadingExisting || setupState.loading) {
+  if (loading || loadingData) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-arcova-teal"></div>
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-slate-950 to-arcova-darkblue">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-arcova-teal" />
       </div>
     );
   }
 
-  if (!user) {
-    return null;
-  }
+  if (!user) return null;
 
-  // Derive first name from Supabase auth metadata or email prefix
-  const firstName = (() => {
-    const meta = user.user_metadata as Record<string, unknown> | undefined;
-    const fullName = String(meta?.full_name || meta?.name || '').trim();
-    if (fullName) return fullName.split(' ')[0];
-    const emailPrefix = (user.email || '').split('@')[0];
-    return emailPrefix ? emailPrefix.charAt(0).toUpperCase() + emailPrefix.slice(1) : '';
-  })();
-
-  // Helper to format array data for display
-  const formatArrayValue = (value: any): string[] => {
-    if (Array.isArray(value)) return value;
-    if (typeof value === 'string') return [value];
-    return [];
-  };
-
-  // Define sections for display - only showing key fields for ICP seeding
-  const getSections = () => {
-    if (!editedResults) return [];
-    
-    return [
-      { key: 'description', title: 'Description', icon: '📝', data: formatArrayValue(editedResults.description) },
-      { key: 'customers_we_serve', title: 'Customers We Serve', icon: '🎯', data: formatArrayValue(editedResults.customers_we_serve) },
-      { key: 'good_fit', title: 'We work best with...', icon: '✅', data: formatArrayValue(editedResults.good_fit) },
-      { key: 'bad_fit', title: 'Not a fit for us', icon: '❌', data: formatArrayValue(editedResults.bad_fit) },
-    ];
-  };
-
-  const sections = getSections();
+  const myCompanyData = toMyCompany(editedData ?? {});
+  const cardStatus = isReenriching ? 'building' : (analysisData ? 'complete' : 'pending');
 
   return (
-    <SetupShell
-      inSetup={inSetup}
-      step={1}
-      setupUserGreeting={firstName || undefined}
-      hideSetupProgress={inSetup && !analysisResults && !showAnalyzeForm}
-    >
-      <div className="flex-1 flex flex-col min-h-0">
+    <div className="flex h-screen bg-gradient-to-b from-slate-950 to-arcova-darkblue">
+      <AppSidebar />
+      <div className="flex flex-1 flex-col overflow-hidden">
+        <div className="flex-1 overflow-y-auto px-6 py-8 lg:px-10">
+          <div className="mx-auto max-w-6xl">
 
-        {/* ── First-time welcome: conversational chat flow ─────────── */}
-        {!analysisResults && !showAnalyzeForm && (
-          <div className="flex min-h-0 flex-1 flex-col">
-            <SetupFlow firstName={firstName} />
-          </div>
-        )}
+            {/* ── Page header ── */}
+            <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h1 className="text-2xl font-bold text-white">Your company profile</h1>
+                <p className="mt-1 text-sm text-white/40">
+                  Used to build target criteria, define buying personas, and find the right leads.
+                </p>
+              </div>
 
-        {/* Content Area (results + re-analyze form) */}
-        {(analysisResults || showAnalyzeForm) && (
-        <div className="flex-1 overflow-y-auto p-4">
-          <div className="max-w-4xl mx-auto">
-            {/* Re-analyze form — only shown when user clicks "Re-analyze" */}
-            {showAnalyzeForm && (
-              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-8">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-2xl font-bold text-gray-900">Re-analyse your company</h2>
-                  {analysisResults && (
-                    <button
-                      onClick={() => setShowAnalyzeForm(false)}
-                      className="text-sm text-gray-500 hover:text-gray-700"
-                    >
-                      Cancel
-                    </button>
+              {/* Action buttons */}
+              {analysisData && (
+                <div className="flex items-center gap-2 shrink-0">
+                  {editMode ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleSave}
+                        disabled={isSaving}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-teal px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/85 disabled:opacity-50"
+                      >
+                        <Save className="h-4 w-4" />
+                        {isSaving ? 'Saving…' : 'Save changes'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCancel}
+                        disabled={isSaving}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 px-4 py-2 text-sm font-medium text-white/60 transition-colors hover:bg-white/[0.06] hover:text-white disabled:opacity-50"
+                      >
+                        <X className="h-4 w-4" /> Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => { setShowChangeInput((v) => !v); setChangeUrl(''); }}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-teal px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/85"
+                      >
+                        <Building2 className="h-4 w-4" /> Change my company
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditMode(true)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-arcova-teal px-4 py-2 text-sm font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/10"
+                      >
+                        <Pencil className="h-4 w-4" /> Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleReenrich}
+                        disabled={isReenriching}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 px-4 py-2 text-sm font-medium text-white/60 transition-colors hover:bg-white/[0.06] hover:text-white disabled:opacity-50"
+                      >
+                        <RefreshCw className={`h-4 w-4 ${isReenriching ? 'animate-spin' : ''}`} />
+                        {isReenriching ? 'Re-enriching…' : 'Re-enrich'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDelete(true)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/30 px-4 py-2 text-sm font-medium text-red-400/70 transition-colors hover:border-red-400/50 hover:bg-red-400/10 hover:text-red-400"
+                      >
+                        <Trash2 className="h-4 w-4" /> Delete
+                      </button>
+                    </>
                   )}
                 </div>
-                <p className="text-gray-600 mb-6">
-                  Enter your company website and I&apos;ll update your profile.
-                </p>
+              )}
+            </div>
 
-                <form onSubmit={handleAnalyze} className="flex gap-4">
+            {/* ── Change company inline input ── */}
+            {showChangeInput && !isReenriching && (
+              <div className="mb-6 rounded-xl border border-arcova-teal/30 bg-arcova-teal/5 px-5 py-4">
+                <p className="mb-3 text-sm font-medium text-white/80">
+                  Enter the website of your new company and we'll analyse it.
+                </p>
+                <form onSubmit={handleChangeCompanySubmit} className="flex items-center gap-2">
                   <input
+                    autoFocus
                     type="text"
-                    value={websiteUrl}
-                    onChange={(e) => setWebsiteUrl(e.target.value)}
-                    placeholder="yourcompany.com"
-                    className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-arcova-teal focus:border-transparent"
-                    disabled={isAnalyzing}
+                    value={changeUrl}
+                    onChange={(e) => setChangeUrl(e.target.value)}
+                    placeholder="e.g. newcompany.com"
+                    className="flex-1 rounded-lg border border-white/15 bg-white/[0.06] px-3 py-2 text-sm text-white placeholder-white/30 outline-none focus:border-arcova-teal/60 focus:ring-1 focus:ring-arcova-teal/30"
                   />
                   <button
                     type="submit"
-                    disabled={isAnalyzing || !websiteUrl.trim()}
-                    className="px-6 py-3 bg-arcova-teal text-white font-semibold rounded-lg hover:bg-arcova-teal/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    disabled={!changeUrl.trim()}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-teal px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/85 disabled:opacity-40"
                   >
-                    {isAnalyzing ? loadingMessage : 'Analyse'}
+                    <ArrowRight className="h-4 w-4" /> Analyse
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setShowChangeInput(false); setChangeUrl(''); }}
+                    className="inline-flex items-center rounded-lg border border-white/15 px-3 py-2 text-sm text-white/50 transition-colors hover:bg-white/[0.06] hover:text-white"
+                  >
+                    <X className="h-4 w-4" />
                   </button>
                 </form>
-
-                {error && (
-                  <div className="mt-4 p-4 bg-red-50 text-red-700 rounded-lg">{error}</div>
-                )}
               </div>
             )}
 
-            {/* Loading State (re-analyze) */}
-            {isAnalyzing && showAnalyzeForm && (
-              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-arcova-teal mx-auto mb-4"></div>
-                <p className="text-lg text-gray-600">{loadingMessage}</p>
-              </div>
-            )}
+            {/* ── Card — bump text sizes up from sidebar-scale to page-scale ── */}
+            <div className="[&_.text-xs]:text-[0.9375rem] [&_.text-xs]:leading-normal [&_.text-sm]:text-base [&_.text-sm]:leading-relaxed">
+              <ProfileCard
+                status={cardStatus}
+                myCompany={myCompanyData}
+                analysisLoading={isReenriching}
+                enrichmentMsg={reenrichMsg}
+                enrichmentPct={reenrichPct}
+                editMode={editMode && !isSaving}
+                defaultAllOpen
+                columns={2}
+                onMyCompanyChange={handleChange}
+              />
+            </div>
 
-            {/* Results */}
-            {analysisResults && !isAnalyzing && (
-              <div className="space-y-4">
-                <div className="mb-4">
-                  <div className="flex items-center gap-2 mb-1">
-                    {isEditingCompanyName ? (
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          value={editedResults?.company_name || ''}
-                          onChange={(e) => handleFieldChange('company_name', e.target.value)}
-                          className="text-2xl font-bold text-arcova-darkblue px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-arcova-teal"
-                          autoFocus
-                        />
-                        <button
-                          onClick={() => {
-                            setEditedResults(analysisResults);
-                            setIsEditingCompanyName(false);
-                          }}
-                          className="text-sm text-gray-500 hover:text-gray-700"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          onClick={handleSaveCompanyName}
-                          disabled={savingCompanyName}
-                          className="text-sm bg-arcova-teal text-white px-3 py-1 rounded hover:bg-arcova-teal/90 disabled:opacity-50"
-                        >
-                          {savingCompanyName ? 'Saving...' : 'Save'}
-                        </button>
-                      </div>
-                    ) : (
-                      <>
-                        <h3 className="text-2xl font-bold text-arcova-darkblue">
-                          {editedResults?.company_name || 'Your Company'}
-                        </h3>
-                        <button
-                          onClick={() => setIsEditingCompanyName(true)}
-                          className="text-sm text-arcova-teal hover:text-arcova-darkblue"
-                        >
-                          Edit
-                        </button>
-                      </>
-                    )}
-                  </div>
-                  {editedResults?.domain && (
-                    <a 
-                      href={editedResults.domain.startsWith('http') ? editedResults.domain : `https://${editedResults.domain}`}
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      className="text-arcova-teal hover:text-arcova-darkblue transition-colors text-sm inline-flex items-center gap-1"
-                    >
-                      {editedResults.domain}
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                      </svg>
-                    </a>
-                  )}
-                </div>
-
-                {/* Sections - 2x2 grid */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  {sections.map((section) => {
-                    const isEditing = editingSections.has(section.key);
-                    const isSavingThis = savingSection === section.key;
-                    const isSuccess = successSection === section.key;
-                    const hasData = section.fields 
-                      ? section.fields.some(f => f.value) 
-                      : (section.data && section.data.length > 0);
-
-                    return (
-                      <div key={section.key} className={`bg-white rounded-lg shadow-sm border border-gray-200 p-4 ${!hasData ? 'opacity-60' : ''}`}>
-                        <div className="flex items-center justify-between mb-2">
-                          <h4 className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
-                            <span className="text-base">{section.icon}</span>
-                            {section.title}
-                          </h4>
-                          <div className="flex items-center gap-2">
-                            {isSuccess && <span className="text-green-600 text-sm">✓ Saved</span>}
-                            {!isEditing ? (
-                              <button
-                                onClick={() => toggleEditSection(section.key)}
-                                className="text-sm text-arcova-teal hover:text-arcova-darkblue"
-                              >
-                                Edit
-                              </button>
-                            ) : (
-                              <>
-                                <button
-                                  onClick={() => handleCancelSection(section.key)}
-                                  className="text-sm text-gray-500 hover:text-gray-700"
-                                >
-                                  Cancel
-                                </button>
-                                <button
-                                  onClick={() => handleSaveSection(section.key)}
-                                  disabled={isSavingThis}
-                                  className="text-sm bg-arcova-teal text-white px-3 py-1 rounded hover:bg-arcova-teal/90 disabled:opacity-50"
-                                >
-                                  {isSavingThis ? 'Saving...' : 'Save'}
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        </div>
-
-                        {section.fields ? (
-                          <div className="space-y-3">
-                            {section.fields.map((field) => (
-                              <div key={field.key}>
-                                {isEditing ? (
-                                  field.type === 'textarea' ? (
-                                    <textarea
-                                      value={field.value || ''}
-                                      onChange={(e) => handleFieldChange(field.key, e.target.value)}
-                                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-arcova-teal"
-                                      rows={3}
-                                    />
-                                  ) : (
-                                    <input
-                                      type="text"
-                                      value={field.value || ''}
-                                      onChange={(e) => handleFieldChange(field.key, e.target.value)}
-                                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-arcova-teal"
-                                    />
-                                  )
-                                ) : (
-                                  <p className="text-gray-700">{field.value || <span className="text-gray-400 italic">Not provided</span>}</p>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="space-y-1">
-                            {section.data && section.data.length > 0 ? (
-                              <>
-                                {section.data.map((item: string, idx: number) => (
-                                  <div key={idx} className="flex items-start gap-1.5 text-sm">
-                                    <span className="text-arcova-teal">•</span>
-                                    {isEditing ? (
-                                      <div className="flex-1 flex gap-1">
-                                        <input
-                                          type="text"
-                                          value={item}
-                                          onChange={(e) => handleArrayItemChange(section.key, idx, e.target.value)}
-                                          className="flex-1 px-2 py-0.5 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-arcova-teal"
-                                        />
-                                        <button
-                                          onClick={() => handleRemoveArrayItem(section.key, idx)}
-                                          className="text-red-500 hover:text-red-700 text-xs"
-                                        >
-                                          ✕
-                                        </button>
-                                      </div>
-                                    ) : (
-                                      <span className="text-gray-700">{item}</span>
-                                    )}
-                                  </div>
-                                ))}
-                              </>
-                            ) : (
-                              <p className="text-gray-400 italic text-sm">No data available</p>
-                            )}
-                            {isEditing && (
-                              <button
-                                onClick={() => handleAddArrayItem(section.key)}
-                                className="text-xs text-arcova-teal hover:text-arcova-darkblue mt-1"
-                              >
-                                + Add Item
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Bottom Buttons */}
-                <div className="pt-4 mt-4">
-                  <div className="flex justify-between items-center">
-                    <button
-                      onClick={() => setShowAnalyzeForm(true)}
-                      className="px-6 py-2 bg-gray-500 text-white font-semibold rounded-lg hover:bg-gray-600 transition-colors"
-                    >
-                      Re-analyze
-                    </button>
-                    <button
-                      onClick={handleNextClick}
-                      className="px-6 py-2 bg-arcova-teal text-white font-semibold rounded-lg hover:bg-arcova-teal/90 transition-colors"
-                    >
-                      Next
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Confirmation Modal */}
-            {showConfirmModal && (
-              <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                <div className="bg-white rounded-lg shadow-xl p-6 max-w-md mx-4">
-                  <h3 className="text-xl font-semibold text-gray-900 mb-4">Confirm Details</h3>
-                  <p className="text-gray-600 mb-6">
-                    Please click 'Next' if your company details are correct, otherwise click 'Go Back' to edit.
-                  </p>
-                  <div className="flex justify-end gap-3">
-                    <button
-                      onClick={() => setShowConfirmModal(false)}
-                      className="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium"
-                    >
-                      Go Back
-                    </button>
-                    <button
-                      onClick={handleConfirmNext}
-                      disabled={isSavingAll}
-                      className="px-6 py-2 bg-arcova-teal text-white font-semibold rounded-lg hover:bg-arcova-teal/90 disabled:opacity-50 transition-colors"
-                    >
-                      {isSavingAll ? 'Saving...' : 'Next'}
-                    </button>
-                  </div>
-                </div>
+            {editMode && (
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={isSaving}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-teal px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/85 disabled:opacity-50"
+                >
+                  <Save className="h-4 w-4" />
+                  {isSaving ? 'Saving…' : 'Save changes'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  disabled={isSaving}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 px-4 py-2 text-sm font-medium text-white/60 transition-colors hover:bg-white/[0.06] hover:text-white disabled:opacity-50"
+                >
+                  <X className="h-4 w-4" /> Cancel
+                </button>
               </div>
             )}
 
           </div>
         </div>
-        )}
       </div>
-    </SetupShell>
+
+      {/* ── Delete confirmation modal ── */}
+      {confirmDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-modal-title"
+        >
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => setConfirmDelete(false)}
+          />
+          {/* Panel */}
+          <div className="relative w-full max-w-md rounded-2xl border border-white/10 bg-slate-900 p-6 shadow-2xl">
+            <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-500/15">
+              <AlertTriangle className="h-6 w-6 text-red-400" />
+            </div>
+            <h2 id="delete-modal-title" className="mb-2 text-lg font-semibold text-white">
+              Delete company profile?
+            </h2>
+            <p className="mb-6 text-sm leading-relaxed text-white/55">
+              This will permanently remove your company analysis, including all enriched data, narrative fields, and firmographics. You'll need to run the analysis again to rebuild it.
+            </p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={handleDelete}
+                className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-red-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-red-600"
+              >
+                <Trash2 className="h-4 w-4" /> Yes, delete it
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(false)}
+                className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg border border-white/15 px-4 py-2.5 text-sm font-medium text-white/70 transition-colors hover:bg-white/[0.06] hover:text-white"
+              >
+                Keep it
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

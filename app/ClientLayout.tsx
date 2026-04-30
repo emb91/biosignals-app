@@ -11,15 +11,14 @@ import { useSetupState, getNextSetupPath } from "@/lib/use-setup-state"
 import { Toaster } from "sonner"
 
 // Routes that are part of the authenticated app (no header/footer)
-const APP_ROUTES = ['/dashboard', '/company-criteria', '/contact', '/contacts', '/find-more-leads', '/import', '/arcova-setup', '/my-profile', '/personas', '/results', '/signals', '/upload']
+const APP_ROUTES = ['/dashboard', '/company-criteria', '/contacts', '/find-more-leads', '/import', '/arcova-setup', '/my-profile', '/personas', '/results', '/signals', '/upload']
 
 // Routes that are part of the setup flow — the guard does NOT redirect away from these
-const SETUP_ROUTES = ['/arcova-setup']
+const SETUP_ROUTES = ['/arcova-setup', '/my-profile', '/company-criteria/new', '/contacts/new', '/personas/new']
 
-// App routes that are NOT setup pages — the guard redirects to setup from here if needed
-const NON_SETUP_APP_ROUTES = APP_ROUTES.filter(
-  (r) => !SETUP_ROUTES.some((s) => r.startsWith(s))
-)
+function matchesRoutePrefix(pathname: string, route: string) {
+  return pathname === route || pathname.startsWith(`${route}/`);
+}
 
 function SetupGuard({ children }: { children: React.ReactNode }) {
   const { user, loading: authLoading } = useAuth()
@@ -27,10 +26,14 @@ function SetupGuard({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() ?? ''
   const router = useRouter()
 
-  const isNonSetupAppRoute = NON_SETUP_APP_ROUTES.some((r) => pathname.startsWith(r))
+  const isAppRoute = APP_ROUTES.some((route) => matchesRoutePrefix(pathname, route))
+  const isSetupRoute = SETUP_ROUTES.some((route) => matchesRoutePrefix(pathname, route))
+  const isNonSetupAppRoute = isAppRoute && !isSetupRoute
 
   // Compute the next step path from primitive values (avoids object-ref churn)
-  const nextSetupPath: string | null = setupComplete ? null : '/arcova-setup'
+  const nextSetupPath: string | null = setupComplete
+    ? null
+    : getNextSetupPath({ step1Complete, step2Complete, step3Complete, setupComplete })
 
   useEffect(() => {
     // Wait for both auth and setup state to resolve
@@ -40,7 +43,7 @@ function SetupGuard({ children }: { children: React.ReactNode }) {
     // If setup is already complete, no redirect needed
     if (setupComplete) return
     // If we're already on the right step, don't redirect
-    if (!nextSetupPath || pathname === nextSetupPath) return
+    if (!nextSetupPath || matchesRoutePrefix(pathname, nextSetupPath)) return
 
     router.replace(nextSetupPath)
   }, [authLoading, setupLoading, setupComplete, nextSetupPath, user, isNonSetupAppRoute, pathname, router])
@@ -53,7 +56,7 @@ function SetupGuard({ children }: { children: React.ReactNode }) {
 
   // Redirect is about to fire (effect hasn't run yet this tick) — keep the blank.
   const redirectImminent =
-    !!user && isNonSetupAppRoute && !setupComplete && !!nextSetupPath && pathname !== nextSetupPath
+    !!user && isNonSetupAppRoute && !setupComplete && !!nextSetupPath && !matchesRoutePrefix(pathname, nextSetupPath)
   if (redirectImminent) {
     return <div className="min-h-screen bg-gray-50" />
   }
@@ -69,7 +72,7 @@ export default function ClientLayout({
   const pathname = usePathname()
 
   // Check if current path is an app route (authenticated area)
-  const isAppRoute = APP_ROUTES.some(route => pathname?.startsWith(route))
+  const isAppRoute = APP_ROUTES.some((route) => pathname ? matchesRoutePrefix(pathname, route) : false)
 
   // For app routes, render children directly without header/footer
   if (isAppRoute) {

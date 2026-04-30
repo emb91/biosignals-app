@@ -23,6 +23,7 @@ import { getSignalDisplayName } from '@/lib/signal-display-names';
 import { getRandomLockedSignals, type LockedSignal } from '@/lib/locked-signals';
 import {
   COMPANY_SIZE_OPTIONS,
+  LI_FOLLOWER_OPTIONS,
   COMPANY_TYPE_OPTIONS,
   DEVELOPMENT_STAGE_OPTIONS,
   FUNDING_STAGE_OPTIONS,
@@ -62,7 +63,12 @@ export interface CompanyFormData {
   therapeuticAreas: string[];
   modalities: string[];
   developmentStages: string[];
+  /** Beachhead taxonomy — stored separately from own TA/modality */
+  customerTherapeuticAreas: string[];
+  customerModalities: string[];
+  customerDevelopmentStages: string[];
   companySizes: string[];
+  liFollowerSizes: string[];
   fundingStages: string[];
   signals: string[];
   exampleCompanies: ExampleCompany[];
@@ -134,7 +140,11 @@ const DEFAULT_FORM_DATA: CompanyFormData = {
   therapeuticAreas: [],
   modalities: [],
   developmentStages: [],
+  customerTherapeuticAreas: [],
+  customerModalities: [],
+  customerDevelopmentStages: [],
   companySizes: [],
+  liFollowerSizes: [],
   fundingStages: [],
   signals: [],
   exampleCompanies: [],
@@ -171,6 +181,7 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
   const [formData, setFormData] = useState<CompanyFormData>(
     initialData
       ? {
+          ...DEFAULT_FORM_DATA,
           ...initialData,
           developmentStages: normalizeDevelopmentStages(initialData.developmentStages),
         }
@@ -340,7 +351,7 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
     }
   };
 
-  const handleMultiSelect = (field: 'therapeuticAreas' | 'modalities' | 'developmentStages' | 'companySizes' | 'fundingStages', value: string) => {
+  const handleMultiSelect = (field: 'therapeuticAreas' | 'modalities' | 'developmentStages' | 'companySizes' | 'liFollowerSizes' | 'fundingStages', value: string) => {
     if (field === 'developmentStages') {
       const currentArray = normalizeDevelopmentStages(formData.developmentStages);
 
@@ -463,8 +474,17 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
     switch (section) {
       case 1: return formData.companyType ? 'complete' : 'incomplete';
       case 2: return formData.companySizes.length > 0 ? 'complete' : 'incomplete';
-      case 3: return (formData.therapeuticAreas.length > 0 || formData.modalities.length > 0) ? 'complete' : 'incomplete';
-      case 4: return formData.developmentStages.length > 0 ? 'complete' : 'incomplete';
+      case 3:
+        return formData.therapeuticAreas.length > 0 ||
+          formData.modalities.length > 0 ||
+          formData.customerTherapeuticAreas.length > 0 ||
+          formData.customerModalities.length > 0
+          ? 'complete'
+          : 'incomplete';
+      case 4:
+        return formData.developmentStages.length > 0 || formData.customerDevelopmentStages.length > 0
+          ? 'complete'
+          : 'incomplete';
       case 5: return formData.fundingStages.length > 0 ? 'complete' : 'incomplete';
       case 6: return formData.name ? 'complete' : 'incomplete';
       case 7: return formData.signals.length > 0 ? 'complete' : 'incomplete';
@@ -583,24 +603,46 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
 
           {/* Section 2: Company Size */}
           {currentSection === 2 && (
-            <div>
-              <h2 className="text-lg font-semibold text-gray-900 mb-1">How large are the companies you usually sell to?</h2>
-              <p className="text-sm text-gray-500 mb-4">Select all that apply.</p>
-              <div className="flex flex-wrap gap-2">
-                {COMPANY_SIZE_OPTIONS.map((size) => (
-                  <button
-                    key={size}
-                    type="button"
-                    onClick={() => handleMultiSelect('companySizes', size)}
-                    className={`px-3 py-1.5 rounded-full text-sm transition-colors ${
-                      formData.companySizes.includes(size)
-                        ? 'bg-arcova-teal text-white'
-                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                    }`}
-                  >
-                    {size}
-                  </button>
-                ))}
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900 mb-1">How large are the companies you usually sell to?</h2>
+                <p className="text-sm text-gray-500 mb-4">Select all that apply.</p>
+                <div className="flex flex-wrap gap-2">
+                  {COMPANY_SIZE_OPTIONS.map((size) => (
+                    <button
+                      key={size}
+                      type="button"
+                      onClick={() => handleMultiSelect('companySizes', size)}
+                      className={`px-3 py-1.5 rounded-full text-sm transition-colors ${
+                        formData.companySizes.includes(size)
+                          ? 'bg-arcova-teal text-white'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      {size}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-gray-900 mb-1">What LinkedIn follower base do they typically have?</h3>
+                <p className="text-sm text-gray-500 mb-4">Select all that apply.</p>
+                <div className="flex flex-wrap gap-2">
+                  {LI_FOLLOWER_OPTIONS.map((band) => (
+                    <button
+                      key={band}
+                      type="button"
+                      onClick={() => handleMultiSelect('liFollowerSizes', band)}
+                      className={`px-3 py-1.5 rounded-full text-sm transition-colors ${
+                        formData.liFollowerSizes.includes(band)
+                          ? 'bg-arcova-teal text-white'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      {band}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           )}

@@ -24,8 +24,7 @@ export type SetupState = {
 export function getNextSetupPath(state: Omit<SetupState, 'loading'>): string {
   if (!state.step1Complete) return '/arcova-setup';
   if (!state.step2Complete) return '/company-criteria';
-  if (!state.step3Complete) return '/personas';
-  return '/import';
+  return '/dashboard';
 }
 
 export function useSetupState(): SetupState {
@@ -77,7 +76,7 @@ export function useSetupState(): SetupState {
           step1Complete,
           step2Complete,
           step3Complete,
-          setupComplete: step1Complete && step2Complete && step3Complete,
+          setupComplete: step1Complete && step2Complete,
           loading: false,
         });
       } catch (err) {

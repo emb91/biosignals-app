@@ -141,22 +141,8 @@ export default function DashboardPage() {
         const importComplete = !!importData;
         const signalsComplete = icps.some((icp) => hasSignals(icp.signals)) || contacts.some((contact) => hasSignals(contact.signals));
 
-        // Re-entry guard: send users to their next incomplete setup step
-        if (!profileComplete) {
-          router.replace('/arcova-setup');
-          return;
-        }
-        if (!companiesComplete) {
-          router.replace('/company-criteria');
-          return;
-        }
-        if (!personasComplete) {
-          router.replace('/personas');
-          return;
-        }
-
         const checklistSteps: SetupStep[] = [
-          { id: 'profile', label: 'My company', completed: profileComplete, actionPath: '/arcova-setup' },
+          { id: 'profile', label: 'My company', completed: profileComplete, actionPath: profileComplete ? '/my-profile' : '/arcova-setup' },
           { id: 'companies', label: 'Target Companies', completed: companiesComplete, actionPath: '/company-criteria' },
           { id: 'personas', label: 'Teams', completed: personasComplete, actionPath: '/personas' },
           { id: 'import', label: 'Upload your CSV', completed: importComplete, actionPath: '/import' },

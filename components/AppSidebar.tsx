@@ -1,13 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard,
   Target,
-  UserCircle,
+
   Radio,
   FileUp,
   Users,
@@ -17,6 +16,7 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useEnrichmentGuard } from '@/context/EnrichmentGuardContext';
 
 interface NavItem {
   name: string;
@@ -25,9 +25,8 @@ interface NavItem {
 }
 
 const setupItems: NavItem[] = [
-  { name: 'Company Criteria', href: '/company-criteria', icon: Target },
-  { name: 'Buyer criteria', href: '/personas', icon: UserCircle },
-  { name: 'Arcova Setup', href: '/arcova-setup', icon: User },
+  { name: 'My company', href: '/my-profile', icon: User },
+  { name: 'ICP Criteria', href: '/company-criteria', icon: Target },
 ];
 
 const topNavigation: NavItem[] = [
@@ -51,8 +50,9 @@ interface AppSidebarProps {
 
 export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
   const pathname = usePathname();
+  const { guardedNavigate } = useEnrichmentGuard();
   const [showCompaniesDot, setShowCompaniesDot] = useState(false);
-  const [showPersonasDot, setShowPersonasDot] = useState(false);
+
   const [showMyProfileDot, setShowMyProfileDot] = useState(false);
   const [showImportDot, setShowImportDot] = useState(false);
 
@@ -72,23 +72,19 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
   useEffect(() => {
     const loadCompletionStatus = async () => {
       try {
-        const [companiesRes, personasRes, profileRes, importRes] = await Promise.all([
+        const [companiesRes, profileRes, importRes] = await Promise.all([
           fetch('/api/company-criteria'),
-          fetch('/api/contacts'),
           fetch('/api/user-company-profile'),
           fetch('/api/import-ready'),
         ]);
 
+        let companiesEmpty = true;
+
         if (companiesRes.ok) {
           const companiesResult = await companiesRes.json();
           const companies = companiesResult.data || [];
-          setShowCompaniesDot(companies.length === 0);
-        }
-
-        if (personasRes.ok) {
-          const personasResult = await personasRes.json();
-          const personas = personasResult.data || [];
-          setShowPersonasDot(personas.length === 0);
+          companiesEmpty = companies.length === 0;
+          setShowCompaniesDot(companiesEmpty);
         }
 
         if (profileRes.ok) {
@@ -114,11 +110,11 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
     loadCompletionStatus();
   }, []);
 
-  const setupDotVisible = showCompaniesDot || showPersonasDot || showMyProfileDot;
+  const setupDotVisible = showCompaniesDot || showMyProfileDot;
 
   const shouldShowDot = (itemName: string) => {
     if (itemName === 'Companies') return showCompaniesDot;
-    if (itemName === 'Buyer criteria') return showPersonasDot;
+
     if (itemName === 'My company') return showMyProfileDot;
     if (itemName === 'Import') return showImportDot;
     return false;
@@ -126,10 +122,11 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
 
   const renderNavItem = (item: NavItem) => (
     <div key={item.name}>
-      <Link
-        href={item.href}
+      <button
+        type="button"
+        onClick={() => guardedNavigate(item.href)}
         className={cn(
-          "flex items-center space-x-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+          "w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors text-left",
           isActive(item.href)
             ? "bg-arcova-teal text-white"
             : "text-white hover:bg-arcova-mint/20 hover:text-white"
@@ -142,7 +139,7 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
           )}
         </div>
         <span>{item.name}</span>
-      </Link>
+      </button>
     </div>
   );
 
@@ -151,7 +148,7 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
       <div className="w-64 bg-arcova-darkblue border-r border-arcova-mint/20 flex flex-col">
         {/* Logo */}
         <div className="p-6 border-b border-arcova-mint/20">
-          <Link href="/" className="flex items-center space-x-2">
+          <button type="button" onClick={() => guardedNavigate('/')} className="flex items-center space-x-2">
             <Image
               src="/images/network-og.png"
               alt="Arcova"
@@ -160,7 +157,7 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
               className="rounded-lg"
             />
             <span className="text-white font-semibold text-lg">arcova</span>
-          </Link>
+          </button>
         </div>
 
         {/* Navigation */}

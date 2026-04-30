@@ -80,7 +80,14 @@ interface AccountContext {
   companyName?: string;
   companyWebsite?: string;
   companyDescription?: string[];
-  icps?: Array<{ name: string; companyType: string; therapeuticAreas: string[]; companySizes: string[]; fundingStages: string[] }>;
+  icps?: Array<{
+    name: string;
+    companyType: string;
+    therapeuticAreas: string[];
+    customerTherapeuticAreas: string[];
+    companySizes: string[];
+    fundingStages: string[];
+  }>;
   personas?: Array<{ name: string; functions: string[]; seniority: string[] }>;
 }
 
@@ -99,7 +106,7 @@ function buildAccountContextBlock(ctx: AccountContext): string {
   if (ctx.icps && ctx.icps.length > 0) {
     lines.push(`\nTarget company profiles (${ctx.icps.length}):`);
     for (const icp of ctx.icps) {
-      lines.push(`- "${icp.name}": ${icp.companyType}, TAs: ${icp.therapeuticAreas.join(', ') || 'none'}, sizes: ${icp.companySizes.join(', ') || 'none'}, funding: ${icp.fundingStages.join(', ') || 'none'}`);
+      lines.push(`- "${icp.name}": ${icp.companyType}, own TAs: ${icp.therapeuticAreas.join(', ') || 'none'}, customer-segment TAs: ${icp.customerTherapeuticAreas.join(', ') || 'none'}, sizes: ${icp.companySizes.join(', ') || 'none'}, funding: ${icp.fundingStages.join(', ') || 'none'}`);
     }
   }
 
@@ -266,6 +273,7 @@ async function fetchAccountContext(supabase: Awaited<ReturnType<typeof createCli
         name: icp.name ?? '',
         companyType: icp.company_type ?? '',
         therapeuticAreas: Array.isArray(icp.therapeutic_areas) ? icp.therapeutic_areas : [],
+        customerTherapeuticAreas: Array.isArray((icp as Record<string, unknown>).customer_therapeutic_areas) ? (icp as Record<string, unknown>).customer_therapeutic_areas as string[] : [],
         companySizes: Array.isArray(icp.company_sizes) ? icp.company_sizes : [],
         fundingStages: Array.isArray(icp.funding_stages) ? icp.funding_stages : [],
       }));

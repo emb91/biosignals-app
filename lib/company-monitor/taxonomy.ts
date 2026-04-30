@@ -37,9 +37,17 @@ export type CompanyTaxonomyInput = {
 export type CompanyTaxonomyResult = {
   company_type: CompanyType | null;
   company_type_display: string | null;
+  /** What THIS company fundamentally works on (their science / product modality). SaaS/vendor often empty. Never copy customer disease areas here because the website mentions oncology. */
   therapeutic_areas: TherapeuticArea[];
   modalities: Modality[];
+  /** This company's OWN development maturity (their assets/trials/org). SaaS/vendor often empty. Do not merge buyer pipeline stages here. */
   development_stages: DevelopmentStage[];
+  /** Disease / problem spaces of ACCOUNTS they sell into (beachhead). Not "this company is an oncology company" unless they develop drugs in that space. */
+  customer_therapeutic_areas: TherapeuticArea[];
+  /** Technology / workflow classes of customers they target (e.g. cell therapy labs). Distinct from own modalities. */
+  customer_modalities: Modality[];
+  /** Development stages of the ACCOUNTS they sell into (e.g. Phase II biotechs). Distinct from own development_stages. */
+  customer_development_stages: DevelopmentStage[];
   source: 'llm' | null;
   confidence: 'high' | 'medium' | 'low';
   evidence_summary: string | null;
@@ -174,6 +182,9 @@ function parseTaxonomyJson(text: string): {
   therapeutic_areas?: unknown;
   modalities?: unknown;
   development_stages?: unknown;
+  customer_therapeutic_areas?: unknown;
+  customer_modalities?: unknown;
+  customer_development_stages?: unknown;
   confidence?: unknown;
   evidence_summary?: unknown;
 } | null {
@@ -194,6 +205,9 @@ export function normalizeCompanyTaxonomyResult(
     therapeutic_areas?: unknown;
     modalities?: unknown;
     development_stages?: unknown;
+    customer_therapeutic_areas?: unknown;
+    customer_modalities?: unknown;
+    customer_development_stages?: unknown;
     confidence?: unknown;
     evidence_summary?: unknown;
   } | null,
@@ -207,6 +221,17 @@ export function normalizeCompanyTaxonomyResult(
     canonicalizeArray(parsed?.modalities, canonicalizeModality)
   );
   const developmentStages = canonicalizeArray(parsed?.development_stages, canonicalizeDevelopmentStage);
+  const customerTherapeuticAreas = canonicalizeArray(
+    parsed?.customer_therapeutic_areas,
+    canonicalizeTherapeuticArea
+  );
+  const customerModalities = expandModalitiesWithParents(
+    canonicalizeArray(parsed?.customer_modalities, canonicalizeModality)
+  );
+  const customerDevelopmentStages = canonicalizeArray(
+    parsed?.customer_development_stages,
+    canonicalizeDevelopmentStage
+  );
 
   return {
     company_type: companyType,
@@ -214,6 +239,9 @@ export function normalizeCompanyTaxonomyResult(
     therapeutic_areas: therapeuticAreas,
     modalities,
     development_stages: developmentStages,
+    customer_therapeutic_areas: customerTherapeuticAreas,
+    customer_modalities: customerModalities,
+    customer_development_stages: customerDevelopmentStages,
     source: parsed ? 'llm' : null,
     confidence: normalizeConfidence(parsed?.confidence),
     evidence_summary: normalizeString(parsed?.evidence_summary) || null,
@@ -234,15 +262,51 @@ export async function resolveCompanyTaxonomy(
     websiteContext ? `Website context:\n${websiteContext}` : '',
   ].filter(Boolean);
 
-  const VENDOR_TYPES = new Set([
-    'CDMO',
-    'CRO',
-    'Life Science Tools & Instruments',
-    'Contract Lab & Testing Services',
-    'Digital Health & Informatics',
-  ]);
+  const prompt = `You classify life sciences companies into Arcova's controlled taxonomy — using TWO SEPARATE PLANES that must never be mixed.
 
-  const prompt = `You classify life sciences companies into Arcova's controlled taxonomy.
+CRITICAL RULE — read this before anything else:
+If the company is a SaaS, data platform, sales intelligence tool, CRM, BI vendor, or any software-first business:
+  • therapeutic_areas MUST be [] — disease areas seen on the website are their CUSTOMERS' areas, not theirs.
+  • modalities: only include software product categories (e.g. AI/ML Platform, Drug Discovery Platform). Drug modalities (Small Molecule, Cell Therapy, Gene Therapy, etc.) belong in customer_modalities, NOT here.
+  • development_stages MUST be [] — they have no drug pipeline.
+  • Put disease areas, drug modalities, and trial stages into customer_* fields instead.
+
+WORKED EXAMPLE — sales intelligence / BI platform (e.g. a company like BioIntelli or SciLeads):
+Website says: "We help oncology and neuroscience drug developers find leads. Our AI covers small molecule and cell therapy programs across Phase I–III."
+CORRECT output:
+{
+  "company_type": "Digital Health & Informatics",
+  "therapeutic_areas": [],
+  "modalities": ["AI/ML Platform", "Drug Discovery Platform"],
+  "development_stages": [],
+  "customer_therapeutic_areas": ["Oncology", "Neuroscience"],
+  "customer_modalities": ["Small Molecule", "Cell Therapy"],
+  "customer_development_stages": ["Phase I", "Phase II", "Phase III"]
+}
+WRONG output (do NOT do this):
+{
+  "therapeutic_areas": ["Oncology", "Neuroscience"],
+  "modalities": ["AI/ML Platform", "Small Molecule", "Cell Therapy"],
+  "customer_therapeutic_areas": []
+}
+
+PLANE A — THIS COMPANY (what THEY are / what THEY build):
+- therapeutic_areas, modalities, development_stages describe only the company's own science, regulated products, software product type, or organisational development stage.
+- SaaS / BI / data vendors: therapeutic_areas = [], drug modalities = [], development_stages = []. Only software-category modalities (AI/ML Platform, Drug Discovery Platform, Biomarker) may appear in own modalities.
+- Biotech / Pharma / device / diagnostic developers: therapeutic_areas and modalities from their OWN pipeline; development_stages from their OWN assets/trials (use web search for current clinical phase).
+- CDMO / CRO / contract lab: PLANE A modalities and development_stages may reflect what THEY operationally handle; still split customer beachhead into PLANE B when the site describes WHO they sell to.
+
+PLANE B — CUSTOMERS SERVED (beachhead / who buys from them):
+- customer_therapeutic_areas, customer_modalities, customer_development_stages describe target accounts and buying contexts — diseases, customer science workflows, or trial phases OF THE ACCOUNTS THEY SELL INTO.
+- For software/data companies: disease areas and drug modalities mentioned on the site almost always belong here, not in PLANE A.
+- Pure therapeutic developers focused only on their asset: usually leave all customer_* fields empty ([]) unless there is explicit separate beachhead messaging.
+
+General rules:
+- Same allowed vocabulary lists for TA and modalities in BOTH planes; development stages use the development_stages list for BOTH planes.
+- Therapeutic areas must be disease/problem spaces, not buzzwords.
+- modalities include parent modalities when a specific child applies (e.g. CAR-T → Cell Therapy).
+- evidence_summary must explicitly mention both planes when both are non-empty (e.g. "Own: pure SaaS AI platform; customer: oncology/neuroscience biotechs in Phase I–III").
+- If evidence is weak, return fewer values and lower confidence — do not fabricate.
 
 Company: ${input.company_name}
 Domain: ${input.domain || 'unknown'}
@@ -250,54 +314,37 @@ Domain: ${input.domain || 'unknown'}
 Allowed company_type values:
 ${COMPANY_TYPE_OPTIONS.map((option) => `- ${option.value}: ${option.description}`).join('\n')}
 
-Allowed therapeutic_areas values:
+Allowed therapeutic_areas values (PLANE A and PLANE B):
 ${THERAPEUTIC_AREA_OPTIONS.map((option) => `- ${option}`).join('\n')}
 
-Allowed modalities values:
+Allowed modalities values (PLANE A and PLANE B):
 ${MODALITY_OPTIONS.map((option) => `- ${option}`).join('\n')}
 
-Allowed development_stages values:
+Allowed development_stages values (PLANE A and PLANE B):
 ${DEVELOPMENT_STAGE_OPTIONS.map((option) => `- ${option}`).join('\n')}
 
 Evidence:
 ${evidenceParts.join('\n\n') || 'No scraped evidence available.'}
 
-Classification rules:
-
-Step 1 — Determine company_type from the evidence.
-
-Step 2 — Determine classification mode based on company_type:
-- THERAPEUTIC MODE: company_type is Biotech / Biopharma, Pharma, Medical Device, Diagnostics, or Academic Spinout.
-  → Classify therapeutic_areas and modalities from the company's OWN pipeline, assets, platform, or indications.
-- VENDOR MODE: company_type is CDMO, CRO, Life Science Tools & Instruments, Contract Lab & Testing Services, or Digital Health & Informatics.
-  → Classify therapeutic_areas and modalities from the CUSTOMER SEGMENTS and LAB WORKFLOWS the company serves — not from what the company itself does.
-  → Example: a lab monitoring company serving cell therapy and gene therapy labs should return those as modalities, even though it makes no therapies itself.
-  → Prefer a populated classification over blank fields when customer-side evidence supports it.
-- UNKNOWN / OTHER: use any concrete signal from website or enrichment. Explain reasoning.
-
-Step 3 — Apply these rules to all modes:
-- Therapeutic areas must be disease/problem spaces, not technologies.
-- Modalities are product/technology approaches. If a specific modality applies, include its parent too (e.g. CAR-T → also Cell Therapy).
-- Return all relevant values, strongest first. In vendor mode, include all customer segments with supporting evidence.
-- If evidence is weak, return fewer values with lower confidence — do not fabricate.
-- Always populate company_type_display with a short human-readable label (e.g. "Venture Capital", "Lab Monitoring Software", "Management Consulting"). If company_type matches, use the same value.
-- Always populate evidence_summary with one sentence explaining what the classification is based on, and whether it reflects the company's own work or its served customer segments.
-- For development_stages: only populate for Biotech / Biopharma, Pharma, Academic Spinout, Academic / Research Institute, CRO, and CDMO. Leave empty for all other company types. For therapeutic developers (Biotech / Biopharma, Pharma, Academic Spinout), you MUST use web search to find their current clinical trial phase — search for "[company name] clinical trial phase" or "[company name] pipeline" to get up-to-date information. Do not rely on scraped website content alone as it is frequently outdated. For Academic / Research Institute, always use ["Preclinical"] without searching. For CROs and CDMOs, infer from the trial phases or manufacturing stages they serve. If a company spans multiple stages, include all that apply. Use "All stages" only for large organisations clearly operating across the full development spectrum. Always classify the most advanced stage the company has reached.
+Web search: for drug developers' own trial phase, search "[company name] clinical trial phase" or "[company name] pipeline". For Academic / Research Institute own work, you may use ["Preclinical"] without search when appropriate.
 
 Return ONLY valid JSON:
 {
   "company_type": "<one allowed company_type or null>",
   "company_type_display": "<short human-readable label, always populated>",
-  "therapeutic_areas": ["<allowed therapeutic area>", "..."],
-  "modalities": ["<allowed modality>", "..."],
-  "development_stages": ["<allowed development stage>", "..."],
+  "therapeutic_areas": [],
+  "modalities": [],
+  "development_stages": [],
+  "customer_therapeutic_areas": [],
+  "customer_modalities": [],
+  "customer_development_stages": [],
   "confidence": "<high|medium|low>",
-  "evidence_summary": "<one sentence — what evidence was used and whether classification reflects own pipeline or served customers>"
+  "evidence_summary": "<one or two sentences — PLANE A vs PLANE B>"
 }`;
 
   const message = await client.messages.create({
     model: MODEL,
-    max_tokens: 700,
+    max_tokens: 1100,
     messages: [{ role: 'user', content: prompt }],
     tools: [
       {
