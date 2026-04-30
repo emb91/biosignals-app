@@ -94,7 +94,6 @@ export async function POST(request: Request) {
       user_id: user.id,
       user_email: user.email,
       name: body.name || '',
-      icp_summary: body.icpSummary || null,
       company_type: body.companyType || '',
       therapeutic_areas: body.therapeuticAreas || [],
       modalities: body.modalities || [],

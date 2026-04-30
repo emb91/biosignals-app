@@ -24,7 +24,6 @@ import { getSignalDisplayName } from '@/lib/signal-display-names';
 import { parseSSEStream } from '@/lib/sse';
 import {
   extractFundingStatus,
-  extractFundingRaised,
   formatCurrencyShort,
 } from '@/lib/funding-display';
 import { splitCustomerSegments } from '@/lib/split-customer-segments';
@@ -41,6 +40,8 @@ import {
   FUNDING_STAGE_OPTIONS,
   employeeCountToSizeBucket,
   followerCountToFollowerBucket,
+  canonicalizeFundingStage,
+  arrEstimateToBucket,
 } from '@/lib/arcova-taxonomy';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -51,7 +52,24 @@ interface ExampleEnrichment {
   logo_url?: string | null;
   tagline?: string | null;
   description?: string[] | null;
+  products?: string[] | null;
+  services?: string[] | null;
+  technologies?: string[] | null;
+  target_customers?: string[] | null;
+  industries?: string[] | null;
+  unique_characteristics?: string[] | null;
+  business_model?: string[] | null;
+  operating_environment?: string[] | null;
+  market_summary?: string[] | null;
   customers_we_serve?: string[] | null;
+  why_customers_buy?: string[] | null;
+  differentiated_value?: string[] | null;
+  status_quo?: string[] | null;
+  capabilities?: string[] | null;
+  challenges_addressed?: string[] | null;
+  customer_benefits?: string[] | null;
+  good_fit?: string[] | null;
+  bad_fit?: string[] | null;
   value_propositions?: string[] | null;
   competitors_enriched?: { name: string; url?: string }[] | null;
   employee_count?: number | null;
@@ -59,6 +77,7 @@ interface ExampleEnrichment {
   hq_city?: string | null;
   hq_country?: string | null;
   company_status?: string | null;
+  arr_estimate?: string | null;
   funding_stage?: string | null;
   total_funding_usd?: number | null;
   linkedin_url?: string | null;
@@ -68,7 +87,6 @@ interface ExampleEnrichment {
 interface ICP {
   id: string;
   name: string;
-  icp_summary?: string | null;
   company_type: string;
   therapeutic_areas: string[];
   modalities: string[];
@@ -205,30 +223,6 @@ function parseFunctionName(f: string): string {
 }
 
 
-async function fetchIcpSummary(icp: ICP): Promise<string> {
-  const e = icp.example_company_enrichment;
-  const res = await fetch('/api/generate-icp-summary', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      companyType: icp.company_type,
-      therapeuticAreas: icp.therapeutic_areas,
-      modalities: icp.modalities,
-      developmentStages: icp.development_stages,
-      customerTherapeuticAreas: icp.customer_therapeutic_areas ?? [],
-      customerModalities: icp.customer_modalities ?? [],
-      customerDevelopmentStages: icp.customer_development_stages ?? [],
-      fundingStages: icp.funding_stages,
-      companySizes: icp.company_sizes,
-      exampleCompanyName: e?.company_name ?? null,
-      exampleCompanyDescription: e?.description ?? null,
-    }),
-  });
-  if (!res.ok) return '';
-  const { summary } = await res.json();
-  return summary ?? '';
-}
-
 // ── Inline edit: removable tags + add dropdown ────────────────────────────
 
 function EditTagField({
@@ -248,7 +242,7 @@ function EditTagField({
 }) {
   return (
     <div>
-      <p className="mb-1.5 text-xs text-white/40">{label}</p>
+      <p className="mb-1.5 text-xs text-white/85">{label}</p>
       {selected.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mb-1.5">
           {selected.map((v) => (
@@ -298,23 +292,7 @@ function ICPCard({
   const functions = persona?.functions?.map(parseFunctionName) ?? [];
   const seniority = persona?.seniority_levels ?? [];
   const customerSegments = splitCustomerSegments(e?.customers_we_serve ?? []);
-
-  const [icpSummary, setIcpSummary] = useState<string>('');
-  const [summaryLoading, setSummaryLoading] = useState(true);
-  useEffect(() => {
-    if (typeof icp.icp_summary === 'string' && icp.icp_summary.trim()) {
-      setIcpSummary(icp.icp_summary);
-      setSummaryLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setSummaryLoading(true);
-    fetchIcpSummary(icp).then((s) => {
-      if (!cancelled) { setIcpSummary(s); setSummaryLoading(false); }
-    });
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [icp.id, icp.company_type, icp.therapeutic_areas.join(), icp.modalities.join()]);
+  const referenceSummary = (e?.description?.[0] ?? '').trim();
 
   const hasModelledOnNarrative = Boolean(
     e?.description?.[0] ||
@@ -327,16 +305,17 @@ function ICPCard({
   const hasFirmographics = !!(e?.employee_count != null || e?.employee_range || e?.hq_city || e?.follower_count != null || e?.company_status || e?.total_funding_usd != null || e?.funding_stage);
 
   const [open, setOpen] = useState({
-    criteria: true, firmographics: true, competitors: true, modelledOn: false, functions: true, seniority: true, titles: true,
+    criteria: true, funding: true, functions: true, seniority: true, titles: true,
   });
   const toggle = (key: keyof typeof open) =>
     setOpen((prev) => ({ ...prev, [key]: !prev[key] }));
+
+  const [modelledOnMode, setModelledOnMode] = useState(false);
 
   // ── Unified edit state (covers both criteria and buying team) ────────────
   const [editMode, setEditMode] = useState(false);
   const [editData, setEditData] = useState({
     name: icp.name,
-    icp_summary: icp.icp_summary ?? '',
     company_type: icp.company_type,
     therapeutic_areas: [...icp.therapeutic_areas],
     modalities: [...icp.modalities],
@@ -354,12 +333,10 @@ function ICPCard({
   const [newCompetitorUrl, setNewCompetitorUrl] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const hasCompetitors = editMode || (e?.competitors_enriched?.length ?? 0) > 0;
 
   const startEdit = () => {
     setEditData({
       name: icp.name,
-      icp_summary: icp.icp_summary ?? icpSummary,
       company_type: icp.company_type,
       therapeutic_areas: [...icp.therapeutic_areas],
       modalities: [...icp.modalities],
@@ -375,6 +352,7 @@ function ICPCard({
     setEditSeniority([...seniority]);
     setEditCompetitors([...(icp.example_company_enrichment?.competitors_enriched ?? [])]);
     setNewCompetitorUrl('');
+    setModelledOnMode(false);
     setEditMode(true);
     if (collapsed) onToggle();
   };
@@ -395,7 +373,6 @@ function ICPCard({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: editData.name,
-          icpSummary: editData.icp_summary,
           companyType: editData.company_type,
           therapeuticAreas: editData.therapeutic_areas,
           modalities: editData.modalities,
@@ -422,17 +399,12 @@ function ICPCard({
       if (!icpRes.ok) {
         const errorPayload = await icpRes.json().catch(() => null) as { error?: string } | null;
         const message = errorPayload?.error ?? 'Failed to save ICP';
-        if (message.includes('icp_summary')) {
-          toast.error('`icp_summary` is missing in the database. Apply the latest Supabase migration, then try again.');
-        } else {
-          toast.error(message);
-        }
+        toast.error(message);
         return;
       }
 
       const result = await icpRes.json();
       onSaved(result.data ?? { ...icp, ...editData });
-      setIcpSummary(editData.icp_summary);
 
       if (persona) {
         const teamRes = await fetch(`/api/contacts/${persona.id}`, {
@@ -503,107 +475,175 @@ function ICPCard({
       </div>
 
 
+      {/* Modelled-on full-panel view */}
+      {!collapsed && modelledOnMode && e && (
+        <div className="px-4 py-4 space-y-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              {e.website ? (
+                <a href={e.website} target="_blank" rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-sm font-semibold text-white hover:underline leading-tight">
+                  {e.company_name}<ExternalLink className="h-3 w-3 shrink-0 opacity-60" />
+                </a>
+              ) : (
+                <p className="text-sm font-semibold text-white leading-tight">{e.company_name}</p>
+              )}
+              <div className="flex flex-col gap-0.5 mt-0.5">
+                {linkedInDisplay && (
+                  <a href={e.linkedin_url!} target="_blank" rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-xs text-arcova-teal hover:underline">
+                    {linkedInDisplay}<ExternalLink className="h-2.5 w-2.5 shrink-0" />
+                  </a>
+                )}
+              </div>
+            </div>
+            {e.logo_url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={e.logo_url} alt={e.company_name ?? ''} className="h-20 w-20 shrink-0 rounded-xl object-contain bg-white/10 p-1" />
+            ) : (
+              <div className="h-20 w-20 shrink-0 rounded-xl bg-white/10 flex items-center justify-center">
+                <Building2 className="h-9 w-9 text-white/30" />
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-x-6 gap-y-4">
+            <div className="space-y-5">
+              {referenceSummary.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-white mb-2">Summary</p>
+                  <p className="text-xs text-white/70 leading-snug">{referenceSummary}</p>
+                </div>
+              )}
+              {(e.employee_count != null || e.employee_range || e.hq_city || e.follower_count != null) && (
+                <div>
+                  <p className="text-xs font-semibold text-white mb-2">Firmographics</p>
+                  <div className="space-y-1">
+                    {(e.employee_count != null || e.employee_range) && (
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-xs text-white/50 w-28 shrink-0">Employees</span>
+                        <span className="text-xs text-white">
+                          {e.employee_count != null ? e.employee_count.toLocaleString() : e.employee_range}
+                          {e.employee_count != null && e.employee_range ? ` (${e.employee_range})` : ''}
+                        </span>
+                      </div>
+                    )}
+                    {e.hq_city && (
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-xs text-white/50 w-28 shrink-0">HQ</span>
+                        <span className="text-xs text-white">{e.hq_city}{e.hq_country ? `, ${e.hq_country}` : ''}</span>
+                      </div>
+                    )}
+                    {e.follower_count != null && (
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-xs text-white/50 w-28 shrink-0">LinkedIn</span>
+                        <span className="text-xs text-white">{e.follower_count.toLocaleString()} followers</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+              {(e.company_status || e.arr_estimate) && (
+                <div>
+                  <p className="text-xs font-semibold text-white mb-2">Funding</p>
+                  <div className="space-y-1">
+                    {e.company_status && (
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-xs text-white/50 w-28 shrink-0">Status</span>
+                        <span className="text-xs text-white">{e.company_status}</span>
+                      </div>
+                    )}
+                    {e.arr_estimate && (
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-xs text-white/50 w-28 shrink-0">ARR</span>
+                        <span className="text-xs text-white">{e.arr_estimate}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+              {(customerSegments.customerOrganizations.length > 0 || customerSegments.buyerTypes.length > 0) && (
+                <div className="space-y-2">
+                  <FieldRow label="Sells to:" items={customerSegments.customerOrganizations} />
+                  <FieldRow label="Sells to people like" items={customerSegments.buyerTypes} />
+                </div>
+              )}
+              {(e.competitors_enriched?.length ?? 0) > 0 && (
+                <div>
+                  <p className="mb-1 text-xs font-semibold text-white">Competitors</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {e.competitors_enriched!.map((c, i) => {
+                      const href = c.url?.trim() || `https://www.google.com/search?q=${encodeURIComponent(c.name)}`;
+                      return (
+                        <a key={`${c.name}-${i}`} href={href} target="_blank" rel="noopener noreferrer"
+                          className="inline-flex items-center gap-0.5 rounded-full bg-arcova-teal/15 px-2.5 py-0.5 text-xs font-medium text-arcova-teal hover:underline">
+                          <span className="truncate max-w-[14rem]">{c.name}</span>
+                          <ExternalLink className="h-2.5 w-2.5 shrink-0 opacity-70" />
+                        </a>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-3">
+              {(e.products?.length ?? 0) > 0 && (
+                <div>
+                  <p className="mb-1 text-xs font-semibold text-white">Products</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {e.products!.map((p, i) => (
+                      <span key={i} className="rounded-full bg-white/10 px-2.5 py-0.5 text-xs text-white/80">{p}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {(e.services?.length ?? 0) > 0 && (
+                <div>
+                  <p className="mb-1 text-xs font-semibold text-white">Services</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {e.services!.map((s, i) => (
+                      <span key={i} className="rounded-full bg-white/10 px-2.5 py-0.5 text-xs text-white/80">{s}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {(e.technologies?.length ?? 0) > 0 && (
+                <div>
+                  <p className="mb-1 text-xs font-semibold text-white">Technology</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {e.technologies!.map((t, i) => (
+                      <span key={i} className="rounded-full bg-white/10 px-2.5 py-0.5 text-xs text-white/80">{t}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Two-column body */}
-      {!collapsed && <div className="flex divide-x divide-white/10">
+      {!collapsed && !modelledOnMode && <div className="flex divide-x divide-white/10">
 
         {/* Left column — firmographics */}
         <div className="flex-1 min-w-0 px-4 py-4 space-y-2">
 
-          {editMode ? (
+          {referenceSummary.length > 0 && (
             <div className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 space-y-1.5">
               <p className="text-xs font-semibold text-white">Summary</p>
-              <textarea
-                value={editData.icp_summary}
-                onChange={(e) => setEditData((prev) => ({ ...prev, icp_summary: e.target.value }))}
-                rows={3}
-                className="w-full rounded-lg bg-white/[0.08] border border-white/20 px-3 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-arcova-teal/60 resize-y"
-                placeholder="Write a short summary of this ICP..."
-              />
-            </div>
-          ) : (summaryLoading || icpSummary.length > 0) && (
-            <div className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 space-y-1.5">
-              <p className="text-xs font-semibold text-white">Summary</p>
-              {summaryLoading ? (
-                <div className="h-3 w-3/4 rounded bg-white/10 animate-pulse" />
-              ) : (
-                <p className="text-xs text-white/70 leading-snug">{icpSummary}</p>
-              )}
+              <p className="text-xs text-white/70 leading-snug">{referenceSummary}</p>
             </div>
           )}
 
-          {!editMode && e?.company_name && (
-            <Segment label={`Modelled on ${e.company_name}`} open={open.modelledOn} onToggle={() => toggle('modelledOn')}>
-              <div className="space-y-3">
-                <div className="flex items-start gap-2.5">
-                  {e.logo_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={e.logo_url} alt={e.company_name} className="h-8 w-8 shrink-0 rounded-lg object-contain bg-white/10 p-0.5" />
-                  ) : (
-                    <div className="h-8 w-8 shrink-0 rounded-lg bg-white/10 flex items-center justify-center">
-                      <Building2 className="h-4 w-4 text-white/30" />
-                    </div>
-                  )}
-                  <div className="min-w-0">
-                    <p className="text-xs font-semibold text-white leading-tight">{e.company_name}</p>
-                    {domain && (
-                      <a href={e.website!} target="_blank" rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-xs text-arcova-teal hover:underline mt-0.5">
-                        {domain}
-                        <ExternalLink className="h-2.5 w-2.5 shrink-0" />
-                      </a>
-                    )}
-                    {e.tagline && (
-                      <p className="mt-1 text-xs italic text-white/40 leading-snug">{e.tagline}</p>
-                    )}
-                  </div>
-                </div>
 
-                {hasModelledOnNarrative && (
-                  <div className="space-y-2.5">
-                    {e?.description?.[0] && (
-                      <p className="text-xs text-white/70 leading-snug">{e.description[0]}</p>
-                    )}
-
-                    {(customerSegments.customerOrganizations.length > 0 || customerSegments.buyerTypes.length > 0) && (
-                      <div className="space-y-2">
-                        <FieldRow label="Customer organisations" items={customerSegments.customerOrganizations} />
-                        <FieldRow label="Buyer / user types" items={customerSegments.buyerTypes} />
-                      </div>
-                    )}
-
-                    {(e?.value_propositions?.length ?? 0) > 0 && (
-                      <div>
-                        <p className="mb-1 text-xs text-white/35">Value props</p>
-                        <BulletList items={e.value_propositions!.slice(0, 3)} />
-                      </div>
-                    )}
-
-                    {(e?.follower_count != null || linkedInDisplay) && (
-                      <div className="space-y-1">
-                        {e?.follower_count != null && (
-                          <Stat label="LinkedIn followers" value={e.follower_count.toLocaleString()} />
-                        )}
-                        {linkedInDisplay && (
-                          <a href={e.linkedin_url!} target="_blank" rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 text-xs text-arcova-teal hover:underline break-all">
-                            {linkedInDisplay}
-                            <ExternalLink className="h-2.5 w-2.5 shrink-0" />
-                          </a>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </Segment>
-          )}
 
           {/* Criteria segment — matches setup panel ICP taxonomy + funding raised tag */}
           <Segment label="Criteria" open={open.criteria} onToggle={() => toggle('criteria')}>
             {editMode ? (
               <div className="space-y-3">
                 <div>
-                  <p className="mb-1.5 text-xs text-white/40">Company type</p>
+                  <p className="mb-1.5 text-xs text-white/85">Company type</p>
                   {editData.company_type ? (
                     <div className="flex flex-wrap gap-1.5">
                       <Tag label={editData.company_type} onRemove={() => setSingle('company_type', '')} />
@@ -626,17 +666,6 @@ function ICPCard({
                 <EditTagField label="Development stage" options={DEVELOPMENT_STAGE_OPTIONS} selected={editData.development_stages} onRemove={(v) => toggleMulti('development_stages', v)} onAdd={(v) => toggleMulti('development_stages', v)} />
                 <EditTagField label="Company size" options={COMPANY_SIZE_OPTIONS} selected={editData.company_sizes} onRemove={(v) => toggleMulti('company_sizes', v)} onAdd={(v) => toggleMulti('company_sizes', v)} />
                 <EditTagField label="LinkedIn follower base" options={LI_FOLLOWER_OPTIONS} selected={editData.li_follower_sizes} onRemove={(v) => toggleMulti('li_follower_sizes', v)} onAdd={(v) => toggleMulti('li_follower_sizes', v)} />
-                {e?.company_status && (() => {
-                  const fr = extractFundingRaised(e.company_status);
-                  return fr ? (
-                    <div>
-                      <p className="mb-1.5 text-xs text-white/40">Funding raised</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        <Tag label={fr} />
-                      </div>
-                    </div>
-                  ) : null;
-                })()}
                 <EditTagField label="Funding stage" options={FUNDING_STAGE_OPTIONS} selected={editData.funding_stages} onRemove={(v) => toggleMulti('funding_stages', v)} onAdd={(v) => toggleMulti('funding_stages', v)} />
               </div>
             ) : (
@@ -645,7 +674,7 @@ function ICPCard({
                   <div className="space-y-2.5">
                     {icp.company_type && (
                       <div>
-                        <p className="mb-1 text-xs text-white/40">Company type</p>
+                        <p className="mb-1 text-xs text-white/85">Company type</p>
                         <Tag label={icp.company_type} />
                       </div>
                     )}
@@ -653,36 +682,20 @@ function ICPCard({
                     <FieldRow label="Modalities" items={icp.modalities} />
                   </div>
                 )}
-                {(icp.development_stages.length > 0 || icp.funding_stages.length > 0) && (
-                  <div className="space-y-2.5 border-t border-white/10 pt-2">
-                    <p className="text-xs text-white/40">Stage and funding</p>
-                    <FieldRow label="Development stage" items={icp.development_stages} />
-                    <FieldRow label="Funding stage" items={icp.funding_stages} />
-                  </div>
+                {icp.development_stages.length > 0 && (
+                  <FieldRow label="Development stage" items={icp.development_stages} />
                 )}
-                {((icp.company_sizes.length > 0 || (icp.li_follower_sizes?.length ?? 0) > 0)
-                  || !!(e?.company_status && extractFundingRaised(e.company_status))) && (
+                {(icp.company_sizes.length > 0 || (icp.li_follower_sizes?.length ?? 0) > 0) && (
                   <div className="space-y-2.5">
                     {icp.company_sizes.length > 0 && <FieldRow label="Company size" items={icp.company_sizes} />}
                     {(icp.li_follower_sizes?.length ?? 0) > 0 && (
                       <FieldRow label="LinkedIn follower base" items={icp.li_follower_sizes ?? []} />
                     )}
-                    {e?.company_status && (() => {
-                      const fr = extractFundingRaised(e.company_status);
-                      return fr ? (
-                        <div>
-                          <p className="mb-1 text-xs text-white/40">Funding raised</p>
-                          <div className="flex flex-wrap gap-1.5">
-                            <Tag label={fr} />
-                          </div>
-                        </div>
-                      ) : null;
-                    })()}
                   </div>
                 )}
                 {icp.signals?.length > 0 && (
                   <div className="space-y-2.5 border-t border-white/10 pt-2">
-                    <p className="text-xs text-white/40">Signals</p>
+                    <p className="text-xs text-white/85">Signals</p>
                     <FieldRow label="Signals" items={icp.signals.map((signal) => getSignalDisplayName(signal))} />
                   </div>
                 )}
@@ -690,105 +703,106 @@ function ICPCard({
             )}
           </Segment>
 
-          {hasFirmographics && e && (
-            <Segment label="Firmographics" open={open.firmographics} onToggle={() => toggle('firmographics')}>
-              <div className="grid grid-cols-2 gap-x-3 gap-y-2">
-                {(e.employee_count != null || e.employee_range) && (
-                  <Stat
-                    label="Employees"
-                    value={e.employee_count != null ? e.employee_count.toLocaleString() : e.employee_range!}
-                    subValue={e.employee_count != null && e.employee_range ? e.employee_range : undefined}
-                  />
-                )}
-                {e.hq_city && <Stat label="HQ" value={e.hq_city} subValue={e.hq_country ?? undefined} />}
-                {e.follower_count != null && (() => {
-                  const band = followerCountToFollowerBucket(e.follower_count);
-                  return band[0] ? <Stat label="LinkedIn follower base" value={band[0]} /> : null;
-                })()}
-                {e.company_status && (() => {
-                  const fs = extractFundingStatus(e.company_status);
-                  return fs ? <Stat label="Funding status" value={fs} /> : null;
-                })()}
-                {!e.company_status && e.funding_stage && <Stat label="Funding stage" value={e.funding_stage} />}
-                {!e.company_status && e.total_funding_usd != null && e.total_funding_usd > 0 && (
-                  <Stat label="Total funding" value={formatCurrencyShort(e.total_funding_usd)} />
-                )}
-              </div>
-              {e.company_status && (
-                <div>
-                  <p className="text-xs text-white/40 mb-1">Funding summary</p>
-                  <p className="text-xs leading-snug text-white/55">{e.company_status}</p>
+          {!editMode && (() => {
+            const fundingStatus = e?.company_status ? extractFundingStatus(e.company_status) : null;
+            const derivedStage = canonicalizeFundingStage(e?.funding_stage, e?.total_funding_usd, e?.company_status);
+            const fundingStages = icp.funding_stages.length > 0
+              ? icp.funding_stages
+              : derivedStage ? [derivedStage] : [];
+            const arrBucket = arrEstimateToBucket(e?.arr_estimate);
+            const hasFunding = fundingStages.length > 0 || fundingStatus || arrBucket;
+            if (!hasFunding) return null;
+            return (
+              <Segment label="Funding" open={open.funding} onToggle={() => toggle('funding')}>
+                <div className="flex flex-wrap gap-1.5">
+                  {fundingStages.map((s) => <Tag key={s} label={s} />)}
+                  {fundingStatus && <Tag label={fundingStatus} />}
+                  {arrBucket && <Tag label={arrBucket} />}
                 </div>
-              )}
-            </Segment>
+              </Segment>
+            );
+          })()}
+
+          {!editMode && (e?.competitors_enriched?.length ?? 0) > 0 && (
+            <div className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 space-y-2">
+              <p className="text-xs font-semibold text-white">Competitors</p>
+              <div className="flex flex-wrap gap-1.5">
+                {e!.competitors_enriched!.map((c, i) => {
+                  const href = c.url?.trim() || `https://www.google.com/search?q=${encodeURIComponent(c.name)}`;
+                  return (
+                    <a
+                      key={`${c.name}-${i}`}
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-0.5 rounded-full bg-arcova-teal/15 px-2.5 py-0.5 text-xs font-medium text-arcova-teal hover:underline"
+                    >
+                      <span className="truncate max-w-[14rem]">{c.name}</span>
+                      <ExternalLink className="h-2.5 w-2.5 shrink-0 opacity-70" />
+                    </a>
+                  );
+                })}
+              </div>
+            </div>
           )}
 
-          {hasCompetitors && (
-            <Segment label="Competitors" open={open.competitors} onToggle={() => toggle('competitors')}>
-              <div className="space-y-2">
-                <div className="flex flex-wrap gap-1.5">
-                  {(editMode ? editCompetitors : (e?.competitors_enriched ?? [])).map((c, i) => {
-                    const trimmedUrl = c.url?.trim();
-                    const href =
-                      trimmedUrl ||
-                      `https://www.google.com/search?q=${encodeURIComponent(c.name)}`;
-                    return (
-                      <span
-                        key={`${c.name}-${i}`}
-                        className="inline-flex max-w-full items-center gap-0.5 rounded-full bg-arcova-teal/15 pl-2.5 pr-1 py-0.5 text-xs font-medium text-arcova-teal"
+          {editMode && (
+            <div className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 space-y-2">
+              <p className="text-xs font-semibold text-white">Competitors</p>
+              <div className="flex flex-wrap gap-1.5">
+                {editCompetitors.map((c, i) => {
+                  const trimmedUrl = c.url?.trim();
+                  const href = trimmedUrl || `https://www.google.com/search?q=${encodeURIComponent(c.name)}`;
+                  return (
+                    <span
+                      key={`${c.name}-${i}`}
+                      className="inline-flex max-w-full items-center gap-0.5 rounded-full bg-arcova-teal/15 pl-2.5 pr-1 py-0.5 text-xs font-medium text-arcova-teal"
+                    >
+                      <a
+                        href={href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex min-w-0 max-w-[14rem] items-center gap-0.5 truncate hover:underline"
+                        title={c.name}
                       >
-                        <a
-                          href={href}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex min-w-0 max-w-[14rem] items-center gap-0.5 truncate hover:underline"
-                          title={c.name}
-                        >
-                          <span className="truncate">{c.name}</span>
-                          <ExternalLink className="h-2.5 w-2.5 shrink-0 opacity-70" />
-                        </a>
-                        {editMode && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setEditCompetitors((prev) => prev.filter((_, j) => j !== i))}
-                            className="shrink-0 rounded-full p-0.5 text-arcova-teal/50 transition-colors hover:bg-arcova-teal/20 hover:text-arcova-teal"
-                            aria-label={`Remove ${c.name}`}
-                          >
-                            <X className="h-2.5 w-2.5" />
-                          </button>
-                        )}
-                      </span>
-                    );
-                  })}
-                </div>
-                {editMode && (
-                  <div className="flex items-center gap-1.5">
-                    <span className="mt-0 h-1 w-1 shrink-0 rounded-full bg-arcova-teal/60" />
-                    <input
-                      type="text"
-                      value={newCompetitorUrl}
-                      onChange={(ev) => setNewCompetitorUrl(ev.target.value)}
-                      onKeyDown={(ev) => {
-                        if (ev.key !== 'Enter' || !newCompetitorUrl.trim()) return;
-                        ev.preventDefault();
-                        const raw = newCompetitorUrl.trim();
-                        let url = raw;
-                        if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
-                        let name = raw;
-                        try {
-                          name = new URL(url).hostname.replace(/^www\./, '');
-                        } catch { /* keep raw as label */ }
-                        setEditCompetitors((prev) => [...prev, { name, url }]);
-                        setNewCompetitorUrl('');
-                      }}
-                      placeholder="Paste competitor URL… (Enter)"
-                      className="min-w-0 flex-1 rounded-lg border border-white/15 bg-white/[0.06] px-2 py-1 text-xs text-white/80 placeholder:text-white/25 focus:outline-none focus:border-arcova-teal/50"
-                    />
-                  </div>
-                )}
+                        <span className="truncate">{c.name}</span>
+                        <ExternalLink className="h-2.5 w-2.5 shrink-0 opacity-70" />
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => setEditCompetitors((prev) => prev.filter((_, j) => j !== i))}
+                        className="shrink-0 rounded-full p-0.5 text-arcova-teal/50 transition-colors hover:bg-arcova-teal/20 hover:text-arcova-teal"
+                        aria-label={`Remove ${c.name}`}
+                      >
+                        <X className="h-2.5 w-2.5" />
+                      </button>
+                    </span>
+                  );
+                })}
               </div>
-            </Segment>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  value={newCompetitorUrl}
+                  onChange={(ev) => setNewCompetitorUrl(ev.target.value)}
+                  onKeyDown={(ev) => {
+                    if (ev.key !== 'Enter' || !newCompetitorUrl.trim()) return;
+                    ev.preventDefault();
+                    const raw = newCompetitorUrl.trim();
+                    let url = raw;
+                    if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+                    let name = raw;
+                    try {
+                      name = new URL(url).hostname.replace(/^www\./, '');
+                    } catch { /* keep raw as label */ }
+                    setEditCompetitors((prev) => [...prev, { name, url }]);
+                    setNewCompetitorUrl('');
+                  }}
+                  placeholder="Paste competitor URL… (Enter)"
+                  className="min-w-0 flex-1 rounded-lg border border-white/15 bg-white/[0.06] px-2 py-1 text-xs text-white/80 placeholder:text-white/25 focus:outline-none focus:border-arcova-teal/50"
+                />
+              </div>
+            </div>
           )}
 
         </div>
@@ -799,6 +813,17 @@ function ICPCard({
             <Users className="h-3.5 w-3.5 text-arcova-teal shrink-0" />
             <p className="text-sm font-semibold text-white flex-1">Buying team</p>
           </div>
+
+          {!editMode && (customerSegments.customerOrganizations.length > 0 || customerSegments.buyerTypes.length > 0) && (
+            <div className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 space-y-2.5">
+              {customerSegments.customerOrganizations.length > 0 && (
+                <FieldRow label="Sells to" items={customerSegments.customerOrganizations} />
+              )}
+              {customerSegments.buyerTypes.length > 0 && (
+                <FieldRow label="Sells to people like:" items={customerSegments.buyerTypes} />
+              )}
+            </div>
+          )}
 
           {editMode ? (
             persona ? (
@@ -864,7 +889,30 @@ function ICPCard({
       </div>}
 
       {!collapsed && (
-        <div className="flex justify-end gap-2 border-t border-white/10 px-4 py-3">
+        <div className="flex items-center justify-between gap-2 border-t border-white/10 px-4 py-3">
+          {/* Bottom-left: subtle modelled-on toggle */}
+          <div>
+            {!editMode && e?.company_name && (
+              modelledOnMode ? (
+                <button
+                  onClick={() => setModelledOnMode(false)}
+                  className="flex items-center gap-1 text-xs text-white/50 underline underline-offset-2 transition-colors hover:text-white/80"
+                >
+                  <ChevronDown className="h-3 w-3 rotate-90" /> Back to criteria
+                </button>
+              ) : (
+                <button
+                  onClick={() => setModelledOnMode(true)}
+                  className="flex items-center gap-1 text-xs text-white/50 underline underline-offset-2 transition-colors hover:text-white/80"
+                >
+                  Modelled on {e.company_name} <ExternalLink className="h-3 w-3" />
+                </button>
+              )
+            )}
+          </div>
+
+          {/* Bottom-right: action buttons */}
+          <div className="flex gap-2">
           {editMode ? (
             <>
               <button
@@ -882,7 +930,7 @@ function ICPCard({
                 <X className="h-3 w-3" /> Cancel
               </button>
             </>
-          ) : (
+          ) : !modelledOnMode && (
             <>
               <button
                 onClick={startEdit}
@@ -906,6 +954,7 @@ function ICPCard({
               </button>
             </>
           )}
+          </div>
         </div>
       )}
     </div>
@@ -1045,31 +1094,6 @@ export default function ICPManagerPage() {
         throw new Error('Failed to re-enrich reference company');
       }
 
-      const summaryRes = await fetch('/api/generate-icp-summary', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          companyType: enrichment.company_type ?? icp.company_type,
-          therapeuticAreas: enrichment.therapeutic_areas ?? icp.therapeutic_areas,
-          modalities: enrichment.modalities ?? icp.modalities,
-          developmentStages: enrichment.development_stages ?? icp.development_stages,
-          customerTherapeuticAreas:
-            enrichment.customer_therapeutic_areas ?? icp.customer_therapeutic_areas ?? [],
-          customerModalities:
-            enrichment.customer_modalities ?? icp.customer_modalities ?? [],
-          customerDevelopmentStages:
-            enrichment.customer_development_stages ?? icp.customer_development_stages ?? [],
-          fundingStages: enrichment.funding_stage ? [enrichment.funding_stage] : icp.funding_stages,
-          companySizes:
-            enrichment.employee_count != null || enrichment.employee_range
-              ? employeeCountToSizeBucket(enrichment.employee_count ?? null, enrichment.employee_range ?? null)
-              : icp.company_sizes,
-          exampleCompanyName: enrichment.company_name ?? icp.example_company_enrichment?.company_name ?? null,
-          exampleCompanyDescription: enrichment.description ?? null,
-        }),
-      });
-      const { summary: icpSummary } = summaryRes.ok ? await summaryRes.json() : { summary: icp.icp_summary ?? '' };
-
       const employeeCount = enrichment.employee_count ?? null;
       const employeeRange = enrichment.employee_range ?? null;
       const followerCount = enrichment.follower_count ?? null;
@@ -1087,7 +1111,6 @@ export default function ICPManagerPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: icp.name,
-          icpSummary,
           companyType: enrichment.company_type ?? icp.company_type,
           therapeuticAreas: enrichment.therapeutic_areas ?? icp.therapeutic_areas,
           modalities: enrichment.modalities ?? icp.modalities,
@@ -1113,6 +1136,65 @@ export default function ICPManagerPage() {
 
       const result = await updateRes.json();
       handleIcpSaved(result.data ?? { ...icp, example_company_enrichment: enrichment });
+
+      // Regenerate the buying team with the fresh enrichment + updated size signal
+      const linkedPersona = personas.find((p) => p.icp_id === icp.id);
+      if (linkedPersona) {
+        toast.loading('Refreshing buying team…', { id: toastId });
+        const sellerRes = await fetch('/api/user-company-profile').catch(() => null);
+        const sellerData = sellerRes?.ok ? ((await sellerRes.json()) as { data?: Record<string, unknown> }).data : null;
+
+        const btRes = await fetch('/api/generate-buying-team', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            seller_company_name: sellerData?.company_name,
+            seller_company_type: sellerData?.company_type,
+            seller_therapeutic_areas: sellerData?.therapeutic_areas,
+            seller_products_services: sellerData?.products_services,
+            seller_services: sellerData?.services,
+            seller_customers_we_serve: sellerData?.customers_we_serve,
+            seller_value_propositions: sellerData?.value_propositions,
+            icp_company_type: enrichment.company_type ?? icp.company_type,
+            icp_therapeutic_areas: enrichment.therapeutic_areas ?? icp.therapeutic_areas,
+            icp_modalities: enrichment.modalities ?? icp.modalities,
+            icp_development_stages: enrichment.development_stages ?? icp.development_stages,
+            icp_customer_therapeutic_areas: enrichment.customer_therapeutic_areas ?? icp.customer_therapeutic_areas ?? [],
+            icp_customer_modalities: enrichment.customer_modalities ?? icp.customer_modalities ?? [],
+            icp_customer_development_stages: enrichment.customer_development_stages ?? icp.customer_development_stages ?? [],
+            icp_company_sizes: companySizes,
+            icp_funding_stages: enrichment.funding_stage ? [enrichment.funding_stage] : icp.funding_stages,
+            icp_example_employee_count: employeeCount,
+            icp_example_employee_range: employeeRange,
+            icp_example_total_funding_usd: enrichment.total_funding_usd ?? null,
+            example_company_name: enrichment.company_name ?? icp.example_company_enrichment?.company_name,
+          }),
+        }).catch(() => null);
+
+        if (btRes?.ok) {
+          const { functions, seniority_levels, job_titles } = await btRes.json() as {
+            functions: string[];
+            seniority_levels: string[];
+            job_titles: string[];
+          };
+          const teamRes = await fetch(`/api/contacts/${linkedPersona.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: linkedPersona.name,
+              functions,
+              seniorityLevels: seniority_levels,
+              jobTitles: job_titles ?? [],
+              signals: linkedPersona.signals ?? [],
+            }),
+          });
+          if (teamRes.ok) {
+            const { data } = await teamRes.json() as { data: Persona };
+            handlePersonaUpdate(data);
+          }
+        }
+      }
+
       toast.success('ICP refreshed', { id: toastId });
     } catch (error) {
       console.error('Failed to re-enrich ICP:', error);

@@ -42,6 +42,7 @@ function icContextForBuyingTeam(
   icp_funding_stages: string[];
   icp_example_employee_count: number | null;
   icp_example_employee_range: string | null;
+  icp_example_total_funding_usd: number | null;
   icp_customer_therapeutic_areas: string[];
   icp_customer_modalities: string[];
   icp_customer_development_stages: string[];
@@ -57,6 +58,8 @@ function icContextForBuyingTeam(
       typeof exampleEnrichment?.employee_count === 'number' ? exampleEnrichment.employee_count : null,
     icp_example_employee_range:
       typeof exampleEnrichment?.employee_range === 'string' ? exampleEnrichment.employee_range : null,
+    icp_example_total_funding_usd:
+      typeof exampleEnrichment?.total_funding_usd === 'number' ? exampleEnrichment.total_funding_usd : null,
     icp_customer_therapeutic_areas: fallback(icp.customerTherapeuticAreas ?? [], 'customer_therapeutic_areas'),
     icp_customer_modalities: fallback(icp.customerModalities ?? [], 'customer_modalities'),
     icp_customer_development_stages: fallback(icp.customerDevelopmentStages ?? [], 'customer_development_stages'),
@@ -659,32 +662,10 @@ export default function SetupFlow({
     const { name } = nameRes.ok ? await nameRes.json() : { name: `${d.companyType} Profile` };
     setSavedIcpName(name);
 
-    const summaryRes = await fetch('/api/generate-icp-summary', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        companyType: d.companyType,
-        therapeuticAreas: d.therapeuticAreas,
-        modalities: d.modalities,
-        developmentStages: d.developmentStages,
-        customerTherapeuticAreas: d.customerTherapeuticAreas,
-        customerModalities: d.customerModalities,
-        customerDevelopmentStages: d.customerDevelopmentStages,
-        fundingStages: d.fundingStages,
-        companySizes: d.companySizes,
-        exampleCompanyName: enrichedTargetCompany?.company_name ?? reviewedCompanyName ?? null,
-        exampleCompanyDescription: enrichedTargetCompany?.description ?? null,
-      }),
-    });
-    const { summary: icpSummary } = summaryRes.ok
-      ? await summaryRes.json()
-      : { summary: '' };
-
     const saveRes = await fetch('/api/company-criteria', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name,
-        icpSummary,
         companyType: d.companyType,
         therapeuticAreas: d.therapeuticAreas,
         modalities: d.modalities,

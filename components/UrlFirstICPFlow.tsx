@@ -235,28 +235,6 @@ export default function UrlFirstICPFlow({ onComplete }: Props) {
 
     setPhase('saving');
 
-    const summaryRes = await fetch('/api/generate-icp-summary', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        companyType: review.companyType,
-        therapeuticAreas: review.therapeuticAreas,
-        modalities: review.modalities,
-        developmentStages: review.developmentStages,
-        customerTherapeuticAreas: review.customerTherapeuticAreas,
-        customerModalities: review.customerModalities,
-        customerDevelopmentStages: review.customerDevelopmentStages,
-        fundingStages: review.fundingStages,
-        companySizes: review.companySizes,
-        exampleCompanyName: review.companyName,
-        exampleCompanyDescription: enrichmentSnapshot.description ?? null,
-      }),
-    });
-
-    const { summary: icpSummaryFromApi } = summaryRes.ok
-      ? await summaryRes.json() as { summary?: string }
-      : { summary: '' };
-
     const nameRes = await fetch('/api/generate-icp-name', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -281,7 +259,6 @@ export default function UrlFirstICPFlow({ onComplete }: Props) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name,
-        icpSummary: typeof icpSummaryFromApi === 'string' ? icpSummaryFromApi : null,
         companyType: review.companyType,
         therapeuticAreas: review.therapeuticAreas,
         modalities: review.modalities,

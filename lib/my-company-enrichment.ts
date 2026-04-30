@@ -89,7 +89,8 @@ Return ONLY valid JSON in this exact structure. Every array field must have 2–
   "customer_benefits": ["Concrete benefit a customer gets", "..."],
   "good_fit": ["Characteristic of an ideal customer", "..."],
   "bad_fit": ["Characteristic of a poor-fit customer", "..."],
-  "company_status": "Public (NASDAQ: GH) — or Private — Series B — or Bootstrapped — one short phrase describing ownership and funding status"
+  "company_status": "Public (NASDAQ: GH) — or Private — Series B — or Bootstrapped — one short phrase describing ownership and funding status",
+  "arr_estimate": "Best-effort ARR estimate as a short string e.g. '<$1M', '~$5M', '$10M–$20M', '>$100M' — or null if no reliable signal found"
 }
 
 Company website: ${website}
