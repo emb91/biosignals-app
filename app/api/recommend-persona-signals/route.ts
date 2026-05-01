@@ -34,16 +34,16 @@ Persona profile:
 Available signals to choose from:
 ${signalList}
 
-Based on this persona profile, select EXACTLY 5 most relevant signals that suggest this person is in a buying window. Order them by importance (most important first).
+Based on this persona profile, select every signal from the list above that is at least moderately relevant to tracking buying intent—be inclusive; do not cap the count. Omit only signals that are clearly a poor fit. Order by importance (strongest indicators first).
 
-Return ONLY a JSON array of signal IDs (the part before the colon), ordered by relevance. Example: ["new_to_role", "recently_promoted", "active_on_linkedin"]
+Return ONLY a JSON array of signal IDs (the part before the colon), ordered by relevance—include as many ids as belong, from one up to the full catalogue if appropriate.
 
 Do not include em dashes in your response.
 Return ONLY the JSON array, nothing else.`;
 
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 200,
+      max_tokens: 1024,
       messages: [{ role: 'user', content: prompt }],
     });
 
@@ -61,7 +61,20 @@ Return ONLY the JSON array, nothing else.`;
       }
     }
 
-    const recommendedSignals = recommendedIds
+    if (!Array.isArray(recommendedIds)) {
+      throw new Error('Persona signal recommendations must be a JSON array');
+    }
+
+    const uniqueIds: string[] = [];
+    const seen = new Set<string>();
+    for (const raw of recommendedIds) {
+      const id = typeof raw === 'string' ? raw.trim() : '';
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      uniqueIds.push(id);
+    }
+
+    const recommendedSignals = uniqueIds
       .map((id) => CONTACT_SIGNALS.find((signal) => signal.id === id))
       .filter(Boolean);
 

@@ -36,19 +36,19 @@ Their ICP criteria:
 Available signals to choose from:
 ${signalList}
 
-Based on this ICP, select EXACTLY 5 MOST relevant signals that would indicate a company matching this profile is likely to be in a buying window. Order them by importance (most important first). Consider:
+Based on this ICP, select every signal from the list above that is at least moderately relevant to tracking buying intent for this profile—be inclusive; do not cap the count. Omit only signals that are clearly a poor fit. Order by importance (strongest buying-window indicators first). Consider:
 - What events typically precede purchasing decisions for this type of customer?
 - What signals indicate growth, expansion, or new initiatives?
 - What hiring patterns suggest they're building capabilities your seller might support?
 
-Return ONLY a JSON array of signal IDs (the part before the colon), ordered by relevance. Example: ["new_funding", "clinical_trial", "cmc_hire"]
+Return ONLY a JSON array of signal IDs (the part before the colon), ordered by relevance—include as many ids as belong in the list, from one up to the full catalogue if appropriate.
 
 Do not include em dashes in your response.
 Return ONLY the JSON array, nothing else.`;
 
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 200,
+      max_tokens: 1024,
       messages: [{ role: 'user', content: prompt }],
     });
 
@@ -66,9 +66,22 @@ Return ONLY the JSON array, nothing else.`;
       }
     }
 
-    // Map IDs to full signal objects
-    const recommendedSignals = recommendedIds
-      .map(id => COMPANY_SIGNALS.find(signal => signal.id === id))
+    if (!Array.isArray(recommendedIds)) {
+      throw new Error('Signal recommendations must be a JSON array');
+    }
+
+    const uniqueIds: string[] = [];
+    const seen = new Set<string>();
+    for (const raw of recommendedIds) {
+      const id = typeof raw === 'string' ? raw.trim() : '';
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      uniqueIds.push(id);
+    }
+
+    // Map IDs to full signal objects (invalid ids dropped)
+    const recommendedSignals = uniqueIds
+      .map((id) => COMPANY_SIGNALS.find((signal) => signal.id === id))
       .filter(Boolean);
 
     return NextResponse.json({ 

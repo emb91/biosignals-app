@@ -1,10 +1,11 @@
 'use client';
 
 import { useAuth } from '@/context/AuthContext';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState, useCallback } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { ArcovaLoader } from '@/components/ArcovaLoader';
+import { getSignalDisplayName } from '@/lib/signal-display-names';
 import {
   Users,
   Search,
@@ -121,6 +122,12 @@ interface Lead {
     last_enriched_at: string | null;
   } | null;
 }
+
+type LeadInsightsModelScores = {
+  companyIntent01: number | null;
+  contactIntent01: number | null;
+  blendedIntent01: number | null;
+};
 
 type EditableLeadFields = {
   first_name: string;
@@ -343,6 +350,7 @@ const getInterpolatedEnrichmentPercent = (
 export default function LeadsPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [leads, setLeads] = useState<Lead[]>([]);
   const [total, setTotal] = useState(0);
@@ -357,6 +365,15 @@ export default function LeadsPage() {
   const [refreshingLeadId, setRefreshingLeadId] = useState<string | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [selectedPreview, setSelectedPreview] = useState<'contact' | 'company'>('contact');
+  const [leadInsights, setLeadInsights] = useState<{
+    companyEvents: Array<Record<string, unknown>>;
+    contactEvents: Array<Record<string, unknown>>;
+    modelScores?: {
+      companyIntent01: number | null;
+      contactIntent01: number | null;
+      blendedIntent01: number | null;
+    };
+  } | null>(null);
   const [isWorkHistoryExpanded, setIsWorkHistoryExpanded] = useState(false);
   const [enrichmentVisuals, setEnrichmentVisuals] = useState<Record<string, EnrichmentVisualState>>({});
   const [progressNow, setProgressNow] = useState(() => Date.now());
@@ -396,6 +413,48 @@ export default function LeadsPage() {
   useEffect(() => {
     fetchLeads();
   }, [fetchLeads]);
+
+  useEffect(() => {
+    const id = searchParams.get('lead');
+    if (!id || leads.length === 0) return;
+    if (leads.some((l) => l.id === id)) {
+      setSelectedLeadId(id);
+      setSelectedPreview('contact');
+    }
+  }, [searchParams, leads]);
+
+  useEffect(() => {
+    if (!user) return;
+    if (!selectedLeadId) {
+      setLeadInsights(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    fetch(`/api/leads/${selectedLeadId}/insights`)
+      .then(async (res) => {
+        if (!res.ok) return null;
+        return res.json() as Promise<{
+          companyEvents?: Array<Record<string, unknown>>;
+          contactEvents?: Array<Record<string, unknown>>;
+          modelScores?: LeadInsightsModelScores;
+        }>;
+      })
+      .then((payload) => {
+        if (cancelled || !payload) return;
+        setLeadInsights({
+          companyEvents: payload.companyEvents ?? [],
+          contactEvents: payload.contactEvents ?? [],
+          modelScores: payload.modelScores,
+        });
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedLeadId, user]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -1284,6 +1343,108 @@ export default function LeadsPage() {
                           })()
                         )}
                       </div>
+
+                      {leadInsights && (
+                        <div className="px-5 py-4 border-t border-gray-100 space-y-3 bg-slate-50/60">
+                          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Buying signals</p>
+                          {leadInsights.modelScores && (
+                            <div className="flex flex-wrap gap-2 text-[11px] text-gray-600">
+                              {typeof selectedLead.company_id === 'string' && selectedLead.company_id.length > 0 && (
+                                <span className="rounded-full bg-white px-2 py-0.5 border border-gray-200">
+                                  Account intent{' '}
+                                  <span className="font-semibold text-gray-900">
+                                    {leadInsights.modelScores.companyIntent01 == null
+                                      ? '—'
+                                      : `${Math.round(Math.min(1, Math.max(0, leadInsights.modelScores.companyIntent01)) * 100)}`}
+                                    {leadInsights.modelScores.companyIntent01 != null ? '%' : ''}
+                                  </span>
+                                </span>
+                              )}
+                              <span className="rounded-full bg-white px-2 py-0.5 border border-gray-200">
+                                Buyer intent{' '}
+                                <span className="font-semibold text-gray-900">
+                                  {leadInsights.modelScores.contactIntent01 == null
+                                    ? '—'
+                                    : `${Math.round(Math.min(1, Math.max(0, leadInsights.modelScores.contactIntent01)) * 100)}`}
+                                  {leadInsights.modelScores.contactIntent01 != null ? '%' : ''}
+                                </span>
+                              </span>
+                              <span className="rounded-full bg-arcova-teal/10 px-2 py-0.5 border border-arcova-teal/30 text-arcova-teal">
+                                Blended headline{' '}
+                                <span className="font-semibold">
+                                  {leadInsights.modelScores.blendedIntent01 == null
+                                    ? '—'
+                                    : `${Math.round(Math.min(1, Math.max(0, leadInsights.modelScores.blendedIntent01)) * 100)}`}
+                                  {leadInsights.modelScores.blendedIntent01 != null ? '%' : ''}
+                                </span>
+                              </span>
+                            </div>
+                          )}
+                          <div className="space-y-2">
+                            <div>
+                              <p className="text-xs font-medium text-gray-700">Company events</p>
+                              {leadInsights.companyEvents.length === 0 ? (
+                                <p className="text-[11px] text-gray-500 mt-1">No account-level observations yet.</p>
+                              ) : (
+                                <ul className="mt-1 space-y-1">
+                                  {leadInsights.companyEvents.slice(0, 6).map((row) => (
+                                    <li key={String(row.id)} className="text-[11px] text-gray-600 leading-snug">
+                                      <span className="font-medium text-gray-800">
+                                        {typeof row.title === 'string' && row.title.trim()
+                                          ? row.title.trim()
+                                          : getSignalDisplayName(String(row.signal_type ?? ''))}
+                                      </span>
+                                      <span className="text-gray-400">
+                                        {' '}
+                                        ·{' '}
+                                        {formatLastUpdated(
+                                          typeof row.detected_at === 'string'
+                                            ? row.detected_at
+                                            : typeof row.created_at === 'string'
+                                              ? row.created_at
+                                              : null
+                                        )}
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
+                            <div>
+                              <p className="text-xs font-medium text-gray-700">Buyer events</p>
+                              {leadInsights.contactEvents.length === 0 ? (
+                                <p className="text-[11px] text-gray-500 mt-1">No contact-level observations yet.</p>
+                              ) : (
+                                <ul className="mt-1 space-y-1">
+                                  {leadInsights.contactEvents.slice(0, 6).map((row) => (
+                                    <li key={String(row.id)} className="text-[11px] text-gray-600 leading-snug">
+                                      <span className="font-medium text-gray-800">
+                                        {typeof row.title === 'string' && row.title.trim()
+                                          ? row.title.trim()
+                                          : getSignalDisplayName(String(row.signal_type ?? ''))}
+                                      </span>
+                                      <span className="text-gray-400">
+                                        {' '}
+                                        ·{' '}
+                                        {formatLastUpdated(
+                                          typeof row.detected_at === 'string'
+                                            ? row.detected_at
+                                            : typeof row.created_at === 'string'
+                                              ? row.created_at
+                                              : null
+                                        )}
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
+                          </div>
+                          <p className="text-[10px] text-gray-400 leading-snug">
+                            Stored scores in the grid still reflect fit/intent imports; modeled intent here updates as new events arrive.
+                          </p>
+                        </div>
+                      )}
 
                       {/* Panel footer */}
                       <div className="px-5 py-4 border-t border-gray-100 space-y-2">

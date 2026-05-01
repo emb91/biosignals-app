@@ -1,6 +1,10 @@
 import { createClient } from '@/lib/supabase-server';
 import { NextResponse } from 'next/server';
-import { assignSignalWeights } from '@/lib/signal-weights';
+import { assignSignalWeights, extractSignalIds } from '@/lib/signal-weights';
+import {
+  hydrateIcpsWithSignals,
+  replaceIcpSignalSelections,
+} from '@/lib/signals/selections';
 
 export async function GET(
   request: Request,
@@ -28,7 +32,8 @@ export async function GET(
       return NextResponse.json({ error: 'ICP not found' }, { status: 404 });
     }
 
-    return NextResponse.json({ data });
+    const [hydrated] = await hydrateIcpsWithSignals(supabase, user.id, [data]);
+    return NextResponse.json({ data: hydrated });
   } catch (error) {
     console.error('Error in GET /api/icp/[id]:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
@@ -51,8 +56,8 @@ export async function PUT(
 
     const body = await request.json();
 
-    // Calculate weights for signals based on their position (priority order)
-    const weightedSignals = assignSignalWeights(body.signals || []);
+    const signalIds = extractSignalIds((body.signals || []) as Parameters<typeof extractSignalIds>[0]);
+    const weightedSignals = assignSignalWeights(signalIds);
 
     const icpData: Record<string, unknown> = {
       name: body.name || '',
@@ -93,7 +98,10 @@ export async function PUT(
       return NextResponse.json({ error: 'Failed to update ICP' }, { status: 500 });
     }
 
-    return NextResponse.json({ data });
+    await replaceIcpSignalSelections(supabase, user.id, data.id, signalIds);
+    const [hydrated] = await hydrateIcpsWithSignals(supabase, user.id, [data]);
+
+    return NextResponse.json({ data: hydrated });
   } catch (error) {
     console.error('Error in PUT /api/icp/[id]:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

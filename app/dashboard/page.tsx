@@ -116,24 +116,82 @@ export default function DashboardPage() {
       try {
         const [
           { data: profileData, error: profileError },
-          { data: icpsData, error: icpsError },
-          { data: contactsData, error: contactsError },
+          icpsBootstrap,
+          personasBootstrap,
           { data: importData, error: importError },
-        ] =
-          await Promise.all([
-            supabase.from('company_analyses').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
-            supabase.from('icps').select('*').eq('user_id', user.id).order('updated_at', { ascending: false }),
-            supabase.from('personas').select('*').eq('user_id', user.id).order('updated_at', { ascending: false }),
-            supabase.from('raw_uploads').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
-          ]);
+          signalEventsHttp,
+          topLeadsRes,
+        ] = await Promise.all([
+          supabase.from('company_analyses').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
+          fetch('/api/company-criteria'),
+          fetch('/api/contacts'),
+          supabase.from('raw_uploads').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
+          fetch('/api/signal-events?recent=1&limit=12'),
+          fetch('/api/leads?pageSize=5&page=1'),
+        ]);
 
         if (profileError) throw profileError;
-        if (icpsError) throw icpsError;
-        if (contactsError) throw contactsError;
         if (importError) throw importError;
 
-        const icps = (icpsData || []) as IcpRecord[];
-        const contacts = (contactsData || []) as ContactRecord[];
+        const icpsJson = icpsBootstrap.ok ? await icpsBootstrap.json() : {};
+        const personaJson = personasBootstrap.ok ? await personasBootstrap.json() : {};
+
+        const icps = ((icpsJson as { data?: IcpRecord[] }).data ?? []) as IcpRecord[];
+        const contacts = ((personaJson as { data?: ContactRecord[] }).data ?? []) as ContactRecord[];
+
+        let recentEventsPayload: SignalEvent[] = [];
+        if (signalEventsHttp.ok) {
+          const recentJson = (await signalEventsHttp.json()) as { data?: Array<Record<string, unknown>> };
+          recentEventsPayload = (recentJson.data ?? []).slice(0, 5).map((row, idx) => ({
+            id: String(row.id ?? `evt-${idx}`),
+            label:
+              typeof row.title === 'string' && row.title.trim()
+                ? row.title.trim()
+                : row.signal_scope === 'contact'
+                  ? 'Buyer signal'
+                  : 'Account signal',
+            signalType: getSignalDisplayName(String(row.signal_type ?? '')),
+            timestamp: String(row.detected_at ?? row.created_at ?? new Date().toISOString()),
+            href: '/results',
+          }));
+        }
+
+        const lastSignInAt = user.last_sign_in_at ? new Date(user.last_sign_in_at).getTime() : 0;
+        const signalEventsFiltered = recentEventsPayload.filter((item) => {
+          const ts = new Date(item.timestamp).getTime();
+          return ts > lastSignInAt && Number.isFinite(ts);
+        });
+
+        let nextTopLeads: TopLead[] = [];
+        if (topLeadsRes.ok) {
+          const tlJson = (await topLeadsRes.json()) as { data?: Array<Record<string, unknown>> };
+          nextTopLeads = (tlJson.data ?? []).slice(0, 5).map((leadRow) => {
+            const pct = (v: unknown) => {
+              const n = typeof v === 'number' ? v : v == null ? 0 : Number(v);
+              if (!Number.isFinite(n)) return 0;
+              return Math.round((n <= 1 ? n * 100 : n));
+            };
+            const name =
+              (typeof leadRow.full_name === 'string' && leadRow.full_name.trim()
+                ? leadRow.full_name
+                : `${leadRow.first_name || ''} ${leadRow.last_name || ''}`).trim() || 'Imported contact';
+
+            const leadIdVal = typeof leadRow.id === 'string' ? leadRow.id : '';
+            return {
+              id: leadIdVal,
+              name,
+              priorityScore: pct(leadRow.priority_score),
+              latestSignalType: 'Intent & fit tuned',
+              latestSignalAt:
+                typeof leadRow.updated_at === 'string'
+                  ? leadRow.updated_at
+                  : typeof leadRow.created_at === 'string'
+                    ? leadRow.created_at
+                    : new Date().toISOString(),
+              href: `/results?lead=${encodeURIComponent(leadIdVal)}`,
+            };
+          });
+        }
 
         const profileComplete = !!profileData;
         const companiesComplete = icps.length > 0;
@@ -150,81 +208,11 @@ export default function DashboardPage() {
         ];
         setSteps(checklistSteps);
 
-        const lastSignInAt = user.last_sign_in_at ? new Date(user.last_sign_in_at).getTime() : 0;
-        const signalEvents: SignalEvent[] = [];
-
-        icps.forEach((icp) => {
-          if (!hasSignals(icp.signals) || !icp.updated_at) return;
-          const updatedAt = new Date(icp.updated_at).getTime();
-          if (updatedAt <= lastSignInAt) return;
-
-          signalEvents.push({
-            id: `icp-${icp.id}`,
-            label: icp.name || 'Unnamed company profile',
-            signalType: getSignalDisplayName(icp.signals?.[0]),
-            timestamp: icp.updated_at,
-            href: `/company-criteria/${icp.id}/edit`,
-          });
-        });
-
-        contacts.forEach((contact) => {
-          if (!hasSignals(contact.signals) || !contact.updated_at) return;
-          const updatedAt = new Date(contact.updated_at).getTime();
-          if (updatedAt <= lastSignInAt) return;
-
-          signalEvents.push({
-            id: `contact-${contact.id}`,
-            label: contact.name || 'Unnamed contact',
-            signalType: getSignalDisplayName(contact.signals?.[0]),
-            timestamp: contact.updated_at,
-            href: `/personas/${contact.id}/edit`,
-          });
-        });
-
-        signalEvents.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-        setNewSignals(signalEvents.slice(0, 5));
-
-        const leads: TopLead[] = icps.map((icp) => {
-          const linkedContacts = contacts.filter((contact) => contact.icp_id === icp.id);
-          const linkedSignalsCount = linkedContacts.reduce((sum, contact) => sum + (contact.signals?.length || 0), 0);
-          const icpSignalsCount = icp.signals?.length || 0;
-
-          const fitInputs = [
-            !!icp.company_type,
-            (icp.therapeutic_areas?.length || 0) > 0,
-            (icp.modalities?.length || 0) > 0,
-            (icp.development_stages?.length || 0) > 0,
-            (icp.company_sizes?.length || 0) > 0,
-            (icp.funding_stages?.length || 0) > 0,
-            (icp.example_companies?.length || 0) > 0,
-          ];
-          const fitScore = Math.round((fitInputs.filter(Boolean).length / fitInputs.length) * 100);
-
-          const newestTimestamp = [icp.updated_at, ...linkedContacts.map((c) => c.updated_at)].filter(Boolean).sort().reverse()[0] || icp.created_at || new Date().toISOString();
-          const recencyDays = daysSince(newestTimestamp);
-          const recencyScore = recencyDays <= 7 ? 100 : recencyDays <= 30 ? 70 : 40;
-          const signalScore = Math.min(100, icpSignalsCount * 20 + linkedSignalsCount * 12);
-          const contactScore = Math.min(100, linkedContacts.length * 25);
-          const intentScore = Math.round(signalScore * 0.5 + recencyScore * 0.3 + contactScore * 0.2);
-
-          const priorityScore = Math.round((fitScore * intentScore) / 100);
-          const latestSignalType = getSignalDisplayName(icp.signals?.[0]);
-
-          return {
-            id: icp.id,
-            name: icp.name || 'Unnamed company profile',
-            priorityScore,
-            latestSignalType,
-            latestSignalAt: newestTimestamp,
-            href: `/company-criteria/${icp.id}/edit`,
-          };
-        });
-
-        leads.sort((a, b) => {
-          if (b.priorityScore !== a.priorityScore) return b.priorityScore - a.priorityScore;
-          return new Date(b.latestSignalAt).getTime() - new Date(a.latestSignalAt).getTime();
-        });
-        setTopLeads(leads.slice(0, 5));
+        const blendedFeed =
+          signalEventsFiltered.length > 0 ? signalEventsFiltered : recentEventsPayload;
+        blendedFeed.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        setNewSignals(blendedFeed.slice(0, 5));
+        setTopLeads(nextTopLeads);
 
         const reminders = contacts
           .filter((contact) => {
