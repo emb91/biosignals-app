@@ -1,24 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { NextResponse } from 'next/server';
-
-const ALL_PERSONA_SIGNALS = [
-  // Career & Role Changes
-  { id: 'new_internal_role', name: 'New internal role', category: 'Career & Role Changes' },
-  { id: 'promoted', name: 'Promoted', category: 'Career & Role Changes' },
-  { id: 'recently_hired', name: 'Recently hired', category: 'Career & Role Changes' },
-  { id: 'title_change', name: 'Title change', category: 'Career & Role Changes' },
-  { id: 'board_or_advisory_role', name: 'Board or advisory role', category: 'Career & Role Changes' },
-
-  // Publications & Recognition
-  { id: 'new_paper_published', name: 'New paper published', category: 'Publications & Recognition' },
-  { id: 'conference_speaker', name: 'Conference speaker', category: 'Publications & Recognition' },
-  { id: 'principal_investigator_new_trial', name: 'Principal investigator on new trial', category: 'Publications & Recognition' },
-  { id: 'award_or_recognition', name: 'Award or recognition', category: 'Publications & Recognition' },
-  { id: 'patent_filed_or_granted', name: 'Patent filed or granted', category: 'Publications & Recognition' },
-
-  // Team & Hiring
-  { id: 'team_actively_hiring', name: 'Team actively hiring', category: 'Team & Hiring' },
-];
+import { CONTACT_SIGNALS } from '@/lib/signals/catalog';
 
 export async function POST(request: Request) {
   try {
@@ -37,8 +19,8 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { name, functions, seniorityLevels, jobTitles } = body;
 
-    const signalList = ALL_PERSONA_SIGNALS.map(
-      (s) => `- ${s.id}: ${s.name} (${s.category})`
+    const signalList = CONTACT_SIGNALS.map(
+      (signal) => `- ${signal.id}: ${signal.displayName} (${signal.category})`
     ).join('\n');
 
     const prompt = `You are helping a B2B sales team select the most relevant persona-level buying signals.
@@ -54,7 +36,7 @@ ${signalList}
 
 Based on this persona profile, select EXACTLY 5 most relevant signals that suggest this person is in a buying window. Order them by importance (most important first).
 
-Return ONLY a JSON array of signal IDs (the part before the colon), ordered by relevance. Example: ["recently_hired", "conference_speaker", "team_actively_hiring"]
+Return ONLY a JSON array of signal IDs (the part before the colon), ordered by relevance. Example: ["new_to_role", "recently_promoted", "active_on_linkedin"]
 
 Do not include em dashes in your response.
 Return ONLY the JSON array, nothing else.`;
@@ -80,12 +62,12 @@ Return ONLY the JSON array, nothing else.`;
     }
 
     const recommendedSignals = recommendedIds
-      .map((id) => ALL_PERSONA_SIGNALS.find((s) => s.id === id))
+      .map((id) => CONTACT_SIGNALS.find((signal) => signal.id === id))
       .filter(Boolean);
 
     return NextResponse.json({
       recommended: recommendedSignals,
-      all: ALL_PERSONA_SIGNALS,
+      all: CONTACT_SIGNALS,
     });
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -98,5 +80,5 @@ Return ONLY the JSON array, nothing else.`;
 }
 
 export async function GET() {
-  return NextResponse.json({ all: ALL_PERSONA_SIGNALS });
+  return NextResponse.json({ all: CONTACT_SIGNALS });
 }

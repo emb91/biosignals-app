@@ -98,6 +98,8 @@ type Phase =
   | 'buying_team_review'
   | 'persona_functions'
   | 'persona_seniority'
+  | 'signals_loading'
+  | 'signals_review'
   | 'persona_saving'
   | 'done';
 
@@ -123,6 +125,33 @@ function splitAssistantBeats(raw: string): string[] {
     .split(ASSISTANT_BEAT_RE)
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+function parseStoredSignalIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((item) => {
+    if (typeof item !== 'string') {
+      if (item && typeof item === 'object' && 'id' in item && typeof item.id === 'string') {
+        return [item.id];
+      }
+      return [];
+    }
+
+    const trimmed = item.trim();
+    if (!trimmed) return [];
+
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === 'object' && typeof parsed.id === 'string') {
+        return [parsed.id];
+      }
+    } catch {
+      // Stored as a raw string signal id.
+    }
+
+    return [trimmed];
+  });
 }
 
 // ── Display message types ──────────────────────────────────────────────────
@@ -252,7 +281,13 @@ function TypingText({ target }: { target: string }) {
 
 // ── Selection chips ────────────────────────────────────────────────────────
 
-type ChipOption = string | { value: string; description?: string };
+type ChipOption = string | { value: string; label?: string; description?: string };
+
+type SignalOption = {
+  id: string;
+  name: string;
+  category: string;
+};
 
 function ChipGrid({
   options,
@@ -266,7 +301,7 @@ function ChipGrid({
   if (options.length > 0 && typeof options[0] === 'object') {
     return (
       <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-        {(options as Array<{ value: string; description?: string }>).map((o) => (
+        {(options as Array<{ value: string; label?: string; description?: string }>).map((o) => (
           <button
             key={o.value}
             onClick={() => onToggle(o.value)}
@@ -277,7 +312,7 @@ function ChipGrid({
             }`}
           >
             <p className={`font-medium ${selected.includes(o.value) ? 'text-arcova-teal' : 'text-white/85'}`}>
-              {o.value}
+              {o.label ?? o.value}
             </p>
             {o.description && <p className="mt-0.5 text-sm text-white/45">{o.description}</p>}
           </button>
@@ -340,6 +375,8 @@ export default function SetupFlow({
   const [ownCompanyProgressNow, setOwnCompanyProgressNow] = useState(0);
   const ownCompanyStartedAtRef = useRef<number | null>(null);
   const [savingProgressNow, setSavingProgressNow] = useState(0);
+  const [companySignalOptions, setCompanySignalOptions] = useState<SignalOption[]>([]);
+  const [personaSignalOptions, setPersonaSignalOptions] = useState<SignalOption[]>([]);
   const savingStartedAtRef = useRef<number | null>(null);
   // Partial enrichment data — populated incrementally via SSE as each step completes
   const [partialTargetEnrichment, setPartialTargetEnrichment] = useState<Partial<import('@/lib/target-company-enrichment').TargetCompanyEnrichmentResult> | null>(null);
@@ -377,9 +414,9 @@ export default function SetupFlow({
   const [panelCompany, setPanelCompany] = useState<PanelCompanyData>({
     companyType: '', companySizes: [], liFollowerSizes: [], therapeuticAreas: [],
     modalities: [], developmentStages: [], customerTherapeuticAreas: [], customerModalities: [], customerDevelopmentStages: [],
-    fundingStages: [],
+    fundingStages: [], signals: [],
   });
-  const [panelPersona, setPanelPersona] = useState<PanelPersonaData>({ functions: [], seniority: [] });
+  const [panelPersona, setPanelPersona] = useState<PanelPersonaData>({ functions: [], seniority: [], signals: [] });
   const [buyingTeamEditMode, setBuyingTeamEditMode] = useState(false);
   const [savedIcpName, setSavedIcpName] = useState('');
   const [savedPersonaName, setSavedPersonaName] = useState('');
@@ -389,9 +426,9 @@ export default function SetupFlow({
     companyType: '', companySizes: [] as string[], liFollowerSizes: [] as string[], therapeuticAreas: [] as string[],
     modalities: [] as string[], developmentStages: [] as string[],
     customerTherapeuticAreas: [] as string[], customerModalities: [] as string[], customerDevelopmentStages: [] as string[],
-    fundingStages: [] as string[],
+    fundingStages: [] as string[], signals: [] as string[],
   });
-  const personaRef = useRef({ functions: [] as string[], seniority: [] as string[], jobTitles: [] as string[] });
+  const personaRef = useRef({ functions: [] as string[], seniority: [] as string[], jobTitles: [] as string[], signals: [] as string[] });
   const icpIdRef = useRef<string | null>(null);
   const personaIdRef = useRef<string | null>(null);
   const lastTargetUrlRef = useRef<string | null>(null);
@@ -524,6 +561,7 @@ export default function SetupFlow({
         customerModalities: reviewDraft.customerModalities,
         customerDevelopmentStages: reviewDraft.customerDevelopmentStages,
         fundingStages: reviewDraft.fundingStages,
+        signals: companyRef.current.signals,
       });
     }
   }, [reviewDraft, phase]);
@@ -662,10 +700,32 @@ export default function SetupFlow({
     const { name } = nameRes.ok ? await nameRes.json() : { name: `${d.companyType} Profile` };
     setSavedIcpName(name);
 
+    const summaryRes = await fetch('/api/generate-icp-summary', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        companyType: d.companyType,
+        therapeuticAreas: d.therapeuticAreas,
+        modalities: d.modalities,
+        developmentStages: d.developmentStages,
+        customerTherapeuticAreas: d.customerTherapeuticAreas,
+        customerModalities: d.customerModalities,
+        customerDevelopmentStages: d.customerDevelopmentStages,
+        companySizes: d.companySizes,
+        fundingStages: d.fundingStages,
+        exampleCompanyName: enrichedTargetCompany?.company_name ?? reviewedCompanyName ?? null,
+        exampleCompanyDescription: enrichedTargetCompany?.description ?? null,
+      }),
+    }).catch(() => null);
+    const { summary: icpSummary } = summaryRes?.ok
+      ? await summaryRes.json() as { summary: string }
+      : { summary: null as string | null };
+
     const saveRes = await fetch('/api/company-criteria', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name,
+        icpSummary,
         companyType: d.companyType,
         therapeuticAreas: d.therapeuticAreas,
         modalities: d.modalities,
@@ -676,7 +736,7 @@ export default function SetupFlow({
         companySizes: d.companySizes,
         liFollowerSizes: d.liFollowerSizes,
         fundingStages: d.fundingStages,
-        signals: [],
+        signals: d.signals,
         exampleCompanies: [],
         exampleCompanyUrl: enrichedTargetCompany?.website ?? lastTargetUrlRef.current ?? '',
         exampleCompanyEnrichment: enrichedTargetCompany ?? undefined,
@@ -741,7 +801,87 @@ export default function SetupFlow({
     if (displayParts.length) await sayBeats(displayParts);
   }, [askClaude, advanceTo, editingFindingsData, reviewedCompanyName, enrichedTargetCompany]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Save persona ──────────────────────────────────────────────────────────
+  const loadSignalsCatalog = useCallback(async (
+    endpoint: string,
+    body: Record<string, unknown>,
+    existingSelection: string[],
+  ): Promise<{ all: SignalOption[]; selected: string[] }> => {
+    const fallbackResponse = await fetch(endpoint);
+    const fallbackPayload = fallbackResponse.ok ? await fallbackResponse.json() as { all?: SignalOption[] } : {};
+    const all = fallbackPayload.all ?? [];
+
+    if (existingSelection.length > 0) {
+      return { all, selected: existingSelection };
+    }
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).catch(() => null);
+
+    if (!response?.ok) {
+      return { all, selected: [] };
+    }
+
+    const payload = await response.json() as { all?: SignalOption[]; recommended?: SignalOption[] };
+    return {
+      all: payload.all ?? all,
+      selected: (payload.recommended ?? []).map((signal) => signal.id),
+    };
+  }, []);
+
+  const startSignalsSetup = useCallback(async () => {
+    setBuyingTeamEditMode(false);
+    setInput(false);
+    setPhase('signals_loading');
+
+    const companyExisting = companyRef.current.signals;
+    const personaExisting = personaRef.current.signals;
+    const personaName =
+      personaRef.current.functions.length > 0 ? `Buying group: ${personaRef.current.functions[0]}` : 'Buying group';
+    setSavedPersonaName(personaName);
+
+    const [companyCatalog, personaCatalog] = await Promise.all([
+      loadSignalsCatalog('/api/recommend-signals', {
+        companyType: companyRef.current.companyType,
+        companySizes: companyRef.current.companySizes,
+        therapeuticAreas: companyRef.current.therapeuticAreas,
+        modalities: companyRef.current.modalities,
+        developmentStages: companyRef.current.developmentStages,
+        fundingStages: companyRef.current.fundingStages,
+      }, companyExisting),
+      loadSignalsCatalog('/api/recommend-persona-signals', {
+        name: personaName,
+        functions: personaRef.current.functions,
+        seniorityLevels: personaRef.current.seniority,
+        jobTitles: personaRef.current.jobTitles,
+      }, personaExisting),
+    ]);
+
+    const nextCompanySignals = companyCatalog.selected;
+    const nextPersonaSignals = personaCatalog.selected;
+
+    companyRef.current.signals = nextCompanySignals;
+    personaRef.current.signals = nextPersonaSignals;
+    setCompanySignalOptions(companyCatalog.all);
+    setPersonaSignalOptions(personaCatalog.all);
+    setPanelCompany((prev) => ({ ...prev, signals: nextCompanySignals }));
+    setPanelPersona((prev) => ({ ...prev, signals: nextPersonaSignals }));
+    setPhase('signals_review');
+
+    const { displayParts } = await askClaude({
+      mode: 'narration',
+      extra: {
+        role: 'user',
+        content:
+          '[System: signal recommendations are ready. In two short sentences, tell the user the most relevant company and contact signals are preselected below, and they can adjust the pills before saving setup.]',
+      },
+    });
+    if (displayParts.length) await sayBeats(displayParts);
+  }, [askClaude, loadSignalsCatalog]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Save persona + signals ───────────────────────────────────────────────
 
   const savePersona = useCallback(async () => {
     setPhase('persona_saving');
@@ -752,17 +892,46 @@ export default function SetupFlow({
       p.functions.length > 0 ? `Buying group: ${p.functions[0]}` : 'Buying group';
     setSavedPersonaName(personaName);
 
-    const personaRes = await fetch('/api/contacts', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: personaName,
-        functions: p.functions,
-        seniorityLevels: p.seniority,
-        jobTitles: p.jobTitles,
-        signals: [],
-        icpId: icpIdRef.current,
-      }),
-    });
+    if (icpIdRef.current) {
+      await fetch(`/api/company-criteria/${icpIdRef.current}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: savedIcpName || `${companyRef.current.companyType} Profile`,
+          companyType: companyRef.current.companyType,
+          therapeuticAreas: companyRef.current.therapeuticAreas,
+          modalities: companyRef.current.modalities,
+          developmentStages: companyRef.current.developmentStages,
+          customerTherapeuticAreas: companyRef.current.customerTherapeuticAreas,
+          customerModalities: companyRef.current.customerModalities,
+          customerDevelopmentStages: companyRef.current.customerDevelopmentStages,
+          companySizes: companyRef.current.companySizes,
+          liFollowerSizes: companyRef.current.liFollowerSizes,
+          fundingStages: companyRef.current.fundingStages,
+          signals: companyRef.current.signals,
+          exampleCompanyUrl: enrichedTargetCompany?.website ?? lastTargetUrlRef.current ?? '',
+          exampleCompanyEnrichment: enrichedTargetCompany ?? undefined,
+        }),
+      }).catch(() => null);
+    }
+
+    const personaPayload = {
+      name: personaName,
+      functions: p.functions,
+      seniorityLevels: p.seniority,
+      jobTitles: p.jobTitles,
+      signals: p.signals,
+      icpId: icpIdRef.current,
+    };
+
+    const personaRes = await fetch(
+      personaIdRef.current ? `/api/contacts/${personaIdRef.current}` : '/api/contacts',
+      {
+        method: personaIdRef.current ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(personaPayload),
+      },
+    );
     if (personaRes.ok) {
       const saved = await personaRes.json();
       const row = saved?.data ?? saved;
@@ -782,7 +951,7 @@ export default function SetupFlow({
 
     setPhase('done');
     setTimeout(() => router.push(resolvedCompletePath), 2500);
-  }, [askClaude, router, resolvedCompletePath]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [askClaude, enrichedTargetCompany, lastTargetUrlRef, resolvedCompletePath, router, savedIcpName]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startBuyingGroupForCompany = useCallback(async (co: TargetCompanyProfile) => {
     selectedCompanyRef.current = co;
@@ -799,6 +968,7 @@ export default function SetupFlow({
       customerModalities: (co as unknown as Record<string, unknown>).customer_modalities as string[] || [],
       customerDevelopmentStages: (co as unknown as Record<string, unknown>).customer_development_stages as string[] || [],
       fundingStages: co.funding_stages || [],
+      signals: parseStoredSignalIds((co as unknown as Record<string, unknown>).signals),
     };
 
     companyRef.current = nextCompanyState;
@@ -863,7 +1033,7 @@ export default function SetupFlow({
       personaRef.current.functions = fns;
       personaRef.current.seniority = sens;
       personaRef.current.jobTitles = titles;
-      setPanelPersona({ functions: fns, seniority: sens, jobTitles: titles });
+      setPanelPersona({ functions: fns, seniority: sens, jobTitles: titles, signals: personaRef.current.signals });
       setBuyingTeamEditMode(false);
       setChipSel([]);
       setPhase('buying_team_review');
@@ -953,10 +1123,10 @@ export default function SetupFlow({
         case 'company_stage': await advanceTo('company_funding'); break;
         case 'company_funding': await saveIcp(); break;
         case 'persona_functions': await advanceTo('persona_seniority'); break;
-        case 'persona_seniority': await savePersona(); break;
+        case 'persona_seniority': await startSignalsSetup(); break;
       }
     })();
-  }, [phase, advanceTo, saveIcp, savePersona]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [phase, advanceTo, saveIcp, startSignalsSetup]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Handle analysis results confirmed ────────────────────────────────────
 
@@ -1020,6 +1190,17 @@ export default function SetupFlow({
       if (displayParts.length) await sayBeats(displayParts);
       setPhase('customer_url_input');
       setInput(true);
+    } else if (stepIndex === 2) {
+      const { displayParts } = await askClaude({
+        mode: 'narration',
+        extra: {
+          role: 'user',
+          content: '[System: the user wants to revisit their buying team. One sentence: acknowledge this and tell them the buying group is ready to review on the right.]',
+        },
+      });
+      if (displayParts.length) await sayBeats(displayParts);
+      setPhase('buying_team_review');
+      setInput(false);
     }
   }, [askClaude]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1057,8 +1238,12 @@ export default function SetupFlow({
     setReviewDraft({ companyType: '', therapeuticAreas: [], modalities: [], developmentStages: [], customerTherapeuticAreas: [], customerModalities: [], customerDevelopmentStages: [], companySizes: [], liFollowerSizes: [], fundingStages: [] });
     setSavedIcpName('');
     setSavedPersonaName('');
-    setPanelCompany({ companyType: '', companySizes: [], liFollowerSizes: [], therapeuticAreas: [], modalities: [], developmentStages: [], customerTherapeuticAreas: [], customerModalities: [], customerDevelopmentStages: [], fundingStages: [] });
-    setPanelPersona({ functions: [], seniority: [], jobTitles: [] });
+    setPanelCompany({ companyType: '', companySizes: [], liFollowerSizes: [], therapeuticAreas: [], modalities: [], developmentStages: [], customerTherapeuticAreas: [], customerModalities: [], customerDevelopmentStages: [], fundingStages: [], signals: [] });
+    setPanelPersona({ functions: [], seniority: [], jobTitles: [], signals: [] });
+    companyRef.current = { companyType: '', companySizes: [], liFollowerSizes: [], therapeuticAreas: [], modalities: [], developmentStages: [], customerTherapeuticAreas: [], customerModalities: [], customerDevelopmentStages: [], fundingStages: [], signals: [] };
+    personaRef.current = { functions: [], seniority: [], jobTitles: [], signals: [] };
+    setCompanySignalOptions([]);
+    setPersonaSignalOptions([]);
     setEditingFindings(false);
     setEditingFindingsData(null);
     setThread([]);
@@ -1435,6 +1620,8 @@ export default function SetupFlow({
     setReviewedCompanyName('');
     setEnrichedTargetCompany(null);
     setSavedIcpName('');
+    companyRef.current.signals = [];
+    setCompanySignalOptions([]);
     lastTargetUrlRef.current = null;
     setPhase('customer_url_input');
     setInput(true);
@@ -1447,8 +1634,9 @@ export default function SetupFlow({
       try { await fetch(`/api/contacts?id=${id}`, { method: 'DELETE' }); } catch {}
       personaIdRef.current = null;
     }
-    setPanelPersona({ functions: [], seniority: [], jobTitles: [] });
-    personaRef.current = { functions: [], seniority: [], jobTitles: [] };
+    setPanelPersona({ functions: [], seniority: [], jobTitles: [], signals: [] });
+    personaRef.current = { functions: [], seniority: [], jobTitles: [], signals: [] };
+    setPersonaSignalOptions([]);
     setBuyingTeamEditMode(false);
     setSavedPersonaName('');
     setPhase('buying_team_review');
@@ -1486,7 +1674,7 @@ export default function SetupFlow({
       personaRef.current.functions = fns;
       personaRef.current.seniority = sens;
       personaRef.current.jobTitles = titles;
-      setPanelPersona({ functions: fns, seniority: sens, jobTitles: titles });
+      setPanelPersona({ functions: fns, seniority: sens, jobTitles: titles, signals: personaRef.current.signals });
       setBuyingTeamEditMode(false);
       setPhase('buying_team_review');
       setInput(false);
@@ -1672,6 +1860,7 @@ export default function SetupFlow({
             customerModalities: Array.isArray(icp.customer_modalities) ? (icp.customer_modalities as string[]) : [],
             customerDevelopmentStages: Array.isArray(icp.customer_development_stages) ? (icp.customer_development_stages as string[]) : [],
             fundingStages: Array.isArray(icp.funding_stages) ? (icp.funding_stages as string[]) : [],
+            signals: parseStoredSignalIds(icp.signals),
           };
           setPanelCompany(taxonomy);
           setReviewDraft(taxonomy);
@@ -1701,7 +1890,14 @@ export default function SetupFlow({
             functions: fnNames,
             seniority: Array.isArray(persona.seniority_levels) ? (persona.seniority_levels as string[]) : [],
             jobTitles: Array.isArray(persona.job_titles) ? (persona.job_titles as string[]) : [],
+            signals: parseStoredSignalIds(persona.signals),
           });
+          personaRef.current = {
+            functions: fnNames,
+            seniority: Array.isArray(persona.seniority_levels) ? (persona.seniority_levels as string[]) : [],
+            jobTitles: Array.isArray(persona.job_titles) ? (persona.job_titles as string[]) : [],
+            signals: parseStoredSignalIds(persona.signals),
+          };
         }
 
         // Leg 1: nothing stored — greet and ask for company URL
@@ -1774,7 +1970,7 @@ export default function SetupFlow({
             personaRef.current.functions = fns;
             personaRef.current.seniority = sens;
             personaRef.current.jobTitles = titles;
-            setPanelPersona({ functions: fns, seniority: sens, jobTitles: titles });
+            setPanelPersona({ functions: fns, seniority: sens, jobTitles: titles, signals: personaRef.current.signals });
             setBuyingTeamEditMode(false);
             setChipSel([]);
             setPhase('buying_team_review');
@@ -1792,7 +1988,21 @@ export default function SetupFlow({
           return;
         }
 
-        // Leg 4: everything done — brief confirmation then redirect
+        // Leg 4: persona exists. If signals are missing on either side, resume at the signals step.
+        if (companyRef.current.signals.length === 0 || personaRef.current.signals.length === 0) {
+          const { displayParts } = await askClaude({
+            mode: 'narration',
+            extra: {
+              role: 'user',
+              content: '[System: the company profile and buying team already exist, but signals still need to be confirmed. One sentence: tell the user you are pulling in the most relevant signals now.]',
+            },
+          });
+          if (displayParts.length) await sayBeats(displayParts);
+          await startSignalsSetup();
+          return;
+        }
+
+        // Leg 5: everything done — brief confirmation then redirect
         const { displayParts } = await askClaude({
           mode: 'narration',
           extra: {
@@ -1902,6 +2112,20 @@ export default function SetupFlow({
   };
 
   const widget = WIDGET[phase];
+  const toggleCompanySignal = (signalId: string) => {
+    const next = companyRef.current.signals.includes(signalId)
+      ? companyRef.current.signals.filter((id) => id !== signalId)
+      : [...companyRef.current.signals, signalId];
+    companyRef.current.signals = next;
+    setPanelCompany((prev) => ({ ...prev, signals: next }));
+  };
+  const togglePersonaSignal = (signalId: string) => {
+    const next = personaRef.current.signals.includes(signalId)
+      ? personaRef.current.signals.filter((id) => id !== signalId)
+      : [...personaRef.current.signals, signalId];
+    personaRef.current.signals = next;
+    setPanelPersona((prev) => ({ ...prev, signals: next }));
+  };
   const showChatBar =
     phase === 'greeting' ||
     phase === 'customer_url_input' ||
@@ -1917,6 +2141,7 @@ export default function SetupFlow({
     phase === 'buying_team_review';
   const isSaving = phase === 'company_saving' || phase === 'persona_saving' || phase === 'done';
   const isCustomerUrlLoading = phase === 'customer_url_loading';
+  const isSignalsReview = phase === 'signals_review';
 
   const customerUrlPercent = (() => {
     if (!isCustomerUrlLoading || customerUrlStartedAtRef.current === null) return 0;
@@ -1952,7 +2177,8 @@ export default function SetupFlow({
   const SETUP_STEPS = [
     { label: 'Your company', phases: ['greeting', 'analysis_loading', 'analysis_results'] as Phase[] },
     { label: 'Target companies', phases: ['customer_url_input', 'customer_url_loading', 'customer_url_review', 'company_type', 'company_size', 'company_ta', 'company_modality', 'company_stage', 'company_funding', 'company_saving'] as Phase[] },
-    { label: 'Buying teams', phases: ['buying_team_loading', 'buying_team_review', 'persona_functions', 'persona_seniority', 'persona_saving', 'done'] as Phase[] },
+    { label: 'Buying teams', phases: ['buying_team_loading', 'buying_team_review', 'persona_functions', 'persona_seniority'] as Phase[] },
+    { label: 'Signals', phases: ['signals_loading', 'signals_review', 'persona_saving', 'done'] as Phase[] },
   ];
   const currentStepIndex = SETUP_STEPS.findIndex((s) => s.phases.includes(phase));
   const showProgress = (entryPoint === 'full') && currentStepIndex >= 0;
@@ -2177,6 +2403,15 @@ export default function SetupFlow({
             </div>
           )}
 
+          {phase === 'signals_loading' && !thinking && (
+            <div className="flex items-start gap-3">
+              <ArcovaLoader size={36} />
+              <div className="rounded-2xl rounded-tl-none border border-gray-200 bg-white px-4 py-3 shadow-sm">
+                <span className="text-base text-gray-600">Selecting the most relevant signals…</span>
+              </div>
+            </div>
+          )}
+
           {isSaving && !thinking && (
             <div className="flex items-start gap-3">
               <ArcovaLoader size={36} />
@@ -2209,7 +2444,7 @@ export default function SetupFlow({
         </div>
       </div>
 
-      {(showChatBar || widget || showResultsActions || isCustomerUrlReview) && !isSaving && (
+      {(showChatBar || widget || showResultsActions || isCustomerUrlReview || isSignalsReview) && !isSaving && (
         <div className="shrink-0 space-y-3 border-t border-white/10 bg-arcova-darkblue px-4 py-3">
           {pendingTransition && (
             <div className="flex items-center gap-2">
@@ -2239,7 +2474,7 @@ export default function SetupFlow({
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <button
                   type="button"
-                  onClick={() => void savePersona()}
+                  onClick={() => void startSignalsSetup()}
                   className="rounded-xl bg-arcova-teal px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/90"
                 >
                   Looks right →
@@ -2250,6 +2485,46 @@ export default function SetupFlow({
                   className="rounded-xl border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
                 >
                   {buyingTeamEditMode ? 'Cancel edits' : "No this isn't quite right"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {isSignalsReview && (
+            <div className="space-y-4 rounded-xl border border-gray-200 bg-white p-3">
+              <div>
+                <p className="text-sm font-medium text-gray-900">Company signals</p>
+                <p className="mt-1 text-sm text-gray-500">These drive account-level intent for this ICP.</p>
+              </div>
+              <ChipGrid
+                options={companySignalOptions.map((signal) => ({
+                  value: signal.id,
+                  label: signal.name,
+                  description: signal.category,
+                }))}
+                selected={panelCompany.signals}
+                onToggle={toggleCompanySignal}
+              />
+              <div>
+                <p className="text-sm font-medium text-gray-900">Contact signals</p>
+                <p className="mt-1 text-sm text-gray-500">These layer buyer-level intent on top of the company signals.</p>
+              </div>
+              <ChipGrid
+                options={personaSignalOptions.map((signal) => ({
+                  value: signal.id,
+                  label: signal.name,
+                  description: signal.category,
+                }))}
+                selected={panelPersona.signals}
+                onToggle={togglePersonaSignal}
+              />
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <button
+                  type="button"
+                  onClick={() => void savePersona()}
+                  className="rounded-xl bg-arcova-teal px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/90"
+                >
+                  Save setup →
                 </button>
               </div>
             </div>
@@ -2564,7 +2839,7 @@ export default function SetupFlow({
               buyingTeamEditMode={buyingTeamEditMode}
               onEditBuyingTeam={() => setBuyingTeamEditMode(true)}
               onCancelBuyingTeamEdit={() => setBuyingTeamEditMode(false)}
-              onConfirmBuyingTeam={phase === 'buying_team_review' ? () => void savePersona() : undefined}
+              onConfirmBuyingTeam={phase === 'buying_team_review' ? () => void startSignalsSetup() : undefined}
               onToggleBuyingTeamFn={(v) => {
                 const next = panelPersona.functions.includes(v)
                   ? panelPersona.functions.filter((x) => x !== v)

@@ -19,6 +19,7 @@ import {
   extractFundingStatus,
   extractFundingRaised,
 } from '@/lib/funding-display';
+import { getSignalDisplayName } from '@/lib/signal-display-names';
 import { resolveCustomerSegments } from '@/lib/split-customer-segments';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -38,12 +39,14 @@ export interface PanelCompanyData {
   customerModalities: string[];
   customerDevelopmentStages: string[];
   fundingStages: string[];
+  signals: string[];
 }
 
 export interface PanelPersonaData {
   functions: string[];
   seniority: string[];
   jobTitles?: string[];
+  signals: string[];
 }
 
 export interface CompetitorItem {
@@ -1135,6 +1138,7 @@ function TargetCard({
   const modalVal = panelCompany.modalities.length ? panelCompany.modalities : (phase === 'company_modality' ? chipSel : []);
   const stageVal = panelCompany.developmentStages.length ? panelCompany.developmentStages : (phase === 'company_stage' ? chipSel : []);
   const fundingVal = panelCompany.fundingStages.length ? panelCompany.fundingStages : (phase === 'company_funding' ? chipSel : []);
+  const signalVal = panelCompany.signals ?? [];
 
   const hasIcpData = typeVal.length > 0 || taVal.length > 0 || modalVal.length > 0;
   const showIcpProfile = !!(savedIcpName || hasIcpData) && (status === 'building' || status === 'complete');
@@ -1442,6 +1446,17 @@ function TargetCard({
                     placeholder="Add funding stage…"
                   />
                 )}
+              </div>
+            )}
+
+            {signalVal.length > 0 && (
+              <div>
+                <p className="mb-1 text-xs text-white/40">Company signals</p>
+                <div className="flex flex-wrap gap-1">
+                  {signalVal.map((signalId) => (
+                    <Tag key={signalId} label={getSignalDisplayName(signalId)} />
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -1776,6 +1791,16 @@ function BuyingTeamCard({
                 </p>
               </div>
             )}
+            {panelPersona.signals.length > 0 && (
+              <div>
+                <p className="mb-1 text-xs font-medium uppercase tracking-wide text-white/40">Contact signals</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {panelPersona.signals.map((signalId) => (
+                    <Tag key={signalId} label={getSignalDisplayName(signalId)} />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
           <div className="border-t border-white/10 pt-2">
             <div className="flex items-center justify-between gap-2">
@@ -1820,6 +1845,16 @@ function BuyingTeamCard({
               <p className="text-xs leading-relaxed text-white/55">
                 {panelPersona.jobTitles!.join(' · ')}
               </p>
+            </div>
+          )}
+          {panelPersona.signals.length > 0 && (
+            <div>
+              <p className="mb-1 text-xs font-medium uppercase tracking-wide text-white/40">Contact signals</p>
+              <div className="flex flex-wrap gap-1.5">
+                {panelPersona.signals.map((signalId) => (
+                  <Tag key={signalId} label={getSignalDisplayName(signalId)} />
+                ))}
+              </div>
             </div>
           )}
           <div className="flex flex-wrap items-center gap-2 border-t border-white/10 pt-2">
@@ -1869,6 +1904,14 @@ function BuyingTeamCard({
                 <p className="text-xs leading-relaxed text-white/55">
                   {panelPersona.jobTitles!.join(' · ')}
                 </p>
+              </div>
+            )}
+            {panelPersona.signals.length > 0 && (
+              <div>
+                <p className="mb-1 text-xs font-medium uppercase tracking-wide text-white/40">Contact signals</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {panelPersona.signals.map((signalId) => <Tag key={signalId} label={getSignalDisplayName(signalId)} />)}
+                </div>
               </div>
             )}
           </div>
