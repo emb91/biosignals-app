@@ -56,6 +56,7 @@ export async function PUT(
 
     const icpData: Record<string, unknown> = {
       name: body.name || '',
+      icp_summary: body.icpSummary || null,
       company_type: body.companyType || '',
       therapeutic_areas: body.therapeuticAreas || [],
       modalities: body.modalities || [],

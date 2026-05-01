@@ -1,36 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { NextResponse } from 'next/server';
-
-const ALL_SIGNALS = [
-  // Funding & Financial
-  { id: 'new_funding', name: 'New funding round', category: 'Funding & Financial' },
-  { id: 'ipo', name: 'IPO', category: 'Funding & Financial' },
-  { id: 'grant_award', name: 'Grant award', category: 'Funding & Financial' },
-  { id: 'partnership_deal', name: 'Partnership or licensing deal', category: 'Funding & Financial' },
-  { id: 'ma', name: 'M&A', category: 'Funding & Financial' },
-  
-  // Pipeline & Clinical
-  { id: 'clinical_trial', name: 'Clinical trial registered', category: 'Pipeline & Clinical' },
-  { id: 'phase_transition', name: 'Phase transition', category: 'Pipeline & Clinical' },
-  { id: 'indication_expansion', name: 'New indication expansion', category: 'Pipeline & Clinical' },
-  { id: 'breakthrough_designation', name: 'Breakthrough / fast track designation', category: 'Pipeline & Clinical' },
-  { id: 'fda_approval', name: 'FDA approval or clearance', category: 'Pipeline & Clinical' },
-  
-  // Hiring & Team
-  { id: 'cmc_hire', name: 'CMC / manufacturing hire', category: 'Hiring & Team' },
-  { id: 'clinical_ops_hire', name: 'Clinical operations hire', category: 'Hiring & Team' },
-  { id: 'bd_hire', name: 'BD or partnerships hire', category: 'Hiring & Team' },
-  { id: 'regulatory_hire', name: 'Regulatory affairs hire', category: 'Hiring & Team' },
-  { id: 'csuite_hire', name: 'C-suite or VP hire', category: 'Hiring & Team' },
-  { id: 'job_surge', name: 'Job postings surge', category: 'Hiring & Team' },
-  
-  // Corporate & Strategic
-  { id: 'new_product_launch', name: 'New product launch', category: 'Corporate & Strategic' },
-  { id: 'new_facility', name: 'New office or facility', category: 'Corporate & Strategic' },
-  { id: 'conference_presentation', name: 'Conference presentation or poster', category: 'Corporate & Strategic' },
-  { id: 'publication', name: 'Publication in peer-reviewed journal', category: 'Corporate & Strategic' },
-  { id: 'press_release', name: 'Press release or news mention', category: 'Corporate & Strategic' },
-];
+import { COMPANY_SIGNALS } from '@/lib/signals/catalog';
 
 export async function POST(request: Request) {
   try {
@@ -49,7 +19,9 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { companyType, companySizes, therapeuticAreas, modalities, developmentStages, fundingStages } = body;
 
-    const signalList = ALL_SIGNALS.map(s => `- ${s.id}: ${s.name} (${s.category})`).join('\n');
+    const signalList = COMPANY_SIGNALS.map(
+      (signal) => `- ${signal.id}: ${signal.displayName} (${signal.category})`
+    ).join('\n');
 
     const prompt = `You are helping a B2B sales team in the life sciences industry select the most relevant buying signals to track for their ideal customer profile.
 
@@ -96,12 +68,12 @@ Return ONLY the JSON array, nothing else.`;
 
     // Map IDs to full signal objects
     const recommendedSignals = recommendedIds
-      .map(id => ALL_SIGNALS.find(s => s.id === id))
+      .map(id => COMPANY_SIGNALS.find(signal => signal.id === id))
       .filter(Boolean);
 
     return NextResponse.json({ 
       recommended: recommendedSignals,
-      all: ALL_SIGNALS 
+      all: COMPANY_SIGNALS 
     });
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -115,5 +87,5 @@ Return ONLY the JSON array, nothing else.`;
 
 // GET endpoint to return all signals (for fallback)
 export async function GET() {
-  return NextResponse.json({ all: ALL_SIGNALS });
+  return NextResponse.json({ all: COMPANY_SIGNALS });
 }
