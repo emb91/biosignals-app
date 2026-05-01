@@ -98,6 +98,9 @@ export interface PanelTargetCompanyData {
   value_propositions?: string[] | null;
   competitors_enriched?: CompetitorItem[] | null;
   company_status?: string | null;
+  funding_status_label?: string | null;
+  funding_resolution_summary?: string | null;
+  funding_data_source?: 'apollo' | 'web_search' | null;
   company_type?: string | null;
   company_type_display?: string | null;
   therapeutic_areas?: string[] | null;
@@ -109,6 +112,7 @@ export interface PanelTargetCompanyData {
   founded_year?: number | null;
   funding_stage?: string | null;
   total_funding_usd?: number | null;
+  latest_funding_date?: string | null;
   hq_city?: string | null;
   hq_country?: string | null;
   industry?: string | null;
@@ -154,6 +158,8 @@ export interface SetupProfilePanelProps {
   onConfirmBuyingTeam?: () => void;
   buyingTeamExampleCompany?: string;
   buyingTeamIcpName?: string;
+  /** When false, hides account- and contact-level intent pills on the cards (e.g. setup auto-applies on save). Default true for other flows. */
+  showSignalPills?: boolean;
 }
 
 // ── Phase sets (building-only — complete is data-driven) ───────────────────
@@ -165,7 +171,12 @@ const ICP_BUILDING_PHASES = new Set([
 ]);
 
 const BUYING_BUILDING_PHASES = new Set([
-  'buying_team_loading', 'buying_team_review', 'persona_functions', 'persona_seniority',
+  'buying_team_loading',
+  'buying_team_review',
+  'persona_functions',
+  'persona_seniority',
+  'persona_saving',
+  'done',
 ]);
 
 // ── Primitives ─────────────────────────────────────────────────────────────
@@ -1102,6 +1113,7 @@ function TargetCard({
   onIcpFieldChange,
   collapsed,
   onToggle,
+  showSignalPills = true,
 }: {
   status: CardStatus;
   phase: string;
@@ -1119,6 +1131,7 @@ function TargetCard({
   onIcpFieldChange?: (field: string, value: IcpChangeValue) => void;
   collapsed?: boolean;
   onToggle?: () => void;
+  showSignalPills?: boolean;
 }) {
   const [modelledOnOpen, setModelledOnOpen] = useState(false);
   const [newCompetitorUrl, setNewCompetitorUrl] = useState('');
@@ -1144,7 +1157,16 @@ function TargetCard({
   const showIcpProfile = !!(savedIcpName || hasIcpData) && (status === 'building' || status === 'complete');
 
   const hasCompetitors = icpEditMode || (e?.competitors_enriched?.length ?? 0) > 0;
-  const hasFirmographics = !!(e?.employee_count || e?.employee_range || e?.hq_city || e?.follower_count != null || e?.company_status || e?.total_funding_usd != null || e?.funding_stage);
+  const hasFirmographics = !!(
+    e?.employee_count ||
+    e?.employee_range ||
+    e?.hq_city ||
+    e?.follower_count != null ||
+    e?.company_status ||
+    e?.funding_status_label ||
+    e?.total_funding_usd != null ||
+    e?.funding_stage
+  );
   const hasModelledOnNarrative = !!(e?.description?.[0] || e?.customers_we_serve?.length || e?.value_propositions?.length || e?.follower_count != null || e?.linkedin_url);
   const customerSegments = resolveCustomerSegments({
     targetCustomers: e?.target_customers ?? [],
@@ -1449,7 +1471,7 @@ function TargetCard({
               </div>
             )}
 
-            {signalVal.length > 0 && (
+            {showSignalPills && signalVal.length > 0 && (
               <div>
                 <p className="mb-1 text-xs text-white/40">Company signals</p>
                 <div className="flex flex-wrap gap-1">
@@ -1474,19 +1496,19 @@ function TargetCard({
                   const band = followerCountToFollowerBucket(e!.follower_count);
                   return band[0] ? <Stat label="LinkedIn follower base" value={band[0]} /> : null;
                 })()}
-                {e!.company_status && (() => {
-                  const fs = extractFundingStatus(e!.company_status!);
+                {(e!.funding_status_label || e!.company_status) && (() => {
+                  const fs = e!.funding_status_label?.trim() || (e!.company_status ? extractFundingStatus(e!.company_status) : null);
                   return fs ? <Stat label="Funding status" value={fs} /> : null;
                 })()}
-                {!e!.company_status && e!.funding_stage && <Stat label="Funding stage" value={e!.funding_stage} />}
-                {!e!.company_status && e!.total_funding_usd != null && (
+                {e!.funding_stage && <Stat label="Funding stage" value={e!.funding_stage} />}
+                {e!.total_funding_usd != null && (
                   <Stat label="Total funding" value={formatCurrencyShort(e!.total_funding_usd)} />
                 )}
               </div>
-              {e!.company_status && (
+              {(e!.funding_resolution_summary || e!.company_status) && (
                 <div>
                   <p className="text-xs text-white/40 mb-1">Funding summary</p>
-                  <p className="text-xs leading-snug text-white/55">{e!.company_status}</p>
+                  <p className="text-xs leading-snug text-white/55">{e!.funding_resolution_summary ?? e!.company_status}</p>
                 </div>
               )}
             </div>
@@ -1496,7 +1518,7 @@ function TargetCard({
             <div className="border-t border-white/10 pt-2 mt-0.5 space-y-1.5">
               <p className="text-xs text-white/40">Customer segments</p>
               {customerSegments.customerOrganizations.length > 0 && (
-                <FieldRow label="Sells to" tags={customerSegments.customerOrganizations} />
+                <FieldRow label="Sells to companies like" tags={customerSegments.customerOrganizations} />
               )}
               {customerSegments.buyerTypes.length > 0 && (
                 <FieldRow label="Sells to people like" tags={customerSegments.buyerTypes} />
@@ -1740,6 +1762,7 @@ function BuyingTeamCard({
   onToggleSeniority,
   exampleCompany,
   icpName,
+  showSignalPills = true,
 }: {
   status: CardStatus;
   phase: string;
@@ -1756,6 +1779,7 @@ function BuyingTeamCard({
   onToggleSeniority?: (v: string) => void;
   exampleCompany?: string;
   icpName?: string;
+  showSignalPills?: boolean;
 }) {
   const isReviewing = phase === 'buying_team_review' || editMode;
   const fnVal = panelPersona.functions.length ? panelPersona.functions : (phase === 'persona_functions' ? chipSel : []);
@@ -1791,7 +1815,7 @@ function BuyingTeamCard({
                 </p>
               </div>
             )}
-            {panelPersona.signals.length > 0 && (
+            {showSignalPills && panelPersona.signals.length > 0 && (
               <div>
                 <p className="mb-1 text-xs font-medium uppercase tracking-wide text-white/40">Contact signals</p>
                 <div className="flex flex-wrap gap-1.5">
@@ -1847,7 +1871,7 @@ function BuyingTeamCard({
               </p>
             </div>
           )}
-          {panelPersona.signals.length > 0 && (
+          {showSignalPills && panelPersona.signals.length > 0 && (
             <div>
               <p className="mb-1 text-xs font-medium uppercase tracking-wide text-white/40">Contact signals</p>
               <div className="flex flex-wrap gap-1.5">
@@ -1906,7 +1930,7 @@ function BuyingTeamCard({
                 </p>
               </div>
             )}
-            {panelPersona.signals.length > 0 && (
+            {showSignalPills && panelPersona.signals.length > 0 && (
               <div>
                 <p className="mb-1 text-xs font-medium uppercase tracking-wide text-white/40">Contact signals</p>
                 <div className="flex flex-wrap gap-1.5">
@@ -1974,6 +1998,7 @@ export default function SetupProfilePanel({
   onConfirmBuyingTeam,
   buyingTeamExampleCompany,
   buyingTeamIcpName,
+  showSignalPills = true,
 }: SetupProfilePanelProps) {
   const [activeTab, setActiveTab] = useState(0);
 
@@ -2049,6 +2074,7 @@ export default function SetupProfilePanel({
       onIcpFieldChange={onIcpFieldChange}
       collapsed={s2 === 'complete' ? collapsed.c2 : undefined}
       onToggle={s2 === 'complete' ? () => toggle('c2') : undefined}
+      showSignalPills={showSignalPills}
     />
   );
 
@@ -2068,6 +2094,7 @@ export default function SetupProfilePanel({
       onToggleSeniority={onToggleBuyingTeamSeniority}
       exampleCompany={buyingTeamExampleCompany}
       icpName={buyingTeamIcpName}
+      showSignalPills={showSignalPills}
     />
   );
 

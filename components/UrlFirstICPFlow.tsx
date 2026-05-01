@@ -180,7 +180,7 @@ export default function UrlFirstICPFlow({ onComplete }: Props) {
     setAnalysisError('');
     setPhase('loading');
 
-    const msgs = ['Gathering account intelligence…', 'Verifying funding and headcount…', 'Scanning their LinkedIn…', 'Classifying company type…', 'Mapping to your ICP…', 'Checking recent news…', 'Reviewing their tech stack…', 'Analyzing hiring signals…', 'Estimating revenue range…', 'Almost there…'];
+    const msgs = ['Gathering account intelligence…', 'Verifying funding and headcount…', 'Scanning their LinkedIn…', 'Classifying company type…', 'Mapping to your ICP…', 'Checking recent news…', 'Reviewing their tech stack…', 'Analyzing hiring activity…', 'Estimating revenue range…', 'Almost there…'];
     let mi = 0;
     setLoadingMsg(msgs[0]);
     const interval = setInterval(() => { mi = (mi + 1) % msgs.length; setLoadingMsg(msgs[mi]); }, 2500);

@@ -2,6 +2,16 @@ begin;
 
 create extension if not exists pgcrypto;
 
+create or replace function public.set_row_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
 create table if not exists public.icp_signal_selections (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -46,14 +56,10 @@ create index if not exists persona_signal_selections_persona_id_idx
 
 alter table public.signals
   add column if not exists signal_scope text,
-  add column if not exists company_id uuid references public.companies(id) on delete cascade,
-  add column if not exists contact_id uuid references public.contacts(id) on delete cascade,
   add column if not exists detected_at timestamptz,
-  add column if not exists source text,
-  add column if not exists title text,
-  add column if not exists description text,
   add column if not exists evidence_url text,
   add column if not exists confidence numeric(6,3),
+  add column if not exists description text,
   add column if not exists event_metadata jsonb,
   add column if not exists raw_payload jsonb;
 
@@ -62,30 +68,19 @@ set
   signal_scope = coalesce(
     signal_scope,
     case
-      when entity_type in ('company', 'contact') then entity_type
+      when company_id is not null and contact_id is null then 'company'
+      when contact_id is not null then 'contact'
       else 'company'
     end
   ),
-  detected_at = coalesce(detected_at, signal_date, created_at, now()),
-  source = coalesce(source, signal_source),
-  title = coalesce(title, signal_type),
-  event_metadata = coalesce(event_metadata, signal_detail)
+  detected_at = coalesce(detected_at, occurred_at, created_at, now()),
+  evidence_url = coalesce(evidence_url, source_url),
+  description = coalesce(description, summary)
 where
   signal_scope is null
   or detected_at is null
-  or source is null
-  or title is null
-  or event_metadata is null;
-
-update public.signals
-set company_id = entity_id
-where signal_scope = 'company'
-  and company_id is null;
-
-update public.signals
-set contact_id = entity_id
-where signal_scope = 'contact'
-  and contact_id is null;
+  or evidence_url is null
+  or description is null;
 
 do $$
 begin
@@ -160,11 +155,11 @@ with check (auth.uid() = user_id);
 drop trigger if exists icp_signal_selections_updated_at on public.icp_signal_selections;
 create trigger icp_signal_selections_updated_at
 before update on public.icp_signal_selections
-for each row execute function public.update_updated_at();
+for each row execute function public.set_row_updated_at();
 
 drop trigger if exists persona_signal_selections_updated_at on public.persona_signal_selections;
 create trigger persona_signal_selections_updated_at
 before update on public.persona_signal_selections
-for each row execute function public.update_updated_at();
+for each row execute function public.set_row_updated_at();
 
 commit;

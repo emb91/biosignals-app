@@ -72,13 +72,13 @@ export async function POST(request: Request) {
 
     let distinguisherHint: string;
     if (taCount === 0 && modCount === 0 && cta.length === 0 && cmod.length === 0) {
-      distinguisherHint = 'No therapeutic area or modality was specified for own product or customer segments — use a general name based on company type and funding stage if available.';
+      distinguisherHint = 'No therapeutic area or modality was specified for own product or customer segments — use a general name based on company type and what they do.';
     } else if (taSpecificity <= modSpecificity && taCount > 0) {
-      distinguisherHint = `Therapeutic area is the most distinctive dimension (${taCount} selected vs ${modCount} modalities). Lead with the therapeutic area.`;
+      distinguisherHint = `Therapeutic area is the most distinctive dimension (${taCount} selected vs ${modCount} modalities). Weave it in as a natural modifier (e.g. "Oncology …" / "Rare Disease …"); do not scramble word order just to put it first.`;
     } else if (modSpecificity < taSpecificity && modCount > 0) {
-      distinguisherHint = `Modality is the most distinctive dimension (${modCount} selected vs ${taCount} TAs). Lead with the modality.`;
+      distinguisherHint = `Modality is the most distinctive dimension (${modCount} selected vs ${taCount} TAs). Weave modality in naturally (e.g. "Cell Therapy …" / "ADC …"); keep standard English noun-phrase order.`;
     } else {
-      distinguisherHint = 'Both therapeutic area and modality are broadly selected — use a general descriptor rather than listing specific ones.';
+      distinguisherHint = 'Therapeutic area and modality are both broad — prefer a concise segment label (e.g. "Multi-modality CDMO") rather than listing many specifics.';
     }
 
     const stageHint = stageCount === 1
@@ -87,41 +87,50 @@ export async function POST(request: Request) {
       ? `A narrow range of development stages selected (${devStages.join(', ')}) — you may include a stage qualifier if it genuinely distinguishes the profile.`
       : 'Development stages are broad or all-encompassing — do not include a stage qualifier in the name.';
 
-    const prompt = `You are naming an ICP (ideal customer profile) category for a life science sales team.
+    const prompt = `You are writing a short category title for an ICP (ideal customer profile) used by a life science sales team.
 
 ${contextLines.join('\n')}
 
-Distinguishing factor guidance: ${distinguisherHint}
+Emphasis hints (natural phrasing beats rigid order): ${distinguisherHint}
 Development stage guidance: ${stageHint}
 
-Write a 3–5 word name that describes the *category* of company this ICP represents — not the specific example company. Pick the single most distinctive attribute and lead with it.
+Goal: Output reads like a real market segment or product category — Title Case, **standard business noun phrase**, not a shuffled bag of keywords. Describe the *category* of company this ICP represents, never the specific example company by name.
 
-Good examples:
+If the profile is clearly a **software / SaaS / data / analytics / commercial intelligence / platform** business, end with an appropriate head noun such as Platform, Software, Solution, Intelligence Platform, or Analytics — e.g. "Life Science Commercial Intelligence Platform", not "Commercial Intelligence Life Science".
+
+If the profile is a **service org or drug developer**, use endings like Biotech, Pharma, CDMO, CRO, Diagnostics, Medical Device Manufacturer as appropriate.
+
+Good examples (mix of shapes):
+- Life Science Commercial Intelligence Platform
+- Digital Health Data Analytics Platform
 - Oncology CDMO
-- ADC Biotech
-- Gene Therapy CRO
+- Gene Therapy Discovery Biotech
 - Rare Disease Pharma
-- Phase I Oncology Biotech
+- Phase I Oncology Clinical Biotech
 - Preclinical Cell Therapy CRO
-- Broad-focus Biopharma
-- Multi-modality CDMO
+- Multi-modality Manufacturing CDMO
+
+Avoid:
+- Jumbled descriptor stacks ("Commercial Intelligence Life Science")
 
 Rules:
-- 3–5 words maximum
+- 3–10 words; prefer 4–7 when the offering needs a clear head noun (Platform, Software, etc.)
+- Title Case throughout
 - No punctuation at the end
 - No em dashes
 - Never mention company size, employee count, or LinkedIn followers
 - Never mention signals
-- Only include a development stage qualifier if exactly one stage (or a very narrow range) was selected
+- Only include a development stage qualifier when the stage guidance allows it
 - Never use "stages" as a standalone word — if used at all, say "development stage" or "clinical stage"
-- If no single attribute stands out, use a general term like "Broad-focus Biopharma" or "Multi-area Pharma"
-- Return only the name, nothing else`;
+- If nothing narrow stands out, use a broad but grammatical label (e.g. "Broad Portfolio Biopharma")
+- Return only the title, nothing else`;
 
     const message = await anthropic.messages.create({
       model: 'claude-haiku-4-5',
-      max_tokens: 20,
+      max_tokens: 64,
       temperature: 0.4,
-      system: 'Output only the ICP category name. Nothing else.',
+      system:
+        'Output only the ICP category title: a natural Title Case noun phrase. No quotes, labels, or explanation.',
       messages: [{ role: 'user', content: prompt }],
     });
 

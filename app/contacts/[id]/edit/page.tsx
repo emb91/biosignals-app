@@ -10,6 +10,7 @@ import PersonaForm, {
   type CompanyProfile,
   type PersonaFormData,
 } from '@/components/PersonaForm';
+import { normalizeOrderedSignalIds } from '@/lib/signals/normalize-client';
 
 export default function ContactEditPage() {
   const { user, loading } = useAuth();
@@ -55,7 +56,7 @@ export default function ContactEditPage() {
               functions: functionNames,
               seniorityLevels: contact.seniority_levels || [],
               jobTitles: contact.job_titles || [],
-              signals: contact.signals || [],
+              signals: normalizeOrderedSignalIds(contact.signals),
             });
             setInitialCompanyId(contact.icp_id || null);
           }

@@ -22,7 +22,7 @@ export function assignSignalWeights(signalIds: string[]): { id: string; weight: 
 /**
  * Extract signal IDs from weighted signal objects (for backward compatibility).
  */
-export function extractSignalIds(signals: ({ id: string; weight: number } | string)[]): string[] {
+export function extractSignalIds(signals: ({ id: string; weight?: number } | string)[]): string[] {
   return signals.map(signal => 
     typeof signal === 'string' ? signal : signal.id
   );

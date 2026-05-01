@@ -18,6 +18,7 @@ import {
   extractApifyFirmographics,
   normalizeLinkedInCompanyUrl,
 } from '@/lib/my-company-enrichment';
+import { resolveFundingStage } from '@/lib/company-monitor/funding';
 import { resolveCompanyTaxonomy } from '@/lib/company-monitor/taxonomy';
 
 function normalizeDomain(value?: string | null): string | null {
@@ -61,6 +62,9 @@ export type TargetCompanyEnrichmentResult = {
   value_propositions: string[] | null;
   competitors_enriched: { name: string; url?: string }[] | null;
   company_status: string | null;
+  funding_status_label: string | null;
+  funding_resolution_summary: string | null;
+  funding_data_source: 'apollo' | 'web_search' | null;
   arr_estimate: string | null;
 
   // Firmographics (Apollo / Apify)
@@ -70,6 +74,7 @@ export type TargetCompanyEnrichmentResult = {
   founded_year: number | null;
   funding_stage: string | null;
   total_funding_usd: number | null;
+  latest_funding_date: string | null;
   hq_city: string | null;
   hq_country: string | null;
   industry: string | null;
@@ -139,6 +144,20 @@ export async function enrichTargetCompany(
     typeof narrative.company_name === 'string' ? narrative.company_name :
     typeof apollo.company_name === 'string' ? apollo.company_name : '';
 
+  let funding: Awaited<ReturnType<typeof resolveFundingStage>> | null = null;
+  if (companyName || domain) {
+    funding = await resolveFundingStage({
+      company_name: companyName || domain || website,
+      domain,
+      apollo_funding_stage: typeof apollo.company_funding_stage === 'string' ? apollo.company_funding_stage : null,
+      apollo_total_funding_usd: typeof apollo.company_total_funding_usd === 'number' ? apollo.company_total_funding_usd : null,
+      apollo_latest_funding_date: typeof apollo.company_latest_funding_date === 'string' ? apollo.company_latest_funding_date : null,
+    }).catch((err: unknown) => {
+      console.error('[target-company-enrichment] Funding resolution failed:', err);
+      return null;
+    });
+  }
+
   let taxonomy: Awaited<ReturnType<typeof resolveCompanyTaxonomy>> | null = null;
   if (companyName || domain) {
     console.log('[target-company-enrichment] Running taxonomy for', companyName || domain);
@@ -188,14 +207,18 @@ export async function enrichTargetCompany(
       ? narrative.competitors_enriched as { name: string; url?: string }[]
       : null,
     company_status: typeof narrative.company_status === 'string' ? narrative.company_status : null,
+    funding_status_label: funding?.funding_status_label ?? null,
+    funding_resolution_summary: funding?.raw_finding ?? null,
+    funding_data_source: funding?.source ?? null,
     arr_estimate: typeof narrative.arr_estimate === 'string' ? narrative.arr_estimate : null,
 
     employee_count: apollo.company_employee_count ?? apify.employee_count ?? null,
     employee_range: apify.employee_range ?? null,
     follower_count: apify.follower_count ?? null,
     founded_year: apollo.company_founded_year ?? apify.founded_year ?? null,
-    funding_stage: apollo.company_funding_stage ?? null,
-    total_funding_usd: apollo.company_total_funding_usd ?? null,
+    funding_stage: funding?.funding_stage ?? apollo.company_funding_stage ?? null,
+    total_funding_usd: funding?.total_funding_usd ?? apollo.company_total_funding_usd ?? null,
+    latest_funding_date: funding?.latest_funding_date ?? apollo.company_latest_funding_date ?? null,
     hq_city: apollo.company_hq_city ?? apify.hq_city ?? null,
     hq_country: apollo.company_hq_country ?? apify.hq_country ?? null,
     industry: apollo.company_industry ?? apify.industry ?? null,

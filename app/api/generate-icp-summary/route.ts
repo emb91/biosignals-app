@@ -62,20 +62,23 @@ ${contextLines.join('\n')}
 Write exactly 1 sentence that describes the ICP archetype, not the specific reference company.
 
 Rules:
-- Start with "This ICP is for"
-- Do not use the reference company name
+- Start exactly with "This ICP defines"
+- Do not ever mention the reference company
+- Do not ever mention the reference company name, website, domain, product names, or branded terms
 - Do not say "example company" or "reference company"
-- Make it sound polished and commercially clear
-- Focus on what kind of company this profile represents and what it does
+- Do not restate or summarize the reference company's specific product or tagline — derive the archetype from company type, modalities, therapeutic focus, customer segments, and size
+- Avoid promotional phrasing like "powered by", "leading", "innovative", or similar positioning language
+- Focus on plainly defining what kind of company this ICP represents
 - If useful, include modality, therapeutic area, or commercial context
 - Keep it under 28 words
+- If you are about to mention the underlying company in any way, rewrite the sentence to stay generic
 - Output only the sentence`;
 
     const message = await anthropic.messages.create({
       model: 'claude-haiku-4-5',
       max_tokens: 80,
       temperature: 0.3,
-      system: 'Output only the requested sentence.',
+      system: 'Output only the requested sentence. Never mention the underlying company. Start exactly with "This ICP defines". Avoid promotional phrasing like "powered by".',
       messages: [{ role: 'user', content: prompt }],
     });
 

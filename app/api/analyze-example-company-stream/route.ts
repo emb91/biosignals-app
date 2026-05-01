@@ -19,6 +19,7 @@ import {
   extractApifyFirmographics,
   normalizeLinkedInCompanyUrl,
 } from '@/lib/my-company-enrichment';
+import { resolveFundingStage } from '@/lib/company-monitor/funding';
 import { resolveCompanyTaxonomy } from '@/lib/company-monitor/taxonomy';
 import { encodeSSEEvent, SSE_HEADERS } from '@/lib/sse';
 import type { TargetCompanyEnrichmentResult } from '@/lib/target-company-enrichment';
@@ -112,6 +113,20 @@ export async function POST(request: Request) {
           typeof narrative.company_name === 'string' ? narrative.company_name :
           typeof apollo.company_name === 'string' ? apollo.company_name : '';
 
+        let funding: Awaited<ReturnType<typeof resolveFundingStage>> | null = null;
+        if (companyName || domain) {
+          funding = await resolveFundingStage({
+            company_name: companyName || domain || website,
+            domain,
+            apollo_funding_stage: typeof apollo.company_funding_stage === 'string' ? apollo.company_funding_stage : null,
+            apollo_total_funding_usd: typeof apollo.company_total_funding_usd === 'number' ? apollo.company_total_funding_usd : null,
+            apollo_latest_funding_date: typeof apollo.company_latest_funding_date === 'string' ? apollo.company_latest_funding_date : null,
+          }).catch((err: unknown) => {
+            console.error('[analyze-example-company-stream] Funding resolution failed:', err);
+            return null;
+          });
+        }
+
         let taxonomy: Awaited<ReturnType<typeof resolveCompanyTaxonomy>> | null = null;
         if (companyName || domain) {
           taxonomy = await resolveCompanyTaxonomy({
@@ -171,14 +186,18 @@ export async function POST(request: Request) {
             ? narrative.competitors_enriched as { name: string; url?: string }[]
             : null,
           company_status: typeof narrative.company_status === 'string' ? narrative.company_status : null,
+          funding_status_label: funding?.funding_status_label ?? null,
+          funding_resolution_summary: funding?.raw_finding ?? null,
+          funding_data_source: funding?.source ?? null,
           arr_estimate: typeof narrative.arr_estimate === 'string' ? narrative.arr_estimate : null,
 
           employee_count: (apollo.company_employee_count as number | null) ?? apify.employee_count ?? null,
           employee_range: apify.employee_range ?? null,
           follower_count: apify.follower_count ?? null,
           founded_year: (apollo.company_founded_year as number | null) ?? apify.founded_year ?? null,
-          funding_stage: (apollo.company_funding_stage as string | null) ?? null,
-          total_funding_usd: (apollo.company_total_funding_usd as number | null) ?? null,
+          funding_stage: funding?.funding_stage ?? (apollo.company_funding_stage as string | null) ?? null,
+          total_funding_usd: funding?.total_funding_usd ?? (apollo.company_total_funding_usd as number | null) ?? null,
+          latest_funding_date: funding?.latest_funding_date ?? (apollo.company_latest_funding_date as string | null) ?? null,
           hq_city: (apollo.company_hq_city as string | null) ?? apify.hq_city ?? null,
           hq_country: (apollo.company_hq_country as string | null) ?? apify.hq_country ?? null,
           industry: (apollo.company_industry as string | null) ?? apify.industry ?? null,
