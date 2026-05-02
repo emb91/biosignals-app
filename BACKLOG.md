@@ -1,5 +1,17 @@
 # Arcova Backlog
 
+## Accounts window (Phase 2 — upsell / new data motion)
+
+The Accounts page is a separate product motion from Leads. Rather than "work what you have", it's "here are your best-fit companies — do you have the right coverage?"
+
+- Rank all enriched companies by ICP company fit score, regardless of whether contacts exist.
+- For companies where contacts exist, show how many and a summary contact fit indicator.
+- For companies where no contacts (or no good-fit contacts) exist, surface a prominent gap — "0 contacts" or "no contacts matching your buying team profile".
+- The "Enrich" / "Find contacts" CTA on a coverage gap is the paid upsell moment: this is how Arcova sells new data to users who believe their CRM data is already fine.
+- Key insight from customer research: prospects say "I have 14,000 contacts in HubSpot, my data is fine" — but when shown a ranked list of perfect-fit companies they have zero coverage on, the gap becomes undeniable.
+- This is a product-led growth mechanic: the value is visible before the purchase.
+- Do not build this as a filter on the Leads page — it is a distinct mode of working and deserves its own window.
+
 ## Post-MVP integrations
 
 - HubSpot connector

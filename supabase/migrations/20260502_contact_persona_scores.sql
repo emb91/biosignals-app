@@ -16,6 +16,7 @@ create table if not exists public.contact_persona_scores (
 
 alter table public.contacts
   add column if not exists scored_against_persona_id uuid references public.personas(id) on delete set null,
+  add column if not exists contact_fit_score double precision,
   add column if not exists contact_fit_breakdown jsonb,
   add column if not exists contact_fit_coverage double precision,
   add column if not exists contact_fit_scored_at timestamp with time zone,

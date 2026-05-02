@@ -6,7 +6,7 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard,
   Target,
-
+  Building2,
   Radio,
   FileUp,
   Users,
@@ -33,6 +33,7 @@ const topNavigation: NavItem[] = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Import', href: '/import', icon: FileUp },
   { name: 'Signals', href: '/customer-signals', icon: Radio },
+  { name: 'Accounts', href: '/accounts', icon: Building2 },
   { name: 'Leads', href: '/results', icon: Users },
 ];
 

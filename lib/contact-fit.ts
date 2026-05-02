@@ -27,6 +27,8 @@ type ContactScoreRow = {
   headline: string | null;
   seniority_level: string | null;
   business_area: string | null;
+  fit_score: number | null;
+  intent_score: number | null;
 };
 
 type PersonaScoreRow = {
@@ -457,7 +459,7 @@ async function loadContactsById(
 ): Promise<ContactScoreRow[]> {
   const { data, error } = await supabase
     .from('contacts')
-    .select('id, user_id, company_id, full_name, job_title, job_title_standardised, headline, seniority_level, business_area')
+    .select('id, user_id, company_id, full_name, job_title, job_title_standardised, headline, seniority_level, business_area, fit_score, intent_score')
     .eq('user_id', userId)
     .in('id', contactIds);
 
@@ -490,15 +492,18 @@ async function loadExistingScores(
 async function clearContactFit(
   supabase: MinimalSupabase,
   userId: string,
-  contactId: string,
+  contact: ContactScoreRow,
 ): Promise<void> {
   const now = new Date().toISOString();
+  const companyFit = contact.fit_score ?? 0;
+  const intent = contact.intent_score ?? 1;
+  const priorityScore = Math.round(companyFit * 0.5 * intent * 1000) / 1000;
 
   const deleteResult = await supabase
     .from('contact_persona_scores')
     .delete()
     .eq('user_id', userId)
-    .eq('contact_id', contactId);
+    .eq('contact_id', contact.id);
 
   if (deleteResult.error) throw deleteResult.error;
 
@@ -511,10 +516,11 @@ async function clearContactFit(
       contact_fit_coverage: null,
       contact_fit_scored_at: now,
       contact_fit_version: SCORE_VERSION,
+      priority_score: priorityScore,
       updated_at: now,
     })
     .eq('user_id', userId)
-    .eq('id', contactId);
+    .eq('id', contact.id);
 
   if (updateResult.error) throw updateResult.error;
 }
@@ -562,15 +568,21 @@ async function persistScoresForContact(
     if (deleteResult.error) throw deleteResult.error;
   }
 
+  const newContactFit = winner?.finalScore01 ?? 0;
+  const companyFit = contact.fit_score ?? 0;
+  const intent = contact.intent_score ?? 1;
+  const priorityScore = Math.round(companyFit * (0.5 + 0.5 * newContactFit) * intent * 1000) / 1000;
+
   const updateResult = await supabase
     .from('contacts')
     .update({
       scored_against_persona_id: winner?.personaId ?? null,
-      contact_fit_score: winner?.finalScore01 ?? 0,
+      contact_fit_score: newContactFit,
       contact_fit_breakdown: winner?.breakdown ?? null,
       contact_fit_coverage: winner?.coverage01 ?? null,
       contact_fit_scored_at: now,
       contact_fit_version: SCORE_VERSION,
+      priority_score: priorityScore,
       updated_at: now,
     })
     .eq('user_id', userId)
@@ -610,7 +622,7 @@ export async function syncContactFitForContacts(
 
     try {
       if (personas.length === 0) {
-        await clearContactFit(supabase, userId, contact.id);
+        await clearContactFit(supabase, userId, contact);
         result.contactsScored += 1;
         continue;
       }

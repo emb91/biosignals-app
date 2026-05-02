@@ -19,6 +19,7 @@ create table if not exists public.company_icp_scores (
 
 alter table public.companies
   add column if not exists matched_icp_id uuid references public.icps(id) on delete set null,
+  add column if not exists company_fit_score double precision,
   add column if not exists company_fit_breakdown jsonb,
   add column if not exists company_fit_coverage double precision,
   add column if not exists company_fit_scored_at timestamp with time zone,

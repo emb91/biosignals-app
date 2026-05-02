@@ -2,7 +2,7 @@
 
 import { useAuth } from '@/context/AuthContext';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { ArcovaLoader } from '@/components/ArcovaLoader';
 import { CONTACT_SIGNALS, isContactSignalComingSoon } from '@/lib/signals/catalog';
@@ -573,6 +573,10 @@ export default function LeadsPage() {
   );
   const [companyFitByCompanyId, setCompanyFitByCompanyId] = useState<Record<string, CompanyFitFetchState>>({});
   const [contactFitByContactId, setContactFitByContactId] = useState<Record<string, ContactFitFetchState>>({});
+  const companyFitCacheRef = useRef(companyFitByCompanyId);
+  companyFitCacheRef.current = companyFitByCompanyId;
+  const contactFitCacheRef = useRef(contactFitByContactId);
+  contactFitCacheRef.current = contactFitByContactId;
   const [showPremiumAddonNotice, setShowPremiumAddonNotice] = useState(false);
   const [enrichmentVisuals, setEnrichmentVisuals] = useState<Record<string, EnrichmentVisualState>>({});
   const [progressNow, setProgressNow] = useState(() => Date.now());
@@ -915,9 +919,9 @@ export default function LeadsPage() {
   const isRefreshingSelected = selectedLead ? refreshingLeadId === selectedLead.id : false;
 
   useEffect(() => {
-    if (selectedPreview !== 'company' || !selectedCompanyId) return;
+    if ((selectedPreview !== 'company' && selectedPreview !== 'scoring') || !selectedCompanyId) return;
 
-    const cached = companyFitByCompanyId[selectedCompanyId];
+    const cached = companyFitCacheRef.current[selectedCompanyId];
     const shouldRefreshForScoreMismatch =
       cached?.data &&
       typeof cached.data.company_fit_score === 'number' &&
@@ -978,12 +982,12 @@ export default function LeadsPage() {
     return () => {
       cancelled = true;
     };
-  }, [companyFitByCompanyId, selectedCompanyId, selectedLead?.fit_score, selectedPreview]);
+  }, [selectedCompanyId, selectedLead?.fit_score, selectedPreview]);
 
   useEffect(() => {
-    if (selectedPreview !== 'contact' || !selectedLeadId) return;
+    if ((selectedPreview !== 'contact' && selectedPreview !== 'scoring') || !selectedLeadId) return;
 
-    const cached = contactFitByContactId[selectedLeadId];
+    const cached = contactFitCacheRef.current[selectedLeadId];
     if (cached) {
       return;
     }
@@ -1038,7 +1042,7 @@ export default function LeadsPage() {
     return () => {
       cancelled = true;
     };
-  }, [contactFitByContactId, selectedLeadId, selectedPreview]);
+  }, [selectedLeadId, selectedPreview]);
 
   if (loading) {
     return (
@@ -1239,7 +1243,6 @@ export default function LeadsPage() {
                                 lead.resolved_current_company_name ||
                                 lead.company_name ||
                                 '—';
-                              const bestMatchLabel = getBestMatchLabel(lead);
                               const truncated = name.length > 30 ? name.slice(0, 30) + '…' : name;
                               const domain = companyFirmographics?.domain || lead.company_domain;
                               const href = companyFirmographics?.website || (domain ? `https://${domain}` : null);
@@ -1250,24 +1253,10 @@ export default function LeadsPage() {
                                     className="text-sm text-arcova-teal hover:underline truncate max-w-full inline-block">
                                     {truncated}
                                   </a>
-                                  {bestMatchLabel && (
-                                    <div className="mt-1 flex flex-wrap gap-1.5">
-                                      <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal">
-                                        {bestMatchLabel}
-                                      </span>
-                                    </div>
-                                  )}
                                 </div>
                               ) : (
                                 <div className="min-w-0">
                                   <p className="text-sm text-gray-700 truncate">{truncated}</p>
-                                  {bestMatchLabel && (
-                                    <div className="mt-1 flex flex-wrap gap-1.5">
-                                      <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal">
-                                        {bestMatchLabel}
-                                      </span>
-                                    </div>
-                                  )}
                                 </div>
                               );
                             })()}
@@ -1387,41 +1376,6 @@ export default function LeadsPage() {
                               {selectedLead.headline}
                             </p>
                           )}
-                          {selectedPreview === 'contact' && (() => {
-                            const contactFitLabel = formatPercent(selectedContactFit?.contact_fit_score);
-                            const contactCoverageLabel = formatCoverage(selectedContactFit?.contact_fit_coverage);
-                            const personaName = selectedContactFit?.matched_persona_name;
-                            const icpName = selectedContactFit?.matched_icp_name;
-
-                            if (!contactFitLabel && !contactCoverageLabel && !personaName && !icpName) {
-                              return null;
-                            }
-
-                            return (
-                              <div className="mt-2 flex flex-wrap gap-1.5">
-                                {personaName && (
-                                  <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2.5 py-0.5 text-xs font-medium text-arcova-teal">
-                                    Buying team: {personaName}
-                                  </span>
-                                )}
-                                {icpName && (
-                                  <span className="inline-flex items-center rounded-full bg-white px-2.5 py-0.5 text-xs font-medium text-slate-500 ring-1 ring-slate-200">
-                                    ICP: {icpName}
-                                  </span>
-                                )}
-                                {contactFitLabel && (
-                                  <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
-                                    {contactFitLabel}
-                                  </span>
-                                )}
-                                {contactCoverageLabel && (
-                                  <span className="inline-flex items-center rounded-full bg-white px-2.5 py-0.5 text-xs font-medium text-slate-500 ring-1 ring-slate-200">
-                                    {contactCoverageLabel}
-                                  </span>
-                                )}
-                              </div>
-                            );
-                          })()}
                           {selectedPreview === 'company' && (() => {
                             const domain =
                               selectedCompanyFirmographics?.domain ||
@@ -1468,18 +1422,22 @@ export default function LeadsPage() {
                             <div className="mt-1 space-y-2">
                               <h2 className="text-lg font-semibold text-gray-900">Priority score</h2>
                               <div className="flex flex-wrap gap-1.5">
-                                <span className="inline-flex items-center rounded-full bg-arcova-teal px-2.5 py-0.5 text-xs font-medium text-white">
-                                  81%
-                                </span>
+                                {typeof selectedLead.priority_score === 'number' && (
+                                  <span className="inline-flex items-center rounded-full bg-arcova-teal px-2.5 py-0.5 text-xs font-medium text-white">
+                                    {formatPercentValue(selectedLead.priority_score)}
+                                  </span>
+                                )}
                                 {formatPercent(selectedLead.fit_score) && (
                                   <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2.5 py-0.5 text-xs font-medium text-arcova-teal">
                                     Company fit {formatPercentValue(selectedLead.fit_score)}
                                   </span>
                                 )}
+                                {selectedContactFit && typeof selectedContactFit.contact_fit_score === 'number' && (
+                                  <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2.5 py-0.5 text-xs font-medium text-arcova-teal">
+                                    Contact fit {formatPercentValue(selectedContactFit.contact_fit_score)}
+                                  </span>
+                                )}
                               </div>
-                              <p className="text-sm text-gray-500 leading-snug">
-                                This lead ranks strongly because the company looks close to the active ICP and the contact appears senior enough to own the evaluation process.
-                              </p>
                             </div>
                           )}
                         </div>
@@ -1569,193 +1527,6 @@ export default function LeadsPage() {
                           ) : (
                             /* ── View mode ── */
                             <div className="space-y-5">
-                              <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
-                                <button
-                                  type="button"
-                                  onClick={() => setContactPanelOpen((s) => ({ ...s, fit: !s.fit }))}
-                                  className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100/60 transition-colors"
-                                >
-                                  <span className="text-xs font-semibold text-gray-700">Contact fit</span>
-                                  <ChevronDown
-                                    className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 ${
-                                      contactPanelOpen.fit ? '' : '-rotate-90'
-                                    }`}
-                                  />
-                                </button>
-                                {contactPanelOpen.fit && (
-                                  <div className="px-3 pb-3 space-y-3">
-                                    {selectedContactFitState?.loading ? (
-                                      <p className="text-xs text-gray-400">Loading contact-fit breakdown…</p>
-                                    ) : selectedContactFitState?.error ? (
-                                      <p className="text-xs text-red-500">{selectedContactFitState.error}</p>
-                                    ) : selectedContactFit?.winning_breakdown ? (
-                                      (() => {
-                                        const fitBreakdown = selectedContactFit.winning_breakdown;
-                                        const contactFitLabel = formatPercent(selectedContactFit.contact_fit_score);
-                                        const contactCoverageLabel = formatCoverage(selectedContactFit.contact_fit_coverage);
-                                        const alternatePersonaScores = selectedContactFit.persona_scores
-                                          .filter((score) => score.persona_id !== selectedContactFit.scored_against_persona_id)
-                                          .slice(0, 3);
-
-                                        return (
-                                          <>
-                                            <div className="flex flex-wrap gap-1.5">
-                                              {selectedContactFit.matched_persona_name && (
-                                                <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2.5 py-0.5 text-xs font-medium text-arcova-teal">
-                                                  Buying team: {selectedContactFit.matched_persona_name}
-                                                </span>
-                                              )}
-                                              {selectedContactFit.matched_icp_name && (
-                                                <span className="inline-flex items-center rounded-full bg-white px-2.5 py-0.5 text-xs font-medium text-slate-500 ring-1 ring-slate-200">
-                                                  ICP: {selectedContactFit.matched_icp_name}
-                                                </span>
-                                              )}
-                                              {contactFitLabel && (
-                                                <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
-                                                  {contactFitLabel}
-                                                </span>
-                                              )}
-                                              {contactCoverageLabel && (
-                                                <span className="inline-flex items-center rounded-full bg-white px-2.5 py-0.5 text-xs font-medium text-slate-500 ring-1 ring-slate-200">
-                                                  {contactCoverageLabel}
-                                                </span>
-                                              )}
-                                            </div>
-
-                                            <p className="text-sm text-gray-700 leading-relaxed">
-                                              {fitBreakdown.summary.reasoning}
-                                            </p>
-
-                                            {selectedContactFitState?.message && (
-                                              <p className="text-xs text-amber-700">{selectedContactFitState.message}</p>
-                                            )}
-
-                                            {fitBreakdown.matched_on.length > 0 && (
-                                              <div>
-                                                <p className="text-gray-400 text-xs mb-1">Matched on</p>
-                                                <div className="flex flex-wrap gap-1.5">
-                                                  {fitBreakdown.matched_on.map((value) => (
-                                                    <span
-                                                      key={value}
-                                                      className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700"
-                                                    >
-                                                      {value}
-                                                    </span>
-                                                  ))}
-                                                </div>
-                                              </div>
-                                            )}
-
-                                            {fitBreakdown.gaps.length > 0 && (
-                                              <div>
-                                                <p className="text-gray-400 text-xs mb-1">Lower-scoring areas</p>
-                                                <div className="flex flex-wrap gap-1.5">
-                                                  {fitBreakdown.gaps.map((value) => (
-                                                    <span
-                                                      key={value}
-                                                      className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600"
-                                                    >
-                                                      {value}
-                                                    </span>
-                                                  ))}
-                                                </div>
-                                              </div>
-                                            )}
-
-                                            <div className="space-y-2">
-                                              {CONTACT_FIT_COMPONENT_ORDER.map((key) => {
-                                                const component = fitBreakdown.components[key];
-                                                if (!component?.active) return null;
-
-                                                const componentPercent = formatPercentValue(component.score01);
-
-                                                return (
-                                                  <div key={key} className="rounded-lg bg-white px-3 py-2 ring-1 ring-slate-200">
-                                                    <div className="flex items-center justify-between gap-3">
-                                                      <div className="min-w-0">
-                                                        <p className="text-sm font-medium text-gray-900">
-                                                          {component.label}
-                                                        </p>
-                                                        {component.matchedValue && (
-                                                          <p className="text-[11px] text-gray-400">
-                                                            Closest match: {component.matchedValue}
-                                                          </p>
-                                                        )}
-                                                      </div>
-                                                      {componentPercent && (
-                                                        <span className="text-xs font-medium text-slate-600">
-                                                          {componentPercent}
-                                                        </span>
-                                                      )}
-                                                    </div>
-                                                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200">
-                                                      <div
-                                                        className={`h-full rounded-full ${
-                                                          component.available
-                                                            ? 'bg-arcova-teal'
-                                                            : 'bg-slate-300'
-                                                        }`}
-                                                        style={{ width: `${Math.max(0, Math.min(100, Math.round(component.score01 * 100)))}%` }}
-                                                      />
-                                                    </div>
-                                                    <p className="mt-2 text-[11px] leading-relaxed text-gray-500">
-                                                      {component.detail}
-                                                    </p>
-                                                  </div>
-                                                );
-                                              })}
-                                            </div>
-
-                                            {alternatePersonaScores.length > 0 && (
-                                              <div>
-                                                <p className="text-gray-400 text-xs mb-1.5">Other persona comparisons</p>
-                                                <div className="space-y-1.5">
-                                                  {alternatePersonaScores.map((score) => (
-                                                    <div
-                                                      key={score.persona_id}
-                                                      className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-2 ring-1 ring-slate-200"
-                                                    >
-                                                      <div className="min-w-0">
-                                                        <p className="truncate text-xs font-medium text-gray-800">
-                                                          {score.persona_name || 'Untitled persona'}
-                                                        </p>
-                                                        {score.icp_name && (
-                                                          <p className="text-[11px] text-gray-400">
-                                                            {score.icp_name}
-                                                          </p>
-                                                        )}
-                                                      </div>
-                                                      <div className="flex flex-wrap justify-end gap-1.5">
-                                                        {formatCoverage(score.coverage) && (
-                                                          <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">
-                                                            {formatCoverage(score.coverage)}
-                                                          </span>
-                                                        )}
-                                                        {formatPercent(score.final_score) && (
-                                                          <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
-                                                            {formatPercent(score.final_score)}
-                                                          </span>
-                                                        )}
-                                                      </div>
-                                                    </div>
-                                                  ))}
-                                                </div>
-                                              </div>
-                                            )}
-                                          </>
-                                        );
-                                      })()
-                                    ) : selectedContactFitState?.message ? (
-                                      <p className="text-xs text-amber-700">{selectedContactFitState.message}</p>
-                                    ) : (
-                                      <p className="text-xs text-gray-400 italic">
-                                        Contact fit will appear here once persona scoring has run for this lead.
-                                      </p>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-
                               {selectedLead.contact_bio && selectedLead.contact_bio.length > 0 && (
                                 <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
                                   <button
@@ -2515,57 +2286,109 @@ export default function LeadsPage() {
                             );
                           })()
                         ) : (
-                          <div className="space-y-4">
-                            <div className="rounded-xl border border-arcova-teal/15 bg-arcova-teal/5 p-4">
-                              <p className="text-xs font-semibold uppercase tracking-wide text-arcova-teal">
-                                Priority score
-                              </p>
-                              <div className="mt-2 flex items-end justify-between gap-3">
-                                <p className="text-3xl font-semibold text-gray-900">81%</p>
-                                <span className="inline-flex items-center rounded-full bg-white px-2.5 py-0.5 text-xs font-medium text-arcova-teal ring-1 ring-arcova-teal/15">
-                                  High priority
-                                </span>
+                          /* ── Scoring view ── */
+                          <div className="space-y-3">
+
+                            {/* Priority score */}
+                            {typeof selectedLead.priority_score === 'number' && (
+                              <div className="rounded-xl border border-arcova-teal/15 bg-arcova-teal/5 p-4">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-arcova-teal">Priority score</p>
+                                <p className="mt-2 text-3xl font-semibold text-gray-900">
+                                  {formatPercentValue(selectedLead.priority_score)}
+                                </p>
                               </div>
-                              <p className="mt-2 text-sm leading-relaxed text-gray-600">
-                                Priority blends company fit, contact fit, and recency signals into one ranking so reps can focus on the leads most likely to convert.
-                              </p>
-                            </div>
+                            )}
 
-                            <div className="rounded-xl border border-gray-100 bg-gray-50/70 p-4">
-                              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                Matched ICP
-                              </p>
-                              <p className="mt-2 text-sm font-medium text-gray-900">Series B digital health platforms selling into provider networks</p>
-                              <p className="mt-2 text-sm leading-relaxed text-gray-600">
-                                This ICP wins because the company profile suggests a scaled commercial motion, healthcare workflow complexity, and enough operational maturity to support a structured buying process.
-                              </p>
-                            </div>
-
-                            <div className="rounded-xl border border-gray-100 bg-gray-50/70 p-4">
-                              <div className="flex items-start justify-between gap-3">
-                                <div>
-                                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                    Company fit score
-                                  </p>
-                                  <p className="mt-2 text-sm font-medium text-gray-900">
-                                    {formatPercentValue(selectedLead.fit_score) || '74%'}
-                                  </p>
+                            {/* Per-ICP company fit scores */}
+                            {selectedCompanyFitState?.loading ? (
+                              <p className="text-xs text-gray-400 px-1">Loading ICP scores…</p>
+                            ) : selectedCompanyFit?.icp_scores?.length ? (
+                              <div className="space-y-2">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 px-1">ICP fit scores</p>
+                                {selectedCompanyFit.icp_scores.map((score) => (
+                                  <div
+                                    key={score.icp_id}
+                                    className={`rounded-xl border p-3 ${
+                                      score.icp_id === selectedCompanyFit.matched_icp_id
+                                        ? 'border-arcova-teal/20 bg-arcova-teal/5'
+                                        : 'border-gray-100 bg-gray-50/70'
+                                    }`}
+                                  >
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div className="min-w-0">
+                                        <p className="text-sm font-medium text-gray-900 truncate">
+                                          {score.icp_name || 'Unnamed ICP'}
+                                        </p>
+                                        {score.company_type_match_status && (
+                                          <p className="mt-0.5 text-[11px] text-gray-400">
+                                            {formatMatchStatus(score.company_type_match_status)}
+                                          </p>
+                                        )}
+                                      </div>
+                                      <div className="flex flex-wrap justify-end gap-1.5 shrink-0">
+                                        {score.icp_id === selectedCompanyFit.matched_icp_id && (
+                                          <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal">
+                                            Best match
+                                          </span>
+                                        )}
+                                        {formatPercent(score.final_score) && (
+                                          <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
+                                            {formatPercent(score.final_score)}
+                                          </span>
+                                        )}
+                                        {formatCoverage(score.coverage) && (
+                                          <span className="inline-flex items-center rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-slate-500 ring-1 ring-slate-200">
+                                            {formatCoverage(score.coverage)}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : selectedLead.fit_score != null ? (
+                              <div className="rounded-xl border border-gray-100 bg-gray-50/70 p-3">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Company fit</p>
+                                <div className="mt-1.5 flex items-center gap-2">
+                                  <p className="text-sm font-medium text-gray-900">{formatPercentValue(selectedLead.fit_score)}</p>
+                                  {selectedLead.matched_icp_name && (
+                                    <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal">
+                                      {selectedLead.matched_icp_name}
+                                    </span>
+                                  )}
                                 </div>
                               </div>
-                              <p className="mt-2 text-sm leading-relaxed text-gray-600">
-                                Company fit is strong because the business appears to sit in the right market category, has enough scale to justify workflow tooling, and shows signals of active growth. The score is held back slightly because the funding and segment data are not fully confirmed.
-                              </p>
-                            </div>
+                            ) : null}
 
-                            <div className="rounded-xl border border-gray-100 bg-gray-50/70 p-4">
-                              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                Contact fit score
-                              </p>
-                              <p className="mt-2 text-sm font-medium text-gray-900">88%</p>
-                              <p className="mt-2 text-sm leading-relaxed text-gray-600">
-                                Contact fit is very high because the title suggests direct ownership of the problem area, the seniority is appropriate for evaluation, and the profile reads like someone who can influence both budget and implementation.
-                              </p>
-                            </div>
+                            {/* Contact fit */}
+                            {selectedContactFitState?.loading ? (
+                              <p className="text-xs text-gray-400 px-1">Loading contact fit…</p>
+                            ) : selectedContactFit ? (
+                              <div className="rounded-xl border border-gray-100 bg-gray-50/70 p-3">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Contact fit</p>
+                                <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                                  <p className="text-sm font-medium text-gray-900">
+                                    {formatPercentValue(selectedContactFit.contact_fit_score) || '—'}
+                                  </p>
+                                  {selectedContactFit.matched_persona_name && (
+                                    <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal">
+                                      {selectedContactFit.matched_persona_name}
+                                    </span>
+                                  )}
+                                  {formatCoverage(selectedContactFit.contact_fit_coverage) && (
+                                    <span className="inline-flex items-center rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-slate-500 ring-1 ring-slate-200">
+                                      {formatCoverage(selectedContactFit.contact_fit_coverage)}
+                                    </span>
+                                  )}
+                                </div>
+                                {selectedContactFit.winning_breakdown?.summary.reasoning && (
+                                  <p className="mt-2 text-xs leading-relaxed text-gray-500">
+                                    {selectedContactFit.winning_breakdown.summary.reasoning}
+                                  </p>
+                                )}
+                              </div>
+                            ) : null}
+
                           </div>
                         )}
                       </div>
