@@ -14,6 +14,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     const {
       companyType,
+      platformCategory,
       therapeuticAreas,
       modalities,
       developmentStages,
@@ -44,6 +45,7 @@ export async function POST(request: Request) {
       );
     }
     if (companyType) contextLines.push(`Company type: ${companyType}`);
+    if (platformCategory) contextLines.push(`Platform category: ${platformCategory}`);
     if (ownTherapeuticAreas.length) contextLines.push(`Own therapeutic areas: ${ownTherapeuticAreas.join(', ')}`);
     if (ownModalities.length) contextLines.push(`Own modalities: ${ownModalities.join(', ')}`);
     if (ownStages.length) contextLines.push(`Own development stages: ${ownStages.join(', ')}`);

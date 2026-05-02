@@ -56,6 +56,10 @@ export const SIGNAL_DISPLAY_NAMES: Record<string, string> = {
   award_or_recognition: 'Award or recognition',
   patent_filed_or_granted: 'Patent filed or granted',
   team_actively_hiring: 'Team actively hiring',
+  attended_your_webinar_or_event_contact: 'Webinar or event attendee',
+  downloaded_your_content_contact: 'Downloaded content',
+  lapsed_customer_contact: 'Lapsed customer contact',
+  renewal_coming_up_contact: 'Renewal due',
 };
 
 const prettifySignalId = (signalId: string) =>

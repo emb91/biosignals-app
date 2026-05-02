@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { toast } from 'sonner';
 import {
   DndContext,
@@ -20,7 +20,6 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { getSignalDisplayName } from '@/lib/signal-display-names';
-import { getRandomLockedSignals, type LockedSignal } from '@/lib/locked-signals';
 import {
   COMPANY_SIZE_OPTIONS,
   LI_FOLLOWER_OPTIONS,
@@ -36,7 +35,6 @@ import {
 const EXPLICIT_DEVELOPMENT_STAGE_OPTIONS = DEVELOPMENT_STAGE_OPTIONS.filter(
   (stage) => stage !== 'All stages'
 );
-const CAL_BOOKING_URL = 'https://cal.com/emma-arcova/45-min-meeting';
 
 // --- Types ---
 
@@ -156,24 +154,6 @@ function normalizeDevelopmentStages(stages: string[] | undefined): string[] {
   return stages;
 }
 
-const ENGAGEMENT_LOCKED_SIGNAL_IDS = [
-  'attended_your_webinar_or_event',
-  'visited_your_website',
-  'downloaded_your_content',
-  'clicked_your_linkedin_ad',
-  'demo_requested',
-  'inbound_enquiry',
-];
-
-const CRM_LOCKED_SIGNAL_IDS = [
-  'previously_contacted_by_your_team',
-  'meeting_previously_booked',
-  'renewal_coming_up',
-  'lapsed_customer',
-  'open_opportunity_in_crm',
-  'responded_to_a_previous_outreach',
-];
-
 // --- Main Component ---
 
 export default function CompanyForm({ mode, initialData, onSave, onCancel }: CompanyFormProps) {
@@ -193,27 +173,7 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
   const [isAnalyzingCompany, setIsAnalyzingCompany] = useState(false);
   const [isLoadingSignals, setIsLoadingSignals] = useState(false);
   const [allSignals, setAllSignals] = useState<Signal[]>([]);
-  const [lockedSignals] = useState<LockedSignal[]>(() => getRandomLockedSignals(undefined, 'company'));
-  const [lockedSignalModal, setLockedSignalModal] = useState<LockedSignal | null>(null);
   const [showAllSignals, setShowAllSignals] = useState(false);
-  const lockedSignalById = useMemo(
-    () => new Map(lockedSignals.map((signal) => [signal.id, signal])),
-    [lockedSignals]
-  );
-  const engagementLockedSignals = useMemo(
-    () =>
-      ENGAGEMENT_LOCKED_SIGNAL_IDS.map((id) => lockedSignalById.get(id)).filter(
-        (signal): signal is LockedSignal => Boolean(signal)
-      ),
-    [lockedSignalById]
-  );
-  const crmLockedSignals = useMemo(
-    () =>
-      CRM_LOCKED_SIGNAL_IDS.map((id) => lockedSignalById.get(id)).filter(
-        (signal): signal is LockedSignal => Boolean(signal)
-      ),
-    [lockedSignalById]
-  );
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -311,33 +271,6 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
         ? prev.signals.filter(id => id !== signalId)
         : [...prev.signals, signalId]
     }));
-  };
-
-  const handleLockedSignalClick = async (signal: LockedSignal) => {
-    setLockedSignalModal(signal);
-    try {
-      await fetch('/api/locked-signal-clicks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          signalId: signal.id,
-          signalName: signal.name,
-        }),
-      });
-    } catch {
-      // Intentionally silent background logging.
-    }
-  };
-
-  const getContactUsUrl = (_signal: LockedSignal) => {
-    const details = 'Company enterprise signal request';
-
-    const params = new URLSearchParams({
-      notes: details,
-      description: details,
-    });
-
-    return `${CAL_BOOKING_URL}?${params.toString()}`;
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -476,13 +409,11 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
       case 2: return formData.companySizes.length > 0 ? 'complete' : 'incomplete';
       case 3:
         return formData.therapeuticAreas.length > 0 ||
-          formData.modalities.length > 0 ||
-          formData.customerTherapeuticAreas.length > 0 ||
-          formData.customerModalities.length > 0
+          formData.modalities.length > 0
           ? 'complete'
           : 'incomplete';
       case 4:
-        return formData.developmentStages.length > 0 || formData.customerDevelopmentStages.length > 0
+        return formData.developmentStages.length > 0
           ? 'complete'
           : 'incomplete';
       case 5: return formData.fundingStages.length > 0 ? 'complete' : 'incomplete';
@@ -845,41 +776,6 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
                     )}
                   </div>
 
-                  <div>
-                    <div className="space-y-3">
-                      <div>
-                        <p className="text-xs text-[#9CA3AF] mb-2">Engagement signals</p>
-                        <div className="flex flex-wrap gap-2">
-                          {engagementLockedSignals.map((signal) => (
-                            <button
-                              key={signal.id}
-                              type="button"
-                              onClick={() => handleLockedSignalClick(signal)}
-                              className="px-3 py-1.5 rounded-full text-sm transition-colors bg-gray-100 text-gray-700 hover:bg-gray-200"
-                            >
-                              {getSignalDisplayName(signal.id, signal.name)}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      <div>
-                        <p className="text-xs text-[#9CA3AF] mb-2">CRM signals</p>
-                        <div className="flex flex-wrap gap-2">
-                          {crmLockedSignals.map((signal) => (
-                            <button
-                              key={signal.id}
-                              type="button"
-                              onClick={() => handleLockedSignalClick(signal)}
-                              className="px-3 py-1.5 rounded-full text-sm transition-colors bg-gray-100 text-gray-700 hover:bg-gray-200"
-                            >
-                              {getSignalDisplayName(signal.id, signal.name)}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
                   {/* See all signals toggle */}
                   <button
                     type="button"
@@ -900,7 +796,7 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
                   {/* All signals grouped by category (collapsible) */}
                   {showAllSignals && (
                     <div className="space-y-4 pt-2 border-t border-gray-200">
-                      {['Funding & Financial', 'Pipeline & Clinical', 'Hiring & Team', 'Corporate & Strategic'].map((category) => (
+                      {['Funding & Financial', 'Pipeline & Clinical', 'Hiring & Team', 'Corporate & Strategic', 'First-Party Engagement', 'CRM & Relationship'].map((category) => (
                         <div key={category}>
                           <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">{category}</h4>
                           <div className="flex flex-wrap gap-2">
@@ -1124,36 +1020,6 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
           </div>
         </form>
       </div>
-
-      {lockedSignalModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl p-8 max-w-md mx-4 text-center">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-2">
-              Unlock {lockedSignalModal.name}
-            </h2>
-            <p className="text-gray-600 mb-6">
-              This signal requires a custom integration with your tracking setup or CRM. Get in touch and we'll help you set it up.
-            </p>
-            <div className="flex flex-col gap-3 items-center">
-              <a
-                href={getContactUsUrl(lockedSignalModal)}
-                target="_blank"
-                rel="noreferrer"
-                className="w-full sm:w-auto px-6 py-2 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors"
-              >
-                Contact us
-              </a>
-              <button
-                type="button"
-                onClick={() => setLockedSignalModal(null)}
-                className="text-gray-500 hover:text-gray-700 text-sm"
-              >
-                Maybe later
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
     </div>
   );

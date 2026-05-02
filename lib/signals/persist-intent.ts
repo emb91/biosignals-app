@@ -4,10 +4,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import {
-  loadIcpSignalSelectionsDetailed,
-  loadPersonaSignalSelectionsDetailed,
-} from '@/lib/signals/selections';
+import { loadIcpSignalSelectionsDetailed } from '@/lib/signals/selections';
 import {
   computeCompanyIntent01,
   computePersonIntent01,
@@ -109,17 +106,6 @@ async function weightedIcpSelections(
   return (rows ?? []).map((r) => ({ signalId: r.signalId, weight: r.weight }));
 }
 
-async function weightedPersonaSelections(
-  supabase: DatabaseClient,
-  userId: string,
-  personaId: string | null
-): Promise<Array<{ signalId: string; weight: number }>> {
-  if (!personaId) return [];
-
-  const m = await loadPersonaSignalSelectionsDetailed(supabase, userId, [personaId]);
-  const rows = m.get(personaId);
-  return (rows ?? []).map((r) => ({ signalId: r.signalId, weight: r.weight }));
-}
 
 /** Recomputes companies.company_intent_score from sampled persona's ICP + company events only. */
 export async function persistCompanyIntentForCompanyRow(
@@ -182,11 +168,6 @@ export async function persistContactIntentScore(
   });
 
   const icpSelections = await weightedIcpSelections(supabase, userId, personaResolve.icpId);
-  const personaSelections = await weightedPersonaSelections(
-    supabase,
-    userId,
-    personaResolve.personaId ?? personaId ?? null
-  );
 
   let companyIntent01: number | null = null;
   if (companyId) {
@@ -199,7 +180,6 @@ export async function persistContactIntentScore(
 
   const contactEv = await listContactSignalEvents(supabase, userId, opts.contactId);
   const contactIntent01 = computePersonIntent01(
-    personaSelections,
     toSlim(contactEv as Record<string, unknown>[])
   );
 

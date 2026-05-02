@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState, useCallback } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { ArcovaLoader } from '@/components/ArcovaLoader';
-import { getSignalDisplayName } from '@/lib/signal-display-names';
+import { CONTACT_SIGNALS, isContactSignalComingSoon } from '@/lib/signals/catalog';
 import {
   Users,
   Search,
@@ -19,6 +19,7 @@ import {
   Link,
   Briefcase,
   RotateCw,
+  Sparkles,
 } from 'lucide-react';
 
 interface EmploymentHistoryItem {
@@ -32,6 +33,7 @@ interface EmploymentHistoryItem {
 interface CompanyFirmographics {
   name?: string | null;
   company_type?: string | null;
+  platform_category?: string | null;
   description?: string | null;
   bio_summary?: string | null;
   tagline?: string | null;
@@ -46,8 +48,13 @@ interface CompanyFirmographics {
   hq_city?: string | null;
   hq_country?: string | null;
   specialties?: string[] | null;
+  products_services?: string[] | null;
+  services?: string[] | null;
+  technologies?: string[] | null;
   linkedin_url?: string | null;
   funding_stage?: string | null;
+  funding_status_label?: string | null;
+  funding_resolution_summary?: string | null;
   total_funding_usd?: number | null;
   latest_funding_date?: string | null;
   therapeutic_areas?: string[] | null;
@@ -89,6 +96,7 @@ interface Lead {
   created_at: string;
   updated_at: string | null;
   company_id: string | null;
+  matched_icp_name: string | null;
   companies: {
     company_name: string | null;
     domain: string | null;
@@ -101,6 +109,7 @@ interface Lead {
     follower_count: number | null;
     company_type: string | null;
     company_type_display: string | null;
+    platform_category: string | null;
     funding_stage: string | null;
     funding_status_label: string | null;
     total_funding_usd: number | null;
@@ -111,6 +120,9 @@ interface Lead {
     headquarters_city: string | null;
     headquarters_country: string | null;
     specialties: string[] | null;
+    products_services: string[] | null;
+    services: string[] | null;
+    technologies: string[] | null;
     therapeutic_areas: string[] | null;
     modalities: string[] | null;
     development_stages: string[] | null;
@@ -119,15 +131,10 @@ interface Lead {
     employee_range: string | null;
     industry: string | null;
     latest_funding_date: string | null;
+    matched_icp_id: string | null;
     last_enriched_at: string | null;
   } | null;
 }
-
-type LeadInsightsModelScores = {
-  companyIntent01: number | null;
-  contactIntent01: number | null;
-  blendedIntent01: number | null;
-};
 
 type EditableLeadFields = {
   first_name: string;
@@ -172,6 +179,11 @@ const formatCurrencyShort = (amount: number | null | undefined): string => {
   }).format(amount);
 };
 
+const formatPercent = (value: number | null | undefined): string | null => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  return `${Math.round((value <= 1 ? value * 100 : value))}% fit`;
+};
+
 const getDisplayedCompanyFirmographics = (lead: Lead | null): CompanyFirmographics | null => {
   if (!lead) return null;
 
@@ -183,6 +195,7 @@ const getDisplayedCompanyFirmographics = (lead: Lead | null): CompanyFirmographi
   return {
     name: company?.company_name || lead.resolved_current_company_name || lead.company_name || null,
     company_type: company?.company_type || company?.company_type_display || null,
+    platform_category: company?.platform_category || null,
     description: company?.description || null,
     bio_summary: company?.bio_summary || null,
     tagline: company?.tagline || null,
@@ -197,8 +210,13 @@ const getDisplayedCompanyFirmographics = (lead: Lead | null): CompanyFirmographi
     hq_city: company?.headquarters_city || null,
     hq_country: company?.headquarters_country || null,
     specialties: company?.specialties || null,
+    products_services: company?.products_services || null,
+    services: company?.services || null,
+    technologies: company?.technologies || null,
     linkedin_url: company?.linkedin_url || lead.company_linkedin_url || null,
     funding_stage: company?.funding_stage || null,
+    funding_status_label: company?.funding_status_label || null,
+    funding_resolution_summary: company?.funding_resolution_summary || null,
     total_funding_usd: company?.total_funding_usd ?? null,
     latest_funding_date: company?.latest_funding_date || null,
     therapeutic_areas: company?.therapeutic_areas || null,
@@ -244,7 +262,7 @@ const renderTaxonomyPills = (values: string[] | null | undefined) => {
       {cleaned.map((value) => (
         <span
           key={value}
-          className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-1 text-xs font-medium text-arcova-teal"
+          className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2.5 py-0.5 text-xs font-medium text-arcova-teal"
         >
           {value}
         </span>
@@ -347,6 +365,8 @@ const getInterpolatedEnrichmentPercent = (
   return safeStart + (stage.ceiling - safeStart) * progress;
 };
 
+const REQUESTED_COMING_SOON_CONTACT_SIGNALS_KEY = 'biosignals_requested_contact_signals_v1';
+
 export default function LeadsPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
@@ -365,18 +385,65 @@ export default function LeadsPage() {
   const [refreshingLeadId, setRefreshingLeadId] = useState<string | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [selectedPreview, setSelectedPreview] = useState<'contact' | 'company'>('contact');
-  const [leadInsights, setLeadInsights] = useState<{
-    companyEvents: Array<Record<string, unknown>>;
-    contactEvents: Array<Record<string, unknown>>;
-    modelScores?: {
-      companyIntent01: number | null;
-      contactIntent01: number | null;
-      blendedIntent01: number | null;
-    };
-  } | null>(null);
   const [isWorkHistoryExpanded, setIsWorkHistoryExpanded] = useState(false);
+  const [companyPanelOpen, setCompanyPanelOpen] = useState<Record<string, boolean>>({
+    summary: true,
+    criteria: true,
+    funding: true,
+    products: true,
+    services: true,
+    technology: true,
+    firmographics: true,
+  });
+  const [contactPanelOpen, setContactPanelOpen] = useState({
+    about: true,
+    details: true,
+    workHistory: true,
+    signals: true,
+  });
+  const [requestedComingSoonContactSignals, setRequestedComingSoonContactSignals] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [showPremiumAddonNotice, setShowPremiumAddonNotice] = useState(false);
   const [enrichmentVisuals, setEnrichmentVisuals] = useState<Record<string, EnrichmentVisualState>>({});
   const [progressNow, setProgressNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(REQUESTED_COMING_SOON_CONTACT_SIGNALS_KEY);
+      if (!raw) return;
+      const ids = JSON.parse(raw) as unknown;
+      if (!Array.isArray(ids)) return;
+      setRequestedComingSoonContactSignals(
+        new Set(ids.filter((id): id is string => typeof id === 'string')),
+      );
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    setShowPremiumAddonNotice(false);
+  }, [selectedLeadId]);
+
+  const toggleComingSoonContactSignalInterest = useCallback((signalId: string) => {
+    setRequestedComingSoonContactSignals((prev) => {
+      const next = new Set(prev);
+      const adding = !next.has(signalId);
+      if (adding) {
+        next.add(signalId);
+        queueMicrotask(() => setShowPremiumAddonNotice(true));
+      } else {
+        next.delete(signalId);
+      }
+      try {
+        localStorage.setItem(REQUESTED_COMING_SOON_CONTACT_SIGNALS_KEY, JSON.stringify([...next]));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (!loading && !user) router.push('/login');
@@ -422,39 +489,6 @@ export default function LeadsPage() {
       setSelectedPreview('contact');
     }
   }, [searchParams, leads]);
-
-  useEffect(() => {
-    if (!user) return;
-    if (!selectedLeadId) {
-      setLeadInsights(null);
-      return;
-    }
-
-    let cancelled = false;
-
-    fetch(`/api/leads/${selectedLeadId}/insights`)
-      .then(async (res) => {
-        if (!res.ok) return null;
-        return res.json() as Promise<{
-          companyEvents?: Array<Record<string, unknown>>;
-          contactEvents?: Array<Record<string, unknown>>;
-          modelScores?: LeadInsightsModelScores;
-        }>;
-      })
-      .then((payload) => {
-        if (cancelled || !payload) return;
-        setLeadInsights({
-          companyEvents: payload.companyEvents ?? [],
-          contactEvents: payload.contactEvents ?? [],
-          modelScores: payload.modelScores,
-        });
-      })
-      .catch(() => {});
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedLeadId, user]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -891,13 +925,45 @@ export default function LeadsPage() {
                               const domain = companyFirmographics?.domain || lead.company_domain;
                               const href = companyFirmographics?.website || (domain ? `https://${domain}` : null);
                               return href ? (
-                                <a href={href} target="_blank" rel="noopener noreferrer"
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="text-sm text-arcova-teal hover:underline truncate max-w-full inline-block">
-                                  {truncated}
-                                </a>
+                                <div className="min-w-0">
+                                  <a href={href} target="_blank" rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="text-sm text-arcova-teal hover:underline truncate max-w-full inline-block">
+                                    {truncated}
+                                  </a>
+                                  {(lead.matched_icp_name || lead.fit_score != null) && (
+                                    <div className="mt-1 flex flex-wrap gap-1.5">
+                                      {lead.matched_icp_name && (
+                                        <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal">
+                                          {lead.matched_icp_name}
+                                        </span>
+                                      )}
+                                      {formatPercent(lead.fit_score) && (
+                                        <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+                                          {formatPercent(lead.fit_score)}
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
                               ) : (
-                                <p className="text-sm text-gray-700 truncate">{truncated}</p>
+                                <div className="min-w-0">
+                                  <p className="text-sm text-gray-700 truncate">{truncated}</p>
+                                  {(lead.matched_icp_name || lead.fit_score != null) && (
+                                    <div className="mt-1 flex flex-wrap gap-1.5">
+                                      {lead.matched_icp_name && (
+                                        <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal">
+                                          {lead.matched_icp_name}
+                                        </span>
+                                      )}
+                                      {formatPercent(lead.fit_score) && (
+                                        <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+                                          {formatPercent(lead.fit_score)}
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
                               );
                             })()}
                           </div>
@@ -991,12 +1057,40 @@ export default function LeadsPage() {
                               selectedLead.resolved_current_company_domain ||
                               selectedLead.company_domain;
                             const href = selectedCompanyFirmographics?.website || (domain ? `https://${domain}` : null);
-                            return domain && href ? (
-                              <a href={href} target="_blank" rel="noopener noreferrer"
-                                className="text-xs text-arcova-teal hover:underline mt-1 inline-block">
-                                {domain}
-                              </a>
-                            ) : null;
+                            const linkedIn = selectedCompanyFirmographics?.linkedin_url || selectedLead.company_linkedin_url;
+                            const fitLabel = formatPercent(selectedLead.fit_score);
+                            return (
+                              <div className="mt-1 space-y-2">
+                                {(selectedLead.matched_icp_name || fitLabel) && (
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {selectedLead.matched_icp_name && (
+                                      <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2.5 py-0.5 text-xs font-medium text-arcova-teal">
+                                        Best ICP: {selectedLead.matched_icp_name}
+                                      </span>
+                                    )}
+                                    {fitLabel && (
+                                      <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600">
+                                        {fitLabel}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                                {domain && href && (
+                                  <a href={href} target="_blank" rel="noopener noreferrer"
+                                    className="flex items-center gap-1 text-xs text-arcova-teal hover:underline">
+                                    {domain}
+                                    <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                                  </a>
+                                )}
+                                {linkedIn && (
+                                  <a href={linkedIn} target="_blank" rel="noopener noreferrer"
+                                    className="flex items-center gap-1 text-xs text-arcova-teal hover:underline">
+                                    {linkedIn.replace(/^https?:\/\/(www\.)?/, '')}
+                                    <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                                  </a>
+                                )}
+                              </div>
+                            );
                           })()}
                         </div>
 
@@ -1084,367 +1178,578 @@ export default function LeadsPage() {
                             </div>
                           ) : (
                             /* ── View mode ── */
-                            <>
+                            <div className="space-y-5">
                               {selectedLead.contact_bio && selectedLead.contact_bio.length > 0 && (
-                                <ul className="space-y-1.5 pb-1">
-                                  {selectedLead.contact_bio.map((bullet, i) => (
-                                    <li key={i} className="flex gap-2 text-sm text-gray-700 leading-snug">
-                                      <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-arcova-teal flex-shrink-0" />
-                                      {bullet}
-                                    </li>
-                                  ))}
-                                </ul>
-                              )}
-
-                              <div className="space-y-3 text-sm">
-                                <div>
-                                  <p className="text-gray-400 text-xs">Job title</p>
-                                  <p className="text-gray-900 mt-0.5">
-                                    {selectedLead.resolved_current_job_title ||
-                                      selectedLead.job_title ||
-                                      '—'}
-                                  </p>
-                                </div>
-                                <div>
-                                  <p className="text-gray-400 text-xs">Location</p>
-                                  <p className="text-gray-900 mt-0.5">
-                                    {selectedLead.location || '—'}
-                                  </p>
-                                </div>
-                                <div>
-                                  <p className="text-gray-400 text-xs">Email</p>
-                                  <p className="text-gray-900 mt-0.5">{selectedLead.email || '—'}</p>
-                                  {selectedLead.email &&
-                                    (selectedLead.email_status === 'candidate' ||
-                                      selectedLead.email_status === 'stale_suspected') && (
-                                      <p className="text-xs text-amber-700 mt-1">
-                                        This email may be outdated.
-                                      </p>
-                                    )}
-                                </div>
-                                <div>
-                                  <p className="text-gray-400 text-xs">LinkedIn</p>
-                                  {selectedLead.linkedin_url ? (
-                                    <a
-                                      href={selectedLead.linkedin_url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="inline-flex items-center gap-1 text-arcova-teal hover:underline text-xs break-all mt-0.5"
-                                    >
-                                      {selectedLead.linkedin_url}
-                                      <ExternalLink className="w-3 h-3 flex-shrink-0" />
-                                    </a>
-                                  ) : (
-                                    <p className="text-gray-900 mt-0.5">—</p>
+                                <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
+                                  <button
+                                    type="button"
+                                    onClick={() => setContactPanelOpen((s) => ({ ...s, about: !s.about }))}
+                                    className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100/60 transition-colors"
+                                  >
+                                    <span className="text-xs font-semibold text-gray-700">About</span>
+                                    <ChevronDown
+                                      className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 ${
+                                        contactPanelOpen.about ? '' : '-rotate-90'
+                                      }`}
+                                    />
+                                  </button>
+                                  {contactPanelOpen.about && (
+                                    <div className="px-3 pb-3">
+                                      {selectedLead.contact_bio.length === 1 ? (
+                                        <p className="text-sm text-gray-700 leading-relaxed">
+                                          {selectedLead.contact_bio[0]}
+                                        </p>
+                                      ) : (
+                                        <ul className="space-y-1.5">
+                                          {selectedLead.contact_bio.map((bullet, i) => (
+                                            <li key={i} className="flex gap-2 text-sm text-gray-700 leading-snug">
+                                              <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-arcova-teal flex-shrink-0" />
+                                              {bullet}
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      )}
+                                    </div>
                                   )}
                                 </div>
+                              )}
+
+                              <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
+                                <button
+                                  type="button"
+                                  onClick={() => setContactPanelOpen((s) => ({ ...s, details: !s.details }))}
+                                  className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100/60 transition-colors"
+                                >
+                                  <span className="text-xs font-semibold text-gray-700">Role &amp; contact</span>
+                                  <ChevronDown
+                                    className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 ${
+                                      contactPanelOpen.details ? '' : '-rotate-90'
+                                    }`}
+                                  />
+                                </button>
+                                {contactPanelOpen.details && (
+                                  <div className="px-3 pb-3 space-y-3 text-sm">
+                                    <div>
+                                      <p className="text-gray-400 text-xs">Job title</p>
+                                      <p className="text-gray-900 mt-0.5">
+                                        {selectedLead.resolved_current_job_title ||
+                                          selectedLead.job_title ||
+                                          '—'}
+                                      </p>
+                                    </div>
+                                    <div>
+                                      <p className="text-gray-400 text-xs">Location</p>
+                                      <p className="text-gray-900 mt-0.5">
+                                        {selectedLead.location || '—'}
+                                      </p>
+                                    </div>
+                                    <div>
+                                      <p className="text-gray-400 text-xs">Email</p>
+                                      <p className="text-gray-900 mt-0.5">{selectedLead.email || '—'}</p>
+                                      {selectedLead.email &&
+                                        (selectedLead.email_status === 'candidate' ||
+                                          selectedLead.email_status === 'stale_suspected') && (
+                                          <p className="text-xs text-amber-700 mt-1">
+                                            This email may be outdated.
+                                          </p>
+                                        )}
+                                    </div>
+                                    <div>
+                                      <p className="text-gray-400 text-xs">LinkedIn</p>
+                                      {selectedLead.linkedin_url ? (
+                                        <a
+                                          href={selectedLead.linkedin_url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="inline-flex items-center gap-1 text-arcova-teal hover:underline text-xs break-all mt-0.5"
+                                        >
+                                          {selectedLead.linkedin_url}
+                                          <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                                        </a>
+                                      ) : (
+                                        <p className="text-gray-900 mt-0.5">—</p>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
                               </div>
 
                               {selectedLead.resolved_employment_history &&
                                 selectedLead.resolved_employment_history.length > 0 && (
-                                  <section className="space-y-3">
-                                    <h3 className="text-sm font-semibold text-gray-900">
-                                      Work history
-                                    </h3>
-                                    <div className="space-y-3">
-                                      {(isWorkHistoryExpanded
-                                        ? selectedLead.resolved_employment_history
-                                        : selectedLead.resolved_employment_history.slice(0, MAX_VISIBLE_WORK_HISTORY)
-                                      ).map((job, i) => (
-                                        <div key={i} className="flex gap-3">
-                                          <div className="mt-1.5 flex-shrink-0">
-                                            <div
-                                              className={`w-2 h-2 rounded-full ${
-                                                job.current ? 'bg-arcova-teal' : 'bg-gray-300'
+                                  <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setContactPanelOpen((s) => ({ ...s, workHistory: !s.workHistory }))
+                                      }
+                                      className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100/60 transition-colors"
+                                    >
+                                      <span className="text-xs font-semibold text-gray-700">Work history</span>
+                                      <ChevronDown
+                                        className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 ${
+                                          contactPanelOpen.workHistory ? '' : '-rotate-90'
+                                        }`}
+                                      />
+                                    </button>
+                                    {contactPanelOpen.workHistory && (
+                                      <div className="px-3 pb-3 space-y-3">
+                                        <div className="space-y-3">
+                                          {(isWorkHistoryExpanded
+                                            ? selectedLead.resolved_employment_history
+                                            : selectedLead.resolved_employment_history.slice(0, MAX_VISIBLE_WORK_HISTORY)
+                                          ).map((job, i) => (
+                                            <div key={i} className="flex gap-3">
+                                              <div className="mt-1.5 flex-shrink-0">
+                                                <div
+                                                  className={`w-2 h-2 rounded-full ${
+                                                    job.current ? 'bg-arcova-teal' : 'bg-gray-300'
+                                                  }`}
+                                                />
+                                              </div>
+                                              <div className="min-w-0">
+                                                <p className="text-sm font-medium text-gray-900">
+                                                  {job.title || '—'}
+                                                </p>
+                                                <p className="text-sm text-gray-600">
+                                                  {job.company_name || '—'}
+                                                </p>
+                                                <p className="text-xs text-gray-400">
+                                                  {[job.start_date, job.end_date]
+                                                    .filter(Boolean)
+                                                    .join(' → ')}
+                                                </p>
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                        {selectedLead.resolved_employment_history.length >
+                                          MAX_VISIBLE_WORK_HISTORY && (
+                                          <button
+                                            type="button"
+                                            onClick={() => setIsWorkHistoryExpanded((prev) => !prev)}
+                                            className="inline-flex items-center gap-1.5 text-sm font-medium text-arcova-teal hover:text-arcova-teal/80 transition-colors"
+                                          >
+                                            <ChevronDown
+                                              className={`w-4 h-4 transition-transform ${
+                                                isWorkHistoryExpanded ? 'rotate-180' : ''
                                               }`}
                                             />
-                                          </div>
-                                          <div className="min-w-0">
-                                            <p className="text-sm font-medium text-gray-900">
-                                              {job.title || '—'}
-                                            </p>
-                                            <p className="text-sm text-gray-600">
-                                              {job.company_name || '—'}
-                                            </p>
-                                            <p className="text-xs text-gray-400">
-                                              {[job.start_date, job.end_date]
-                                                .filter(Boolean)
-                                                .join(' → ')}
-                                            </p>
-                                          </div>
-                                        </div>
-                                      ))}
-                                    </div>
-                                    {selectedLead.resolved_employment_history.length > MAX_VISIBLE_WORK_HISTORY && (
-                                      <button
-                                        type="button"
-                                        onClick={() => setIsWorkHistoryExpanded((prev) => !prev)}
-                                        className="inline-flex items-center gap-1.5 text-sm font-medium text-arcova-teal hover:text-arcova-teal/80 transition-colors"
-                                      >
-                                        <ChevronDown
-                                          className={`w-4 h-4 transition-transform ${isWorkHistoryExpanded ? 'rotate-180' : ''}`}
-                                        />
-                                        {isWorkHistoryExpanded
-                                          ? 'Show fewer roles'
-                                          : `Show ${
-                                              selectedLead.resolved_employment_history.length - MAX_VISIBLE_WORK_HISTORY
-                                            } more roles`}
-                                      </button>
+                                            {isWorkHistoryExpanded
+                                              ? 'Show fewer roles'
+                                              : `Show ${
+                                                  selectedLead.resolved_employment_history.length -
+                                                  MAX_VISIBLE_WORK_HISTORY
+                                                } more roles`}
+                                          </button>
+                                        )}
+                                      </div>
                                     )}
-                                  </section>
+                                  </div>
                                 )}
-                            </>
+
+                              {/* ── Tracked signals (catalog) ── */}
+                              {(() => {
+                                const categories = [
+                                  'Career & Role Changes',
+                                  'Activity & Network',
+                                  'Publications & Recognition',
+                                  'Hiring & Team',
+                                  'First-Party Engagement',
+                                  'CRM & Relationship',
+                                ] as const;
+
+                                const grouped = categories
+                                  .map((cat) => ({
+                                    category: cat,
+                                    signals: CONTACT_SIGNALS.filter((s) => s.category === cat),
+                                  }))
+                                  .filter((g) => g.signals.length > 0);
+
+                                return (
+                                  <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
+                                    <button
+                                      type="button"
+                                      onClick={() => setContactPanelOpen((s) => ({ ...s, signals: !s.signals }))}
+                                      className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100/60 transition-colors"
+                                    >
+                                      <span className="text-xs font-semibold text-gray-700">
+                                        Tracked signals
+                                      </span>
+                                      <ChevronDown
+                                        className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 ${
+                                          contactPanelOpen.signals ? '' : '-rotate-90'
+                                        }`}
+                                      />
+                                    </button>
+                                    {contactPanelOpen.signals && (
+                                      <div className="px-3 pb-3 space-y-3">
+                                        {showPremiumAddonNotice && (
+                                          <div
+                                            role="status"
+                                            className="relative overflow-hidden rounded-xl border border-arcova-teal/25 bg-white shadow-sm"
+                                          >
+                                            <div
+                                              className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-arcova-teal/50 via-arcova-teal to-arcova-teal/50"
+                                              aria-hidden
+                                            />
+                                            <button
+                                              type="button"
+                                              onClick={() => setShowPremiumAddonNotice(false)}
+                                              className="absolute right-2.5 top-2.5 rounded-md p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
+                                              aria-label="Dismiss"
+                                            >
+                                              <X className="h-4 w-4" />
+                                            </button>
+                                            <div className="flex gap-3 p-4 pr-11">
+                                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-arcova-teal/12 ring-1 ring-arcova-teal/20">
+                                                <Sparkles className="h-5 w-5 text-arcova-teal" />
+                                              </div>
+                                              <div className="min-w-0">
+                                                <p className="text-sm font-semibold text-gray-900">
+                                                  Premium add-on
+                                                </p>
+                                                <p className="mt-1.5 text-sm leading-relaxed text-gray-600">
+                                                  First-party and CRM-linked signals are delivered through managed
+                                                  integrations and data feeds we turn on per customer. They are not part
+                                                  of the core product — contact our team to discuss enablement, scope,
+                                                  and pricing for your organization.
+                                                </p>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        )}
+                                        {grouped.map(({ category, signals }) => (
+                                          <div key={category}>
+                                            <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-1.5">
+                                              {category}
+                                            </p>
+                                            <div className="flex flex-wrap gap-1.5">
+                                              {signals.map((signal) => {
+                                                const comingSoon = isContactSignalComingSoon(signal.id);
+                                                const selected = requestedComingSoonContactSignals.has(signal.id);
+                                                if (comingSoon) {
+                                                  return (
+                                                    <button
+                                                      key={signal.id}
+                                                      type="button"
+                                                      onClick={() => toggleComingSoonContactSignalInterest(signal.id)}
+                                                      title={
+                                                        selected
+                                                          ? 'Selected — we will use this to prioritize integrations'
+                                                          : 'Not live yet — click to register interest'
+                                                      }
+                                                      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors ${
+                                                        selected
+                                                          ? 'border-arcova-teal/40 bg-gray-200 text-gray-700'
+                                                          : 'border-transparent bg-gray-100 text-gray-400 hover:bg-gray-200/80 hover:text-gray-500'
+                                                      }`}
+                                                    >
+                                                      {signal.displayName}
+                                                    </button>
+                                                  );
+                                                }
+                                                return (
+                                                  <span
+                                                    key={signal.id}
+                                                    className="inline-flex items-center rounded-full bg-arcova-teal px-2.5 py-0.5 text-xs font-medium text-white"
+                                                  >
+                                                    {signal.displayName}
+                                                  </span>
+                                                );
+                                              })}
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
+                            </div>
                           )
                         ) : (
                           /* ── Company view ── */
                           (() => {
                             const f = selectedCompanyFirmographics;
-                            const website = f?.website || null;
-                            const companyLinkedIn = f?.linkedin_url || selectedLead.company_linkedin_url;
                             const hqParts = [f?.hq_city, f?.hq_country].filter(Boolean);
                             const hq = hqParts.join(', ') || null;
-                            const fundingStatus = getFundingStatusDisplay(selectedLead.companies);
+                            const showPlatformCategory = f?.company_type === 'SaaS' && !!f?.platform_category;
+                            const hasCriteria = !!(f?.company_type || showPlatformCategory || f?.therapeutic_areas?.length || f?.modalities?.length || f?.development_stages?.length);
+                            const hasFunding = !!(f?.funding_status_label || f?.funding_stage || f?.total_funding_usd != null || f?.latest_funding_date);
+                            const hasFirmographics = !!(f?.employee_count || f?.employee_range || f?.follower_count != null || f?.founded_year || hq);
+                            const aboutText = f?.bio_summary || f?.description || null;
+                            const hasProducts = (f?.products_services?.length ?? 0) > 0;
+                            const hasServices = (f?.services?.length ?? 0) > 0;
+                            const hasSpecialties = (f?.specialties?.length ?? 0) > 0;
 
                             return (
-                              <div className="space-y-4">
-                                {!!(f?.company_type || f?.therapeutic_areas?.length || f?.modalities?.length || f?.development_stages?.length) && (
-                                  <div className="space-y-3 rounded-xl border border-gray-100 bg-gray-50/70 p-3">
-                                    {f.company_type && (
-                                      <div>
-                                        <p className="text-gray-400 text-xs">Company type</p>
-                                        <p className="text-gray-900 text-sm mt-0.5">{f.company_type}</p>
-                                      </div>
-                                    )}
-                                    {f.therapeutic_areas?.length ? (
-                                      <div>
-                                        <p className="text-gray-400 text-xs">Therapeutic areas</p>
-                                        {renderTaxonomyPills(f.therapeutic_areas)}
-                                      </div>
-                                    ) : null}
-                                    {f.modalities?.length ? (
-                                      <div>
-                                        <p className="text-gray-400 text-xs">Modalities</p>
-                                        {renderTaxonomyPills(f.modalities)}
-                                      </div>
-                                    ) : null}
-                                    {f.development_stages?.length ? (
-                                      <div>
-                                        <p className="text-gray-400 text-xs">Development stage</p>
-                                        {renderTaxonomyPills(f.development_stages)}
-                                      </div>
-                                    ) : null}
-                                  </div>
-                                )}
+                              <div className="space-y-3">
 
-                                {/* Bio — LLM summary preferred, raw description as fallback */}
-                                {(f?.bio_summary || f?.description) ? (
-                                  <div>
-                                    <p className="text-gray-400 text-xs mb-1">About</p>
-                                    <ul className="space-y-1.5 pb-1">
-                                      {(f.bio_summary ?? f.description ?? '')
-                                        .split('\n')
-                                        .map((s: string) => s.trim())
-                                        .filter(Boolean)
-                                        .slice(0, 3)
-                                        .map((bullet: string, i: number) => (
-                                          <li key={i} className="flex gap-2 text-sm text-gray-700 leading-snug">
-                                            <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-arcova-teal flex-shrink-0" />
-                                            {bullet}
-                                          </li>
-                                        ))}
-                                    </ul>
-                                  </div>
-                                ) : (
-                                  <p className="text-xs text-gray-400 italic">Company bio will appear after enrichment runs.</p>
-                                )}
-
-                                {/* Key stats */}
-                                <div className="grid grid-cols-2 gap-3">
-                                  {(f?.employee_count || f?.employee_range) && (
-                                    <div>
-                                      <p className="text-gray-400 text-xs">Employees</p>
-                                      <p className="text-gray-900 text-sm mt-0.5">
-                                        {f.employee_count ? f.employee_count.toLocaleString() : f.employee_range}
-                                      </p>
-                                    </div>
-                                  )}
-                                  {f?.follower_count != null && (
-                                    <div>
-                                      <p className="text-gray-400 text-xs">Followers</p>
-                                      <p className="text-gray-900 text-sm mt-0.5">{f.follower_count.toLocaleString()}</p>
-                                    </div>
-                                  )}
-                                  {fundingStatus && (
-                                    <div>
-                                      <p className="text-gray-400 text-xs">{fundingStatus.heading}</p>
-                                      <p className="text-gray-900 text-sm mt-0.5">{fundingStatus.value}</p>
-                                    </div>
-                                  )}
-                                  {f?.total_funding_usd != null && (
-                                    <div>
-                                      <p className="text-gray-400 text-xs">Total funding</p>
-                                      <p className="text-gray-900 text-sm mt-0.5">
-                                        {formatCurrencyShort(f.total_funding_usd)}
-                                      </p>
-                                    </div>
-                                  )}
-                                  {f?.founded_year && (
-                                    <div>
-                                      <p className="text-gray-400 text-xs">Founded</p>
-                                      <p className="text-gray-900 text-sm mt-0.5">{f.founded_year}</p>
-                                    </div>
-                                  )}
-                                  {f?.latest_funding_date && (
-                                    <div>
-                                      <p className="text-gray-400 text-xs">Latest Funding Round</p>
-                                      <p className="text-gray-900 text-sm mt-0.5">
-                                        {formatLastUpdated(f.latest_funding_date)}
-                                      </p>
-                                    </div>
-                                  )}
-                                  {hq && (
-                                    <div>
-                                      <p className="text-gray-400 text-xs">HQ</p>
-                                      <p className="text-gray-900 text-sm mt-0.5">{hq}</p>
+                                {/* Summary */}
+                                <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
+                                  <button
+                                    type="button"
+                                    onClick={() => setCompanyPanelOpen((s) => ({ ...s, summary: !s.summary }))}
+                                    className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100/60 transition-colors"
+                                  >
+                                    <span className="text-xs font-semibold text-gray-700">Summary</span>
+                                    <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 ${companyPanelOpen.summary ? '' : '-rotate-90'}`} />
+                                  </button>
+                                  {companyPanelOpen.summary && (
+                                    <div className="px-3 pb-3">
+                                      {aboutText ? (
+                                        <p className="text-sm text-gray-700 leading-relaxed">{aboutText}</p>
+                                      ) : (
+                                        <p className="text-xs text-gray-400 italic">Company bio will appear after enrichment runs.</p>
+                                      )}
                                     </div>
                                   )}
                                 </div>
 
-                                {/* Links */}
-                                {website && (
-                                  <div>
-                                    <p className="text-gray-400 text-xs">Website</p>
-                                    <a href={website} target="_blank" rel="noopener noreferrer"
-                                      className="inline-flex items-center gap-1 text-arcova-teal hover:underline text-xs break-all mt-0.5">
-                                      {website}
-                                      <ExternalLink className="w-3 h-3 flex-shrink-0" />
-                                    </a>
+                                {/* Criteria — taxonomy + LI followers */}
+                                {hasCriteria && (
+                                  <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
+                                    <button
+                                      type="button"
+                                      onClick={() => setCompanyPanelOpen((s) => ({ ...s, criteria: !s.criteria }))}
+                                      className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100/60 transition-colors"
+                                    >
+                                      <span className="text-xs font-semibold text-gray-700">Criteria</span>
+                                      <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 ${companyPanelOpen.criteria ? '' : '-rotate-90'}`} />
+                                    </button>
+                                    {companyPanelOpen.criteria && (
+                                      <div className="px-3 pb-3 space-y-3">
+                                        {(f?.company_type || showPlatformCategory) && (
+                                          <div>
+                                            <p className="text-gray-400 text-xs mb-1">Company type</p>
+                                            <div className="flex flex-wrap gap-1.5">
+                                              {f?.company_type && (
+                                                <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2.5 py-0.5 text-xs font-medium text-arcova-teal">{f.company_type}</span>
+                                              )}
+                                              {showPlatformCategory && (
+                                                <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2.5 py-0.5 text-xs font-medium text-arcova-teal">{f!.platform_category}</span>
+                                              )}
+                                            </div>
+                                          </div>
+                                        )}
+                                        {f?.therapeutic_areas?.length ? (
+                                          <div>
+                                            <p className="text-gray-400 text-xs mb-1">Therapeutic areas</p>
+                                            {renderTaxonomyPills(f.therapeutic_areas)}
+                                          </div>
+                                        ) : null}
+                                        {f?.modalities?.length ? (
+                                          <div>
+                                            <p className="text-gray-400 text-xs mb-1">Modalities</p>
+                                            {renderTaxonomyPills(f.modalities)}
+                                          </div>
+                                        ) : null}
+                                        {f?.development_stages?.length ? (
+                                          <div>
+                                            <p className="text-gray-400 text-xs mb-1">Development stage</p>
+                                            {renderTaxonomyPills(f.development_stages)}
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                    )}
                                   </div>
                                 )}
 
-                                {companyLinkedIn && (
-                                  <div>
-                                    <p className="text-gray-400 text-xs">LinkedIn</p>
-                                    <a href={companyLinkedIn} target="_blank" rel="noopener noreferrer"
-                                      className="inline-flex items-center gap-1 text-arcova-teal hover:underline text-xs break-all mt-0.5">
-                                      {companyLinkedIn}
-                                      <ExternalLink className="w-3 h-3 flex-shrink-0" />
-                                    </a>
+                                {/* Firmographics — headcount, followers, HQ, founded */}
+                                {hasFirmographics && (
+                                  <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
+                                    <button
+                                      type="button"
+                                      onClick={() => setCompanyPanelOpen((s) => ({ ...s, firmographics: !s.firmographics }))}
+                                      className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100/60 transition-colors"
+                                    >
+                                      <span className="text-xs font-semibold text-gray-700">Firmographics</span>
+                                      <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 ${companyPanelOpen.firmographics ? '' : '-rotate-90'}`} />
+                                    </button>
+                                    {companyPanelOpen.firmographics && (
+                                      <div className="px-3 pb-3">
+                                        <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+                                          {(f?.employee_count || f?.employee_range) && (
+                                            <div>
+                                              <p className="text-gray-400 text-xs">Employees</p>
+                                              <p className="text-gray-900 text-sm mt-0.5">
+                                                {f.employee_count ? f.employee_count.toLocaleString() : f.employee_range}
+                                              </p>
+                                            </div>
+                                          )}
+                                          {f?.follower_count != null && (
+                                            <div>
+                                              <p className="text-gray-400 text-xs">LI followers</p>
+                                              <p className="text-gray-900 text-sm mt-0.5">{f.follower_count.toLocaleString()}</p>
+                                            </div>
+                                          )}
+                                          {f?.founded_year && (
+                                            <div>
+                                              <p className="text-gray-400 text-xs">Founded</p>
+                                              <p className="text-gray-900 text-sm mt-0.5">{f.founded_year}</p>
+                                            </div>
+                                          )}
+                                          {hq && (
+                                            <div>
+                                              <p className="text-gray-400 text-xs">HQ</p>
+                                              <p className="text-gray-900 text-sm mt-0.5">{hq}</p>
+                                            </div>
+                                          )}
+                                        </div>
+                                        {selectedCompanyFirmographicsLastRefresh && (
+                                          <p className="text-xs text-gray-400 mt-3">
+                                            Refreshed {formatLastUpdated(selectedCompanyFirmographicsLastRefresh)}
+                                          </p>
+                                        )}
+                                      </div>
+                                    )}
                                   </div>
                                 )}
 
-                                {selectedCompanyFirmographicsLastRefresh && (
-                                  <p className="text-xs text-gray-400">
-                                    Firmographics refreshed {formatLastUpdated(selectedCompanyFirmographicsLastRefresh)}
-                                  </p>
+                                {/* Funding */}
+                                {hasFunding && (
+                                  <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
+                                    <button
+                                      type="button"
+                                      onClick={() => setCompanyPanelOpen((s) => ({ ...s, funding: !s.funding }))}
+                                      className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100/60 transition-colors"
+                                    >
+                                      <span className="text-xs font-semibold text-gray-700">Funding</span>
+                                      <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 ${companyPanelOpen.funding ? '' : '-rotate-90'}`} />
+                                    </button>
+                                    {companyPanelOpen.funding && (
+                                      <div className="px-3 pb-3 space-y-1.5">
+                                        {(f.funding_stage || f.funding_status_label) && (
+                                          <div className="flex items-baseline gap-2">
+                                            <span className="text-xs text-gray-400 w-24 shrink-0">Stage</span>
+                                            <span className="text-xs text-gray-900">{f.funding_stage ?? f.funding_status_label}</span>
+                                          </div>
+                                        )}
+                                        {f.total_funding_usd != null && (
+                                          <div className="flex items-baseline gap-2">
+                                            <span className="text-xs text-gray-400 w-24 shrink-0">Total raised</span>
+                                            <span className="text-xs text-gray-900">{formatCurrencyShort(f.total_funding_usd)}</span>
+                                          </div>
+                                        )}
+                                        {f.latest_funding_date && (
+                                          <div className="flex items-baseline gap-2">
+                                            <span className="text-xs text-gray-400 w-24 shrink-0">Latest round</span>
+                                            <span className="text-xs text-gray-900">{formatLastUpdated(f.latest_funding_date)}</span>
+                                          </div>
+                                        )}
+                                        {f.funding_resolution_summary && (
+                                          <p className="text-xs text-gray-500 leading-snug pt-1">{f.funding_resolution_summary}</p>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
                                 )}
+
+                                {/* Products */}
+                                {(hasProducts || (!hasProducts && !hasServices && hasSpecialties)) && (
+                                  <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
+                                    <button
+                                      type="button"
+                                      onClick={() => setCompanyPanelOpen((s) => ({ ...s, products: !s.products }))}
+                                      className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100/60 transition-colors"
+                                    >
+                                      <span className="text-xs font-semibold text-gray-700">Products</span>
+                                      <ChevronDown
+                                        className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 ${
+                                          companyPanelOpen.products ? '' : '-rotate-90'
+                                        }`}
+                                      />
+                                    </button>
+                                    {companyPanelOpen.products && (
+                                      <div className="px-3 pb-3">
+                                        {hasProducts ? (
+                                          <div className="flex flex-wrap gap-1.5">
+                                            {f!.products_services!.map((p, i) => (
+                                              <span
+                                                key={i}
+                                                className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600"
+                                              >
+                                                {p}
+                                              </span>
+                                            ))}
+                                          </div>
+                                        ) : (
+                                          <div className="flex flex-wrap gap-1.5">
+                                            {f!.specialties!.map((s, i) => (
+                                              <span
+                                                key={i}
+                                                className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600"
+                                              >
+                                                {s}
+                                              </span>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+
+                                {/* Services */}
+                                {hasServices && (
+                                  <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
+                                    <button
+                                      type="button"
+                                      onClick={() => setCompanyPanelOpen((s) => ({ ...s, services: !s.services }))}
+                                      className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100/60 transition-colors"
+                                    >
+                                      <span className="text-xs font-semibold text-gray-700">Services</span>
+                                      <ChevronDown
+                                        className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 ${
+                                          companyPanelOpen.services ? '' : '-rotate-90'
+                                        }`}
+                                      />
+                                    </button>
+                                    {companyPanelOpen.services && (
+                                      <div className="px-3 pb-3">
+                                        <div className="flex flex-wrap gap-1.5">
+                                          {f!.services!.map((s, i) => (
+                                            <span
+                                              key={i}
+                                              className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600"
+                                            >
+                                              {s}
+                                            </span>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+
+                                {/* Technology */}
+                                {f?.technologies?.length ? (
+                                  <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
+                                    <button
+                                      type="button"
+                                      onClick={() => setCompanyPanelOpen((s) => ({ ...s, technology: !s.technology }))}
+                                      className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100/60 transition-colors"
+                                    >
+                                      <span className="text-xs font-semibold text-gray-700">Technology</span>
+                                      <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 ${companyPanelOpen.technology ? '' : '-rotate-90'}`} />
+                                    </button>
+                                    {companyPanelOpen.technology && (
+                                      <div className="px-3 pb-3">
+                                        <div className="flex flex-wrap gap-1.5">
+                                          {f.technologies.map((t, i) => (
+                                            <span key={i} className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600">{t}</span>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : null}
+
                               </div>
                             );
                           })()
                         )}
                       </div>
-
-                      {leadInsights && (
-                        <div className="px-5 py-4 border-t border-gray-100 space-y-3 bg-slate-50/60">
-                          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Buying signals</p>
-                          {leadInsights.modelScores && (
-                            <div className="flex flex-wrap gap-2 text-[11px] text-gray-600">
-                              {typeof selectedLead.company_id === 'string' && selectedLead.company_id.length > 0 && (
-                                <span className="rounded-full bg-white px-2 py-0.5 border border-gray-200">
-                                  Account intent{' '}
-                                  <span className="font-semibold text-gray-900">
-                                    {leadInsights.modelScores.companyIntent01 == null
-                                      ? '—'
-                                      : `${Math.round(Math.min(1, Math.max(0, leadInsights.modelScores.companyIntent01)) * 100)}`}
-                                    {leadInsights.modelScores.companyIntent01 != null ? '%' : ''}
-                                  </span>
-                                </span>
-                              )}
-                              <span className="rounded-full bg-white px-2 py-0.5 border border-gray-200">
-                                Buyer intent{' '}
-                                <span className="font-semibold text-gray-900">
-                                  {leadInsights.modelScores.contactIntent01 == null
-                                    ? '—'
-                                    : `${Math.round(Math.min(1, Math.max(0, leadInsights.modelScores.contactIntent01)) * 100)}`}
-                                  {leadInsights.modelScores.contactIntent01 != null ? '%' : ''}
-                                </span>
-                              </span>
-                              <span className="rounded-full bg-arcova-teal/10 px-2 py-0.5 border border-arcova-teal/30 text-arcova-teal">
-                                Blended headline{' '}
-                                <span className="font-semibold">
-                                  {leadInsights.modelScores.blendedIntent01 == null
-                                    ? '—'
-                                    : `${Math.round(Math.min(1, Math.max(0, leadInsights.modelScores.blendedIntent01)) * 100)}`}
-                                  {leadInsights.modelScores.blendedIntent01 != null ? '%' : ''}
-                                </span>
-                              </span>
-                            </div>
-                          )}
-                          <div className="space-y-2">
-                            <div>
-                              <p className="text-xs font-medium text-gray-700">Company events</p>
-                              {leadInsights.companyEvents.length === 0 ? (
-                                <p className="text-[11px] text-gray-500 mt-1">No account-level observations yet.</p>
-                              ) : (
-                                <ul className="mt-1 space-y-1">
-                                  {leadInsights.companyEvents.slice(0, 6).map((row) => (
-                                    <li key={String(row.id)} className="text-[11px] text-gray-600 leading-snug">
-                                      <span className="font-medium text-gray-800">
-                                        {typeof row.title === 'string' && row.title.trim()
-                                          ? row.title.trim()
-                                          : getSignalDisplayName(String(row.signal_type ?? ''))}
-                                      </span>
-                                      <span className="text-gray-400">
-                                        {' '}
-                                        ·{' '}
-                                        {formatLastUpdated(
-                                          typeof row.detected_at === 'string'
-                                            ? row.detected_at
-                                            : typeof row.created_at === 'string'
-                                              ? row.created_at
-                                              : null
-                                        )}
-                                      </span>
-                                    </li>
-                                  ))}
-                                </ul>
-                              )}
-                            </div>
-                            <div>
-                              <p className="text-xs font-medium text-gray-700">Buyer events</p>
-                              {leadInsights.contactEvents.length === 0 ? (
-                                <p className="text-[11px] text-gray-500 mt-1">No contact-level observations yet.</p>
-                              ) : (
-                                <ul className="mt-1 space-y-1">
-                                  {leadInsights.contactEvents.slice(0, 6).map((row) => (
-                                    <li key={String(row.id)} className="text-[11px] text-gray-600 leading-snug">
-                                      <span className="font-medium text-gray-800">
-                                        {typeof row.title === 'string' && row.title.trim()
-                                          ? row.title.trim()
-                                          : getSignalDisplayName(String(row.signal_type ?? ''))}
-                                      </span>
-                                      <span className="text-gray-400">
-                                        {' '}
-                                        ·{' '}
-                                        {formatLastUpdated(
-                                          typeof row.detected_at === 'string'
-                                            ? row.detected_at
-                                            : typeof row.created_at === 'string'
-                                              ? row.created_at
-                                              : null
-                                        )}
-                                      </span>
-                                    </li>
-                                  ))}
-                                </ul>
-                              )}
-                            </div>
-                          </div>
-                          <p className="text-[10px] text-gray-400 leading-snug">
-                            Stored scores in the grid still reflect fit/intent imports; modeled intent here updates as new events arrive.
-                          </p>
-                        </div>
-                      )}
 
                       {/* Panel footer */}
                       <div className="px-5 py-4 border-t border-gray-100 space-y-2">

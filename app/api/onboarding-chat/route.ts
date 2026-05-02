@@ -242,7 +242,7 @@ async function fetchAccountContext(supabase: Awaited<ReturnType<typeof createCli
   try {
     const [analysisResult, icpsResult, personasResult] = await Promise.all([
       supabase
-        .from('company_analyses')
+        .from('user_company')
         .select('company_name, website, description')
         .eq('user_id', userId)
         .order('created_at', { ascending: false })

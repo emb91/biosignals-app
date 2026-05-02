@@ -42,6 +42,10 @@ export const COMPANY_TYPE_OPTIONS = [
     value: 'SaaS',
     description: 'Software-as-a-service, data, workflow, CRM, sales intelligence, or market intelligence platforms',
   },
+  {
+    value: 'Other',
+    description: 'Companies that do not fit any other life science or health technology category — use when the company is clearly identifiable but outside the standard taxonomy',
+  },
 ] as const;
 
 export const THERAPEUTIC_AREA_OPTIONS = [
@@ -90,10 +94,6 @@ export const MODALITY_OPTIONS = [
   'Diagnostics',
   'Liquid Biopsy',
   'Digital Therapeutics',
-  'AI/ML Platform',
-  'Drug Discovery Platform',
-  'Sales Intelligence Platform',
-  'Market Intelligence Platform',
   'Biomarker',
   'Imaging',
 ] as const;
@@ -182,6 +182,7 @@ export const FUNDING_STAGE_OPTIONS = [
   'Series D+',
   'Public',
   'Grant-funded',
+  'Non-profit',
 ] as const;
 
 export const BUSINESS_AREA_OPTIONS = [
@@ -201,6 +202,7 @@ export const BUSINESS_AREA_OPTIONS = [
   'Technology & Systems',
   'AI & Machine Learning',
   'Data & Informatics',
+  'Library & Information Services',
   'Quality & Compliance',
   'Marketing',
 ] as const;
@@ -373,18 +375,6 @@ export function canonicalizeModality(value: unknown): Modality | null {
     imaging: 'Imaging',
     diagnostic: 'Diagnostics',
     diagnostics: 'Diagnostics',
-    'sales intelligence': 'Sales Intelligence Platform',
-    'sales platform': 'Sales Intelligence Platform',
-    'prospecting platform': 'Sales Intelligence Platform',
-    'lead generation platform': 'Sales Intelligence Platform',
-    'commercial intelligence': 'Market Intelligence Platform',
-    'market intelligence': 'Market Intelligence Platform',
-    'scientific intelligence': 'Market Intelligence Platform',
-    'business intelligence': 'Market Intelligence Platform',
-    'intelligence platform': 'Market Intelligence Platform',
-    ai: 'AI/ML Platform',
-    ml: 'AI/ML Platform',
-    'machine learning': 'AI/ML Platform',
   };
 
   const normalized = normalizeTaxonomyText(value);
@@ -445,6 +435,11 @@ export function canonicalizeFundingStage(
       government_grant: 'Grant-funded',
       sbir: 'Grant-funded',
       sttr: 'Grant-funded',
+      non_profit: 'Non-profit',
+      nonprofit: 'Non-profit',
+      donation: 'Non-profit',
+      charity: 'Non-profit',
+      foundation: 'Non-profit',
     };
     if (stageMap[normalized]) return stageMap[normalized];
   }
@@ -475,6 +470,7 @@ export function canonicalizeFundingStage(
     if (/pre[\s-]?seed|angel/.test(s)) return 'Pre-seed';
     if (/\bipo\b|publicly\s+(traded|listed)|\bpublic\b/.test(s)) return 'Public';
     if (/grant[\s-]?fund|sbir|sttr|government\s+grant/.test(s)) return 'Grant-funded';
+    if (/non[\s-]?profit|nonprofit|donation[\s-]?fund|charity|foundation/.test(s)) return 'Non-profit';
   }
 
   return null;
@@ -494,6 +490,23 @@ export function totalFundingToBracket(totalFundingUsd: number | null | undefined
   if (totalFundingUsd < 100_000_000) return `$30M–$100M (Series B)`;
   if (totalFundingUsd < 300_000_000) return `$100M–$300M (Series C)`;
   return `$300M+ (Series D+ / late-stage)`;
+}
+
+/**
+ * Returns a clean dollar-range label for UI display.
+ * Unlike totalFundingToBracket, omits stage-name hints that can conflict with
+ * the separately-displayed funding stage (e.g. a Series C company at $50M
+ * shouldn't show "$30M–$100M (Series B)").
+ */
+export function fundingAmountDisplayBucket(totalFundingUsd: number | null | undefined): string | null {
+  if (totalFundingUsd == null) return null;
+  if (totalFundingUsd === 0)         return 'Bootstrapped';
+  if (totalFundingUsd < 2_000_000)   return '< $2M raised';
+  if (totalFundingUsd < 10_000_000)  return '$2M–$10M raised';
+  if (totalFundingUsd < 30_000_000)  return '$10M–$30M raised';
+  if (totalFundingUsd < 100_000_000) return '$30M–$100M raised';
+  if (totalFundingUsd < 300_000_000) return '$100M–$300M raised';
+  return '$300M+ raised';
 }
 
 export const ARR_BUCKET_OPTIONS = [

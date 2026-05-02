@@ -3,6 +3,7 @@
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useCallback } from 'react';
+import { normalizePlatformTaxonomyFields } from '@/lib/platform-category';
 import { parseSSEStream } from '@/lib/sse';
 import AppSidebar from '@/components/AppSidebar';
 import { ProfileCard, type PanelMyCompanyData, type MyCompanyChangeValue, type CompetitorItem } from '@/components/SetupProfilePanel';
@@ -24,6 +25,7 @@ const FIELD_MAP: Record<string, string> = {
   companyStatus: 'company_status',
   companyType: 'company_type',
   companyTypeDisplay: 'company_type_display',
+  platformCategory: 'platform_category',
   therapeuticAreas: 'therapeutic_areas',
   modalities: 'modalities',
   developmentStages: 'development_stages',
@@ -63,6 +65,7 @@ function toMyCompany(d: Record<string, unknown>): PanelMyCompanyData {
     companyStatus: str(d.company_status),
     companyType: str(d.company_type),
     companyTypeDisplay: str(d.company_type_display),
+    platformCategory: str(d.platform_category),
     therapeuticAreas: arr(d.therapeutic_areas),
     modalities: arr(d.modalities),
     developmentStages: arr(d.development_stages),
@@ -106,14 +109,15 @@ export default function MyProfilePage() {
     (async () => {
       try {
         const { data } = await supabase
-          .from('company_analyses')
+          .from('user_company')
           .select('*')
           .eq('user_id', user.id)
           .limit(1)
           .maybeSingle();
         if (data) {
-          setAnalysisData(data as Record<string, unknown>);
-          setEditedData(data as Record<string, unknown>);
+          const normalized = normalizePlatformTaxonomyFields(data as Record<string, unknown>);
+          setAnalysisData(normalized);
+          setEditedData(normalized);
         }
       } finally {
         setLoadingData(false);
@@ -130,15 +134,16 @@ export default function MyProfilePage() {
     if (!editedData) return;
     setIsSaving(true);
     try {
-      const res = await fetch('/api/user-analyses', {
+      const res = await fetch('/api/user-company', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(editedData),
       });
       if (res.ok) {
         const updated = await res.json();
-        setAnalysisData(updated);
-        setEditedData(updated);
+        const normalized = normalizePlatformTaxonomyFields(updated as Record<string, unknown>);
+        setAnalysisData(normalized);
+        setEditedData(normalized);
       }
     } finally {
       setIsSaving(false);
@@ -154,7 +159,7 @@ export default function MyProfilePage() {
   const handleDelete = async () => {
     const id = typeof analysisData?.id === 'string' ? analysisData.id : null;
     if (id) {
-      await fetch(`/api/user-analyses?id=${id}`, { method: 'DELETE' }).catch(() => {});
+      await fetch(`/api/user-company?id=${id}`, { method: 'DELETE' }).catch(() => {});
     }
     router.replace('/dashboard');
   };
@@ -190,8 +195,9 @@ export default function MyProfilePage() {
         }
       }
       if (finalData) {
-        setAnalysisData(finalData);
-        setEditedData(finalData);
+        const normalized = normalizePlatformTaxonomyFields(finalData);
+        setAnalysisData(normalized);
+        setEditedData(normalized);
       }
     } finally {
       setIsReenriching(false);

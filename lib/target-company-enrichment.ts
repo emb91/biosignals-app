@@ -1,7 +1,7 @@
 /**
  * Target company enrichment pipeline — for PROSPECT / EXAMPLE companies entered during setup.
  *
- * This is NOT for the seller's own company (that is lib/my-company-enrichment.ts → company_analyses).
+ * This is NOT for the user's own company (that is lib/my-company-enrichment.ts → user_company).
  * Results from this pipeline are returned to the client and stored as example_company_enrichment
  * on the icps table alongside the taxonomy criteria derived from the analysis.
  *
@@ -83,6 +83,7 @@ export type TargetCompanyEnrichmentResult = {
   // Taxonomy (resolveCompanyTaxonomy — canonical Arcova values; PLANE A + PLANE B)
   company_type: string | null;
   company_type_display: string | null;
+  platform_category: string | null;
   therapeutic_areas: string[] | null;
   modalities: string[] | null;
   development_stages: string[] | null;
@@ -226,6 +227,7 @@ export async function enrichTargetCompany(
 
     company_type: taxonomy?.company_type ?? null,
     company_type_display: taxonomy?.company_type_display ?? null,
+    platform_category: taxonomy?.platform_category ?? null,
     therapeutic_areas: taxonomy?.therapeutic_areas ?? null,
     modalities: taxonomy?.modalities ?? null,
     development_stages: taxonomy?.development_stages ?? null,

@@ -1,4 +1,5 @@
 import { employeeCountToSizeBucket, SENIORITY_LEVEL_OPTIONS, BUSINESS_AREA_OPTIONS } from '@/lib/arcova-taxonomy';
+import { syncCompanyFitForCompanies } from '@/lib/company-fit';
 
 export type EnrichedImportRecord = {
   raw_upload_id: string;
@@ -300,6 +301,7 @@ export async function ingestEnrichedRecords(
 
   let inserted = 0;
   let failed = 0;
+  const touchedCompanyIds = new Set<string>();
 
   for (let index = 0; index < toProcess.length; index += 1) {
     const record = toProcess[index];
@@ -307,6 +309,7 @@ export async function ingestEnrichedRecords(
 
     try {
       const companyId = await upsertCompany(supabase, userId, record);
+      if (companyId) touchedCompanyIds.add(companyId);
 
       const contactPayload = {
         user_id: userId,
@@ -407,6 +410,12 @@ export async function ingestEnrichedRecords(
         .update({ status: 'failed', enriched_at: new Date().toISOString() })
         .eq('id', record.raw_upload_id);
     }
+  }
+
+  if (touchedCompanyIds.size > 0) {
+    await syncCompanyFitForCompanies(supabase, userId, [...touchedCompanyIds]).catch((error) => {
+      console.error('[import-ingestion] Failed syncing company fit scores:', error);
+    });
   }
 
   const batchId = records[0]?.batch_id;

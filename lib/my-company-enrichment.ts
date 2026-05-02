@@ -2,7 +2,7 @@
  * "My company" enrichment pipeline — for the SELLER'S OWN company profile only.
  *
  * This is NOT for prospect/target companies (those go through lib/enrichment-pipeline.ts
- * and are stored in the `companies` table). This pipeline writes to `company_analyses`.
+ * and are stored in the `companies` table). This pipeline writes to `user_company`.
  *
  * Three sources, run in order:
  *   1. Claude web_search  — narrative analysis (what they do, who they serve, etc.)
@@ -48,7 +48,7 @@ function parseJson(text: string): Record<string, unknown> | null {
 
 /**
  * Research a company by website URL using Claude with web search.
- * Returns structured narrative fields matching the company_analyses schema,
+ * Returns structured narrative fields matching the user_company schema,
  * plus a best-effort LinkedIn company URL.
  */
 export async function analyseCompanyWithClaude(

@@ -21,6 +21,10 @@ import {
   type Modality,
   type TherapeuticArea,
 } from '@/lib/arcova-taxonomy';
+import {
+  inferPlatformCategoryFromLegacyModalities,
+  normalizePlatformCategory,
+} from '@/lib/platform-category';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const MODEL = 'claude-sonnet-4-6';
@@ -37,6 +41,8 @@ export type CompanyTaxonomyInput = {
 export type CompanyTaxonomyResult = {
   company_type: CompanyType | null;
   company_type_display: string | null;
+  /** Short software / platform category for the company itself (e.g. Sales Intelligence Platform). Null for non-software companies. */
+  platform_category: string | null;
   /** What THIS company fundamentally works on (their science / product modality). SaaS/vendor often empty. Never copy customer disease areas here because the website mentions oncology. */
   therapeutic_areas: TherapeuticArea[];
   modalities: Modality[];
@@ -179,6 +185,7 @@ function canonicalizeDevelopmentStage(value: unknown): DevelopmentStage | null {
 function parseTaxonomyJson(text: string): {
   company_type?: unknown;
   company_type_display?: unknown;
+  platform_category?: unknown;
   therapeutic_areas?: unknown;
   modalities?: unknown;
   development_stages?: unknown;
@@ -202,6 +209,7 @@ export function normalizeCompanyTaxonomyResult(
   parsed: {
     company_type?: unknown;
     company_type_display?: unknown;
+    platform_category?: unknown;
     therapeutic_areas?: unknown;
     modalities?: unknown;
     development_stages?: unknown;
@@ -216,6 +224,9 @@ export function normalizeCompanyTaxonomyResult(
   const companyType = canonicalizeCompanyType(parsed?.company_type);
   const rawDisplay = normalizeString(parsed?.company_type_display);
   const companyTypeDisplay = rawDisplay || (companyType ?? null);
+  const platformCategory =
+    normalizePlatformCategory(parsed?.platform_category) ??
+    inferPlatformCategoryFromLegacyModalities(parsed?.modalities);
   const therapeuticAreas = canonicalizeArray(parsed?.therapeutic_areas, canonicalizeTherapeuticArea);
   const modalities = expandModalitiesWithParents(
     canonicalizeArray(parsed?.modalities, canonicalizeModality)
@@ -236,6 +247,7 @@ export function normalizeCompanyTaxonomyResult(
   return {
     company_type: companyType,
     company_type_display: companyTypeDisplay,
+    platform_category: platformCategory,
     therapeutic_areas: therapeuticAreas,
     modalities,
     development_stages: developmentStages,
@@ -268,9 +280,11 @@ CRITICAL RULE — read this before anything else:
 If the company is a SaaS, data platform, sales intelligence tool, CRM, BI vendor, or any software-first business:
   • company_type should usually be "SaaS" for commercial workflow, data, intelligence, GTM, CRM, or research software platforms.
   • Use "Digital Health & Informatics" only when the software is fundamentally patient-facing, clinical, care-delivery, provider workflow, or healthcare informatics.
+  • platform_category should capture the company's software / product type in a short label such as "Sales Intelligence Platform", "Scientific Content Platform", or "Analytics Platform".
+  • platform_category must be 1–4 words, Title Case, noun-phrase style, and must not contain "and".
   • therapeutic_areas MUST be [] — disease areas seen on the website are their CUSTOMERS' areas, not theirs.
-  • modalities: only include software product categories (e.g. Sales Intelligence Platform, Market Intelligence Platform, AI/ML Platform, Drug Discovery Platform). Drug modalities (Small Molecule, Cell Therapy, Gene Therapy, etc.) belong in customer_modalities, NOT here.
-  • Do NOT use "AI/ML Platform" just because the website mentions AI features or algorithms. Use it only when the core product is meaningfully an AI/ML platform. Prefer a workflow/intelligence label when AI is just part of a sales, data, or intelligence product.
+  • modalities MUST stay [] unless the company truly has its own scientific / therapeutic modality.
+  • Do NOT use an AI label just because the website mentions AI features or algorithms. Use an AI platform category only when the core product is meaningfully an AI platform.
   • development_stages MUST be [] — they have no drug pipeline.
   • Put disease areas, drug modalities, and trial stages into customer_* fields instead.
 
@@ -279,8 +293,9 @@ Website says: "We help oncology and neuroscience drug developers find leads. Our
 CORRECT output:
 {
   "company_type": "SaaS",
+  "platform_category": "Sales Intelligence Platform",
   "therapeutic_areas": [],
-  "modalities": ["Sales Intelligence Platform", "Market Intelligence Platform"],
+  "modalities": [],
   "development_stages": [],
   "customer_therapeutic_areas": ["Oncology", "Neuroscience"],
   "customer_modalities": ["Small Molecule", "Cell Therapy"],
@@ -288,18 +303,22 @@ CORRECT output:
 }
 WRONG output (do NOT do this):
 {
+  "platform_category": null,
   "therapeutic_areas": ["Oncology", "Neuroscience"],
-  "modalities": ["AI/ML Platform", "Small Molecule", "Cell Therapy"],
+  "modalities": ["Small Molecule", "Cell Therapy"],
   "customer_therapeutic_areas": []
 }
 
 PLANE A — THIS COMPANY (what THEY are / what THEY build):
-- therapeutic_areas, modalities, development_stages describe only the company's own science, regulated products, software product type, or organisational development stage.
-- SaaS / BI / data vendors: company_type is usually "SaaS"; therapeutic_areas = [], drug modalities = [], development_stages = []. Only software-category modalities (Sales Intelligence Platform, Market Intelligence Platform, AI/ML Platform, Drug Discovery Platform, Biomarker) may appear in own modalities.
-- If the product is a GTM, prospecting, sales, or intelligence tool for life sciences, prefer Sales/Market Intelligence labels over AI/ML Platform unless the site's primary claim is that it is itself an AI platform.
-- Reserve "Digital Health & Informatics" for companies whose core product is used in patient care, clinical decision support, provider workflow, healthcare operations, or digital therapeutics.
-- Biotech / Pharma / device / diagnostic developers: therapeutic_areas and modalities from their OWN pipeline; development_stages from their OWN assets/trials (use web search for current clinical phase).
-- CDMO / CRO / contract lab: PLANE A modalities and development_stages may reflect what THEY operationally handle; still split customer beachhead into PLANE B when the site describes WHO they sell to.
+- platform_category, therapeutic_areas, modalities, development_stages describe only the company's own product/science/organisational maturity.
+- DEFAULT RULE: For ALL non-software company types, therapeutic_areas and modalities MUST be populated based on what the company operationally specialises in. A company's domain specialisation is its identity — do NOT leave these empty just because it is a service provider, tools vendor, or research organisation rather than a drug developer.
+- SOFTWARE EXCEPTION (SaaS / Digital Health & Informatics only): therapeutic_areas = [] and modalities = [] — their identity is their software product, not a scientific domain. Disease areas and drug modalities seen on the site go into customer_* instead.
+  - SaaS / BI / data vendors: company_type is usually "SaaS"; platform_category should usually be populated.
+  - If the product is a GTM, prospecting, sales, or intelligence tool for life sciences, prefer specific categories like Sales Intelligence Platform, Commercial Intelligence Platform, Scientific Content Platform, or Analytics Platform over a generic AI label.
+  - Reserve "Digital Health & Informatics" for companies whose core product is used in patient care, clinical decision support, provider workflow, healthcare operations, or digital therapeutics.
+- Biotech / Biopharma / Pharma: development_stages from their OWN assets/trials (use web search for current clinical phase).
+- Academic / Research Institute / Academic Spinout: development_stages from their own asset/trial maturity (typically Preclinical or Discovery).
+- For ALL non-software types, populate ALL therapeutic_areas and modalities that are genuinely evidenced — there is no cap. A broad CRO or tools company may have many modalities; list every one that appears in the allowed vocabulary.
 
 PLANE B — CUSTOMERS SERVED (beachhead / who buys from them):
 - customer_therapeutic_areas, customer_modalities, customer_development_stages describe target accounts and buying contexts — diseases, customer science workflows, or trial phases OF THE ACCOUNTS THEY SELL INTO.
@@ -308,10 +327,12 @@ PLANE B — CUSTOMERS SERVED (beachhead / who buys from them):
 
 General rules:
 - Same allowed vocabulary lists for TA and modalities in BOTH planes; development stages use the development_stages list for BOTH planes.
+- platform_category is free-form but constrained: 1–4 words, Title Case, no "and", no slogans, no sentences.
 - Therapeutic areas must be disease/problem spaces, not buzzwords.
 - modalities include parent modalities when a specific child applies (e.g. CAR-T → Cell Therapy).
-- evidence_summary must explicitly mention both planes when both are non-empty (e.g. "Own: pure SaaS AI platform; customer: oncology/neuroscience biotechs in Phase I–III").
+- evidence_summary must explicitly mention both planes when both are non-empty (e.g. "Own: SaaS sales intelligence platform; customer: oncology/neuroscience biotechs in Phase I–III").
 - If evidence is weak, return fewer values and lower confidence — do not fabricate.
+- company_type must NEVER be null. If the company clearly exists but does not fit any other category, use "Other". Only return null if you have no evidence at all that the company exists.
 
 Company: ${input.company_name}
 Domain: ${input.domain || 'unknown'}
@@ -337,6 +358,7 @@ Return ONLY valid JSON:
 {
   "company_type": "<one allowed company_type or null>",
   "company_type_display": "<short human-readable label, always populated>",
+  "platform_category": "<1-4 word Title Case software/product category for the company itself, or null>",
   "therapeutic_areas": [],
   "modalities": [],
   "development_stages": [],
@@ -349,7 +371,7 @@ Return ONLY valid JSON:
 
   const message = await client.messages.create({
     model: MODEL,
-    max_tokens: 1100,
+    max_tokens: 2000,
     messages: [{ role: 'user', content: prompt }],
     tools: [
       {

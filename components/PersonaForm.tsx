@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { toast } from 'sonner';
 import {
   DndContext,
@@ -21,32 +21,11 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { BUSINESS_AREA_OPTIONS, SENIORITY_LEVEL_OPTIONS } from '@/lib/arcova-taxonomy';
 import { getSignalDisplayName } from '@/lib/signal-display-names';
-import { getRandomLockedSignals, type LockedSignal } from '@/lib/locked-signals';
-
 // --- Constants ---
 
 const FUNCTION_OPTIONS: string[] = [...BUSINESS_AREA_OPTIONS];
 
 const SENIORITY_OPTIONS: string[] = [...SENIORITY_LEVEL_OPTIONS];
-const CAL_BOOKING_URL = 'https://cal.com/emma-arcova/45-min-meeting';
-const ENGAGEMENT_LOCKED_SIGNAL_IDS = [
-  'downloaded_your_content',
-  'attended_your_webinar_or_event',
-  'clicked_your_linkedin_ad',
-  'demo_requested',
-  'inbound_enquiry',
-  'followed_your_company',
-  'engaged_with_your_content',
-  'commented_on_your_post',
-  'shared_your_content',
-  'viewed_your_profile',
-];
-const CRM_LOCKED_SIGNAL_IDS = [
-  'previously_contacted_by_your_team',
-  'meeting_previously_booked',
-  'went_dark_after_engagement',
-  'met_at_conference_or_tradeshow',
-];
 
 const SPECIFIC_ROLE_OPTIONS: Record<string, string[]> = {
   "Executive Leadership": [
@@ -181,6 +160,13 @@ const SPECIFIC_ROLE_OPTIONS: Record<string, string[]> = {
     "Director of Computational Biology",
     "Head of Computational Biology",
   ],
+  "Library & Information Services": [
+    "University Librarian",
+    "Library Director",
+    "Head of Library Services",
+    "Scholarly Communications Director",
+    "Research Information Manager",
+  ],
   "Marketing": [
     "Chief Marketing Officer",
     "VP Marketing",
@@ -215,11 +201,18 @@ export interface CompanyProfile {
   id: string;
   name: string;
   company_type: string;
+  platform_category?: string;
   therapeutic_areas: string[];
   modalities: string[];
   development_stages: string[];
   company_sizes: string[];
   funding_stages: string[];
+  target_customers?: string[] | null;
+  buyer_types?: string[] | null;
+  example_company_enrichment?: {
+    target_customers?: string[] | null;
+    customers_we_serve?: string[] | null;
+  } | null;
 }
 
 export interface SellerProfile {
@@ -351,27 +344,7 @@ export default function PersonaForm({
   const [modalCompanyId, setModalCompanyId] = useState<string | null>(null);
   const [isLoadingSignals, setIsLoadingSignals] = useState(false);
   const [allSignals, setAllSignals] = useState<Signal[]>([]);
-  const [lockedSignals] = useState<LockedSignal[]>(() => getRandomLockedSignals());
-  const [lockedSignalModal, setLockedSignalModal] = useState<LockedSignal | null>(null);
   const [showAllSignals, setShowAllSignals] = useState(false);
-  const lockedSignalById = useMemo(
-    () => new Map(lockedSignals.map((signal) => [signal.id, signal])),
-    [lockedSignals]
-  );
-  const engagementLockedSignals = useMemo(
-    () =>
-      ENGAGEMENT_LOCKED_SIGNAL_IDS.map((id) => lockedSignalById.get(id)).filter(
-        (signal): signal is LockedSignal => Boolean(signal)
-      ),
-    [lockedSignalById]
-  );
-  const crmLockedSignals = useMemo(
-    () =>
-      CRM_LOCKED_SIGNAL_IDS.map((id) => lockedSignalById.get(id)).filter(
-        (signal): signal is LockedSignal => Boolean(signal)
-      ),
-    [lockedSignalById]
-  );
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, {
@@ -641,33 +614,6 @@ export default function PersonaForm({
         ? prev.signals.filter(id => id !== signalId)
         : [...prev.signals, signalId]
     }));
-  };
-
-  const handleLockedSignalClick = async (signal: LockedSignal) => {
-    setLockedSignalModal(signal);
-    try {
-      await fetch('/api/locked-signal-clicks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          signalId: signal.id,
-          signalName: signal.name,
-        }),
-      });
-    } catch {
-      // Intentionally silent background logging.
-    }
-  };
-
-  const getContactUsUrl = (_signal: LockedSignal) => {
-    const details = 'Persona enterprise signal request';
-
-    const params = new URLSearchParams({
-      notes: details,
-      description: details,
-    });
-
-    return `${CAL_BOOKING_URL}?${params.toString()}`;
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -1309,39 +1255,6 @@ export default function PersonaForm({
                     )}
                   </div>
 
-                  <div className="space-y-3">
-                    <div>
-                      <p className="text-xs text-[#9CA3AF] mb-2">Engagement signals</p>
-                      <div className="flex flex-wrap gap-2">
-                        {engagementLockedSignals.map((signal) => (
-                          <button
-                            key={signal.id}
-                            type="button"
-                            onClick={() => handleLockedSignalClick(signal)}
-                            className="px-3 py-1.5 rounded-full text-sm transition-colors bg-gray-100 text-gray-700 hover:bg-gray-200"
-                          >
-                            {getSignalDisplayName(signal.id, signal.name)}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <div>
-                      <p className="text-xs text-[#9CA3AF] mb-2">CRM signals</p>
-                      <div className="flex flex-wrap gap-2">
-                        {crmLockedSignals.map((signal) => (
-                          <button
-                            key={signal.id}
-                            type="button"
-                            onClick={() => handleLockedSignalClick(signal)}
-                            className="px-3 py-1.5 rounded-full text-sm transition-colors bg-gray-100 text-gray-700 hover:bg-gray-200"
-                          >
-                            {getSignalDisplayName(signal.id, signal.name)}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-
                   <button
                     type="button"
                     onClick={() => setShowAllSignals(!showAllSignals)}
@@ -1360,7 +1273,7 @@ export default function PersonaForm({
 
                   {showAllSignals && (
                     <div className="space-y-4 pt-2 border-t border-gray-200">
-                      {['Funding & Financial', 'Pipeline & Clinical', 'Hiring & Team', 'Corporate & Strategic'].map((category) => (
+                      {['Career & Role Changes', 'Activity & Network', 'Publications & Recognition', 'Hiring & Team', 'First-Party Engagement', 'CRM & Relationship'].map((category) => (
                         <div key={category}>
                           <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">{category}</h4>
                           <div className="flex flex-wrap gap-2">
@@ -1472,36 +1385,6 @@ export default function PersonaForm({
           </div>
         </form>
       </div>
-
-      {lockedSignalModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl p-8 max-w-md mx-4 text-center">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-2">
-              Unlock {lockedSignalModal.name}
-            </h2>
-            <p className="text-gray-600 mb-6">
-              This signal requires a custom integration with your tracking setup or CRM. Get in touch and we'll help you set it up.
-            </p>
-            <div className="flex flex-col gap-3 items-center">
-              <a
-                href={getContactUsUrl(lockedSignalModal)}
-                target="_blank"
-                rel="noreferrer"
-                className="w-full sm:w-auto px-6 py-2 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors"
-              >
-                Contact us
-              </a>
-              <button
-                type="button"
-                onClick={() => setLockedSignalModal(null)}
-                className="text-gray-500 hover:text-gray-700 text-sm"
-              >
-                Maybe later
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Already Added Modal (create mode) */}
       {showAlreadyAddedModal && (

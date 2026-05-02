@@ -120,6 +120,7 @@ export async function POST(request: NextRequest) {
       // Seller profile
       seller_company_name?: string;
       seller_company_type?: string;
+      seller_platform_category?: string;
       seller_therapeutic_areas?: string[];
       seller_products_services?: string[];
       seller_services?: string[];
@@ -127,6 +128,7 @@ export async function POST(request: NextRequest) {
       seller_value_propositions?: string[];
       // Target ICP
       icp_company_type?: string;
+      icp_platform_category?: string;
       icp_therapeutic_areas?: string[];
       icp_modalities?: string[];
       icp_development_stages?: string[];
@@ -134,6 +136,8 @@ export async function POST(request: NextRequest) {
       icp_customer_therapeutic_areas?: string[];
       icp_customer_modalities?: string[];
       icp_customer_development_stages?: string[];
+      icp_target_customers?: string[];
+      icp_buyer_types?: string[];
       icp_company_sizes?: string[];
       icp_funding_stages?: string[];
       /** From example-company enrichment (Apollo / LinkedIn) — drives realistic micro-company buying logic */
@@ -177,6 +181,7 @@ export async function POST(request: NextRequest) {
 SELLER:
 - Company: ${body.seller_company_name ?? 'Unknown'}
 - Type: ${body.seller_company_type ?? ''}
+- Platform category: ${body.seller_platform_category ?? ''}
 - Products: ${body.seller_products_services?.join(', ') ?? ''}
 - Services: ${body.seller_services?.join(', ') ?? ''}
 - Customers they serve: ${body.seller_customers_we_serve?.join(', ') ?? ''}
@@ -185,9 +190,12 @@ SELLER:
 
 TARGET ACCOUNT PROFILE (ICP) — distinguish "this company" vs "customers they serve":
 - Company type: ${body.icp_company_type ?? ''}
+- Platform category: ${body.icp_platform_category ?? ''}
 - Own therapeutic areas (their science / product): ${body.icp_therapeutic_areas?.join(', ') ?? ''}
 - Own modalities (their product technology): ${body.icp_modalities?.join(', ') ?? ''}
 - Own development stages (their assets / trial phase): ${body.icp_development_stages?.join(', ') ?? ''}
+- Sells to companies like: ${body.icp_target_customers?.join(', ') ?? ''}
+- Sells to people like: ${body.icp_buyer_types?.join(', ') ?? ''}
 - Customers served — therapeutic areas (beachhead): ${body.icp_customer_therapeutic_areas?.join(', ') ?? ''}
 - Customers served — modalities / workflows: ${body.icp_customer_modalities?.join(', ') ?? ''}
 - Customers served — development stages (buyer accounts): ${body.icp_customer_development_stages?.join(', ') ?? ''}
@@ -206,6 +214,12 @@ ${orgScaleInstructions(scaleBand)}
 TASK: Identify which business functions and seniority levels are most likely involved in buying decisions for this seller's product within target accounts like these. The answer must be consistent with the organisation scale above — for micro and small companies, that often means concentrating on founders / CEO / singular functional owners rather than imagining mature parallel departments.
 
 Then list 4–6 representative job titles that match the implied scale — founders and generalist heads for tiny companies; more specialised titles only when scale band truly supports several distinct senior buyers.
+
+Segment interpretation rules:
+- Treat account segments like Research Universities, Academic Libraries, Healthcare Systems, CROs, or Learned Societies as context about WHO they sell into, not as business functions themselves.
+- Treat buyer segments like Research Library Teams, Editorial Boards, Commercial Teams, or Clinical Operations Teams as strong clues about the real buying team.
+- If the target segments point to academic libraries, scholarly communications, research information teams, or information-resource ownership, "Library & Information Services" is an appropriate business function.
+- If the target segments point to university labs or research institutes, prefer existing functions like "Research & Development" or "Lab Operations" rather than inventing a generic "University" function.
 
 You MUST only use values from the allowed lists below for "functions" and "seniority_levels". Pick the 2–5 most relevant business functions AND 2–5 seniority levels, but APPLY the smallest counts implied by scale (e.g. a 5-person company might warrant only 2 business functions × 2 seniority levels reflected across job_titles).
 

@@ -47,7 +47,7 @@ export function useSetupState(): SetupState {
       try {
         const [profileResult, icpsResult, personasResult] = await Promise.all([
           supabase
-            .from('company_analyses')
+            .from('user_company')
             .select('id')
             .eq('user_id', user.id)
             .limit(1)

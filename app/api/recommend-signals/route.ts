@@ -17,7 +17,7 @@ export async function POST(request: Request) {
     });
 
     const body = await request.json();
-    const { companyType, companySizes, therapeuticAreas, modalities, developmentStages, fundingStages } = body;
+    const { companyType, platformCategory, companySizes, therapeuticAreas, modalities, developmentStages, fundingStages } = body;
 
     const signalList = COMPANY_SIGNALS.map(
       (signal) => `- ${signal.id}: ${signal.displayName} (${signal.category})`
@@ -27,6 +27,7 @@ export async function POST(request: Request) {
 
 Their ICP criteria:
 - Company Type: ${companyType || 'Not specified'}
+- Platform Category: ${platformCategory || 'Not specified'}
 - Company Sizes: ${companySizes?.join(', ') || 'Any'}
 - Therapeutic Areas: ${therapeuticAreas?.join(', ') || 'Any'}
 - Modalities: ${modalities?.join(', ') || 'Any'}
