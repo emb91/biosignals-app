@@ -98,32 +98,6 @@ export async function replaceIcpSignalSelections(
   return (data || []) as SignalSelectionRow[];
 }
 
-export async function replacePersonaSignalSelections(
-  supabase: DatabaseClient,
-  userId: string,
-  personaId: string,
-  signalIds: string[]
-) {
-  const { error: deleteError } = await supabase
-    .from('persona_signal_selections')
-    .delete()
-    .eq('user_id', userId)
-    .eq('persona_id', personaId);
-
-  if (deleteError) throw deleteError;
-
-  const rows = buildSelectionRows(signalIds, { user_id: userId, key: 'persona_id', id: personaId });
-  if (rows.length === 0) return [];
-
-  const { data, error } = await supabase
-    .from('persona_signal_selections')
-    .insert(rows)
-    .select('signal_id, rank, weight')
-    .order('rank', { ascending: true });
-
-  if (error) throw error;
-  return (data || []) as SignalSelectionRow[];
-}
 
 export async function loadIcpSignalSelections(
   supabase: DatabaseClient,
@@ -151,31 +125,6 @@ export async function loadIcpSignalSelections(
   return selections;
 }
 
-export async function loadPersonaSignalSelections(
-  supabase: DatabaseClient,
-  userId: string,
-  personaIds: string[]
-) {
-  if (personaIds.length === 0) return new Map<string, string[]>();
-
-  const { data, error } = await supabase
-    .from('persona_signal_selections')
-    .select('persona_id, signal_id, rank')
-    .eq('user_id', userId)
-    .in('persona_id', personaIds)
-    .order('rank', { ascending: true });
-
-  if (error) throw error;
-
-  const selections = new Map<string, string[]>();
-  for (const row of (data || []) as Array<{ persona_id: string; signal_id: string }>) {
-    const current = selections.get(row.persona_id) || [];
-    current.push(row.signal_id);
-    selections.set(row.persona_id, current);
-  }
-
-  return selections;
-}
 
 /** Per-ICP ordered rows with weights from icp_signal_selections. */
 export async function loadIcpSignalSelectionsDetailed(
@@ -208,36 +157,6 @@ export async function loadIcpSignalSelectionsDetailed(
   return out;
 }
 
-/** Per-persona ordered rows with weights from persona_signal_selections. */
-export async function loadPersonaSignalSelectionsDetailed(
-  supabase: DatabaseClient,
-  userId: string,
-  personaIds: string[]
-): Promise<Map<string, Array<{ signalId: string; rank: number; weight: number }>>> {
-  if (personaIds.length === 0) return new Map();
-
-  const { data, error } = await supabase
-    .from('persona_signal_selections')
-    .select('persona_id, signal_id, rank, weight')
-    .eq('user_id', userId)
-    .in('persona_id', personaIds)
-    .order('rank', { ascending: true });
-
-  if (error) throw error;
-
-  const out = new Map<string, Array<{ signalId: string; rank: number; weight: number }>>();
-  for (const row of data || []) {
-    const persona_id = row.persona_id as string;
-    const arr = out.get(persona_id) || [];
-    arr.push({
-      signalId: row.signal_id as string,
-      rank: Number(row.rank),
-      weight: Number(row.weight),
-    });
-    out.set(persona_id, arr);
-  }
-  return out;
-}
 
 export async function hydrateIcpsWithSignals<T extends EntityWithId>(
   supabase: DatabaseClient,
@@ -252,19 +171,3 @@ export async function hydrateIcpsWithSignals<T extends EntityWithId>(
   }));
 }
 
-export async function hydratePersonasWithSignals<T extends EntityWithId>(
-  supabase: DatabaseClient,
-  userId: string,
-  personas: T[]
-): Promise<Array<T & { signals: string[] }>> {
-  const selections = await loadPersonaSignalSelections(
-    supabase,
-    userId,
-    personas.map((persona) => persona.id)
-  );
-
-  return personas.map((persona) => ({
-    ...persona,
-    signals: selections.get(persona.id) || parseLegacySignalIds(persona.signals),
-  }));
-}

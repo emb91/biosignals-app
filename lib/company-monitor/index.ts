@@ -8,6 +8,7 @@
  * Current modules:
  *   - funding: resolves funding stage from Apollo + web search
  *   - taxonomy: maps company evidence into Arcova's canonical company taxonomy
+ *   - narrative: resolves products_services, services, technologies via Claude web_search
  *
  * Planned modules (slot in here when ready):
  *   - clinical_trials: polls ClinicalTrials.gov for pipeline changes
@@ -17,6 +18,7 @@
 
 import { resolveFundingStage, type FundingInput } from './funding';
 import { resolveCompanyTaxonomy, type CompanyTaxonomyInput } from './taxonomy';
+import { resolveCompanyNarrative, type CompanyNarrativeInput } from './narrative';
 
 type MinimalSupabase = {
   from: (table: string) => any;
@@ -51,6 +53,7 @@ export type CompanyMonitorInput = {
   company_id: string;
   company_name: string;
   domain?: string | null;
+  website?: string | null;
   apollo_funding_stage?: string | null;
   apollo_total_funding_usd?: number | null;
   apollo_latest_funding_date?: string | null;
@@ -350,6 +353,56 @@ export async function runCompanyMonitor(
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[company-monitor] taxonomy module failed for ${input.company_name}:`, msg);
     result.errors.push(`taxonomy: ${msg}`);
+  }
+
+  // ── Narrative module (products_services, services, technologies) ───────────
+  try {
+    const websiteForNarrative =
+      input.website ||
+      (typeof input.apify_company_firmographics?.website === 'string'
+        ? input.apify_company_firmographics.website
+        : null);
+
+    const narrativeInput: CompanyNarrativeInput = {
+      company_id: input.company_id,
+      company_name: input.company_name,
+      domain: input.domain,
+      website: websiteForNarrative,
+    };
+
+    // Fetch existing values to skip if already populated
+    const existingNarrative = await supabase
+      .from('companies')
+      .select('products_services, services, technologies')
+      .eq('id', input.company_id)
+      .maybeSingle();
+
+    const existingNarrativeData = existingNarrative?.data ?? null;
+
+    const narrative = await resolveCompanyNarrative(narrativeInput, existingNarrativeData);
+
+    if (!narrative.skipped) {
+      const narrativeUpdate: Record<string, unknown> = { updated_at: new Date().toISOString() };
+      if (narrative.products_services) narrativeUpdate.products_services = narrative.products_services;
+      if (narrative.services) narrativeUpdate.services = narrative.services;
+      if (narrative.technologies) narrativeUpdate.technologies = narrative.technologies;
+
+      const updateResult = await supabase
+        .from('companies')
+        .update(narrativeUpdate)
+        .eq('id', input.company_id);
+
+      const updateError = formatSupabaseErrorMessage(updateResult?.error);
+      if (updateError) {
+        throw new Error(
+          `[company-monitor] Failed to persist narrative for company ${input.company_id}: ${updateError}`
+        );
+      }
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[company-monitor] narrative module failed for ${input.company_name}:`, msg);
+    result.errors.push(`narrative: ${msg}`);
   }
 
   // ── Future modules slot in here ─────────────────────────────────────────────

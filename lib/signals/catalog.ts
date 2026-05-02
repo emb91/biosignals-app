@@ -190,6 +190,14 @@ export const SIGNAL_CATALOG: SignalDefinition[] = [
     description: 'A press release can be a useful weak signal of recent movement.',
   },
   {
+    id: 'patent_filed_or_granted',
+    scope: 'company',
+    displayName: 'Patent filed or granted',
+    category: 'Corporate & Strategic',
+    baseWeight: 0.7,
+    description: 'Patent activity signals new IP development, a novel programme direction, or approaching commercialisation.',
+  },
+  {
     id: 'demo_requested',
     scope: 'company',
     displayName: 'Demo requested',
@@ -350,14 +358,6 @@ export const SIGNAL_CATALOG: SignalDefinition[] = [
     description: 'Recognition can signal growing influence and a moment of increased visibility.',
   },
   {
-    id: 'patent_filed_or_granted',
-    scope: 'contact',
-    displayName: 'Patent filed or granted',
-    category: 'Publications & Recognition',
-    baseWeight: 0.7,
-    description: 'Patent activity signals active IP development and potential commercialisation.',
-  },
-  {
     id: 'team_actively_hiring',
     scope: 'contact',
     displayName: 'Team actively hiring',
@@ -441,6 +441,23 @@ export const SIGNAL_CATALOG: SignalDefinition[] = [
 
 export const COMPANY_SIGNALS = SIGNAL_CATALOG.filter((signal) => signal.scope === 'company');
 export const CONTACT_SIGNALS = SIGNAL_CATALOG.filter((signal) => signal.scope === 'contact');
+
+/** First-party and CRM-linked contact signals — not backed by live ingestion yet; UI may collect interest. */
+const CONTACT_SIGNAL_COMING_SOON_IDS = new Set([
+  'attended_your_webinar_or_event_contact',
+  'downloaded_your_content_contact',
+  'clicked_your_linkedin_ad',
+  'responded_to_a_previous_outreach',
+  'previously_contacted_by_your_team',
+  'meeting_previously_booked',
+  'open_opportunity_in_your_pipeline',
+  'lapsed_customer_contact',
+  'renewal_coming_up_contact',
+]);
+
+export function isContactSignalComingSoon(signalId: string): boolean {
+  return CONTACT_SIGNAL_COMING_SOON_IDS.has(signalId);
+}
 
 export const getSignalById = (signalId: string) =>
   SIGNAL_CATALOG.find((signal) => signal.id === signalId) ?? null;

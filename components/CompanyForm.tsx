@@ -796,7 +796,7 @@ export default function CompanyForm({ mode, initialData, onSave, onCancel }: Com
                   {/* All signals grouped by category (collapsible) */}
                   {showAllSignals && (
                     <div className="space-y-4 pt-2 border-t border-gray-200">
-                      {['Funding & Financial', 'Pipeline & Clinical', 'Hiring & Team', 'Corporate & Strategic'].map((category) => (
+                      {['Funding & Financial', 'Pipeline & Clinical', 'Hiring & Team', 'Corporate & Strategic', 'First-Party Engagement', 'CRM & Relationship'].map((category) => (
                         <div key={category}>
                           <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">{category}</h4>
                           <div className="flex flex-wrap gap-2">

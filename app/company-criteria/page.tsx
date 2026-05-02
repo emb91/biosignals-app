@@ -42,6 +42,7 @@ import {
   followerCountToFollowerBucket,
   canonicalizeFundingStage,
   arrEstimateToBucket,
+  fundingAmountDisplayBucket,
 } from '@/lib/arcova-taxonomy';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -281,7 +282,7 @@ function simplifyFundingStatusForIcp(value?: string | null): string | null {
     return 'Public';
   }
   if (lower.includes('grant')) return 'Grant-funded';
-  if (lower.includes('non-profit') || lower.includes('nonprofit')) return 'Non-profit';
+  if (lower.includes('non-profit') || lower.includes('nonprofit') || lower.includes('donation') || lower.includes('grassroots') || lower.includes('community-funded')) return 'Non-profit';
   if (
     lower.includes('private') ||
     lower.includes('venture') ||
@@ -961,6 +962,7 @@ function ICPCard({
 
 
           <div className="rounded-xl border border-white/10 bg-white/[0.06] px-3 py-3">
+            <p className="text-xs font-semibold text-white mb-2.5">Criteria</p>
             {editMode ? (
               <div className="space-y-3">
                 <div>
@@ -1002,42 +1004,51 @@ function ICPCard({
                 <EditTagField label="LinkedIn follower base" options={LI_FOLLOWER_OPTIONS} selected={editData.li_follower_sizes} onRemove={(v) => toggleMulti('li_follower_sizes', v)} onAdd={(v) => toggleMulti('li_follower_sizes', v)} />
                 <EditTagField label="Funding stage" options={FUNDING_STAGE_OPTIONS} selected={editData.funding_stages} onRemove={(v) => toggleMulti('funding_stages', v)} onAdd={(v) => toggleMulti('funding_stages', v)} />
               </div>
-            ) : (
-              <>
-                {(icp.company_type || visiblePlatformCategory(icp.company_type, icp.platform_category) || icp.therapeutic_areas.length > 0 || icp.modalities.length > 0
-                  || icp.development_stages.length > 0) && (
-                  <div className="space-y-2.5">
-                    {icp.company_type && (
-                      <div>
-                        <p className="mb-1 text-xs font-semibold text-white">Company type</p>
-                        <Tag label={icp.company_type} />
-                      </div>
-                    )}
-                    {visiblePlatformCategory(icp.company_type, icp.platform_category) && (
-                      <div>
-                        <p className="mb-1 text-xs font-semibold text-white">Platform category</p>
-                        <Tag label={visiblePlatformCategory(icp.company_type, icp.platform_category)} />
-                      </div>
-                    )}
-                    <FieldRow label="Therapeutic areas" items={icp.therapeutic_areas} />
-                    <FieldRow label="Modalities" items={icp.modalities} />
-                    <FieldRow label="Development stage" items={icp.development_stages} />
-                  </div>
-                )}
-                {(icp.company_sizes.length > 0 || (icp.li_follower_sizes?.length ?? 0) > 0) && (
-                  <div className="space-y-2.5">
-                    {icp.company_sizes.length > 0 && <FieldRow label="Company size" items={icp.company_sizes} />}
-                    {(icp.li_follower_sizes?.length ?? 0) > 0 && (
-                      <FieldRow label="LinkedIn follower base" items={icp.li_follower_sizes ?? []} />
-                    )}
-                  </div>
-                )}
-              </>
-            )}
+            ) : (() => {
+              const hasTaxonomy = icp.company_type || visiblePlatformCategory(icp.company_type, icp.platform_category) || icp.therapeutic_areas.length > 0 || icp.modalities.length > 0 || icp.development_stages.length > 0;
+              const hasSizing = icp.company_sizes.length > 0 || (icp.li_follower_sizes?.length ?? 0) > 0;
+              if (!hasTaxonomy && !hasSizing) {
+                return (
+                  <p className="text-xs text-white/40 italic">
+                    No criteria set — this ICP will match any company type, size, or stage. Click Edit to add filters.
+                  </p>
+                );
+              }
+              return (
+                <>
+                  {hasTaxonomy && (
+                    <div className="space-y-2.5">
+                      {icp.company_type && (
+                        <div>
+                          <p className="mb-1 text-xs font-semibold text-white">Company type</p>
+                          <Tag label={icp.company_type} />
+                        </div>
+                      )}
+                      {visiblePlatformCategory(icp.company_type, icp.platform_category) && (
+                        <div>
+                          <p className="mb-1 text-xs font-semibold text-white">Platform category</p>
+                          <Tag label={visiblePlatformCategory(icp.company_type, icp.platform_category)} />
+                        </div>
+                      )}
+                      <FieldRow label="Therapeutic areas" items={icp.therapeutic_areas} />
+                      <FieldRow label="Modalities" items={icp.modalities} />
+                      <FieldRow label="Development stage" items={icp.development_stages} />
+                    </div>
+                  )}
+                  {hasSizing && (
+                    <div className="space-y-2.5">
+                      {icp.company_sizes.length > 0 && <FieldRow label="Company size" items={icp.company_sizes} />}
+                      {(icp.li_follower_sizes?.length ?? 0) > 0 && (
+                        <FieldRow label="LinkedIn follower base" items={icp.li_follower_sizes ?? []} />
+                      )}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
 
           {!editMode && (() => {
-            const fundingStatus = icpFundingStatus;
             const derivedStage = canonicalizeFundingStage(
               e?.funding_stage,
               e?.total_funding_usd,
@@ -1046,13 +1057,20 @@ function ICPCard({
             const fundingStages = icp.funding_stages.length > 0
               ? icp.funding_stages
               : derivedStage ? [derivedStage] : [];
+            // Dollar bucket from the reference account's total funding amount
+            const fundingBucket = fundingAmountDisplayBucket(e?.total_funding_usd);
+            // Only show generic ownership status (e.g. "Public", "Grant-funded") when
+            // there's no named stage already — avoids the redundant "Private" tag
+            // appearing alongside "Series C" + a dollar bucket.
+            const fundingStatus = fundingStages.length === 0 ? icpFundingStatus : null;
             const arrBucket = arrEstimateToBucket(e?.arr_estimate);
-            const hasFunding = fundingStages.length > 0 || fundingStatus || arrBucket;
+            const hasFunding = fundingStages.length > 0 || fundingBucket || fundingStatus || arrBucket;
             if (!hasFunding) return null;
             return (
               <Segment label="Funding" open={open.funding} onToggle={() => toggle('funding')}>
                 <div className="flex flex-wrap gap-1.5">
                   {fundingStages.map((s) => <Tag key={s} label={s} />)}
+                  {fundingBucket && <Tag label={fundingBucket} />}
                   {fundingStatus && <Tag label={fundingStatus} />}
                   {arrBucket && <Tag label={arrBucket} />}
                 </div>

@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase-server';
 import { NextResponse } from 'next/server';
 import { assignSignalWeights, extractSignalIds } from '@/lib/signal-weights';
+import { rescoreAllCompanyFitForUser } from '@/lib/company-fit';
 import {
   hydrateIcpsWithSignals,
   replaceIcpSignalSelections,
@@ -146,6 +147,10 @@ export async function PUT(
     await replaceIcpSignalSelections(supabase, user.id, data.id, signalIds);
     const [hydrated] = await hydrateIcpsWithSignals(supabase, user.id, [data]);
 
+    rescoreAllCompanyFitForUser(user.id).catch((err) =>
+      console.error('[company-criteria PUT] Background company-fit rescore failed:', err),
+    );
+
     return NextResponse.json({ data: hydrated });
   } catch (error) {
     console.error('Error in PUT /api/icp/[id]:', error);
@@ -177,6 +182,10 @@ export async function DELETE(
       console.error('Error deleting ICP:', error);
       return NextResponse.json({ error: 'Failed to delete ICP' }, { status: 500 });
     }
+
+    rescoreAllCompanyFitForUser(user.id).catch((err) =>
+      console.error('[company-criteria DELETE] Background company-fit rescore failed:', err),
+    );
 
     return NextResponse.json({ success: true });
   } catch (error) {

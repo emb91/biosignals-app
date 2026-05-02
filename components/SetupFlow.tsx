@@ -833,29 +833,17 @@ export default function SetupFlow({
 
   /** Fetches recommended IDs and merges into refs + panel only (no phase change / no narration). */
   const applyRecommendedSignalsSilently = useCallback(async () => {
-    const personaName =
-      personaRef.current.functions.length > 0 ? `Buying group: ${personaRef.current.functions[0]}` : 'Buying group';
-    const [companyCatalog, personaCatalog] = await Promise.all([
-      loadSignalsCatalog('/api/recommend-signals', {
-        companyType: companyRef.current.companyType,
-        platformCategory: visiblePlatformCategory(companyRef.current.companyType, companyRef.current.platformCategory),
-        companySizes: companyRef.current.companySizes,
-        therapeuticAreas: companyRef.current.therapeuticAreas,
-        modalities: companyRef.current.modalities,
-        developmentStages: companyRef.current.developmentStages,
-        fundingStages: companyRef.current.fundingStages,
-      }, companyRef.current.signals),
-      loadSignalsCatalog('/api/recommend-persona-signals', {
-        name: personaName,
-        functions: personaRef.current.functions,
-        seniorityLevels: personaRef.current.seniority,
-        jobTitles: personaRef.current.jobTitles,
-      }, personaRef.current.signals),
-    ]);
+    const companyCatalog = await loadSignalsCatalog('/api/recommend-signals', {
+      companyType: companyRef.current.companyType,
+      platformCategory: visiblePlatformCategory(companyRef.current.companyType, companyRef.current.platformCategory),
+      companySizes: companyRef.current.companySizes,
+      therapeuticAreas: companyRef.current.therapeuticAreas,
+      modalities: companyRef.current.modalities,
+      developmentStages: companyRef.current.developmentStages,
+      fundingStages: companyRef.current.fundingStages,
+    }, companyRef.current.signals);
     companyRef.current.signals = companyCatalog.selected;
-    personaRef.current.signals = personaCatalog.selected;
     setPanelCompany((prev) => ({ ...prev, signals: companyCatalog.selected }));
-    setPanelPersona((prev) => ({ ...prev, signals: personaCatalog.selected }));
   }, [loadSignalsCatalog]);
 
   // ── Save persona (and persist ICP + contact rows) ─────────────────────────
@@ -902,7 +890,6 @@ export default function SetupFlow({
       functions: p.functions,
       seniorityLevels: p.seniority,
       jobTitles: p.jobTitles,
-      signals: p.signals,
       icpId: icpIdRef.current,
     };
 
@@ -2031,8 +2018,8 @@ export default function SetupFlow({
           return;
         }
 
-        // Leg 4: persona exists — backfill recommended selections via save (no extra review step).
-        if (companyRef.current.signals.length === 0 || personaRef.current.signals.length === 0) {
+        // Leg 4: persona exists — backfill recommended company signal selections via save (no extra review step).
+        if (companyRef.current.signals.length === 0) {
           await savePersona();
           return;
         }

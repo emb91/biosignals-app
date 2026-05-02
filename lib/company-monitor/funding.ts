@@ -73,7 +73,8 @@ function mapApolloFundingStage(raw: string | null | undefined): FundingStage | n
   if (normalised === 'series c') return 'Series C';
   if (normalised.match(/series [d-z]/i) || normalised.includes('series d+') || normalised.includes('growth')) return 'Series D+';
   if (normalised.includes('ipo') || normalised.includes('post-ipo') || normalised.includes('public')) return 'Public';
-  if (normalised.includes('grant') || normalised.includes('non-profit')) return 'Grant-funded';
+  if (normalised.includes('grant')) return 'Grant-funded';
+  if (normalised.includes('non-profit') || normalised.includes('nonprofit') || normalised.includes('donation') || normalised.includes('charity') || normalised.includes('foundation')) return 'Non-profit';
 
   // "Venture (Round not Specified)" and anything else → needs web search
   return null;
@@ -102,6 +103,7 @@ Your task:
 3. Classify into exactly one of: ${FUNDING_STAGE_OPTIONS.join(', ')}
    - Use "Public" if the company is listed on a stock exchange
    - Use "Grant-funded" if the company is primarily funded by government or academic grants with no VC rounds
+   - Use "Non-profit" if the company is a registered non-profit, charity, foundation, or donation/community-funded organisation with no equity structure
    - Use null if you genuinely cannot determine the funding stage
 
 Search for "[company name] funding round", "[company name] raises", and "[company name] investor" to find the most recent information.

@@ -2,10 +2,7 @@ import { NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase-server';
 import { listLeadEvents } from '@/lib/signals/events';
-import {
-  loadIcpSignalSelectionsDetailed,
-  loadPersonaSignalSelectionsDetailed,
-} from '@/lib/signals/selections';
+import { loadIcpSignalSelectionsDetailed } from '@/lib/signals/selections';
 import {
   computeCompanyIntent01,
   computePersonIntent01,
@@ -57,6 +54,21 @@ async function personaForContact(
     .maybeSingle();
 
   return typeof p?.id === 'string' ? p.id : null;
+}
+
+async function matchedIcpForCompany(
+  supabase: SupabaseClient<any>,
+  companyId: string | null
+): Promise<string | null> {
+  if (!companyId) return null;
+
+  const { data } = await supabase
+    .from('companies')
+    .select('matched_icp_id')
+    .eq('id', companyId)
+    .maybeSingle();
+
+  return typeof data?.matched_icp_id === 'string' ? data.matched_icp_id : null;
 }
 
 /** Lead detail: observable signal events plus model intent used for overlays (stored DB scores unchanged here). */
@@ -115,24 +127,18 @@ export async function GET(
       icpId = typeof p?.icp_id === 'string' ? p.icp_id : null;
     }
 
+    if (!icpId) {
+      icpId = await matchedIcpForCompany(supabase, companyId);
+    }
+
     let icpSel: Array<{ signalId: string; weight: number }> = [];
     if (icpId) {
       const selMap = await loadIcpSignalSelectionsDetailed(supabase, user.id, [icpId]);
       icpSel = (selMap.get(icpId) ?? []).map((r) => ({ signalId: r.signalId, weight: r.weight }));
     }
 
-    let personaSel: Array<{ signalId: string; weight: number }> = [];
-    if (personaId) {
-      const pmap = await loadPersonaSignalSelectionsDetailed(supabase, user.id, [personaId]);
-      personaSel = (pmap.get(personaId) ?? []).map((r) => ({
-        signalId: r.signalId,
-        weight: r.weight,
-      }));
-    }
-
     const companyIntentModel = computeCompanyIntent01(icpSel, toSlim(bundle.companyEvents as Record<string, unknown>[]));
     const contactIntentModel = computePersonIntent01(
-      personaSel,
       toSlim(bundle.contactEvents as Record<string, unknown>[])
     );
 

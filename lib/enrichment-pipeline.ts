@@ -4,6 +4,7 @@
 // profile enrichment  = Apify LinkedIn profile scrape + company scrape + Apollo company enrich + LLM bio summary
 import Anthropic from '@anthropic-ai/sdk';
 import { enrichOrganizationWithApollo } from '@/lib/apollo';
+import { syncCompanyFitForCompany } from '@/lib/company-fit';
 import { resolveLinkedinUrl, type LinkedinResolutionResult } from '@/lib/linkedin-url-resolver';
 import { classifyContacts } from '@/lib/contact-classification';
 import { runCompanyMonitor } from '@/lib/company-monitor';
@@ -402,12 +403,12 @@ async function summariseCompanyBio(description: string): Promise<string | null> 
   try {
     const client = new Anthropic({ apiKey });
     const message = await client.messages.create({
-      model: 'claude-haiku-4-5',
-      max_tokens: 200,
+      model: 'claude-sonnet-4-6',
+      max_tokens: 100,
       messages: [
         {
           role: 'user',
-          content: `Summarise the following company description into exactly 3 bullet points for a B2B sales context. Each bullet must be 10–15 words maximum — tight and factual. Cover: what the company does, who it serves, and their distinctive positioning or advantage. Return only the 3 bullets as plain text, one per line, no leading dashes or numbers, no preamble.\n\n${description}`,
+          content: `Write a single plain sentence (10–20 words) describing what this company does, in a B2B sales context. Be factual and specific — name the category, product, or service. No preamble, no punctuation beyond the closing period.\n\n${description}`,
         },
       ],
     });
@@ -415,19 +416,8 @@ async function summariseCompanyBio(description: string): Promise<string | null> 
     const block = message.content[0];
     if (block.type !== 'text') return null;
 
-    const raw = block.text.trim();
-    // Model sometimes returns newline-separated bullets, sometimes a paragraph.
-    // Normalise to 3 newline-separated sentences either way.
-    const lines = raw.includes('\n')
-      ? raw.split('\n')
-      : raw.split(/(?<=\.)\s+(?=[A-Z])/);
-
-    const bullets = lines
-      .map((l) => l.replace(/^[-•*\d.)]\s*/, '').trim())
-      .filter(Boolean)
-      .slice(0, 3);
-
-    return bullets.length > 0 ? bullets.join('\n') : null;
+    const sentence = block.text.trim().replace(/^[-•*\d.)]\s*/, '');
+    return sentence || null;
   } catch (err) {
     console.warn('Company bio summarisation failed (non-fatal):', err instanceof Error ? err.message : err);
     return null;
@@ -440,7 +430,7 @@ async function generateContactBio(params: {
   currentCompany: string | null;
   headline: string | null;
   employmentHistory: NormalizedEmployment[];
-}): Promise<string[] | null> {
+}): Promise<string | null> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return null;
 
@@ -448,41 +438,34 @@ async function generateContactBio(params: {
   if (!currentTitle && !currentCompany && employmentHistory.length === 0) return null;
 
   const historyText = employmentHistory
-    .map((e) => `- ${e.title || 'Unknown role'} at ${e.company_name || 'Unknown'} (${[e.start_date, e.end_date].filter(Boolean).join(' – ')})`)
+    .map(
+      (e) =>
+        `- ${e.title || 'Unknown role'} at ${e.company_name || 'Unknown'} (${[e.start_date, e.end_date].filter(Boolean).join(' – ')})`,
+    )
     .join('\n');
 
-  const prompt = `You are writing an ultra-concise prospect snapshot for a B2B sales team.
-
-Contact: ${fullName || 'Unknown'}
+  const sourceBlock = `Contact: ${fullName || 'Unknown'}
 Current role: ${currentTitle || '—'} at ${currentCompany || '—'}
 LinkedIn headline: ${headline || '—'}
 Work history:
-${historyText || '— No history available'}
+${historyText || '— No history available'}`;
 
-Write exactly 3 bullet points (plain text, no markdown bullet characters, no labels). Each bullet must be 10–14 words maximum — tight, factual, telegraphic. Cover:
-1. Current role and focus
-2. Relevant prior background
-3. Why they are an interesting prospect
-
-Return only the 3 bullets, one per line, no preamble, no punctuation at end.`;
+  const instruction = `Write a single plain sentence (10–20 words) describing this person as a prospect in a B2B sales context — current role, organization, and why they are a relevant contact. Be factual and specific; use title, company, or domain of focus when the source material supports it. No preamble, no bullet points, no labels, no punctuation beyond the closing period.`;
 
   try {
     const client = new Anthropic({ apiKey });
     const message = await client.messages.create({
-      model: 'claude-haiku-4-5',
-      max_tokens: 120,
-      messages: [{ role: 'user', content: prompt }],
+      model: 'claude-sonnet-4-6',
+      max_tokens: 100,
+      messages: [{ role: 'user', content: `${instruction}\n\n${sourceBlock}` }],
     });
 
     const block = message.content[0];
     if (block.type !== 'text') return null;
 
-    const bullets = block.text
-      .split('\n')
-      .map((l) => l.replace(/^[-•*]\s*/, '').trim())
-      .filter(Boolean);
-
-    return bullets.length > 0 ? bullets : null;
+    const firstLine = block.text.trim().split('\n')[0] ?? '';
+    const sentence = firstLine.replace(/^[-•*\d.)]\s*/, '').trim();
+    return sentence || null;
   } catch (err) {
     console.warn('Contact bio generation failed (non-fatal):', err instanceof Error ? err.message : err);
     return null;
@@ -876,13 +859,14 @@ export async function runContactResolutionPipelineForContact(
       apifyProfile,
     });
     // Generate contact bio from profile data
-    const contactBio = await generateContactBio({
+    const contactBioSentence = await generateContactBio({
       fullName: typedContact.full_name,
       currentTitle: resolved.currentJobTitle,
       currentCompany: resolved.currentCompanyName,
       headline: resolved.headline,
       employmentHistory: resolved.employmentHistory,
     });
+    const contactBio = contactBioSentence ? [contactBioSentence] : null;
 
     // Step 3b: company enrichment — once we have an Apify-resolved profile,
     // use its current-company LinkedIn URL as the trigger for company scraping.
@@ -999,12 +983,17 @@ export async function runContactResolutionPipelineForContact(
         company_id: companyId,
         company_name: resolved.currentCompanyName ?? '',
         domain: canonicalCompanyDomainForFunding,
+        website: (apifyCompanyFirmographics?.website as string | null) ?? null,
         apollo_funding_stage: (apolloCompanyFirmographics?.funding_stage as string | null) ?? null,
         apollo_total_funding_usd: (apolloCompanyFirmographics?.total_funding_usd as number | null) ?? null,
         apollo_latest_funding_date: (apolloCompanyFirmographics?.latest_funding_date as string | null) ?? null,
         apify_company_firmographics: apifyCompanyFirmographics,
         apollo_company_firmographics: apolloCompanyFirmographics,
         apollo_organization_raw: apolloOrganization,
+      });
+
+      await syncCompanyFitForCompany(supabase, userId, companyId).catch((error) => {
+        console.error('[enrichment-pipeline] Failed syncing company fit score:', error);
       });
     }
 

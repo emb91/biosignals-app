@@ -311,11 +311,14 @@ WRONG output (do NOT do this):
 
 PLANE A — THIS COMPANY (what THEY are / what THEY build):
 - platform_category, therapeutic_areas, modalities, development_stages describe only the company's own product/science/organisational maturity.
-- SaaS / BI / data vendors: company_type is usually "SaaS"; platform_category should usually be populated; therapeutic_areas = [], drug modalities = [], development_stages = [].
-- If the product is a GTM, prospecting, sales, or intelligence tool for life sciences, prefer specific categories like Sales Intelligence Platform, Commercial Intelligence Platform, Scientific Content Platform, or Analytics Platform over a generic AI label.
-- Reserve "Digital Health & Informatics" for companies whose core product is used in patient care, clinical decision support, provider workflow, healthcare operations, or digital therapeutics.
-- Biotech / Pharma / device / diagnostic developers: therapeutic_areas and modalities from their OWN pipeline; development_stages from their OWN assets/trials (use web search for current clinical phase).
-- CDMO / CRO / contract lab: PLANE A modalities and development_stages may reflect what THEY operationally handle; still split customer beachhead into PLANE B when the site describes WHO they sell to.
+- DEFAULT RULE: For ALL non-software company types, therapeutic_areas and modalities MUST be populated based on what the company operationally specialises in. A company's domain specialisation is its identity — do NOT leave these empty just because it is a service provider, tools vendor, or research organisation rather than a drug developer.
+- SOFTWARE EXCEPTION (SaaS / Digital Health & Informatics only): therapeutic_areas = [] and modalities = [] — their identity is their software product, not a scientific domain. Disease areas and drug modalities seen on the site go into customer_* instead.
+  - SaaS / BI / data vendors: company_type is usually "SaaS"; platform_category should usually be populated.
+  - If the product is a GTM, prospecting, sales, or intelligence tool for life sciences, prefer specific categories like Sales Intelligence Platform, Commercial Intelligence Platform, Scientific Content Platform, or Analytics Platform over a generic AI label.
+  - Reserve "Digital Health & Informatics" for companies whose core product is used in patient care, clinical decision support, provider workflow, healthcare operations, or digital therapeutics.
+- Biotech / Biopharma / Pharma: development_stages from their OWN assets/trials (use web search for current clinical phase).
+- Academic / Research Institute / Academic Spinout: development_stages from their own asset/trial maturity (typically Preclinical or Discovery).
+- For ALL non-software types, populate ALL therapeutic_areas and modalities that are genuinely evidenced — there is no cap. A broad CRO or tools company may have many modalities; list every one that appears in the allowed vocabulary.
 
 PLANE B — CUSTOMERS SERVED (beachhead / who buys from them):
 - customer_therapeutic_areas, customer_modalities, customer_development_stages describe target accounts and buying contexts — diseases, customer science workflows, or trial phases OF THE ACCOUNTS THEY SELL INTO.
@@ -329,6 +332,7 @@ General rules:
 - modalities include parent modalities when a specific child applies (e.g. CAR-T → Cell Therapy).
 - evidence_summary must explicitly mention both planes when both are non-empty (e.g. "Own: SaaS sales intelligence platform; customer: oncology/neuroscience biotechs in Phase I–III").
 - If evidence is weak, return fewer values and lower confidence — do not fabricate.
+- company_type must NEVER be null. If the company clearly exists but does not fit any other category, use "Other". Only return null if you have no evidence at all that the company exists.
 
 Company: ${input.company_name}
 Domain: ${input.domain || 'unknown'}
@@ -367,7 +371,7 @@ Return ONLY valid JSON:
 
   const message = await client.messages.create({
     model: MODEL,
-    max_tokens: 1100,
+    max_tokens: 2000,
     messages: [{ role: 'user', content: prompt }],
     tools: [
       {

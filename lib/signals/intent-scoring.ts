@@ -1,4 +1,4 @@
-import { getSignalById } from '@/lib/signals/catalog';
+import { getSignalById, CONTACT_SIGNALS } from '@/lib/signals/catalog';
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 const RECENCY_HALF_LIFE_DAYS = 21;
@@ -86,11 +86,19 @@ export function computeCompanyIntent01(
   return normalizeIntent(raw, cap || 1);
 }
 
+/**
+ * Contact intent score — uses all catalog contact signals at their natural baseWeight.
+ * All contact signals apply universally; signal strength is an intrinsic property of
+ * the signal itself, not of the persona being matched.
+ */
 export function computePersonIntent01(
-  personaSelections: SelectionWeighted[],
   contactEvents: ObservedRow[]
 ): number | null {
-  const raw = accumulateIntentMass(personaSelections, contactEvents, 'contact');
-  const cap = selectionMassCeiling(personaSelections, 'contact');
+  const catalogSelections: SelectionWeighted[] = CONTACT_SIGNALS.map((s) => ({
+    signalId: s.id,
+    weight: 1,
+  }));
+  const raw = accumulateIntentMass(catalogSelections, contactEvents, 'contact');
+  const cap = selectionMassCeiling(catalogSelections, 'contact');
   return normalizeIntent(raw, cap || 1);
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 import { createAdminClient } from '@/lib/supabase-admin';
+import { syncCompanyFitForCompany } from '@/lib/company-fit';
 import { runCompanyMonitor } from '@/lib/company-monitor';
 
 /**
@@ -64,6 +65,8 @@ export async function POST(request: Request) {
       apollo_organization_raw:
         (linkedContact?.apollo_organization_raw as Record<string, unknown> | null) ?? null,
     });
+
+    await syncCompanyFitForCompany(supabase, user.id, company.id);
 
     return NextResponse.json({ success: true, result });
   } catch (error) {
