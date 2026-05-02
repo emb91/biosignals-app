@@ -157,6 +157,7 @@ export async function GET(
           score_cap: normalizeNumber(row.score_cap),
           coverage: normalizeNumber(row.coverage),
           company_type_match_status: row.company_type_match_status ?? null,
+          breakdown: row.breakdown,
         })),
       },
       unavailable: schemaUnavailable,

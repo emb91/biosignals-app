@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase-server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { syncCompanyFitForCompany } from '@/lib/company-fit';
 import { runCompanyMonitor } from '@/lib/company-monitor';
+import { recalculatePriorityScoresForUser } from '@/lib/rescore';
 
 /**
  * POST /api/monitor-company
@@ -67,6 +68,9 @@ export async function POST(request: Request) {
     });
 
     await syncCompanyFitForCompany(supabase, user.id, company.id);
+    recalculatePriorityScoresForUser(user.id).catch((err) =>
+      console.error('[monitor-company] Background priority rescore failed:', err),
+    );
 
     return NextResponse.json({ success: true, result });
   } catch (error) {

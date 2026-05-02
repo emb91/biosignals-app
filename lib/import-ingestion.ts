@@ -1,4 +1,5 @@
 import { employeeCountToSizeBucket, SENIORITY_LEVEL_OPTIONS, BUSINESS_AREA_OPTIONS } from '@/lib/arcova-taxonomy';
+import { syncContactFitForContacts } from '@/lib/contact-fit';
 import { syncCompanyFitForCompanies } from '@/lib/company-fit';
 
 export type EnrichedImportRecord = {
@@ -302,6 +303,7 @@ export async function ingestEnrichedRecords(
   let inserted = 0;
   let failed = 0;
   const touchedCompanyIds = new Set<string>();
+  const touchedContactIds = new Set<string>();
 
   for (let index = 0; index < toProcess.length; index += 1) {
     const record = toProcess[index];
@@ -366,12 +368,13 @@ export async function ingestEnrichedRecords(
         updated_at: new Date().toISOString(),
       };
 
-      let upsertResult = (await supabase
+      let upsertResult = await supabase
         .from('contacts')
         .upsert(contactPayload, {
           onConflict: 'user_id,linkedin_url',
           ignoreDuplicates: false,
-        })) as { error?: unknown };
+        })
+        .select('id');
 
       if (upsertResult.error && isMissingColumnError(upsertResult.error)) {
         const {
@@ -383,16 +386,23 @@ export async function ingestEnrichedRecords(
           ...legacyCompatiblePayload
         } = contactPayload;
 
-        upsertResult = (await supabase
+        upsertResult = await supabase
           .from('contacts')
           .upsert(legacyCompatiblePayload, {
             onConflict: 'user_id,linkedin_url',
             ignoreDuplicates: false,
-          })) as { error?: unknown };
+          })
+          .select('id');
       }
 
       if (upsertResult.error) {
         throw upsertResult.error;
+      }
+
+      for (const row of (upsertResult.data || []) as Array<{ id?: string }>) {
+        if (typeof row.id === 'string') {
+          touchedContactIds.add(row.id);
+        }
       }
 
       await supabase
@@ -415,6 +425,12 @@ export async function ingestEnrichedRecords(
   if (touchedCompanyIds.size > 0) {
     await syncCompanyFitForCompanies(supabase, userId, [...touchedCompanyIds]).catch((error) => {
       console.error('[import-ingestion] Failed syncing company fit scores:', error);
+    });
+  }
+
+  if (touchedContactIds.size > 0) {
+    await syncContactFitForContacts(supabase, userId, [...touchedContactIds]).catch((error) => {
+      console.error('[import-ingestion] Failed syncing contact fit scores:', error);
     });
   }
 

@@ -4,6 +4,7 @@
 // profile enrichment  = Apify LinkedIn profile scrape + company scrape + Apollo company enrich + LLM bio summary
 import Anthropic from '@anthropic-ai/sdk';
 import { enrichOrganizationWithApollo } from '@/lib/apollo';
+import { syncContactFitForContact } from '@/lib/contact-fit';
 import { syncCompanyFitForCompany } from '@/lib/company-fit';
 import { resolveLinkedinUrl, type LinkedinResolutionResult } from '@/lib/linkedin-url-resolver';
 import { classifyContacts } from '@/lib/contact-classification';
@@ -1071,6 +1072,10 @@ export async function runContactResolutionPipelineForContact(
     }
 
     await supabase.from('contacts').update(updatePayload).eq('user_id', userId).eq('id', contactId);
+
+    await syncContactFitForContact(supabase, userId, contactId).catch((error) => {
+      console.error('[enrichment-pipeline] Failed syncing contact fit score:', error);
+    });
 
     return {
       status: profileEnrichmentStatus,

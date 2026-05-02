@@ -142,23 +142,36 @@ async function attachMatchedIcpNames(
   );
 
   if (icpIds.length === 0) {
-    return rows.map((row) => ({ ...row, matched_icp_name: null }));
+    return rows.map((row) => ({
+      ...row,
+      matched_icp_name: null,
+      matched_icp_index: null,
+      matched_icp_label: null,
+    }));
   }
 
   const { data, error } = await supabase
     .from('icps')
-    .select('id, name')
-    .in('id', icpIds);
+    .select('id, name, created_at')
+    .order('created_at', { ascending: false });
 
   if (error) {
     console.warn('Best-effort ICP name fetch failed:', error);
-    return rows.map((row) => ({ ...row, matched_icp_name: null }));
+    return rows.map((row) => ({
+      ...row,
+      matched_icp_name: null,
+      matched_icp_index: null,
+      matched_icp_label: null,
+    }));
   }
 
+  const icpRows = ((data || []) as Array<{ id: string; name: string | null }>)
+    .filter((row) => typeof row.id === 'string');
   const namesById = new Map(
-    ((data || []) as Array<{ id: string; name: string | null }>)
-      .filter((row) => typeof row.id === 'string')
-      .map((row) => [row.id, row.name ?? null]),
+    icpRows.map((row) => [row.id, row.name ?? null]),
+  );
+  const indexById = new Map(
+    icpRows.map((row, index) => [row.id, index + 1]),
   );
 
   return rows.map((row) => {
@@ -169,10 +182,17 @@ async function attachMatchedIcpNames(
     const matchedIcpId = company && typeof company.matched_icp_id === 'string'
       ? company.matched_icp_id
       : null;
+    const matchedIcpIndex = matchedIcpId ? indexById.get(matchedIcpId) ?? null : null;
+    const matchedIcpName = matchedIcpId ? namesById.get(matchedIcpId) ?? null : null;
 
     return {
       ...row,
-      matched_icp_name: matchedIcpId ? namesById.get(matchedIcpId) ?? null : null,
+      matched_icp_name: matchedIcpName,
+      matched_icp_index: matchedIcpIndex,
+      matched_icp_label:
+        matchedIcpIndex && matchedIcpName
+          ? `ICP ${matchedIcpIndex}: ${matchedIcpName}`
+          : matchedIcpName,
     };
   });
 }
