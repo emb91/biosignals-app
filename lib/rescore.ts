@@ -1,13 +1,12 @@
 /**
  * Lead rescoring.
  *
- * The lead list currently ranks on contacts.fit_score, but fit is now driven
- * primarily by company-level ICP scoring. This module keeps the public
- * rescore API stable while delegating the actual work to deterministic
- * company-vs-ICP scoring and syncing the winning company score back onto all
- * linked contacts.
+ * Company fit and contact fit now run as adjacent layers:
+ * - company-vs-ICP scoring writes the account fit mirror onto contacts.fit_score
+ * - contact-vs-persona scoring writes a separate contact_fit_score summary
  */
 
+import { rescoreAllContactFitForUser } from '@/lib/contact-fit';
 import { rescoreAllCompanyFitForUser } from '@/lib/company-fit';
 
 export type RescoreResult = {
@@ -17,11 +16,14 @@ export type RescoreResult = {
 };
 
 export async function rescoreAllContactsForUser(userId: string): Promise<RescoreResult> {
-  const result = await rescoreAllCompanyFitForUser(userId);
+  const [companyResult, contactResult] = await Promise.all([
+    rescoreAllCompanyFitForUser(userId),
+    rescoreAllContactFitForUser(userId),
+  ]);
 
   return {
-    rescored: result.contactsSynced,
-    failed: result.failed,
-    skipped: result.skipped,
+    rescored: Math.max(companyResult.contactsSynced, contactResult.contactsScored),
+    failed: companyResult.failed + contactResult.failed,
+    skipped: companyResult.skipped + contactResult.skipped,
   };
 }
