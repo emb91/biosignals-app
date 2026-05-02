@@ -62,6 +62,73 @@ interface CompanyFirmographics {
   development_stages?: string[] | null;
 }
 
+type CompanyFitComponentKey =
+  | 'company_type'
+  | 'platform_category'
+  | 'therapeutic_areas'
+  | 'modalities'
+  | 'development_stages'
+  | 'company_size'
+  | 'funding';
+
+interface CompanyFitBreakdownComponent {
+  label: string;
+  active: boolean;
+  available: boolean;
+  weight: number;
+  earned: number;
+  score01: number;
+  detail: string;
+  matchedCount?: number;
+  totalSelected?: number;
+  matchStatus?: string;
+}
+
+interface CompanyFitBreakdown {
+  score_version: string;
+  matched_on: string[];
+  gaps: string[];
+  summary: {
+    raw_score01: number;
+    final_score01: number;
+    raw_score_pct: number;
+    final_score_pct: number;
+    score_cap01: number;
+    coverage01: number;
+    reasoning: string;
+  };
+  components: Record<CompanyFitComponentKey, CompanyFitBreakdownComponent>;
+}
+
+interface CompanyFitCandidate {
+  icp_id: string;
+  icp_name: string | null;
+  final_score: number | null;
+  raw_score: number | null;
+  score_cap: number | null;
+  coverage: number | null;
+  company_type_match_status: string | null;
+}
+
+interface CompanyFitDetails {
+  company_id: string;
+  company_fit_score: number | null;
+  company_fit_coverage: number | null;
+  company_fit_scored_at: string | null;
+  company_fit_version: string | null;
+  matched_icp_id: string | null;
+  matched_icp_name: string | null;
+  winning_breakdown: CompanyFitBreakdown | null;
+  icp_scores: CompanyFitCandidate[];
+}
+
+interface CompanyFitFetchState {
+  loading: boolean;
+  data: CompanyFitDetails | null;
+  error: string | null;
+  message: string | null;
+}
+
 interface Lead {
   id: string;
   full_name: string | null;
@@ -158,6 +225,15 @@ type EnrichmentVisualState = {
 
 const PAGE_SIZE = 50;
 const MAX_VISIBLE_WORK_HISTORY = 5;
+const COMPANY_FIT_COMPONENT_ORDER: CompanyFitComponentKey[] = [
+  'company_type',
+  'platform_category',
+  'therapeutic_areas',
+  'modalities',
+  'development_stages',
+  'company_size',
+  'funding',
+];
 
 const formatLastUpdated = (iso: string | null): string => {
   if (!iso) return '—';
@@ -179,9 +255,24 @@ const formatCurrencyShort = (amount: number | null | undefined): string => {
   }).format(amount);
 };
 
-const formatPercent = (value: number | null | undefined): string | null => {
+const formatPercentValue = (value: number | null | undefined): string | null => {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
-  return `${Math.round((value <= 1 ? value * 100 : value))}% fit`;
+  return `${Math.round((value <= 1 ? value * 100 : value))}%`;
+};
+
+const formatPercent = (value: number | null | undefined): string | null => {
+  const percent = formatPercentValue(value);
+  return percent ? `${percent} fit` : null;
+};
+
+const formatCoverage = (value: number | null | undefined): string | null => {
+  const percent = formatPercentValue(value);
+  return percent ? `${percent} coverage` : null;
+};
+
+const formatMatchStatus = (value: string | null | undefined): string | null => {
+  if (!value) return null;
+  return value.replace(/_/g, ' ');
 };
 
 const getDisplayedCompanyFirmographics = (lead: Lead | null): CompanyFirmographics | null => {
@@ -387,6 +478,7 @@ export default function LeadsPage() {
   const [selectedPreview, setSelectedPreview] = useState<'contact' | 'company'>('contact');
   const [isWorkHistoryExpanded, setIsWorkHistoryExpanded] = useState(false);
   const [companyPanelOpen, setCompanyPanelOpen] = useState<Record<string, boolean>>({
+    fit: true,
     summary: true,
     criteria: true,
     funding: true,
@@ -404,6 +496,7 @@ export default function LeadsPage() {
   const [requestedComingSoonContactSignals, setRequestedComingSoonContactSignals] = useState<Set<string>>(
     () => new Set(),
   );
+  const [companyFitByCompanyId, setCompanyFitByCompanyId] = useState<Record<string, CompanyFitFetchState>>({});
   const [showPremiumAddonNotice, setShowPremiumAddonNotice] = useState(false);
   const [enrichmentVisuals, setEnrichmentVisuals] = useState<Record<string, EnrichmentVisualState>>({});
   const [progressNow, setProgressNow] = useState(() => Date.now());
@@ -591,6 +684,7 @@ export default function LeadsPage() {
   };
 
   const rerunEnrichment = async (leadId: string) => {
+    const companyId = leads.find((lead) => lead.id === leadId)?.company_id ?? null;
     setRefreshingLeadId(leadId);
     setLeads((prev) =>
       prev.map((lead) =>
@@ -603,6 +697,14 @@ export default function LeadsPage() {
           : lead
       )
     );
+    if (companyId) {
+      setCompanyFitByCompanyId((prev) => {
+        if (!prev[companyId]) return prev;
+        const next = { ...prev };
+        delete next[companyId];
+        return next;
+      });
+    }
 
     try {
       const response = await fetch(`/api/enrich/${leadId}`, {
@@ -718,12 +820,81 @@ export default function LeadsPage() {
   const totalPages = Math.ceil(total / PAGE_SIZE);
   const showSearchInput = total > 0 || searchInput.trim().length > 0 || search.trim().length > 0;
   const selectedLead = leads.find((lead) => lead.id === selectedLeadId) || null;
+  const selectedCompanyId = selectedLead?.company_id ?? null;
+  const selectedCompanyFitState = selectedCompanyId ? companyFitByCompanyId[selectedCompanyId] ?? null : null;
+  const selectedCompanyFit = selectedCompanyFitState?.data ?? null;
   const selectedCompanyFirmographics = getDisplayedCompanyFirmographics(selectedLead);
   const selectedCompanyFirmographicsLastRefresh = getCompanyFirmographicsLastRefresh(selectedLead);
   const isEditingSelected = selectedLead ? editingLeadId === selectedLead.id : false;
   const isSavingSelected = selectedLead ? savingLeadId === selectedLead.id : false;
   const isDeletingSelected = selectedLead ? deletingLeadId === selectedLead.id : false;
   const isRefreshingSelected = selectedLead ? refreshingLeadId === selectedLead.id : false;
+
+  useEffect(() => {
+    if (selectedPreview !== 'company' || !selectedCompanyId) return;
+
+    const cached = companyFitByCompanyId[selectedCompanyId];
+    const shouldRefreshForScoreMismatch =
+      cached?.data &&
+      typeof cached.data.company_fit_score === 'number' &&
+      typeof selectedLead?.fit_score === 'number' &&
+      Math.abs(cached.data.company_fit_score - selectedLead.fit_score) > 0.0001;
+
+    if ((cached && !shouldRefreshForScoreMismatch) || cached?.loading) {
+      return;
+    }
+
+    let cancelled = false;
+
+    setCompanyFitByCompanyId((prev) => ({
+      ...prev,
+      [selectedCompanyId]: {
+        loading: true,
+        data: shouldRefreshForScoreMismatch ? null : prev[selectedCompanyId]?.data ?? null,
+        error: null,
+        message: null,
+      },
+    }));
+
+    (async () => {
+      try {
+        const response = await fetch(`/api/companies/${selectedCompanyId}/fit`);
+        const result = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          throw new Error(result.error || 'Failed to load company fit details.');
+        }
+
+        if (cancelled) return;
+
+        setCompanyFitByCompanyId((prev) => ({
+          ...prev,
+          [selectedCompanyId]: {
+            loading: false,
+            data: result.data ?? null,
+            error: null,
+            message: typeof result.message === 'string' ? result.message : null,
+          },
+        }));
+      } catch (error) {
+        if (cancelled) return;
+
+        setCompanyFitByCompanyId((prev) => ({
+          ...prev,
+          [selectedCompanyId]: {
+            loading: false,
+            data: null,
+            error: error instanceof Error ? error.message : 'Failed to load company fit details.',
+            message: null,
+          },
+        }));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [companyFitByCompanyId, selectedCompanyId, selectedLead?.fit_score, selectedPreview]);
 
   if (loading) {
     return (
@@ -1473,6 +1644,17 @@ export default function LeadsPage() {
                             const f = selectedCompanyFirmographics;
                             const hqParts = [f?.hq_city, f?.hq_country].filter(Boolean);
                             const hq = hqParts.join(', ') || null;
+                            const companyFit = selectedCompanyFit;
+                            const fitBreakdown = companyFit?.winning_breakdown ?? null;
+                            const fitLabel = formatPercent(
+                              companyFit?.company_fit_score ?? selectedLead.fit_score,
+                            );
+                            const fitCoverageLabel = formatCoverage(companyFit?.company_fit_coverage);
+                            const fitMessage = selectedCompanyFitState?.message ?? null;
+                            const fitError = selectedCompanyFitState?.error ?? null;
+                            const alternateIcpScores = (companyFit?.icp_scores || [])
+                              .filter((score) => score.icp_id !== companyFit?.matched_icp_id)
+                              .slice(0, 3);
                             const showPlatformCategory = f?.company_type === 'SaaS' && !!f?.platform_category;
                             const hasCriteria = !!(f?.company_type || showPlatformCategory || f?.therapeutic_areas?.length || f?.modalities?.length || f?.development_stages?.length);
                             const hasFunding = !!(f?.funding_status_label || f?.funding_stage || f?.total_funding_usd != null || f?.latest_funding_date);
@@ -1484,6 +1666,183 @@ export default function LeadsPage() {
 
                             return (
                               <div className="space-y-3">
+
+                                {/* Fit */}
+                                <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
+                                  <button
+                                    type="button"
+                                    onClick={() => setCompanyPanelOpen((s) => ({ ...s, fit: !s.fit }))}
+                                    className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100/60 transition-colors"
+                                  >
+                                    <span className="text-xs font-semibold text-gray-700">Fit score</span>
+                                    <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 ${companyPanelOpen.fit ? '' : '-rotate-90'}`} />
+                                  </button>
+                                  {companyPanelOpen.fit && (
+                                    <div className="px-3 pb-3 space-y-3">
+                                      {selectedCompanyFitState?.loading ? (
+                                        <p className="text-xs text-gray-400">Loading company-fit breakdown…</p>
+                                      ) : fitError ? (
+                                        <p className="text-xs text-red-500">{fitError}</p>
+                                      ) : fitBreakdown ? (
+                                        <>
+                                          <div className="flex flex-wrap gap-1.5">
+                                            {(companyFit?.matched_icp_name || selectedLead.matched_icp_name) && (
+                                              <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2.5 py-0.5 text-xs font-medium text-arcova-teal">
+                                                Best ICP: {companyFit?.matched_icp_name || selectedLead.matched_icp_name}
+                                              </span>
+                                            )}
+                                            {fitLabel && (
+                                              <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
+                                                {fitLabel}
+                                              </span>
+                                            )}
+                                            {fitCoverageLabel && (
+                                              <span className="inline-flex items-center rounded-full bg-white px-2.5 py-0.5 text-xs font-medium text-slate-500 ring-1 ring-slate-200">
+                                                {fitCoverageLabel}
+                                              </span>
+                                            )}
+                                          </div>
+
+                                          <p className="text-sm text-gray-700 leading-relaxed">
+                                            {fitBreakdown.summary.reasoning}
+                                          </p>
+
+                                          {fitMessage && (
+                                            <p className="text-xs text-amber-700">{fitMessage}</p>
+                                          )}
+
+                                          {fitBreakdown.matched_on.length > 0 && (
+                                            <div>
+                                              <p className="text-gray-400 text-xs mb-1">Matched on</p>
+                                              <div className="flex flex-wrap gap-1.5">
+                                                {fitBreakdown.matched_on.map((value) => (
+                                                  <span
+                                                    key={value}
+                                                    className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700"
+                                                  >
+                                                    {value}
+                                                  </span>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          )}
+
+                                          {fitBreakdown.gaps.length > 0 && (
+                                            <div>
+                                              <p className="text-gray-400 text-xs mb-1">Lower-scoring areas</p>
+                                              <div className="flex flex-wrap gap-1.5">
+                                                {fitBreakdown.gaps.map((value) => (
+                                                  <span
+                                                    key={value}
+                                                    className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600"
+                                                  >
+                                                    {value}
+                                                  </span>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          )}
+
+                                          <div className="space-y-2">
+                                            {COMPANY_FIT_COMPONENT_ORDER.map((key) => {
+                                              const component = fitBreakdown.components[key];
+                                              if (!component?.active) return null;
+
+                                              const componentPercent = formatPercentValue(component.score01);
+                                              const matchedRatio =
+                                                typeof component.matchedCount === 'number' &&
+                                                typeof component.totalSelected === 'number'
+                                                  ? `${component.matchedCount}/${component.totalSelected}`
+                                                  : null;
+
+                                              return (
+                                                <div key={key} className="rounded-lg bg-white px-3 py-2 ring-1 ring-slate-200">
+                                                  <div className="flex items-center justify-between gap-3">
+                                                    <div className="min-w-0">
+                                                      <p className="text-sm font-medium text-gray-900">
+                                                        {component.label}
+                                                      </p>
+                                                      {matchedRatio && (
+                                                        <p className="text-[11px] text-gray-400">
+                                                          {matchedRatio} matched
+                                                        </p>
+                                                      )}
+                                                    </div>
+                                                    {componentPercent && (
+                                                      <span className="text-xs font-medium text-slate-600">
+                                                        {componentPercent}
+                                                      </span>
+                                                    )}
+                                                  </div>
+                                                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200">
+                                                    <div
+                                                      className={`h-full rounded-full ${
+                                                        component.available
+                                                          ? 'bg-arcova-teal'
+                                                          : 'bg-slate-300'
+                                                      }`}
+                                                      style={{ width: `${Math.max(0, Math.min(100, Math.round(component.score01 * 100)))}%` }}
+                                                    />
+                                                  </div>
+                                                  <p className="mt-2 text-[11px] leading-relaxed text-gray-500">
+                                                    {component.detail}
+                                                  </p>
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+
+                                          {alternateIcpScores.length > 0 && (
+                                            <div>
+                                              <p className="text-gray-400 text-xs mb-1.5">Other ICP comparisons</p>
+                                              <div className="space-y-1.5">
+                                                {alternateIcpScores.map((score) => (
+                                                  <div
+                                                    key={score.icp_id}
+                                                    className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-2 ring-1 ring-slate-200"
+                                                  >
+                                                    <div className="min-w-0">
+                                                      <p className="truncate text-xs font-medium text-gray-800">
+                                                        {score.icp_name || 'Untitled ICP'}
+                                                      </p>
+                                                      {formatMatchStatus(score.company_type_match_status) && (
+                                                        <p className="text-[11px] text-gray-400 capitalize">
+                                                          {formatMatchStatus(score.company_type_match_status)}
+                                                        </p>
+                                                      )}
+                                                    </div>
+                                                    <div className="flex flex-wrap justify-end gap-1.5">
+                                                      {formatCoverage(score.coverage) && (
+                                                        <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">
+                                                          {formatCoverage(score.coverage)}
+                                                        </span>
+                                                      )}
+                                                      {formatPercent(score.final_score) && (
+                                                        <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
+                                                          {formatPercent(score.final_score)}
+                                                        </span>
+                                                      )}
+                                                    </div>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          )}
+                                        </>
+                                      ) : fitMessage ? (
+                                        <p className="text-xs text-amber-700">{fitMessage}</p>
+                                      ) : fitLabel || selectedLead.matched_icp_name ? (
+                                        <p className="text-xs text-gray-500">
+                                          Company fit is cached on the lead, but the detailed breakdown has not been stored yet.
+                                        </p>
+                                      ) : (
+                                        <p className="text-xs text-gray-400 italic">
+                                          Company fit will appear here once scoring has run for this company.
+                                        </p>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
 
                                 {/* Summary */}
                                 <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
