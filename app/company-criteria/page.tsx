@@ -1811,7 +1811,7 @@ export default function ICPManagerPage() {
                     <ICPCard
                       key={icp.id}
                       icp={icp}
-                      index={i + 1}
+                      index={icps.length - i}
                       persona={persona}
                       collapsed={collapsed}
                       onToggle={() => setExpandedIds((prev) => {
