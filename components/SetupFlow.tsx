@@ -34,6 +34,7 @@ import {
 } from '@/lib/arcova-taxonomy';
 import type { TargetCompanyEnrichmentResult } from '@/lib/target-company-enrichment';
 import { normalizeOrderedSignalIds } from '@/lib/signals/normalize-client';
+import { resolveCustomerSegments } from '@/lib/split-customer-segments';
 
 /** Funding, headcount + customer-segment context for buying-team inference */
 function icContextForBuyingTeam(
@@ -44,6 +45,8 @@ function icContextForBuyingTeam(
   icp_example_employee_count: number | null;
   icp_example_employee_range: string | null;
   icp_example_total_funding_usd: number | null;
+  icp_target_customers: string[];
+  icp_buyer_types: string[];
   icp_customer_therapeutic_areas: string[];
   icp_customer_modalities: string[];
   icp_customer_development_stages: string[];
@@ -61,6 +64,8 @@ function icContextForBuyingTeam(
       typeof exampleEnrichment?.employee_range === 'string' ? exampleEnrichment.employee_range : null,
     icp_example_total_funding_usd:
       typeof exampleEnrichment?.total_funding_usd === 'number' ? exampleEnrichment.total_funding_usd : null,
+    icp_target_customers: icp.targetCustomers ?? [],
+    icp_buyer_types: icp.buyerTypes ?? [],
     icp_customer_therapeutic_areas: fallback(icp.customerTherapeuticAreas ?? [], 'customer_therapeutic_areas'),
     icp_customer_modalities: fallback(icp.customerModalities ?? [], 'customer_modalities'),
     icp_customer_development_stages: fallback(icp.customerDevelopmentStages ?? [], 'customer_development_stages'),
@@ -179,11 +184,15 @@ interface TargetCompanyProfile {
   id: string;
   name: string;
   company_type: string;
+  platform_category?: string | null;
   therapeutic_areas?: string[];
   modalities?: string[];
   development_stages?: string[];
   company_sizes?: string[];
   funding_stages?: string[];
+  target_customers?: string[] | null;
+  buyer_types?: string[] | null;
+  competitors?: { name: string; url?: string }[] | null;
   example_company_enrichment?: {
     company_name?: string | null;
   } | null;
@@ -200,6 +209,14 @@ const SETUP_CHAT_SURROUND =
 /** Card panel floating over the dark surround. */
 const SETUP_CHAT_CARD =
   'flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.06] shadow-[0_28px_70px_-20px_rgba(0,0,0,0.8)] ring-1 ring-white/10 backdrop-blur-[2px]';
+
+function isSaasCompanyType(value?: string | null): boolean {
+  return (value ?? '').trim() === 'SaaS';
+}
+
+function visiblePlatformCategory(companyType?: string | null, platformCategory?: string | null): string {
+  return isSaasCompanyType(companyType) ? (platformCategory ?? '').trim() : '';
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Sub-components
@@ -360,6 +377,7 @@ export default function SetupFlow({
   } | null>(null);
   const [reviewDraft, setReviewDraft] = useState({
     companyType: '',
+    platformCategory: '',
     therapeuticAreas: [] as string[],
     modalities: [] as string[],
     developmentStages: [] as string[],
@@ -378,13 +396,13 @@ export default function SetupFlow({
   const [icpEditMode, setIcpEditMode] = useState(false);
   const icpEditSnapshotRef = useRef<typeof reviewDraft | null>(null);
   /** Snapshot of enrichment (e.g. competitors) when opening ICP edit from the panel. */
-  const icpEditEnrichmentSnapshotRef = useRef<import('@/lib/target-company-enrichment').TargetCompanyEnrichmentResult | null>(null);
+  const icpEditPanelSegmentsRef = useRef<{ targetCustomers: string[]; buyerTypes: string[]; competitors: import('@/components/SetupProfilePanel').CompetitorItem[] } | null>(null);
 
   // ── Panel state (mirrors refs so the profile panel re-renders live) ───────
   const [panelCompany, setPanelCompany] = useState<PanelCompanyData>({
-    companyType: '', companySizes: [], liFollowerSizes: [], therapeuticAreas: [],
+    companyType: '', platformCategory: '', companySizes: [], liFollowerSizes: [], therapeuticAreas: [],
     modalities: [], developmentStages: [], customerTherapeuticAreas: [], customerModalities: [], customerDevelopmentStages: [],
-    fundingStages: [], signals: [],
+    fundingStages: [], signals: [], targetCustomers: [], buyerTypes: [], competitors: [],
   });
   const [panelPersona, setPanelPersona] = useState<PanelPersonaData>({ functions: [], seniority: [], signals: [] });
   const [buyingTeamEditMode, setBuyingTeamEditMode] = useState(false);
@@ -393,10 +411,11 @@ export default function SetupFlow({
 
   // ── Accumulated form data (refs avoid stale closure in async callbacks) ──
   const companyRef = useRef({
-    companyType: '', companySizes: [] as string[], liFollowerSizes: [] as string[], therapeuticAreas: [] as string[],
+    companyType: '', platformCategory: '', companySizes: [] as string[], liFollowerSizes: [] as string[], therapeuticAreas: [] as string[],
     modalities: [] as string[], developmentStages: [] as string[],
     customerTherapeuticAreas: [] as string[], customerModalities: [] as string[], customerDevelopmentStages: [] as string[],
     fundingStages: [] as string[], signals: [] as string[],
+    targetCustomers: [] as string[], buyerTypes: [] as string[], competitors: [] as import('@/components/SetupProfilePanel').CompetitorItem[],
   });
   const personaRef = useRef({ functions: [] as string[], seniority: [] as string[], jobTitles: [] as string[], signals: [] as string[] });
   const icpIdRef = useRef<string | null>(null);
@@ -522,6 +541,7 @@ export default function SetupFlow({
     if (phase === 'customer_url_review') {
       setPanelCompany({
         companyType: reviewDraft.companyType,
+        platformCategory: visiblePlatformCategory(reviewDraft.companyType, reviewDraft.platformCategory),
         companySizes: reviewDraft.companySizes,
         liFollowerSizes: reviewDraft.liFollowerSizes,
         therapeuticAreas: reviewDraft.therapeuticAreas,
@@ -532,6 +552,9 @@ export default function SetupFlow({
         customerDevelopmentStages: reviewDraft.customerDevelopmentStages,
         fundingStages: reviewDraft.fundingStages,
         signals: companyRef.current.signals,
+        targetCustomers: companyRef.current.targetCustomers,
+        buyerTypes: companyRef.current.buyerTypes,
+        competitors: companyRef.current.competitors,
       });
     }
   }, [reviewDraft, phase]);
@@ -675,6 +698,7 @@ export default function SetupFlow({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         companyType: d.companyType,
+        platformCategory: visiblePlatformCategory(d.companyType, d.platformCategory),
         therapeuticAreas: d.therapeuticAreas,
         modalities: d.modalities,
         developmentStages: d.developmentStages,
@@ -697,6 +721,7 @@ export default function SetupFlow({
         name,
         icpSummary,
         companyType: d.companyType,
+        platformCategory: visiblePlatformCategory(d.companyType, d.platformCategory),
         therapeuticAreas: d.therapeuticAreas,
         modalities: d.modalities,
         developmentStages: d.developmentStages,
@@ -710,6 +735,9 @@ export default function SetupFlow({
         exampleCompanies: [],
         exampleCompanyUrl: enrichedTargetCompany?.website ?? lastTargetUrlRef.current ?? '',
         exampleCompanyEnrichment: enrichedTargetCompany ?? undefined,
+        targetCustomers: d.targetCustomers,
+        buyerTypes: d.buyerTypes,
+        competitors: d.competitors,
       }),
     });
 
@@ -730,12 +758,14 @@ export default function SetupFlow({
       body: JSON.stringify({
         seller_company_name: sellerData.company_name,
         seller_company_type: sellerData.company_type,
+        seller_platform_category: visiblePlatformCategory(sellerData.company_type as string | null | undefined, sellerData.platform_category as string | null | undefined),
         seller_therapeutic_areas: sellerData.therapeutic_areas,
         seller_products_services: sellerData.products_services,
         seller_services: sellerData.services,
         seller_customers_we_serve: sellerData.customers_we_serve,
         seller_value_propositions: sellerData.value_propositions,
         icp_company_type: icpData.companyType,
+        icp_platform_category: visiblePlatformCategory(icpData.companyType, icpData.platformCategory),
         icp_therapeutic_areas: icpData.therapeuticAreas,
         icp_modalities: icpData.modalities,
         icp_development_stages: icpData.developmentStages,
@@ -808,6 +838,7 @@ export default function SetupFlow({
     const [companyCatalog, personaCatalog] = await Promise.all([
       loadSignalsCatalog('/api/recommend-signals', {
         companyType: companyRef.current.companyType,
+        platformCategory: visiblePlatformCategory(companyRef.current.companyType, companyRef.current.platformCategory),
         companySizes: companyRef.current.companySizes,
         therapeuticAreas: companyRef.current.therapeuticAreas,
         modalities: companyRef.current.modalities,
@@ -846,6 +877,7 @@ export default function SetupFlow({
         body: JSON.stringify({
           name: savedIcpName || `${companyRef.current.companyType} Profile`,
           companyType: companyRef.current.companyType,
+          platformCategory: visiblePlatformCategory(companyRef.current.companyType, companyRef.current.platformCategory),
           therapeuticAreas: companyRef.current.therapeuticAreas,
           modalities: companyRef.current.modalities,
           developmentStages: companyRef.current.developmentStages,
@@ -858,6 +890,9 @@ export default function SetupFlow({
           signals: companyRef.current.signals,
           exampleCompanyUrl: enrichedTargetCompany?.website ?? lastTargetUrlRef.current ?? '',
           exampleCompanyEnrichment: enrichedTargetCompany ?? undefined,
+          targetCustomers: companyRef.current.targetCustomers,
+          buyerTypes: companyRef.current.buyerTypes,
+          competitors: companyRef.current.competitors,
         }),
       }).catch(() => null);
     }
@@ -906,6 +941,7 @@ export default function SetupFlow({
 
     const nextCompanyState = {
       companyType: co.company_type || '',
+      platformCategory: visiblePlatformCategory(co.company_type || '', co.platform_category || ''),
       companySizes: co.company_sizes || [],
       liFollowerSizes: (co as unknown as Record<string, unknown>).li_follower_sizes as string[] || [],
       therapeuticAreas: co.therapeutic_areas || [],
@@ -916,6 +952,9 @@ export default function SetupFlow({
       customerDevelopmentStages: (co as unknown as Record<string, unknown>).customer_development_stages as string[] || [],
       fundingStages: co.funding_stages || [],
       signals: normalizeOrderedSignalIds((co as unknown as Record<string, unknown>).signals),
+      targetCustomers: co.target_customers ?? [],
+      buyerTypes: co.buyer_types ?? [],
+      competitors: (co.competitors ?? []) as import('@/components/SetupProfilePanel').CompetitorItem[],
     };
 
     companyRef.current = nextCompanyState;
@@ -924,9 +963,9 @@ export default function SetupFlow({
 
     const exampleCompanyName = co.example_company_enrichment?.company_name || co.name || 'this company profile';
     setReviewedCompanyName(exampleCompanyName);
-    setEnrichedTargetCompany((co.example_company_enrichment as import('@/lib/target-company-enrichment').TargetCompanyEnrichmentResult | null | undefined) ?? null);
+    setEnrichedTargetCompany((co.example_company_enrichment as TargetCompanyEnrichmentResult | null | undefined) ?? null);
 
-    const analysesRes = await fetch('/api/user-analyses');
+    const analysesRes = await fetch('/api/user-company');
     const existingAnalysis = analysesRes.ok ? ((await analysesRes.json())?.analyses?.[0] ?? null) : null;
     if (existingAnalysis) {
       setEditingFindingsData(existingAnalysis as Record<string, unknown>);
@@ -954,12 +993,14 @@ export default function SetupFlow({
       body: JSON.stringify({
         seller_company_name: sellerData.company_name,
         seller_company_type: sellerData.company_type,
+        seller_platform_category: visiblePlatformCategory(sellerData.company_type as string | null | undefined, sellerData.platform_category as string | null | undefined),
         seller_therapeutic_areas: sellerData.therapeutic_areas,
         seller_products_services: sellerData.products_services,
         seller_services: sellerData.services,
         seller_customers_we_serve: sellerData.customers_we_serve,
         seller_value_propositions: sellerData.value_propositions,
         icp_company_type: nextCompanyState.companyType,
+        icp_platform_category: visiblePlatformCategory(nextCompanyState.companyType, nextCompanyState.platformCategory),
         icp_therapeutic_areas: nextCompanyState.therapeuticAreas,
         icp_modalities: nextCompanyState.modalities,
         icp_development_stages: nextCompanyState.developmentStages,
@@ -1189,7 +1230,7 @@ export default function SetupFlow({
     const analysisId = typeof editingFindingsData?.id === 'string' ? editingFindingsData.id : null;
     if (analysisId) {
       try {
-        await fetch(`/api/user-analyses?id=${analysisId}`, { method: 'DELETE' });
+        await fetch(`/api/user-company?id=${analysisId}`, { method: 'DELETE' });
       } catch {}
     }
 
@@ -1200,12 +1241,12 @@ export default function SetupFlow({
     selectedCompanyRef.current = null;
     setEnrichedTargetCompany(null);
     setReviewedCompanyName('');
-    setReviewDraft({ companyType: '', therapeuticAreas: [], modalities: [], developmentStages: [], customerTherapeuticAreas: [], customerModalities: [], customerDevelopmentStages: [], companySizes: [], liFollowerSizes: [], fundingStages: [] });
+    setReviewDraft({ companyType: '', platformCategory: '', therapeuticAreas: [], modalities: [], developmentStages: [], customerTherapeuticAreas: [], customerModalities: [], customerDevelopmentStages: [], companySizes: [], liFollowerSizes: [], fundingStages: [] });
     setSavedIcpName('');
     setSavedPersonaName('');
-    setPanelCompany({ companyType: '', companySizes: [], liFollowerSizes: [], therapeuticAreas: [], modalities: [], developmentStages: [], customerTherapeuticAreas: [], customerModalities: [], customerDevelopmentStages: [], fundingStages: [], signals: [] });
+    setPanelCompany({ companyType: '', platformCategory: '', companySizes: [], liFollowerSizes: [], therapeuticAreas: [], modalities: [], developmentStages: [], customerTherapeuticAreas: [], customerModalities: [], customerDevelopmentStages: [], fundingStages: [], signals: [], targetCustomers: [], buyerTypes: [], competitors: [] });
     setPanelPersona({ functions: [], seniority: [], jobTitles: [], signals: [] });
-    companyRef.current = { companyType: '', companySizes: [], liFollowerSizes: [], therapeuticAreas: [], modalities: [], developmentStages: [], customerTherapeuticAreas: [], customerModalities: [], customerDevelopmentStages: [], fundingStages: [], signals: [] };
+    companyRef.current = { companyType: '', platformCategory: '', companySizes: [], liFollowerSizes: [], therapeuticAreas: [], modalities: [], developmentStages: [], customerTherapeuticAreas: [], customerModalities: [], customerDevelopmentStages: [], fundingStages: [], signals: [], targetCustomers: [], buyerTypes: [], competitors: [] };
     personaRef.current = { functions: [], seniority: [], jobTitles: [], signals: [] };
     setEditingFindings(false);
     setEditingFindingsData(null);
@@ -1309,8 +1350,14 @@ export default function SetupFlow({
       setReviewedCompanyName(name);
       setEnrichedTargetCompany(data);
 
+      const enrichmentSegments = resolveCustomerSegments({
+        targetCustomers: data.target_customers,
+        customersWeServe: data.customers_we_serve,
+        fallbackItems: data.customers_we_serve,
+      });
       const draft = {
         companyType: data.company_type ?? '',
+        platformCategory: visiblePlatformCategory(data.company_type ?? '', data.platform_category ?? ''),
         therapeuticAreas: data.therapeutic_areas ?? [],
         modalities: data.modalities ?? [],
         developmentStages: data.development_stages ?? [],
@@ -1320,8 +1367,13 @@ export default function SetupFlow({
         companySizes: employeeCountToSizeBucket(data.employee_count, data.employee_range),
         liFollowerSizes: followerCountToFollowerBucket(data.follower_count),
         fundingStages: (() => { const s = canonicalizeFundingStage(data.funding_stage, data.total_funding_usd); return s ? [s] : []; })(),
+        targetCustomers: enrichmentSegments.customerOrganizations,
+        buyerTypes: enrichmentSegments.buyerTypes,
+        competitors: data.competitors_enriched ?? [],
       };
       setReviewDraft(draft);
+      companyRef.current = { ...companyRef.current, ...draft };
+      setPanelCompany((prev) => ({ ...prev, ...draft }));
 
       // Generate the ICP name now so it shows in the panel immediately
       const nameRes = await fetch('/api/generate-icp-name', {
@@ -1501,6 +1553,7 @@ export default function SetupFlow({
       valuePropositions: 'value_propositions',
       companyType: 'company_type',
       companyTypeDisplay: 'company_type_display',
+      platformCategory: 'platform_category',
       therapeuticAreas: 'therapeutic_areas',
       modalities: 'modalities',
       developmentStages: 'development_stages',
@@ -1539,7 +1592,7 @@ export default function SetupFlow({
     const id = typeof data?.id === 'string' ? data.id : null;
     if (id) {
       try {
-        await fetch(`/api/user-analyses?id=${id}`, { method: 'DELETE' });
+        await fetch(`/api/user-company?id=${id}`, { method: 'DELETE' });
       } catch {}
     }
     setEditingFindings(false);
@@ -1579,7 +1632,7 @@ export default function SetupFlow({
       icpIdRef.current = null;
     }
     setIcpEditMode(false);
-    setReviewDraft({ companyType: '', therapeuticAreas: [], modalities: [], developmentStages: [], customerTherapeuticAreas: [], customerModalities: [], customerDevelopmentStages: [], companySizes: [], liFollowerSizes: [], fundingStages: [] });
+    setReviewDraft({ companyType: '', platformCategory: '', therapeuticAreas: [], modalities: [], developmentStages: [], customerTherapeuticAreas: [], customerModalities: [], customerDevelopmentStages: [], companySizes: [], liFollowerSizes: [], fundingStages: [] });
     setReviewedCompanyName('');
     setEnrichedTargetCompany(null);
     setSavedIcpName('');
@@ -1613,12 +1666,14 @@ export default function SetupFlow({
       body: JSON.stringify({
         seller_company_name: sellerData.company_name,
         seller_company_type: sellerData.company_type,
+        seller_platform_category: visiblePlatformCategory(sellerData.company_type as string | null | undefined, sellerData.platform_category as string | null | undefined),
         seller_therapeutic_areas: sellerData.therapeutic_areas,
         seller_products_services: sellerData.products_services,
         seller_services: sellerData.services,
         seller_customers_we_serve: sellerData.customers_we_serve,
         seller_value_propositions: sellerData.value_propositions,
         icp_company_type: icpData.companyType,
+        icp_platform_category: visiblePlatformCategory(icpData.companyType, icpData.platformCategory),
         icp_therapeutic_areas: icpData.therapeuticAreas,
         icp_modalities: icpData.modalities,
         icp_development_stages: icpData.developmentStages,
@@ -1665,7 +1720,7 @@ export default function SetupFlow({
       let nextData = editingFindingsData;
 
       if (id) {
-        const response = await fetch('/api/user-analyses', {
+        const response = await fetch('/api/user-company', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(editingFindingsData),
@@ -1692,19 +1747,27 @@ export default function SetupFlow({
 
   const handleEditIcp = useCallback(() => {
     icpEditSnapshotRef.current = { ...reviewDraft };
-    icpEditEnrichmentSnapshotRef.current = enrichedTargetCompany ? { ...enrichedTargetCompany } : null;
+    icpEditPanelSegmentsRef.current = {
+      targetCustomers: [...panelCompany.targetCustomers],
+      buyerTypes: [...panelCompany.buyerTypes],
+      competitors: [...panelCompany.competitors],
+    };
     setIcpEditMode(true);
-  }, [reviewDraft, enrichedTargetCompany]);
+  }, [reviewDraft, panelCompany]);
 
   const handleCancelIcp = useCallback(() => {
     if (icpEditSnapshotRef.current) {
       setReviewDraft(icpEditSnapshotRef.current);
     }
-    if (icpEditEnrichmentSnapshotRef.current) {
-      setEnrichedTargetCompany(icpEditEnrichmentSnapshotRef.current);
+    if (icpEditPanelSegmentsRef.current) {
+      const snap = icpEditPanelSegmentsRef.current;
+      companyRef.current.targetCustomers = snap.targetCustomers;
+      companyRef.current.buyerTypes = snap.buyerTypes;
+      companyRef.current.competitors = snap.competitors;
+      setPanelCompany((prev) => ({ ...prev, ...snap }));
     }
     setIcpEditMode(false);
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSaveIcp = useCallback(async () => {
     setIcpEditMode(false);
@@ -1718,17 +1781,26 @@ export default function SetupFlow({
       setSavedIcpName(value as string);
       return;
     }
-    if (field === 'competitorsEnriched') {
-      setEnrichedTargetCompany((prev) => (prev
-        ? {
-            ...prev,
-            competitors_enriched: value as import('@/components/SetupProfilePanel').CompetitorItem[],
-          }
-        : prev));
+    if (field === 'competitors') {
+      const v = value as import('@/components/SetupProfilePanel').CompetitorItem[];
+      companyRef.current.competitors = v;
+      setPanelCompany((prev) => ({ ...prev, competitors: v }));
+      return;
+    }
+    if (field === 'targetCustomers') {
+      const v = value as string[];
+      companyRef.current.targetCustomers = v;
+      setPanelCompany((prev) => ({ ...prev, targetCustomers: v }));
+      return;
+    }
+    if (field === 'customersWeServe') {
+      const v = value as string[];
+      companyRef.current.buyerTypes = v;
+      setPanelCompany((prev) => ({ ...prev, buyerTypes: v }));
       return;
     }
     setReviewDraft((prev) => ({ ...prev, [field]: value }));
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Handle user text input (greeting phase) ───────────────────────────────
 
@@ -1790,7 +1862,7 @@ export default function SetupFlow({
         let bootstrapExampleEnrichment: TargetCompanyEnrichmentResult | null = null;
         // Decision tree: check what the user has already completed and resume from the right step.
         const [analysesRes, icpRes, personaRes] = await Promise.all([
-          fetch('/api/user-analyses'),
+          fetch('/api/user-company'),
           fetch('/api/company-criteria'),
           fetch('/api/contacts'),
         ]);
@@ -1812,6 +1884,10 @@ export default function SetupFlow({
           setSavedIcpName(typeof icp.name === 'string' ? icp.name : '');
           const taxonomy = {
             companyType: typeof icp.company_type === 'string' ? icp.company_type : '',
+            platformCategory: visiblePlatformCategory(
+              typeof icp.company_type === 'string' ? icp.company_type : '',
+              typeof icp.platform_category === 'string' ? icp.platform_category : '',
+            ),
             companySizes: Array.isArray(icp.company_sizes) ? (icp.company_sizes as string[]) : [],
             liFollowerSizes: Array.isArray(icp.li_follower_sizes) ? (icp.li_follower_sizes as string[]) : [],
             therapeuticAreas: Array.isArray(icp.therapeutic_areas) ? (icp.therapeutic_areas as string[]) : [],
@@ -1822,6 +1898,10 @@ export default function SetupFlow({
             customerDevelopmentStages: Array.isArray(icp.customer_development_stages) ? (icp.customer_development_stages as string[]) : [],
             fundingStages: Array.isArray(icp.funding_stages) ? (icp.funding_stages as string[]) : [],
             signals: normalizeOrderedSignalIds(icp.signals),
+            targetCustomers: Array.isArray(icp.target_customers) ? (icp.target_customers as string[]) : [],
+            buyerTypes: Array.isArray(icp.buyer_types) ? (icp.buyer_types as string[]) : [],
+            competitors: Array.isArray(icp.competitors)
+              ? (icp.competitors as import('@/components/SetupProfilePanel').CompetitorItem[]) : [],
           };
           setPanelCompany(taxonomy);
           setReviewDraft(taxonomy);
@@ -1908,12 +1988,14 @@ export default function SetupFlow({
             body: JSON.stringify({
               seller_company_name: sellerData.company_name,
               seller_company_type: sellerData.company_type,
+              seller_platform_category: visiblePlatformCategory(sellerData.company_type as string | null | undefined, sellerData.platform_category as string | null | undefined),
               seller_therapeutic_areas: sellerData.therapeutic_areas,
               seller_products_services: sellerData.products_services,
               seller_services: sellerData.services,
               seller_customers_we_serve: sellerData.customers_we_serve,
               seller_value_propositions: sellerData.value_propositions,
               icp_company_type: icpData.companyType,
+              icp_platform_category: visiblePlatformCategory(icpData.companyType, icpData.platformCategory),
               icp_therapeutic_areas: icpData.therapeuticAreas,
               icp_modalities: icpData.modalities,
               icp_development_stages: icpData.developmentStages,
@@ -1985,7 +2067,7 @@ export default function SetupFlow({
 
       if (entryPoint === 'target-company') {
         // Fetch seller analysis so buying-team generation later has full context
-        const analysesRes = await fetch('/api/user-analyses');
+        const analysesRes = await fetch('/api/user-company');
         const existingAnalysis = analysesRes.ok ? ((await analysesRes.json())?.analyses?.[0] ?? null) : null;
         if (existingAnalysis) {
           setEditingFindingsData(existingAnalysis as Record<string, unknown>);
@@ -2124,12 +2206,13 @@ export default function SetupFlow({
   const isCustomerUrlReview = phase === 'customer_url_review';
   const isReviewValid =
     reviewDraft.companyType !== '' &&
-    (reviewDraft.therapeuticAreas.length > 0 ||
+    (visiblePlatformCategory(reviewDraft.companyType, reviewDraft.platformCategory).length > 0 ||
+      reviewDraft.therapeuticAreas.length > 0 ||
       reviewDraft.modalities.length > 0 ||
-      reviewDraft.customerTherapeuticAreas.length > 0 ||
-      reviewDraft.customerModalities.length > 0 ||
       reviewDraft.developmentStages.length > 0 ||
-      reviewDraft.customerDevelopmentStages.length > 0);
+      reviewDraft.companySizes.length > 0 ||
+      reviewDraft.liFollowerSizes.length > 0 ||
+      reviewDraft.fundingStages.length > 0);
 
   const toggleReview = (
     field: keyof Pick<typeof reviewDraft, 'therapeuticAreas' | 'modalities' | 'developmentStages' | 'customerTherapeuticAreas' | 'customerModalities' | 'customerDevelopmentStages' | 'companySizes' | 'liFollowerSizes' | 'fundingStages'>
@@ -2143,6 +2226,7 @@ export default function SetupFlow({
 
   const handleReviewConfirm = async () => {
     companyRef.current.companyType = reviewDraft.companyType;
+    companyRef.current.platformCategory = visiblePlatformCategory(reviewDraft.companyType, reviewDraft.platformCategory);
     companyRef.current.therapeuticAreas = reviewDraft.therapeuticAreas;
     companyRef.current.modalities = reviewDraft.modalities;
     companyRef.current.developmentStages = reviewDraft.developmentStages;
@@ -2629,6 +2713,7 @@ export default function SetupFlow({
     })(),
     companyType: getStr(resultsPanelData?.company_type),
     companyTypeDisplay: getStr(resultsPanelData?.company_type_display),
+    platformCategory: getStr(resultsPanelData?.platform_category),
     therapeuticAreas: getStrArr(resultsPanelData?.therapeutic_areas),
     modalities: getStrArr(resultsPanelData?.modalities),
     developmentStages: getStrArr(resultsPanelData?.development_stages),

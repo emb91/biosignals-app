@@ -2,7 +2,7 @@
 
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { toast } from 'sonner';
 import {
@@ -80,6 +80,15 @@ interface ExampleEnrichment {
   funding_status_label?: string | null;
   funding_resolution_summary?: string | null;
   funding_data_source?: 'apollo' | 'web_search' | null;
+  company_type?: string | null;
+  company_type_display?: string | null;
+  platform_category?: string | null;
+  therapeutic_areas?: string[] | null;
+  modalities?: string[] | null;
+  development_stages?: string[] | null;
+  customer_therapeutic_areas?: string[] | null;
+  customer_modalities?: string[] | null;
+  customer_development_stages?: string[] | null;
   arr_estimate?: string | null;
   funding_stage?: string | null;
   total_funding_usd?: number | null;
@@ -93,6 +102,7 @@ interface ICP {
   name: string;
   icp_summary?: string | null;
   company_type: string;
+  platform_category?: string | null;
   therapeutic_areas: string[];
   modalities: string[];
   development_stages: string[];
@@ -106,6 +116,10 @@ interface ICP {
   signals: string[];
   example_company_url: string;
   example_company_enrichment?: ExampleEnrichment | null;
+  /** First-class ICP segment columns (backfilled from enrichment blob by migration). */
+  target_customers?: string[] | null;
+  buyer_types?: string[] | null;
+  competitors?: { name: string; url?: string }[] | null;
   created_at: string;
   updated_at?: string;
 }
@@ -227,22 +241,61 @@ function parseFunctionName(f: string): string {
   try { return (JSON.parse(f) as { name?: string }).name ?? f; } catch { return f; }
 }
 
+function isSaasCompanyType(value?: string | null): boolean {
+  return (value ?? '').trim() === 'SaaS';
+}
+
+function visiblePlatformCategory(companyType?: string | null, platformCategory?: string | null): string {
+  return isSaasCompanyType(companyType) ? (platformCategory ?? '').trim() : '';
+}
+
 /** One line from persisted ICP fields only — used when `icp_summary` is empty (never reference-company enrichment). */
 function segmentSummaryFallbackFromIcp(icp: ICP): string {
   const parts: string[] = [];
   if (icp.company_type?.trim()) parts.push(icp.company_type.trim());
+  if (visiblePlatformCategory(icp.company_type, icp.platform_category)) {
+    parts.push(visiblePlatformCategory(icp.company_type, icp.platform_category));
+  }
   const diseaseMod = [...icp.therapeutic_areas, ...icp.modalities].filter(Boolean);
   if (diseaseMod.length > 0) parts.push(diseaseMod.join(', '));
   if (icp.development_stages.length > 0) parts.push(icp.development_stages.join(', '));
-  const customerFocus = [
-    ...(icp.customer_therapeutic_areas ?? []),
-    ...(icp.customer_modalities ?? []),
-    ...(icp.customer_development_stages ?? []),
-  ].filter(Boolean);
-  if (customerFocus.length > 0) parts.push(customerFocus.join(', '));
   if (icp.company_sizes.length > 0) parts.push(icp.company_sizes.join(', '));
   if (icp.funding_stages.length > 0) parts.push(icp.funding_stages.join(', '));
   return parts.length > 0 ? parts.join(' · ') : '';
+}
+
+function simplifyFundingStatusForIcp(value?: string | null): string | null {
+  const text = (value ?? '').trim();
+  if (!text) return null;
+
+  const lower = text.toLowerCase();
+  if (
+    lower.includes('public') ||
+    lower.includes('nasdaq') ||
+    lower.includes('nyse') ||
+    lower.includes('listed on') ||
+    lower.includes('stock exchange') ||
+    lower.includes('lse') ||
+    lower.includes('aex')
+  ) {
+    return 'Public';
+  }
+  if (lower.includes('grant')) return 'Grant-funded';
+  if (lower.includes('non-profit') || lower.includes('nonprofit')) return 'Non-profit';
+  if (
+    lower.includes('private') ||
+    lower.includes('venture') ||
+    lower.includes('vc') ||
+    lower.includes('angel') ||
+    lower.includes('bootstrapped') ||
+    lower.includes('series') ||
+    lower.includes('seed') ||
+    lower.includes('growth')
+  ) {
+    return 'Private';
+  }
+
+  return null;
 }
 
 const COMPANY_SIGNAL_OPTIONS = [
@@ -310,6 +363,68 @@ function EditTagField({
   );
 }
 
+function EditFreeformTagField({
+  label,
+  selected,
+  onRemove,
+  onAdd,
+  placeholder = 'Add…',
+}: {
+  label: string;
+  selected: string[];
+  onRemove: (v: string) => void;
+  onAdd: (v: string) => void;
+  placeholder?: string;
+}) {
+  const [draft, setDraft] = useState('');
+
+  const addItem = () => {
+    const next = draft.trim();
+    if (!next) return;
+    const exists = selected.some((value) => value.trim().toLowerCase() === next.toLowerCase());
+    if (exists) {
+      setDraft('');
+      return;
+    }
+    onAdd(next);
+    setDraft('');
+  };
+
+  return (
+    <div>
+      <p className="mb-1.5 text-xs text-white/85">{label}</p>
+      {selected.length > 0 && (
+        <div className="mb-1.5 flex flex-wrap gap-1.5">
+          {selected.map((value) => (
+            <Tag key={value} label={value} onRemove={() => onRemove(value)} />
+          ))}
+        </div>
+      )}
+      <div className="flex items-center gap-1.5">
+        <input
+          type="text"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            addItem();
+          }}
+          placeholder={placeholder}
+          className="min-w-0 flex-1 rounded-lg border border-white/15 bg-white/[0.06] px-2 py-1 text-xs text-white/80 placeholder:text-white/25 focus:border-arcova-teal/50 focus:outline-none"
+        />
+        <button
+          type="button"
+          onClick={addItem}
+          className="shrink-0 rounded-lg border border-white/15 px-2.5 py-1 text-xs font-medium text-white/60 transition-colors hover:bg-white/[0.06] hover:text-white/80"
+        >
+          Add
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Combined ICP + buying team card ───────────────────────────────────────
 
 function ICPCard({
@@ -346,16 +461,34 @@ function ICPCard({
   const linkedInDisplay = e?.linkedin_url?.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
   const functions = persona?.functions?.map(parseFunctionName) ?? [];
   const seniority = persona?.seniority_levels ?? [];
-  const customerSegments = resolveCustomerSegments({
+  const referenceCustomerSegments = resolveCustomerSegments({
     targetCustomers: e?.target_customers ?? [],
     customersWeServe: e?.customers_we_serve ?? [],
     fallbackItems: e?.customers_we_serve ?? [],
   });
+  const icpCustomerSegments = (icp.target_customers?.length || icp.buyer_types?.length)
+    ? { customerOrganizations: icp.target_customers ?? [], buyerTypes: icp.buyer_types ?? [] }
+    : resolveCustomerSegments({
+        targetCustomers: e?.target_customers ?? [],
+        customersWeServe: e?.customers_we_serve ?? [],
+        fallbackItems: e?.customers_we_serve ?? [],
+      });
+  const displayCompetitors = icp.competitors?.length
+    ? icp.competitors
+    : (e?.competitors_enriched ?? []);
   const referenceSummary = (e?.description?.[0] ?? '').trim();
   const icpSummaryStored = (icp.icp_summary ?? '').trim();
   /** Stored sentence first; otherwise taxonomy-only (not reference-account description). */
   const icpProfileSummaryDisplay = icpSummaryStored || segmentSummaryFallbackFromIcp(icp);
   const referenceAccountLabel = e?.company_name?.trim() || 'Reference account';
+  const modelledOnFundingStatus =
+    (e?.funding_status_label ?? '').trim() || (e?.company_status ? extractFundingStatus(e.company_status) : null);
+  const modelledOnFundingSummary =
+    (e?.funding_resolution_summary ?? e?.company_status ?? '').trim() || null;
+  const icpFundingStatus =
+    simplifyFundingStatusForIcp(e?.funding_status_label) ??
+    simplifyFundingStatusForIcp(e?.company_status) ??
+    null;
 
   const hasModelledOnNarrative = Boolean(
     e?.description?.[0] ||
@@ -389,6 +522,7 @@ function ICPCard({
   const [editData, setEditData] = useState({
     name: icp.name,
     company_type: icp.company_type,
+    platform_category: icp.platform_category ?? '',
     therapeutic_areas: [...icp.therapeutic_areas],
     modalities: [...icp.modalities],
     development_stages: [...icp.development_stages],
@@ -404,15 +538,36 @@ function ICPCard({
   const [editSeniority, setEditSeniority] = useState<string[]>([]);
   const [editPersonaSignals, setEditPersonaSignals] = useState<string[]>([]);
   const [editCompetitors, setEditCompetitors] = useState<CompetitorItem[]>([]);
+  const [editTargetCustomers, setEditTargetCustomers] = useState<string[]>([]);
+  const [editBuyerTypes, setEditBuyerTypes] = useState<string[]>([]);
   const [newCompetitorUrl, setNewCompetitorUrl] = useState('');
   const [saving, setSaving] = useState(false);
   const [regeneratingName, setRegeneratingName] = useState(false);
 
 
+  const resolvedSegments = () => {
+    // Prefer first-class columns (post-migration); fall back to blob for old rows.
+    if (icp.target_customers?.length || icp.buyer_types?.length) {
+      return { customerOrganizations: icp.target_customers ?? [], buyerTypes: icp.buyer_types ?? [] };
+    }
+    return resolveCustomerSegments({
+      targetCustomers: icp.example_company_enrichment?.target_customers ?? [],
+      customersWeServe: icp.example_company_enrichment?.customers_we_serve ?? [],
+      fallbackItems: icp.example_company_enrichment?.customers_we_serve ?? [],
+    });
+  };
+
+  const resolvedCompetitors = () =>
+    icp.competitors?.length
+      ? icp.competitors
+      : (icp.example_company_enrichment?.competitors_enriched ?? []);
+
   const startEdit = () => {
+    const segs = resolvedSegments();
     setEditData({
       name: icp.name,
       company_type: icp.company_type,
+      platform_category: icp.platform_category ?? '',
       therapeutic_areas: [...icp.therapeutic_areas],
       modalities: [...icp.modalities],
       development_stages: [...icp.development_stages],
@@ -427,7 +582,9 @@ function ICPCard({
     setEditFunctions([...functions]);
     setEditSeniority([...seniority]);
     setEditPersonaSignals([...(persona?.signals ?? [])]);
-    setEditCompetitors([...(icp.example_company_enrichment?.competitors_enriched ?? [])]);
+    setEditCompetitors([...resolvedCompetitors()]);
+    setEditTargetCustomers([...segs.customerOrganizations]);
+    setEditBuyerTypes([...segs.buyerTypes]);
     setNewCompetitorUrl('');
     setModelledOnMode(false);
     setEditMode(true);
@@ -435,10 +592,13 @@ function ICPCard({
   };
 
   const cancelEdit = () => {
+    const segs = resolvedSegments();
     setEditFunctions([...functions]);
     setEditSeniority([...seniority]);
     setEditPersonaSignals([...(persona?.signals ?? [])]);
-    setEditCompetitors([...(icp.example_company_enrichment?.competitors_enriched ?? [])]);
+    setEditCompetitors([...resolvedCompetitors()]);
+    setEditTargetCustomers([...segs.customerOrganizations]);
+    setEditBuyerTypes([...segs.buyerTypes]);
     setNewCompetitorUrl('');
     setEditMode(false);
   };
@@ -451,6 +611,7 @@ function ICPCard({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           companyType: editData.company_type,
+          platformCategory: visiblePlatformCategory(editData.company_type, editData.platform_category),
           therapeuticAreas: editData.therapeutic_areas,
           modalities: editData.modalities,
           developmentStages: editData.development_stages,
@@ -474,6 +635,7 @@ function ICPCard({
           name: editData.name,
           icpSummary,
           companyType: editData.company_type,
+          platformCategory: visiblePlatformCategory(editData.company_type, editData.platform_category),
           therapeuticAreas: editData.therapeutic_areas,
           modalities: editData.modalities,
           developmentStages: editData.development_stages,
@@ -486,13 +648,10 @@ function ICPCard({
           signals: editData.signals,
           exampleCompanies: [],
           exampleCompanyUrl: icp.example_company_url,
-          exampleCompanyEnrichment:
-            icp.example_company_enrichment == null
-              ? null
-              : {
-                  ...icp.example_company_enrichment,
-                  competitors_enriched: editCompetitors.length > 0 ? editCompetitors : null,
-                },
+          exampleCompanyEnrichment: icp.example_company_enrichment ?? null,
+          targetCustomers: editTargetCustomers,
+          buyerTypes: editBuyerTypes,
+          competitors: editCompetitors,
         }),
       });
 
@@ -539,6 +698,7 @@ function ICPCard({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           companyType: editData.company_type,
+          platformCategory: visiblePlatformCategory(editData.company_type, editData.platform_category),
           therapeuticAreas: editData.therapeutic_areas,
           modalities: editData.modalities,
           developmentStages: editData.development_stages,
@@ -691,14 +851,14 @@ function ICPCard({
                   </div>
                 </div>
               )}
-              {(e.funding_status_label || e.company_status || e.funding_stage || e.total_funding_usd != null || e.arr_estimate) && (
+              {(modelledOnFundingStatus || modelledOnFundingSummary || e.funding_stage || e.total_funding_usd != null || e.arr_estimate) && (
                 <div>
                   <p className="text-xs font-semibold text-white mb-2">Funding</p>
                   <div className="space-y-1">
-                    {(e.funding_status_label || e.company_status) && (
+                    {modelledOnFundingStatus && (
                       <div className="flex items-baseline gap-2">
                         <span className="text-xs text-white/50 w-28 shrink-0">Status</span>
-                        <span className="text-xs text-white">{e.funding_status_label ?? e.company_status}</span>
+                        <span className="text-xs text-white">{modelledOnFundingStatus}</span>
                       </div>
                     )}
                     {e.funding_stage && (
@@ -720,10 +880,16 @@ function ICPCard({
                       </div>
                     )}
                   </div>
+                  {modelledOnFundingSummary && (
+                    <div className="mt-2">
+                      <p className="text-xs text-white/40 mb-1">Funding summary</p>
+                      <p className="text-xs leading-snug text-white/55">{modelledOnFundingSummary}</p>
+                    </div>
+                  )}
                 </div>
               )}
-              <FieldRow label="Sells to companies like" items={customerSegments.customerOrganizations} />
-              <FieldRow label="Sells to people like" items={customerSegments.buyerTypes} />
+              <FieldRow label="Sells to companies like" items={referenceCustomerSegments.customerOrganizations} />
+              <FieldRow label="Sells to people like" items={referenceCustomerSegments.buyerTypes} />
               {(e.competitors_enriched?.length ?? 0) > 0 && (
                 <div className="space-y-1">
                   <p className="text-xs font-semibold text-white">Competitors</p>
@@ -816,43 +982,41 @@ function ICPCard({
                     </select>
                   )}
                 </div>
+                {isSaasCompanyType(editData.company_type) && (
+                  <div>
+                    <p className="mb-1.5 text-xs font-semibold text-white">Platform category</p>
+                    <input
+                      type="text"
+                      value={editData.platform_category}
+                      onChange={(e) => setSingle('platform_category', e.target.value)}
+                      placeholder="e.g. Scientific Content Platform"
+                      maxLength={48}
+                      className="w-full rounded-lg bg-white/[0.06] border border-white/15 px-2 py-1 text-xs text-white/80 focus:outline-none focus:border-arcova-teal/50 placeholder:text-white/25"
+                    />
+                  </div>
+                )}
                 <EditTagField label="Therapeutic areas" options={THERAPEUTIC_AREA_OPTIONS} selected={editData.therapeutic_areas} onRemove={(v) => toggleMulti('therapeutic_areas', v)} onAdd={(v) => toggleMulti('therapeutic_areas', v)} />
                 <EditTagField label="Modalities" options={MODALITY_OPTIONS} selected={editData.modalities} onRemove={(v) => toggleMulti('modalities', v)} onAdd={(v) => toggleMulti('modalities', v)} />
-                <EditTagField
-                  label="Customer-served therapeutic areas"
-                  options={THERAPEUTIC_AREA_OPTIONS}
-                  selected={editData.customer_therapeutic_areas}
-                  onRemove={(v) => toggleMulti('customer_therapeutic_areas', v)}
-                  onAdd={(v) => toggleMulti('customer_therapeutic_areas', v)}
-                />
-                <EditTagField
-                  label="Customer-served modalities"
-                  options={MODALITY_OPTIONS}
-                  selected={editData.customer_modalities}
-                  onRemove={(v) => toggleMulti('customer_modalities', v)}
-                  onAdd={(v) => toggleMulti('customer_modalities', v)}
-                />
                 <EditTagField label="Development stage" options={DEVELOPMENT_STAGE_OPTIONS} selected={editData.development_stages} onRemove={(v) => toggleMulti('development_stages', v)} onAdd={(v) => toggleMulti('development_stages', v)} />
-                <EditTagField
-                  label="Customer-served development stage"
-                  options={DEVELOPMENT_STAGE_OPTIONS}
-                  selected={editData.customer_development_stages}
-                  onRemove={(v) => toggleMulti('customer_development_stages', v)}
-                  onAdd={(v) => toggleMulti('customer_development_stages', v)}
-                />
                 <EditTagField label="Company size" options={COMPANY_SIZE_OPTIONS} selected={editData.company_sizes} onRemove={(v) => toggleMulti('company_sizes', v)} onAdd={(v) => toggleMulti('company_sizes', v)} />
                 <EditTagField label="LinkedIn follower base" options={LI_FOLLOWER_OPTIONS} selected={editData.li_follower_sizes} onRemove={(v) => toggleMulti('li_follower_sizes', v)} onAdd={(v) => toggleMulti('li_follower_sizes', v)} />
                 <EditTagField label="Funding stage" options={FUNDING_STAGE_OPTIONS} selected={editData.funding_stages} onRemove={(v) => toggleMulti('funding_stages', v)} onAdd={(v) => toggleMulti('funding_stages', v)} />
               </div>
             ) : (
               <>
-                {(icp.company_type || icp.therapeutic_areas.length > 0 || icp.modalities.length > 0
+                {(icp.company_type || visiblePlatformCategory(icp.company_type, icp.platform_category) || icp.therapeutic_areas.length > 0 || icp.modalities.length > 0
                   || icp.development_stages.length > 0) && (
                   <div className="space-y-2.5">
                     {icp.company_type && (
                       <div>
                         <p className="mb-1 text-xs font-semibold text-white">Company type</p>
                         <Tag label={icp.company_type} />
+                      </div>
+                    )}
+                    {visiblePlatformCategory(icp.company_type, icp.platform_category) && (
+                      <div>
+                        <p className="mb-1 text-xs font-semibold text-white">Platform category</p>
+                        <Tag label={visiblePlatformCategory(icp.company_type, icp.platform_category)} />
                       </div>
                     )}
                     <FieldRow label="Therapeutic areas" items={icp.therapeutic_areas} />
@@ -873,12 +1037,11 @@ function ICPCard({
           </div>
 
           {!editMode && (() => {
-            const fundingStatus =
-              e?.funding_status_label?.trim() || (e?.company_status ? extractFundingStatus(e.company_status) : null);
+            const fundingStatus = icpFundingStatus;
             const derivedStage = canonicalizeFundingStage(
               e?.funding_stage,
               e?.total_funding_usd,
-              e?.funding_status_label ?? e?.company_status,
+              e?.company_status ?? e?.funding_status_label ?? null,
             );
             const fundingStages = icp.funding_stages.length > 0
               ? icp.funding_stages
@@ -897,12 +1060,12 @@ function ICPCard({
             );
           })()}
 
-          {!editMode && customerSegments.customerOrganizations.length > 0 && (
+          {!editMode && icpCustomerSegments.customerOrganizations.length > 0 && (
             <div className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 space-y-2.5">
               <div>
                 <p className="mb-1 text-xs font-semibold text-white">Sells to companies like</p>
                 <div className="flex flex-wrap gap-1.5">
-                  {customerSegments.customerOrganizations.map((item) => (
+                  {icpCustomerSegments.customerOrganizations.map((item) => (
                     <Tag key={item} label={item} />
                   ))}
                 </div>
@@ -910,11 +1073,23 @@ function ICPCard({
             </div>
           )}
 
-          {!editMode && (e?.competitors_enriched?.length ?? 0) > 0 && (
+          {editMode && (
+            <div className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 space-y-2">
+              <EditFreeformTagField
+                label="Sells to companies like"
+                selected={editTargetCustomers}
+                onRemove={(value) => setEditTargetCustomers((prev) => prev.filter((item) => item !== value))}
+                onAdd={(value) => setEditTargetCustomers((prev) => [...prev, value])}
+                placeholder="Add company segment…"
+              />
+            </div>
+          )}
+
+          {!editMode && displayCompetitors.length > 0 && (
             <div className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 space-y-2">
               <p className="text-xs font-semibold text-white">Competitors</p>
               <div className="flex flex-wrap gap-1.5">
-                {e!.competitors_enriched!.map((c, i) => {
+                {displayCompetitors.map((c, i) => {
                   const href = c.url?.trim() || `https://www.google.com/search?q=${encodeURIComponent(c.name)}`;
                   return (
                     <a
@@ -1151,6 +1326,7 @@ export default function ICPManagerPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [reenrichingId, setReenrichingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const attemptedSummaryRepairRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!loading && !user) router.push('/login');
@@ -1180,6 +1356,73 @@ export default function ICPManagerPage() {
       }
     })();
   }, [user]);
+
+  useEffect(() => {
+    const missingSummaries = icps.filter((icp) => {
+      const stored = (icp.icp_summary ?? '').trim();
+      return stored.length === 0 && !attemptedSummaryRepairRef.current.has(icp.id);
+    });
+    if (missingSummaries.length === 0) return;
+
+    for (const icp of missingSummaries) {
+      attemptedSummaryRepairRef.current.add(icp.id);
+      void (async () => {
+        try {
+          const summaryRes = await fetch('/api/generate-icp-summary', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              companyType: icp.company_type,
+              platformCategory: visiblePlatformCategory(icp.company_type, icp.platform_category),
+              therapeuticAreas: icp.therapeutic_areas,
+              modalities: icp.modalities,
+              developmentStages: icp.development_stages,
+              customerTherapeuticAreas: icp.customer_therapeutic_areas,
+              customerModalities: icp.customer_modalities,
+              customerDevelopmentStages: icp.customer_development_stages,
+              companySizes: icp.company_sizes,
+              fundingStages: icp.funding_stages,
+              exampleCompanyName: icp.example_company_enrichment?.company_name ?? null,
+              exampleCompanyDescription: icp.example_company_enrichment?.description ?? null,
+            }),
+          });
+          if (!summaryRes.ok) return;
+          const { summary } = await summaryRes.json() as { summary?: string };
+          const icpSummary = summary?.trim();
+          if (!icpSummary) return;
+
+          const updateRes = await fetch(`/api/company-criteria/${icp.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: icp.name,
+              icpSummary,
+              companyType: icp.company_type,
+              platformCategory: visiblePlatformCategory(icp.company_type, icp.platform_category),
+              therapeuticAreas: icp.therapeutic_areas,
+              modalities: icp.modalities,
+              developmentStages: icp.development_stages,
+              customerTherapeuticAreas: icp.customer_therapeutic_areas,
+              customerModalities: icp.customer_modalities,
+              customerDevelopmentStages: icp.customer_development_stages,
+              companySizes: icp.company_sizes,
+              liFollowerSizes: icp.li_follower_sizes,
+              fundingStages: icp.funding_stages,
+              signals: icp.signals,
+              exampleCompanies: [],
+              exampleCompanyUrl: icp.example_company_url,
+              exampleCompanyEnrichment: icp.example_company_enrichment ?? null,
+            }),
+          });
+          if (!updateRes.ok) return;
+          const { data } = await updateRes.json() as { data: ICP };
+          setIcps((prev) => prev.map((item) => (item.id === icp.id ? data : item)));
+        } catch (error) {
+          console.error('Failed to repair ICP summary:', error);
+        }
+      })();
+    }
+  }, [icps]);
 
   const handleDelete = async (id: string) => {
     setDeletingId(id);
@@ -1231,6 +1474,9 @@ export default function ICPManagerPage() {
     try {
       const sellerRes = await fetch('/api/user-company-profile').catch(() => null);
       const sellerData = sellerRes?.ok ? ((await sellerRes.json()) as { data?: Record<string, unknown> }).data : null;
+      const sellerCompanyType = typeof sellerData?.company_type === 'string' ? sellerData.company_type : null;
+      const sellerPlatformCategory =
+        typeof sellerData?.platform_category === 'string' ? sellerData.platform_category : null;
 
       const enrichRes = await fetch('/api/analyze-example-company-stream', {
         method: 'POST',
@@ -1244,6 +1490,7 @@ export default function ICPManagerPage() {
 
       type EnrichmentResult = ExampleEnrichment & {
         company_type?: string | null;
+        platform_category?: string | null;
         therapeutic_areas?: string[] | null;
         modalities?: string[] | null;
         development_stages?: string[] | null;
@@ -1285,6 +1532,10 @@ export default function ICPManagerPage() {
           ? followerCountToFollowerBucket(followerCount)
           : icp.li_follower_sizes;
       const refreshedCompanyType = enrichment.company_type ?? icp.company_type;
+      const refreshedPlatformCategory = visiblePlatformCategory(
+        refreshedCompanyType,
+        enrichment.platform_category ?? icp.platform_category ?? '',
+      );
       const refreshedTherapeuticAreas = enrichment.therapeutic_areas ?? icp.therapeutic_areas;
       const refreshedModalities = enrichment.modalities ?? icp.modalities;
       const refreshedDevelopmentStages = enrichment.development_stages ?? icp.development_stages;
@@ -1295,6 +1546,14 @@ export default function ICPManagerPage() {
       const refreshedCustomerDevelopmentStages =
         enrichment.customer_development_stages ?? icp.customer_development_stages ?? [];
       const refreshedFundingStages = enrichment.funding_stage ? [enrichment.funding_stage] : icp.funding_stages;
+      // Keep enrichment snapshot clean — overrides live in first-class columns.
+      const nextExampleCompanyEnrichment = { ...enrichment };
+      // Preserve user-edited segments; only refresh competitors from new enrichment.
+      const refreshedIcpCustomerSegments = {
+        customerOrganizations: icp.target_customers?.length ? icp.target_customers : [],
+        buyerTypes: icp.buyer_types?.length ? icp.buyer_types : [],
+      };
+      const refreshedCompetitors = enrichment.competitors_enriched ?? icp.competitors ?? [];
 
       toast.loading('Refreshing company signals…', { id: toastId });
       const companySignalsRes = await fetch('/api/recommend-signals', {
@@ -1302,6 +1561,7 @@ export default function ICPManagerPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           companyType: refreshedCompanyType,
+          platformCategory: refreshedPlatformCategory,
           companySizes,
           therapeuticAreas: refreshedTherapeuticAreas,
           modalities: refreshedModalities,
@@ -1321,6 +1581,7 @@ export default function ICPManagerPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           companyType: refreshedCompanyType,
+          platformCategory: refreshedPlatformCategory,
           therapeuticAreas: refreshedTherapeuticAreas,
           modalities: refreshedModalities,
           developmentStages: refreshedDevelopmentStages,
@@ -1346,6 +1607,7 @@ export default function ICPManagerPage() {
           name: icp.name,
           icpSummary: refreshedIcpSummary,
           companyType: refreshedCompanyType,
+          platformCategory: refreshedPlatformCategory,
           therapeuticAreas: refreshedTherapeuticAreas,
           modalities: refreshedModalities,
           developmentStages: refreshedDevelopmentStages,
@@ -1358,7 +1620,10 @@ export default function ICPManagerPage() {
           signals: recommendedCompanySignals,
           exampleCompanies: [],
           exampleCompanyUrl: icp.example_company_url,
-          exampleCompanyEnrichment: enrichment,
+          exampleCompanyEnrichment: nextExampleCompanyEnrichment,
+          targetCustomers: refreshedIcpCustomerSegments.customerOrganizations,
+          buyerTypes: refreshedIcpCustomerSegments.buyerTypes,
+          competitors: refreshedCompetitors,
         }),
       });
 
@@ -1367,7 +1632,7 @@ export default function ICPManagerPage() {
       }
 
       const result = await updateRes.json();
-      handleIcpSaved(result.data ?? { ...icp, example_company_enrichment: enrichment });
+      handleIcpSaved(result.data ?? { ...icp, example_company_enrichment: nextExampleCompanyEnrichment });
 
       // Regenerate the buying team with the fresh enrichment + updated size signal.
       // If a persona already exists, update it; otherwise create one.
@@ -1378,19 +1643,23 @@ export default function ICPManagerPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           seller_company_name: sellerData?.company_name,
-          seller_company_type: sellerData?.company_type,
+          seller_company_type: sellerCompanyType,
+          seller_platform_category: visiblePlatformCategory(sellerCompanyType, sellerPlatformCategory),
           seller_therapeutic_areas: sellerData?.therapeutic_areas,
           seller_products_services: sellerData?.products_services,
           seller_services: sellerData?.services,
           seller_customers_we_serve: sellerData?.customers_we_serve,
           seller_value_propositions: sellerData?.value_propositions,
           icp_company_type: refreshedCompanyType,
+          icp_platform_category: refreshedPlatformCategory,
           icp_therapeutic_areas: refreshedTherapeuticAreas,
           icp_modalities: refreshedModalities,
           icp_development_stages: refreshedDevelopmentStages,
           icp_customer_therapeutic_areas: refreshedCustomerTherapeuticAreas,
           icp_customer_modalities: refreshedCustomerModalities,
           icp_customer_development_stages: refreshedCustomerDevelopmentStages,
+          icp_target_customers: refreshedIcpCustomerSegments.customerOrganizations,
+          icp_buyer_types: refreshedIcpCustomerSegments.buyerTypes,
           icp_company_sizes: companySizes,
           icp_funding_stages: refreshedFundingStages,
           icp_example_employee_count: employeeCount,
@@ -1483,7 +1752,7 @@ export default function ICPManagerPage() {
             {/* Page header — same flow as my-profile, no border */}
             <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
               <div>
-                <h1 className="text-2xl font-bold text-white">ICP criteria</h1>
+                <h1 className="text-2xl font-bold text-white">My ICPs</h1>
                 <p className="mt-1 text-sm text-white/40">
                   The types of accounts you sell to, and who buys within them.
                 </p>

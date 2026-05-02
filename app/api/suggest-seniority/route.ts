@@ -102,6 +102,7 @@ Return ONLY a JSON array of seniority level names from the list above. No explan
 
 function buildTargetDescription(profile: {
   company_type?: string;
+  platform_category?: string;
   therapeutic_areas?: string[];
   modalities?: string[];
   development_stages?: string[];
@@ -117,6 +118,10 @@ function buildTargetDescription(profile: {
 
   if (profile.company_type) {
     parts.push(`Company type: ${profile.company_type}`);
+  }
+
+  if (profile.platform_category) {
+    parts.push(`Platform category: ${profile.platform_category}`);
   }
 
   if (profile.therapeutic_areas?.length) {

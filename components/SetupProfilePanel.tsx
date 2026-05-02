@@ -12,12 +12,10 @@ import {
   FUNDING_STAGE_OPTIONS,
   BUSINESS_AREA_OPTIONS,
   SENIORITY_LEVEL_OPTIONS,
-  followerCountToFollowerBucket,
 } from '@/lib/arcova-taxonomy';
 import {
   formatCurrencyShort,
   extractFundingStatus,
-  extractFundingRaised,
 } from '@/lib/funding-display';
 import { getSignalDisplayName } from '@/lib/signal-display-names';
 import { resolveCustomerSegments } from '@/lib/split-customer-segments';
@@ -28,6 +26,7 @@ type CardStatus = 'pending' | 'building' | 'complete';
 
 export interface PanelCompanyData {
   companyType: string;
+  platformCategory: string;
   companySizes: string[];
   liFollowerSizes: string[];
   /** This company's own therapeutic focus (their science / product). */
@@ -40,6 +39,10 @@ export interface PanelCompanyData {
   customerDevelopmentStages: string[];
   fundingStages: string[];
   signals: string[];
+  /** First-class ICP segment fields — editable, persisted in icps columns. */
+  targetCustomers: string[];
+  buyerTypes: string[];
+  competitors: CompetitorItem[];
 }
 
 export interface PanelPersonaData {
@@ -69,6 +72,7 @@ export interface PanelMyCompanyData {
   companyStatus?: string;
   companyType?: string;
   companyTypeDisplay?: string;
+  platformCategory?: string;
   therapeuticAreas?: string[];
   modalities?: string[];
   developmentStages?: string[];
@@ -96,13 +100,13 @@ export interface PanelTargetCompanyData {
   target_customers?: string[] | null;
   customers_we_serve?: string[] | null;
   value_propositions?: string[] | null;
-  competitors_enriched?: CompetitorItem[] | null;
   company_status?: string | null;
   funding_status_label?: string | null;
   funding_resolution_summary?: string | null;
   funding_data_source?: 'apollo' | 'web_search' | null;
   company_type?: string | null;
   company_type_display?: string | null;
+  platform_category?: string | null;
   therapeutic_areas?: string[] | null;
   modalities?: string[] | null;
   development_stages?: string[] | null;
@@ -116,6 +120,10 @@ export interface PanelTargetCompanyData {
   hq_city?: string | null;
   hq_country?: string | null;
   industry?: string | null;
+}
+
+function isSaasCompanyType(value?: string | null): boolean {
+  return (value ?? '').trim() === 'SaaS';
 }
 
 export type MyCompanyChangeValue = string | string[] | number | CompetitorItem[] | undefined;
@@ -385,6 +393,67 @@ function EditableBulletList({
   );
 }
 
+function EditableTagList({
+  items,
+  onChange,
+  addPlaceholder = 'Add item…',
+}: {
+  items: string[];
+  onChange: (items: string[]) => void;
+  addPlaceholder?: string;
+}) {
+  const [draft, setDraft] = useState('');
+
+  const addItem = () => {
+    const next = draft.trim();
+    if (!next) return;
+    const exists = items.some((item) => item.trim().toLowerCase() === next.toLowerCase());
+    if (exists) {
+      setDraft('');
+      return;
+    }
+    onChange([...items, next]);
+    setDraft('');
+  };
+
+  return (
+    <div className="space-y-1.5">
+      {items.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {items.map((item, index) => (
+            <Tag
+              key={`${item}-${index}`}
+              label={item}
+              onRemove={() => onChange(items.filter((_, itemIndex) => itemIndex !== index))}
+            />
+          ))}
+        </div>
+      )}
+      <div className="flex items-center gap-1.5">
+        <input
+          type="text"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            addItem();
+          }}
+          placeholder={addPlaceholder}
+          className={EDIT_INPUT}
+        />
+        <button
+          type="button"
+          onClick={addItem}
+          className="shrink-0 rounded-lg border border-white/15 px-2.5 py-1 text-xs font-medium text-white/60 transition-colors hover:bg-white/[0.06] hover:text-white/80"
+        >
+          Add
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** Extracts the short name from a verbose enrichment string like "Guardant360 CDx: FDA-approved…" → "Guardant360 CDx" */
 function shortLabel(s: string): string {
   return s.split(/:\s|—|\.\s/)[0].trim();
@@ -496,6 +565,7 @@ export function ProfileCard({
     companyName, website, logoUrl, tagline, linkedinUrl,
     description, customersWeServe, valuePropositions, goodFit, badFit,
     companyType, companyTypeDisplay, companyStatus, competitorsEnriched,
+    platformCategory,
     therapeuticAreas, modalities, developmentStages,
     productsServices, services, technologies,
     employeeCount, employeeRange, followerCount, foundedYear,
@@ -503,8 +573,14 @@ export function ProfileCard({
   } = myCompany;
 
   const displayDomain = website?.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
+  const visiblePlatformCategory = isSaasCompanyType(companyType) ? (platformCategory ?? '').trim() : '';
 
-  const hasAbout = !!description?.[0] || !!companyType || (therapeuticAreas?.length ?? 0) > 0 || (modalities?.length ?? 0) > 0;
+  const hasAbout =
+    !!description?.[0] ||
+    !!companyType ||
+    !!visiblePlatformCategory ||
+    (therapeuticAreas?.length ?? 0) > 0 ||
+    (modalities?.length ?? 0) > 0;
   const hasCustomers = (customersWeServe?.length ?? 0) > 0 || (goodFit?.length ?? 0) > 0 || (badFit?.length ?? 0) > 0;
   const hasValueProps = (valuePropositions?.length ?? 0) > 0;
   const hasFirmographics = !!(employeeCount || employeeRange || foundedYear || hqCity || fundingStage || totalFundingUsd != null || companyStatus);
@@ -597,6 +673,23 @@ export function ProfileCard({
                       </select>
                     ) : companyType ? (
                       <Tag label={companyType} />
+                    ) : null}
+                  </div>
+                )}
+                {isSaasCompanyType(companyType) && (visiblePlatformCategory || editMode) && (
+                  <div>
+                    <p className="mb-1 text-xs text-white/40">Platform category</p>
+                    {editMode ? (
+                      <input
+                        type="text"
+                        value={platformCategory ?? ''}
+                        onChange={(e) => onMyCompanyChange?.('platformCategory', e.target.value || undefined)}
+                        placeholder="e.g. Scientific Content Platform"
+                        maxLength={48}
+                        className={EDIT_INPUT}
+                      />
+                    ) : visiblePlatformCategory ? (
+                      <Tag label={visiblePlatformCategory} />
                     ) : null}
                   </div>
                 )}
@@ -1145,6 +1238,8 @@ function TargetCard({
 
   // ICP taxonomy — prefer confirmed panelCompany, fall back to chipSel while the chip phase is active
   const typeVal = panelCompany.companyType ? [panelCompany.companyType] : (phase === 'company_type' ? chipSel : []);
+  const currentCompanyType = panelCompany.companyType || (phase === 'company_type' ? chipSel[0] ?? '' : '');
+  const platformVal = isSaasCompanyType(currentCompanyType) ? panelCompany.platformCategory.trim() : '';
   const sizesVal = panelCompany.companySizes.length ? panelCompany.companySizes : (phase === 'company_size' ? chipSel : []);
   const liFollowerSizesVal = panelCompany.liFollowerSizes?.length ? panelCompany.liFollowerSizes : (phase === 'company_li_followers' ? chipSel : []);
   const taVal = panelCompany.therapeuticAreas.length ? panelCompany.therapeuticAreas : (phase === 'company_ta' ? chipSel : []);
@@ -1153,26 +1248,39 @@ function TargetCard({
   const fundingVal = panelCompany.fundingStages.length ? panelCompany.fundingStages : (phase === 'company_funding' ? chipSel : []);
   const signalVal = panelCompany.signals ?? [];
 
-  const hasIcpData = typeVal.length > 0 || taVal.length > 0 || modalVal.length > 0;
+  const hasIcpData = typeVal.length > 0 || !!platformVal || taVal.length > 0 || modalVal.length > 0;
   const showIcpProfile = !!(savedIcpName || hasIcpData) && (status === 'building' || status === 'complete');
 
-  const hasCompetitors = icpEditMode || (e?.competitors_enriched?.length ?? 0) > 0;
-  const hasFirmographics = !!(
+  const hasCompetitors = icpEditMode || panelCompany.competitors.length > 0;
+  const hasModelledOnNarrative = !!(
+    e?.description?.[0] ||
+    e?.customers_we_serve?.length ||
+    e?.value_propositions?.length ||
+    e?.linkedin_url
+  );
+  const hasModelledOnFirmographics = !!(
     e?.employee_count ||
     e?.employee_range ||
     e?.hq_city ||
     e?.follower_count != null ||
-    e?.company_status ||
     e?.funding_status_label ||
+    e?.funding_stage ||
     e?.total_funding_usd != null ||
-    e?.funding_stage
+    e?.funding_resolution_summary ||
+    e?.company_status
   );
-  const hasModelledOnNarrative = !!(e?.description?.[0] || e?.customers_we_serve?.length || e?.value_propositions?.length || e?.follower_count != null || e?.linkedin_url);
-  const customerSegments = resolveCustomerSegments({
+  const modelledOnFundingStatus =
+    e?.funding_status_label?.trim() || (e?.company_status ? extractFundingStatus(e.company_status) : null);
+  const referenceCustomerSegments = resolveCustomerSegments({
     targetCustomers: e?.target_customers ?? [],
     customersWeServe: e?.customers_we_serve ?? [],
     fallbackItems: e?.customers_we_serve ?? [],
   });
+  // ICP segments come from panelCompany (first-class fields), not from the reference snapshot.
+  const icpCustomerSegments = {
+    customerOrganizations: panelCompany.targetCustomers,
+    buyerTypes: panelCompany.buyerTypes,
+  };
 
   const displayDomain = e?.website?.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
 
@@ -1234,12 +1342,37 @@ function TargetCard({
                   {e.description?.[0] && (
                     <p className="text-xs text-white/60 leading-snug">{e.description[0]}</p>
                   )}
+                  {hasModelledOnFirmographics && (
+                    <div className="space-y-1.5 pt-0.5">
+                      <p className="text-xs text-white/35">Firmographics</p>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
+                        {(e.employee_count || e.employee_range) && (
+                          <Stat label="Employees" value={e.employee_count ? e.employee_count.toLocaleString() : e.employee_range!} />
+                        )}
+                        {e.hq_city && <Stat label="HQ" value={e.hq_city} subValue={e.hq_country ?? undefined} />}
+                        {e.follower_count != null && (
+                          <Stat label="LinkedIn followers" value={e.follower_count.toLocaleString()} />
+                        )}
+                        {modelledOnFundingStatus && <Stat label="Funding status" value={modelledOnFundingStatus} />}
+                        {e.funding_stage && <Stat label="Funding stage" value={e.funding_stage} />}
+                        {e.total_funding_usd != null && (
+                          <Stat label="Total funding" value={formatCurrencyShort(e.total_funding_usd)} />
+                        )}
+                      </div>
+                      {(e.funding_resolution_summary || e.company_status) && (
+                        <div>
+                          <p className="mb-1 text-xs text-white/35">Funding summary</p>
+                          <p className="text-xs leading-snug text-white/55">{e.funding_resolution_summary ?? e.company_status}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {hasModelledOnNarrative && (
                     <div className="space-y-1.5 pt-0.5">
-                      {(customerSegments.customerOrganizations.length > 0 || customerSegments.buyerTypes.length > 0) && (
+                      {(referenceCustomerSegments.customerOrganizations.length > 0 || referenceCustomerSegments.buyerTypes.length > 0) && (
                         <div className="space-y-1.5">
-                          <FieldRow label="Customer organisations" tags={customerSegments.customerOrganizations} />
-                          <FieldRow label="Buyer / user types" tags={customerSegments.buyerTypes} />
+                          <FieldRow label="Customer organisations" tags={referenceCustomerSegments.customerOrganizations} />
+                          <FieldRow label="Buyer / user types" tags={referenceCustomerSegments.buyerTypes} />
                         </div>
                       )}
                       {(e.value_propositions?.length ?? 0) > 0 && (
@@ -1248,21 +1381,13 @@ function TargetCard({
                           <BulletList items={e.value_propositions!.slice(0, 3)} />
                         </div>
                       )}
-                      {(e.follower_count != null || e.linkedin_url) && (
+                      {e.linkedin_url && (
                         <div className="space-y-1">
-                          {e.follower_count != null && (
-                            <Stat
-                              label="LinkedIn followers"
-                              value={e.follower_count.toLocaleString()}
-                            />
-                          )}
-                          {e.linkedin_url && (
-                            <a href={e.linkedin_url} target="_blank" rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 text-xs text-arcova-teal hover:underline break-all">
-                              {e.linkedin_url.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')}
-                              <ExternalLink className="h-2.5 w-2.5 shrink-0" />
-                            </a>
-                          )}
+                          <a href={e.linkedin_url} target="_blank" rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-xs text-arcova-teal hover:underline break-all">
+                            {e.linkedin_url.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')}
+                            <ExternalLink className="h-2.5 w-2.5 shrink-0" />
+                          </a>
                         </div>
                       )}
                     </div>
@@ -1311,6 +1436,24 @@ function TargetCard({
                     placeholder="Select company type…"
                   />
                 )}
+              </div>
+            )}
+
+            {isSaasCompanyType(currentCompanyType) && (platformVal || icpEditMode) && (
+              <div>
+                <p className="mb-1 text-xs text-white/40">Platform category</p>
+                {icpEditMode ? (
+                  <input
+                    type="text"
+                    value={platformVal}
+                    onChange={(e) => onIcpFieldChange?.('platformCategory', e.target.value)}
+                    placeholder="e.g. Sales Intelligence Platform"
+                    maxLength={48}
+                    className={EDIT_INPUT}
+                  />
+                ) : platformVal ? (
+                  <Tag label={platformVal} />
+                ) : null}
               </div>
             )}
 
@@ -1434,19 +1577,6 @@ function TargetCard({
               </div>
             )}
 
-            {/* Funding raised — extracted from Claude's company_status narrative */}
-            {e?.company_status && (() => {
-              const fr = extractFundingRaised(e.company_status!);
-              return fr ? (
-                <div>
-                  <p className="mb-1 text-xs text-white/40">Funding raised</p>
-                  <div className="flex flex-wrap gap-1">
-                    <Tag label={fr} />
-                  </div>
-                </div>
-              ) : null;
-            })()}
-
             {/* Funding stages */}
             {(fundingVal.length > 0 || icpEditMode) && (
               <div>
@@ -1483,45 +1613,37 @@ function TargetCard({
             )}
           </div>
 
-          {/* Firmographics — always visible */}
-          {hasFirmographics && (
-            <div className="border-t border-white/10 pt-2 mt-0.5 space-y-2">
-              <p className="text-xs text-white/40">Firmographics</p>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
-                {(e!.employee_count || e!.employee_range) && (
-                  <Stat label="Employees" value={e!.employee_count ? e!.employee_count.toLocaleString() : e!.employee_range!} />
-                )}
-                {e!.hq_city && <Stat label="HQ" value={e!.hq_city} subValue={e!.hq_country ?? undefined} />}
-                {e!.follower_count != null && (() => {
-                  const band = followerCountToFollowerBucket(e!.follower_count);
-                  return band[0] ? <Stat label="LinkedIn follower base" value={band[0]} /> : null;
-                })()}
-                {(e!.funding_status_label || e!.company_status) && (() => {
-                  const fs = e!.funding_status_label?.trim() || (e!.company_status ? extractFundingStatus(e!.company_status) : null);
-                  return fs ? <Stat label="Funding status" value={fs} /> : null;
-                })()}
-                {e!.funding_stage && <Stat label="Funding stage" value={e!.funding_stage} />}
-                {e!.total_funding_usd != null && (
-                  <Stat label="Total funding" value={formatCurrencyShort(e!.total_funding_usd)} />
-                )}
-              </div>
-              {(e!.funding_resolution_summary || e!.company_status) && (
-                <div>
-                  <p className="text-xs text-white/40 mb-1">Funding summary</p>
-                  <p className="text-xs leading-snug text-white/55">{e!.funding_resolution_summary ?? e!.company_status}</p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {(customerSegments.customerOrganizations.length > 0 || customerSegments.buyerTypes.length > 0) && (
+          {(icpCustomerSegments.customerOrganizations.length > 0 || icpCustomerSegments.buyerTypes.length > 0 || icpEditMode) && (
             <div className="border-t border-white/10 pt-2 mt-0.5 space-y-1.5">
               <p className="text-xs text-white/40">Customer segments</p>
-              {customerSegments.customerOrganizations.length > 0 && (
-                <FieldRow label="Sells to companies like" tags={customerSegments.customerOrganizations} />
-              )}
-              {customerSegments.buyerTypes.length > 0 && (
-                <FieldRow label="Sells to people like" tags={customerSegments.buyerTypes} />
+              {icpEditMode ? (
+                <div className="space-y-2">
+                  <div>
+                    <p className="mb-1 text-xs font-medium text-white/40">Sells to companies like</p>
+                    <EditableTagList
+                      items={icpCustomerSegments.customerOrganizations}
+                      onChange={(items) => onIcpFieldChange?.('targetCustomers', items)}
+                      addPlaceholder="Add company segment…"
+                    />
+                  </div>
+                  <div>
+                    <p className="mb-1 text-xs font-medium text-white/40">Sells to people like</p>
+                    <EditableTagList
+                      items={icpCustomerSegments.buyerTypes}
+                      onChange={(items) => onIcpFieldChange?.('customersWeServe', items)}
+                      addPlaceholder="Add buyer or team segment…"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {icpCustomerSegments.customerOrganizations.length > 0 && (
+                    <FieldRow label="Sells to companies like" tags={icpCustomerSegments.customerOrganizations} />
+                  )}
+                  {icpCustomerSegments.buyerTypes.length > 0 && (
+                    <FieldRow label="Sells to people like" tags={icpCustomerSegments.buyerTypes} />
+                  )}
+                </>
               )}
             </div>
           )}
@@ -1531,7 +1653,7 @@ function TargetCard({
             <div className="border-t border-white/10 pt-2 mt-0.5 space-y-1">
               <p className="text-xs text-white/40">Competitors</p>
               <div className="space-y-1.5">
-                {(e?.competitors_enriched ?? []).map((c, i) => (
+                {panelCompany.competitors.map((c, i) => (
                   <div key={`${c.name}-${i}`} className="flex items-center gap-1.5">
                     <div className="flex min-w-0 flex-1 items-center gap-1">
                       {c.url ? (
@@ -1553,8 +1675,8 @@ function TargetCard({
                         type="button"
                         onClick={() =>
                           onIcpFieldChange(
-                            'competitorsEnriched',
-                            (e?.competitors_enriched ?? []).filter((_, j) => j !== i),
+                            'competitors',
+                            panelCompany.competitors.filter((_, j) => j !== i),
                           )}
                         className="shrink-0 text-white/25 transition-colors hover:text-white/60"
                         aria-label={`Remove ${c.name}`}
@@ -1581,7 +1703,7 @@ function TargetCard({
                         try {
                           name = new URL(url).hostname.replace(/^www\./, '');
                         } catch { /* keep typed text as label */ }
-                        onIcpFieldChange('competitorsEnriched', [...(e?.competitors_enriched ?? []), { name, url }]);
+                        onIcpFieldChange('competitors', [...panelCompany.competitors, { name, url }]);
                         setNewCompetitorUrl('');
                       }}
                       placeholder="Add competitor URL… (Enter)"

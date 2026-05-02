@@ -90,10 +90,6 @@ export const MODALITY_OPTIONS = [
   'Diagnostics',
   'Liquid Biopsy',
   'Digital Therapeutics',
-  'AI/ML Platform',
-  'Drug Discovery Platform',
-  'Sales Intelligence Platform',
-  'Market Intelligence Platform',
   'Biomarker',
   'Imaging',
 ] as const;
@@ -201,6 +197,7 @@ export const BUSINESS_AREA_OPTIONS = [
   'Technology & Systems',
   'AI & Machine Learning',
   'Data & Informatics',
+  'Library & Information Services',
   'Quality & Compliance',
   'Marketing',
 ] as const;
@@ -373,18 +370,6 @@ export function canonicalizeModality(value: unknown): Modality | null {
     imaging: 'Imaging',
     diagnostic: 'Diagnostics',
     diagnostics: 'Diagnostics',
-    'sales intelligence': 'Sales Intelligence Platform',
-    'sales platform': 'Sales Intelligence Platform',
-    'prospecting platform': 'Sales Intelligence Platform',
-    'lead generation platform': 'Sales Intelligence Platform',
-    'commercial intelligence': 'Market Intelligence Platform',
-    'market intelligence': 'Market Intelligence Platform',
-    'scientific intelligence': 'Market Intelligence Platform',
-    'business intelligence': 'Market Intelligence Platform',
-    'intelligence platform': 'Market Intelligence Platform',
-    ai: 'AI/ML Platform',
-    ml: 'AI/ML Platform',
-    'machine learning': 'AI/ML Platform',
   };
 
   const normalized = normalizeTaxonomyText(value);

@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { NextResponse } from 'next/server';
 import { BUSINESS_AREA_OPTIONS } from '@/lib/arcova-taxonomy';
+import { resolveCustomerSegments } from '@/lib/split-customer-segments';
 
 export async function POST(request: Request) {
   try {
@@ -99,14 +100,37 @@ Return ONLY a JSON array of business area names from the list above. No explanat
 
 function buildTargetDescription(profile: {
   company_type?: string;
+  platform_category?: string;
   therapeutic_areas?: string[];
   modalities?: string[];
   development_stages?: string[];
   company_sizes?: string[];
   funding_stages?: string[];
   name?: string;
+  target_customers?: string[] | null;
+  buyer_types?: string[] | null;
+  // Blob fallbacks for rows that predate the first-class columns migration.
+  example_company_enrichment?: {
+    target_customers?: string[] | null;
+    customers_we_serve?: string[] | null;
+  } | null;
 }): string {
   const parts: string[] = [];
+  const customerSegments = (() => {
+    // Prefer first-class columns if populated.
+    if (profile.target_customers?.length || profile.buyer_types?.length) {
+      return {
+        customerOrganizations: profile.target_customers ?? [],
+        buyerTypes: profile.buyer_types ?? [],
+      };
+    }
+    const blob = profile.example_company_enrichment;
+    return resolveCustomerSegments({
+      targetCustomers: blob?.target_customers ?? null,
+      customersWeServe: blob?.customers_we_serve ?? null,
+      fallbackItems: blob?.customers_we_serve ?? null,
+    });
+  })();
 
   if (profile.name) {
     parts.push(`Profile name: ${profile.name}`);
@@ -114,6 +138,10 @@ function buildTargetDescription(profile: {
 
   if (profile.company_type) {
     parts.push(`Company type: ${profile.company_type}`);
+  }
+
+  if (profile.platform_category) {
+    parts.push(`Platform category: ${profile.platform_category}`);
   }
 
   if (profile.therapeutic_areas?.length) {
@@ -134,6 +162,14 @@ function buildTargetDescription(profile: {
 
   if (profile.funding_stages?.length) {
     parts.push(`Funding stage: ${profile.funding_stages.join(', ')}`);
+  }
+
+  if (customerSegments.customerOrganizations.length > 0) {
+    parts.push(`Sells to companies like: ${customerSegments.customerOrganizations.join(', ')}`);
+  }
+
+  if (customerSegments.buyerTypes.length > 0) {
+    parts.push(`Sells to people like: ${customerSegments.buyerTypes.join(', ')}`);
   }
 
   return parts.join('\n') || 'Unknown company type';

@@ -200,7 +200,9 @@ Clay was configured to:
 > "Based on this company description: '{{company_description}}' and company name: '{{company_name}}', list the therapeutic areas this company works in. Choose only from: Oncology, Rare Disease, Neurology / CNS, Immunology, Infectious Disease, Cardiovascular, Metabolic / Endocrinology, Ophthalmology, Dermatology, Respiratory, Haematology, Musculoskeletal, Gastroenterology, Women's Health, Pain, Gene Editing, Diagnostics, Multi-therapeutic. Return as a comma-separated list."
 
 `company_modalities`:
-> "Based on this company description: '{{company_description}}' and company name: '{{company_name}}', list the drug modalities this company uses. Choose only from: Small Molecule, Biologic (Antibody), Bispecific Antibody, ADC, Cell Therapy, Gene Therapy, RNA Therapy, Peptide, Oligonucleotide, Radiopharmaceutical, Protein / Enzyme Replacement, Gene Editing (CRISPR), Microbiome, Biosimilar, Vaccine, Diagnostics, Liquid Biopsy, Digital Therapeutics, AI/ML Platform, Drug Discovery Platform, Biomarker, Imaging. Return as a comma-separated list."
+> "Based on this company description: '{{company_description}}' and company name: '{{company_name}}', list the drug modalities this company uses. Choose only from: Small Molecule, Biologic (Antibody), Bispecific Antibody, ADC, Cell Therapy, Gene Therapy, RNA Therapy, Peptide, Oligonucleotide, Radiopharmaceutical, Protein / Enzyme Replacement, Gene Editing (CRISPR), Microbiome, Biosimilar, Vaccine, Diagnostics, Liquid Biopsy, Digital Therapeutics, Biomarker, Imaging. Return as a comma-separated list."
+
+> Software / product type should be captured separately in `platform_category`, not in modalities.
 
 `company_clinical_stage`:
 > "Based on this company description: '{{company_description}}' and company name: '{{company_name}}', classify the furthest clinical stage this company has reached. Choose exactly one from: Preclinical, Phase 1, Phase 2, Phase 3, Approved / Commercial, Platform Only, Research Tools / Services. Return only the classification."

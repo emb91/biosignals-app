@@ -14,6 +14,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     const {
       companyType,
+      platformCategory,
       companySizes,
       therapeuticAreas,
       modalities,
@@ -41,13 +42,14 @@ export async function POST(request: Request) {
     const cmod = normaliseList(customerModalities);
 
     const fallbackName =
-      [mod[0] || ta[0] || cmod[0] || cta[0] || '', companyType || 'Company'].filter(Boolean).join(' ').trim() ||
+      [platformCategory || mod[0] || ta[0] || cmod[0] || cta[0] || '', companyType || 'Company'].filter(Boolean).join(' ').trim() ||
       'Target Company Profile';
 
     const contextLines: string[] = [];
     if (exampleCompanyName) contextLines.push(`Example company: ${exampleCompanyName}`);
     if (exampleCompanyDescription) contextLines.push(`What they do: ${Array.isArray(exampleCompanyDescription) ? exampleCompanyDescription[0] : exampleCompanyDescription}`);
     if (companyType) contextLines.push(`Company type: ${companyType}`);
+    if (platformCategory) contextLines.push(`Platform category (their own): ${platformCategory}`);
     if (ta.length) contextLines.push(`Therapeutic areas (their own): ${ta.join(', ')}`);
     if (mod.length) contextLines.push(`Modalities (their own): ${mod.join(', ')}`);
     if (cta.length) contextLines.push(`Customer-served therapeutic areas (beachhead): ${cta.join(', ')}`);

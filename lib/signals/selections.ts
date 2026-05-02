@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { assignSignalWeights } from '@/lib/signal-weights';
+import { normalizePlatformTaxonomyFields } from '@/lib/platform-category';
 
 type DatabaseClient = SupabaseClient<any, 'public', any>;
 
@@ -246,7 +247,7 @@ export async function hydrateIcpsWithSignals<T extends EntityWithId>(
   const selections = await loadIcpSignalSelections(supabase, userId, icps.map((icp) => icp.id));
 
   return icps.map((icp) => ({
-    ...icp,
+    ...normalizePlatformTaxonomyFields(icp as T & Record<string, unknown>),
     signals: selections.get(icp.id) || parseLegacySignalIds(icp.signals),
   }));
 }

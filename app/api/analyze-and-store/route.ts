@@ -170,6 +170,7 @@ export async function POST(request: NextRequest) {
       // Taxonomy (canonical values from resolveCompanyTaxonomy)
       company_type: taxonomy?.company_type ?? null,
       company_type_display: taxonomy?.company_type_display ?? null,
+      platform_category: taxonomy?.platform_category ?? null,
       therapeutic_areas: taxonomy?.therapeutic_areas ?? null,
       modalities: taxonomy?.modalities ?? null,
       development_stages: taxonomy?.development_stages ?? null,
@@ -206,9 +207,9 @@ export async function POST(request: NextRequest) {
       apify_firmographics: apifyRaw,
     };
 
-    // ── Step 6: Upsert into company_analyses ──────────────────────────────────
+    // ── Step 6: Upsert into user_company ──────────────────────────────────
     const { data: existing } = await supabase
-      .from('company_analyses')
+      .from('user_company')
       .select('id')
       .eq('user_id', user.id)
       .limit(1)
@@ -217,7 +218,7 @@ export async function POST(request: NextRequest) {
     let result;
     if (existing) {
       const { data, error } = await supabase
-        .from('company_analyses')
+        .from('user_company')
         .update(mergedData)
         .eq('id', existing.id)
         .select()
@@ -226,7 +227,7 @@ export async function POST(request: NextRequest) {
       result = data;
     } else {
       const { data, error } = await supabase
-        .from('company_analyses')
+        .from('user_company')
         .insert({ user_id: user.id, user_email: user.email, ...mergedData })
         .select()
         .single();

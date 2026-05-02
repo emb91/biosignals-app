@@ -32,6 +32,7 @@ interface EmploymentHistoryItem {
 interface CompanyFirmographics {
   name?: string | null;
   company_type?: string | null;
+  platform_category?: string | null;
   description?: string | null;
   bio_summary?: string | null;
   tagline?: string | null;
@@ -101,6 +102,7 @@ interface Lead {
     follower_count: number | null;
     company_type: string | null;
     company_type_display: string | null;
+    platform_category: string | null;
     funding_stage: string | null;
     funding_status_label: string | null;
     total_funding_usd: number | null;
@@ -183,6 +185,7 @@ const getDisplayedCompanyFirmographics = (lead: Lead | null): CompanyFirmographi
   return {
     name: company?.company_name || lead.resolved_current_company_name || lead.company_name || null,
     company_type: company?.company_type || company?.company_type_display || null,
+    platform_category: company?.platform_category || null,
     description: company?.description || null,
     bio_summary: company?.bio_summary || null,
     tagline: company?.tagline || null,
@@ -1204,10 +1207,11 @@ export default function LeadsPage() {
                             const hqParts = [f?.hq_city, f?.hq_country].filter(Boolean);
                             const hq = hqParts.join(', ') || null;
                             const fundingStatus = getFundingStatusDisplay(selectedLead.companies);
+                            const showPlatformCategory = f?.company_type === 'SaaS' && !!f?.platform_category;
 
                             return (
                               <div className="space-y-4">
-                                {!!(f?.company_type || f?.therapeutic_areas?.length || f?.modalities?.length || f?.development_stages?.length) && (
+                                {!!(f?.company_type || showPlatformCategory || f?.therapeutic_areas?.length || f?.modalities?.length || f?.development_stages?.length) && (
                                   <div className="space-y-3 rounded-xl border border-gray-100 bg-gray-50/70 p-3">
                                     {f.company_type && (
                                       <div>
@@ -1215,6 +1219,12 @@ export default function LeadsPage() {
                                         <p className="text-gray-900 text-sm mt-0.5">{f.company_type}</p>
                                       </div>
                                     )}
+                                    {showPlatformCategory ? (
+                                      <div>
+                                        <p className="text-gray-400 text-xs">Platform category</p>
+                                        <p className="text-gray-900 text-sm mt-0.5">{f.platform_category}</p>
+                                      </div>
+                                    ) : null}
                                     {f.therapeutic_areas?.length ? (
                                       <div>
                                         <p className="text-gray-400 text-xs">Therapeutic areas</p>

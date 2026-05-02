@@ -144,6 +144,7 @@ export async function POST(request: Request) {
           emit('step_taxonomy', {
             company_type: taxonomy.company_type ?? null,
             company_type_display: taxonomy.company_type_display ?? null,
+            platform_category: taxonomy.platform_category ?? null,
             therapeutic_areas: taxonomy.therapeutic_areas ?? null,
             modalities: taxonomy.modalities ?? null,
             development_stages: taxonomy.development_stages ?? null,
@@ -205,6 +206,7 @@ export async function POST(request: Request) {
 
           company_type: taxonomy?.company_type ?? null,
           company_type_display: taxonomy?.company_type_display ?? null,
+          platform_category: taxonomy?.platform_category ?? null,
           therapeutic_areas: taxonomy?.therapeutic_areas ?? null,
           modalities: taxonomy?.modalities ?? null,
           development_stages: taxonomy?.development_stages ?? null,

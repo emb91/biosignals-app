@@ -26,7 +26,7 @@ interface NavItem {
 
 const setupItems: NavItem[] = [
   { name: 'My Company', href: '/my-profile', icon: User },
-  { name: 'ICP Criteria', href: '/company-criteria', icon: Target },
+  { name: 'My ICPs', href: '/company-criteria', icon: Target },
 ];
 
 const topNavigation: NavItem[] = [

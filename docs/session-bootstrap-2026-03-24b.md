@@ -90,7 +90,9 @@ Return as a comma-separated list, nothing else.
 ```
 Based on this company description: "{{company_description}}" and company name: "{{company_name}}"
 List the drug modalities or technology types this company uses. Choose only from:
-Small Molecule, Biologic (Antibody), Bispecific Antibody, ADC, Cell Therapy, Gene Therapy, RNA Therapy, Peptide, Oligonucleotide, Radiopharmaceutical, Protein / Enzyme Replacement, Gene Editing (CRISPR), Microbiome, Biosimilar, Vaccine, Diagnostics, Liquid Biopsy, Digital Therapeutics, AI/ML Platform, Drug Discovery Platform, Biomarker, Imaging
+Small Molecule, Biologic (Antibody), Bispecific Antibody, ADC, Cell Therapy, Gene Therapy, RNA Therapy, Peptide, Oligonucleotide, Radiopharmaceutical, Protein / Enzyme Replacement, Gene Editing (CRISPR), Microbiome, Biosimilar, Vaccine, Diagnostics, Liquid Biopsy, Digital Therapeutics, Biomarker, Imaging
+
+Software / product type is now tracked separately in `platform_category` rather than inside modalities.
 Return as a comma-separated list, nothing else.
 ```
 

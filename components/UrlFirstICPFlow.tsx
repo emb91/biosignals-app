@@ -14,12 +14,14 @@ import {
   canonicalizeFundingStage,
 } from '@/lib/arcova-taxonomy';
 import type { TargetCompanyEnrichmentResult } from '@/lib/target-company-enrichment';
+import { resolveCustomerSegments } from '@/lib/split-customer-segments';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
 interface ReviewState {
   companyName: string;
   companyType: string;
+  platformCategory: string;
   therapeuticAreas: string[];
   modalities: string[];
   developmentStages: string[];
@@ -35,6 +37,10 @@ type FlowPhase = 'url-input' | 'loading' | 'review' | 'saving';
 
 interface Props {
   onComplete: () => void;
+}
+
+function isSaasCompanyType(value?: string | null): boolean {
+  return (value ?? '').trim() === 'SaaS';
 }
 
 // ── Chip components ────────────────────────────────────────────────────────
@@ -141,6 +147,7 @@ export default function UrlFirstICPFlow({ onComplete }: Props) {
   const [review, setReview] = useState<ReviewState>({
     companyName: '',
     companyType: '',
+    platformCategory: '',
     therapeuticAreas: [],
     modalities: [],
     developmentStages: [],
@@ -162,14 +169,17 @@ export default function UrlFirstICPFlow({ onComplete }: Props) {
             : [...prev[field], value],
         }));
 
+  const visiblePlatformCategory = isSaasCompanyType(review.companyType) ? review.platformCategory : '';
+
   const isReviewValid =
     review.companyType !== '' &&
-    (review.therapeuticAreas.length > 0 ||
+    (visiblePlatformCategory.trim().length > 0 ||
+      review.therapeuticAreas.length > 0 ||
       review.modalities.length > 0 ||
-      review.customerTherapeuticAreas.length > 0 ||
-      review.customerModalities.length > 0 ||
       review.developmentStages.length > 0 ||
-      review.customerDevelopmentStages.length > 0);
+      review.companySizes.length > 0 ||
+      review.liFollowerSizes.length > 0 ||
+      review.fundingStages.length > 0);
 
   const handleAnalyse = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -208,6 +218,7 @@ export default function UrlFirstICPFlow({ onComplete }: Props) {
       setReview({
         companyName: detectedName,
         companyType: data.company_type ?? '',
+        platformCategory: data.platform_category ?? '',
         therapeuticAreas: data.therapeutic_areas ?? [],
         modalities: data.modalities ?? [],
         developmentStages: data.development_stages ?? [],
@@ -240,6 +251,7 @@ export default function UrlFirstICPFlow({ onComplete }: Props) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         companyType: review.companyType,
+        platformCategory: visiblePlatformCategory,
         therapeuticAreas: review.therapeuticAreas,
         modalities: review.modalities,
         developmentStages: review.developmentStages,
@@ -254,12 +266,41 @@ export default function UrlFirstICPFlow({ onComplete }: Props) {
     });
     const { name } = nameRes.ok ? await nameRes.json() as { name: string } : { name: `${review.companyType} Profile` };
 
+    const summaryRes = await fetch('/api/generate-icp-summary', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        companyType: review.companyType,
+        platformCategory: visiblePlatformCategory,
+        therapeuticAreas: review.therapeuticAreas,
+        modalities: review.modalities,
+        developmentStages: review.developmentStages,
+        customerTherapeuticAreas: review.customerTherapeuticAreas,
+        customerModalities: review.customerModalities,
+        customerDevelopmentStages: review.customerDevelopmentStages,
+        companySizes: review.companySizes,
+        fundingStages: review.fundingStages,
+        exampleCompanyName: review.companyName,
+        exampleCompanyDescription: enrichmentSnapshot.description ?? undefined,
+      }),
+    }).catch(() => null);
+    const { summary: icpSummary } = summaryRes?.ok
+      ? await summaryRes.json() as { summary: string }
+      : { summary: null as string | null };
+
+    const icpSegments = resolveCustomerSegments({
+      targetCustomers: enrichmentSnapshot.target_customers,
+      customersWeServe: enrichmentSnapshot.customers_we_serve,
+      fallbackItems: enrichmentSnapshot.customers_we_serve,
+    });
     const saveRes = await fetch('/api/company-criteria', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name,
+        icpSummary,
         companyType: review.companyType,
+        platformCategory: visiblePlatformCategory,
         therapeuticAreas: review.therapeuticAreas,
         modalities: review.modalities,
         developmentStages: review.developmentStages,
@@ -273,6 +314,9 @@ export default function UrlFirstICPFlow({ onComplete }: Props) {
         exampleCompanies: [],
         exampleCompanyUrl: enrichmentSnapshot.website,
         exampleCompanyEnrichment: enrichmentSnapshot,
+        targetCustomers: icpSegments.customerOrganizations,
+        buyerTypes: icpSegments.buyerTypes,
+        competitors: enrichmentSnapshot.competitors_enriched ?? [],
       }),
     });
 
@@ -368,6 +412,21 @@ export default function UrlFirstICPFlow({ onComplete }: Props) {
           />
         </Field>
 
+        {isSaasCompanyType(review.companyType) && (
+          <Field label="Platform category">
+            <div className="space-y-2">
+              <input
+                type="text"
+                value={review.platformCategory}
+                onChange={(e) => setReview((p) => ({ ...p, platformCategory: e.target.value }))}
+                placeholder="e.g. Scientific Content Platform"
+                maxLength={48}
+                className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-arcova-teal"
+              />
+            </div>
+          </Field>
+        )}
+
         <Field label="Therapeutic areas">
           <MultiChipGrid
             options={THERAPEUTIC_AREA_OPTIONS}
@@ -447,7 +506,7 @@ export default function UrlFirstICPFlow({ onComplete }: Props) {
 
       {!isReviewValid && (
         <p className="text-xs text-amber-600">
-          Company type, at least one therapeutic area, and at least one modality are required.
+          Add a company type and at least one substantive qualifier such as a platform category, therapeutic area, modality, customer segment, or stage.
         </p>
       )}
     </div>

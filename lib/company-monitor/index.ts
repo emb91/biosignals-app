@@ -75,6 +75,7 @@ export type CompanyMonitorResult = {
   taxonomy?: {
     updated: boolean;
     company_type: string | null;
+    platform_category: string | null;
     therapeutic_areas: string[];
     modalities: string[];
     confidence: string;
@@ -234,7 +235,7 @@ export async function runCompanyMonitor(
     let currentResult = await supabase
       .from('companies')
       .select(
-        'company_type, company_type_display, therapeutic_areas, modalities, development_stages, customer_therapeutic_areas, customer_modalities, customer_development_stages',
+        'company_type, company_type_display, platform_category, therapeutic_areas, modalities, development_stages, customer_therapeutic_areas, customer_modalities, customer_development_stages',
       )
       .eq('id', input.company_id)
       .maybeSingle();
@@ -257,6 +258,7 @@ export async function runCompanyMonitor(
     const current = currentResult?.data;
     const previousCompanyType = typeof current?.company_type === 'string' ? current.company_type : null;
     const previousCompanyTypeDisplay = typeof current?.company_type_display === 'string' ? current.company_type_display : null;
+    const previousPlatformCategory = typeof current?.platform_category === 'string' ? current.platform_category : null;
     const previousTherapeuticAreas = normalizeStringArray(current?.therapeutic_areas);
     const previousModalities = normalizeStringArray(current?.modalities);
     const previousDevelopmentStages = normalizeStringArray(current?.development_stages);
@@ -273,6 +275,8 @@ export async function runCompanyMonitor(
       canOverwrite && taxonomy.company_type ? taxonomy.company_type : previousCompanyType;
     const nextCompanyTypeDisplay =
       canOverwrite && taxonomy.company_type_display ? taxonomy.company_type_display : previousCompanyTypeDisplay;
+    const nextPlatformCategory =
+      canOverwrite ? taxonomy.platform_category : previousPlatformCategory;
     const nextTherapeuticAreas = canOverwrite ? taxonomy.therapeutic_areas : previousTherapeuticAreas;
     const nextModalities = canOverwrite ? taxonomy.modalities : previousModalities;
     const nextDevelopmentStages =
@@ -284,6 +288,7 @@ export async function runCompanyMonitor(
     const changed =
       nextCompanyType !== previousCompanyType ||
       nextCompanyTypeDisplay !== previousCompanyTypeDisplay ||
+      nextPlatformCategory !== previousPlatformCategory ||
       !arraysEqual(nextTherapeuticAreas, previousTherapeuticAreas) ||
       !arraysEqual(nextModalities, previousModalities) ||
       !arraysEqual(nextDevelopmentStages, previousDevelopmentStages) ||
@@ -297,6 +302,7 @@ export async function runCompanyMonitor(
         .update({
           company_type: nextCompanyType,
           company_type_display: nextCompanyTypeDisplay,
+          platform_category: nextPlatformCategory,
           therapeutic_areas: nextTherapeuticAreas,
           modalities: nextModalities,
           development_stages: nextDevelopmentStages,
@@ -334,6 +340,7 @@ export async function runCompanyMonitor(
     result.taxonomy = {
       updated: changed,
       company_type: nextCompanyType,
+      platform_category: nextPlatformCategory,
       therapeutic_areas: nextTherapeuticAreas,
       modalities: nextModalities,
       confidence: taxonomy.confidence,

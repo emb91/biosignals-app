@@ -122,7 +122,7 @@ export default function DashboardPage() {
           signalEventsHttp,
           topLeadsRes,
         ] = await Promise.all([
-          supabase.from('company_analyses').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
+          supabase.from('user_company').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
           fetch('/api/company-criteria'),
           fetch('/api/contacts'),
           supabase.from('raw_uploads').select('id').eq('user_id', user.id).limit(1).maybeSingle(),

@@ -5,6 +5,12 @@ import {
   hydrateIcpsWithSignals,
   replaceIcpSignalSelections,
 } from '@/lib/signals/selections';
+import { parsePlatformCategoryInput } from '@/lib/platform-category';
+import {
+  isMissingColumnError,
+  withoutPlatformCategory,
+  withoutIcpSegmentColumns,
+} from '@/lib/supabase-column-compat';
 
 export async function GET() {
   try {
@@ -93,6 +99,14 @@ export async function POST(request: Request) {
     }
 
     const signalIds = extractSignalIds((body.signals || []) as Parameters<typeof extractSignalIds>[0]);
+    const {
+      value: platformCategory,
+      error: platformCategoryError,
+    } = parsePlatformCategoryInput(body.platformCategory);
+    if (platformCategoryError) {
+      return NextResponse.json({ error: platformCategoryError }, { status: 400 });
+    }
+
     const weightedSignals = assignSignalWeights(signalIds);
 
     const icpData = {
@@ -101,6 +115,7 @@ export async function POST(request: Request) {
       name: body.name || '',
       icp_summary: body.icpSummary || null,
       company_type: body.companyType || '',
+      platform_category: platformCategory,
       therapeutic_areas: body.therapeuticAreas || [],
       modalities: body.modalities || [],
       development_stages: body.developmentStages || [],
@@ -114,15 +129,36 @@ export async function POST(request: Request) {
       example_companies: body.exampleCompanies || [],
       example_company_url: exampleCompanyUrl,
       example_company_enrichment: body.exampleCompanyEnrichment ?? null,
+      target_customers: Array.isArray(body.targetCustomers) ? body.targetCustomers : [],
+      buyer_types: Array.isArray(body.buyerTypes) ? body.buyerTypes : [],
+      competitors: Array.isArray(body.competitors) ? body.competitors : [],
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
 
-    const { data, error } = await supabase
+    let result = await supabase
       .from('icps')
       .insert(icpData)
       .select()
       .single();
+
+    if (result.error && isMissingColumnError(result.error, 'platform_category')) {
+      result = await supabase
+        .from('icps')
+        .insert(withoutPlatformCategory(icpData))
+        .select()
+        .single();
+    }
+
+    if (result.error && isMissingColumnError(result.error, 'target_customers')) {
+      result = await supabase
+        .from('icps')
+        .insert(withoutIcpSegmentColumns(icpData))
+        .select()
+        .single();
+    }
+
+    const { data, error } = result;
 
     if (error) {
       console.error('Error saving ICP:', error);
