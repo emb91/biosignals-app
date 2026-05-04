@@ -99,6 +99,56 @@ function formatSupabaseErrorMessage(error: unknown): string | null {
   return parts.length > 0 ? parts.join(' | ') : null;
 }
 
+function isMissingColumnError(error: unknown, columnName: string): boolean {
+  const message = formatSupabaseErrorMessage(error) || '';
+  return message.includes('column') && message.includes('does not exist') && message.includes(columnName);
+}
+
+const OPTIONAL_CONTACT_REFRESH_JOB_FIELDS = new Set([
+  'enrichment_refresh_status',
+  'enrichment_refresh_last_error',
+  'enrichment_refresh_started_at',
+  'enrichment_refresh_finished_at',
+]);
+
+async function updateContactWithOptionalRefreshJobFields(
+  supabase: MinimalSupabase,
+  params: {
+    contactId: string;
+    userId: string;
+    payload: Record<string, unknown>;
+  },
+): Promise<void> {
+  const { contactId, userId, payload } = params;
+
+  const executeUpdate = async (updatePayload: Record<string, unknown>) =>
+    supabase
+      .from('contacts')
+      .update(updatePayload)
+      .eq('user_id', userId)
+      .eq('id', contactId);
+
+  const { error } = await executeUpdate(payload);
+  if (!error) return;
+
+  const missingOptionalColumn = [...OPTIONAL_CONTACT_REFRESH_JOB_FIELDS].some((field) =>
+    isMissingColumnError(error, field),
+  );
+
+  if (!missingOptionalColumn) {
+    throw error;
+  }
+
+  const fallbackPayload = Object.fromEntries(
+    Object.entries(payload).filter(([key]) => !OPTIONAL_CONTACT_REFRESH_JOB_FIELDS.has(key)),
+  );
+
+  const { error: fallbackError } = await executeUpdate(fallbackPayload);
+  if (fallbackError) {
+    throw fallbackError;
+  }
+}
+
 type CanonicalCompanyRow = {
   id: string;
   company_name: string | null;
@@ -738,18 +788,22 @@ export async function runContactResolutionPipelineForContact(
   const typedContact = contact as ContactRow;
   let linkedinResolved = false;
 
-  await supabase
-    .from('contacts')
-    .update({
+  await updateContactWithOptionalRefreshJobFields(supabase, {
+    contactId,
+    userId,
+    payload: {
       linkedin_resolution_status: 'processing',
       linkedin_resolution_started_at: now,
       linkedin_resolution_last_error: null,
       profile_enrichment_status: 'pending',
       profile_enrichment_last_error: null,
+      enrichment_refresh_status: 'running',
+      enrichment_refresh_last_error: null,
+      enrichment_refresh_started_at: now,
+      enrichment_refresh_finished_at: null,
       updated_at: now,
-    })
-    .eq('user_id', userId)
-    .eq('id', contactId);
+    },
+  });
 
   try {
     const rawUploadData =
@@ -793,39 +847,52 @@ export async function runContactResolutionPipelineForContact(
     });
 
     if (!resolvedLinkedin.linkedin_url) {
+      const finishedAt = new Date().toISOString();
+      const failureMessage = 'No credible LinkedIn profile URL found during LinkedIn resolution.';
       const failPayload = {
         linkedin_resolution_source: resolvedLinkedin.source,
         linkedin_resolution_confidence: resolvedLinkedin.confidence,
         linkedin_resolution_summary: resolvedLinkedin.search_summary || null,
         linkedin_resolution_status: 'failed',
-        linkedin_resolution_completed_at: new Date().toISOString(),
-        linkedin_resolution_last_error: 'No credible LinkedIn profile URL found during LinkedIn resolution.',
+        linkedin_resolution_completed_at: finishedAt,
+        linkedin_resolution_last_error: failureMessage,
         profile_enrichment_status: 'blocked',
         profile_enrichment_last_error: 'Blocked because LinkedIn resolution could not find a credible profile URL.',
-        updated_at: new Date().toISOString(),
+        enrichment_refresh_status: 'failed',
+        enrichment_refresh_last_error: failureMessage,
+        enrichment_refresh_finished_at: finishedAt,
+        updated_at: finishedAt,
       };
 
-      await supabase.from('contacts').update(failPayload).eq('user_id', userId).eq('id', contactId);
+      await updateContactWithOptionalRefreshJobFields(supabase, {
+        contactId,
+        userId,
+        payload: failPayload,
+      });
       return { status: 'failed', linkedinResolution: resolvedLinkedin };
     }
 
     linkedinResolved = true;
 
     if (!isProfileEnrichmentConfigured()) {
-      await supabase
-        .from('contacts')
-        .update({
+      const completedAt = new Date().toISOString();
+      await updateContactWithOptionalRefreshJobFields(supabase, {
+        contactId,
+        userId,
+        payload: {
           linkedin_url: resolvedLinkedin.linkedin_url,
           linkedin_resolution_source: resolvedLinkedin.source,
           linkedin_resolution_confidence: resolvedLinkedin.confidence,
           linkedin_resolution_summary: resolvedLinkedin.search_summary || null,
           linkedin_resolution_status: 'completed',
-          linkedin_resolution_completed_at: new Date().toISOString(),
+          linkedin_resolution_completed_at: completedAt,
           profile_enrichment_status: 'skipped',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('user_id', userId)
-        .eq('id', contactId);
+          enrichment_refresh_status: 'succeeded',
+          enrichment_refresh_last_error: null,
+          enrichment_refresh_finished_at: completedAt,
+          updated_at: completedAt,
+        },
+      });
 
       return {
         status: 'completed',
@@ -999,6 +1066,7 @@ export async function runContactResolutionPipelineForContact(
     }
 
     const profileEnrichmentStatus = alignment.alignment === 'low' ? 'ambiguous' : 'completed';
+    const completedAt = new Date().toISOString();
     const updatePayload: Record<string, unknown> = {
       linkedin_url: resolvedLinkedin.linkedin_url,
       linkedin_resolution_source: resolvedLinkedin.source,
@@ -1007,7 +1075,10 @@ export async function runContactResolutionPipelineForContact(
       linkedin_resolution_status: 'completed',
       profile_enrichment_status: profileEnrichmentStatus,
       profile_enrichment_provider: 'harvestapi',
-      profile_enrichment_completed_at: new Date().toISOString(),
+      profile_enrichment_completed_at: completedAt,
+      enrichment_refresh_status: 'succeeded',
+      enrichment_refresh_last_error: null,
+      enrichment_refresh_finished_at: completedAt,
       apify_profile_raw: apifyProfile,
       apify_lookup_metadata: {
         provider: 'harvestapi',
@@ -1036,7 +1107,7 @@ export async function runContactResolutionPipelineForContact(
       contact_bio: contactBio,
       email_status: emailAssessment.status,
       email_status_reasoning: emailAssessment.reasoning,
-      updated_at: new Date().toISOString(),
+      updated_at: completedAt,
     };
 
     updatePayload.job_title = resolved.currentJobTitle;
@@ -1071,7 +1142,11 @@ export async function runContactResolutionPipelineForContact(
       console.warn('[enrichment] contact classification failed (non-fatal):', err instanceof Error ? err.message : err);
     }
 
-    await supabase.from('contacts').update(updatePayload).eq('user_id', userId).eq('id', contactId);
+    await updateContactWithOptionalRefreshJobFields(supabase, {
+      contactId,
+      userId,
+      payload: updatePayload,
+    });
 
     await syncContactFitForContact(supabase, userId, contactId).catch((error) => {
       console.error('[enrichment-pipeline] Failed syncing contact fit score:', error);
@@ -1087,30 +1162,38 @@ export async function runContactResolutionPipelineForContact(
     const message = error instanceof Error ? error.message : 'Unknown contact resolution pipeline error';
 
     if (linkedinResolved) {
-      await supabase
-        .from('contacts')
-        .update({
+      const failedAt = new Date().toISOString();
+      await updateContactWithOptionalRefreshJobFields(supabase, {
+        contactId,
+        userId,
+        payload: {
           linkedin_resolution_status: 'completed',
           profile_enrichment_status: 'failed',
-          profile_enrichment_completed_at: new Date().toISOString(),
+          profile_enrichment_completed_at: failedAt,
           profile_enrichment_last_error: message,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('user_id', userId)
-        .eq('id', contactId);
+          enrichment_refresh_status: 'failed',
+          enrichment_refresh_last_error: message,
+          enrichment_refresh_finished_at: failedAt,
+          updated_at: failedAt,
+        },
+      });
     } else {
-      await supabase
-        .from('contacts')
-        .update({
+      const failedAt = new Date().toISOString();
+      await updateContactWithOptionalRefreshJobFields(supabase, {
+        contactId,
+        userId,
+        payload: {
           linkedin_resolution_status: 'failed',
-          linkedin_resolution_completed_at: new Date().toISOString(),
+          linkedin_resolution_completed_at: failedAt,
           linkedin_resolution_last_error: message,
           profile_enrichment_status: 'blocked',
           profile_enrichment_last_error: 'Blocked because LinkedIn resolution did not complete successfully.',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('user_id', userId)
-        .eq('id', contactId);
+          enrichment_refresh_status: 'failed',
+          enrichment_refresh_last_error: message,
+          enrichment_refresh_finished_at: failedAt,
+          updated_at: failedAt,
+        },
+      });
     }
 
     return {

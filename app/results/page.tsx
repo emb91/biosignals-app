@@ -226,6 +226,10 @@ interface Lead {
   linkedin_resolution_completed_at?: string | null;
   profile_enrichment_started_at?: string | null;
   profile_enrichment_completed_at?: string | null;
+  enrichment_refresh_status?: 'idle' | 'running' | 'succeeded' | 'failed' | null;
+  enrichment_refresh_last_error?: string | null;
+  enrichment_refresh_started_at?: string | null;
+  enrichment_refresh_finished_at?: string | null;
   fit_score: number | null;
   intent_score: number | null;
   overall_fit_score: number | null;
@@ -288,6 +292,8 @@ type EnrichmentStageKey =
   | 'profile_processing'
   | 'complete'
   | 'stopped';
+
+type LeadRefreshStatus = 'idle' | 'running' | 'succeeded' | 'failed';
 
 type EnrichmentVisualState = {
   stageKey: EnrichmentStageKey;
@@ -574,6 +580,9 @@ const getInterpolatedEnrichmentPercent = (
 };
 
 const getEnrichmentErrorMessage = (lead: Lead): string | null => {
+  const refreshError = lead.enrichment_refresh_last_error?.trim();
+  if (refreshError) return refreshError;
+
   const profileError = lead.profile_enrichment_last_error?.trim();
   if (profileError) return profileError;
 
@@ -585,6 +594,43 @@ const getEnrichmentErrorMessage = (lead: Lead): string | null => {
   }
 
   return null;
+};
+
+const normalizeLeadRefreshStatus = (
+  status?: Lead['enrichment_refresh_status'],
+): LeadRefreshStatus => {
+  if (status === 'running' || status === 'succeeded' || status === 'failed') {
+    return status;
+  }
+
+  return 'idle';
+};
+
+const getLeadRefreshStatusMeta = (
+  status: LeadRefreshStatus,
+): { label: string; className: string } => {
+  switch (status) {
+    case 'running':
+      return {
+        label: 'Enrichment running',
+        className: 'border-arcova-teal/25 bg-arcova-teal/5 text-arcova-teal',
+      };
+    case 'succeeded':
+      return {
+        label: 'Enrichment done',
+        className: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+      };
+    case 'failed':
+      return {
+        label: 'Enrichment failed',
+        className: 'border-rose-200 bg-rose-50 text-rose-700',
+      };
+    default:
+      return {
+        label: 'Idle',
+        className: 'border-gray-200 bg-gray-50 text-gray-500',
+      };
+  }
 };
 
 const REQUESTED_COMING_SOON_CONTACT_SIGNALS_KEY = 'biosignals_requested_contact_signals_v1';
@@ -707,9 +753,10 @@ export default function LeadsPage() {
         setLeads(nextLeads);
         setTotal(result.total || 0);
 
-        setSelectedLeadId((current) =>
-          current && !nextLeads.some((lead: Lead) => lead.id === current) ? null : current
-        );
+        setSelectedLeadId((current) => {
+          if (current && nextLeads.some((lead: Lead) => lead.id === current)) return current;
+          return nextLeads[0]?.id ?? null;
+        });
       }
     } catch (err) {
       console.error('Error fetching leads:', err);
@@ -842,6 +889,7 @@ export default function LeadsPage() {
 
   const rerunEnrichment = async (leadId: string) => {
     const companyId = leads.find((lead) => lead.id === leadId)?.company_id ?? null;
+    const startedAt = new Date().toISOString();
     setContactFitByContactId((prev) => {
       if (!prev[leadId]) return prev;
       const next = { ...prev };
@@ -856,6 +904,12 @@ export default function LeadsPage() {
               ...lead,
               linkedin_resolution_status: 'processing',
               profile_enrichment_status: 'pending',
+              linkedin_resolution_last_error: null,
+              profile_enrichment_last_error: null,
+              enrichment_refresh_status: 'running',
+              enrichment_refresh_last_error: null,
+              enrichment_refresh_started_at: startedAt,
+              enrichment_refresh_finished_at: null,
             }
           : lead
       )
@@ -879,6 +933,11 @@ export default function LeadsPage() {
         throw new Error(result.error || 'Failed to refresh enrichment.');
       }
 
+      if (result.alreadyRunning) {
+        await fetchLeads(true);
+        return;
+      }
+
       await fetchLeads(true);
     } catch (error) {
       console.error('Error refreshing enrichment:', error);
@@ -894,6 +953,27 @@ export default function LeadsPage() {
     ['pending', 'processing'].includes(lead.profile_enrichment_status || '');
 
   const anyEnriching = leads.some(isEnriching);
+  const isLeadRefreshRunning = (lead: Lead) =>
+    normalizeLeadRefreshStatus(lead.enrichment_refresh_status) === 'running' ||
+    isEnriching(lead);
+  const anyLeadRefreshRunning = leads.some(isLeadRefreshRunning);
+
+  const getLeadRefreshStatus = (lead: Lead): LeadRefreshStatus => {
+    const normalizedStatus = normalizeLeadRefreshStatus(lead.enrichment_refresh_status);
+    if (normalizedStatus !== 'idle') {
+      return normalizedStatus;
+    }
+
+    if (isEnriching(lead)) {
+      return 'running';
+    }
+
+    if (getEnrichmentErrorMessage(lead)) {
+      return 'failed';
+    }
+
+    return 'idle';
+  };
 
   useEffect(() => {
     const now = Date.now();
@@ -975,10 +1055,10 @@ export default function LeadsPage() {
 
   // Auto-poll every 5s while any contact is still being enriched
   useEffect(() => {
-    if (!anyEnriching) return;
+    if (!anyLeadRefreshRunning) return;
     const interval = setInterval(() => { fetchLeads(true); }, 5000);
     return () => clearInterval(interval);
-  }, [anyEnriching, fetchLeads]);
+  }, [anyLeadRefreshRunning, fetchLeads]);
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
   const showSearchInput = total > 0 || searchInput.trim().length > 0 || search.trim().length > 0;
@@ -994,8 +1074,10 @@ export default function LeadsPage() {
   const isSavingSelected = selectedLead ? savingLeadId === selectedLead.id : false;
   const isDeletingSelected = selectedLead ? deletingLeadId === selectedLead.id : false;
   const isRefreshingSelected = selectedLead ? refreshingLeadId === selectedLead.id : false;
-  const isSelectedLeadEnriching = selectedLead ? isEnriching(selectedLead) : false;
+  const isSelectedLeadRefreshRunning = selectedLead ? isLeadRefreshRunning(selectedLead) : false;
   const selectedEnrichmentError = selectedLead ? getEnrichmentErrorMessage(selectedLead) : null;
+  const selectedLeadRefreshStatus = selectedLead ? getLeadRefreshStatus(selectedLead) : 'idle';
+  const selectedLeadRefreshStatusMeta = getLeadRefreshStatusMeta(selectedLeadRefreshStatus);
 
   useEffect(() => {
     if ((selectedPreview !== 'company' && selectedPreview !== 'scoring') || !selectedCompanyId) return;
@@ -1203,12 +1285,12 @@ export default function LeadsPage() {
               <div className={`grid gap-4 ${selectedLeadId ? 'xl:grid-cols-[minmax(0,1fr)_360px]' : ''}`}>
                 {/* ── Leads table ── */}
                 <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-                  <div className="grid grid-cols-[0.8fr_1fr_1.35fr_0.8fr_3.5rem] gap-1 px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide">
+                  <div className="grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.35fr)_3.5rem_auto] gap-x-4 px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide">
                     <span>Name</span>
                     <span>Job title</span>
-                    <span>Company</span>
-                    <span>Fit score</span>
-                    <span></span>
+                    <span>Company name</span>
+                    <span className="text-center leading-tight">Company details</span>
+                    <span className="pl-24 text-right whitespace-nowrap justify-self-end">Fit score</span>
                   </div>
 
                   <div className="divide-y divide-gray-100">
@@ -1216,6 +1298,8 @@ export default function LeadsPage() {
                       const isSelected = selectedLeadId === lead.id;
                       const enriching = isEnriching(lead);
                       const enrichmentProgress = getEnrichmentProgress(lead);
+                      const leadRefreshStatus = getLeadRefreshStatus(lead);
+                      const leadRefreshError = getEnrichmentErrorMessage(lead);
 
                       if (enriching) {
                         return (
@@ -1226,7 +1310,7 @@ export default function LeadsPage() {
                               setSelectedPreview('contact');
                               cancelEditingLead();
                             }}
-                            className={`grid grid-cols-[0.8fr_1fr_1.35fr_0.8fr_3.5rem] gap-1 px-4 py-3 items-center cursor-pointer transition-all duration-150 border-b border-gray-50 last:border-0 ${
+                            className={`grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.35fr)_3.5rem_auto] gap-x-4 px-4 py-3 items-center cursor-pointer transition-all duration-150 border-b border-gray-50 last:border-0 ${
                               isSelected
                                 ? 'bg-arcova-teal/10 border-l-2 border-arcova-teal'
                                 : 'border-l-2 border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30'
@@ -1262,9 +1346,9 @@ export default function LeadsPage() {
                               </div>
                             </div>
 
-                            <div className="min-w-0" />
+                            <div className="min-w-0 flex justify-center" />
 
-                            <div className="flex items-center justify-center">
+                            <div className="flex items-center justify-end min-w-[5.5rem] pl-24">
                               <ArcovaLoader size={28} />
                             </div>
                           </div>
@@ -1279,30 +1363,23 @@ export default function LeadsPage() {
                             setSelectedPreview('contact');
                             cancelEditingLead();
                           }}
-                          className={`grid grid-cols-[0.8fr_1fr_1.35fr_0.8fr_3.5rem] gap-1 px-4 py-3 items-center cursor-pointer transition-all duration-150 opacity-100 ${
+                          className={`grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.35fr)_3.5rem_auto] gap-x-4 px-4 py-3 items-center cursor-pointer transition-all duration-150 opacity-100 ${
                             isSelected
                               ? 'bg-arcova-teal/10 border-l-2 border-arcova-teal'
                               : 'border-l-2 border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30'
                           }`}
                         >
-                          {/* Full name + LinkedIn icon */}
-                          <div className="min-w-0 flex items-center gap-2">
+                          {/* Full name */}
+                          <div className="min-w-0">
                             <p className="font-medium text-gray-900 truncate text-sm">
                               {lead.full_name ||
                                 [lead.first_name, lead.last_name].filter(Boolean).join(' ') ||
                                 '—'}
                             </p>
-                            {lead.linkedin_url && (
-                              <a
-                                href={lead.linkedin_url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                className="text-arcova-teal hover:text-arcova-teal/70 transition-colors flex-shrink-0"
-                                title="View LinkedIn profile"
-                              >
-                                <ExternalLink className="w-3.5 h-3.5" />
-                              </a>
+                            {leadRefreshStatus === 'failed' && leadRefreshError && (
+                              <p className="mt-0.5 truncate text-[11px] text-rose-600">
+                                Enrichment failed
+                              </p>
                             )}
                           </div>
 
@@ -1313,7 +1390,7 @@ export default function LeadsPage() {
                             </p>
                           </div>
 
-                          {/* Company */}
+                          {/* Company name */}
                           <div className="min-w-0">
                             {(() => {
                               const companyFirmographics = getDisplayedCompanyFirmographics(lead);
@@ -1341,8 +1418,29 @@ export default function LeadsPage() {
                             })()}
                           </div>
 
-                          {/* Company fit score */}
-                          <div className="min-w-0">
+                          {/* Company details */}
+                          <div className="min-w-0 flex justify-center">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedLeadId(lead.id);
+                                setSelectedPreview('company');
+                                cancelEditingLead();
+                              }}
+                              className={`inline-flex items-center justify-center rounded-md border p-1.5 transition-colors ${
+                                isSelected && selectedPreview === 'company'
+                                  ? 'border-arcova-teal bg-arcova-teal text-white'
+                                  : 'border-arcova-teal/40 bg-arcova-teal/10 text-arcova-teal hover:bg-arcova-teal hover:text-white hover:border-arcova-teal'
+                              }`}
+                              title="Company details"
+                            >
+                              <Briefcase className="w-5 h-5" />
+                            </button>
+                          </div>
+
+                          {/* Fit score */}
+                          <div className="min-w-0 flex justify-end pl-24">
                             {formatPercent(lead.overall_fit_score) ? (
                               <button
                                 type="button"
@@ -1364,27 +1462,6 @@ export default function LeadsPage() {
                             ) : (
                               <span className="text-xs text-gray-400">—</span>
                             )}
-                          </div>
-
-                          {/* Company details button */}
-                          <div className="min-w-0 pl-2">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedLeadId(lead.id);
-                                setSelectedPreview('company');
-                                cancelEditingLead();
-                              }}
-                              className={`inline-flex w-full items-center justify-center rounded-md border p-1.5 transition-colors ${
-                                isSelected && selectedPreview === 'company'
-                                  ? 'border-arcova-teal bg-arcova-teal text-white'
-                                  : 'border-arcova-teal/40 bg-arcova-teal/10 text-arcova-teal hover:bg-arcova-teal hover:text-white hover:border-arcova-teal'
-                              }`}
-                              title="Company details"
-                            >
-                              <Briefcase className="w-5 h-5" />
-                            </button>
                           </div>
                         </div>
                       );
@@ -2468,17 +2545,39 @@ export default function LeadsPage() {
                         </p>
 
                         <div className="space-y-2">
+                          {selectedLeadRefreshStatus !== 'idle' && (
+                            <div className={`rounded-lg border px-3 py-2 text-xs ${selectedLeadRefreshStatusMeta.className}`}>
+                              <p className="font-medium">{selectedLeadRefreshStatusMeta.label}</p>
+                              {selectedLeadRefreshStatus === 'running' && (
+                                <p className="mt-1">
+                                  This refresh is running on the server, so it will keep going even if you leave this page.
+                                </p>
+                              )}
+                              {selectedLeadRefreshStatus === 'succeeded' && selectedLead.enrichment_refresh_finished_at && (
+                                <p className="mt-1">
+                                  Finished {formatLastUpdated(selectedLead.enrichment_refresh_finished_at)}.
+                                </p>
+                              )}
+                              {selectedLeadRefreshStatus === 'failed' && selectedEnrichmentError && (
+                                <p className="mt-1">{selectedEnrichmentError}</p>
+                              )}
+                            </div>
+                          )}
                           <p className="text-xs text-gray-500">
                             If this enrichment looks stalled, you can manually run it again here.
                           </p>
                           <button
                             type="button"
                             onClick={() => rerunEnrichment(selectedLead.id)}
-                            disabled={isRefreshingSelected || isEditingSelected}
+                            disabled={isRefreshingSelected || isEditingSelected || isSelectedLeadRefreshRunning}
                             className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-arcova-teal/5 px-4 py-2 text-sm font-medium text-arcova-teal hover:bg-arcova-teal/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                           >
-                            <RotateCw className={`w-4 h-4 ${isRefreshingSelected ? 'animate-spin' : ''}`} />
-                            {isRefreshingSelected ? 'Refreshing enrichment…' : 'Refresh enrichment'}
+                            <RotateCw className={`w-4 h-4 ${(isRefreshingSelected || isSelectedLeadRefreshRunning) ? 'animate-spin' : ''}`} />
+                            {isRefreshingSelected
+                              ? 'Starting enrichment…'
+                              : isSelectedLeadRefreshRunning
+                                ? 'Enrichment running…'
+                                : 'Refresh enrichment'}
                           </button>
                         </div>
 

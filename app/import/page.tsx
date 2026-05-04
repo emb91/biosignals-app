@@ -1,6 +1,6 @@
 'use client';
 
-import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, DragEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
@@ -219,6 +219,10 @@ export default function ImportPage() {
   const [batchDetailsError, setBatchDetailsError] = useState<string | null>(null);
   const [isLoadingBatchDetails, setIsLoadingBatchDetails] = useState(false);
   const [expandedBatchSection, setExpandedBatchSection] = useState<'failed' | 'duplicate' | null>(null);
+  const [hubspotConnected, setHubspotConnected] = useState(false);
+  const [hubspotDomain, setHubspotDomain] = useState<string | null>(null);
+  const [hubspotSyncing, setHubspotSyncing] = useState(false);
+  const [hubspotDisconnecting, setHubspotDisconnecting] = useState(false);
 
   const persistBatchId = (id: string | null) => {
     setCurrentBatchId(id);
@@ -349,6 +353,58 @@ export default function ImportPage() {
 
     void fetchBatchDetails();
   }, [currentBatchId]);
+
+  const fetchHubspotStatus = useCallback(async () => {
+    const res = await fetch('/api/hubspot/status');
+    if (!res.ok) return;
+    const { connected, hubDomain } = await res.json();
+    setHubspotConnected(connected);
+    setHubspotDomain(hubDomain ?? null);
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    void fetchHubspotStatus();
+    // Show success toast if redirected back from HubSpot OAuth
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('hubspot') === 'connected') {
+      window.history.replaceState({}, '', '/import');
+    }
+  }, [user, fetchHubspotStatus]);
+
+  const handleHubspotSync = async () => {
+    setHubspotSyncing(true);
+    try {
+      const res = await fetch('/api/hubspot/sync', { method: 'POST' });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error ?? 'Sync failed');
+      persistBatchId(result.batchId);
+      setProgress({
+        total: result.total,
+        processed: 0,
+        remaining: result.total,
+        duplicates: 0,
+        enriching: result.total,
+        enriched: 0,
+        notEnriched: 0,
+        highFitLeads: 0,
+        batchStatus: 'processing',
+      });
+    } finally {
+      setHubspotSyncing(false);
+    }
+  };
+
+  const handleHubspotDisconnect = async () => {
+    setHubspotDisconnecting(true);
+    try {
+      await fetch('/api/hubspot/disconnect', { method: 'DELETE' });
+      setHubspotConnected(false);
+      setHubspotDomain(null);
+    } finally {
+      setHubspotDisconnecting(false);
+    }
+  };
 
   const initializeMappings = (headers: string[]) => {
     const nextMappings: Record<string, ImportField> = {};
@@ -583,12 +639,71 @@ export default function ImportPage() {
             <>
               <h1 className="text-3xl font-bold text-gray-900">Import your existing contacts</h1>
               <p className="text-gray-600 mt-2">
-                Upload your existing CRM contacts and we&apos;ll enrich them, score them against your ICP, and tell
+                Connect your CRM or upload a CSV — we&apos;ll enrich your contacts, score them against your ICP, and tell
                 you who to prioritise this week.
               </p>
 
+              {/* HubSpot connector */}
               <div className="mt-10">
-                <h2 className="text-lg font-semibold text-gray-900 mb-3">Upload CSV</h2>
+                <h2 className="text-lg font-semibold text-gray-900 mb-3">Connect your CRM</h2>
+                <div className={`rounded-xl border p-6 flex items-center justify-between gap-6 ${hubspotConnected ? 'border-green-200 bg-green-50/50' : 'border-gray-200'}`}>
+                  <div className="flex items-center gap-4">
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#FF7A59]/10">
+                      <svg viewBox="0 0 24 24" className="h-6 w-6" fill="#FF7A59" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M18.164 7.93V5.773a1.878 1.878 0 0 0 1.083-1.7V4.02a1.878 1.878 0 0 0-1.878-1.878h-.043a1.878 1.878 0 0 0-1.878 1.878v.054a1.878 1.878 0 0 0 1.083 1.7V7.93a5.33 5.33 0 0 0-2.533 1.117L7.081 4.405a2.09 2.09 0 1 0-.95 1.261l6.8 4.583a5.353 5.353 0 0 0 .005 5.425l-2.07 2.07a1.702 1.702 0 1 0 1.073 1.013l1.997-1.997a5.37 5.37 0 1 0 5.228-8.83zm-.837 8.033a2.74 2.74 0 1 1 0-5.48 2.74 2.74 0 0 1 0 5.48z"/>
+                      </svg>
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-semibold text-gray-900">HubSpot</p>
+                        {hubspotConnected && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
+                            <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                            Connected{hubspotDomain ? ` · ${hubspotDomain}` : ''}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm text-gray-500 mt-0.5">
+                        {hubspotConnected
+                          ? 'Sync your contacts now — Arcova will enrich and score them, then push prioritisation data back to HubSpot.'
+                          : 'Sync contacts from your HubSpot CRM. Arcova will enrich and score them, then push prioritisation data back.'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {hubspotConnected ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => void handleHubspotSync()}
+                          disabled={hubspotSyncing}
+                          className="rounded-lg bg-[#FF7A59] px-4 py-2 text-sm font-semibold text-white hover:bg-[#FF7A59]/90 disabled:opacity-50 transition-colors"
+                        >
+                          {hubspotSyncing ? 'Syncing…' : 'Sync now'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleHubspotDisconnect()}
+                          disabled={hubspotDisconnecting}
+                          className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-600 hover:border-gray-400 hover:text-gray-800 disabled:opacity-50 transition-colors"
+                        >
+                          {hubspotDisconnecting ? 'Disconnecting…' : 'Disconnect'}
+                        </button>
+                      </>
+                    ) : (
+                      <a
+                        href="/api/auth/hubspot"
+                        className="rounded-lg bg-[#FF7A59] px-4 py-2 text-sm font-semibold text-white hover:bg-[#FF7A59]/90 transition-colors"
+                      >
+                        Connect HubSpot
+                      </a>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-10">
+                <h2 className="text-lg font-semibold text-gray-900 mb-3">Or upload a CSV</h2>
 
                 <input
                   ref={fileInputRef}

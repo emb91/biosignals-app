@@ -212,7 +212,7 @@ async function attachEnrichmentMetadataBestEffort(
   const result = await supabase
     .from('contacts')
     .select(
-      'id, linkedin_resolution_last_error, profile_enrichment_last_error, linkedin_resolution_started_at, linkedin_resolution_completed_at, profile_enrichment_started_at, profile_enrichment_completed_at',
+      'id, linkedin_resolution_last_error, profile_enrichment_last_error, linkedin_resolution_started_at, linkedin_resolution_completed_at, profile_enrichment_started_at, profile_enrichment_completed_at, enrichment_refresh_status, enrichment_refresh_last_error, enrichment_refresh_started_at, enrichment_refresh_finished_at',
     )
     .in('id', contactIds);
 
@@ -245,6 +245,10 @@ async function attachEnrichmentMetadataBestEffort(
       linkedin_resolution_completed_at: metadata.linkedin_resolution_completed_at ?? null,
       profile_enrichment_started_at: metadata.profile_enrichment_started_at ?? null,
       profile_enrichment_completed_at: metadata.profile_enrichment_completed_at ?? null,
+      enrichment_refresh_status: metadata.enrichment_refresh_status ?? null,
+      enrichment_refresh_last_error: metadata.enrichment_refresh_last_error ?? null,
+      enrichment_refresh_started_at: metadata.enrichment_refresh_started_at ?? null,
+      enrichment_refresh_finished_at: metadata.enrichment_refresh_finished_at ?? null,
     };
   });
 }
