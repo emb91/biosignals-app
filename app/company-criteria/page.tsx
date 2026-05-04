@@ -21,7 +21,6 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { getSignalDisplayName } from '@/lib/signal-display-names';
-import { parseSSEStream } from '@/lib/sse';
 import {
   extractFundingStatus,
   formatCurrencyShort,
@@ -38,8 +37,6 @@ import {
   COMPANY_SIZE_OPTIONS,
   LI_FOLLOWER_OPTIONS,
   FUNDING_STAGE_OPTIONS,
-  employeeCountToSizeBucket,
-  followerCountToFollowerBucket,
   canonicalizeFundingStage,
   arrEstimateToBucket,
   fundingAmountDisplayBucket,
@@ -121,6 +118,10 @@ interface ICP {
   target_customers?: string[] | null;
   buyer_types?: string[] | null;
   competitors?: { name: string; url?: string }[] | null;
+  reenrichment_status?: 'idle' | 'running' | 'succeeded' | 'failed' | null;
+  reenrichment_last_error?: string | null;
+  reenrichment_started_at?: string | null;
+  reenrichment_finished_at?: string | null;
   created_at: string;
   updated_at?: string;
 }
@@ -248,6 +249,38 @@ function isSaasCompanyType(value?: string | null): boolean {
 
 function visiblePlatformCategory(companyType?: string | null, platformCategory?: string | null): string {
   return isSaasCompanyType(companyType) ? (platformCategory ?? '').trim() : '';
+}
+
+function normalizeReenrichmentStatus(status?: ICP['reenrichment_status']): 'idle' | 'running' | 'succeeded' | 'failed' {
+  return status === 'running' || status === 'succeeded' || status === 'failed' ? status : 'idle';
+}
+
+function reenrichmentStatusMeta(status: ReturnType<typeof normalizeReenrichmentStatus>): {
+  label: string;
+  className: string;
+} | null {
+  if (status === 'running') {
+    return {
+      label: 'Running',
+      className: 'border-arcova-teal/30 bg-arcova-teal/10 text-arcova-teal',
+    };
+  }
+
+  if (status === 'succeeded') {
+    return {
+      label: 'Done',
+      className: 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200',
+    };
+  }
+
+  if (status === 'failed') {
+    return {
+      label: 'Failed',
+      className: 'border-red-400/30 bg-red-400/10 text-red-200',
+    };
+  }
+
+  return null;
 }
 
 /** One line from persisted ICP fields only — used when `icp_summary` is empty (never reference-company enrichment). */
@@ -509,6 +542,8 @@ function ICPCard({
     e?.total_funding_usd != null ||
     e?.funding_stage
   );
+  const currentReenrichmentStatus = normalizeReenrichmentStatus(icp.reenrichment_status);
+  const currentReenrichmentMeta = reenrichmentStatusMeta(currentReenrichmentStatus);
 
   const [open, setOpen] = useState({
     criteria: true, funding: true, functions: true, seniority: true, titles: true, personaSignals: true,
@@ -773,9 +808,16 @@ function ICPCard({
             >
               <Briefcase className="h-4 w-4 shrink-0 text-arcova-teal" />
               <div className="flex-1 min-w-0">
-                <span className="block text-sm font-semibold text-white truncate">
-                  ICP {index}: {icp.name || 'ICP Profile'}
-                </span>
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="block min-w-0 truncate text-sm font-semibold text-white">
+                    ICP {index}: {icp.name || 'ICP Profile'}
+                  </span>
+                  {currentReenrichmentMeta && (
+                    <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${currentReenrichmentMeta.className}`}>
+                      {currentReenrichmentMeta.label}
+                    </span>
+                  )}
+                </div>
                 {collapsed && e?.company_name?.trim() && (
                   <span className="block text-xs text-white/40 truncate">Modelled on {e.company_name.trim()}</span>
                 )}
@@ -956,6 +998,24 @@ function ICPCard({
 
         {/* Left column — firmographics */}
         <div className="flex-1 min-w-0 px-4 py-4 space-y-2">
+
+          {!editMode && currentReenrichmentStatus === 'running' && (
+            <div className="rounded-xl border border-arcova-teal/30 bg-arcova-teal/10 px-3 py-3 text-xs text-arcova-teal">
+              Re-enrichment is running in the background. You can leave this page and come back later.
+            </div>
+          )}
+
+          {!editMode && currentReenrichmentStatus === 'failed' && icp.reenrichment_last_error?.trim() && (
+            <div className="rounded-xl border border-red-400/30 bg-red-400/10 px-3 py-3 text-xs text-red-200">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <div className="min-w-0">
+                  <p className="font-semibold text-red-100">Latest re-enrichment failed</p>
+                  <p className="mt-1 leading-snug text-red-200/85">{icp.reenrichment_last_error.trim()}</p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {icpProfileSummaryDisplay.length > 0 && (
             <div className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 space-y-1.5">
@@ -1308,6 +1368,7 @@ function ICPCard({
             <>
               <button
                 onClick={startEdit}
+                disabled={reenriching}
                 className="flex items-center gap-1 rounded-lg border border-arcova-teal px-3 py-1.5 text-xs font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/10"
               >
                 <Pencil className="h-3 w-3" /> Edit
@@ -1321,7 +1382,7 @@ function ICPCard({
               </button>
               <button
                 onClick={onDelete}
-                disabled={deleting}
+                disabled={deleting || reenriching}
                 className="flex items-center gap-1 rounded-lg border border-red-400/30 px-3 py-1.5 text-xs font-medium text-red-400/70 transition-colors hover:border-red-400/50 hover:bg-red-400/10 hover:text-red-400 disabled:opacity-40"
               >
                 <Trash2 className="h-3 w-3" /> Delete
@@ -1347,9 +1408,36 @@ export default function ICPManagerPage() {
   const [loadingData, setLoadingData] = useState(true);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [reenrichingId, setReenrichingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const attemptedSummaryRepairRef = useRef<Set<string>>(new Set());
+  const hasRunningReenrichment = icps.some(
+    (icp) => normalizeReenrichmentStatus(icp.reenrichment_status) === 'running',
+  );
+
+  const refreshPageData = async () => {
+    const [icpRes, personaRes] = await Promise.all([
+      fetch('/api/company-criteria'),
+      fetch('/api/contacts'),
+    ]);
+
+    if (icpRes.ok) {
+      const result = await icpRes.json();
+      const data: ICP[] = result.data || [];
+      setIcps(data);
+      setExpandedIds((prev) => {
+        if (data.length === 0) return new Set();
+        const validIds = new Set(data.map((icp) => icp.id));
+        const next = new Set([...prev].filter((id) => validIds.has(id)));
+        if (next.size === 0) next.add(data[0].id);
+        return next;
+      });
+    }
+
+    if (personaRes.ok) {
+      const result = await personaRes.json();
+      setPersonas(result.data || []);
+    }
+  };
 
   useEffect(() => {
     if (!loading && !user) router.push('/login');
@@ -1357,33 +1445,41 @@ export default function ICPManagerPage() {
 
   useEffect(() => {
     if (!user) return;
+    let cancelled = false;
     (async () => {
       try {
-        const [icpRes, personaRes] = await Promise.all([
-          fetch('/api/company-criteria'),
-          fetch('/api/contacts'),
-        ]);
-        if (icpRes.ok) {
-          const result = await icpRes.json();
-          const data: ICP[] = result.data || [];
-          setIcps(data);
-          // Open the first card by default
-          if (data.length > 0) setExpandedIds(new Set([data[0].id]));
-        }
-        if (personaRes.ok) {
-          const result = await personaRes.json();
-          setPersonas(result.data || []);
-        }
+        await refreshPageData();
       } finally {
-        setLoadingData(false);
+        if (!cancelled) {
+          setLoadingData(false);
+        }
       }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [user]);
+
+  useEffect(() => {
+    if (!user || !hasRunningReenrichment) return;
+
+    const intervalId = window.setInterval(() => {
+      void refreshPageData();
+    }, 5000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [user, hasRunningReenrichment]);
 
   useEffect(() => {
     const missingSummaries = icps.filter((icp) => {
       const stored = (icp.icp_summary ?? '').trim();
-      return stored.length === 0 && !attemptedSummaryRepairRef.current.has(icp.id);
+      return (
+        stored.length === 0 &&
+        normalizeReenrichmentStatus(icp.reenrichment_status) !== 'running' &&
+        !attemptedSummaryRepairRef.current.has(icp.id)
+      );
     });
     if (missingSummaries.length === 0) return;
 
@@ -1491,266 +1587,35 @@ export default function ICPManagerPage() {
       return;
     }
 
-    setReenrichingId(icp.id);
     const toastId = `reenrich-${icp.id}`;
-    toast.loading('Researching the company…', { id: toastId });
     try {
-      const sellerRes = await fetch('/api/user-company-profile').catch(() => null);
-      const sellerData = sellerRes?.ok ? ((await sellerRes.json()) as { data?: Record<string, unknown> }).data : null;
-      const sellerCompanyType = typeof sellerData?.company_type === 'string' ? sellerData.company_type : null;
-      const sellerPlatformCategory =
-        typeof sellerData?.platform_category === 'string' ? sellerData.platform_category : null;
-
-      const enrichRes = await fetch('/api/analyze-example-company-stream', {
+      const response = await fetch(`/api/company-criteria/${icp.id}/reenrich`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: website }),
       });
-
-      if (!enrichRes.ok) {
-        throw new Error('Failed to re-enrich reference company');
-      }
-
-      type EnrichmentResult = ExampleEnrichment & {
-        company_type?: string | null;
-        platform_category?: string | null;
-        therapeutic_areas?: string[] | null;
-        modalities?: string[] | null;
-        development_stages?: string[] | null;
-        customer_therapeutic_areas?: string[] | null;
-        customer_modalities?: string[] | null;
-        customer_development_stages?: string[] | null;
+      const payload = (await response.json().catch(() => ({}))) as {
+        data?: ICP;
+        alreadyRunning?: boolean;
+        error?: string;
       };
 
-      let enrichment: EnrichmentResult | null = null;
-      for await (const { event, data } of parseSSEStream(enrichRes)) {
-        if (event === 'step_claude') {
-          toast.loading('Website analysed ✓  Checking company database…', { id: toastId });
-        } else if (event === 'step_apollo') {
-          toast.loading('Company data retrieved ✓  Scanning LinkedIn…', { id: toastId });
-        } else if (event === 'step_apify') {
-          toast.loading('LinkedIn scanned ✓  Classifying company…', { id: toastId });
-        } else if (event === 'step_taxonomy') {
-          toast.loading('Classified ✓  Finishing up…', { id: toastId });
-        } else if (event === 'done') {
-          enrichment = data as unknown as EnrichmentResult;
-        } else if (event === 'error') {
-          throw new Error((data.message as string) || 'Failed to re-enrich reference company');
-        }
+      if (!response.ok) {
+        throw new Error(payload.error ?? 'Failed to start ICP re-enrichment');
       }
 
-      if (!enrichment) {
-        throw new Error('Failed to re-enrich reference company');
+      if (payload.data) {
+        handleIcpSaved(payload.data);
       }
 
-      const employeeCount = enrichment.employee_count ?? null;
-      const employeeRange = enrichment.employee_range ?? null;
-      const followerCount = enrichment.follower_count ?? null;
-      const companySizes =
-        employeeCount != null || employeeRange
-          ? employeeCountToSizeBucket(employeeCount, employeeRange)
-          : [];
-      const liFollowerSizes =
-        followerCount != null
-          ? followerCountToFollowerBucket(followerCount)
-          : [];
-      const refreshedCompanyType = enrichment.company_type ?? '';
-      const refreshedPlatformCategory = visiblePlatformCategory(
-        refreshedCompanyType,
-        enrichment.platform_category ?? '',
+      toast.success(
+        payload.alreadyRunning
+          ? 'Re-enrichment is already running.'
+          : 'Re-enrichment started. You can leave this page.',
+        { id: toastId },
       );
-      const refreshedTherapeuticAreas = enrichment.therapeutic_areas ?? [];
-      const refreshedModalities = enrichment.modalities ?? [];
-      const refreshedDevelopmentStages = enrichment.development_stages ?? [];
-      const refreshedCustomerTherapeuticAreas =
-        enrichment.customer_therapeutic_areas ?? [];
-      const refreshedCustomerModalities =
-        enrichment.customer_modalities ?? [];
-      const refreshedCustomerDevelopmentStages =
-        enrichment.customer_development_stages ?? [];
-      const refreshedFundingStages = enrichment.funding_stage ? [enrichment.funding_stage] : [];
-      // Keep enrichment snapshot clean — overrides live in first-class columns.
-      const nextExampleCompanyEnrichment = { ...enrichment };
-      const refreshedIcpCustomerSegments = resolveCustomerSegments({
-        targetCustomers: enrichment.target_customers ?? [],
-        customersWeServe: enrichment.customers_we_serve ?? [],
-        fallbackItems: enrichment.customers_we_serve ?? [],
-      });
-      const refreshedCompetitors = enrichment.competitors_enriched ?? [];
-
-      toast.loading('Refreshing company signals…', { id: toastId });
-      const companySignalsRes = await fetch('/api/recommend-signals', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          companyType: refreshedCompanyType,
-          platformCategory: refreshedPlatformCategory,
-          companySizes,
-          therapeuticAreas: refreshedTherapeuticAreas,
-          modalities: refreshedModalities,
-          developmentStages: refreshedDevelopmentStages,
-          fundingStages: refreshedFundingStages,
-        }),
-      });
-      if (!companySignalsRes.ok) {
-        throw new Error('Failed to refresh company signals');
-      }
-      const recommendedCompanySignals =
-        (((await companySignalsRes.json()) as { recommended?: Array<{ id: string }> }).recommended ?? []).map((signal) => signal.id);
-
-      toast.loading('Refreshing ICP summary…', { id: toastId });
-      const icpSummaryRes = await fetch('/api/generate-icp-summary', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          companyType: refreshedCompanyType,
-          platformCategory: refreshedPlatformCategory,
-          therapeuticAreas: refreshedTherapeuticAreas,
-          modalities: refreshedModalities,
-          developmentStages: refreshedDevelopmentStages,
-          customerTherapeuticAreas: refreshedCustomerTherapeuticAreas,
-          customerModalities: refreshedCustomerModalities,
-          customerDevelopmentStages: refreshedCustomerDevelopmentStages,
-          companySizes,
-          fundingStages: refreshedFundingStages,
-          exampleCompanyName: enrichment.company_name ?? null,
-          exampleCompanyDescription: enrichment.description ?? null,
-        }),
-      });
-      if (!icpSummaryRes.ok) {
-        throw new Error('Failed to refresh ICP summary');
-      }
-      const refreshedIcpSummary =
-        (((await icpSummaryRes.json()) as { summary: string }).summary ?? null);
-
-      const updateRes = await fetch(`/api/company-criteria/${icp.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: icp.name,
-          icpSummary: refreshedIcpSummary,
-          companyType: refreshedCompanyType,
-          platformCategory: refreshedPlatformCategory,
-          therapeuticAreas: refreshedTherapeuticAreas,
-          modalities: refreshedModalities,
-          developmentStages: refreshedDevelopmentStages,
-          customerTherapeuticAreas: refreshedCustomerTherapeuticAreas,
-          customerModalities: refreshedCustomerModalities,
-          customerDevelopmentStages: refreshedCustomerDevelopmentStages,
-          companySizes,
-          liFollowerSizes,
-          fundingStages: refreshedFundingStages,
-          signals: recommendedCompanySignals,
-          exampleCompanies: [],
-          exampleCompanyUrl: icp.example_company_url,
-          exampleCompanyEnrichment: nextExampleCompanyEnrichment,
-          targetCustomers: refreshedIcpCustomerSegments.customerOrganizations,
-          buyerTypes: refreshedIcpCustomerSegments.buyerTypes,
-          competitors: refreshedCompetitors,
-        }),
-      });
-
-      if (!updateRes.ok) {
-        throw new Error('Failed to save refreshed ICP');
-      }
-
-      const result = await updateRes.json();
-      handleIcpSaved(result.data ?? { ...icp, example_company_enrichment: nextExampleCompanyEnrichment });
-
-      // Regenerate the buying team with the fresh enrichment + updated size signal.
-      // If a persona already exists, update it; otherwise create one.
-      const linkedPersona = personas.find((p) => p.icp_id === icp.id) ?? null;
-      toast.loading(linkedPersona ? 'Refreshing buying team…' : 'Generating buying team…', { id: toastId });
-      const btRes = await fetch('/api/generate-buying-team', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          seller_company_name: sellerData?.company_name,
-          seller_company_type: sellerCompanyType,
-          seller_platform_category: visiblePlatformCategory(sellerCompanyType, sellerPlatformCategory),
-          seller_therapeutic_areas: sellerData?.therapeutic_areas,
-          seller_products_services: sellerData?.products_services,
-          seller_services: sellerData?.services,
-          seller_customers_we_serve: sellerData?.customers_we_serve,
-          seller_value_propositions: sellerData?.value_propositions,
-          icp_company_type: refreshedCompanyType,
-          icp_platform_category: refreshedPlatformCategory,
-          icp_therapeutic_areas: refreshedTherapeuticAreas,
-          icp_modalities: refreshedModalities,
-          icp_development_stages: refreshedDevelopmentStages,
-          icp_customer_therapeutic_areas: refreshedCustomerTherapeuticAreas,
-          icp_customer_modalities: refreshedCustomerModalities,
-          icp_customer_development_stages: refreshedCustomerDevelopmentStages,
-          icp_target_customers: refreshedIcpCustomerSegments.customerOrganizations,
-          icp_buyer_types: refreshedIcpCustomerSegments.buyerTypes,
-          icp_company_sizes: companySizes,
-          icp_funding_stages: refreshedFundingStages,
-          icp_example_employee_count: employeeCount,
-          icp_example_employee_range: employeeRange,
-          icp_example_total_funding_usd: enrichment.total_funding_usd ?? null,
-          example_company_name: enrichment.company_name ?? null,
-        }),
-      });
-      if (!btRes.ok) {
-        throw new Error('Failed to refresh buying team');
-      }
-
-      const { functions, seniority_levels, job_titles } = await btRes.json() as {
-        functions: string[];
-        seniority_levels: string[];
-        job_titles: string[];
-      };
-      const personaName =
-        functions.length > 0 ? `Buying group: ${functions[0]}` : (linkedPersona?.name ?? 'Buying group');
-
-      toast.loading('Refreshing contact signals…', { id: toastId });
-      const personaSignalsRes = await fetch('/api/recommend-persona-signals', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: personaName,
-          functions,
-          seniorityLevels: seniority_levels,
-          jobTitles: job_titles ?? [],
-        }),
-      });
-      if (!personaSignalsRes.ok) {
-        throw new Error('Failed to refresh buying-team signals');
-      }
-      const recommendedPersonaSignals =
-        (((await personaSignalsRes.json()) as { recommended?: Array<{ id: string }> }).recommended ?? []).map((signal) => signal.id);
-
-      const teamRes = await fetch(linkedPersona ? `/api/contacts/${linkedPersona.id}` : '/api/contacts', {
-        method: linkedPersona ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: personaName,
-          functions,
-          seniorityLevels: seniority_levels,
-          jobTitles: job_titles ?? [],
-          signals: recommendedPersonaSignals,
-          icpId: icp.id,
-        }),
-      });
-      if (!teamRes.ok) {
-        throw new Error(linkedPersona ? 'Failed to save refreshed buying team' : 'Failed to create buying team');
-      }
-      const { data } = await teamRes.json() as { data: Persona };
-      if (linkedPersona) {
-        handlePersonaUpdate(data);
-      } else {
-        setPersonas((prev) => {
-          const exists = prev.some((persona) => persona.id === data.id);
-          return exists ? prev.map((persona) => (persona.id === data.id ? data : persona)) : [data, ...prev];
-        });
-      }
-
-      toast.success('ICP refreshed', { id: toastId });
+      void refreshPageData();
     } catch (error) {
       console.error('Failed to re-enrich ICP:', error);
-      toast.error('Failed to re-enrich ICP', { id: toastId });
-    } finally {
-      setReenrichingId(null);
+      toast.error(error instanceof Error ? error.message : 'Failed to re-enrich ICP', { id: toastId });
     }
   };
 
@@ -1828,7 +1693,7 @@ export default function ICPManagerPage() {
                       onSaved={handleIcpSaved}
                       onDelete={() => setConfirmDeleteId(icp.id)}
                       deleting={deletingId === icp.id}
-                      reenriching={reenrichingId === icp.id}
+                      reenriching={normalizeReenrichmentStatus(icp.reenrichment_status) === 'running'}
                       onPersonaUpdate={handlePersonaUpdate}
                       onPersonaDelete={handlePersonaDelete}
                       onAddBuyingTeam={() => router.push(`/personas/new?icpId=${icp.id}`)}
