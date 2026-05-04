@@ -2550,7 +2550,7 @@ export default function LeadsPage() {
                               <p className="font-medium">{selectedLeadRefreshStatusMeta.label}</p>
                               {selectedLeadRefreshStatus === 'running' && (
                                 <p className="mt-1">
-                                  This refresh is running on the server, so it will keep going even if you leave this page.
+                                  Enrichment in progress. You don't need to wait on this page.
                                 </p>
                               )}
                               {selectedLeadRefreshStatus === 'succeeded' && selectedLead.enrichment_refresh_finished_at && (

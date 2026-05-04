@@ -1,7 +1,7 @@
 const CLIENT_ID = process.env.HUBSPOT_CLIENT_ID!;
 const CLIENT_SECRET = process.env.HUBSPOT_CLIENT_SECRET!;
 const REDIRECT_URI = `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/hubspot/callback`;
-const SCOPES = 'crm.objects.contacts.read crm.objects.companies.read';
+const SCOPES = 'oauth crm.objects.contacts.read crm.objects.contacts.write';
 
 export type HubSpotContact = {
   id: string;

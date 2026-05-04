@@ -5,6 +5,9 @@ import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import AppSidebar from '@/components/AppSidebar';
+import Nango from '@nangohq/frontend';
+
+const HUBSPOT_INTEGRATION_ID = 'hubspot';
 
 type ImportField =
   | 'first_name'
@@ -365,12 +368,33 @@ export default function ImportPage() {
   useEffect(() => {
     if (!user) return;
     void fetchHubspotStatus();
-    // Show success toast if redirected back from HubSpot OAuth
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('hubspot') === 'connected') {
-      window.history.replaceState({}, '', '/import');
-    }
   }, [user, fetchHubspotStatus]);
+
+  const handleConnectHubSpot = async () => {
+    if (!user) return;
+
+    // Get a short-lived session token from our backend
+    const sessionRes = await fetch('/api/nango/session', { method: 'POST' });
+    if (!sessionRes.ok) return;
+    const { sessionToken } = await sessionRes.json();
+
+    const nangoClient = new Nango();
+    const connectUI = nangoClient.openConnectUI({
+      onEvent: async (event) => {
+        if (event.type === 'connect') {
+          const { connectionId, providerConfigKey } = event.payload;
+          // Persist the Nango connectionId to our DB
+          await fetch('/api/nango/connection', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ integrationId: providerConfigKey, connectionId }),
+          });
+          setHubspotConnected(true);
+        }
+      },
+    });
+    connectUI.setSessionToken(sessionToken);
+  };
 
   const handleHubspotSync = async () => {
     setHubspotSyncing(true);
@@ -691,12 +715,13 @@ export default function ImportPage() {
                         </button>
                       </>
                     ) : (
-                      <a
-                        href="/api/auth/hubspot"
+                      <button
+                        type="button"
+                        onClick={() => void handleConnectHubSpot()}
                         className="rounded-lg bg-[#FF7A59] px-4 py-2 text-sm font-semibold text-white hover:bg-[#FF7A59]/90 transition-colors"
                       >
                         Connect HubSpot
-                      </a>
+                      </button>
                     )}
                   </div>
                 </div>

@@ -1,18 +1,30 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createClient } from '@/lib/supabase-server';
-import { getValidAccessToken, fetchHubSpotContacts } from '@/lib/hubspot';
+import { fetchHubSpotContacts } from '@/lib/hubspot';
+import { nango, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
 
 export async function POST() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  const { data: conn } = await supabase
+    .from('nango_connections')
+    .select('nango_connection_id')
+    .eq('user_id', user.id)
+    .eq('integration_id', HUBSPOT_INTEGRATION_ID)
+    .single();
+
+  if (!conn?.nango_connection_id) {
+    return NextResponse.json({ error: 'HubSpot not connected' }, { status: 400 });
+  }
+
   let accessToken: string;
   try {
-    accessToken = await getValidAccessToken(user.id, supabase);
+    accessToken = await nango.getToken(HUBSPOT_INTEGRATION_ID, conn.nango_connection_id) as string;
   } catch {
-    return NextResponse.json({ error: 'HubSpot not connected' }, { status: 400 });
+    return NextResponse.json({ error: 'Failed to get HubSpot token' }, { status: 400 });
   }
 
   const contacts = await fetchHubSpotContacts(accessToken);
