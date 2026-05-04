@@ -21,6 +21,7 @@ type ContactScoreRow = {
   id: string;
   user_id: string;
   company_id: string | null;
+  matched_icp_id: string | null;
   full_name: string | null;
   job_title: string | null;
   job_title_standardised: string | null;
@@ -464,7 +465,35 @@ async function loadContactsById(
     .in('id', contactIds);
 
   if (error) throw error;
-  return (data || []) as ContactScoreRow[];
+
+  const contacts = (data || []) as ContactScoreRow[];
+  const companyIds = [...new Set(contacts.map((contact) => contact.company_id).filter(Boolean))] as string[];
+
+  if (companyIds.length === 0) {
+    return contacts.map((contact) => ({ ...contact, matched_icp_id: null }));
+  }
+
+  const companyResult = await supabase
+    .from('companies')
+    .select('id, matched_icp_id')
+    .eq('user_id', userId)
+    .in('id', companyIds);
+
+  if (companyResult.error) throw companyResult.error;
+
+  const matchedIcpByCompanyId = new Map(
+    ((companyResult.data || []) as Array<{ id: string; matched_icp_id: string | null }>)
+      .filter((row) => typeof row.id === 'string')
+      .map((row) => [row.id, row.matched_icp_id ?? null]),
+  );
+
+  return contacts.map((contact) => ({
+    ...contact,
+    matched_icp_id:
+      contact.company_id && matchedIcpByCompanyId.has(contact.company_id)
+        ? matchedIcpByCompanyId.get(contact.company_id) ?? null
+        : null,
+  }));
 }
 
 async function loadExistingScores(
@@ -627,7 +656,17 @@ export async function syncContactFitForContacts(
         continue;
       }
 
-      const scores = personas.map((persona) => computeContactPersonaScore(contact, persona));
+      const eligiblePersonas = contact.matched_icp_id
+        ? personas.filter((persona) => persona.icp_id === contact.matched_icp_id)
+        : personas;
+
+      if (eligiblePersonas.length === 0) {
+        await clearContactFit(supabase, userId, contact);
+        result.contactsScored += 1;
+        continue;
+      }
+
+      const scores = eligiblePersonas.map((persona) => computeContactPersonaScore(contact, persona));
       const expectedPersonaIds = new Set(scores.map((score) => score.personaId));
       const stalePersonaIds = (existingScores.get(contact.id) || []).filter(
         (personaId) => !expectedPersonaIds.has(personaId),
