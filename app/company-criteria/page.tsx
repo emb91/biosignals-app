@@ -21,7 +21,6 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { getSignalDisplayName } from '@/lib/signal-display-names';
-import { parseSSEStream } from '@/lib/sse';
 import {
   extractFundingStatus,
   formatCurrencyShort,
@@ -121,6 +120,10 @@ interface ICP {
   target_customers?: string[] | null;
   buyer_types?: string[] | null;
   competitors?: { name: string; url?: string }[] | null;
+  reenrichment_status?: 'idle' | 'running' | 'succeeded' | 'failed' | null;
+  reenrichment_last_error?: string | null;
+  reenrichment_started_at?: string | null;
+  reenrichment_finished_at?: string | null;
   created_at: string;
   updated_at?: string;
 }
@@ -248,6 +251,38 @@ function isSaasCompanyType(value?: string | null): boolean {
 
 function visiblePlatformCategory(companyType?: string | null, platformCategory?: string | null): string {
   return isSaasCompanyType(companyType) ? (platformCategory ?? '').trim() : '';
+}
+
+function normalizeReenrichmentStatus(status?: ICP['reenrichment_status']): 'idle' | 'running' | 'succeeded' | 'failed' {
+  return status === 'running' || status === 'succeeded' || status === 'failed' ? status : 'idle';
+}
+
+function reenrichmentStatusMeta(status: ReturnType<typeof normalizeReenrichmentStatus>): {
+  label: string;
+  className: string;
+} | null {
+  if (status === 'running') {
+    return {
+      label: 'Running',
+      className: 'border-arcova-teal/30 bg-arcova-teal/10 text-arcova-teal',
+    };
+  }
+
+  if (status === 'succeeded') {
+    return {
+      label: 'Done',
+      className: 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200',
+    };
+  }
+
+  if (status === 'failed') {
+    return {
+      label: 'Failed',
+      className: 'border-red-400/30 bg-red-400/10 text-red-200',
+    };
+  }
+
+  return null;
 }
 
 /** One line from persisted ICP fields only — used when `icp_summary` is empty (never reference-company enrichment). */
@@ -509,6 +544,8 @@ function ICPCard({
     e?.total_funding_usd != null ||
     e?.funding_stage
   );
+  const currentReenrichmentStatus = normalizeReenrichmentStatus(icp.reenrichment_status);
+  const currentReenrichmentMeta = reenrichmentStatusMeta(currentReenrichmentStatus);
 
   const [open, setOpen] = useState({
     criteria: true, funding: true, functions: true, seniority: true, titles: true, personaSignals: true,
@@ -773,9 +810,16 @@ function ICPCard({
             >
               <Briefcase className="h-4 w-4 shrink-0 text-arcova-teal" />
               <div className="flex-1 min-w-0">
-                <span className="block text-sm font-semibold text-white truncate">
-                  ICP {index}: {icp.name || 'ICP Profile'}
-                </span>
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="block min-w-0 truncate text-sm font-semibold text-white">
+                    ICP {index}: {icp.name || 'ICP Profile'}
+                  </span>
+                  {currentReenrichmentMeta && (
+                    <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${currentReenrichmentMeta.className}`}>
+                      {currentReenrichmentMeta.label}
+                    </span>
+                  )}
+                </div>
                 {collapsed && e?.company_name?.trim() && (
                   <span className="block text-xs text-white/40 truncate">Modelled on {e.company_name.trim()}</span>
                 )}
@@ -956,6 +1000,24 @@ function ICPCard({
 
         {/* Left column — firmographics */}
         <div className="flex-1 min-w-0 px-4 py-4 space-y-2">
+
+          {!editMode && currentReenrichmentStatus === 'running' && (
+            <div className="rounded-xl border border-arcova-teal/30 bg-arcova-teal/10 px-3 py-3 text-xs text-arcova-teal">
+              Re-enrichment is running in the background. You can leave this page and come back later.
+            </div>
+          )}
+
+          {!editMode && currentReenrichmentStatus === 'failed' && icp.reenrichment_last_error?.trim() && (
+            <div className="rounded-xl border border-red-400/30 bg-red-400/10 px-3 py-3 text-xs text-red-200">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <div className="min-w-0">
+                  <p className="font-semibold text-red-100">Latest re-enrichment failed</p>
+                  <p className="mt-1 leading-snug text-red-200/85">{icp.reenrichment_last_error.trim()}</p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {icpProfileSummaryDisplay.length > 0 && (
             <div className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 space-y-1.5">
@@ -1308,6 +1370,7 @@ function ICPCard({
             <>
               <button
                 onClick={startEdit}
+                disabled={reenriching}
                 className="flex items-center gap-1 rounded-lg border border-arcova-teal px-3 py-1.5 text-xs font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/10"
               >
                 <Pencil className="h-3 w-3" /> Edit
@@ -1321,7 +1384,7 @@ function ICPCard({
               </button>
               <button
                 onClick={onDelete}
-                disabled={deleting}
+                disabled={deleting || reenriching}
                 className="flex items-center gap-1 rounded-lg border border-red-400/30 px-3 py-1.5 text-xs font-medium text-red-400/70 transition-colors hover:border-red-400/50 hover:bg-red-400/10 hover:text-red-400 disabled:opacity-40"
               >
                 <Trash2 className="h-3 w-3" /> Delete

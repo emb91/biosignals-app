@@ -9,8 +9,8 @@ import { createAdminClient } from '@/lib/supabase-admin';
 const SCORE_VERSION = 'contact_fit_v1';
 
 const COMPONENT_WEIGHTS = {
-  businessArea: 70,
-  seniority: 30,
+  businessArea: 50,
+  seniority: 50,
 } as const;
 
 type MinimalSupabase = {
@@ -28,8 +28,6 @@ type ContactScoreRow = {
   headline: string | null;
   seniority_level: string | null;
   business_area: string | null;
-  fit_score: number | null;
-  intent_score: number | null;
 };
 
 type PersonaScoreRow = {
@@ -153,71 +151,6 @@ function canonicalizeSeniorityList(values: string[] | null | undefined): Seniori
   );
 }
 
-const BUSINESS_AREA_SIMILARITY: Partial<Record<BusinessArea, Partial<Record<BusinessArea, number>>>> = {
-  'Business Development': {
-    Partnerships: 0.85,
-    'Strategy & Corporate Development': 0.65,
-    Commercial: 0.45,
-  },
-  Partnerships: {
-    'Business Development': 0.85,
-    'Strategy & Corporate Development': 0.55,
-  },
-  'Strategy & Corporate Development': {
-    'Business Development': 0.65,
-    Partnerships: 0.55,
-    'Executive Leadership': 0.5,
-  },
-  Commercial: {
-    Marketing: 0.7,
-    'Sales Operations': 0.65,
-    'Business Development': 0.45,
-  },
-  'Sales Operations': {
-    Commercial: 0.65,
-    Marketing: 0.35,
-  },
-  'Research & Development': {
-    'Clinical Operations': 0.4,
-    'Medical Affairs': 0.35,
-    'Lab Operations': 0.55,
-  },
-  'Clinical Operations': {
-    'Research & Development': 0.4,
-    'Medical Affairs': 0.35,
-  },
-  'Technology & Systems': {
-    'Data & Informatics': 0.75,
-    'AI & Machine Learning': 0.7,
-  },
-  'Data & Informatics': {
-    'Technology & Systems': 0.75,
-    'AI & Machine Learning': 0.65,
-  },
-  'AI & Machine Learning': {
-    'Technology & Systems': 0.7,
-    'Data & Informatics': 0.65,
-  },
-  'Manufacturing & CMC': {
-    'Quality & Compliance': 0.5,
-    'Lab Operations': 0.35,
-    Procurement: 0.3,
-  },
-  'Quality & Compliance': {
-    'Manufacturing & CMC': 0.5,
-    'Regulatory Affairs': 0.35,
-  },
-};
-
-function businessAreaSimilarityPair(contactArea: BusinessArea, personaArea: BusinessArea): number {
-  if (contactArea === personaArea) return 1;
-  return (
-    BUSINESS_AREA_SIMILARITY[contactArea]?.[personaArea] ??
-    BUSINESS_AREA_SIMILARITY[personaArea]?.[contactArea] ??
-    0
-  );
-}
-
 function businessAreaSimilarity(
   contactArea: BusinessArea | null,
   personaAreas: BusinessArea[],
@@ -226,21 +159,8 @@ function businessAreaSimilarity(
     return { score: null, matchedValue: null };
   }
 
-  let bestScore = -1;
-  let bestValue: BusinessArea | null = null;
-
-  for (const personaArea of personaAreas) {
-    const score = businessAreaSimilarityPair(contactArea, personaArea);
-    if (score > bestScore) {
-      bestScore = score;
-      bestValue = personaArea;
-    }
-  }
-
-  return {
-    score: bestScore >= 0 ? bestScore : null,
-    matchedValue: bestValue,
-  };
+  const matched = personaAreas.find((area) => area === contactArea) ?? null;
+  return { score: matched ? 1 : 0, matchedValue: matched };
 }
 
 function senioritySimilarity(
@@ -251,30 +171,11 @@ function senioritySimilarity(
     return { score: null, matchedValue: null };
   }
 
-  const contactIndex = SENIORITY_LEVEL_OPTIONS.findIndex((value) => value === contactSeniority);
-  if (contactIndex < 0) {
-    return { score: null, matchedValue: null };
-  }
-
-  let bestScore = -1;
-  let bestValue: SeniorityLevel | null = null;
-
-  for (const personaSeniority of personaSeniorities) {
-    const personaIndex = SENIORITY_LEVEL_OPTIONS.findIndex((value) => value === personaSeniority);
-    if (personaIndex < 0) continue;
-
-    const distance = Math.abs(personaIndex - contactIndex);
-    const score = distance === 0 ? 1 : distance === 1 ? 0.65 : distance === 2 ? 0.3 : 0;
-
-    if (score > bestScore) {
-      bestScore = score;
-      bestValue = personaSeniority;
-    }
-  }
+  const matched = personaSeniorities.find((value) => value === contactSeniority) ?? null;
 
   return {
-    score: bestScore >= 0 ? bestScore : null,
-    matchedValue: bestValue,
+    score: matched ? 1 : 0,
+    matchedValue: matched,
   };
 }
 
@@ -325,18 +226,14 @@ function computeContactPersonaScore(
           ? `Business area is not classified yet; persona expects ${personaFunctions.join(', ')}.`
           : businessAreaMatch.score === 1
             ? `Exact match on ${contactBusinessArea}.`
-            : businessAreaMatch.score && businessAreaMatch.score > 0
-              ? `${contactBusinessArea} is adjacent to persona target ${businessAreaMatch.matchedValue}.`
-              : `Persona expects ${personaFunctions.join(', ')}; contact is ${contactBusinessArea}.`,
+            : `Persona expects ${personaFunctions.join(', ')}; contact is ${contactBusinessArea}.`,
     matchedValue: businessAreaMatch.matchedValue,
     matchStatus:
       businessAreaMatch.score === 1
         ? 'exact'
-        : businessAreaMatch.score && businessAreaMatch.score > 0
-          ? 'adjacent'
-          : contactBusinessArea
-            ? 'mismatch'
-            : 'unknown',
+        : contactBusinessArea
+          ? 'mismatch'
+          : 'unknown',
   });
 
   const personaSeniorities = canonicalizeSeniorityList(persona.seniority_levels);
@@ -358,18 +255,14 @@ function computeContactPersonaScore(
           ? `Seniority is not classified yet; persona expects ${personaSeniorities.join(', ')}.`
           : seniorityMatch.score === 1
             ? `Exact seniority match on ${contactSeniority}.`
-            : seniorityMatch.score && seniorityMatch.score > 0
-              ? `${contactSeniority} is near persona target ${seniorityMatch.matchedValue}.`
-              : `Persona expects ${personaSeniorities.join(', ')}; contact is ${contactSeniority}.`,
+            : `Persona expects ${personaSeniorities.join(', ')}; contact is ${contactSeniority}.`,
     matchedValue: seniorityMatch.matchedValue,
     matchStatus:
       seniorityMatch.score === 1
         ? 'exact'
-        : seniorityMatch.score && seniorityMatch.score > 0
-          ? 'adjacent'
-          : contactSeniority
-            ? 'mismatch'
-            : 'unknown',
+        : contactSeniority
+          ? 'mismatch'
+          : 'unknown',
   });
 
   const components = {
@@ -460,7 +353,7 @@ async function loadContactsById(
 ): Promise<ContactScoreRow[]> {
   const { data, error } = await supabase
     .from('contacts')
-    .select('id, user_id, company_id, full_name, job_title, job_title_standardised, headline, seniority_level, business_area, fit_score, intent_score')
+    .select('id, user_id, company_id, full_name, job_title, job_title_standardised, headline, seniority_level, business_area')
     .eq('user_id', userId)
     .in('id', contactIds);
 
@@ -524,9 +417,6 @@ async function clearContactFit(
   contact: ContactScoreRow,
 ): Promise<void> {
   const now = new Date().toISOString();
-  const companyFit = contact.fit_score ?? 0;
-  const intent = contact.intent_score ?? 1;
-  const priorityScore = Math.round(companyFit * 0.5 * intent * 1000) / 1000;
 
   const deleteResult = await supabase
     .from('contact_persona_scores')
@@ -545,7 +435,6 @@ async function clearContactFit(
       contact_fit_coverage: null,
       contact_fit_scored_at: now,
       contact_fit_version: SCORE_VERSION,
-      priority_score: priorityScore,
       updated_at: now,
     })
     .eq('user_id', userId)
@@ -598,9 +487,6 @@ async function persistScoresForContact(
   }
 
   const newContactFit = winner?.finalScore01 ?? 0;
-  const companyFit = contact.fit_score ?? 0;
-  const intent = contact.intent_score ?? 1;
-  const priorityScore = Math.round(companyFit * (0.5 + 0.5 * newContactFit) * intent * 1000) / 1000;
 
   const updateResult = await supabase
     .from('contacts')
@@ -611,7 +497,6 @@ async function persistScoresForContact(
       contact_fit_coverage: winner?.coverage01 ?? null,
       contact_fit_scored_at: now,
       contact_fit_version: SCORE_VERSION,
-      priority_score: priorityScore,
       updated_at: now,
     })
     .eq('user_id', userId)
