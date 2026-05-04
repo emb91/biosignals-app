@@ -220,9 +220,15 @@ interface Lead {
   contact_discovery_status: string | null;
   linkedin_resolution_status: string | null;
   profile_enrichment_status: string | null;
+  linkedin_resolution_last_error?: string | null;
+  profile_enrichment_last_error?: string | null;
+  linkedin_resolution_started_at?: string | null;
+  linkedin_resolution_completed_at?: string | null;
+  profile_enrichment_started_at?: string | null;
+  profile_enrichment_completed_at?: string | null;
   fit_score: number | null;
   intent_score: number | null;
-  priority_score: number | null;
+  overall_fit_score: number | null;
   source: string;
   created_at: string;
   updated_at: string | null;
@@ -567,6 +573,20 @@ const getInterpolatedEnrichmentPercent = (
   return safeStart + (stage.ceiling - safeStart) * progress;
 };
 
+const getEnrichmentErrorMessage = (lead: Lead): string | null => {
+  const profileError = lead.profile_enrichment_last_error?.trim();
+  if (profileError) return profileError;
+
+  const linkedinError = lead.linkedin_resolution_last_error?.trim();
+  if (linkedinError) return linkedinError;
+
+  if ((lead.profile_enrichment_status || '') === 'blocked') {
+    return 'Blocked because LinkedIn resolution did not complete successfully.';
+  }
+
+  return null;
+};
+
 const REQUESTED_COMING_SOON_CONTACT_SIGNALS_KEY = 'biosignals_requested_contact_signals_v1';
 
 export default function LeadsPage() {
@@ -710,6 +730,15 @@ export default function LeadsPage() {
       setSelectedPreview('contact');
     }
   }, [searchParams, leads]);
+
+  const urlSearchParam = searchParams.get('search') ?? '';
+  useEffect(() => {
+    const q = urlSearchParam.trim();
+    if (!q) return;
+    setSearchInput(q);
+    setSearch(q);
+    setPage(1);
+  }, [urlSearchParam]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -965,6 +994,8 @@ export default function LeadsPage() {
   const isSavingSelected = selectedLead ? savingLeadId === selectedLead.id : false;
   const isDeletingSelected = selectedLead ? deletingLeadId === selectedLead.id : false;
   const isRefreshingSelected = selectedLead ? refreshingLeadId === selectedLead.id : false;
+  const isSelectedLeadEnriching = selectedLead ? isEnriching(selectedLead) : false;
+  const selectedEnrichmentError = selectedLead ? getEnrichmentErrorMessage(selectedLead) : null;
 
   useEffect(() => {
     if ((selectedPreview !== 'company' && selectedPreview !== 'scoring') || !selectedCompanyId) return;
@@ -1312,7 +1343,7 @@ export default function LeadsPage() {
 
                           {/* Company fit score */}
                           <div className="min-w-0">
-                            {formatPercent(lead.fit_score) ? (
+                            {formatPercent(lead.overall_fit_score) ? (
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -1328,7 +1359,7 @@ export default function LeadsPage() {
                                 }`}
                                 title="Open scoring details"
                               >
-                                {formatPercentValue(lead.fit_score)}
+                                {formatPercentValue(lead.overall_fit_score)}
                               </button>
                             ) : (
                               <span className="text-xs text-gray-400">—</span>
@@ -1454,9 +1485,9 @@ export default function LeadsPage() {
                             <div className="mt-1 space-y-2">
                               <h2 className="text-lg font-semibold text-gray-900 leading-tight">Lead prioritisation</h2>
                               <div className="flex flex-wrap gap-1.5">
-                                {typeof selectedLead.priority_score === 'number' && (
+                                {typeof selectedLead.overall_fit_score === 'number' && (
                                   <span className="inline-flex items-center rounded-full bg-arcova-teal px-2.5 py-0.5 text-xs font-semibold text-white">
-                                    Overall fit {formatPercentValue(selectedLead.priority_score)}
+                                    Overall fit {formatPercentValue(selectedLead.overall_fit_score)}
                                   </span>
                                 )}
                                 {(selectedLead.matched_icp_index != null || selectedLead.matched_icp_name) && (
@@ -2139,7 +2170,7 @@ export default function LeadsPage() {
                           <div className="space-y-3">
 
                             {/* Priority score */}
-                            {typeof selectedLead.priority_score === 'number' && (
+                            {typeof selectedLead.overall_fit_score === 'number' && (
                               <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
                                 <button
                                   type="button"
@@ -2152,7 +2183,7 @@ export default function LeadsPage() {
                                 {scoringPanelOpen.priority && (
                                   <div className="px-4 pb-3">
                                     <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-sm font-medium text-slate-700">
-                                      {formatPercentValue(selectedLead.priority_score)}
+                                      {formatPercentValue(selectedLead.overall_fit_score)}
                                     </span>
                                   </div>
                                 )}

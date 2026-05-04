@@ -160,7 +160,7 @@ function businessAreaSimilarity(
   }
 
   const matched = personaAreas.find((area) => area === contactArea) ?? null;
-  return { score: matched ? 1 : 0, matchedValue: matched };
+  return { score: matched ? 1 : 0.001, matchedValue: matched };
 }
 
 function senioritySimilarity(
@@ -174,7 +174,7 @@ function senioritySimilarity(
   const matched = personaSeniorities.find((value) => value === contactSeniority) ?? null;
 
   return {
-    score: matched ? 1 : 0,
+    score: matched ? 1 : 0.001,
     matchedValue: matched,
   };
 }

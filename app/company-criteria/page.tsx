@@ -239,6 +239,21 @@ function Segment({
   );
 }
 
+function relativeTime(iso?: string): string | null {
+  if (!iso) return null;
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 2) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo ago`;
+  return `${Math.floor(months / 12)}y ago`;
+}
+
 function parseFunctionName(f: string): string {
   try { return (JSON.parse(f) as { name?: string }).name ?? f; } catch { return f; }
 }
@@ -818,8 +833,13 @@ function ICPCard({
                     </span>
                   )}
                 </div>
-                {collapsed && e?.company_name?.trim() && (
-                  <span className="block text-xs text-white/40 truncate">Modelled on {e.company_name.trim()}</span>
+                {collapsed && (
+                  <span className="block text-xs text-white/40 truncate">
+                    {[
+                      e?.company_name?.trim() ? `Modelled on ${e.company_name.trim()}` : null,
+                      relativeTime(icp.updated_at) ? `Updated ${relativeTime(icp.updated_at)}` : null,
+                    ].filter(Boolean).join(' · ')}
+                  </span>
                 )}
               </div>
               {collapsed
@@ -1325,7 +1345,7 @@ function ICPCard({
       {!collapsed && (
         <div className="flex items-center justify-between gap-2 border-t border-white/10 px-4 py-3">
           {/* Bottom-left: subtle modelled-on toggle */}
-          <div>
+          <div className="flex items-center gap-3">
             {!editMode && e?.company_name && (
               modelledOnMode ? (
                 <button
@@ -1342,6 +1362,9 @@ function ICPCard({
                   Modelled on {e.company_name} <ExternalLink className="h-3 w-3" />
                 </button>
               )
+            )}
+            {!editMode && relativeTime(icp.updated_at) && (
+              <span className="text-xs text-white/30">Updated {relativeTime(icp.updated_at)}</span>
             )}
           </div>
 

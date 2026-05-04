@@ -197,6 +197,58 @@ async function attachMatchedIcpNames(
   });
 }
 
+async function attachEnrichmentMetadataBestEffort(
+  supabase: SupabaseClientLike,
+  rows: LeadRow[],
+): Promise<LeadRow[]> {
+  const contactIds = dedupe(
+    rows
+      .map((row) => (typeof row.id === 'string' ? row.id : null))
+      .filter((value): value is string => Boolean(value)),
+  );
+
+  if (contactIds.length === 0) return rows;
+
+  const result = await supabase
+    .from('contacts')
+    .select(
+      'id, linkedin_resolution_last_error, profile_enrichment_last_error, linkedin_resolution_started_at, linkedin_resolution_completed_at, profile_enrichment_started_at, profile_enrichment_completed_at',
+    )
+    .in('id', contactIds);
+
+  if (result.error && isMissingColumnError(result.error)) {
+    return rows;
+  }
+
+  if (result.error) {
+    console.warn('Best-effort lead enrichment metadata fetch failed:', result.error);
+    return rows;
+  }
+
+  const metadataById = new Map(
+    ((result.data || []) as Array<Record<string, unknown>>)
+      .filter((row) => typeof row.id === 'string')
+      .map((row) => [row.id as string, row]),
+  );
+
+  return rows.map((row) => {
+    const metadata =
+      typeof row.id === 'string' ? metadataById.get(row.id) ?? null : null;
+
+    if (!metadata) return row;
+
+    return {
+      ...row,
+      linkedin_resolution_last_error: metadata.linkedin_resolution_last_error ?? null,
+      profile_enrichment_last_error: metadata.profile_enrichment_last_error ?? null,
+      linkedin_resolution_started_at: metadata.linkedin_resolution_started_at ?? null,
+      linkedin_resolution_completed_at: metadata.linkedin_resolution_completed_at ?? null,
+      profile_enrichment_started_at: metadata.profile_enrichment_started_at ?? null,
+      profile_enrichment_completed_at: metadata.profile_enrichment_completed_at ?? null,
+    };
+  });
+}
+
 function dedupe(values: string[]): string[] {
   return [...new Set(values)];
 }
@@ -269,14 +321,14 @@ export async function GET(request: Request) {
       }
 
       return query
-        .order('priority_score', { ascending: false, nullsFirst: false })
+        .order('overall_fit_score', { ascending: false, nullsFirst: false })
         .order('fit_score', { ascending: false, nullsFirst: false })
         .order('created_at', { ascending: false })
         .range(offset, offset + pageSize - 1);
     };
 
     const baseLeadSelect =
-      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, email_status, email_status_reasoning, linkedin_url, profile_photo_url, headline, location, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, intent_score, priority_score, source, created_at, updated_at, company_id';
+      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, email_status, email_status_reasoning, linkedin_url, profile_photo_url, headline, location, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, intent_score, overall_fit_score, source, created_at, updated_at, company_id';
     const companySelectCore =
       'companies(company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_country, specialties, products_services, services, technologies, company_type, company_type_display, platform_category, funding_stage, funding_status_label, total_funding_usd, latest_funding_date, funding_data_source, therapeutic_areas, modalities, development_stages, clinical_stage, matched_icp_id, last_enriched_at)';
     const companySelectStable =
@@ -297,7 +349,7 @@ export async function GET(request: Request) {
     const tertiarySelect =
       `${baseLeadSelect}, ${companySelectStable}`;
     const fallbackSelect =
-      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, linkedin_url, profile_photo_url, headline, location, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, intent_score, priority_score, source, created_at, updated_at, company_id';
+      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, linkedin_url, profile_photo_url, headline, location, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, intent_score, overall_fit_score, source, created_at, updated_at, company_id';
 
     let { data, error, count } = await runQuery(primarySelect);
 
@@ -434,9 +486,14 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const enrichedRows = await attachMatchedIcpNames(
+    const rowsWithEnrichmentMetadata = await attachEnrichmentMetadataBestEffort(
       supabase,
       ((data || []) as unknown) as LeadRow[],
+    );
+
+    const enrichedRows = await attachMatchedIcpNames(
+      supabase,
+      rowsWithEnrichmentMetadata,
     );
 
     return NextResponse.json({

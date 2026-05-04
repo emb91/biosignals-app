@@ -180,7 +180,7 @@ export default function DashboardPage() {
             return {
               id: leadIdVal,
               name,
-              priorityScore: pct(leadRow.priority_score),
+              priorityScore: pct(leadRow.overall_fit_score),
               latestSignalType: 'Intent & fit tuned',
               latestSignalAt:
                 typeof leadRow.updated_at === 'string'
