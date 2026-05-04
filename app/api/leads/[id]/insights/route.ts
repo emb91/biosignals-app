@@ -93,7 +93,7 @@ export async function GET(
     const { data: row, error: rowErr } = await supabase
       .from('contacts')
       .select(
-        'id, company_id, scored_against_persona_id, fit_score, intent_score, priority_score'
+        'id, company_id, scored_against_persona_id, fit_score, intent_score, overall_fit_score'
       )
       .eq('user_id', user.id)
       .eq('id', leadId)
