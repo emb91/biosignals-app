@@ -2358,9 +2358,6 @@ export default function LeadsPage() {
                                         </span>
                                       </div>
                                     )}
-                                    {selectedContactFit.matched_icp_name && (
-                                      <p className="mt-1.5 text-xs text-gray-400">ICP: {selectedContactFit.matched_icp_name}</p>
-                                    )}
 
                                     <div className="mt-5 space-y-2.5">
                                       {CONTACT_FIT_COMPONENT_ORDER.map((key) => {
@@ -2394,11 +2391,9 @@ export default function LeadsPage() {
                                               const detailText: string | null = (() => {
                                                 if (component.matchStatus === 'exact') return 'Exact match';
                                                 if (key === 'seniority') {
-                                                  const contactSeniority = selectedLead.seniority_level?.toLowerCase() ?? null;
-                                                  const personaSeniority = component.matchedValue?.toLowerCase() ?? null;
-                                                  if (contactSeniority && personaSeniority) {
-                                                    const subject = selectedLead.first_name || 'This contact';
-                                                    return `${subject} is ${contactSeniority}, not ${personaSeniority}`;
+                                                  const contactSeniority = selectedLead.seniority_level ?? null;
+                                                  if (contactSeniority) {
+                                                    return `Contact is ${contactSeniority}. This is not the target buying group for this ICP`;
                                                   }
                                                 }
                                                 return component.detail || null;
