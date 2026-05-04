@@ -772,9 +772,14 @@ function ICPCard({
               className="flex flex-1 items-center gap-2.5 text-left min-w-0"
             >
               <Briefcase className="h-4 w-4 shrink-0 text-arcova-teal" />
-              <span className="flex-1 text-sm font-semibold text-white truncate">
-                ICP {index}: {icp.name || 'ICP Profile'}
-              </span>
+              <div className="flex-1 min-w-0">
+                <span className="block text-sm font-semibold text-white truncate">
+                  ICP {index}: {icp.name || 'ICP Profile'}
+                </span>
+                {collapsed && e?.company_name?.trim() && (
+                  <span className="block text-xs text-white/40 truncate">Modelled on {e.company_name.trim()}</span>
+                )}
+              </div>
               {collapsed
                 ? <ChevronDown className="h-4 w-4 text-white/40 shrink-0" />
                 : <ChevronUp className="h-4 w-4 text-white/40 shrink-0" />}
@@ -1544,34 +1549,34 @@ export default function ICPManagerPage() {
       const companySizes =
         employeeCount != null || employeeRange
           ? employeeCountToSizeBucket(employeeCount, employeeRange)
-          : icp.company_sizes;
+          : [];
       const liFollowerSizes =
         followerCount != null
           ? followerCountToFollowerBucket(followerCount)
-          : icp.li_follower_sizes;
-      const refreshedCompanyType = enrichment.company_type ?? icp.company_type;
+          : [];
+      const refreshedCompanyType = enrichment.company_type ?? '';
       const refreshedPlatformCategory = visiblePlatformCategory(
         refreshedCompanyType,
-        enrichment.platform_category ?? icp.platform_category ?? '',
+        enrichment.platform_category ?? '',
       );
-      const refreshedTherapeuticAreas = enrichment.therapeutic_areas ?? icp.therapeutic_areas;
-      const refreshedModalities = enrichment.modalities ?? icp.modalities;
-      const refreshedDevelopmentStages = enrichment.development_stages ?? icp.development_stages;
+      const refreshedTherapeuticAreas = enrichment.therapeutic_areas ?? [];
+      const refreshedModalities = enrichment.modalities ?? [];
+      const refreshedDevelopmentStages = enrichment.development_stages ?? [];
       const refreshedCustomerTherapeuticAreas =
-        enrichment.customer_therapeutic_areas ?? icp.customer_therapeutic_areas ?? [];
+        enrichment.customer_therapeutic_areas ?? [];
       const refreshedCustomerModalities =
-        enrichment.customer_modalities ?? icp.customer_modalities ?? [];
+        enrichment.customer_modalities ?? [];
       const refreshedCustomerDevelopmentStages =
-        enrichment.customer_development_stages ?? icp.customer_development_stages ?? [];
-      const refreshedFundingStages = enrichment.funding_stage ? [enrichment.funding_stage] : icp.funding_stages;
+        enrichment.customer_development_stages ?? [];
+      const refreshedFundingStages = enrichment.funding_stage ? [enrichment.funding_stage] : [];
       // Keep enrichment snapshot clean — overrides live in first-class columns.
       const nextExampleCompanyEnrichment = { ...enrichment };
-      // Preserve user-edited segments; only refresh competitors from new enrichment.
-      const refreshedIcpCustomerSegments = {
-        customerOrganizations: icp.target_customers?.length ? icp.target_customers : [],
-        buyerTypes: icp.buyer_types?.length ? icp.buyer_types : [],
-      };
-      const refreshedCompetitors = enrichment.competitors_enriched ?? icp.competitors ?? [];
+      const refreshedIcpCustomerSegments = resolveCustomerSegments({
+        targetCustomers: enrichment.target_customers ?? [],
+        customersWeServe: enrichment.customers_we_serve ?? [],
+        fallbackItems: enrichment.customers_we_serve ?? [],
+      });
+      const refreshedCompetitors = enrichment.competitors_enriched ?? [];
 
       toast.loading('Refreshing company signals…', { id: toastId });
       const companySignalsRes = await fetch('/api/recommend-signals', {
@@ -1608,8 +1613,8 @@ export default function ICPManagerPage() {
           customerDevelopmentStages: refreshedCustomerDevelopmentStages,
           companySizes,
           fundingStages: refreshedFundingStages,
-          exampleCompanyName: enrichment.company_name ?? icp.example_company_enrichment?.company_name ?? null,
-          exampleCompanyDescription: enrichment.description ?? icp.example_company_enrichment?.description ?? null,
+          exampleCompanyName: enrichment.company_name ?? null,
+          exampleCompanyDescription: enrichment.description ?? null,
         }),
       });
       if (!icpSummaryRes.ok) {
@@ -1683,7 +1688,7 @@ export default function ICPManagerPage() {
           icp_example_employee_count: employeeCount,
           icp_example_employee_range: employeeRange,
           icp_example_total_funding_usd: enrichment.total_funding_usd ?? null,
-          example_company_name: enrichment.company_name ?? icp.example_company_enrichment?.company_name,
+          example_company_name: enrichment.company_name ?? null,
         }),
       });
       if (!btRes.ok) {

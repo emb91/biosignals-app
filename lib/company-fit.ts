@@ -84,6 +84,8 @@ type BreakdownComponent = {
   matchedCount?: number;
   totalSelected?: number;
   matchStatus?: string;
+  matchedValues?: string[];
+  unmatchedValues?: string[];
 };
 
 type ScoreBreakdown = {
@@ -261,6 +263,26 @@ function fundingAmountBandIndex(amount: number | null): number | null {
   return 5;
 }
 
+function fundingAmountBandLabel(amount: number | null): string | null {
+  const band = fundingAmountBandIndex(amount);
+  switch (band) {
+    case 0:
+      return 'under $2M';
+    case 1:
+      return '$2M-$10M';
+    case 2:
+      return '$10M-$30M';
+    case 3:
+      return '$30M-$100M';
+    case 4:
+      return '$100M-$300M';
+    case 5:
+      return '$300M+';
+    default:
+      return null;
+  }
+}
+
 function fundingAmountSimilarity(companyAmount: number | null, referenceAmount: number | null): number | null {
   const companyBand = fundingAmountBandIndex(companyAmount);
   const referenceBand = fundingAmountBandIndex(referenceAmount);
@@ -373,6 +395,8 @@ function makeComponent(params: {
   matchedCount?: number;
   totalSelected?: number;
   matchStatus?: string;
+  matchedValues?: string[];
+  unmatchedValues?: string[];
 }): BreakdownComponent {
   const earned = Math.max(0, Math.min(params.weight, params.earned));
   return {
@@ -386,6 +410,8 @@ function makeComponent(params: {
     matchedCount: params.matchedCount,
     totalSelected: params.totalSelected,
     matchStatus: params.matchStatus,
+    matchedValues: params.matchedValues,
+    unmatchedValues: params.unmatchedValues,
   };
 }
 
@@ -417,6 +443,8 @@ function computeCompanyIcpScore(company: CompanyScoreRow, icp: IcpScoreRow): Com
             ? `ICP expects ${icpCompanyType}; company is ${companyType ?? 'unknown'}.`
             : 'No company-type gate on this ICP.',
     matchStatus: companyTypeMatchStatus,
+    matchedValues: companyTypeMatchStatus === 'exact' && icpCompanyType ? [icpCompanyType] : [],
+    unmatchedValues: companyTypeMatchStatus === 'mismatch' && icpCompanyType ? [icpCompanyType] : [],
   });
 
   const icpPlatformCategory = normalizePlatformCategoryForStorage(icp.platform_category);
@@ -446,7 +474,9 @@ function computeCompanyIcpScore(company: CompanyScoreRow, icp: IcpScoreRow): Com
   const companyTherapeuticAreas = new Set(
     canonicalizeStringList(company.therapeutic_areas, canonicalizeTherapeuticArea),
   );
-  const matchedTherapeuticAreas = icpTherapeuticAreas.filter((value) => companyTherapeuticAreas.has(value)).length;
+  const matchedTAValues = icpTherapeuticAreas.filter((value) => companyTherapeuticAreas.has(value));
+  const unmatchedTAValues = icpTherapeuticAreas.filter((value) => !companyTherapeuticAreas.has(value));
+  const matchedTherapeuticAreas = matchedTAValues.length;
   const therapeuticAreasComponent = makeComponent({
     label: 'Therapeutic areas',
     active: icpTherapeuticAreas.length > 0,
@@ -464,12 +494,16 @@ function computeCompanyIcpScore(company: CompanyScoreRow, icp: IcpScoreRow): Com
           : `${matchedTherapeuticAreas}/${icpTherapeuticAreas.length} ICP therapeutic areas matched.`,
     matchedCount: matchedTherapeuticAreas,
     totalSelected: icpTherapeuticAreas.length,
+    matchedValues: matchedTAValues,
+    unmatchedValues: unmatchedTAValues,
   });
 
   const icpModalities = canonicalizeStringList(icp.modalities, canonicalizeModality);
   const companyModalities = canonicalizeStringList(company.modalities, canonicalizeModality);
   const expandedCompanyModalities = new Set(expandModalitiesWithParents(companyModalities));
-  const matchedModalities = icpModalities.filter((value) => expandedCompanyModalities.has(value)).length;
+  const matchedModalityValues = icpModalities.filter((value) => expandedCompanyModalities.has(value));
+  const unmatchedModalityValues = icpModalities.filter((value) => !expandedCompanyModalities.has(value));
+  const matchedModalities = matchedModalityValues.length;
   const modalitiesComponent = makeComponent({
     label: 'Modalities',
     active: icpModalities.length > 0,
@@ -479,6 +513,8 @@ function computeCompanyIcpScore(company: CompanyScoreRow, icp: IcpScoreRow): Com
       icpModalities.length > 0
         ? COMPONENT_WEIGHTS.modalities * ratioScore(matchedModalities, icpModalities.length)
         : 0,
+    matchedValues: matchedModalityValues,
+    unmatchedValues: unmatchedModalityValues,
     detail:
       icpModalities.length === 0
         ? 'No modality criterion.'
@@ -492,9 +528,9 @@ function computeCompanyIcpScore(company: CompanyScoreRow, icp: IcpScoreRow): Com
   const icpStages = canonicalizeStringList(icp.development_stages, canonicalizeDevelopmentStage);
   const companyStages = getCompanyDevelopmentStages(company);
   const hasAllStages = icpStages.includes('All stages') || companyStages.includes('All stages');
-  const matchedStages = hasAllStages
-    ? icpStages.length
-    : icpStages.filter((value) => companyStages.includes(value)).length;
+  const matchedStageValues = hasAllStages ? icpStages : icpStages.filter((value) => companyStages.includes(value));
+  const unmatchedStageValues = hasAllStages ? [] : icpStages.filter((value) => !companyStages.includes(value));
+  const matchedStages = matchedStageValues.length;
   const developmentStagesComponent = makeComponent({
     label: 'Development stages',
     active: icpStages.length > 0,
@@ -504,6 +540,8 @@ function computeCompanyIcpScore(company: CompanyScoreRow, icp: IcpScoreRow): Com
       icpStages.length > 0
         ? COMPONENT_WEIGHTS.developmentStages * (hasAllStages ? 1 : ratioScore(matchedStages, icpStages.length))
         : 0,
+    matchedValues: matchedStageValues,
+    unmatchedValues: unmatchedStageValues,
     detail:
       icpStages.length === 0
         ? 'No development-stage criterion.'
@@ -528,6 +566,10 @@ function computeCompanyIcpScore(company: CompanyScoreRow, icp: IcpScoreRow): Com
       icpSizeBuckets.length > 0 && sizeScore != null
         ? COMPONENT_WEIGHTS.companySize * sizeScore
         : 0,
+    matchedValues:
+      companySize && sizeScore != null && sizeScore > 0
+        ? [companySize]
+        : [],
     detail:
       icpSizeBuckets.length === 0
         ? 'No company-size criterion.'
@@ -536,6 +578,14 @@ function computeCompanyIcpScore(company: CompanyScoreRow, icp: IcpScoreRow): Com
           : icpSizeBuckets.includes(companySize)
             ? `Exact size-band match on ${companySize}.`
             : `Nearest size band to ${companySize} compared with ICP target ${icpSizeBuckets.join(', ')}.`,
+    matchStatus:
+      !companySize
+        ? 'unknown'
+        : sizeScore === 1
+          ? 'exact'
+          : sizeScore && sizeScore > 0
+            ? 'adjacent'
+            : 'mismatch',
   });
 
   const icpFundingStages = dedupe(
@@ -556,6 +606,8 @@ function computeCompanyIcpScore(company: CompanyScoreRow, icp: IcpScoreRow): Com
   );
   const stageSimilarity = fundingStageSimilarity(companyFundingStage, icpFundingStages);
   const amountSimilarity = fundingAmountSimilarity(company.total_funding_usd, icpFundingAmount);
+  const companyFundingBand = fundingAmountBandLabel(company.total_funding_usd);
+  const icpFundingBand = fundingAmountBandLabel(icpFundingAmount);
   const fundingStageActive = icpFundingStages.length > 0;
   const fundingAmountActive = icpFundingAmount != null;
   const fundingWeightShareStage = fundingStageActive && fundingAmountActive ? 0.7 : fundingStageActive ? 1 : 0;
@@ -575,6 +627,10 @@ function computeCompanyIcpScore(company: CompanyScoreRow, icp: IcpScoreRow): Com
       fundingStageActive || fundingAmountActive
         ? COMPONENT_WEIGHTS.funding * fundingRatio
         : 0,
+    matchedValues: [
+      ...(companyFundingStage && stageSimilarity != null && stageSimilarity > 0 ? [companyFundingStage] : []),
+      ...(companyFundingBand && amountSimilarity != null && amountSimilarity > 0 ? [companyFundingBand] : []),
+    ],
     detail:
       !fundingStageActive && !fundingAmountActive
         ? 'No funding criterion.'
@@ -586,14 +642,22 @@ function computeCompanyIcpScore(company: CompanyScoreRow, icp: IcpScoreRow): Com
                   ? `Funding stage ${companyFundingStage} compared with ICP target ${icpFundingStages.join(', ')}.`
                   : `Funding stage missing; ICP target ${icpFundingStages.join(', ')}.`
                 : null,
-              fundingAmountActive && company.total_funding_usd != null
-                ? `Raised ${Math.round(company.total_funding_usd / 1_000_000)}M against ICP reference ${Math.round(icpFundingAmount! / 1_000_000)}M.`
+              fundingAmountActive && companyFundingBand
+                ? `Raised bucket ${companyFundingBand} compared with ICP target bucket ${icpFundingBand ?? 'unknown'}.`
                 : fundingAmountActive
-                  ? `Total funding missing; ICP reference ${Math.round(icpFundingAmount! / 1_000_000)}M.`
+                  ? `Total funding missing; ICP target bucket ${icpFundingBand ?? 'unknown'}.`
                   : null,
             ]
               .filter(Boolean)
               .join(' '),
+    matchStatus:
+      !fundingAvailable
+        ? 'unknown'
+        : fundingRatio >= 0.999
+          ? 'exact'
+          : fundingRatio > 0
+            ? 'adjacent'
+            : 'mismatch',
   });
 
   const components = {

@@ -82,6 +82,8 @@ interface CompanyFitBreakdownComponent {
   matchedCount?: number;
   totalSelected?: number;
   matchStatus?: string;
+  matchedValues?: string[];
+  unmatchedValues?: string[];
 }
 
 interface CompanyFitBreakdown {
@@ -103,6 +105,7 @@ interface CompanyFitBreakdown {
 interface CompanyFitCandidate {
   icp_id: string;
   icp_name: string | null;
+  icp_index: number | null;
   final_score: number | null;
   raw_score: number | null;
   score_cap: number | null;
@@ -339,14 +342,47 @@ const formatMatchStatus = (value: string | null | undefined): string | null => {
   return value.replace(/_/g, ' ');
 };
 
-const getBestMatchLabel = (lead: Pick<Lead, 'matched_icp_name' | 'matched_icp_index' | 'matched_icp_label'>): string | null => {
-  if (lead.matched_icp_label) return `Best match: ${lead.matched_icp_label}`;
-  if (lead.matched_icp_index && lead.matched_icp_name) {
-    return `Best match: ICP ${lead.matched_icp_index}: ${lead.matched_icp_name}`;
+const getExactCompanyFitPillLabels = (
+  key: CompanyFitComponentKey,
+  detail: string | null | undefined,
+): string[] => {
+  if (!detail) return [];
+
+  if (key === 'company_type') {
+    const match = detail.match(/^Matches\s+(.+?)\.$/i);
+    return match?.[1] ? [match[1]] : [];
   }
-  if (lead.matched_icp_name) {
-    return `Best match: ${lead.matched_icp_name}`;
+
+  if (key === 'company_size') {
+    const match = detail.match(/^Exact size-band match on\s+(.+?)\.$/i);
+    return match?.[1] ? [match[1]] : [];
   }
+
+  if (key === 'funding') {
+    const labels: string[] = [];
+    const stageMatch = detail.match(/Funding stage\s+(.+?)\s+compared with ICP target/i);
+    if (stageMatch?.[1]) labels.push(stageMatch[1]);
+
+    const bucketMatch = detail.match(/Raised bucket\s+(.+?)\s+compared with ICP target bucket/i);
+    if (bucketMatch?.[1]) labels.push(bucketMatch[1]);
+
+    return labels;
+  }
+
+  return [];
+};
+
+const getExactCompanyFitStatusLabel = (
+  key: CompanyFitComponentKey,
+  component: { matchStatus?: string | null; detail?: string | null },
+): string | null => {
+  const hasExactPillFallback = getExactCompanyFitPillLabels(key, component.detail).length > 0;
+  if (component.matchStatus !== 'exact' && !hasExactPillFallback) return null;
+
+  if (key === 'company_type') return 'Company type match';
+  if (key === 'company_size') return 'Company size match';
+  if (key === 'funding') return 'Funding match';
+
   return null;
 };
 
@@ -553,7 +589,6 @@ export default function LeadsPage() {
   const [selectedPreview, setSelectedPreview] = useState<'contact' | 'company' | 'scoring'>('contact');
   const [isWorkHistoryExpanded, setIsWorkHistoryExpanded] = useState(false);
   const [companyPanelOpen, setCompanyPanelOpen] = useState<Record<string, boolean>>({
-    fit: true,
     summary: true,
     criteria: true,
     funding: true,
@@ -568,6 +603,18 @@ export default function LeadsPage() {
     details: true,
     workHistory: true,
     signals: true,
+  });
+  const [scoringPanelOpen, setScoringPanelOpen] = useState({
+    priority: true,
+    icpFit: true,
+    contactFit: true,
+    otherIcps: false,
+  });
+  const [expandedBars, setExpandedBars] = useState<Set<string>>(new Set());
+  const toggleBar = (key: string) => setExpandedBars(prev => {
+    const next = new Set(prev);
+    next.has(key) ? next.delete(key) : next.add(key);
+    return next;
   });
   const [requestedComingSoonContactSignals, setRequestedComingSoonContactSignals] = useState<Set<string>>(
     () => new Set(),
@@ -1129,7 +1176,7 @@ export default function LeadsPage() {
                     <span>Name</span>
                     <span>Job title</span>
                     <span>Company</span>
-                    <span>Score</span>
+                    <span>Fit score</span>
                     <span></span>
                   </div>
 
@@ -1356,7 +1403,7 @@ export default function LeadsPage() {
                               ? 'Contact details'
                               : selectedPreview === 'company'
                                 ? 'Company details'
-                                : 'Scoring'}
+                                : 'Fit score'}
                           </p>
                           {selectedPreview !== 'scoring' && (
                             <h2 className="text-lg font-semibold text-gray-900 mt-1 leading-tight">
@@ -1384,24 +1431,8 @@ export default function LeadsPage() {
                               selectedLead.company_domain;
                             const href = selectedCompanyFirmographics?.website || (domain ? `https://${domain}` : null);
                             const linkedIn = selectedCompanyFirmographics?.linkedin_url || selectedLead.company_linkedin_url;
-                            const fitLabel = formatPercent(selectedLead.fit_score);
-                            const bestMatchLabel = getBestMatchLabel(selectedLead);
                             return (
                               <div className="mt-1 space-y-2">
-                                {(bestMatchLabel || fitLabel) && (
-                                  <div className="flex flex-wrap gap-1.5">
-                                    {bestMatchLabel && (
-                                      <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2.5 py-0.5 text-xs font-medium text-arcova-teal">
-                                        {bestMatchLabel}
-                                      </span>
-                                    )}
-                                    {fitLabel && (
-                                      <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600">
-                                        {fitLabel}
-                                      </span>
-                                    )}
-                                  </div>
-                                )}
                                 {domain && href && (
                                   <a href={href} target="_blank" rel="noopener noreferrer"
                                     className="flex items-center gap-1 text-xs text-arcova-teal hover:underline">
@@ -1421,20 +1452,27 @@ export default function LeadsPage() {
                           })()}
                           {selectedPreview === 'scoring' && (
                             <div className="mt-1 space-y-2">
-                              <h2 className="text-lg font-semibold text-gray-900">Priority score</h2>
+                              <h2 className="text-lg font-semibold text-gray-900 leading-tight">Lead prioritisation</h2>
                               <div className="flex flex-wrap gap-1.5">
                                 {typeof selectedLead.priority_score === 'number' && (
-                                  <span className="inline-flex items-center rounded-full bg-arcova-teal px-2.5 py-0.5 text-xs font-medium text-white">
-                                    {formatPercentValue(selectedLead.priority_score)}
+                                  <span className="inline-flex items-center rounded-full bg-arcova-teal px-2.5 py-0.5 text-xs font-semibold text-white">
+                                    Overall fit {formatPercentValue(selectedLead.priority_score)}
                                   </span>
                                 )}
-                                {formatPercent(selectedLead.fit_score) && (
+                                {(selectedLead.matched_icp_index != null || selectedLead.matched_icp_name) && (
                                   <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2.5 py-0.5 text-xs font-medium text-arcova-teal">
-                                    Company fit {formatPercentValue(selectedLead.fit_score)}
+                                    {selectedLead.matched_icp_index != null
+                                      ? `Best fit ICP-${selectedLead.matched_icp_index}`
+                                      : `Best fit: ${selectedLead.matched_icp_name}`}
                                   </span>
                                 )}
-                                {selectedContactFit && typeof selectedContactFit.contact_fit_score === 'number' && (
-                                  <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2.5 py-0.5 text-xs font-medium text-arcova-teal">
+                                {typeof selectedLead.fit_score === 'number' && (
+                                  <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
+                                    ICP fit {formatPercentValue(selectedLead.fit_score)}
+                                  </span>
+                                )}
+                                {selectedContactFit?.contact_fit_score != null && (
+                                  <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
                                     Contact fit {formatPercentValue(selectedContactFit.contact_fit_score)}
                                   </span>
                                 )}
@@ -1598,7 +1636,7 @@ export default function LeadsPage() {
                                       {selectedLead.email &&
                                         (selectedLead.email_status === 'candidate' ||
                                           selectedLead.email_status === 'stale_suspected') && (
-                                          <p className="text-xs text-amber-700 mt-1">
+                                          <p className="text-xs text-gray-500 mt-1">
                                             This email may be outdated.
                                           </p>
                                         )}
@@ -1822,18 +1860,6 @@ export default function LeadsPage() {
                             const f = selectedCompanyFirmographics;
                             const hqParts = [f?.hq_city, f?.hq_country].filter(Boolean);
                             const hq = hqParts.join(', ') || null;
-                            const companyFit = selectedCompanyFit;
-                            const fitBreakdown = companyFit?.winning_breakdown ?? null;
-                            const fitLabel = formatPercent(
-                              companyFit?.company_fit_score ?? selectedLead.fit_score,
-                            );
-                            const bestMatchLabel = getBestMatchLabel(selectedLead);
-                            const fitCoverageLabel = formatCoverage(companyFit?.company_fit_coverage);
-                            const fitMessage = selectedCompanyFitState?.message ?? null;
-                            const fitError = selectedCompanyFitState?.error ?? null;
-                            const alternateIcpScores = (companyFit?.icp_scores || [])
-                              .filter((score) => score.icp_id !== companyFit?.matched_icp_id)
-                              .slice(0, 3);
                             const showPlatformCategory = f?.company_type === 'SaaS' && !!f?.platform_category;
                             const hasCriteria = !!(f?.company_type || showPlatformCategory || f?.therapeutic_areas?.length || f?.modalities?.length || f?.development_stages?.length);
                             const hasFunding = !!(f?.funding_status_label || f?.funding_stage || f?.total_funding_usd != null || f?.latest_funding_date);
@@ -1845,184 +1871,6 @@ export default function LeadsPage() {
 
                             return (
                               <div className="space-y-3">
-
-                                {/* Fit */}
-                                <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
-                                  <button
-                                    type="button"
-                                    onClick={() => setCompanyPanelOpen((s) => ({ ...s, fit: !s.fit }))}
-                                    className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100/60 transition-colors"
-                                  >
-                                    <span className="text-xs font-semibold text-gray-700">Fit score</span>
-                                    <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 ${companyPanelOpen.fit ? '' : '-rotate-90'}`} />
-                                  </button>
-                                  {companyPanelOpen.fit && (
-                                    <div className="px-3 pb-3 space-y-3">
-                                      {selectedCompanyFitState?.loading ? (
-                                        <p className="text-xs text-gray-400">Loading company-fit breakdown…</p>
-                                      ) : fitError ? (
-                                        <p className="text-xs text-red-500">{fitError}</p>
-                                      ) : fitBreakdown ? (
-                                        <>
-                                          <div className="flex flex-wrap gap-1.5">
-                                            {bestMatchLabel && (
-                                              <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2.5 py-0.5 text-xs font-medium text-arcova-teal">
-                                                {bestMatchLabel}
-                                              </span>
-                                            )}
-                                            {fitLabel && (
-                                              <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
-                                                {fitLabel}
-                                              </span>
-                                            )}
-                                            {fitCoverageLabel && (
-                                              <span className="inline-flex items-center rounded-full bg-white px-2.5 py-0.5 text-xs font-medium text-slate-500 ring-1 ring-slate-200">
-                                                {fitCoverageLabel}
-                                              </span>
-                                            )}
-                                          </div>
-
-                                          <p className="text-sm text-gray-700 leading-relaxed">
-                                            {fitBreakdown.summary.reasoning}
-                                          </p>
-
-                                          {fitMessage && (
-                                            <p className="text-xs text-amber-700">{fitMessage}</p>
-                                          )}
-
-                                          {fitBreakdown.matched_on.length > 0 && (
-                                            <div>
-                                              <p className="text-gray-400 text-xs mb-1">Matched on</p>
-                                              <div className="flex flex-wrap gap-1.5">
-                                                {fitBreakdown.matched_on.map((value) => (
-                                                  <span
-                                                    key={value}
-                                                    className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700"
-                                                  >
-                                                    {value}
-                                                  </span>
-                                                ))}
-                                              </div>
-                                            </div>
-                                          )}
-
-                                          {fitBreakdown.gaps.length > 0 && (
-                                            <div>
-                                              <p className="text-gray-400 text-xs mb-1">Lower-scoring areas</p>
-                                              <div className="flex flex-wrap gap-1.5">
-                                                {fitBreakdown.gaps.map((value) => (
-                                                  <span
-                                                    key={value}
-                                                    className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600"
-                                                  >
-                                                    {value}
-                                                  </span>
-                                                ))}
-                                              </div>
-                                            </div>
-                                          )}
-
-                                          <div className="space-y-2">
-                                            {COMPANY_FIT_COMPONENT_ORDER.map((key) => {
-                                              const component = fitBreakdown.components[key];
-                                              if (!component?.active) return null;
-
-                                              const componentPercent = formatPercentValue(component.score01);
-                                              const matchedRatio =
-                                                typeof component.matchedCount === 'number' &&
-                                                typeof component.totalSelected === 'number'
-                                                  ? `${component.matchedCount}/${component.totalSelected}`
-                                                  : null;
-
-                                              return (
-                                                <div key={key} className="rounded-lg bg-white px-3 py-2 ring-1 ring-slate-200">
-                                                  <div className="flex items-center justify-between gap-3">
-                                                    <div className="min-w-0">
-                                                      <p className="text-sm font-medium text-gray-900">
-                                                        {component.label}
-                                                      </p>
-                                                      {matchedRatio && (
-                                                        <p className="text-[11px] text-gray-400">
-                                                          {matchedRatio} matched
-                                                        </p>
-                                                      )}
-                                                    </div>
-                                                    {componentPercent && (
-                                                      <span className="text-xs font-medium text-slate-600">
-                                                        {componentPercent}
-                                                      </span>
-                                                    )}
-                                                  </div>
-                                                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200">
-                                                    <div
-                                                      className={`h-full rounded-full ${
-                                                        component.available
-                                                          ? 'bg-arcova-teal'
-                                                          : 'bg-slate-300'
-                                                      }`}
-                                                      style={{ width: `${Math.max(0, Math.min(100, Math.round(component.score01 * 100)))}%` }}
-                                                    />
-                                                  </div>
-                                                  <p className="mt-2 text-[11px] leading-relaxed text-gray-500">
-                                                    {component.detail}
-                                                  </p>
-                                                </div>
-                                              );
-                                            })}
-                                          </div>
-
-                                          {alternateIcpScores.length > 0 && (
-                                            <div>
-                                              <p className="text-gray-400 text-xs mb-1.5">Other ICP comparisons</p>
-                                              <div className="space-y-1.5">
-                                                {alternateIcpScores.map((score) => (
-                                                  <div
-                                                    key={score.icp_id}
-                                                    className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-2 ring-1 ring-slate-200"
-                                                  >
-                                                    <div className="min-w-0">
-                                                      <p className="truncate text-xs font-medium text-gray-800">
-                                                        {score.icp_name || 'Untitled ICP'}
-                                                      </p>
-                                                      {formatMatchStatus(score.company_type_match_status) && (
-                                                        <p className="text-[11px] text-gray-400 capitalize">
-                                                          {formatMatchStatus(score.company_type_match_status)}
-                                                        </p>
-                                                      )}
-                                                    </div>
-                                                    <div className="flex flex-wrap justify-end gap-1.5">
-                                                      {formatCoverage(score.coverage) && (
-                                                        <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">
-                                                          {formatCoverage(score.coverage)}
-                                                        </span>
-                                                      )}
-                                                      {formatPercent(score.final_score) && (
-                                                        <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
-                                                          {formatPercent(score.final_score)}
-                                                        </span>
-                                                      )}
-                                                    </div>
-                                                  </div>
-                                                ))}
-                                              </div>
-                                            </div>
-                                          )}
-                                        </>
-                                      ) : fitMessage ? (
-                                        <p className="text-xs text-amber-700">{fitMessage}</p>
-                                      ) : fitLabel || selectedLead.matched_icp_name ? (
-                                        <p className="text-xs text-gray-500">
-                                          Company fit is cached on the lead, but the detailed breakdown has not been stored yet.
-                                        </p>
-                                      ) : (
-                                        <p className="text-xs text-gray-400 italic">
-                                          Company fit will appear here once scoring has run for this company.
-                                        </p>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-
                                 {/* Summary */}
                                 <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
                                   <button
@@ -2292,123 +2140,182 @@ export default function LeadsPage() {
 
                             {/* Priority score */}
                             {typeof selectedLead.priority_score === 'number' && (
-                              <div className="rounded-xl border border-arcova-teal/15 bg-arcova-teal/5 p-4">
-                                <p className="text-xs font-semibold uppercase tracking-wide text-arcova-teal">Priority score</p>
-                                <p className="mt-2 text-3xl font-semibold text-gray-900">
-                                  {formatPercentValue(selectedLead.priority_score)}
-                                </p>
+                              <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
+                                <button
+                                  type="button"
+                                  onClick={() => setScoringPanelOpen((s) => ({ ...s, priority: !s.priority }))}
+                                  className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-100/60 transition-colors"
+                                >
+                                  <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Overall fit score</span>
+                                  <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 ${scoringPanelOpen.priority ? '' : '-rotate-90'}`} />
+                                </button>
+                                {scoringPanelOpen.priority && (
+                                  <div className="px-4 pb-3">
+                                    <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-sm font-medium text-slate-700">
+                                      {formatPercentValue(selectedLead.priority_score)}
+                                    </span>
+                                  </div>
+                                )}
                               </div>
                             )}
 
                             {/* ICP fit scores card */}
-                            <div className="rounded-xl border border-gray-100 bg-gray-50/70 p-4 space-y-3">
-                              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">ICP fit</p>
+                            <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
+                              <button
+                                type="button"
+                                onClick={() => setScoringPanelOpen((s) => ({ ...s, icpFit: !s.icpFit }))}
+                                className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-100/60 transition-colors"
+                              >
+                                <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">ICP fit score</span>
+                                <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 ${scoringPanelOpen.icpFit ? '' : '-rotate-90'}`} />
+                              </button>
+                              {scoringPanelOpen.icpFit && (
+                                <div className="px-4 pb-4 space-y-3">
 
                               {selectedCompanyFitState?.loading ? (
                                 <p className="text-xs text-gray-400">Loading ICP scores…</p>
                               ) : selectedCompanyFit?.icp_scores?.length ? (
-                                <div className="space-y-2">
-                                  {selectedCompanyFit.icp_scores.map((score) => {
+                                (() => {
+                                  const bestScore = selectedCompanyFit.icp_scores.find(s => s.icp_id === selectedCompanyFit.matched_icp_id) ?? selectedCompanyFit.icp_scores[0];
+                                  const otherScores = selectedCompanyFit.icp_scores.filter(s => s.icp_id !== bestScore?.icp_id);
+                                  const renderScore = (score: typeof bestScore, idx: number) => {
                                     const isBest = score.icp_id === selectedCompanyFit.matched_icp_id;
                                     const breakdown = score.breakdown;
                                     return (
                                       <div
                                         key={score.icp_id}
-                                        className={`rounded-lg border p-3 ${
+                                        className={
                                           isBest
-                                            ? 'border-arcova-teal/30 bg-white'
-                                            : 'border-gray-200 bg-white/60'
-                                        }`}
+                                            ? ''
+                                            : 'rounded-lg border border-slate-200 bg-white/80 px-3 py-3 shadow-[0_1px_2px_rgba(15,23,42,0.04)]'
+                                        }
                                       >
-                                        <div className="flex items-start justify-between gap-3">
-                                          <div className="min-w-0">
-                                            <p className="text-sm font-medium text-gray-900 truncate">
-                                              {score.icp_name || 'Unnamed ICP'}
-                                            </p>
-                                            {score.company_type_match_status && (
-                                              <p className="mt-0.5 text-[11px] text-gray-400 capitalize">
-                                                {formatMatchStatus(score.company_type_match_status)}
-                                              </p>
-                                            )}
-                                          </div>
-                                          <div className="flex flex-wrap justify-end gap-1.5 shrink-0">
-                                            {isBest && (
-                                              <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal">
-                                                Best match
+                                        <div>
+                                          <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-gray-400">
+                                            {isBest ? 'Best fit' : 'Also scored'}{score.icp_index != null ? `: ICP ${score.icp_index}` : ''}
+                                          </p>
+                                          <p className="mt-0.5 text-sm font-semibold text-gray-900">
+                                            {score.icp_name || 'Unnamed ICP'}
+                                          </p>
+                                          {formatPercentValue(score.final_score) && (
+                                            <div className="mt-2">
+                                              <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-sm font-medium text-slate-700">
+                                                {formatPercentValue(score.final_score)}
                                               </span>
-                                            )}
-                                            {formatPercent(score.final_score) && (
-                                              <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
-                                                {formatPercent(score.final_score)}
-                                              </span>
-                                            )}
-                                          </div>
+                                            </div>
+                                          )}
                                         </div>
 
                                         {isBest && breakdown && (
-                                          <div className="mt-3 space-y-3">
-                                            {breakdown.matched_on.length > 0 && (
-                                              <div>
-                                                <p className="text-gray-400 text-[11px] mb-1">Matched on</p>
-                                                <div className="flex flex-wrap gap-1.5">
-                                                  {breakdown.matched_on.map((value) => (
-                                                    <span
-                                                      key={value}
-                                                      className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700"
-                                                    >
-                                                      {value}
-                                                    </span>
-                                                  ))}
-                                                </div>
-                                              </div>
-                                            )}
-
-                                            {breakdown.gaps.length > 0 && (
-                                              <div>
-                                                <p className="text-gray-400 text-[11px] mb-1">Misfits</p>
-                                                <div className="flex flex-wrap gap-1.5">
-                                                  {breakdown.gaps.map((value) => (
-                                                    <span
-                                                      key={value}
-                                                      className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700"
-                                                    >
-                                                      {value}
-                                                    </span>
-                                                  ))}
-                                                </div>
-                                              </div>
-                                            )}
-
-                                            <div className="space-y-1.5">
-                                              {COMPANY_FIT_COMPONENT_ORDER.map((key) => {
-                                                const component = breakdown.components[key];
-                                                if (!component?.active) return null;
-                                                const componentPercent = formatPercentValue(component.score01);
-                                                return (
-                                                  <div key={key} className="rounded-md bg-gray-50 px-2.5 py-2 ring-1 ring-slate-200">
+                                          <div className="mt-5 space-y-2.5">
+                                            {COMPANY_FIT_COMPONENT_ORDER.map((key) => {
+                                              const component = breakdown.components[key];
+                                              if (!component?.active) return null;
+                                              const componentPercent = formatPercentValue(component.score01);
+                                              const exactPillLabels = getExactCompanyFitPillLabels(key, component.detail);
+                                              const barKey = `icp:${score.icp_id}:${key}`;
+                                              const isOpen = expandedBars.has(barKey);
+                                              return (
+                                                <div key={key}>
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => toggleBar(barKey)}
+                                                    className="w-full text-left"
+                                                  >
                                                     <div className="flex items-center justify-between gap-2">
-                                                      <p className="text-[12px] font-medium text-gray-800 truncate">{component.label}</p>
+                                                      <p className="text-xs font-medium text-gray-700">{component.label}</p>
                                                       {componentPercent && (
-                                                        <span className="text-[11px] font-medium text-slate-600 shrink-0">{componentPercent}</span>
+                                                        <span className="text-[11px] text-slate-500 shrink-0">{componentPercent}</span>
                                                       )}
                                                     </div>
-                                                    <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-slate-200">
+                                                    <div className="mt-1 h-1 overflow-hidden rounded-full bg-slate-200">
                                                       <div
                                                         className={`h-full rounded-full ${component.available ? 'bg-arcova-teal' : 'bg-slate-300'}`}
                                                         style={{ width: `${Math.max(0, Math.min(100, Math.round(component.score01 * 100)))}%` }}
                                                       />
                                                     </div>
-                                                    <p className="mt-1.5 text-[11px] leading-relaxed text-gray-500">{component.detail}</p>
-                                                  </div>
-                                                );
-                                              })}
-                                            </div>
+                                                  </button>
+                                                  {isOpen && (
+                                                    <div className="mt-1.5 space-y-1">
+                                                      {component.matchedValues && component.matchedValues.length > 0 && (
+                                                        <div className="flex flex-wrap gap-1">
+                                                          {component.matchedValues.map(v => (
+                                                            <span key={v} className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal">{v}</span>
+                                                          ))}
+                                                        </div>
+                                                      )}
+                                                      {!(component.matchedValues && component.matchedValues.length > 0) && exactPillLabels.length > 0 && (
+                                                        <div className="flex flex-wrap gap-1">
+                                                          {exactPillLabels.map((label) => (
+                                                            <span key={label} className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal">{label}</span>
+                                                          ))}
+                                                        </div>
+                                                      )}
+                                                      {component.unmatchedValues && component.unmatchedValues.length > 0 && (
+                                                        <div className="flex flex-wrap gap-1">
+                                                          {component.unmatchedValues.map(v => (
+                                                            <span key={v} className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">{v}</span>
+                                                          ))}
+                                                        </div>
+                                                      )}
+                                                      {key === 'company_type' && (
+                                                        <p className="text-[11px] leading-relaxed text-gray-400">
+                                                          {component.matchStatus === 'exact'
+                                                            ? 'Company type match'
+                                                            : component.matchStatus === 'unknown'
+                                                              ? 'Company type not yet classified'
+                                                              : component.matchStatus === 'not_applicable'
+                                                                ? 'No company type gate'
+                                                                : 'Company type not matched'}
+                                                        </p>
+                                                      )}
+                                                      {key !== 'company_type' && getExactCompanyFitStatusLabel(key, component) && (
+                                                        <p className="text-[11px] leading-relaxed text-gray-400">
+                                                          {getExactCompanyFitStatusLabel(key, component)}
+                                                        </p>
+                                                      )}
+                                                      {component.detail && !(
+                                                        (component.matchStatus === 'exact' || exactPillLabels.length > 0) &&
+                                                        (
+                                                          (component.matchedValues && component.matchedValues.length > 0) ||
+                                                          exactPillLabels.length > 0
+                                                        )
+                                                      ) && (
+                                                        <p className="text-[11px] leading-relaxed text-gray-400">{component.detail}</p>
+                                                      )}
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              );
+                                            })}
                                           </div>
                                         )}
                                       </div>
                                     );
-                                  })}
-                                </div>
+                                  };
+                                  return (
+                                    <div className="space-y-3">
+                                      {bestScore && renderScore(bestScore, 0)}
+                                      {otherScores.length > 0 && (
+                                        <div className="pt-3 border-t border-gray-100">
+                                          <button
+                                            type="button"
+                                            onClick={() => setScoringPanelOpen(s => ({ ...s, otherIcps: !s.otherIcps }))}
+                                            className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+                                          >
+                                            <ChevronDown className={`w-3 h-3 transition-transform duration-200 ${scoringPanelOpen.otherIcps ? '' : '-rotate-90'}`} />
+                                            {scoringPanelOpen.otherIcps ? 'Hide' : `${otherScores.length} other ICP${otherScores.length > 1 ? 's' : ''}`}
+                                          </button>
+                                          {scoringPanelOpen.otherIcps && (
+                                            <div className="mt-3 space-y-3">
+                                              {otherScores.map((s, i) => renderScore(s, i + 1))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })()
                               ) : selectedLead.fit_score != null ? (
                                 <div className="flex items-center gap-2">
                                   <p className="text-sm font-medium text-gray-900">{formatPercentValue(selectedLead.fit_score)}</p>
@@ -2421,101 +2328,105 @@ export default function LeadsPage() {
                               ) : (
                                 <p className="text-xs text-gray-400">No ICP fit yet.</p>
                               )}
+                                </div>
+                              )}
                             </div>
 
                             {/* Contact fit card */}
-                            <div className="rounded-xl border border-gray-100 bg-gray-50/70 p-4 space-y-3">
-                              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Contact fit</p>
+                            <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
+                              <button
+                                type="button"
+                                onClick={() => setScoringPanelOpen((s) => ({ ...s, contactFit: !s.contactFit }))}
+                                className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-100/60 transition-colors"
+                              >
+                                <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Contact fit score</span>
+                                <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 ${scoringPanelOpen.contactFit ? '' : '-rotate-90'}`} />
+                              </button>
+                              {scoringPanelOpen.contactFit && (
+                                <div className="px-4 pb-4 space-y-3">
 
                               {selectedContactFitState?.loading ? (
                                 <p className="text-xs text-gray-400">Loading contact fit…</p>
                               ) : selectedContactFit?.winning_breakdown ? (() => {
                                 const fitBreakdown = selectedContactFit.winning_breakdown;
                                 return (
-                                  <>
-                                    <div className="flex flex-wrap items-center gap-1.5">
-                                      {formatPercent(selectedContactFit.contact_fit_score) && (
-                                        <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
-                                          {formatPercent(selectedContactFit.contact_fit_score)}
-                                        </span>
-                                      )}
-                                      {selectedContactFit.matched_persona_name && (
-                                        <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal">
-                                          {selectedContactFit.matched_persona_name}
-                                        </span>
-                                      )}
-                                      {selectedContactFit.matched_icp_name && (
-                                        <span className="inline-flex items-center rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-slate-500 ring-1 ring-slate-200">
-                                          ICP: {selectedContactFit.matched_icp_name}
-                                        </span>
-                                      )}
-                                    </div>
-
-                                    {fitBreakdown.matched_on.length > 0 && (
+                                  <div>
+                                    {formatPercentValue(selectedContactFit.contact_fit_score) && (
                                       <div>
-                                        <p className="text-gray-400 text-[11px] mb-1">Matched on</p>
-                                        <div className="flex flex-wrap gap-1.5">
-                                          {fitBreakdown.matched_on.map((value) => (
-                                            <span
-                                              key={value}
-                                              className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700"
-                                            >
-                                              {value}
-                                            </span>
-                                          ))}
-                                        </div>
+                                        <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-sm font-medium text-slate-700">
+                                          {formatPercentValue(selectedContactFit.contact_fit_score)}
+                                        </span>
                                       </div>
                                     )}
-
-                                    {fitBreakdown.gaps.length > 0 && (
-                                      <div>
-                                        <p className="text-gray-400 text-[11px] mb-1">Misfits</p>
-                                        <div className="flex flex-wrap gap-1.5">
-                                          {fitBreakdown.gaps.map((value) => (
-                                            <span
-                                              key={value}
-                                              className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700"
-                                            >
-                                              {value}
-                                            </span>
-                                          ))}
-                                        </div>
-                                      </div>
+                                    {selectedContactFit.matched_icp_name && (
+                                      <p className="mt-1.5 text-xs text-gray-400">ICP: {selectedContactFit.matched_icp_name}</p>
                                     )}
 
-                                    <div className="space-y-1.5">
+                                    <div className="mt-5 space-y-2.5">
                                       {CONTACT_FIT_COMPONENT_ORDER.map((key) => {
                                         const component = fitBreakdown.components[key];
                                         if (!component?.active) return null;
                                         const componentPercent = formatPercentValue(component.score01);
+                                        const barKey = `contact:${key}`;
+                                        const isOpen = expandedBars.has(barKey);
                                         return (
-                                          <div key={key} className="rounded-md bg-white px-2.5 py-2 ring-1 ring-slate-200">
-                                            <div className="flex items-center justify-between gap-2">
-                                              <div className="min-w-0">
-                                                <p className="text-[12px] font-medium text-gray-800 truncate">{component.label}</p>
-                                                {component.matchedValue && (
-                                                  <p className="text-[11px] text-gray-400 truncate">Closest match: {component.matchedValue}</p>
+                                          <div key={key}>
+                                            <button
+                                              type="button"
+                                              onClick={() => toggleBar(barKey)}
+                                              className="w-full text-left"
+                                            >
+                                              <div className="flex items-center justify-between gap-2">
+                                                <p className="text-xs font-medium text-gray-700">{component.label}</p>
+                                                {componentPercent && (
+                                                  <span className="text-[11px] text-slate-500 shrink-0">{componentPercent}</span>
                                                 )}
                                               </div>
-                                              {componentPercent && (
-                                                <span className="text-[11px] font-medium text-slate-600 shrink-0">{componentPercent}</span>
-                                              )}
-                                            </div>
-                                            <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-slate-200">
-                                              <div
-                                                className={`h-full rounded-full ${component.available ? 'bg-arcova-teal' : 'bg-slate-300'}`}
-                                                style={{ width: `${Math.max(0, Math.min(100, Math.round(component.score01 * 100)))}%` }}
-                                              />
-                                            </div>
-                                            <p className="mt-1.5 text-[11px] leading-relaxed text-gray-500">{component.detail}</p>
+                                              <div className="mt-1 h-1 overflow-hidden rounded-full bg-slate-200">
+                                                <div
+                                                  className={`h-full rounded-full ${component.available ? 'bg-arcova-teal' : 'bg-slate-300'}`}
+                                                  style={{ width: `${Math.max(0, Math.min(100, Math.round(component.score01 * 100)))}%` }}
+                                                />
+                                              </div>
+                                            </button>
+                                            {isOpen && (() => {
+                                              const showPill = Boolean(component.matchedValue) && component.matchStatus !== 'mismatch';
+                                              const detailText: string | null = (() => {
+                                                if (component.matchStatus === 'exact') return 'Exact match';
+                                                if (key === 'seniority') {
+                                                  const contactSeniority = selectedLead.seniority_level?.toLowerCase() ?? null;
+                                                  const personaSeniority = component.matchedValue?.toLowerCase() ?? null;
+                                                  if (contactSeniority && personaSeniority) {
+                                                    const subject = selectedLead.first_name || 'This contact';
+                                                    return `${subject} is ${contactSeniority}, not ${personaSeniority}`;
+                                                  }
+                                                }
+                                                return component.detail || null;
+                                              })();
+                                              if (!showPill && !detailText) return null;
+                                              return (
+                                                <div className="mt-1.5 space-y-1">
+                                                  {showPill && (
+                                                    <div className="flex flex-wrap gap-1">
+                                                      <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal">{component.matchedValue}</span>
+                                                    </div>
+                                                  )}
+                                                  {detailText && (
+                                                    <p className="text-[11px] leading-relaxed text-gray-400">{detailText}</p>
+                                                  )}
+                                                </div>
+                                              );
+                                            })()}
                                           </div>
                                         );
                                       })}
                                     </div>
-                                  </>
+                                  </div>
                                 );
                               })() : (
                                 <p className="text-xs text-gray-400">No contact fit yet.</p>
+                              )}
+                                </div>
                               )}
                             </div>
 
@@ -2578,7 +2489,7 @@ export default function LeadsPage() {
                                 type="button"
                                 onClick={() => deleteLead(selectedLead.id)}
                                 disabled={isDeletingSelected}
-                                className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border border-red-200 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 transition-colors"
+                                className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition-colors"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                                 {isDeletingSelected ? 'Deleting…' : 'Delete contact'}

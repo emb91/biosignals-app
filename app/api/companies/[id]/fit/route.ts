@@ -113,22 +113,21 @@ export async function GET(
         : null;
 
     let namesById = new Map<string, string | null>();
+    let indexById = new Map<string, number>();
 
-    if (icpIds.length > 0) {
-      const icpResult = await supabase
-        .from('icps')
-        .select('id, name')
-        .in('id', icpIds);
+    const icpResult = await supabase
+      .from('icps')
+      .select('id, name, created_at')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false });
 
-      if (icpResult.error) {
-        console.warn('Error fetching ICP names for company fit:', icpResult.error);
-      } else {
-        namesById = new Map(
-          ((icpResult.data || []) as Array<{ id: string; name: string | null }>)
-            .filter((row) => typeof row.id === 'string')
-            .map((row) => [row.id, row.name ?? null]),
-        );
-      }
+    if (icpResult.error) {
+      console.warn('Error fetching ICP names for company fit:', icpResult.error);
+    } else {
+      const allIcps = ((icpResult.data || []) as Array<{ id: string; name: string | null }>)
+        .filter((row) => typeof row.id === 'string');
+      indexById = new Map(allIcps.map((row, i) => [row.id, i + 1]));
+      namesById = new Map(allIcps.map((row) => [row.id, row.name ?? null]));
     }
 
     const winnerRow =
@@ -152,6 +151,7 @@ export async function GET(
         icp_scores: scoreRows.map((row) => ({
           icp_id: row.icp_id,
           icp_name: namesById.get(row.icp_id) ?? null,
+          icp_index: indexById.get(row.icp_id) ?? null,
           final_score: normalizeNumber(row.final_score),
           raw_score: normalizeNumber(row.raw_score),
           score_cap: normalizeNumber(row.score_cap),
