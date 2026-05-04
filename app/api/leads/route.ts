@@ -70,8 +70,25 @@ function normalizeCompanyRow(row: Record<string, unknown>): Record<string, unkno
     modalities: row.modalities ?? row.modality ?? null,
     clinical_stage: row.clinical_stage ?? null,
     matched_icp_id: row.matched_icp_id ?? null,
+    company_fit_score: row.company_fit_score ?? null,
     last_enriched_at: row.last_enriched_at ?? row.updated_at ?? null,
   });
+}
+
+function withTopLevelCompanyFitScore<T extends Record<string, unknown>>(row: T): T {
+  const company =
+    row.companies && typeof row.companies === 'object'
+      ? (row.companies as Record<string, unknown>)
+      : null;
+
+  return {
+    ...row,
+    company_fit_score: row.company_fit_score ?? company?.company_fit_score ?? null,
+  };
+}
+
+function withTopLevelCompanyFitScores(rows: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return rows.map((row) => withTopLevelCompanyFitScore(row));
 }
 
 async function attachCompaniesBestEffort(
@@ -332,19 +349,19 @@ export async function GET(request: Request) {
     };
 
     const baseLeadSelect =
-      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, email_status, email_status_reasoning, linkedin_url, profile_photo_url, headline, location, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, intent_score, overall_fit_score, source, created_at, updated_at, company_id';
+      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, email_status, email_status_reasoning, linkedin_url, profile_photo_url, headline, location, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, intent_score, overall_fit_score, contact_fit_score, source, created_at, updated_at, company_id';
     const companySelectCore =
-      'companies(company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_country, specialties, products_services, services, technologies, company_type, company_type_display, platform_category, funding_stage, funding_status_label, total_funding_usd, latest_funding_date, funding_data_source, therapeutic_areas, modalities, development_stages, clinical_stage, matched_icp_id, last_enriched_at)';
+      'companies(company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_country, specialties, products_services, services, technologies, company_type, company_type_display, platform_category, funding_stage, funding_status_label, total_funding_usd, latest_funding_date, funding_data_source, therapeutic_areas, modalities, development_stages, clinical_stage, matched_icp_id, company_fit_score, last_enriched_at)';
     const companySelectStable =
-      'companies(company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_country, specialties, products_services, services, technologies, company_type, company_type_display, platform_category, funding_stage, total_funding_usd, latest_funding_date, funding_data_source, therapeutic_areas, modalities, development_stages, clinical_stage, matched_icp_id, last_enriched_at)';
+      'companies(company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_country, specialties, products_services, services, technologies, company_type, company_type_display, platform_category, funding_stage, total_funding_usd, latest_funding_date, funding_data_source, therapeutic_areas, modalities, development_stages, clinical_stage, matched_icp_id, company_fit_score, last_enriched_at)';
     const companySelectWithFundingDebug =
-      'companies(company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_country, specialties, products_services, services, technologies, company_type, company_type_display, platform_category, funding_stage, funding_status_label, total_funding_usd, latest_funding_date, funding_data_source, funding_resolution_confidence, funding_resolution_summary, clinical_stage, therapeutic_areas, modalities, development_stages, matched_icp_id, last_enriched_at)';
+      'companies(company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_country, specialties, products_services, services, technologies, company_type, company_type_display, platform_category, funding_stage, funding_status_label, total_funding_usd, latest_funding_date, funding_data_source, funding_resolution_confidence, funding_resolution_summary, clinical_stage, therapeutic_areas, modalities, development_stages, matched_icp_id, company_fit_score, last_enriched_at)';
     const companySelectCoreLegacyTaxonomy =
-      'companies(company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_country, specialties, company_type, funding_stage, funding_status_label, total_funding_usd, latest_funding_date, funding_data_source, therapeutic_areas:therapeutic_area, modalities:modality, clinical_stage, matched_icp_id, last_enriched_at)';
+      'companies(company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_country, specialties, company_type, funding_stage, funding_status_label, total_funding_usd, latest_funding_date, funding_data_source, therapeutic_areas:therapeutic_area, modalities:modality, clinical_stage, matched_icp_id, company_fit_score, last_enriched_at)';
     const companySelectStableLegacyTaxonomy =
-      'companies(company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_country, specialties, company_type, funding_stage, total_funding_usd, latest_funding_date, funding_data_source, therapeutic_areas:therapeutic_area, modalities:modality, clinical_stage, matched_icp_id, last_enriched_at)';
+      'companies(company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_country, specialties, company_type, funding_stage, total_funding_usd, latest_funding_date, funding_data_source, therapeutic_areas:therapeutic_area, modalities:modality, clinical_stage, matched_icp_id, company_fit_score, last_enriched_at)';
     const companySelectMinimalLegacy =
-      'companies(company_name, website:company_website, linkedin_url, company_type, funding_stage, therapeutic_areas:therapeutic_area, modalities:modality, matched_icp_id, updated_at)';
+      'companies(company_name, website:company_website, linkedin_url, company_type, funding_stage, therapeutic_areas:therapeutic_area, modalities:modality, matched_icp_id, company_fit_score, updated_at)';
 
     const primarySelect =
       `${baseLeadSelect}, ${companySelectWithFundingDebug}`;
@@ -353,7 +370,7 @@ export async function GET(request: Request) {
     const tertiarySelect =
       `${baseLeadSelect}, ${companySelectStable}`;
     const fallbackSelect =
-      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, linkedin_url, profile_photo_url, headline, location, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, intent_score, overall_fit_score, source, created_at, updated_at, company_id';
+      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, linkedin_url, profile_photo_url, headline, location, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, intent_score, overall_fit_score, contact_fit_score, source, created_at, updated_at, company_id';
 
     let { data, error, count } = await runQuery(primarySelect);
 
@@ -379,12 +396,12 @@ export async function GET(request: Request) {
                   ...(row && typeof row === 'object' ? row : {}),
                   email_status: null,
                   email_status_reasoning: null,
-                })))) as unknown) as typeof data;
+                }))).then(withTopLevelCompanyFitScores)) as unknown) as typeof data;
                 error = fallbackResult.error;
                 count = fallbackResult.count;
               } else {
                 const minimalLegacyData = ((minimalLegacyResult.data || []) as unknown) as Array<Record<string, unknown>>;
-                data = (minimalLegacyData.map((row) => ({
+                data = (withTopLevelCompanyFitScores(minimalLegacyData.map((row) => ({
                   ...(row && typeof row === 'object' ? row : {}),
                   companies:
                     row?.companies && typeof row.companies === 'object'
@@ -413,13 +430,13 @@ export async function GET(request: Request) {
                           last_enriched_at: (row.companies as Record<string, unknown>).updated_at ?? null,
                         }
                       : row?.companies ?? null,
-                })) as unknown) as typeof data;
+                }))) as unknown) as typeof data;
                 error = minimalLegacyResult.error;
                 count = minimalLegacyResult.count;
               }
             } else {
               const legacyStableData = ((legacyStableResult.data || []) as unknown) as Array<Record<string, unknown>>;
-              data = (legacyStableData.map((row) => ({
+              data = (withTopLevelCompanyFitScores(legacyStableData.map((row) => ({
                 ...(row && typeof row === 'object' ? row : {}),
                 companies:
                   row?.companies && typeof row.companies === 'object'
@@ -428,15 +445,15 @@ export async function GET(request: Request) {
                         funding_status_label: null,
                         funding_resolution_confidence: null,
                         funding_resolution_summary: null,
-                      }
+                    }
                     : row?.companies ?? null,
-              })) as unknown) as typeof data;
+              }))) as unknown) as typeof data;
               error = legacyStableResult.error;
               count = legacyStableResult.count;
             }
           } else {
             const legacyCoreData = ((legacyCoreResult.data || []) as unknown) as Array<Record<string, unknown>>;
-            data = (legacyCoreData.map((row) => ({
+            data = (withTopLevelCompanyFitScores(legacyCoreData.map((row) => ({
               ...(row && typeof row === 'object' ? row : {}),
               companies:
                 row?.companies && typeof row.companies === 'object'
@@ -444,15 +461,15 @@ export async function GET(request: Request) {
                       ...(row.companies as Record<string, unknown>),
                       funding_resolution_confidence: null,
                       funding_resolution_summary: null,
-                    }
+                  }
                   : row?.companies ?? null,
-            })) as unknown) as typeof data;
+            }))) as unknown) as typeof data;
             error = legacyCoreResult.error;
             count = legacyCoreResult.count;
           }
         } else {
           const tertiaryData = ((tertiaryResult.data || []) as unknown) as Array<Record<string, unknown>>;
-          data = (tertiaryData.map((row) => ({
+          data = (withTopLevelCompanyFitScores(tertiaryData.map((row) => ({
             ...(row && typeof row === 'object' ? row : {}),
             companies:
               row?.companies && typeof row.companies === 'object'
@@ -461,15 +478,15 @@ export async function GET(request: Request) {
                     funding_status_label: null,
                     funding_resolution_confidence: null,
                     funding_resolution_summary: null,
-                  }
+                }
                 : row?.companies ?? null,
-          })) as unknown) as typeof data;
+          }))) as unknown) as typeof data;
           error = tertiaryResult.error;
           count = tertiaryResult.count;
         }
       } else {
         const secondaryData = ((secondaryResult.data || []) as unknown) as Array<Record<string, unknown>>;
-        data = (secondaryData.map((row) => ({
+        data = (withTopLevelCompanyFitScores(secondaryData.map((row) => ({
           ...(row && typeof row === 'object' ? row : {}),
           companies:
             row?.companies && typeof row.companies === 'object'
@@ -477,12 +494,16 @@ export async function GET(request: Request) {
                   ...(row.companies as Record<string, unknown>),
                   funding_resolution_confidence: null,
                   funding_resolution_summary: null,
-                }
+              }
               : row?.companies ?? null,
-        })) as unknown) as typeof data;
+        }))) as unknown) as typeof data;
         error = secondaryResult.error;
         count = secondaryResult.count;
       }
+    }
+
+    if (data) {
+      data = (withTopLevelCompanyFitScores(((data || []) as unknown) as Array<Record<string, unknown>>) as unknown) as typeof data;
     }
 
     if (error) {

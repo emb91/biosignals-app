@@ -2,7 +2,7 @@
 
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { supabase } from '@/lib/supabase';
 import { getSignalDisplayName } from '@/lib/signal-display-names';
@@ -62,6 +62,18 @@ type FollowUpReminder = {
   updatedAt: string;
 };
 
+type EnrichmentJob = {
+  id: string;
+  kind: 'icp' | 'lead';
+  status: 'running' | 'failed';
+  title: string;
+  subtitle: string | null;
+  href: string;
+  started_at: string | null;
+  finished_at: string | null;
+  last_error: string | null;
+};
+
 const TEAL = '#1D9E75';
 const MILLIS_IN_DAY = 1000 * 60 * 60 * 24;
 
@@ -102,12 +114,33 @@ export default function DashboardPage() {
   const [topLeads, setTopLeads] = useState<TopLead[]>([]);
   const [followUpReminders, setFollowUpReminders] = useState<FollowUpReminder[]>([]);
   const [showImportReadyBanner, setShowImportReadyBanner] = useState(false);
+  const [enrichmentJobs, setEnrichmentJobs] = useState<EnrichmentJob[]>([]);
+  const [hasRunningEnrichmentJobs, setHasRunningEnrichmentJobs] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) {
       router.push('/login');
     }
   }, [user, loading, router]);
+
+  const fetchEnrichmentJobs = useCallback(async () => {
+    if (!user) return;
+
+    try {
+      const response = await fetch('/api/enrichment-jobs/active');
+      if (!response.ok) return;
+
+      const result = await response.json() as {
+        data?: EnrichmentJob[];
+        hasRunning?: boolean;
+      };
+
+      setEnrichmentJobs(result.data ?? []);
+      setHasRunningEnrichmentJobs(Boolean(result.hasRunning));
+    } catch (error) {
+      console.error('Error loading enrichment jobs:', error);
+    }
+  }, [user]);
 
   useEffect(() => {
     const fetchDashboardData = async () => {
@@ -242,6 +275,20 @@ export default function DashboardPage() {
   }, [user]);
 
   useEffect(() => {
+    fetchEnrichmentJobs();
+  }, [fetchEnrichmentJobs]);
+
+  useEffect(() => {
+    if (!hasRunningEnrichmentJobs) return;
+
+    const interval = setInterval(() => {
+      fetchEnrichmentJobs();
+    }, 15000);
+
+    return () => clearInterval(interval);
+  }, [fetchEnrichmentJobs, hasRunningEnrichmentJobs]);
+
+  useEffect(() => {
     const loadImportReadyStatus = async () => {
       if (!user) return;
       try {
@@ -269,6 +316,8 @@ export default function DashboardPage() {
 
   const completedSteps = steps.filter((step) => step.completed).length;
   const isLiveMode = completedSteps === steps.length && steps.length > 0;
+  const runningEnrichmentCount = enrichmentJobs.filter((job) => job.status === 'running').length;
+  const failedEnrichmentCount = enrichmentJobs.filter((job) => job.status === 'failed').length;
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -287,6 +336,65 @@ export default function DashboardPage() {
                   >
                     View leads
                   </button>
+                </div>
+              )}
+
+              {enrichmentJobs.length > 0 && (
+                <div className="mb-6 rounded-lg border border-gray-200 bg-white p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h2 className="text-base font-semibold text-gray-900">
+                        {runningEnrichmentCount > 0 ? 'Enrichment in progress' : 'Enrichment needs attention'}
+                      </h2>
+                      <p className="mt-1 text-sm text-gray-500">
+                        {runningEnrichmentCount > 0
+                          ? "You don't need to wait on these pages."
+                          : `${failedEnrichmentCount} enrichment${failedEnrichmentCount === 1 ? '' : 's'} failed.`}
+                      </p>
+                    </div>
+                    {runningEnrichmentCount > 0 && (
+                      <span className="rounded-full bg-arcova-teal/10 px-2.5 py-1 text-xs font-semibold text-arcova-teal">
+                        {runningEnrichmentCount} running
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="mt-4 divide-y divide-gray-100">
+                    {enrichmentJobs.slice(0, 5).map((job) => (
+                      <div key={job.id} className="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                                job.status === 'running'
+                                  ? 'bg-arcova-teal/10 text-arcova-teal'
+                                  : 'bg-rose-50 text-rose-700'
+                              }`}
+                            >
+                              {job.status === 'running' ? 'Running' : 'Failed'}
+                            </span>
+                            <p className="truncate text-sm font-semibold text-gray-900">{job.title}</p>
+                          </div>
+                          <p className="mt-1 truncate text-xs text-gray-500">
+                            {job.kind === 'icp' ? 'ICP' : 'Lead'}
+                            {job.subtitle ? ` · ${job.subtitle}` : ''}
+                            {' · '}
+                            {formatTimeAgo(job.started_at || job.finished_at)}
+                          </p>
+                          {job.status === 'failed' && job.last_error && (
+                            <p className="mt-1 truncate text-xs text-rose-600">{job.last_error}</p>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => router.push(job.href)}
+                          className="shrink-0 text-sm font-medium hover:opacity-80"
+                          style={{ color: TEAL }}
+                        >
+                          Open
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 

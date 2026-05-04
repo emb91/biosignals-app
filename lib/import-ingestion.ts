@@ -362,7 +362,6 @@ export async function ingestEnrichedRecords(
         fit_score_matched_on: [],
         fit_score_gaps: null,
         scored_against_persona_id: null,
-        intent_score: 1.0,
         source: 'imported',
         last_enriched_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
