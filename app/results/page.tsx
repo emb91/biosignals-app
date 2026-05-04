@@ -1,6 +1,7 @@
 'use client';
 
 import { useAuth } from '@/context/AuthContext';
+import { useEnrichmentGuard } from '@/context/EnrichmentGuardContext';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import AppSidebar from '@/components/AppSidebar';
@@ -16,10 +17,10 @@ import {
   Trash2,
   X,
   ExternalLink,
-  Link,
   Briefcase,
   RotateCw,
   Sparkles,
+  Ban,
 } from 'lucide-react';
 
 interface EmploymentHistoryItem {
@@ -226,13 +227,15 @@ interface Lead {
   linkedin_resolution_completed_at?: string | null;
   profile_enrichment_started_at?: string | null;
   profile_enrichment_completed_at?: string | null;
-  enrichment_refresh_status?: 'idle' | 'running' | 'succeeded' | 'failed' | null;
+  enrichment_refresh_status?: 'idle' | 'running' | 'succeeded' | 'failed' | 'cancelled' | null;
   enrichment_refresh_last_error?: string | null;
   enrichment_refresh_started_at?: string | null;
   enrichment_refresh_finished_at?: string | null;
   fit_score: number | null;
   intent_score: number | null;
   overall_fit_score: number | null;
+  company_fit_score: number | null;
+  contact_fit_score: number | null;
   source: string;
   created_at: string;
   updated_at: string | null;
@@ -276,6 +279,7 @@ interface Lead {
     latest_funding_date: string | null;
     matched_icp_id: string | null;
     last_enriched_at: string | null;
+    company_fit_score?: number | null;
   } | null;
 }
 
@@ -293,7 +297,7 @@ type EnrichmentStageKey =
   | 'complete'
   | 'stopped';
 
-type LeadRefreshStatus = 'idle' | 'running' | 'succeeded' | 'failed';
+type LeadRefreshStatus = 'idle' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 
 type EnrichmentVisualState = {
   stageKey: EnrichmentStageKey;
@@ -342,6 +346,102 @@ const formatPercentValue = (value: number | null | undefined): string | null => 
 const formatPercent = (value: number | null | undefined): string | null => {
   const percent = formatPercentValue(value);
   return percent ? `${percent} fit` : null;
+};
+
+type LeadAction = 'source_contact' | 'monitor' | 'deprioritize';
+
+/**
+ * Thresholds for action classification.
+ *
+ * Company fit is the primary gate — if the account isn't worth pursuing, nothing else matters.
+ * Contact fit then determines the action:
+ *   - contact strong → Monitor (right person, wait for signal)
+ *   - contact weak/missing → Source (right account, find the right person)
+ *
+ * A weak contact with a strong company should NEVER deprioritise — that's the Source case.
+ */
+const DEPRIORITIZE_COMPANY_BELOW = 0.45;  // company_fit below this → deprioritise regardless
+const SOURCE_COMPANY_MIN = 0.5;           // company must clear this to be worth sourcing a contact
+const SOURCE_CONTACT_MAX = 0.65;          // contact below this → Source (find the right person)
+
+/**
+ * Effective overall fit score: company × (0.3 + 0.7 × contact)
+ *
+ * Multiplicative formula with company as the base and contact as a multiplier ranging
+ * from 0.3 (no contact fit) to 1.0 (perfect contact). Properties:
+ *   - Company gates the ceiling — a weak company can't be rescued by a perfect contact.
+ *   - A contact-less or zero-contact lead at a great company still scores at 30% of company,
+ *     reflecting that the account is worth pursuing even if this specific contact isn't.
+ *   - Perfect contact returns the raw company score; perfect both = 100%.
+ */
+function resolveEffectiveOverallFit(lead: Lead): number | null {
+  const company = resolveCompanyFitForLeadAction(lead);
+  const contact = resolveContactFitForLeadAction(lead);
+
+  if (company === null) {
+    const stored = lead.overall_fit_score;
+    return typeof stored === 'number' && Number.isFinite(stored) ? stored : null;
+  }
+
+  const contactMultiplier = 0.3 + 0.7 * (contact ?? 0);
+  return company * contactMultiplier;
+}
+
+/** Company ICP fit for UX pills: API sends `fit_score` on the contact row; optional joins expose `companies.company_fit_score`. */
+function resolveCompanyFitForLeadAction(lead: Lead): number | null {
+  if (typeof lead.company_fit_score === 'number' && Number.isFinite(lead.company_fit_score)) {
+    return lead.company_fit_score;
+  }
+  const nested =
+    lead.companies &&
+    typeof lead.companies.company_fit_score === 'number' &&
+    Number.isFinite(lead.companies.company_fit_score)
+      ? lead.companies.company_fit_score
+      : null;
+  if (nested != null) return nested;
+  if (typeof lead.fit_score === 'number' && Number.isFinite(lead.fit_score)) {
+    return lead.fit_score;
+  }
+  return null;
+}
+
+function resolveContactFitForLeadAction(lead: Lead): number | null {
+  if (typeof lead.contact_fit_score === 'number' && Number.isFinite(lead.contact_fit_score)) {
+    return lead.contact_fit_score;
+  }
+  return null;
+}
+
+const getLeadAction = (lead: Lead): LeadAction => {
+  const company = resolveCompanyFitForLeadAction(lead);
+  const contact = resolveContactFitForLeadAction(lead);
+
+  // Company fit is the primary gate — weak company means the account isn't worth pursuing
+  if (company === null || company < DEPRIORITIZE_COMPANY_BELOW) return 'deprioritize';
+
+  // Company clears the bar — now contact fit determines the action
+  // Weak or missing contact on a good company = Source (find the right person there)
+  if (company >= SOURCE_COMPANY_MIN && (contact === null || contact < SOURCE_CONTACT_MAX)) {
+    return 'source_contact';
+  }
+
+  // Both dimensions are solid — monitor and wait for signals
+  return 'monitor';
+};
+
+const ACTION_CONFIG: Record<LeadAction, { label: string; className: string }> = {
+  monitor: {
+    label: 'Monitor',
+    className: 'bg-arcova-teal text-white',
+  },
+  source_contact: {
+    label: 'Source',
+    className: 'bg-arcova-teal/10 text-arcova-teal ring-1 ring-arcova-teal/20',
+  },
+  deprioritize: {
+    label: 'Deprioritise',
+    className: 'bg-gray-100 text-gray-500 ring-1 ring-gray-200',
+  },
 };
 
 const formatCoverage = (value: number | null | undefined): string | null => {
@@ -599,7 +699,7 @@ const getEnrichmentErrorMessage = (lead: Lead): string | null => {
 const normalizeLeadRefreshStatus = (
   status?: Lead['enrichment_refresh_status'],
 ): LeadRefreshStatus => {
-  if (status === 'running' || status === 'succeeded' || status === 'failed') {
+  if (status === 'running' || status === 'succeeded' || status === 'failed' || status === 'cancelled') {
     return status;
   }
 
@@ -612,7 +712,7 @@ const getLeadRefreshStatusMeta = (
   switch (status) {
     case 'running':
       return {
-        label: 'Enrichment running',
+        label: 'Enrichment in progress',
         className: 'border-arcova-teal/25 bg-arcova-teal/5 text-arcova-teal',
       };
     case 'succeeded':
@@ -624,6 +724,11 @@ const getLeadRefreshStatusMeta = (
       return {
         label: 'Enrichment failed',
         className: 'border-rose-200 bg-rose-50 text-rose-700',
+      };
+    case 'cancelled':
+      return {
+        label: 'Enrichment stopped',
+        className: 'border-slate-200 bg-slate-50 text-slate-600',
       };
     default:
       return {
@@ -638,6 +743,7 @@ const REQUESTED_COMING_SOON_CONTACT_SIGNALS_KEY = 'biosignals_requested_contact_
 export default function LeadsPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const { guardedNavigate } = useEnrichmentGuard();
   const searchParams = useSearchParams();
 
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -651,8 +757,10 @@ export default function LeadsPage() {
   const [savingLeadId, setSavingLeadId] = useState<string | null>(null);
   const [deletingLeadId, setDeletingLeadId] = useState<string | null>(null);
   const [refreshingLeadId, setRefreshingLeadId] = useState<string | null>(null);
+  const [rescoringAll, setRescoringAll] = useState(false);
+  const [stoppingLeadId, setStoppingLeadId] = useState<string | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
-  const [selectedPreview, setSelectedPreview] = useState<'contact' | 'company' | 'scoring'>('contact');
+  const [selectedPreview, setSelectedPreview] = useState<'contact' | 'company' | 'scoring' | 'action'>('contact');
   const [isWorkHistoryExpanded, setIsWorkHistoryExpanded] = useState(false);
   const [companyPanelOpen, setCompanyPanelOpen] = useState<Record<string, boolean>>({
     summary: true,
@@ -749,7 +857,11 @@ export default function LeadsPage() {
       const res = await fetch(`/api/leads?${params}`);
       if (res.ok) {
         const result = await res.json();
-        const nextLeads = result.data || [];
+        const nextLeads = (result.data || []).slice().sort((a: Lead, b: Lead) => {
+          const aScore = resolveEffectiveOverallFit(a) ?? -1;
+          const bScore = resolveEffectiveOverallFit(b) ?? -1;
+          return bScore - aScore;
+        });
         setLeads(nextLeads);
         setTotal(result.total || 0);
 
@@ -768,6 +880,26 @@ export default function LeadsPage() {
   useEffect(() => {
     fetchLeads();
   }, [fetchLeads]);
+
+  // TEMP: dev-time button to recompute all fit scores against current ICP/persona criteria
+  // without re-running enrichment. Remove this once a proper background recompute is wired up.
+  const handleRescoreAll = useCallback(async () => {
+    if (rescoringAll) return;
+    setRescoringAll(true);
+    try {
+      const res = await fetch('/api/rescore-contacts', { method: 'POST' });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        console.error('Rescore failed:', body);
+        return;
+      }
+      await fetchLeads(true);
+    } catch (err) {
+      console.error('Rescore error:', err);
+    } finally {
+      setRescoringAll(false);
+    }
+  }, [rescoringAll, fetchLeads]);
 
   useEffect(() => {
     const id = searchParams.get('lead');
@@ -948,6 +1080,32 @@ export default function LeadsPage() {
     }
   };
 
+  const stopLeadEnrichment = async (leadId: string) => {
+    setStoppingLeadId(leadId);
+    try {
+      const response = await fetch(`/api/enrich/${leadId}`, {
+        method: 'DELETE',
+      });
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          typeof result.error === 'string' ? result.error : 'Could not stop enrichment.',
+        );
+      }
+
+      await fetchLeads(true);
+    } catch (error) {
+      console.error('Error stopping enrichment:', error);
+      window.alert(
+        error instanceof Error ? error.message : 'Could not stop enrichment. Please try again.',
+      );
+      await fetchLeads(true);
+    } finally {
+      setStoppingLeadId(null);
+    }
+  };
+
   const isEnriching = (lead: Lead) =>
     ['pending', 'processing'].includes(lead.linkedin_resolution_status || '') ||
     ['pending', 'processing'].includes(lead.profile_enrichment_status || '');
@@ -1074,6 +1232,7 @@ export default function LeadsPage() {
   const isSavingSelected = selectedLead ? savingLeadId === selectedLead.id : false;
   const isDeletingSelected = selectedLead ? deletingLeadId === selectedLead.id : false;
   const isRefreshingSelected = selectedLead ? refreshingLeadId === selectedLead.id : false;
+  const isStoppingSelected = selectedLead ? stoppingLeadId === selectedLead.id : false;
   const isSelectedLeadRefreshRunning = selectedLead ? isLeadRefreshRunning(selectedLead) : false;
   const selectedEnrichmentError = selectedLead ? getEnrichmentErrorMessage(selectedLead) : null;
   const selectedLeadRefreshStatus = selectedLead ? getLeadRefreshStatus(selectedLead) : 'idle';
@@ -1235,12 +1394,24 @@ export default function LeadsPage() {
               </div>
 
               {total > 0 && (
-                <button
-                  onClick={() => router.push('/import')}
-                  className="px-4 py-2 bg-arcova-teal text-white rounded-lg text-sm hover:bg-arcova-teal/90 transition-colors"
-                >
-                  + Import more
-                </button>
+                <div className="flex items-center gap-2">
+                  {/* TEMP: dev-time recalculate-all button — remove later */}
+                  <button
+                    onClick={handleRescoreAll}
+                    disabled={rescoringAll}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 border border-gray-200 bg-white text-gray-700 rounded-lg text-sm hover:bg-gray-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                    title="Recompute fit scores against current ICP/persona criteria"
+                  >
+                    <RotateCw className={`w-3.5 h-3.5 ${rescoringAll ? 'animate-spin' : ''}`} />
+                    {rescoringAll ? 'Recalculating…' : 'Recalculate scores'}
+                  </button>
+                  <button
+                    onClick={() => router.push('/import')}
+                    className="px-4 py-2 bg-arcova-teal text-white rounded-lg text-sm hover:bg-arcova-teal/90 transition-colors"
+                  >
+                    + Import more
+                  </button>
+                </div>
               )}
             </div>
 
@@ -1285,12 +1456,13 @@ export default function LeadsPage() {
               <div className={`grid gap-4 ${selectedLeadId ? 'xl:grid-cols-[minmax(0,1fr)_360px]' : ''}`}>
                 {/* ── Leads table ── */}
                 <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-                  <div className="grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.35fr)_3.5rem_auto] gap-x-4 px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide">
+                  <div className="grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.35fr)_3.5rem_auto_minmax(0,1.1fr)] gap-x-4 px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide">
                     <span>Name</span>
                     <span>Job title</span>
                     <span>Company name</span>
                     <span className="text-center leading-tight">Company details</span>
                     <span className="pl-24 text-right whitespace-nowrap justify-self-end">Fit score</span>
+                    <span>Action</span>
                   </div>
 
                   <div className="divide-y divide-gray-100">
@@ -1310,7 +1482,7 @@ export default function LeadsPage() {
                               setSelectedPreview('contact');
                               cancelEditingLead();
                             }}
-                            className={`grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.35fr)_3.5rem_auto] gap-x-4 px-4 py-3 items-center cursor-pointer transition-all duration-150 border-b border-gray-50 last:border-0 ${
+                            className={`grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.35fr)_3.5rem_auto_minmax(0,1.1fr)] gap-x-4 px-4 py-3 items-center cursor-pointer transition-all duration-150 border-b border-gray-50 last:border-0 ${
                               isSelected
                                 ? 'bg-arcova-teal/10 border-l-2 border-arcova-teal'
                                 : 'border-l-2 border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30'
@@ -1351,6 +1523,8 @@ export default function LeadsPage() {
                             <div className="flex items-center justify-end min-w-[5.5rem] pl-24">
                               <ArcovaLoader size={28} />
                             </div>
+
+                            <div className="min-w-0" />
                           </div>
                         );
                       }
@@ -1363,7 +1537,7 @@ export default function LeadsPage() {
                             setSelectedPreview('contact');
                             cancelEditingLead();
                           }}
-                          className={`grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.35fr)_3.5rem_auto] gap-x-4 px-4 py-3 items-center cursor-pointer transition-all duration-150 opacity-100 ${
+                          className={`grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.35fr)_3.5rem_auto_minmax(0,1.1fr)] gap-x-4 px-4 py-3 items-center cursor-pointer transition-all duration-150 opacity-100 ${
                             isSelected
                               ? 'bg-arcova-teal/10 border-l-2 border-arcova-teal'
                               : 'border-l-2 border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30'
@@ -1441,27 +1615,52 @@ export default function LeadsPage() {
 
                           {/* Fit score */}
                           <div className="min-w-0 flex justify-end pl-24">
-                            {formatPercent(lead.overall_fit_score) ? (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setSelectedLeadId(lead.id);
-                                  setSelectedPreview('scoring');
-                                  cancelEditingLead();
-                                }}
-                                className={`inline-flex items-center justify-center min-w-[3.75rem] rounded-full border px-2.5 py-1 text-xs font-semibold shadow-sm transition-colors ${
-                                  isSelected && selectedPreview === 'scoring'
-                                    ? 'border-arcova-teal bg-arcova-teal text-white'
-                                    : 'border-arcova-teal/30 bg-white text-arcova-teal hover:border-arcova-teal hover:bg-arcova-teal/10'
-                                }`}
-                                title="Open scoring details"
-                              >
-                                {formatPercentValue(lead.overall_fit_score)}
-                              </button>
-                            ) : (
-                              <span className="text-xs text-gray-400">—</span>
-                            )}
+                            {(() => {
+                              const effectiveScore = resolveEffectiveOverallFit(lead);
+                              return effectiveScore !== null ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedLeadId(lead.id);
+                                    setSelectedPreview('scoring');
+                                    cancelEditingLead();
+                                  }}
+                                  className={`inline-flex items-center justify-center min-w-[3.75rem] rounded-full border px-2.5 py-1 text-xs font-semibold shadow-sm transition-colors ${
+                                    isSelected && selectedPreview === 'scoring'
+                                      ? 'border-arcova-teal bg-arcova-teal text-white'
+                                      : 'border-arcova-teal/30 bg-white text-arcova-teal hover:border-arcova-teal hover:bg-arcova-teal/10'
+                                  }`}
+                                  title="Open scoring details"
+                                >
+                                  {formatPercentValue(effectiveScore)}
+                                </button>
+                              ) : (
+                                <span className="text-xs text-gray-400">—</span>
+                              );
+                            })()}
+                          </div>
+
+                          {/* Action */}
+                          <div className="min-w-0 flex items-center">
+                            {(() => {
+                              const action = getLeadAction(lead);
+                              const config = ACTION_CONFIG[action];
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedLeadId(lead.id);
+                                    setSelectedPreview('action');
+                                    cancelEditingLead();
+                                  }}
+                                  className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium transition-opacity hover:opacity-80 ${config.className} ${isSelected && selectedPreview === 'action' ? 'ring-2 ring-offset-1' : ''}`}
+                                >
+                                  {config.label}
+                                </button>
+                              );
+                            })()}
                           </div>
                         </div>
                       );
@@ -1511,9 +1710,11 @@ export default function LeadsPage() {
                               ? 'Contact details'
                               : selectedPreview === 'company'
                                 ? 'Company details'
-                                : 'Fit score'}
+                                : selectedPreview === 'action'
+                                  ? 'Recommended action'
+                                  : 'Fit score'}
                           </p>
-                          {selectedPreview !== 'scoring' && (
+                          {selectedPreview !== 'scoring' && selectedPreview !== 'action' && (
                             <h2 className="text-lg font-semibold text-gray-900 mt-1 leading-tight">
                               {selectedPreview === 'contact'
                                 ? [selectedLead.first_name, selectedLead.last_name]
@@ -1527,6 +1728,15 @@ export default function LeadsPage() {
                                   'Selected company'}
                             </h2>
                           )}
+                          {selectedPreview === 'action' && (() => {
+                            const action = getLeadAction(selectedLead);
+                            const config = ACTION_CONFIG[action];
+                            return (
+                              <span className={`mt-2 inline-flex items-center rounded-full px-3 py-1 text-sm font-medium ${config.className}`}>
+                                {config.label}
+                              </span>
+                            );
+                          })()}
                           {selectedPreview === 'contact' && selectedLead.headline && (
                             <p className="text-sm text-gray-500 mt-1 leading-snug line-clamp-2">
                               {selectedLead.headline}
@@ -1562,9 +1772,9 @@ export default function LeadsPage() {
                             <div className="mt-1 space-y-2">
                               <h2 className="text-lg font-semibold text-gray-900 leading-tight">Lead prioritisation</h2>
                               <div className="flex flex-wrap gap-1.5">
-                                {typeof selectedLead.overall_fit_score === 'number' && (
+                                {resolveEffectiveOverallFit(selectedLead) !== null && (
                                   <span className="inline-flex items-center rounded-full bg-arcova-teal px-2.5 py-0.5 text-xs font-semibold text-white">
-                                    Overall fit {formatPercentValue(selectedLead.overall_fit_score)}
+                                    Overall fit {formatPercentValue(resolveEffectiveOverallFit(selectedLead))}
                                   </span>
                                 )}
                                 {(selectedLead.matched_icp_index != null || selectedLead.matched_icp_name) && (
@@ -2242,6 +2452,117 @@ export default function LeadsPage() {
                               </div>
                             );
                           })()
+                        ) : selectedPreview === 'action' ? (
+                          /* ── Action view ── */
+                          (() => {
+                            const action = getLeadAction(selectedLead);
+                            const companyFit = resolveCompanyFitForLeadAction(selectedLead);
+                            const contactFit = resolveContactFitForLeadAction(selectedLead);
+                            const overallFit = resolveEffectiveOverallFit(selectedLead);
+                            const signalStrength =
+                              typeof selectedLead.intent_score === 'number' &&
+                              Number.isFinite(selectedLead.intent_score)
+                                ? selectedLead.intent_score
+                                : null;
+                            const contactName = [selectedLead.first_name, selectedLead.last_name].filter(Boolean).join(' ') || selectedLead.full_name;
+
+                            return (
+                              <div className="space-y-5">
+
+                                {/* Score summary */}
+                                <div className="rounded-xl border border-gray-100 bg-gray-50/70 p-4 space-y-3">
+                                  {companyFit !== null && (
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-sm text-gray-500">Company fit</span>
+                                      <span className="text-sm font-semibold text-gray-900">{formatPercentValue(companyFit)}</span>
+                                    </div>
+                                  )}
+                                  {contactFit !== null && (
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-sm text-gray-500">Contact fit</span>
+                                      <span className="text-sm font-semibold text-gray-900">{formatPercentValue(contactFit)}</span>
+                                    </div>
+                                  )}
+                                  {signalStrength !== null && (
+                                    <div className="flex items-center justify-between border-t border-gray-200 pt-3">
+                                      <span className="text-sm text-gray-500">Signal strength</span>
+                                      <span className="text-sm font-semibold text-gray-900">{formatPercentValue(signalStrength)}</span>
+                                    </div>
+                                  )}
+                                  {overallFit !== null && (
+                                    <div className="flex items-center justify-between border-t border-gray-200 pt-3">
+                                      <span className="text-sm text-gray-500">Overall fit</span>
+                                      <span className="text-sm font-semibold text-gray-900">{formatPercentValue(overallFit)}</span>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Action explanation */}
+                                {action === 'monitor' && (
+                                  <div className="space-y-3">
+                                    <p className="text-sm text-gray-700 leading-relaxed">
+                                      {contactName ? `${contactName} is` : 'This lead is'} a strong fit across both company and contact dimensions. No immediate action needed — keep them on your radar and wait for a buying signal before reaching out.
+                                    </p>
+                                    <p className="text-sm text-gray-500 leading-relaxed">
+                                      When contact-level signals strengthen, they will surface here automatically.
+                                    </p>
+                                    <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
+                                      <button
+                                        type="button"
+                                        onClick={() => guardedNavigate('/customer-signals')}
+                                        className="inline-flex items-center gap-1.5 text-sm font-semibold text-arcova-teal hover:text-arcova-teal/85 transition-colors"
+                                      >
+                                        Set up Signals
+                                        <ChevronRight className="w-4 h-4" aria-hidden />
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {action === 'source_contact' && (
+                                  <div className="space-y-3">
+                                    <p className="text-sm text-gray-700 leading-relaxed">
+                                      {selectedLead.companies?.company_name
+                                        ? <><strong>{selectedLead.companies.company_name}</strong> is a strong ICP fit</>
+                                        : 'The company is a strong ICP fit'
+                                      }, but {contactName || 'this contact'} isn&apos;t the right persona to approach. Look for a better-matched contact at this account before reaching out.
+                                    </p>
+                                    <p className="text-sm text-gray-500 leading-relaxed">
+                                      Try searching LinkedIn for the right title at this company, or use enrichment to surface additional contacts.
+                                    </p>
+                                    {(selectedLead.companies?.linkedin_url || selectedLead.companies?.company_name) && (
+                                      <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
+                                        <a
+                                          href={
+                                            selectedLead.companies?.linkedin_url
+                                              ? `${selectedLead.companies.linkedin_url}/people/`
+                                              : `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(selectedLead.companies?.company_name ?? '')}`
+                                          }
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="inline-flex items-center gap-1.5 text-sm font-semibold text-arcova-teal hover:text-arcova-teal/85 transition-colors"
+                                        >
+                                          Search contacts on LinkedIn
+                                          <ExternalLink className="w-3.5 h-3.5" aria-hidden />
+                                        </a>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+
+                                {action === 'deprioritize' && (
+                                  <div className="space-y-3">
+                                    <p className="text-sm text-gray-700 leading-relaxed">
+                                      This lead sits below minimum fit thresholds — either company fit, contact fit, or both are too weak to warrant attention right now.
+                                    </p>
+                                    <p className="text-sm text-gray-500 leading-relaxed">
+                                      This doesn&apos;t mean they are permanently out. If their company situation changes or you revisit your ICP criteria, they may score higher in a future run.
+                                    </p>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()
                         ) : (
                           /* ── Scoring view ── */
                           <div className="space-y-3">
@@ -2260,7 +2581,7 @@ export default function LeadsPage() {
                                 {scoringPanelOpen.priority && (
                                   <div className="px-4 pb-3">
                                     <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-sm font-medium text-slate-700">
-                                      {formatPercentValue(selectedLead.overall_fit_score)}
+                                      {formatPercentValue(resolveEffectiveOverallFit(selectedLead))}
                                     </span>
                                   </div>
                                 )}
@@ -2365,31 +2686,6 @@ export default function LeadsPage() {
                                                             <span key={v} className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">{v}</span>
                                                           ))}
                                                         </div>
-                                                      )}
-                                                      {key === 'company_type' && (
-                                                        <p className="text-[11px] leading-relaxed text-gray-400">
-                                                          {component.matchStatus === 'exact'
-                                                            ? 'Company type match'
-                                                            : component.matchStatus === 'unknown'
-                                                              ? 'Company type not yet classified'
-                                                              : component.matchStatus === 'not_applicable'
-                                                                ? 'No company type gate'
-                                                                : 'Company type not matched'}
-                                                        </p>
-                                                      )}
-                                                      {key !== 'company_type' && getExactCompanyFitStatusLabel(key, component) && (
-                                                        <p className="text-[11px] leading-relaxed text-gray-400">
-                                                          {getExactCompanyFitStatusLabel(key, component)}
-                                                        </p>
-                                                      )}
-                                                      {component.detail && !(
-                                                        (component.matchStatus === 'exact' || exactPillLabels.length > 0) &&
-                                                        (
-                                                          (component.matchedValues && component.matchedValues.length > 0) ||
-                                                          exactPillLabels.length > 0
-                                                        )
-                                                      ) && (
-                                                        <p className="text-[11px] leading-relaxed text-gray-400">{component.detail}</p>
                                                       )}
                                                     </div>
                                                   )}
@@ -2549,10 +2845,24 @@ export default function LeadsPage() {
                             <div className={`rounded-lg border px-3 py-2 text-xs ${selectedLeadRefreshStatusMeta.className}`}>
                               <p className="font-medium">{selectedLeadRefreshStatusMeta.label}</p>
                               {selectedLeadRefreshStatus === 'running' && (
-                                <p className="mt-1">
-                                  Enrichment in progress. You don't need to wait on this page.
-                                </p>
+                                <div className="mt-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => stopLeadEnrichment(selectedLead.id)}
+                                    disabled={isStoppingSelected}
+                                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                  >
+                                    <Ban className="w-3.5 h-3.5" aria-hidden />
+                                    {isStoppingSelected ? 'Stopping…' : 'Stop enrichment'}
+                                  </button>
+                                </div>
                               )}
+                              {selectedLeadRefreshStatus === 'cancelled' &&
+                                selectedLead.enrichment_refresh_finished_at && (
+                                  <p className="mt-1">
+                                    Stopped {formatLastUpdated(selectedLead.enrichment_refresh_finished_at)}.
+                                  </p>
+                                )}
                               {selectedLeadRefreshStatus === 'succeeded' && selectedLead.enrichment_refresh_finished_at && (
                                 <p className="mt-1">
                                   Finished {formatLastUpdated(selectedLead.enrichment_refresh_finished_at)}.
@@ -2563,16 +2873,25 @@ export default function LeadsPage() {
                               )}
                             </div>
                           )}
-                          <p className="text-xs text-gray-500">
-                            If this enrichment looks stalled, you can manually run it again here.
-                          </p>
+                          {selectedLeadRefreshStatus !== 'running' && (
+                            <p className="text-xs text-gray-500">
+                              You can refresh this enrichment again whenever you need updated data.
+                            </p>
+                          )}
                           <button
                             type="button"
                             onClick={() => rerunEnrichment(selectedLead.id)}
-                            disabled={isRefreshingSelected || isEditingSelected || isSelectedLeadRefreshRunning}
+                            disabled={
+                              isRefreshingSelected ||
+                              isStoppingSelected ||
+                              isEditingSelected ||
+                              isSelectedLeadRefreshRunning
+                            }
                             className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-arcova-teal/5 px-4 py-2 text-sm font-medium text-arcova-teal hover:bg-arcova-teal/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                           >
-                            <RotateCw className={`w-4 h-4 ${(isRefreshingSelected || isSelectedLeadRefreshRunning) ? 'animate-spin' : ''}`} />
+                            <RotateCw
+                              className={`w-4 h-4 ${isRefreshingSelected || isSelectedLeadRefreshRunning ? 'animate-spin' : ''}`}
+                            />
                             {isRefreshingSelected
                               ? 'Starting enrichment…'
                               : isSelectedLeadRefreshRunning

@@ -36,8 +36,8 @@ type ContactRow = {
 };
 
 type Pass2Result = {
-  status: 'completed' | 'ambiguous' | 'failed';
-  linkedinResolution: LinkedinResolutionResult;
+  status: 'completed' | 'ambiguous' | 'failed' | 'cancelled';
+  linkedinResolution?: LinkedinResolutionResult;
   alignment?: Record<string, unknown> | null;
   apifyProfile?: Record<string, unknown> | null;
 };
@@ -147,6 +147,92 @@ async function updateContactWithOptionalRefreshJobFields(
   if (fallbackError) {
     throw fallbackError;
   }
+}
+
+export class LeadEnrichmentCancelledError extends Error {
+  readonly name = 'LeadEnrichmentCancelledError';
+
+  constructor() {
+    super('Lead enrichment was stopped by user');
+  }
+}
+
+async function throwIfLeadRefreshCancelled(
+  supabase: MinimalSupabase,
+  contactId: string,
+  userId: string,
+): Promise<void> {
+  const { data, error } = await supabase
+    .from('contacts')
+    .select('enrichment_refresh_status')
+    .eq('user_id', userId)
+    .eq('id', contactId)
+    .maybeSingle();
+
+  if (error) {
+    console.warn('[enrichment-pipeline] Cancel check failed:', error);
+    return;
+  }
+
+  if ((data as { enrichment_refresh_status?: string | null } | null)?.enrichment_refresh_status === 'cancelled') {
+    throw new LeadEnrichmentCancelledError();
+  }
+}
+
+/**
+ * Applies terminal state after the user stops an in-flight lead enrichment (API DELETE or cooperative cancel).
+ */
+export async function applyUserCancellationToLeadEnrichment(
+  supabase: MinimalSupabase,
+  params: { contactId: string; userId: string },
+): Promise<void> {
+  const { contactId, userId } = params;
+
+  const { data: row, error } = await supabase
+    .from('contacts')
+    .select(
+      'linkedin_resolution_status, profile_enrichment_status, enrichment_refresh_finished_at',
+    )
+    .eq('user_id', userId)
+    .eq('id', contactId)
+    .maybeSingle();
+
+  if (error || !row) {
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const typed = row as {
+    linkedin_resolution_status: string | null;
+    profile_enrichment_status: string | null;
+    enrichment_refresh_finished_at: string | null;
+  };
+
+  const payload: Record<string, unknown> = {
+    enrichment_refresh_status: 'cancelled',
+    enrichment_refresh_last_error: null,
+    enrichment_refresh_finished_at: typed.enrichment_refresh_finished_at || now,
+    updated_at: now,
+  };
+
+  if ((typed.linkedin_resolution_status || '') === 'processing') {
+    payload.linkedin_resolution_status = 'failed';
+    payload.linkedin_resolution_completed_at = now;
+    payload.linkedin_resolution_last_error = 'Stopped by user.';
+    payload.profile_enrichment_status = 'blocked';
+    payload.profile_enrichment_last_error = 'Enrichment was stopped before completion.';
+    payload.profile_enrichment_completed_at = now;
+  } else if ((typed.profile_enrichment_status || '') === 'processing') {
+    payload.profile_enrichment_status = 'blocked';
+    payload.profile_enrichment_last_error = 'Stopped by user.';
+    payload.profile_enrichment_completed_at = now;
+  }
+
+  await updateContactWithOptionalRefreshJobFields(supabase, {
+    contactId,
+    userId,
+    payload,
+  });
 }
 
 type CanonicalCompanyRow = {
@@ -788,6 +874,21 @@ export async function runContactResolutionPipelineForContact(
   const typedContact = contact as ContactRow;
   let linkedinResolved = false;
 
+  const cancelledSnap = await supabase
+    .from('contacts')
+    .select('enrichment_refresh_status')
+    .eq('user_id', userId)
+    .eq('id', contactId)
+    .maybeSingle();
+
+  if (
+    !cancelledSnap.error &&
+    (cancelledSnap.data as { enrichment_refresh_status?: string | null } | null)?.enrichment_refresh_status === 'cancelled'
+  ) {
+    await applyUserCancellationToLeadEnrichment(supabase, { contactId, userId });
+    return { status: 'cancelled' };
+  }
+
   await updateContactWithOptionalRefreshJobFields(supabase, {
     contactId,
     userId,
@@ -846,6 +947,8 @@ export async function runContactResolutionPipelineForContact(
       apollo_person: apolloPerson as any,
     });
 
+    await throwIfLeadRefreshCancelled(supabase, contactId, userId);
+
     if (!resolvedLinkedin.linkedin_url) {
       const finishedAt = new Date().toISOString();
       const failureMessage = 'No credible LinkedIn profile URL found during LinkedIn resolution.';
@@ -874,6 +977,8 @@ export async function runContactResolutionPipelineForContact(
 
     linkedinResolved = true;
 
+    await throwIfLeadRefreshCancelled(supabase, contactId, userId);
+
     if (!isProfileEnrichmentConfigured()) {
       const completedAt = new Date().toISOString();
       await updateContactWithOptionalRefreshJobFields(supabase, {
@@ -900,6 +1005,8 @@ export async function runContactResolutionPipelineForContact(
       };
     }
 
+    await throwIfLeadRefreshCancelled(supabase, contactId, userId);
+
     await supabase
       .from('contacts')
       .update({
@@ -915,6 +1022,8 @@ export async function runContactResolutionPipelineForContact(
       })
       .eq('user_id', userId)
       .eq('id', contactId);
+
+    await throwIfLeadRefreshCancelled(supabase, contactId, userId);
 
     const apifyProfile = await runApifyProfileEnrichment(resolvedLinkedin.linkedin_url);
     const alignment = compareApolloAndApify({
@@ -944,6 +1053,9 @@ export async function runContactResolutionPipelineForContact(
     let apolloCompanyFirmographics: Record<string, unknown> | null = null;
     let apifyCompanyFirmographicsRefreshedAt: string | null = null;
     let apolloCompanyFirmographicsRefreshedAt: string | null = null;
+
+    await throwIfLeadRefreshCancelled(supabase, contactId, userId);
+
     if (resolved.currentCompanyLinkedinUrl) {
       try {
         apifyCompanyRaw = await runApifyCompanyEnrichment(resolved.currentCompanyLinkedinUrl);
@@ -1044,6 +1156,8 @@ export async function runContactResolutionPipelineForContact(
       normalizeDomain(resolved.currentCompanyDomain) ||
       null;
 
+    await throwIfLeadRefreshCancelled(supabase, contactId, userId);
+
     // Resolve canonical funding before flipping the lead to completed so the UI
     // never settles on an intermediate Apollo funding stage.
     if (companyId) {
@@ -1120,6 +1234,8 @@ export async function runContactResolutionPipelineForContact(
     updatePayload.company_linkedin_url = resolved.currentCompanyLinkedinUrl;
     updatePayload.company_id = companyId;
 
+    await throwIfLeadRefreshCancelled(supabase, contactId, userId);
+
     try {
       const previousTitles = (resolved.employmentHistory ?? [])
         .filter((h: { current?: boolean; title?: string | null }) => !h.current && h.title)
@@ -1159,6 +1275,11 @@ export async function runContactResolutionPipelineForContact(
       apifyProfile,
     };
   } catch (error) {
+    if (error instanceof LeadEnrichmentCancelledError) {
+      await applyUserCancellationToLeadEnrichment(supabase, { contactId, userId });
+      return { status: 'cancelled' };
+    }
+
     const message = error instanceof Error ? error.message : 'Unknown contact resolution pipeline error';
 
     if (linkedinResolved) {

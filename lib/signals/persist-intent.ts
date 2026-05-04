@@ -183,7 +183,8 @@ export async function persistContactIntentScore(
     toSlim(contactEv as Record<string, unknown>[])
   );
 
-  const intentStored = typeof contactIntent01 === 'number' ? contactIntent01 : 1;
+  const intentStored: number | null =
+    typeof contactIntent01 === 'number' ? contactIntent01 : null;
 
   const { error: upErr } = await supabase
     .from('contacts')
