@@ -1,3 +1,247 @@
+export type ArcovaContactProperties = {
+  arcova_contact_fit_score: string;
+  arcova_overall_fit_score: string;
+  arcova_action: string;
+  arcova_seniority: string;
+  arcova_function: string;
+  arcova_enriched_email: string;
+  arcova_enriched_at: string;
+  arcova_person_summary: string;
+};
+
+export type ArcovaCompanyProperties = {
+  arcova_company_fit_score: string;
+  arcova_modalities: string;
+  arcova_therapeutic_areas: string;
+  arcova_development_stages: string;
+  arcova_company_type: string;
+  arcova_platform_category: string;
+  arcova_bio_summary: string;
+  arcova_industry: string;
+  arcova_employee_count: string;
+  arcova_founded_year: string;
+  arcova_headquarters: string;
+};
+
+type HubSpotPropertyDefinition = {
+  name: string;
+  label: string;
+  type: 'string' | 'number' | 'date' | 'datetime' | 'enumeration' | 'bool';
+  fieldType: 'text' | 'textarea' | 'number' | 'date' | 'select' | 'checkbox';
+  groupName: string;
+};
+
+const ARCOVA_CONTACT_PROPERTIES: HubSpotPropertyDefinition[] = [
+  { name: 'arcova_contact_fit_score', label: 'Arcova: Contact Fit Score', type: 'number', fieldType: 'number', groupName: 'arcova_intelligence' },
+  { name: 'arcova_overall_fit_score', label: 'Arcova: Overall Fit Score', type: 'number', fieldType: 'number', groupName: 'arcova_intelligence' },
+  { name: 'arcova_action', label: 'Arcova: Recommended Action', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
+  { name: 'arcova_seniority', label: 'Arcova: Seniority Level', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
+  { name: 'arcova_function', label: 'Arcova: Business Function', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
+  { name: 'arcova_enriched_email', label: 'Arcova: Enriched Email', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
+  { name: 'arcova_enriched_at', label: 'Arcova: Enriched At', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
+  { name: 'arcova_person_summary', label: 'Arcova: Person Summary', type: 'string', fieldType: 'textarea', groupName: 'arcova_intelligence' },
+  { name: 'arcova_linkedin_url', label: 'Arcova: LinkedIn URL', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
+];
+
+const ARCOVA_COMPANY_PROPERTIES: HubSpotPropertyDefinition[] = [
+  { name: 'arcova_company_fit_score', label: 'Arcova: Company Fit Score', type: 'number', fieldType: 'number', groupName: 'arcova_intelligence' },
+  { name: 'arcova_modalities', label: 'Arcova: Modalities', type: 'string', fieldType: 'textarea', groupName: 'arcova_intelligence' },
+  { name: 'arcova_therapeutic_areas', label: 'Arcova: Therapeutic Areas', type: 'string', fieldType: 'textarea', groupName: 'arcova_intelligence' },
+  { name: 'arcova_development_stages', label: 'Arcova: Development Stages', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
+  { name: 'arcova_company_type', label: 'Arcova: Company Type', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
+  { name: 'arcova_platform_category', label: 'Arcova: Platform Category', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
+  { name: 'arcova_bio_summary', label: 'Arcova: Bio Summary', type: 'string', fieldType: 'textarea', groupName: 'arcova_intelligence' },
+  { name: 'arcova_industry', label: 'Arcova: Industry', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
+  { name: 'arcova_employee_count', label: 'Arcova: Employee Count', type: 'number', fieldType: 'number', groupName: 'arcova_intelligence' },
+  { name: 'arcova_founded_year', label: 'Arcova: Founded Year', type: 'number', fieldType: 'number', groupName: 'arcova_intelligence' },
+  { name: 'arcova_headquarters', label: 'Arcova: Headquarters', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
+  { name: 'arcova_linkedin_url', label: 'Arcova: LinkedIn URL', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
+  { name: 'arcova_funding_stage', label: 'Arcova: Funding Stage', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
+  { name: 'arcova_funding_status', label: 'Arcova: Funding Status', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
+  { name: 'arcova_total_funding_usd', label: 'Arcova: Total Funding (USD)', type: 'number', fieldType: 'number', groupName: 'arcova_intelligence' },
+];
+
+async function ensurePropertyGroup(accessToken: string, objectType: 'contacts' | 'companies'): Promise<void> {
+  await fetch(`https://api.hubapi.com/crm/v3/properties/${objectType}/groups`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'arcova_intelligence', label: 'Arcova Intelligence', displayOrder: -1 }),
+  });
+  // 409 = already exists, both cases are fine
+}
+
+async function ensureProperties(accessToken: string, objectType: 'contacts' | 'companies', properties: HubSpotPropertyDefinition[]): Promise<void> {
+  await Promise.all(
+    properties.map((prop) =>
+      fetch(`https://api.hubapi.com/crm/v3/properties/${objectType}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(prop),
+      })
+    )
+  );
+  // Ignore 409s (already exist)
+}
+
+export async function ensureArcovaHubSpotProperties(accessToken: string): Promise<void> {
+  await Promise.all([
+    ensurePropertyGroup(accessToken, 'contacts'),
+    ensurePropertyGroup(accessToken, 'companies'),
+  ]);
+  await Promise.all([
+    ensureProperties(accessToken, 'contacts', ARCOVA_CONTACT_PROPERTIES),
+    ensureProperties(accessToken, 'companies', ARCOVA_COMPANY_PROPERTIES),
+  ]);
+}
+
+export type HubSpotContactRecord = {
+  id: string;
+  properties: Record<string, string | null>;
+};
+
+export async function batchReadContactsByEmail(
+  accessToken: string,
+  emails: string[]
+): Promise<HubSpotContactRecord[]> {
+  const standardProps = ['hs_linkedin_url', 'jobtitle', 'email'];
+  const arcovaContactProps = ARCOVA_CONTACT_PROPERTIES.map((p) => p.name);
+  const propertiesParam = [...standardProps, ...arcovaContactProps];
+
+  const results: HubSpotContactRecord[] = [];
+  const chunks = chunkArray(emails, 100);
+
+  for (const chunk of chunks) {
+    const res = await fetch('https://api.hubapi.com/crm/v3/objects/contacts/batch/read', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        idProperty: 'email',
+        inputs: chunk.map((email) => ({ id: email })),
+        properties: propertiesParam,
+      }),
+    });
+    if (!res.ok) continue;
+    const data = await res.json();
+    results.push(...(data.results ?? []));
+  }
+  return results;
+}
+
+export async function batchUpdateContacts(
+  accessToken: string,
+  updates: Array<{ id: string; properties: Record<string, string> }>
+): Promise<{ updated: number; errors: number }> {
+  let updated = 0;
+  let errors = 0;
+  const chunks = chunkArray(updates, 100);
+
+  for (const chunk of chunks) {
+    const res = await fetch('https://api.hubapi.com/crm/v3/objects/contacts/batch/update', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ inputs: chunk }),
+    });
+    if (res.ok || res.status === 207) {
+      const data = await res.json();
+      updated += (data.results ?? []).length;
+      errors += (data.errors ?? []).length;
+    } else {
+      errors += chunk.length;
+    }
+  }
+  return { updated, errors };
+}
+
+// Upsert contacts by email — creates if not exists, updates if exists.
+// HubSpot batch upsert requires idProperty + id on each input.
+export async function batchUpsertContacts(
+  accessToken: string,
+  upserts: Array<{ email: string; properties: Record<string, string> }>
+): Promise<{ upserted: number; errors: number }> {
+  let upserted = 0;
+  let errors = 0;
+  const chunks = chunkArray(upserts, 100);
+
+  for (const chunk of chunks) {
+    const res = await fetch('https://api.hubapi.com/crm/v3/objects/contacts/batch/upsert', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        inputs: chunk.map(({ email, properties }) => ({
+          idProperty: 'email',
+          id: email,
+          properties: { ...properties, email },
+        })),
+      }),
+    });
+    if (res.ok || res.status === 207) {
+      const data = await res.json();
+      upserted += (data.results ?? []).length;
+      errors += (data.errors ?? []).length;
+    } else {
+      errors += chunk.length;
+    }
+  }
+  return { upserted, errors };
+}
+
+export async function getContactAssociatedCompanyIds(
+  accessToken: string,
+  contactIds: string[]
+): Promise<Map<string, string>> {
+  // Returns Map<contactId, companyId>
+  const contactToCompany = new Map<string, string>();
+  const chunks = chunkArray(contactIds, 100);
+
+  for (const chunk of chunks) {
+    const res = await fetch('https://api.hubapi.com/crm/v4/associations/contacts/companies/batch/read', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ inputs: chunk.map((id) => ({ id })) }),
+    });
+    if (!res.ok) continue;
+    const data = await res.json();
+    for (const result of data.results ?? []) {
+      const firstAssoc = result.to?.[0];
+      if (firstAssoc?.toObjectId) {
+        contactToCompany.set(String(result.from.id), String(firstAssoc.toObjectId));
+      }
+    }
+  }
+  return contactToCompany;
+}
+
+export async function batchUpdateCompanies(
+  accessToken: string,
+  updates: Array<{ id: string; properties: Record<string, string> }>
+): Promise<{ updated: number; errors: number }> {
+  let updated = 0;
+  let errors = 0;
+  const chunks = chunkArray(updates, 100);
+
+  for (const chunk of chunks) {
+    const res = await fetch('https://api.hubapi.com/crm/v3/objects/companies/batch/update', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ inputs: chunk }),
+    });
+    if (res.ok || res.status === 207) {
+      const data = await res.json();
+      updated += (data.results ?? []).length;
+      errors += (data.errors ?? []).length;
+    } else {
+      errors += chunk.length;
+    }
+  }
+  return { updated, errors };
+}
+
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) chunks.push(arr.slice(i, i + size));
+  return chunks;
+}
+
 const CLIENT_ID = process.env.HUBSPOT_CLIENT_ID!;
 const CLIENT_SECRET = process.env.HUBSPOT_CLIENT_SECRET!;
 const REDIRECT_URI = `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/hubspot/callback`;
