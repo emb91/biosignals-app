@@ -54,22 +54,21 @@ export async function POST() {
     return NextResponse.json({ error: 'Failed to get HubSpot token' }, { status: 400 });
   }
 
-  // Fetch all leads for this user
+  // Fetch ALL leads — including those without email so we can report skipped
   const { data: leads, error: leadsError } = await supabase
     .from('contacts')
     .select(`
-      id, email, linkedin_url, job_title, seniority_level, business_area,
-      contact_fit_score, overall_fit_score, contact_bio,
+      id, email, first_name, last_name, job_title, seniority_level, business_area,
+      contact_fit_score, overall_fit_score, contact_bio, linkedin_url,
       companies(
+        company_name,
         company_fit_score, modalities, therapeutic_areas, development_stages,
         company_type, platform_category, bio_summary,
         industry, employee_count, founded_year, headquarters_city, headquarters_country,
         linkedin_url, funding_stage, funding_status_label, total_funding_usd
       )
     `)
-    .eq('user_id', user.id)
-    .not('email', 'is', null)
-    .neq('email', '');
+    .eq('user_id', user.id);
 
   if (leadsError) {
     return NextResponse.json({ error: 'Failed to fetch leads' }, { status: 500 });
@@ -79,17 +78,30 @@ export async function POST() {
     return NextResponse.json({ upserted: 0, skipped: 0, errors: 0 });
   }
 
-  // Ensure arcova custom properties exist in HubSpot
+  // Split into syncable and skipped
+  type SkippedContact = { name: string; company: string | null; reason: string };
+  const skippedContacts: SkippedContact[] = [];
+  const syncableLeads = leads.filter((lead) => {
+    if (!lead.email || lead.email.trim() === '') {
+      const name = [lead.first_name, lead.last_name].filter(Boolean).join(' ') || 'Unknown';
+      const company = (lead.companies as any)?.company_name ?? null;
+      skippedContacts.push({ name, company, reason: 'No email address' });
+      return false;
+    }
+    return true;
+  });
+
+  if (!syncableLeads.length) {
+    return NextResponse.json({ contacts: { upserted: 0, errors: 0 }, companies: { updated: 0, errors: 0 }, total: 0, skipped: skippedContacts.length, skippedContacts });
+  }
+
   await ensureArcovaHubSpotProperties(accessToken);
 
   const enrichedAt = new Date().toISOString().slice(0, 10);
 
-  // Build contact upsert payloads
   const upserts: Array<{ email: string; properties: Record<string, string> }> = [];
 
-  for (const lead of leads) {
-    if (!lead.email) continue;
-
+  for (const lead of syncableLeads) {
     const co = lead.companies as any;
     const companyFit = co?.company_fit_score ?? null;
     const contactFit = typeof lead.contact_fit_score === 'number' ? lead.contact_fit_score : null;
@@ -105,36 +117,26 @@ export async function POST() {
     if (contactFit !== null) props.arcova_contact_fit_score = fmt(contactFit);
     if (lead.seniority_level) props.arcova_seniority = lead.seniority_level;
     if (lead.business_area) props.arcova_function = lead.business_area;
-    props.arcova_enriched_email = lead.email;
+    props.arcova_enriched_email = lead.email!;
 
     const personSummary = Array.isArray(lead.contact_bio)
-      ? lead.contact_bio.filter(Boolean).join(' ')
+      ? (lead.contact_bio as string[]).filter(Boolean).join(' ')
       : (lead.contact_bio as string | null) ?? '';
     if (personSummary) props.arcova_person_summary = personSummary;
     if (lead.linkedin_url) props.arcova_linkedin_url = lead.linkedin_url;
-
-    // Standard fields — set on new contacts, fill-blanks handled by upsert (won't overwrite existing)
     if (lead.linkedin_url) props.hs_linkedin_url = lead.linkedin_url;
     if (lead.job_title) props.jobtitle = lead.job_title;
-    if (lead.seniority_level || lead.business_area) {
-      // firstname/lastname not stored on contacts table — skip
-    }
 
-    upserts.push({ email: lead.email.toLowerCase(), properties: props });
-  }
-
-  if (!upserts.length) {
-    return NextResponse.json({ upserted: 0, skipped: leads.length, errors: 0 });
+    upserts.push({ email: lead.email!.toLowerCase(), properties: props });
   }
 
   const contactResult = await batchUpsertContacts(accessToken, upserts);
 
-  // Resolve HubSpot contact IDs for company association updates.
-  // Batch read by email to get the IDs we just upserted.
+  // Resolve HubSpot contact IDs to update associated companies
   const emails = upserts.map((u) => u.email);
   const hubspotContacts = await batchReadContactsByEmail(accessToken, emails);
 
-  const emailToLead = new Map(leads.map((l) => [l.email!.toLowerCase(), l]));
+  const emailToLead = new Map(syncableLeads.map((l) => [l.email!.toLowerCase(), l]));
   const hubspotContactToLead = new Map(
     hubspotContacts
       .map((c) => {
@@ -142,7 +144,7 @@ export async function POST() {
         const lead = email ? emailToLead.get(email) : undefined;
         return lead ? ([c.id, lead] as const) : null;
       })
-      .filter((x): x is [string, typeof leads[number]] => x !== null)
+      .filter((x): x is [string, typeof syncableLeads[number]] => x !== null)
   );
 
   const matchedIds = [...hubspotContactToLead.keys()];
@@ -161,9 +163,8 @@ export async function POST() {
     const co = lead.companies as any;
     if (!co) continue;
 
-    const companyFit = co?.company_fit_score ?? null;
-
     const props: Record<string, string> = {};
+    const companyFit = co?.company_fit_score ?? null;
     if (companyFit !== null) props.arcova_company_fit_score = fmt(companyFit);
     if (co.modalities?.length) props.arcova_modalities = fmtList(co.modalities);
     if (co.therapeutic_areas?.length) props.arcova_therapeutic_areas = fmtList(co.therapeutic_areas);
@@ -190,10 +191,21 @@ export async function POST() {
     ? await batchUpdateCompanies(accessToken, companyUpdates)
     : { updated: 0, errors: 0 };
 
+  // Persist sync log
+  await supabase.from('hubspot_sync_log').upsert({
+    user_id: user.id,
+    synced_at: new Date().toISOString(),
+    contacts_synced: contactResult.upserted,
+    contacts_errors: contactResult.errors,
+    contacts_skipped: skippedContacts.length,
+    skipped_contacts: skippedContacts,
+  }, { onConflict: 'user_id' });
+
   return NextResponse.json({
     contacts: contactResult,
     companies: companyResult,
     total: upserts.length,
-    skipped: leads.length - upserts.length,
+    skipped: skippedContacts.length,
+    skippedContacts,
   });
 }

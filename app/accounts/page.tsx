@@ -6,12 +6,15 @@ import { useCallback, useEffect, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import {
   Building2,
+  Briefcase,
   ChevronLeft,
   ChevronRight,
   ExternalLink,
   Search,
   Users,
+  X,
 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 const PAGE_SIZE = 50;
 
@@ -20,9 +23,23 @@ type AccountRow = {
   company_name: string | null;
   domain: string | null;
   company_website: string | null;
+  logo_url: string | null;
   company_fit_score: number | null;
   matched_icp_id: string | null;
   matched_icp_label: string | null;
+  therapeutic_areas: string[] | null;
+  modalities: string[] | null;
+  development_stages: string[] | null;
+  funding_stage: string | null;
+  funding_status_label: string | null;
+  company_type: string | null;
+  linkedin_url: string | null;
+  description: string | null;
+  bio_summary: string | null;
+  employee_count: number | null;
+  employee_range: string | null;
+  headquarters_city: string | null;
+  headquarters_country: string | null;
   contact_count: number;
   best_contact_fit: number | null;
   worst_contact_fit: number | null;
@@ -41,6 +58,35 @@ function externalCompanyUrl(account: AccountRow): string | null {
   return `https://${raw.replace(/^\/+/, '')}`;
 }
 
+function formatJoinedList(value: string[] | null | undefined, maxItems = 3): string {
+  const list = (value || []).filter(Boolean);
+  if (list.length === 0) return '—';
+  const shown = list.slice(0, maxItems);
+  const suffix = list.length > maxItems ? ` +${list.length - maxItems}` : '';
+  return `${shown.join(', ')}${suffix}`;
+}
+
+function renderTaxonomyPills(items: string[] | null | undefined) {
+  const list = (items || []).filter(Boolean);
+  if (list.length === 0) return <p className="text-xs text-gray-400">—</p>;
+  return (
+    <div className="flex flex-wrap gap-1">
+      {list.map((item) => (
+        <span
+          key={item}
+          className="inline-flex rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal"
+        >
+          {item}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** Same rhythm as leads table: 7rem details column, padded centered action column */
+const TABLE_GRID =
+  'grid grid-cols-[minmax(0,1.15fr)_minmax(0,0.95fr)_minmax(0,0.9fr)_minmax(0,5.5rem)_minmax(0,6rem)_7rem_minmax(10rem,1.25fr)] gap-x-6';
+
 export default function AccountsPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
@@ -51,6 +97,7 @@ export default function AccountsPage() {
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [loadingAccounts, setLoadingAccounts] = useState(true);
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!loading && !user) router.push('/login');
@@ -69,8 +116,13 @@ export default function AccountsPage() {
       const res = await fetch(`/api/accounts?${params}`);
       if (res.ok) {
         const result = await res.json();
-        setAccounts(result.data || []);
+        const next: AccountRow[] = result.data || [];
+        setAccounts(next);
         setTotal(result.total || 0);
+        setSelectedAccountId((current) => {
+          if (current && next.some((a) => a.id === current)) return current;
+          return next[0]?.id ?? null;
+        });
       }
     } catch (err) {
       console.error('Error fetching accounts:', err);
@@ -103,6 +155,11 @@ export default function AccountsPage() {
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
   const showSearch = total > 0 || searchInput.trim().length > 0 || search.trim().length > 0;
+  const selectedAccount = selectedAccountId
+    ? accounts.find((a) => a.id === selectedAccountId) ?? null
+    : null;
+  const leadsHrefFor = (account: AccountRow) =>
+    `/results?search=${encodeURIComponent(account.company_name || account.domain || '')}`;
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -111,22 +168,14 @@ export default function AccountsPage() {
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="flex-1 overflow-auto p-6">
           <div className="w-full max-w-none">
-            <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="mb-6 flex items-center justify-between">
               <div>
                 <h1 className="text-2xl font-bold text-gray-900">Accounts</h1>
-                <p className="mt-1 text-gray-600 max-w-3xl">
-                  Strong ICP matches where your existing contacts still score low on persona fit.
-                  Prioritize net-new outreach or enrichment so strong accounts get better coverage.
+                <p className="text-gray-600 mt-1 max-w-3xl">
+                  One row per company that appears on your imported contacts, with firmographics and fit at a
+                  glance. Select a row for details or open Leads to work people at that account.
                 </p>
               </div>
-
-              <button
-                type="button"
-                onClick={() => router.push('/results')}
-                className="shrink-0 self-start px-4 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:border-gray-400 hover:text-gray-900 transition-colors"
-              >
-                View leads
-              </button>
             </div>
 
             {showSearch && (
@@ -134,7 +183,7 @@ export default function AccountsPage() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                 <input
                   type="text"
-                  placeholder="Search by company name or domain…"
+                  placeholder="Search by company, domain, therapeutic area, modality, funding, or company type…"
                   value={searchInput}
                   onChange={(e) => setSearchInput(e.target.value)}
                   className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-arcova-teal/30 bg-white"
@@ -151,10 +200,10 @@ export default function AccountsPage() {
                 <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                   <Building2 className="w-8 h-8 text-gray-400" />
                 </div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">No coverage gaps match</h3>
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">No companies yet</h3>
                 <p className="text-gray-500 mb-6 max-w-md mx-auto">
-                  Either every imported contact already aligns well with your personas at strong
-                  accounts, or company and contact scores need another scoring pass after import.
+                  Accounts are built from your imported contacts. After you import leads with a resolved
+                  company, companies appear here.
                 </p>
                 <button
                   type="button"
@@ -170,96 +219,143 @@ export default function AccountsPage() {
                 <p className="text-gray-500">No accounts matching &ldquo;{search}&rdquo;</p>
               </div>
             ) : (
-              <>
-                <div className="overflow-x-auto">
-                  <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden min-w-[860px]">
-                  <div className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,1.2fr)_5rem_5.5rem_5.5rem_5.5rem_7rem] gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide">
+              <div className={cn('grid gap-4', selectedAccountId ? 'xl:grid-cols-[minmax(0,1fr)_360px]' : '')}>
+                <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                  <div
+                    className={cn(
+                      TABLE_GRID,
+                      'px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide',
+                    )}
+                  >
                     <span>Company</span>
-                    <span>ICP</span>
-                    <span className="text-right">Leads</span>
-                    <span className="text-right">ICP fit</span>
-                    <span className="text-right">Best contact</span>
-                    <span className="text-right">Avg contact</span>
-                    <span className="text-right sr-only">Open</span>
+                    <span>Therapeutic areas</span>
+                    <span>Modalities</span>
+                    <span className="leading-tight">Funding</span>
+                    <span className="leading-tight">Development</span>
+                    <span className="text-center leading-tight whitespace-nowrap">Company details</span>
+                    <span className="block w-full pl-12 text-center">Action</span>
                   </div>
 
                   <div className="divide-y divide-gray-100">
                     {accounts.map((account) => {
+                      const isSelected = selectedAccountId === account.id;
                       const href = externalCompanyUrl(account);
                       const companyLabel = account.company_name || account.domain || '—';
-                      const truncated =
-                        companyLabel.length > 42 ? `${companyLabel.slice(0, 42)}…` : companyLabel;
-                      const leadsHref = `/results?search=${encodeURIComponent(
-                        account.company_name || account.domain || '',
-                      )}`;
+                      const truncated = companyLabel.length > 34 ? `${companyLabel.slice(0, 34)}…` : companyLabel;
+                      const fundingDisplay =
+                        account.funding_stage || account.funding_status_label || '—';
+                      const devDisplay = formatJoinedList(account.development_stages, 2);
 
                       return (
                         <div
                           key={account.id}
-                          className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,1.2fr)_5rem_5.5rem_5.5rem_5.5rem_7rem] gap-2 px-4 py-3 items-center border-l-2 border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30 transition-colors"
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => setSelectedAccountId(account.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              setSelectedAccountId(account.id);
+                            }
+                          }}
+                          className={cn(
+                            TABLE_GRID,
+                            'px-4 py-3 items-center cursor-pointer transition-all duration-150 border-l-2',
+                            isSelected
+                              ? 'bg-arcova-teal/10 border-arcova-teal'
+                              : 'border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30',
+                          )}
                         >
-                          <div className="min-w-0 flex items-center gap-2">
-                            {href ? (
-                              <a
-                                href={href}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-sm font-medium text-arcova-teal hover:underline truncate"
-                                title={companyLabel}
-                              >
-                                {truncated}
-                              </a>
-                            ) : (
-                              <span className="text-sm font-medium text-gray-900 truncate" title={companyLabel}>
-                                {truncated}
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 min-w-0">
+                              {href ? (
+                                <a
+                                  href={href}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="text-sm font-medium text-arcova-teal hover:underline truncate"
+                                  title={companyLabel}
+                                >
+                                  {truncated}
+                                </a>
+                              ) : (
+                                <span className="text-sm font-medium text-gray-900 truncate" title={companyLabel}>
+                                  {truncated}
+                                </span>
+                              )}
+                              {href && (
+                                <a
+                                  href={href}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="text-arcova-teal hover:text-arcova-teal/70 shrink-0"
+                                  aria-label="Company website"
+                                >
+                                  <ExternalLink className="w-3.5 h-3.5" />
+                                </a>
+                              )}
+                            </div>
+                            <div className="mt-1 flex flex-wrap items-center gap-2">
+                              <span className="text-[11px] text-gray-500">
+                                {account.contact_count} contact{account.contact_count !== 1 ? 's' : ''}
                               </span>
-                            )}
-                            {href && (
-                              <a
-                                href={href}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-arcova-teal hover:text-arcova-teal/70 shrink-0"
-                                aria-label="Company website"
-                              >
-                                <ExternalLink className="w-3.5 h-3.5" />
-                              </a>
-                            )}
+                              {formatPercentValue(account.company_fit_score) && (
+                                <span className="inline-flex rounded-full border border-arcova-teal/30 bg-white px-2 py-0.5 text-[11px] font-semibold text-arcova-teal">
+                                  ICP {formatPercentValue(account.company_fit_score)}
+                                </span>
+                              )}
+                            </div>
                           </div>
 
                           <div className="min-w-0">
-                            <p className="text-xs text-gray-600 truncate leading-snug">
-                              {account.matched_icp_label || '—'}
+                            <p className="text-xs text-gray-700 truncate leading-snug" title={formatJoinedList(account.therapeutic_areas, 99)}>
+                              {formatJoinedList(account.therapeutic_areas)}
                             </p>
                           </div>
 
-                          <div className="text-right text-sm tabular-nums text-gray-800">
-                            {account.contact_count}
+                          <div className="min-w-0">
+                            <p className="text-xs text-gray-700 truncate leading-snug" title={formatJoinedList(account.modalities, 99)}>
+                              {formatJoinedList(account.modalities)}
+                            </p>
                           </div>
 
-                          <div className="text-right">
-                            <span className="inline-flex min-w-[3.25rem] justify-end rounded-full border border-arcova-teal/30 bg-white px-2 py-0.5 text-xs font-semibold text-arcova-teal">
-                              {formatPercentValue(account.company_fit_score) ?? '—'}
-                            </span>
+                          <div className="min-w-0">
+                            <p className="text-xs text-gray-700 truncate leading-snug">{fundingDisplay}</p>
                           </div>
 
-                          <div className="text-right">
-                            <span className="inline-flex min-w-[3.25rem] justify-end rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-900">
-                              {formatPercentValue(account.best_contact_fit) ?? '—'}
-                            </span>
+                          <div className="min-w-0">
+                            <p className="text-xs text-gray-700 truncate leading-snug">{devDisplay}</p>
                           </div>
 
-                          <div className="text-right">
-                            <span className="text-xs font-medium tabular-nums text-gray-600">
-                              {formatPercentValue(account.avg_contact_fit) ?? '—'}
-                            </span>
-                          </div>
-
-                          <div className="flex justify-end">
+                          <div className="min-w-0 flex justify-center justify-self-center w-full max-w-[7rem]">
                             <button
                               type="button"
-                              onClick={() => router.push(leadsHref)}
-                              className="text-xs font-semibold text-arcova-teal hover:text-arcova-teal/80 whitespace-nowrap"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedAccountId(account.id);
+                              }}
+                              className={cn(
+                                'inline-flex items-center justify-center rounded-md border p-1.5 transition-colors',
+                                isSelected
+                                  ? 'border-arcova-teal bg-arcova-teal text-white'
+                                  : 'border-arcova-teal/40 bg-arcova-teal/10 text-arcova-teal hover:bg-arcova-teal hover:text-white hover:border-arcova-teal',
+                              )}
+                              title="Company details"
+                            >
+                              <Briefcase className="w-5 h-5" />
+                            </button>
+                          </div>
+
+                          <div className="min-w-0 flex items-center justify-center pl-12">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                router.push(leadsHrefFor(account));
+                              }}
+                              className="inline-flex items-center rounded-full border border-arcova-teal/30 bg-white px-2.5 py-1 text-xs font-semibold text-arcova-teal hover:border-arcova-teal hover:bg-arcova-teal/10 transition-colors"
                             >
                               In leads
                             </button>
@@ -268,36 +364,207 @@ export default function AccountsPage() {
                       );
                     })}
                   </div>
-                  </div>
+
+                  {totalPages > 1 && (
+                    <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200 bg-gray-50">
+                      <p className="text-xs text-gray-500">
+                        {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of{' '}
+                        {total.toLocaleString()}
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setPage((p) => Math.max(1, p - 1))}
+                          disabled={page === 1}
+                          className="p-1.5 rounded text-gray-500 hover:text-gray-900 hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        >
+                          <ChevronLeft className="w-4 h-4" />
+                        </button>
+                        <span className="text-xs text-gray-600">
+                          {page} / {totalPages}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                          disabled={page === totalPages}
+                          className="p-1.5 rounded text-gray-500 hover:text-gray-900 hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        >
+                          <ChevronRight className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                {totalPages > 1 && (
-                  <div className="mt-4 flex items-center justify-between">
-                    <p className="text-sm text-gray-600">
-                      {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of {total}{' '}
-                      account{total !== 1 ? 's' : ''}
-                    </p>
-                    <div className="flex gap-2">
+                {selectedAccountId && selectedAccount && (
+                  <aside className="bg-white rounded-lg shadow-sm border border-gray-200 min-h-[520px] flex flex-col">
+                    <div className="flex items-start gap-3 px-5 py-4 border-b border-gray-200">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium uppercase tracking-wide text-arcova-teal">Company</p>
+                        <h2 className="text-lg font-semibold text-gray-900 mt-1 leading-tight break-words">
+                          {selectedAccount.company_name || selectedAccount.domain || 'Company'}
+                        </h2>
+                        {selectedAccount.matched_icp_label && (
+                          <p className="text-xs text-gray-500 mt-1">{selectedAccount.matched_icp_label}</p>
+                        )}
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {formatPercentValue(selectedAccount.company_fit_score) && (
+                            <span className="inline-flex rounded-full bg-arcova-teal px-2 py-0.5 text-xs font-semibold text-white">
+                              ICP {formatPercentValue(selectedAccount.company_fit_score)}
+                            </span>
+                          )}
+                          <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">
+                            {selectedAccount.contact_count} contact{selectedAccount.contact_count !== 1 ? 's' : ''}
+                          </span>
+                        </div>
+                      </div>
                       <button
                         type="button"
-                        disabled={page <= 1}
-                        onClick={() => setPage((p) => Math.max(1, p - 1))}
-                        className="p-2 rounded-lg border border-gray-200 bg-white disabled:opacity-40 hover:bg-gray-50"
+                        onClick={() => setSelectedAccountId(null)}
+                        className="text-gray-400 hover:text-gray-700 transition-colors"
+                        aria-label="Close details"
                       >
-                        <ChevronLeft className="w-4 h-4" />
-                      </button>
-                      <button
-                        type="button"
-                        disabled={page >= totalPages}
-                        onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                        className="p-2 rounded-lg border border-gray-200 bg-white disabled:opacity-40 hover:bg-gray-50"
-                      >
-                        <ChevronRight className="w-4 h-4" />
+                        <X className="w-5 h-5" />
                       </button>
                     </div>
-                  </div>
+
+                    <div className="flex-1 overflow-auto px-5 py-4 space-y-3">
+                      {(() => {
+                        const ext = externalCompanyUrl(selectedAccount);
+                        const domain = selectedAccount.domain;
+                        return (
+                          <div className="space-y-2">
+                            {domain && ext && (
+                              <a
+                                href={ext}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-1 text-xs text-arcova-teal hover:underline"
+                              >
+                                {domain}
+                                <ExternalLink className="w-3 h-3 shrink-0" />
+                              </a>
+                            )}
+                            {selectedAccount.linkedin_url && (
+                              <a
+                                href={selectedAccount.linkedin_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-1 text-xs text-arcova-teal hover:underline"
+                              >
+                                {selectedAccount.linkedin_url.replace(/^https?:\/\/(www\.)?/, '')}
+                                <ExternalLink className="w-3 h-3 shrink-0" />
+                              </a>
+                            )}
+                          </div>
+                        );
+                      })()}
+
+                      {(selectedAccount.bio_summary || selectedAccount.description) && (
+                        <div className="rounded-xl border border-gray-100 bg-gray-50/70 px-3 py-2.5">
+                          <p className="text-xs font-semibold text-gray-700 mb-1.5">Summary</p>
+                          <p className="text-sm text-gray-700 leading-relaxed">
+                            {selectedAccount.bio_summary || selectedAccount.description}
+                          </p>
+                        </div>
+                      )}
+
+                      <div className="rounded-xl border border-gray-100 bg-gray-50/70 px-3 py-2.5 space-y-2">
+                        <p className="text-xs font-semibold text-gray-700">Coverage</p>
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div>
+                            <p className="text-gray-400">Best contact fit</p>
+                            <p className="font-medium text-gray-900">
+                              {formatPercentValue(selectedAccount.best_contact_fit) ?? '—'}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-gray-400">Avg contact fit</p>
+                            <p className="font-medium text-gray-900">
+                              {formatPercentValue(selectedAccount.avg_contact_fit) ?? '—'}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {(selectedAccount.company_type ||
+                        selectedAccount.employee_count != null ||
+                        selectedAccount.employee_range ||
+                        selectedAccount.headquarters_city ||
+                        selectedAccount.headquarters_country) && (
+                        <div className="rounded-xl border border-gray-100 bg-gray-50/70 px-3 py-2.5 space-y-2">
+                          <p className="text-xs font-semibold text-gray-700">Firmographics</p>
+                          <div className="space-y-1.5 text-xs">
+                            {selectedAccount.company_type && (
+                              <p>
+                                <span className="text-gray-400">Type </span>
+                                <span className="text-gray-900">{selectedAccount.company_type}</span>
+                              </p>
+                            )}
+                            {(selectedAccount.employee_count != null || selectedAccount.employee_range) && (
+                              <p>
+                                <span className="text-gray-400">Employees </span>
+                                <span className="text-gray-900">
+                                  {selectedAccount.employee_count != null
+                                    ? selectedAccount.employee_count.toLocaleString()
+                                    : selectedAccount.employee_range}
+                                </span>
+                              </p>
+                            )}
+                            {(selectedAccount.headquarters_city || selectedAccount.headquarters_country) && (
+                              <p>
+                                <span className="text-gray-400">HQ </span>
+                                <span className="text-gray-900">
+                                  {[selectedAccount.headquarters_city, selectedAccount.headquarters_country]
+                                    .filter(Boolean)
+                                    .join(', ')}
+                                </span>
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="rounded-xl border border-gray-100 bg-gray-50/70 px-3 py-2.5 space-y-2">
+                        <p className="text-xs font-semibold text-gray-700">Criteria</p>
+                        <div className="space-y-2">
+                          <div>
+                            <p className="text-gray-400 text-xs mb-1">Therapeutic areas</p>
+                            {renderTaxonomyPills(selectedAccount.therapeutic_areas)}
+                          </div>
+                          <div>
+                            <p className="text-gray-400 text-xs mb-1">Modalities</p>
+                            {renderTaxonomyPills(selectedAccount.modalities)}
+                          </div>
+                          <div>
+                            <p className="text-gray-400 text-xs mb-1">Development stage</p>
+                            {renderTaxonomyPills(selectedAccount.development_stages)}
+                          </div>
+                        </div>
+                      </div>
+
+                      {(selectedAccount.funding_stage ||
+                        selectedAccount.funding_status_label) && (
+                        <div className="rounded-xl border border-gray-100 bg-gray-50/70 px-3 py-2.5">
+                          <p className="text-xs font-semibold text-gray-700 mb-1">Funding</p>
+                          <p className="text-sm text-gray-900">
+                            {selectedAccount.funding_stage || selectedAccount.funding_status_label}
+                          </p>
+                        </div>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => router.push(leadsHrefFor(selectedAccount))}
+                        className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-arcova-teal/5 px-4 py-2 text-sm font-medium text-arcova-teal hover:bg-arcova-teal/10 transition-colors"
+                      >
+                        <Users className="w-4 h-4" />
+                        View contacts in Leads
+                      </button>
+                    </div>
+                  </aside>
                 )}
-              </>
+              </div>
             )}
           </div>
         </div>

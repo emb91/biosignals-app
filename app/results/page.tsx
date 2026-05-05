@@ -22,6 +22,7 @@ import {
   Sparkles,
   Ban,
   Upload,
+  Download,
 } from 'lucide-react';
 
 interface EmploymentHistoryItem {
@@ -748,7 +749,12 @@ export default function LeadsPage() {
   const [refreshingLeadId, setRefreshingLeadId] = useState<string | null>(null);
   const [hubspotConnected, setHubspotConnected] = useState(false);
   const [pushingToHubspot, setPushingToHubspot] = useState(false);
-  const [hubspotPushResult, setHubspotPushResult] = useState<{ contacts?: { upserted: number; errors: number }; total?: number; message?: string } | null>(null);
+  const [hubspotSyncResult, setHubspotSyncResult] = useState<{
+    contacts: { upserted: number; errors: number };
+    skipped: number;
+    skippedContacts: { name: string; company: string | null; reason: string }[];
+  } | null>(null);
+  const [syncResultExpanded, setSyncResultExpanded] = useState(false);
   const [stoppingLeadId, setStoppingLeadId] = useState<string | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [selectedPreview, setSelectedPreview] = useState<'contact' | 'company' | 'scoring' | 'action'>('contact');
@@ -882,12 +888,13 @@ export default function LeadsPage() {
   const handlePushToHubspot = useCallback(async () => {
     if (pushingToHubspot) return;
     setPushingToHubspot(true);
-    setHubspotPushResult(null);
+    setHubspotSyncResult(null);
+    setSyncResultExpanded(false);
     try {
       const res = await fetch('/api/hubspot/push-enrichment', { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
-        setHubspotPushResult(data);
+        if (data.contacts) setHubspotSyncResult(data);
       } else {
         console.error('HubSpot push failed:', await res.text());
       }
@@ -1811,40 +1818,6 @@ export default function LeadsPage() {
 
               {total > 0 && (
                 <div className="flex items-center gap-2">
-                  {hubspotConnected && (
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={handlePushToHubspot}
-                        disabled={pushingToHubspot}
-                        className="inline-flex items-center gap-2 px-3 py-2 bg-[#ff7a59] text-white rounded-lg text-sm font-medium hover:bg-[#e8693f] transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
-                        title="Sync enrichment data to HubSpot"
-                      >
-                        {pushingToHubspot ? (
-                          <RotateCw className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M18.164 7.932V5.085a2.198 2.198 0 0 0 1.268-1.978V3.06A2.199 2.199 0 0 0 17.235.862h-.047a2.199 2.199 0 0 0-2.197 2.197v.047a2.199 2.199 0 0 0 1.268 1.978v2.847a6.232 6.232 0 0 0-2.962 1.302L5.028 3.617a2.44 2.44 0 0 0 .072-.573A2.455 2.455 0 1 0 2.645 5.5a2.43 2.43 0 0 0 1.194-.315l8.122 4.707a6.248 6.248 0 0 0 0 4.208L4.123 18.5a2.432 2.432 0 0 0-1.478-.498 2.455 2.455 0 1 0 2.455 2.455 2.43 2.43 0 0 0-.388-1.337l7.91-4.583a6.266 6.266 0 0 0 8.976-5.628 6.25 6.25 0 0 0-3.434-5.977zm-1.023 9.565a3.59 3.59 0 1 1 0-7.181 3.59 3.59 0 0 1 0 7.181z"/>
-                          </svg>
-                        )}
-                        {pushingToHubspot ? 'Syncing…' : 'HubSpot Sync'}
-                      </button>
-                      {hubspotPushResult && (
-                        <span className="text-xs text-gray-500">
-                          {hubspotPushResult.contacts
-                            ? `${hubspotPushResult.contacts.upserted} contact${hubspotPushResult.contacts.upserted !== 1 ? 's' : ''} synced${hubspotPushResult.contacts.errors > 0 ? `, ${hubspotPushResult.contacts.errors} errors` : ''}`
-                            : hubspotPushResult.message ?? 'Done'}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                  <button
-                    onClick={handleDownloadCsv}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 border border-gray-200 bg-white text-gray-700 rounded-lg text-sm hover:bg-gray-50 transition-colors"
-                    title="Download all leads as CSV"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                    Download CSV
-                  </button>
                   <button
                     onClick={() => router.push('/import')}
                     className="inline-flex items-center gap-1.5 px-4 py-2 bg-arcova-teal text-white rounded-lg text-sm hover:bg-arcova-teal/90 transition-colors"
@@ -1852,9 +1825,83 @@ export default function LeadsPage() {
                     <Upload className="w-3.5 h-3.5" />
                     Import
                   </button>
+                  <button
+                    onClick={handleDownloadCsv}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 border border-gray-200 bg-white text-gray-700 rounded-lg text-sm hover:bg-gray-50 transition-colors"
+                    title="Export leads as CSV"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Export CSV
+                  </button>
+                  {hubspotConnected && (
+                    <button
+                      onClick={handlePushToHubspot}
+                      disabled={pushingToHubspot}
+                      className="inline-flex items-center gap-2 px-3 py-2 bg-[#ff7a59] text-white rounded-lg text-sm font-medium hover:bg-[#e8693f] transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
+                      title="Sync enrichment data to HubSpot"
+                    >
+                      {pushingToHubspot ? (
+                        <RotateCw className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M18.164 7.932V5.085a2.198 2.198 0 0 0 1.268-1.978V3.06A2.199 2.199 0 0 0 17.235.862h-.047a2.199 2.199 0 0 0-2.197 2.197v.047a2.199 2.199 0 0 0 1.268 1.978v2.847a6.232 6.232 0 0 0-2.962 1.302L5.028 3.617a2.44 2.44 0 0 0 .072-.573A2.455 2.455 0 1 0 2.645 5.5a2.43 2.43 0 0 0 1.194-.315l8.122 4.707a6.248 6.248 0 0 0 0 4.208L4.123 18.5a2.432 2.432 0 0 0-1.478-.498 2.455 2.455 0 1 0 2.455 2.455 2.43 2.43 0 0 0-.388-1.337l7.91-4.583a6.266 6.266 0 0 0 8.976-5.628 6.25 6.25 0 0 0-3.434-5.977zm-1.023 9.565a3.59 3.59 0 1 1 0-7.181 3.59 3.59 0 0 1 0 7.181z"/>
+                        </svg>
+                      )}
+                      {pushingToHubspot ? 'Syncing…' : 'HubSpot Sync'}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
+
+            {hubspotSyncResult && (
+              <div className="mb-4 rounded-lg border border-[#ff7a59]/30 bg-[#fff5f2] pl-4 pr-4 pt-3.5 pb-3.5 flex items-start justify-between gap-4">
+                <div className="flex items-start gap-3 min-w-0">
+                  <svg className="w-4 h-4 shrink-0 mt-0.5 text-[#ff7a59]" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M18.164 7.932V5.085a2.198 2.198 0 0 0 1.268-1.978V3.06A2.199 2.199 0 0 0 17.235.862h-.047a2.199 2.199 0 0 0-2.197 2.197v.047a2.199 2.199 0 0 0 1.268 1.978v2.847a6.232 6.232 0 0 0-2.962 1.302L5.028 3.617a2.44 2.44 0 0 0 .072-.573A2.455 2.455 0 1 0 2.645 5.5a2.43 2.43 0 0 0 1.194-.315l8.122 4.707a6.248 6.248 0 0 0 0 4.208L4.123 18.5a2.432 2.432 0 0 0-1.478-.498 2.455 2.455 0 1 0 2.455 2.455 2.43 2.43 0 0 0-.388-1.337l7.91-4.583a6.266 6.266 0 0 0 8.976-5.628 6.25 6.25 0 0 0-3.434-5.977zm-1.023 9.565a3.59 3.59 0 1 1 0-7.181 3.59 3.59 0 0 1 0 7.181z"/>
+                  </svg>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <span className="text-sm font-semibold text-gray-900">
+                        {hubspotSyncResult.contacts.upserted} contact{hubspotSyncResult.contacts.upserted !== 1 ? 's' : ''} synced
+                      </span>
+                      {hubspotSyncResult.contacts.errors > 0 && (
+                        <span className="text-xs font-medium text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full">
+                          {hubspotSyncResult.contacts.errors} error{hubspotSyncResult.contacts.errors !== 1 ? 's' : ''}
+                        </span>
+                      )}
+                      {hubspotSyncResult.skipped > 0 && (
+                        <button
+                          onClick={() => setSyncResultExpanded((v) => !v)}
+                          className="text-xs font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full flex items-center gap-1 hover:bg-amber-100 transition-colors"
+                        >
+                          <svg className={`w-2.5 h-2.5 transition-transform ${syncResultExpanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                          {hubspotSyncResult.skipped} skipped
+                        </button>
+                      )}
+                    </div>
+                    {syncResultExpanded && hubspotSyncResult.skippedContacts.length > 0 && (
+                      <ul className="mt-2 space-y-1.5">
+                        {hubspotSyncResult.skippedContacts.map((c, i) => (
+                          <li key={i} className="text-xs text-gray-600">
+                            <span className="font-medium text-gray-800">{c.name}</span>
+                            {c.company && <span className="text-gray-400"> · {c.company}</span>}
+                            <span className="ml-1.5 text-amber-600">— {c.reason.toLowerCase()}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={() => setHubspotSyncResult(null)}
+                  className="shrink-0 text-gray-400 hover:text-gray-600 mt-0.5"
+                  aria-label="Dismiss"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
 
             {showSearchInput && (
               <div className="mb-4 relative">

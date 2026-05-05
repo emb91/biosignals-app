@@ -116,6 +116,14 @@ export default function DashboardPage() {
   const [showImportReadyBanner, setShowImportReadyBanner] = useState(false);
   const [enrichmentJobs, setEnrichmentJobs] = useState<EnrichmentJob[]>([]);
   const [hasRunningEnrichmentJobs, setHasRunningEnrichmentJobs] = useState(false);
+  const [hubspotSyncLog, setHubspotSyncLog] = useState<{
+    synced_at: string;
+    contacts_synced: number;
+    contacts_errors: number;
+    contacts_skipped: number;
+    skipped_contacts: { name: string; company: string | null; reason: string }[];
+  } | null>(null);
+  const [syncLogExpanded, setSyncLogExpanded] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -154,6 +162,7 @@ export default function DashboardPage() {
           { data: importData, error: importError },
           signalEventsHttp,
           topLeadsRes,
+          syncLogRes,
         ] = await Promise.all([
           supabase.from('user_company').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
           fetch('/api/company-criteria'),
@@ -161,7 +170,13 @@ export default function DashboardPage() {
           supabase.from('raw_uploads').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
           fetch('/api/signal-events?recent=1&limit=12'),
           fetch('/api/leads?pageSize=5&page=1'),
+          fetch('/api/hubspot/sync-log'),
         ]);
+
+        if (syncLogRes.ok) {
+          const syncJson = await syncLogRes.json() as { data: typeof hubspotSyncLog };
+          setHubspotSyncLog(syncJson.data);
+        }
 
         if (profileError) throw profileError;
         if (importError) throw importError;
@@ -395,6 +410,51 @@ export default function DashboardPage() {
                       </div>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {hubspotSyncLog && (
+                <div className="mb-6 rounded-lg border border-gray-200 bg-white p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-center gap-2">
+                      <svg className="w-4 h-4 shrink-0 text-[#ff7a59]" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M18.164 7.932V5.085a2.198 2.198 0 0 0 1.268-1.978V3.06A2.199 2.199 0 0 0 17.235.862h-.047a2.199 2.199 0 0 0-2.197 2.197v.047a2.199 2.199 0 0 0 1.268 1.978v2.847a6.232 6.232 0 0 0-2.962 1.302L5.028 3.617a2.44 2.44 0 0 0 .072-.573A2.455 2.455 0 1 0 2.645 5.5a2.43 2.43 0 0 0 1.194-.315l8.122 4.707a6.248 6.248 0 0 0 0 4.208L4.123 18.5a2.432 2.432 0 0 0-1.478-.498 2.455 2.455 0 1 0 2.455 2.455 2.43 2.43 0 0 0-.388-1.337l7.91-4.583a6.266 6.266 0 0 0 8.976-5.628 6.25 6.25 0 0 0-3.434-5.977zm-1.023 9.565a3.59 3.59 0 1 1 0-7.181 3.59 3.59 0 0 1 0 7.181z"/>
+                      </svg>
+                      <div>
+                        <h2 className="text-base font-semibold text-gray-900">Last HubSpot sync</h2>
+                        <p className="text-xs text-gray-500 mt-0.5">{formatTimeAgo(hubspotSyncLog.synced_at)}</p>
+                      </div>
+                    </div>
+                    <button onClick={() => router.push('/results')} className="shrink-0 text-sm font-medium hover:opacity-80" style={{ color: TEAL }}>
+                      Go to leads
+                    </button>
+                  </div>
+                  <div className="mt-3 flex items-center gap-4 text-sm text-gray-600">
+                    <span><span className="font-semibold text-gray-900">{hubspotSyncLog.contacts_synced}</span> synced</span>
+                    {hubspotSyncLog.contacts_errors > 0 && (
+                      <span><span className="font-semibold text-rose-600">{hubspotSyncLog.contacts_errors}</span> errors</span>
+                    )}
+                    {hubspotSyncLog.contacts_skipped > 0 && (
+                      <button
+                        onClick={() => setSyncLogExpanded((v) => !v)}
+                        className="flex items-center gap-1 text-gray-500 hover:text-gray-700"
+                      >
+                        <svg className={`w-3 h-3 transition-transform ${syncLogExpanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                        <span><span className="font-semibold">{hubspotSyncLog.contacts_skipped}</span> skipped</span>
+                      </button>
+                    )}
+                  </div>
+                  {syncLogExpanded && hubspotSyncLog.skipped_contacts.length > 0 && (
+                    <ul className="mt-2 space-y-1.5 border-t border-gray-100 pt-2">
+                      {hubspotSyncLog.skipped_contacts.map((c, i) => (
+                        <li key={i} className="text-xs text-gray-600">
+                          <span className="font-medium text-gray-800">{c.name}</span>
+                          {c.company && <span className="text-gray-400"> · {c.company}</span>}
+                          <span className="ml-1.5 text-amber-600">— {c.reason.toLowerCase()}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               )}
 

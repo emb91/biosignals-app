@@ -1,6 +1,7 @@
 'use client';
 
 import { ChangeEvent, DragEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { RotateCw, Unlink, ChevronDown, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
@@ -226,6 +227,8 @@ export default function ImportPage() {
   const [hubspotDomain, setHubspotDomain] = useState<string | null>(null);
   const [hubspotSyncing, setHubspotSyncing] = useState(false);
   const [hubspotDisconnecting, setHubspotDisconnecting] = useState(false);
+  const [pastImportsExpanded, setPastImportsExpanded] = useState(false);
+  const [expandedHistoryBatchId, setExpandedHistoryBatchId] = useState<string | null>(null);
 
   const persistBatchId = (id: string | null) => {
     setCurrentBatchId(id);
@@ -653,150 +656,152 @@ export default function ImportPage() {
       ? 'Already in Arcova'
       : '';
 
+  const HubSpotLogo = () => (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
+      <path d="M18.164 7.932V5.085a2.198 2.198 0 0 0 1.268-1.978V3.06A2.199 2.199 0 0 0 17.235.862h-.047a2.199 2.199 0 0 0-2.197 2.197v.047a2.199 2.199 0 0 0 1.268 1.978v2.847a6.232 6.232 0 0 0-2.962 1.302L5.028 3.617a2.44 2.44 0 0 0 .072-.573A2.455 2.455 0 1 0 2.645 5.5a2.43 2.43 0 0 0 1.194-.315l8.122 4.707a6.248 6.248 0 0 0 0 4.208L4.123 18.5a2.432 2.432 0 0 0-1.478-.498 2.455 2.455 0 1 0 2.455 2.455 2.43 2.43 0 0 0-.388-1.337l7.91-4.583a6.266 6.266 0 0 0 8.976-5.628 6.25 6.25 0 0 0-3.434-5.977zm-1.023 9.565a3.59 3.59 0 1 1 0-7.181 3.59 3.59 0 0 1 0 7.181z"/>
+    </svg>
+  );
+
   return (
     <div className="flex h-screen bg-gray-50">
       <AppSidebar />
 
-      <div className="flex-1 overflow-auto p-6">
-        <div className="max-w-5xl mx-auto bg-white rounded-lg shadow-sm border border-gray-200 p-8">
+      <div className="flex-1 overflow-auto">
+        <div className="max-w-3xl mx-auto px-6 py-10">
+
           {!currentBatchId ? (
             <>
-              <h1 className="text-3xl font-bold text-gray-900">Import your existing contacts</h1>
-              <p className="text-gray-600 mt-2">
-                Connect your CRM or upload a CSV — we&apos;ll enrich your contacts, score them against your ICP, and tell
-                you who to prioritise this week.
-              </p>
+              <div className="mb-8">
+                <h1 className="text-2xl font-semibold text-gray-900">Import contacts</h1>
+                <p className="text-sm text-gray-500 mt-1">
+                  Connect your CRM or upload a CSV — Arcova will enrich, score against your ICP, and tell you who to prioritise.
+                </p>
+              </div>
 
-              {/* HubSpot connector */}
-              <div className="mt-10">
-                <h2 className="text-lg font-semibold text-gray-900 mb-3">Connect your CRM</h2>
-                <div className={`rounded-xl border p-6 flex items-center justify-between gap-6 ${hubspotConnected ? 'border-green-200 bg-green-50/50' : 'border-gray-200'}`}>
-                  <div className="flex items-center gap-4">
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#FF7A59]/10">
-                      <svg viewBox="0 0 24 24" className="h-6 w-6" fill="#FF7A59" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M18.164 7.93V5.773a1.878 1.878 0 0 0 1.083-1.7V4.02a1.878 1.878 0 0 0-1.878-1.878h-.043a1.878 1.878 0 0 0-1.878 1.878v.054a1.878 1.878 0 0 0 1.083 1.7V7.93a5.33 5.33 0 0 0-2.533 1.117L7.081 4.405a2.09 2.09 0 1 0-.95 1.261l6.8 4.583a5.353 5.353 0 0 0 .005 5.425l-2.07 2.07a1.702 1.702 0 1 0 1.073 1.013l1.997-1.997a5.37 5.37 0 1 0 5.228-8.83zm-.837 8.033a2.74 2.74 0 1 1 0-5.48 2.74 2.74 0 0 1 0 5.48z"/>
-                      </svg>
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-semibold text-gray-900">HubSpot</p>
-                        {hubspotConnected && (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
-                            <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
-                            Connected{hubspotDomain ? ` · ${hubspotDomain}` : ''}
-                          </span>
-                        )}
+              {/* Import methods */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
+                {/* HubSpot */}
+                <div className={`rounded-xl border-2 p-5 flex flex-col gap-4 transition-colors ${hubspotConnected ? 'border-[#ff7a59]/40 bg-[#fff5f2]' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#ff7a59] text-white">
+                        <HubSpotLogo />
                       </div>
-                      <p className="text-sm text-gray-500 mt-0.5">
-                        {hubspotConnected
-                          ? 'Sync your contacts now — Arcova will enrich and score them, then push prioritisation data back to HubSpot.'
-                          : 'Sync contacts from your HubSpot CRM. Arcova will enrich and score them, then push prioritisation data back.'}
-                      </p>
+                      <span className="text-sm font-semibold text-gray-900">HubSpot</span>
                     </div>
+                    {hubspotConnected ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
+                        <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                        Connected
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-400">CRM sync</span>
+                    )}
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
+                  <p className="text-xs text-gray-500 leading-relaxed">
+                    {hubspotConnected
+                      ? hubspotDomain
+                        ? `Synced with ${hubspotDomain}. Pull contacts in and push enrichment data back.`
+                        : 'Pull contacts in and push enrichment data back to HubSpot.'
+                      : 'Connect your HubSpot account to pull contacts directly into Arcova.'}
+                  </p>
+                  <div className="flex gap-2 mt-auto">
                     {hubspotConnected ? (
                       <>
                         <button
                           type="button"
                           onClick={() => void handleHubspotSync()}
                           disabled={hubspotSyncing}
-                          className="rounded-lg bg-[#FF7A59] px-4 py-2 text-sm font-semibold text-white hover:bg-[#FF7A59]/90 disabled:opacity-50 transition-colors"
+                          className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#ff7a59] px-3 py-2 text-xs font-semibold text-white hover:bg-[#e8693f] disabled:opacity-50 transition-colors"
                         >
-                          {hubspotSyncing ? 'Syncing…' : 'Sync now'}
+                          <RotateCw className={`w-3 h-3 ${hubspotSyncing ? 'animate-spin' : ''}`} />
+                          {hubspotSyncing ? 'Syncing…' : 'Sync contacts'}
                         </button>
                         <button
                           type="button"
                           onClick={() => void handleHubspotDisconnect()}
                           disabled={hubspotDisconnecting}
-                          className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-600 hover:border-gray-400 hover:text-gray-800 disabled:opacity-50 transition-colors"
+                          className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-2 text-xs font-medium text-gray-500 hover:border-gray-300 hover:text-gray-700 disabled:opacity-50 transition-colors"
                         >
-                          {hubspotDisconnecting ? 'Disconnecting…' : 'Disconnect'}
+                          <Unlink className="w-3 h-3" />
+                          {hubspotDisconnecting ? '…' : 'Disconnect'}
                         </button>
                       </>
                     ) : (
                       <button
                         type="button"
                         onClick={() => void handleConnectHubSpot()}
-                        className="rounded-lg bg-[#FF7A59] px-4 py-2 text-sm font-semibold text-white hover:bg-[#FF7A59]/90 transition-colors"
+                        className="flex-1 rounded-lg bg-[#ff7a59] px-3 py-2 text-xs font-semibold text-white hover:bg-[#e8693f] transition-colors text-center"
                       >
                         Connect HubSpot
                       </button>
                     )}
                   </div>
                 </div>
-              </div>
 
-              <div className="mt-10">
-                <h2 className="text-lg font-semibold text-gray-900 mb-3">Or upload a CSV</h2>
-
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".csv,text/csv"
-                  className="hidden"
-                  onChange={handleFileInputChange}
-                />
-
-                <div
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
-                  onClick={handleBrowseClick}
-                  className={`border-2 border-dashed rounded-lg p-10 text-center cursor-pointer transition-colors ${
-                    isDragOver ? 'border-arcova-teal bg-arcova-teal/5' : 'border-gray-300 hover:border-arcova-teal/60'
-                  }`}
-                >
-                  <p className="text-sm font-medium text-gray-900">Drag and drop your CSV here</p>
-                  <p className="text-sm text-gray-500 mt-1">or click to browse</p>
-                  <p className="text-xs text-gray-400 mt-3">Accepts .csv files only</p>
-                </div>
-
-                {errorMessage && <p className="mt-3 text-sm text-red-600">{errorMessage}</p>}
-
-                {parsedCsv && (
-                  <p className="mt-4 text-sm text-gray-600">
-                    <span className="font-medium text-gray-900">{parsedCsv.fileName}</span> - {parsedCsv.rows.length}{' '}
-                    rows
-                  </p>
-                )}
-              </div>
-
-              {parsedCsv && (
-                <>
-                  <div className="mt-10">
-                    <h2 className="text-lg font-semibold text-gray-900 mb-2">Map your columns</h2>
-                    <p className="text-sm text-gray-600 mb-3">
-                      We&apos;ve made our best guess below — check each one and correct anything that looks off.
-                      Columns set to &ldquo;Don&apos;t import&rdquo; will be ignored.
-                    </p>
-                    <p className="text-xs text-gray-400 mb-3">
-                      Previewing the first {Math.min(parsedCsv.rows.length, CSV_PREVIEW_ROW_COUNT)} of {parsedCsv.rows.length}{' '}
-                      rows.
-                    </p>
-
-                    {parsedCsv.headers.length > 4 && (
-                      <p className="text-xs text-gray-400 mb-2">
-                        {parsedCsv.headers.length} columns detected — scroll right to map all →
+                {/* CSV upload */}
+                <div className="rounded-xl border-2 border-dashed border-gray-200 bg-white hover:border-arcova-teal/50 transition-colors flex flex-col">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".csv,text/csv"
+                    className="hidden"
+                    onChange={handleFileInputChange}
+                  />
+                  <div
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    onClick={handleBrowseClick}
+                    className={`flex-1 flex flex-col items-center justify-center gap-3 p-6 cursor-pointer rounded-xl transition-colors ${isDragOver ? 'bg-arcova-teal/5' : ''}`}
+                  >
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gray-100">
+                      <svg className="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-sm font-medium text-gray-700">
+                        {isDragOver ? 'Drop to upload' : 'Upload a CSV'}
                       </p>
-                    )}
+                      <p className="text-xs text-gray-400 mt-0.5">Drag and drop or click to browse</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
 
-                    <div className="relative">
-                      <div
-                        ref={tableScrollRef}
-                        onScroll={handleTableScroll}
-                        className="overflow-x-auto rounded-lg border border-gray-200"
-                      >
+              {errorMessage && (
+                <p className="mb-4 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-3">{errorMessage}</p>
+              )}
+
+              {/* Column mapping */}
+              {parsedCsv && (
+                <div className="bg-white rounded-xl border border-gray-200 p-6">
+                  <div className="flex items-center justify-between mb-1">
+                    <h2 className="text-base font-semibold text-gray-900">Map your columns</h2>
+                    <span className="text-xs text-gray-400">{parsedCsv.fileName} · {parsedCsv.rows.length.toLocaleString()} rows</span>
+                  </div>
+                  <p className="text-xs text-gray-500 mb-4">
+                    We&apos;ve made our best guess — check each column and correct anything that looks off.
+                    {parsedCsv.headers.length > 4 && ' Scroll right to see all columns.'}
+                  </p>
+
+                  <div className="relative">
+                    <div
+                      ref={tableScrollRef}
+                      onScroll={handleTableScroll}
+                      className="overflow-x-auto rounded-lg border border-gray-100"
+                    >
                       <table className="min-w-full text-sm">
                         <thead>
-                          <tr className="bg-white">
+                          <tr className="bg-gray-50">
                             {parsedCsv.headers.map((header) => (
                               <th
                                 key={header}
-                                className="px-3 py-4 border-b-2 border-gray-100 w-[170px] min-w-[170px] max-w-[170px] align-top text-left font-normal"
+                                className="px-3 py-3 border-b border-gray-100 w-[160px] min-w-[160px] max-w-[160px] align-top text-left font-normal"
                               >
-                                <div className="text-sm font-medium text-gray-900 mb-2.5 truncate" title={header}>
-                                  {header || '(Unnamed column)'}
+                                <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 truncate" title={header}>
+                                  {header || '(Unnamed)'}
                                 </div>
                                 <select
                                   value={columnMappings[header] || 'ignore'}
@@ -806,7 +811,7 @@ export default function ImportPage() {
                                       [header]: event.target.value as ImportField,
                                     }))
                                   }
-                                  className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-arcova-teal"
+                                  className="w-full border border-gray-200 rounded-md px-2 py-1.5 text-xs text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-arcova-teal/30"
                                 >
                                   {IMPORT_FIELD_OPTIONS.map((option) => (
                                     <option key={option.value} value={option.value}>
@@ -818,20 +823,20 @@ export default function ImportPage() {
                             ))}
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-gray-100 bg-gray-50/50">
+                        <tbody className="divide-y divide-gray-50 bg-white">
                           {rawPreviewRows.length === 0 ? (
                             <tr>
-                              <td className="px-4 py-3 text-gray-500" colSpan={parsedCsv.headers.length}>
+                              <td className="px-4 py-3 text-xs text-gray-400" colSpan={parsedCsv.headers.length}>
                                 No preview rows available.
                               </td>
                             </tr>
                           ) : (
                             rawPreviewRows.map((row, index) => (
-                              <tr key={`preview-${index}`}>
+                              <tr key={`preview-${index}`} className="hover:bg-gray-50/50">
                                 {parsedCsv.headers.map((header, columnIndex) => (
-                                  <td key={`${header}-${index}`} className="px-3 py-2.5 text-gray-600 align-top max-w-[170px]">
-                                    <div className="truncate text-xs" title={row[columnIndex] || ''}>
-                                      {row[columnIndex] || <span className="text-gray-400">—</span>}
+                                  <td key={`${header}-${index}`} className="px-3 py-2 align-top max-w-[160px]">
+                                    <div className="truncate text-xs text-gray-600" title={row[columnIndex] || ''}>
+                                      {row[columnIndex] || <span className="text-gray-300">—</span>}
                                     </div>
                                   </td>
                                 ))}
@@ -840,244 +845,225 @@ export default function ImportPage() {
                           )}
                         </tbody>
                       </table>
-                      </div>
-                      {parsedCsv.rows.length > CSV_PREVIEW_ROW_COUNT && (
-                        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 rounded-b-lg bg-gradient-to-t from-white via-white/85 to-transparent" />
-                      )}
-                      {!tableScrolledToEnd && (
-                        <div className="pointer-events-none absolute inset-y-0 right-0 w-16 bg-gradient-to-l from-white to-transparent rounded-r-lg" />
-                      )}
                     </div>
-
-                    <div className="mt-8 flex justify-end">
-                      <button
-                        type="button"
-                        disabled={!canConfirmImport || isSubmitting}
-                        onClick={handleConfirmImport}
-                        className="px-5 py-2.5 rounded-lg text-white text-sm font-medium bg-arcova-teal hover:bg-arcova-teal/90 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {isSubmitting ? 'Starting import...' : 'Confirm import'}
-                      </button>
-                    </div>
+                    {parsedCsv.rows.length > CSV_PREVIEW_ROW_COUNT && (
+                      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 rounded-b-lg bg-gradient-to-t from-white to-transparent" />
+                    )}
+                    {!tableScrolledToEnd && (
+                      <div className="pointer-events-none absolute inset-y-0 right-0 w-12 bg-gradient-to-l from-white to-transparent rounded-r-lg" />
+                    )}
                   </div>
-                </>
+
+                  {!canConfirmImport && (
+                    <p className="mt-3 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                      Map at least one name field (first name, last name, or full name) and a company name to continue.
+                    </p>
+                  )}
+
+                  <div className="mt-5 flex items-center justify-between">
+                    <button
+                      type="button"
+                      onClick={() => { setParsedCsv(null); setColumnMappings({}); }}
+                      className="text-xs text-gray-400 hover:text-gray-600"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!canConfirmImport || isSubmitting}
+                      onClick={handleConfirmImport}
+                      className="px-5 py-2 rounded-lg text-white text-sm font-medium bg-arcova-teal hover:bg-arcova-teal/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {isSubmitting ? 'Starting…' : 'Confirm import'}
+                    </button>
+                  </div>
+                </div>
               )}
 
-              {/* Past imports — shown when no CSV is loaded yet */}
+              {/* Past imports */}
               {!parsedCsv && importHistory.length > 0 && (
-                <div className="mt-12">
-                  <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">Past imports</h2>
-                  <div className="divide-y divide-gray-100 rounded-lg border border-gray-200 overflow-hidden">
-                    {importHistory.map((batch) => (
-                      <div key={batch.id} className="flex items-center justify-between px-4 py-3 bg-white hover:bg-gray-50 transition-colors">
-                        <div className="flex items-center gap-4 min-w-0">
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium text-gray-900 truncate max-w-xs" title={batch.filename}>
-                              {batch.filename}
-                            </p>
-                            <p className="text-xs text-gray-400 mt-0.5">
-                              {formatBatchDate(batch.created_at)} · {(batch.total_rows || 0).toLocaleString()} rows
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-4 shrink-0 ml-4">
-                          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                            batch.status === 'complete'
-                              ? 'bg-green-50 text-green-700'
-                              : batch.status === 'cancelled'
-                              ? 'bg-gray-100 text-gray-700'
-                              : batch.status === 'failed'
-                              ? 'bg-red-50 text-red-600'
-                              : 'bg-amber-50 text-amber-600'
-                          }`}>
-                            {batch.status === 'complete'
-                              ? 'Complete'
-                              : batch.status === 'cancelled'
-                              ? 'Cancelled'
-                              : batch.status === 'failed'
-                              ? 'Failed'
-                              : 'Processing'}
-                          </span>
-                          {batch.status === 'complete' && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                persistBatchId(batch.id);
-                                setProgress(null);
-                                setExpandedBatchSection(null);
-                              }}
-                              className="text-sm text-arcova-teal hover:underline whitespace-nowrap"
-                            >
-                              View results →
-                            </button>
-                          )}
-                          {batch.status !== 'complete' && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                persistBatchId(batch.id);
-                                setProgress(null);
-                                setExpandedBatchSection(null);
-                              }}
-                              className="text-sm text-arcova-teal hover:underline whitespace-nowrap"
-                            >
-                              {batch.status === 'cancelled' ? 'View summary →' : 'View progress →'}
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => handleHideImport(batch.id)}
-                            className="text-sm text-gray-400 hover:text-gray-700 whitespace-nowrap"
+                <div className="mt-8">
+                  <button
+                    type="button"
+                    onClick={() => setPastImportsExpanded((v) => !v)}
+                    className="flex items-center justify-between w-full mb-3 group"
+                  >
+                    <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-widest group-hover:text-gray-600 transition-colors">
+                      Past imports
+                      <span className="ml-2 font-normal normal-case tracking-normal text-gray-300">({importHistory.length})</span>
+                    </h2>
+                    <ChevronDown className={`w-3.5 h-3.5 text-gray-300 group-hover:text-gray-500 transition-all ${pastImportsExpanded ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  <div className="rounded-xl border border-gray-200 overflow-hidden bg-white">
+                    {/* Always show most recent */}
+                    {[importHistory[0], ...(pastImportsExpanded ? importHistory.slice(1) : [])].map((batch) => {
+                      const isOpen = expandedHistoryBatchId === batch.id;
+                      const enriched = Math.max(0, (batch.processed_rows || 0) - (batch.duplicate_rows || 0) - (batch.failed_rows || 0));
+                      return (
+                        <div key={batch.id} className="border-b border-gray-100 last:border-0">
+                          <div
+                            className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors cursor-pointer"
+                            onClick={() => setExpandedHistoryBatchId(isOpen ? null : batch.id)}
                           >
-                            Remove
-                          </button>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium text-gray-900 truncate max-w-xs" title={batch.filename}>
+                                {batch.filename}
+                              </p>
+                              <p className="text-xs text-gray-400 mt-0.5">
+                                {formatBatchDate(batch.created_at)} · {(batch.total_rows || 0).toLocaleString()} rows
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0 ml-4">
+                              <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                                batch.status === 'complete' ? 'bg-green-50 text-green-700'
+                                : batch.status === 'cancelled' ? 'bg-gray-100 text-gray-500'
+                                : batch.status === 'failed' ? 'bg-red-50 text-red-600'
+                                : 'bg-amber-50 text-amber-600'
+                              }`}>
+                                {batch.status === 'complete' ? 'Complete'
+                                  : batch.status === 'cancelled' ? 'Cancelled'
+                                  : batch.status === 'failed' ? 'Failed'
+                                  : 'Processing'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); handleHideImport(batch.id); }}
+                                className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-red-50 text-red-400 hover:bg-red-100 hover:text-red-600 transition-colors"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                              <div className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-arcova-teal/10 text-arcova-teal">
+                                <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                              </div>
+                            </div>
+                          </div>
+                          {isOpen && (
+                            <div className="px-4 pb-3 pt-2 bg-gray-50/60 flex items-center gap-2 flex-wrap">
+                              {[
+                                { label: 'enriched', value: enriched, className: 'bg-arcova-teal/10 text-arcova-teal' },
+                                { label: 'uploaded', value: batch.total_rows || 0, className: 'bg-gray-100 text-gray-600' },
+                                { label: 'duplicates', value: batch.duplicate_rows || 0, className: 'bg-gray-100 text-gray-500' },
+                                { label: 'not enriched', value: batch.failed_rows || 0, className: 'bg-gray-100 text-gray-500' },
+                              ].map(({ label, value, className }) => (
+                                <span key={label} className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium ${className}`}>
+                                  <span className="font-semibold">{value.toLocaleString()}</span> {label}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
+
+                    {importHistory.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => setPastImportsExpanded((v) => !v)}
+                        className="w-full px-4 py-2.5 text-xs text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors border-t border-gray-100 text-center"
+                      >
+                        {pastImportsExpanded ? 'Show less' : `Show ${importHistory.length - 1} more`}
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
             </>
           ) : (
-            <div>
+            <>
               {importFinished ? (
                 <>
-                  <h1 className="text-3xl font-bold text-gray-900">
-                    {importCancelled ? 'Import stopped' : 'Import complete'}
-                  </h1>
-                  <p className="text-gray-600 mt-2">
-                    {importCancelled
-                      ? 'We stopped processing this file. Only enriched, scored contacts were added to Leads.'
-                      : 'We&apos;ve finished processing your file. Only enriched, scored contacts were added to Leads.'}
-                  </p>
-
-                  <div className="mt-8 rounded-xl border border-gray-200 bg-gray-50 p-6">
-                    <div className="space-y-4">
-                      <div className="flex items-start justify-between gap-6">
-                        <div>
-                          <p className="text-sm text-gray-500">Uploaded</p>
-                          <p className="text-sm text-gray-400">Contacts in this CSV batch</p>
-                        </div>
-                        <p className="text-2xl font-semibold text-gray-900">{(progress?.total || 0).toLocaleString()}</p>
-                      </div>
-
-                      <div className="flex items-start justify-between gap-6 border-t border-gray-200 pt-4">
-                        <div>
-                          <p className="text-sm text-gray-500">Enriched</p>
-                          <p className="text-sm text-gray-400">Added to your Leads view</p>
-                        </div>
-                        <p className="text-2xl font-semibold text-gray-900">{(progress?.enriched || 0).toLocaleString()}</p>
-                      </div>
-
-                      {(progress?.duplicates || 0) > 0 && (
-                        <div className="flex items-start justify-between gap-6 border-t border-gray-200 pt-4">
-                          <div>
-                            <p className="text-sm text-gray-500">Already in Arcova</p>
-                            <p className="text-sm text-gray-400">Skipped because these contacts already exist in your workspace</p>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setExpandedBatchSection((prev) => (prev === 'duplicate' ? null : 'duplicate'))
-                              }
-                              className="mt-2 text-sm text-arcova-teal hover:underline"
-                            >
-                              {expandedBatchSection === 'duplicate' ? 'Hide contacts' : 'View contacts'}
-                            </button>
-                          </div>
-                          <p className="text-2xl font-semibold text-gray-900">
-                            {(progress?.duplicates || 0).toLocaleString()}
-                          </p>
-                        </div>
-                      )}
-
-                      <div className="flex items-start justify-between gap-6 border-t border-gray-200 pt-4">
-                        <div>
-                          <p className="text-sm text-gray-500">Not enriched</p>
-                          <p className="text-sm text-gray-400">
-                            Insufficient data to identify
-                          </p>
-                          <p className="text-sm text-gray-400">
-                            Old records, missing LinkedIn URLs, or incomplete profiles
-                          </p>
-                          {(progress?.notEnriched || 0) > 0 && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setExpandedBatchSection((prev) => (prev === 'failed' ? null : 'failed'))
-                              }
-                              className="mt-2 text-sm text-arcova-teal hover:underline"
-                            >
-                              {expandedBatchSection === 'failed' ? 'Hide contacts' : 'View contacts'}
-                            </button>
-                          )}
-                        </div>
-                        <p className="text-2xl font-semibold text-gray-900">
-                          {(progress?.notEnriched || 0).toLocaleString()}
-                        </p>
-                      </div>
-
-                      <div className="flex items-start justify-between gap-6 border-t border-gray-200 pt-4">
-                        <div>
-                          <p className="text-sm text-gray-500">High-fit leads</p>
-                          <p className="text-sm text-gray-400">Enriched contacts above your fit threshold</p>
-                        </div>
-                        <p className="text-2xl font-semibold text-gray-900">
-                          {(progress?.highFitLeads || 0).toLocaleString()}
-                        </p>
-                      </div>
+                  <div className="mb-8 flex items-start justify-between gap-4">
+                    <div>
+                      <h1 className="text-2xl font-semibold text-gray-900">
+                        {importCancelled ? 'Import stopped' : 'Import complete'}
+                      </h1>
+                      <p className="text-sm text-gray-500 mt-1">
+                        {importCancelled
+                          ? 'Enriched, scored contacts were added to Leads before stopping.'
+                          : 'All enriched, scored contacts have been added to your Leads view.'}
+                      </p>
                     </div>
+                    <button type="button" onClick={resetBatchView} className="text-xs text-gray-400 hover:text-gray-600 whitespace-nowrap mt-1">
+                      ← Back
+                    </button>
                   </div>
 
-                  {(expandedBatchSection || batchDetailsError) && (
-                    <div className="mt-6 rounded-xl border border-gray-200 bg-white p-6">
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <h2 className="text-lg font-semibold text-gray-900">{expandedBatchTitle}</h2>
-                          <p className="mt-1 text-sm text-gray-500">
-                            {expandedBatchSection === 'failed'
-                              ? 'These rows were uploaded but did not land in Leads.'
-                              : 'These rows were uploaded but skipped because matching contacts already existed.'}
-                          </p>
-                        </div>
-                        {expandedBatchSection && (
-                          <button
-                            type="button"
-                            onClick={() => setExpandedBatchSection(null)}
-                            className="text-sm text-gray-400 hover:text-gray-600"
-                          >
-                            Close
-                          </button>
-                        )}
+                  {/* Summary stats */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+                    {[
+                      { label: 'Uploaded', value: progress?.total ?? 0, color: 'text-gray-900' },
+                      { label: 'Enriched', value: progress?.enriched ?? 0, color: 'text-arcova-teal' },
+                      { label: 'Skipped', value: progress?.duplicates ?? 0, color: 'text-gray-500' },
+                      { label: 'High-fit leads', value: progress?.highFitLeads ?? 0, color: 'text-arcova-teal font-bold' },
+                    ].map(({ label, value, color }) => (
+                      <div key={label} className="rounded-xl border border-gray-200 bg-white p-4">
+                        <p className="text-xs text-gray-400 mb-1">{label}</p>
+                        <p className={`text-2xl font-semibold ${color}`}>{value.toLocaleString()}</p>
                       </div>
+                    ))}
+                  </div>
 
+                  {/* Not enriched */}
+                  {(progress?.notEnriched ?? 0) > 0 && (
+                    <div className="mb-4 rounded-xl border border-gray-200 bg-white p-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">{(progress?.notEnriched ?? 0).toLocaleString()} not enriched</p>
+                          <p className="text-xs text-gray-400 mt-0.5">Insufficient data — missing LinkedIn URL or incomplete profile</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setExpandedBatchSection((prev) => (prev === 'failed' ? null : 'failed'))}
+                          className="text-xs font-medium text-arcova-teal hover:opacity-70"
+                        >
+                          {expandedBatchSection === 'failed' ? 'Hide' : 'View contacts'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Duplicates */}
+                  {(progress?.duplicates ?? 0) > 0 && (
+                    <div className="mb-4 rounded-xl border border-gray-200 bg-white p-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">{(progress?.duplicates ?? 0).toLocaleString()} already in Arcova</p>
+                          <p className="text-xs text-gray-400 mt-0.5">Skipped — these contacts already exist in your workspace</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setExpandedBatchSection((prev) => (prev === 'duplicate' ? null : 'duplicate'))}
+                          className="text-xs font-medium text-arcova-teal hover:opacity-70"
+                        >
+                          {expandedBatchSection === 'duplicate' ? 'Hide' : 'View contacts'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Expanded contact list */}
+                  {(expandedBatchSection || batchDetailsError) && (
+                    <div className="mb-6 rounded-xl border border-gray-200 bg-white overflow-hidden">
+                      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+                        <p className="text-sm font-medium text-gray-900">{expandedBatchTitle}</p>
+                        <button type="button" onClick={() => setExpandedBatchSection(null)} className="text-xs text-gray-400 hover:text-gray-600">Close</button>
+                      </div>
                       {isLoadingBatchDetails ? (
-                        <p className="mt-4 text-sm text-gray-500">Loading contact details…</p>
+                        <p className="px-4 py-6 text-sm text-gray-400 text-center">Loading…</p>
                       ) : batchDetailsError ? (
-                        <p className="mt-4 text-sm text-red-600">{batchDetailsError}</p>
+                        <p className="px-4 py-6 text-sm text-red-600 text-center">{batchDetailsError}</p>
                       ) : visibleBatchRows.length === 0 ? (
-                        <p className="mt-4 text-sm text-gray-500">No contacts to show here.</p>
+                        <p className="px-4 py-6 text-sm text-gray-400 text-center">No contacts to show.</p>
                       ) : (
-                        <div className="mt-4 divide-y divide-gray-100 rounded-lg border border-gray-200 overflow-hidden">
+                        <div className="divide-y divide-gray-100">
                           {visibleBatchRows.map((row) => (
-                            <div key={row.id} className="bg-white px-4 py-3">
-                              <div className="flex items-start justify-between gap-4">
-                                <div className="min-w-0">
-                                  <p className="text-sm font-medium text-gray-900 truncate">{row.full_name}</p>
-                                  <p className="mt-0.5 text-sm text-arcova-teal truncate">
-                                    {row.company_name || row.company_domain || 'Unknown company'}
-                                  </p>
-                                  {row.job_title && (
-                                    <p className="mt-1 text-xs text-gray-500 truncate">{row.job_title}</p>
-                                  )}
-                                </div>
-                                <div className="min-w-0 text-right">
-                                  {row.email && <p className="text-sm text-gray-700 truncate">{row.email}</p>}
-                                  {!row.email && <p className="text-sm text-gray-400">No email</p>}
-                                  {row.linkedin_url && (
-                                    <p className="mt-1 text-xs text-gray-400 truncate">LinkedIn URL provided</p>
-                                  )}
-                                </div>
+                            <div key={row.id} className="flex items-start justify-between gap-4 px-4 py-3">
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium text-gray-900 truncate">{row.full_name}</p>
+                                <p className="text-xs text-gray-500 mt-0.5">{row.company_name || row.company_domain || 'Unknown company'}{row.job_title ? ` · ${row.job_title}` : ''}</p>
                               </div>
+                              <p className="text-xs text-gray-400 shrink-0">{row.email || 'No email'}</p>
                             </div>
                           ))}
                         </div>
@@ -1085,138 +1071,98 @@ export default function ImportPage() {
                     </div>
                   )}
 
-                  <div className="mt-8 rounded-xl border border-gray-200 p-6">
-                    <p className="text-lg font-semibold text-gray-900">
-                      Your Leads view has {(progress?.highFitLeads || 0).toLocaleString()} contact
-                      {(progress?.highFitLeads || 0) === 1 ? '' : 's'} ready to work with.
+                  {/* CTA */}
+                  <div className="rounded-xl border border-gray-200 bg-white p-5">
+                    <p className="text-sm font-semibold text-gray-900">
+                      {(progress?.highFitLeads || 0).toLocaleString()} high-fit contact{(progress?.highFitLeads || 0) !== 1 ? 's' : ''} ready to work with
                     </p>
-                    <p className="mt-2 text-sm text-gray-600">
+                    <p className="text-xs text-gray-500 mt-1">
                       {enoughHighFitLeads
-                        ? 'You have enough high-fit leads to start working this team in outreach.'
+                        ? 'You have enough high-fit leads to start your outreach.'
                         : `Most outreach programs need ${HIGH_FIT_TARGET}+ high-fit leads to see consistent results.`}
                     </p>
-
-                    <div className="mt-5 flex flex-wrap gap-3">
-                      <Link
-                        href="/results"
-                        className="px-4 py-2 rounded-lg bg-arcova-teal text-white text-sm font-medium hover:bg-arcova-teal/90 transition-colors"
-                      >
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <Link href="/results" className="px-4 py-2 rounded-lg bg-arcova-teal text-white text-sm font-medium hover:bg-arcova-teal/90 transition-colors">
                         View Leads
                       </Link>
                       {!enoughHighFitLeads && (
-                        <Link
-                          href="/find-more-leads"
-                          className="px-4 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:border-gray-400 hover:text-gray-900 transition-colors"
-                        >
-                          Find more leads matching this team →
+                        <Link href="/find-more-leads" className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:border-gray-300 hover:text-gray-900 transition-colors">
+                          Find more leads →
                         </Link>
                       )}
                     </div>
                   </div>
-
-                  <div className="mt-8 flex items-center gap-6">
-                    <button
-                      type="button"
-                      onClick={resetBatchView}
-                      className="text-sm text-arcova-teal hover:underline"
-                    >
-                      Back to imports
-                    </button>
-                  </div>
                 </>
               ) : (
                 <>
-                  <h1 className="text-3xl font-bold text-gray-900">We&apos;re enriching your contacts</h1>
-                  <p className="text-gray-600 mt-2">
-                    This may take a few minutes depending on the size of your list. We&apos;ll keep updating this
-                    screen as we work through your file.
-                  </p>
+                  <div className="mb-8">
+                    <h1 className="text-2xl font-semibold text-gray-900">Enriching your contacts</h1>
+                    <p className="text-sm text-gray-500 mt-1">
+                      This takes a few minutes. You don&apos;t need to stay on this page.
+                    </p>
+                  </div>
 
-                  {errorMessage && <p className="mt-4 text-sm text-red-600">{errorMessage}</p>}
+                  {errorMessage && (
+                    <p className="mb-4 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-3">{errorMessage}</p>
+                  )}
 
-                  <div className="mt-8 rounded-xl border border-gray-200 bg-white p-6">
-                    <div className="flex items-center justify-between gap-6">
-                      <div>
-                        <p className="text-sm font-medium text-gray-900">Enriching your contacts...</p>
-                        <p className="mt-1 text-sm text-gray-500">
-                          {processedCount.toLocaleString()} of {totalCount.toLocaleString()} processed
-                        </p>
+                  {/* Progress card */}
+                  <div className="rounded-xl border border-gray-200 bg-white p-5 mb-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-arcova-teal" />
+                        <span className="text-sm font-medium text-gray-900">Working through your contacts</span>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <div className="flex items-center gap-2 text-sm text-gray-500">
-                          <span className="inline-flex h-2.5 w-2.5 animate-pulse rounded-full bg-arcova-teal" />
-                          Working through your file
-                        </div>
-                        <button
-                          type="button"
-                          onClick={handleCancelImport}
-                          disabled={isCancelling}
-                          className="px-4 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:border-gray-400 hover:text-gray-900 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                        >
-                          {isCancelling ? 'Stopping import...' : 'Cancel import'}
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={handleCancelImport}
+                        disabled={isCancelling}
+                        className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50"
+                      >
+                        {isCancelling ? 'Stopping…' : 'Cancel'}
+                      </button>
                     </div>
-
-                    <div className="mt-5 h-3 overflow-hidden rounded-full bg-gray-100">
+                    <div className="h-2 overflow-hidden rounded-full bg-gray-100">
                       <div
                         className="h-full rounded-full bg-arcova-teal transition-all duration-500"
                         style={{ width: `${progressPercent}%` }}
                       />
                     </div>
-
-                    <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
+                    <div className="mt-2 flex items-center justify-between text-xs text-gray-400">
                       <span>{Math.round(progressPercent)}% complete</span>
-                      <span>{(progress?.remaining || 0).toLocaleString()} remaining</span>
+                      <span>{processedCount.toLocaleString()} of {totalCount.toLocaleString()} processed</span>
                     </div>
                   </div>
 
-                  <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="rounded-lg border border-gray-200 p-4">
-                      <p className="text-sm text-gray-500">Uploaded</p>
-                      <p className="text-2xl font-semibold text-gray-900">{progress?.total ?? 0}</p>
-                    </div>
-                    <div className="rounded-lg border border-gray-200 p-4">
-                      <p className="text-sm text-gray-500">Processed</p>
-                      <p className="text-2xl font-semibold text-gray-900">{processedCount}</p>
-                    </div>
-                    <div className="rounded-lg border border-gray-200 p-4">
-                      <p className="text-sm text-gray-500">Being enriched</p>
-                      <p className="text-2xl font-semibold text-gray-900">{progress?.enriching ?? 0}</p>
-                    </div>
-                    <div className="rounded-lg border border-gray-200 p-4">
-                      <p className="text-sm text-gray-500">Enriched</p>
-                      <p className="text-2xl font-semibold text-gray-900">{progress?.enriched ?? 0}</p>
-                    </div>
-                    <div className="rounded-lg border border-gray-200 p-4">
-                      <p className="text-sm text-gray-500">Already in Arcova</p>
-                      <p className="text-2xl font-semibold text-gray-900">{progress?.duplicates ?? 0}</p>
-                    </div>
-                    <div className="rounded-lg border border-gray-200 p-4">
-                      <p className="text-sm text-gray-500">Not enriched</p>
-                      <p className="text-2xl font-semibold text-gray-900">{progress?.notEnriched ?? 0}</p>
-                    </div>
+                  {/* Live stats */}
+                  <div className="grid grid-cols-3 gap-3 mb-8">
+                    {[
+                      { label: 'Enriched', value: progress?.enriched ?? 0 },
+                      { label: 'In queue', value: progress?.enriching ?? 0 },
+                      { label: 'Skipped', value: (progress?.duplicates ?? 0) + (progress?.notEnriched ?? 0) },
+                    ].map(({ label, value }) => (
+                      <div key={label} className="rounded-xl border border-gray-200 bg-white p-4 text-center">
+                        <p className="text-xl font-semibold text-gray-900">{value.toLocaleString()}</p>
+                        <p className="text-xs text-gray-400 mt-0.5">{label}</p>
+                      </div>
+                    ))}
                   </div>
 
-                  <div className="mt-8 flex items-center gap-6">
+                  <div className="flex items-center gap-6">
                     <button
                       type="button"
                       onClick={() => { persistBatchId(null); setProgress(null); }}
-                      className="text-sm text-arcova-teal hover:underline"
+                      className="text-xs text-arcova-teal hover:opacity-70"
                     >
                       Start new import
                     </button>
-                    <Link
-                      href="/dashboard"
-                      onClick={() => persistBatchId(null)}
-                      className="text-sm text-gray-400 hover:text-gray-600"
-                    >
-                      I&apos;ll come back later
+                    <Link href="/dashboard" onClick={() => persistBatchId(null)} className="text-xs text-gray-400 hover:text-gray-600">
+                      I&apos;ll check back later
                     </Link>
                   </div>
                 </>
               )}
-            </div>
+            </>
           )}
         </div>
       </div>
