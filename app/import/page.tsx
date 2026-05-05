@@ -883,21 +883,19 @@ export default function ImportPage() {
               {/* Past imports */}
               {!parsedCsv && importHistory.length > 0 && (
                 <div className="mt-8">
-                  <button
-                    type="button"
-                    onClick={() => setPastImportsExpanded((v) => !v)}
-                    className="flex items-center justify-between w-full mb-3 group"
-                  >
-                    <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-widest group-hover:text-gray-600 transition-colors">
-                      Past imports
-                      <span className="ml-2 font-normal normal-case tracking-normal text-gray-300">({importHistory.length})</span>
-                    </h2>
-                    <ChevronDown className={`w-3.5 h-3.5 text-gray-300 group-hover:text-gray-500 transition-all ${pastImportsExpanded ? 'rotate-180' : ''}`} />
-                  </button>
-
                   <div className="rounded-xl border border-gray-200 overflow-hidden bg-white">
-                    {/* Always show most recent */}
-                    {[importHistory[0], ...(pastImportsExpanded ? importHistory.slice(1) : [])].map((batch) => {
+                    <button
+                      type="button"
+                      onClick={() => setPastImportsExpanded((v) => !v)}
+                      className="flex items-center justify-between w-full px-4 py-3.5 hover:bg-gray-50 transition-colors group border-b border-gray-100"
+                    >
+                      <span className="text-sm font-semibold text-gray-700 group-hover:text-gray-900 transition-colors">
+                        Past imports
+                        <span className="ml-2 text-xs font-normal text-gray-400">({importHistory.length})</span>
+                      </span>
+                      <ChevronDown className={`w-4 h-4 text-gray-400 group-hover:text-gray-600 transition-all ${pastImportsExpanded ? 'rotate-180' : ''}`} />
+                    </button>
+                    {pastImportsExpanded && importHistory.map((batch) => {
                       const isOpen = expandedHistoryBatchId === batch.id;
                       const enriched = Math.max(0, (batch.processed_rows || 0) - (batch.duplicate_rows || 0) - (batch.failed_rows || 0));
                       return (
@@ -956,15 +954,6 @@ export default function ImportPage() {
                       );
                     })}
 
-                    {importHistory.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => setPastImportsExpanded((v) => !v)}
-                        className="w-full px-4 py-2.5 text-xs text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors border-t border-gray-100 text-center"
-                      >
-                        {pastImportsExpanded ? 'Show less' : `Show ${importHistory.length - 1} more`}
-                      </button>
-                    )}
                   </div>
                 </div>
               )}
