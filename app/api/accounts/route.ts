@@ -5,15 +5,18 @@ type CompanyAggRow = {
   id: string;
   company_name: string | null;
   domain: string | null;
-  company_website: string | null;
   logo_url: string | null;
   company_fit_score: number | null;
+  company_fit_coverage: number | null;
   matched_icp_id: string | null;
   therapeutic_areas: string[] | null;
   modalities: string[] | null;
   development_stages: string[] | null;
   funding_stage: string | null;
   funding_status_label: string | null;
+  total_funding_usd: number | null;
+  latest_funding_date: string | null;
+  funding_resolution_summary: string | null;
   company_type: string | null;
   linkedin_url: string | null;
   description: string | null;
@@ -22,8 +25,15 @@ type CompanyAggRow = {
   employee_range: string | null;
   headquarters_city: string | null;
   headquarters_country: string | null;
+  founded_year: number | null;
+  specialties: string[] | null;
+  products_services: string[] | null;
+  services: string[] | null;
+  technologies: string[] | null;
+  last_enriched_at: string | null;
 };
 
+// AggregatedAccount inherits all CompanyAggRow fields (including the new funding/founding ones)
 type AggregatedAccount = CompanyAggRow & {
   contact_count: number;
   best_contact_fit: number | null;
@@ -54,9 +64,9 @@ function finalizeScratch(row: ScratchAgg): AggregatedAccount {
     id: row.id,
     company_name: row.company_name,
     domain: row.domain,
-    company_website: row.company_website,
     logo_url: row.logo_url,
     company_fit_score: row.company_fit_score,
+    company_fit_coverage: row.company_fit_coverage,
     matched_icp_id: row.matched_icp_id,
     therapeutic_areas: row.therapeutic_areas,
     modalities: row.modalities,
@@ -71,6 +81,15 @@ function finalizeScratch(row: ScratchAgg): AggregatedAccount {
     employee_range: row.employee_range,
     headquarters_city: row.headquarters_city,
     headquarters_country: row.headquarters_country,
+    total_funding_usd: row.total_funding_usd,
+    latest_funding_date: row.latest_funding_date,
+    funding_resolution_summary: row.funding_resolution_summary,
+    founded_year: row.founded_year,
+    specialties: row.specialties,
+    products_services: row.products_services,
+    services: row.services,
+    technologies: row.technologies,
+    last_enriched_at: row.last_enriched_at,
     contact_count: row.contact_count,
     best_contact_fit: row.best_contact_fit,
     worst_contact_fit: row.worst_contact_fit,
@@ -116,9 +135,9 @@ export async function GET(request: Request) {
           id,
           company_name,
           domain,
-          company_website,
           logo_url,
           company_fit_score,
+          company_fit_coverage,
           matched_icp_id,
           therapeutic_areas,
           modalities,
@@ -132,7 +151,16 @@ export async function GET(request: Request) {
           employee_count,
           employee_range,
           headquarters_city,
-          headquarters_country
+          headquarters_country,
+          total_funding_usd,
+          latest_funding_date,
+          funding_resolution_summary,
+          founded_year,
+          specialties,
+          products_services,
+          services,
+          technologies,
+          last_enriched_at
         )
       `,
       )

@@ -37,7 +37,7 @@ type ImportProgress = {
   enriching: number;
   enriched: number;
   notEnriched: number;
-  highFitLeads: number;
+  monitorOrReachOutLeads: number;
   batchStatus: 'processing' | 'complete' | 'failed' | 'cancelled';
 };
 
@@ -66,6 +66,8 @@ type ImportBatchRow = {
 type ImportBatchDetails = {
   failedRows: ImportBatchRow[];
   duplicateRows: ImportBatchRow[];
+  enrichedRows: ImportBatchRow[];
+  allRows: ImportBatchRow[];
 };
 
 const BATCH_ID_STORAGE_KEY = 'arcova_current_batch_id';
@@ -222,7 +224,7 @@ export default function ImportPage() {
   const [batchDetails, setBatchDetails] = useState<ImportBatchDetails | null>(null);
   const [batchDetailsError, setBatchDetailsError] = useState<string | null>(null);
   const [isLoadingBatchDetails, setIsLoadingBatchDetails] = useState(false);
-  const [expandedBatchSection, setExpandedBatchSection] = useState<'failed' | 'duplicate' | null>(null);
+  const [expandedBatchSection, setExpandedBatchSection] = useState<'failed' | 'duplicate' | 'enriched' | 'uploaded' | null>(null);
   const [hubspotConnected, setHubspotConnected] = useState(false);
   const [hubspotDomain, setHubspotDomain] = useState<string | null>(null);
   const [hubspotSyncing, setHubspotSyncing] = useState(false);
@@ -311,7 +313,7 @@ export default function ImportPage() {
         enriching: (result.enriching || 0) + (result.pending || 0),
         enriched: result.enriched || 0,
         notEnriched: result.not_enriched || 0,
-        highFitLeads: result.high_fit_leads || 0,
+        monitorOrReachOutLeads: result.monitor_or_reach_out_total ?? 0,
         batchStatus,
       });
       if (batchStatus === 'complete') {
@@ -348,6 +350,8 @@ export default function ImportPage() {
         setBatchDetails({
           failedRows: result.failedRows || [],
           duplicateRows: result.duplicateRows || [],
+          enrichedRows: result.enrichedRows || [],
+          allRows: result.allRows || [],
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to load import details.';
@@ -414,7 +418,7 @@ export default function ImportPage() {
         enriching: result.total,
         enriched: 0,
         notEnriched: 0,
-        highFitLeads: 0,
+        monitorOrReachOutLeads: 0,
         batchStatus: 'processing',
       });
     } finally {
@@ -505,13 +509,17 @@ export default function ImportPage() {
 
   const canConfirmImport = useMemo(() => {
     const mappedTargets = Object.values(columnMappings);
-    const hasCompany = mappedTargets.includes('company_name');
-    const hasAnyNameField =
-      mappedTargets.includes('first_name') ||
-      mappedTargets.includes('last_name') ||
-      mappedTargets.includes('full_name');
+    const hasPersonIdentifier =
+      (mappedTargets.includes('first_name') && mappedTargets.includes('last_name')) ||
+      mappedTargets.includes('full_name') ||
+      mappedTargets.includes('linkedin_url');
+    const hasCompanyIdentifier =
+      mappedTargets.includes('company_name') ||
+      mappedTargets.includes('company_domain') ||
+      mappedTargets.includes('email_address') ||
+      mappedTargets.includes('linkedin_url');
 
-    return hasCompany && hasAnyNameField;
+    return hasPersonIdentifier && hasCompanyIdentifier;
   }, [columnMappings]);
 
   const rawPreviewRows = useMemo(() => {
@@ -557,7 +565,7 @@ export default function ImportPage() {
         enriching: result.beingEnriched || 0,
         enriched: result.complete || 0,
         notEnriched: result.failed || 0,
-        highFitLeads: 0,
+        monitorOrReachOutLeads: 0,
         batchStatus: 'processing',
       });
     } catch (error) {
@@ -600,7 +608,7 @@ export default function ImportPage() {
           enriching: 0,
           enriched,
           notEnriched,
-          highFitLeads: prev?.highFitLeads || 0,
+          monitorOrReachOutLeads: prev?.monitorOrReachOutLeads || 0,
           batchStatus: 'cancelled',
         };
       });
@@ -639,22 +647,22 @@ export default function ImportPage() {
   const importComplete = progress?.batchStatus === 'complete';
   const importCancelled = progress?.batchStatus === 'cancelled';
   const importFinished = importComplete || importCancelled;
-  const enoughHighFitLeads = (progress?.highFitLeads || 0) >= HIGH_FIT_TARGET;
+  const enoughMonitorOrReachOutLeads = (progress?.monitorOrReachOutLeads || 0) >= HIGH_FIT_TARGET;
   const processedCount = progress?.processed || 0;
   const totalCount = progress?.total || 0;
   const progressPercent = totalCount > 0 ? Math.min((processedCount / totalCount) * 100, 100) : 0;
   const visibleBatchRows =
-    expandedBatchSection === 'failed'
-      ? batchDetails?.failedRows || []
-      : expandedBatchSection === 'duplicate'
-      ? batchDetails?.duplicateRows || []
-      : [];
+    expandedBatchSection === 'failed' ? batchDetails?.failedRows || []
+    : expandedBatchSection === 'duplicate' ? batchDetails?.duplicateRows || []
+    : expandedBatchSection === 'enriched' ? batchDetails?.enrichedRows || []
+    : expandedBatchSection === 'uploaded' ? batchDetails?.allRows || []
+    : [];
   const expandedBatchTitle =
-    expandedBatchSection === 'failed'
-      ? 'Not enriched contacts'
-      : expandedBatchSection === 'duplicate'
-      ? 'Already in Arcova'
-      : '';
+    expandedBatchSection === 'failed' ? 'Not enriched'
+    : expandedBatchSection === 'duplicate' ? 'Duplicates'
+    : expandedBatchSection === 'enriched' ? 'Enriched contacts'
+    : expandedBatchSection === 'uploaded' ? 'All uploaded contacts'
+    : '';
 
   const HubSpotLogo = () => (
     <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
@@ -856,7 +864,7 @@ export default function ImportPage() {
 
                   {!canConfirmImport && (
                     <p className="mt-3 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                      Map at least one name field (first name, last name, or full name) and a company name to continue.
+                      Map a person identifier (first + last name, full name, or LinkedIn URL) and a company identifier (company name, domain, email, or LinkedIn URL) to continue.
                     </p>
                   )}
 
@@ -978,58 +986,24 @@ export default function ImportPage() {
                     </button>
                   </div>
 
-                  {/* Summary stats */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+                  {/* Summary pills */}
+                  <div className="flex flex-wrap items-center gap-2 mb-4">
                     {[
-                      { label: 'Uploaded', value: progress?.total ?? 0, color: 'text-gray-900' },
-                      { label: 'Enriched', value: progress?.enriched ?? 0, color: 'text-arcova-teal' },
-                      { label: 'Skipped', value: progress?.duplicates ?? 0, color: 'text-gray-500' },
-                      { label: 'High-fit leads', value: progress?.highFitLeads ?? 0, color: 'text-arcova-teal font-bold' },
-                    ].map(({ label, value, color }) => (
-                      <div key={label} className="rounded-xl border border-gray-200 bg-white p-4">
-                        <p className="text-xs text-gray-400 mb-1">{label}</p>
-                        <p className={`text-2xl font-semibold ${color}`}>{value.toLocaleString()}</p>
-                      </div>
+                      { label: 'enriched', value: progress?.enriched ?? 0, section: 'enriched' as const, className: 'bg-arcova-teal/10 text-arcova-teal' },
+                      { label: 'uploaded', value: progress?.total ?? 0, section: 'uploaded' as const, className: 'bg-gray-100 text-gray-600' },
+                      { label: 'duplicates', value: progress?.duplicates ?? 0, section: 'duplicate' as const, className: 'bg-gray-100 text-gray-500' },
+                      { label: 'not enriched', value: progress?.notEnriched ?? 0, section: 'failed' as const, className: 'bg-gray-100 text-gray-500' },
+                    ].map(({ label, value, section, className }) => (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={() => setExpandedBatchSection((prev) => (prev === section ? null : section))}
+                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-opacity hover:opacity-70 ${className} ${expandedBatchSection === section ? 'ring-1 ring-current ring-offset-1' : ''}`}
+                      >
+                        <span className="font-semibold">{value.toLocaleString()}</span> {label}
+                      </button>
                     ))}
                   </div>
-
-                  {/* Not enriched */}
-                  {(progress?.notEnriched ?? 0) > 0 && (
-                    <div className="mb-4 rounded-xl border border-gray-200 bg-white p-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-medium text-gray-900">{(progress?.notEnriched ?? 0).toLocaleString()} not enriched</p>
-                          <p className="text-xs text-gray-400 mt-0.5">Insufficient data — missing LinkedIn URL or incomplete profile</p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setExpandedBatchSection((prev) => (prev === 'failed' ? null : 'failed'))}
-                          className="text-xs font-medium text-arcova-teal hover:opacity-70"
-                        >
-                          {expandedBatchSection === 'failed' ? 'Hide' : 'View contacts'}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Duplicates */}
-                  {(progress?.duplicates ?? 0) > 0 && (
-                    <div className="mb-4 rounded-xl border border-gray-200 bg-white p-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-medium text-gray-900">{(progress?.duplicates ?? 0).toLocaleString()} already in Arcova</p>
-                          <p className="text-xs text-gray-400 mt-0.5">Skipped — these contacts already exist in your workspace</p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setExpandedBatchSection((prev) => (prev === 'duplicate' ? null : 'duplicate'))}
-                          className="text-xs font-medium text-arcova-teal hover:opacity-70"
-                        >
-                          {expandedBatchSection === 'duplicate' ? 'Hide' : 'View contacts'}
-                        </button>
-                      </div>
-                    </div>
-                  )}
 
                   {/* Expanded contact list */}
                   {(expandedBatchSection || batchDetailsError) && (
@@ -1060,21 +1034,19 @@ export default function ImportPage() {
                     </div>
                   )}
 
+
                   {/* CTA */}
                   <div className="rounded-xl border border-gray-200 bg-white p-5">
                     <p className="text-sm font-semibold text-gray-900">
-                      {(progress?.highFitLeads || 0).toLocaleString()} high-fit contact{(progress?.highFitLeads || 0) !== 1 ? 's' : ''} ready to work with
-                    </p>
-                    <p className="text-xs text-gray-500 mt-1">
-                      {enoughHighFitLeads
-                        ? 'You have enough high-fit leads to start your outreach.'
-                        : `Most outreach programs need ${HIGH_FIT_TARGET}+ high-fit leads to see consistent results.`}
+                      <span className="tabular-nums">{(progress?.monitorOrReachOutLeads || 0).toLocaleString()}</span>
+                      {' '}
+                      high fit lead{(progress?.monitorOrReachOutLeads || 0) !== 1 ? 's' : ''} ready to view
                     </p>
                     <div className="mt-4 flex flex-wrap gap-2">
                       <Link href="/results" className="px-4 py-2 rounded-lg bg-arcova-teal text-white text-sm font-medium hover:bg-arcova-teal/90 transition-colors">
                         View Leads
                       </Link>
-                      {!enoughHighFitLeads && (
+                      {!enoughMonitorOrReachOutLeads && (
                         <Link href="/find-more-leads" className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:border-gray-300 hover:text-gray-900 transition-colors">
                           Find more leads →
                         </Link>
@@ -1084,60 +1056,62 @@ export default function ImportPage() {
                 </>
               ) : (
                 <>
-                  <div className="mb-8">
-                    <h1 className="text-2xl font-semibold text-gray-900">Enriching your contacts</h1>
-                    <p className="text-sm text-gray-500 mt-1">
-                      This takes a few minutes. You don&apos;t need to stay on this page.
-                    </p>
-                  </div>
-
                   {errorMessage && (
                     <p className="mb-4 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-3">{errorMessage}</p>
                   )}
 
-                  {/* Progress card */}
-                  <div className="rounded-xl border border-gray-200 bg-white p-5 mb-6">
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-2">
-                        <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-arcova-teal" />
-                        <span className="text-sm font-medium text-gray-900">Working through your contacts</span>
+                  {/* Main progress card */}
+                  <div className="rounded-xl border border-gray-200 bg-white overflow-hidden mb-4">
+                    {/* Header */}
+                    <div className="px-5 pt-5 pb-4 border-b border-gray-100">
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-arcova-teal" />
+                            <span className="text-sm font-semibold text-gray-900">Enriching your contacts</span>
+                          </div>
+                          <p className="text-xs text-gray-400">This takes a few minutes — you don&apos;t need to stay on this page.</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleCancelImport}
+                          disabled={isCancelling}
+                          className="shrink-0 text-xs font-medium text-gray-400 border border-gray-200 rounded-lg px-3 py-1.5 hover:border-gray-300 hover:text-gray-600 disabled:opacity-50 transition-colors"
+                        >
+                          {isCancelling ? 'Stopping…' : 'Cancel'}
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={handleCancelImport}
-                        disabled={isCancelling}
-                        className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50"
-                      >
-                        {isCancelling ? 'Stopping…' : 'Cancel'}
-                      </button>
                     </div>
-                    <div className="h-2 overflow-hidden rounded-full bg-gray-100">
-                      <div
-                        className="h-full rounded-full bg-arcova-teal transition-all duration-500"
-                        style={{ width: `${progressPercent}%` }}
-                      />
+
+                    {/* Progress bar */}
+                    <div className="px-5 py-4">
+                      <div className="h-1.5 overflow-hidden rounded-full bg-gray-100">
+                        <div
+                          className="h-full rounded-full bg-arcova-teal transition-all duration-500"
+                          style={{ width: `${progressPercent}%` }}
+                        />
+                      </div>
+                      <div className="mt-2 flex items-center justify-between text-xs text-gray-400">
+                        <span>{Math.round(progressPercent)}% complete</span>
+                        <span>{processedCount.toLocaleString()} of {totalCount.toLocaleString()}</span>
+                      </div>
                     </div>
-                    <div className="mt-2 flex items-center justify-between text-xs text-gray-400">
-                      <span>{Math.round(progressPercent)}% complete</span>
-                      <span>{processedCount.toLocaleString()} of {totalCount.toLocaleString()} processed</span>
+
+                    {/* Live stat pills */}
+                    <div className="px-5 pb-5 flex items-center gap-2">
+                      {[
+                        { label: 'enriched', value: progress?.enriched ?? 0, className: 'bg-arcova-teal/10 text-arcova-teal' },
+                        { label: 'in queue', value: progress?.enriching ?? 0, className: 'bg-gray-100 text-gray-500' },
+                        { label: 'skipped', value: (progress?.duplicates ?? 0) + (progress?.notEnriched ?? 0), className: 'bg-gray-100 text-gray-400' },
+                      ].map(({ label, value, className }) => (
+                        <span key={label} className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium ${className}`}>
+                          <span className="font-semibold">{value.toLocaleString()}</span> {label}
+                        </span>
+                      ))}
                     </div>
                   </div>
 
-                  {/* Live stats */}
-                  <div className="grid grid-cols-3 gap-3 mb-8">
-                    {[
-                      { label: 'Enriched', value: progress?.enriched ?? 0 },
-                      { label: 'In queue', value: progress?.enriching ?? 0 },
-                      { label: 'Skipped', value: (progress?.duplicates ?? 0) + (progress?.notEnriched ?? 0) },
-                    ].map(({ label, value }) => (
-                      <div key={label} className="rounded-xl border border-gray-200 bg-white p-4 text-center">
-                        <p className="text-xl font-semibold text-gray-900">{value.toLocaleString()}</p>
-                        <p className="text-xs text-gray-400 mt-0.5">{label}</p>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="flex items-center gap-6">
+                  <div className="flex items-center gap-5">
                     <button
                       type="button"
                       onClick={() => { persistBatchId(null); setProgress(null); }}

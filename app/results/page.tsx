@@ -8,6 +8,13 @@ import AppSidebar from '@/components/AppSidebar';
 import { ArcovaLoader } from '@/components/ArcovaLoader';
 import { CONTACT_SIGNALS, isContactSignalComingSoon } from '@/lib/signals/catalog';
 import {
+  type LeadAction,
+  getLeadAction,
+  formatLeadActionLabel,
+  resolveCompanyFitForLeadAction,
+  resolveContactFitForLeadAction,
+} from '@/lib/lead-action';
+import {
   Users,
   Search,
   ChevronLeft,
@@ -49,6 +56,7 @@ interface CompanyFirmographics {
   industry?: string | null;
   founded_year?: number | null;
   hq_city?: string | null;
+  hq_state?: string | null;
   hq_country?: string | null;
   specialties?: string[] | null;
   products_services?: string[] | null;
@@ -266,6 +274,7 @@ interface Lead {
     funding_resolution_summary: string | null;
     founded_year: number | null;
     headquarters_city: string | null;
+    headquarters_state: string | null;
     headquarters_country: string | null;
     specialties: string[] | null;
     products_services: string[] | null;
@@ -350,82 +359,13 @@ const formatPercent = (value: number | null | undefined): string | null => {
   return percent ? `${percent} fit` : null;
 };
 
-type LeadAction = 'source_contact' | 'monitor' | 'deprioritize';
-
-/**
- * Thresholds for action classification.
- *
- * Company fit is the primary gate — if the account isn't worth pursuing, nothing else matters.
- * Contact fit then determines the action:
- *   - contact strong → Monitor (right person, wait for signal)
- *   - contact weak/missing → Source (right account, find the right person)
- *
- * A weak contact with a strong company should NEVER deprioritise — that's the Source case.
- */
-const DEPRIORITIZE_COMPANY_BELOW = 0.45;  // company_fit below this → deprioritise regardless
-const SOURCE_COMPANY_MIN = 0.5;           // company must clear this to be worth sourcing a contact
-const SOURCE_CONTACT_MAX = 0.65;          // contact below this → Source (find the right person)
-
-/**
- * Effective overall fit score: company × (0.3 + 0.7 × contact)
- *
- * Multiplicative formula with company as the base and contact as a multiplier ranging
- * from 0.3 (no contact fit) to 1.0 (perfect contact). Properties:
- *   - Company gates the ceiling — a weak company can't be rescued by a perfect contact.
- *   - A contact-less or zero-contact lead at a great company still scores at 30% of company,
- *     reflecting that the account is worth pursuing even if this specific contact isn't.
- *   - Perfect contact returns the raw company score; perfect both = 100%.
- */
-
-/** Company ICP fit for UX pills: API sends `fit_score` on the contact row; optional joins expose `companies.company_fit_score`. */
-function resolveCompanyFitForLeadAction(lead: Lead): number | null {
-  if (typeof lead.company_fit_score === 'number' && Number.isFinite(lead.company_fit_score)) {
-    return lead.company_fit_score;
-  }
-  const nested =
-    lead.companies &&
-    typeof lead.companies.company_fit_score === 'number' &&
-    Number.isFinite(lead.companies.company_fit_score)
-      ? lead.companies.company_fit_score
-      : null;
-  if (nested != null) return nested;
-  if (typeof lead.fit_score === 'number' && Number.isFinite(lead.fit_score)) {
-    return lead.fit_score;
-  }
-  return null;
-}
-
-function resolveContactFitForLeadAction(lead: Lead): number | null {
-  if (typeof lead.contact_fit_score === 'number' && Number.isFinite(lead.contact_fit_score)) {
-    return lead.contact_fit_score;
-  }
-  return null;
-}
-
-const getLeadAction = (lead: Lead): LeadAction => {
-  const company = resolveCompanyFitForLeadAction(lead);
-  const contact = resolveContactFitForLeadAction(lead);
-
-  // Company fit is the primary gate — weak company means the account isn't worth pursuing
-  if (company === null || company < DEPRIORITIZE_COMPANY_BELOW) return 'deprioritize';
-
-  // Company clears the bar — now contact fit determines the action
-  // Weak or missing contact on a good company = Source (find the right person there)
-  if (company >= SOURCE_COMPANY_MIN && (contact === null || contact < SOURCE_CONTACT_MAX)) {
-    return 'source_contact';
-  }
-
-  // Both dimensions are solid — monitor and wait for signals
-  return 'monitor';
-};
-
 const ACTION_CONFIG: Record<LeadAction, { label: string; className: string }> = {
   monitor: {
     label: 'Monitor',
     className: 'bg-arcova-teal text-white',
   },
   source_contact: {
-    label: 'Source',
+    label: 'Reach out',
     className: 'bg-arcova-teal/10 text-arcova-teal ring-1 ring-arcova-teal/20',
   },
   deprioritize: {
@@ -512,6 +452,7 @@ const getDisplayedCompanyFirmographics = (lead: Lead | null): CompanyFirmographi
     industry: company?.industry || null,
     founded_year: company?.founded_year ?? null,
     hq_city: company?.headquarters_city || null,
+    hq_state: company?.headquarters_state || null,
     hq_country: company?.headquarters_country || null,
     specialties: company?.specialties || null,
     products_services: company?.products_services || null,
@@ -921,17 +862,7 @@ export default function LeadsPage() {
       p++;
     }
 
-    const DEPRIORITIZE_COMPANY_BELOW_CSV = 0.45;
-    const SOURCE_COMPANY_MIN_CSV = 0.5;
-    const SOURCE_CONTACT_MAX_CSV = 0.65;
-    const actionLabel = (lead: Lead) => {
-      const co = typeof lead.company_fit_score === 'number' ? lead.company_fit_score
-        : lead.companies?.company_fit_score ?? null;
-      const ct = lead.contact_fit_score;
-      if (co === null || co < DEPRIORITIZE_COMPANY_BELOW_CSV) return 'Deprioritise';
-      if (co >= SOURCE_COMPANY_MIN_CSV && (ct === null || ct < SOURCE_CONTACT_MAX_CSV)) return 'Source contact';
-      return 'Monitor';
-    };
+    const actionLabel = (lead: Lead) => formatLeadActionLabel(getLeadAction(lead));
 
     const pct = (n: number | null | undefined) =>
       n != null && Number.isFinite(n) ? `${Math.round(n * 100)}%` : '';
@@ -2633,12 +2564,10 @@ export default function LeadsPage() {
                           /* ── Company view ── */
                           (() => {
                             const f = selectedCompanyFirmographics;
-                            const hqParts = [f?.hq_city, f?.hq_country].filter(Boolean);
-                            const hq = hqParts.join(', ') || null;
                             const showPlatformCategory = f?.company_type === 'SaaS' && !!f?.platform_category;
                             const hasCriteria = !!(f?.company_type || showPlatformCategory || f?.therapeutic_areas?.length || f?.modalities?.length || f?.development_stages?.length);
                             const hasFunding = !!(f?.funding_status_label || f?.funding_stage || f?.total_funding_usd != null || f?.latest_funding_date);
-                            const hasFirmographics = !!(f?.employee_count || f?.employee_range || f?.follower_count != null || f?.founded_year || hq);
+                            const hasFirmographics = !!(f?.employee_count || f?.employee_range || f?.follower_count != null || f?.founded_year || f?.hq_city || f?.hq_state || f?.hq_country);
                             const aboutText = f?.bio_summary || f?.description || null;
                             const hasProducts = (f?.products_services?.length ?? 0) > 0;
                             const hasServices = (f?.services?.length ?? 0) > 0;
@@ -2750,10 +2679,22 @@ export default function LeadsPage() {
                                               <p className="text-gray-900 text-sm mt-0.5">{f.founded_year}</p>
                                             </div>
                                           )}
-                                          {hq && (
+                                          {f?.hq_city && (
                                             <div>
-                                              <p className="text-gray-400 text-xs">HQ</p>
-                                              <p className="text-gray-900 text-sm mt-0.5">{hq}</p>
+                                              <p className="text-gray-400 text-xs">City</p>
+                                              <p className="text-gray-900 text-sm mt-0.5">{f.hq_city}</p>
+                                            </div>
+                                          )}
+                                          {f?.hq_state && (
+                                            <div>
+                                              <p className="text-gray-400 text-xs">State</p>
+                                              <p className="text-gray-900 text-sm mt-0.5">{f.hq_state}</p>
+                                            </div>
+                                          )}
+                                          {f?.hq_country && (
+                                            <div>
+                                              <p className="text-gray-400 text-xs">Country</p>
+                                              <p className="text-gray-900 text-sm mt-0.5">{f.hq_country}</p>
                                             </div>
                                           )}
                                         </div>

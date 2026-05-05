@@ -78,7 +78,6 @@ export async function GET(
       .select('id, status, full_name, email, linkedin_url, company_name, raw_data')
       .eq('user_id', user.id)
       .eq('batch_id', batchId)
-      .in('status', ['failed', 'duplicate'])
       .order('full_name', { ascending: true });
 
     if (rowsError) {
@@ -91,6 +90,8 @@ export async function GET(
       batch,
       failedRows: mappedRows.filter((row) => row.status === 'failed'),
       duplicateRows: mappedRows.filter((row) => row.status === 'duplicate'),
+      enrichedRows: mappedRows.filter((row) => row.status === 'complete'),
+      allRows: mappedRows,
     });
   } catch (error) {
     console.error('Error in import-history/[batchId] GET:', error);

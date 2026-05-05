@@ -207,6 +207,7 @@ export type ApifyFirmographics = {
   industry: string | null;
   founded_year: number | null;
   hq_city: string | null;
+  hq_state: string | null;
   hq_country: string | null;
   specialties: string[] | null;
   linkedin_url: string | null;
@@ -219,7 +220,7 @@ export function extractApifyFirmographics(
     return {
       description: null, tagline: null, logo_url: null, follower_count: null,
       employee_count: null, employee_range: null, industry: null, founded_year: null,
-      hq_city: null, hq_country: null, specialties: null, linkedin_url: null,
+      hq_city: null, hq_state: null, hq_country: null, specialties: null, linkedin_url: null,
     };
   }
 
@@ -245,6 +246,7 @@ export function extractApifyFirmographics(
     industry: str(raw.industry ?? raw.industries) || null,
     founded_year: num(raw.foundedYear) ?? num(raw.founded),
     hq_city: hq ? (str(hq.city ?? hq.cityName) || null) : null,
+    hq_state: hq ? (str(hq.state ?? hq.stateName ?? hq.stateCode) || null) : null,
     hq_country: hq ? (str(hq.country ?? hq.countryName ?? hq.countryCode) || null) : null,
     specialties: specialties.length > 0 ? specialties : null,
     // raw.url is the LinkedIn page URL — not the company website

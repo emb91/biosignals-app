@@ -101,6 +101,7 @@ export type ApolloEnrichmentResult = {
   company_employee_count?: number;
   company_founded_year?: number;
   company_hq_city?: string;
+  company_hq_state?: string;
   company_hq_country?: string;
   company_funding_stage?: string;
   company_total_funding_usd?: number;
@@ -132,6 +133,7 @@ export type ApolloOrganizationEnrichmentResult = {
   company_employee_count?: number;
   company_founded_year?: number;
   company_hq_city?: string;
+  company_hq_state?: string;
   company_hq_country?: string;
   company_funding_stage?: string;
   company_total_funding_usd?: number;
@@ -356,6 +358,7 @@ export async function enrichOrganizationWithApollo(input: {
     company_employee_count: organization.estimated_num_employees ?? undefined,
     company_founded_year: organization.founded_year ?? undefined,
     company_hq_city: organization.city || undefined,
+    company_hq_state: organization.state || undefined,
     company_hq_country: organization.country || undefined,
     company_funding_stage: organization.latest_funding_stage || undefined,
     company_total_funding_usd: organization.total_funding ?? undefined,
@@ -393,6 +396,7 @@ export async function enrichContactWithApollo(input: ApolloLookupInput): Promise
     company_employee_count: undefined,
     company_founded_year: undefined,
     company_hq_city: undefined,
+    company_hq_state: undefined,
     company_hq_country: undefined,
     company_funding_stage: undefined,
     company_total_funding_usd: undefined,

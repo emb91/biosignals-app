@@ -8,18 +8,7 @@ import {
   batchUpdateCompanies,
   batchReadContactsByEmail,
 } from '@/lib/hubspot';
-
-const DEPRIORITIZE_COMPANY_BELOW = 0.45;
-const SOURCE_COMPANY_MIN = 0.5;
-const SOURCE_CONTACT_MAX = 0.65;
-
-function computeAction(companyFit: number | null, contactFit: number | null): string {
-  if (companyFit === null || companyFit < DEPRIORITIZE_COMPANY_BELOW) return 'Deprioritise';
-  if (companyFit >= SOURCE_COMPANY_MIN && (contactFit === null || contactFit < SOURCE_CONTACT_MAX)) {
-    return 'Source contact';
-  }
-  return 'Monitor';
-}
+import { getLeadAction, formatLeadActionLabel } from '@/lib/lead-action';
 
 function fmt(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return '';
@@ -64,7 +53,7 @@ export async function POST() {
         company_name,
         company_fit_score, modalities, therapeutic_areas, development_stages,
         company_type, platform_category, bio_summary,
-        industry, employee_count, founded_year, headquarters_city, headquarters_country,
+        industry, employee_count, founded_year, headquarters_city, headquarters_state, headquarters_country,
         linkedin_url, funding_stage, funding_status_label, total_funding_usd
       )
     `)
@@ -102,11 +91,9 @@ export async function POST() {
   const upserts: Array<{ email: string; properties: Record<string, string> }> = [];
 
   for (const lead of syncableLeads) {
-    const co = lead.companies as any;
-    const companyFit = co?.company_fit_score ?? null;
     const contactFit = typeof lead.contact_fit_score === 'number' ? lead.contact_fit_score : null;
     const overallFit = lead.overall_fit_score ?? null;
-    const action = computeAction(companyFit, contactFit);
+    const action = formatLeadActionLabel(getLeadAction(lead));
 
     const props: Record<string, string> = {
       arcova_action: action,
@@ -175,8 +162,9 @@ export async function POST() {
     if (co.industry) props.arcova_industry = co.industry;
     if (co.employee_count != null) props.arcova_employee_count = String(co.employee_count);
     if (co.founded_year != null) props.arcova_founded_year = String(co.founded_year);
-    const hq = [co.headquarters_city, co.headquarters_country].filter(Boolean).join(', ');
-    if (hq) props.arcova_headquarters = hq;
+    if (co.headquarters_city) props.arcova_hq_city = co.headquarters_city;
+    if (co.headquarters_state) props.arcova_hq_state = co.headquarters_state;
+    if (co.headquarters_country) props.arcova_hq_country = co.headquarters_country;
     if (co.linkedin_url) props.arcova_linkedin_url = co.linkedin_url;
     if (co.funding_stage) props.arcova_funding_stage = co.funding_stage;
     if (co.funding_status_label) props.arcova_funding_status = co.funding_status_label;
