@@ -4,6 +4,16 @@ import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
+import { AgentPanel } from '@/components/AgentPanel';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Slider } from '@/components/ui/slider';
 import { toast } from 'sonner';
 import { Building2, Kanban, Loader2, Plus, Users, ArrowRight } from 'lucide-react';
 import {
@@ -27,6 +37,10 @@ interface IcpPipelineCard {
   depth: HealthDim;
   overall: HealthDim;
 }
+
+const MIN_ACQUISITION_QUANTITY = 1;
+const MAX_ACQUISITION_QUANTITY = 1000;
+const DEFAULT_ACQUISITION_QUANTITY = 50;
 
 function healthAccentClass(d: HealthDim): string {
   switch (d) {
@@ -122,6 +136,11 @@ export default function PipelinePage() {
   const [cards, setCards] = useState<IcpPipelineCard[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [requesting, setRequesting] = useState<string | null>(null);
+  const [quantityDialog, setQuantityDialog] = useState<{
+    card: IcpPipelineCard;
+    requestType: PipelineDataRequestType;
+  } | null>(null);
+  const [selectedQuantity, setSelectedQuantity] = useState(DEFAULT_ACQUISITION_QUANTITY);
 
   const loadCards = useCallback(async () => {
     setLoadError(null);
@@ -142,20 +161,33 @@ export default function PipelinePage() {
     if (user) void loadCards();
   }, [user, loadCards]);
 
-  const submitDataRequest = async (icpId: string, requestType: PipelineDataRequestType) => {
+  const submitDataRequest = async (
+    icpId: string,
+    requestType: PipelineDataRequestType,
+    targetCompanyCount?: number,
+  ) => {
     const key = `${icpId}:${requestType}`;
     setRequesting(key);
     try {
       const res = await fetch('/api/pipeline/data-request', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ icpId, requestType }),
+        body: JSON.stringify({
+          icpId,
+          requestType,
+          targetCompanyCount,
+        }),
       });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(typeof payload.error === 'string' ? payload.error : 'Request failed');
       }
-      toast.success('Data request recorded. Open Import to follow the new Arcova-sourced batch.', {
+      const estimate = payload.estimatedScreenedCompanies as { min?: number; max?: number } | undefined;
+      const estimateText =
+        typeof estimate?.min === 'number' && typeof estimate.max === 'number'
+          ? ` Estimated screening: ${estimate.min}-${estimate.max} companies.`
+          : '';
+      toast.success(`Acquisition job queued.${estimateText}`, {
         action: {
           label: 'Open Import',
           onClick: () => router.push('/import'),
@@ -166,6 +198,22 @@ export default function PipelinePage() {
     } finally {
       setRequesting(null);
     }
+  };
+
+  const openDataRequest = (card: IcpPipelineCard, requestType: PipelineDataRequestType) => {
+    if (requestType !== 'expand_companies') {
+      void submitDataRequest(card.icp_id, requestType);
+      return;
+    }
+    setSelectedQuantity(DEFAULT_ACQUISITION_QUANTITY);
+    setQuantityDialog({ card, requestType });
+  };
+
+  const estimatedScreenedMin = selectedQuantity * 3;
+  const estimatedScreenedMax = selectedQuantity * 6;
+  const setClampedQuantity = (value: number) => {
+    const next = Number.isFinite(value) ? Math.round(value) : DEFAULT_ACQUISITION_QUANTITY;
+    setSelectedQuantity(Math.min(MAX_ACQUISITION_QUANTITY, Math.max(MIN_ACQUISITION_QUANTITY, next)));
   };
 
   if (authLoading) {
@@ -182,7 +230,7 @@ export default function PipelinePage() {
     <div className="flex h-screen bg-gray-50">
       <AppSidebar />
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         <div className="flex-1 overflow-auto p-6">
           <div className="w-full max-w-2xl mx-auto">
 
@@ -282,7 +330,7 @@ export default function PipelinePage() {
                                 key={cta.type}
                                 type="button"
                                 disabled={busy}
-                                onClick={() => void submitDataRequest(card.icp_id, cta.type)}
+                                onClick={() => openDataRequest(card, cta.type)}
                                 className="inline-flex items-center gap-1.5 rounded-full border border-arcova-teal/30 bg-white px-3 py-1.5 text-xs font-semibold text-arcova-teal hover:border-arcova-teal hover:bg-arcova-teal/5 disabled:opacity-60 transition-colors"
                               >
                                 {busy
@@ -301,7 +349,97 @@ export default function PipelinePage() {
             )}
           </div>
         </div>
+
+        <AgentPanel page="pipeline" />
       </div>
+
+      <Dialog open={Boolean(quantityDialog)} onOpenChange={(open) => !open && setQuantityDialog(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Get more data</DialogTitle>
+            <DialogDescription>
+              Choose how many ICP-fit companies Arcova should try to add.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-5 py-2">
+            <div>
+              <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">Target</p>
+              <p className="mt-1 text-sm font-semibold text-gray-900">
+                {quantityDialog?.card.label ?? 'Selected ICP'}
+              </p>
+            </div>
+
+            <div className="rounded-lg border border-gray-100 bg-gray-50/70 px-4 py-4">
+              <div className="flex items-baseline justify-between gap-3">
+                <p className="text-sm font-medium text-gray-700">Companies to add</p>
+                <input
+                  type="number"
+                  min={MIN_ACQUISITION_QUANTITY}
+                  max={MAX_ACQUISITION_QUANTITY}
+                  value={selectedQuantity}
+                  onChange={(e) => setClampedQuantity(Number(e.target.value))}
+                  className="h-9 w-24 rounded-md border border-gray-200 bg-white px-2 text-right text-xl font-semibold tabular-nums text-gray-900 outline-none focus:border-arcova-teal focus:ring-2 focus:ring-arcova-teal/20"
+                />
+              </div>
+              <Slider
+                className="mt-4"
+                min={MIN_ACQUISITION_QUANTITY}
+                max={MAX_ACQUISITION_QUANTITY}
+                step={1}
+                value={[selectedQuantity]}
+                onValueChange={(value) => setClampedQuantity(value[0] ?? DEFAULT_ACQUISITION_QUANTITY)}
+              />
+              <div className="mt-3 flex justify-between text-[11px] tabular-nums text-gray-400">
+                <span>{MIN_ACQUISITION_QUANTITY}</span>
+                <span>{MAX_ACQUISITION_QUANTITY}</span>
+              </div>
+            </div>
+
+            <p className="text-xs leading-relaxed text-gray-500">
+              Estimated screening: {estimatedScreenedMin.toLocaleString()}-
+              {estimatedScreenedMax.toLocaleString()} Apollo company candidates before enrichment.
+            </p>
+          </div>
+
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setQuantityDialog(null)}
+              className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={
+                Boolean(
+                  quantityDialog &&
+                    requesting === `${quantityDialog.card.icp_id}:${quantityDialog.requestType}`,
+                )
+              }
+              onClick={() => {
+                if (!quantityDialog) return;
+                void submitDataRequest(
+                  quantityDialog.card.icp_id,
+                  quantityDialog.requestType,
+                  selectedQuantity,
+                );
+                setQuantityDialog(null);
+              }}
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-arcova-teal px-4 py-2 text-sm font-semibold text-white hover:bg-arcova-teal/90 disabled:opacity-60 transition-colors"
+            >
+              {quantityDialog &&
+              requesting === `${quantityDialog.card.icp_id}:${quantityDialog.requestType}` ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <ArrowRight className="h-4 w-4" />
+              )}
+              Start acquisition
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

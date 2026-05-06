@@ -118,6 +118,14 @@ function normalizeBreakdown(row: CompanyFitIcpScoreRow): CompanyFitBreakdown | n
   return raw as CompanyFitBreakdown;
 }
 
+function toSingleSentence(value: string): string {
+  const text = value.replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  const firstSentence = text.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? text;
+  const trimmed = firstSentence.trim();
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
 export function CompanyIcpFitDetailPanel({
   details,
   loading,
@@ -176,7 +184,7 @@ export function CompanyIcpFitDetailPanel({
       .then(async (res) => {
         const data = (await res.json().catch(() => ({}))) as { summary?: unknown };
         if (!res.ok || cancelled) return;
-        const text = typeof data.summary === 'string' ? data.summary.trim() : '';
+        const text = typeof data.summary === 'string' ? toSingleSentence(data.summary) : '';
         cache.set(companyId, text || null);
         if (!cancelled) setFitSummary(text || null);
       })
@@ -196,17 +204,18 @@ export function CompanyIcpFitDetailPanel({
   }, [embedded, companyId]);
 
   const headerFit = details?.company_fit_score ?? tableCompanyFitScore;
+  const displayedFitSummary = fitSummary ? toSingleSentence(fitSummary) : null;
 
   const body = (
     <>
       {embedded && companyId && (
         <>
-          {fitSummaryLoading && !fitSummary && (
+          {fitSummaryLoading && !displayedFitSummary && (
             <p className="text-xs text-gray-400">Summarizing fit…</p>
           )}
-          {fitSummary && (
+          {displayedFitSummary && (
             <div className="rounded-lg border border-slate-200/80 bg-white/90 px-3 py-2.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
-              <p className="text-sm text-gray-800 leading-relaxed">{fitSummary}</p>
+              <p className="text-sm text-gray-800 leading-relaxed">{displayedFitSummary}</p>
             </div>
           )}
         </>

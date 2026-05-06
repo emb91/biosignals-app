@@ -5,9 +5,9 @@ import { useEnrichmentGuard } from '@/context/EnrichmentGuardContext';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import AppSidebar from '@/components/AppSidebar';
+import { AgentPanel, type AgentLeadsFilter } from '@/components/AgentPanel';
 import { ArcovaLoader } from '@/components/ArcovaLoader';
-import { QueryBar } from './components/QueryBar';
-import type { AgentQueryResult, QueryLead, QueryColumn } from '@/app/api/leads/query/route';
+import type { QueryLead } from '@/lib/leads-data';
 import {
   type LeadAction,
   getLeadAction,
@@ -627,113 +627,7 @@ const getLeadRefreshStatusMeta = (
   }
 };
 
-// ── Query column definitions (used in query mode) ────────────────────────────
 
-const QUERY_COL_DEFS: Record<QueryColumn, { label: string; width: string }> = {
-  name: { label: 'Name', width: 'minmax(0,1fr)' },
-  job_title: { label: 'Job title', width: 'minmax(0,1fr)' },
-  company: { label: 'Company', width: 'minmax(0,1.2fr)' },
-  status: { label: 'Status', width: '9rem' },
-  company_fit: { label: 'Company fit', width: '8rem' },
-  contact_fit: { label: 'Contact fit', width: '8rem' },
-  source: { label: 'Source', width: '7rem' },
-  signals: { label: 'Signal', width: '6rem' },
-  icp_match: { label: 'ICP match', width: 'minmax(0,1fr)' },
-  funding_stage: { label: 'Funding', width: '9rem' },
-  therapeutic_areas: { label: 'Therapeutic areas', width: 'minmax(0,1fr)' },
-  seniority: { label: 'Seniority', width: '8rem' },
-};
-
-function queryGridCols(columns: QueryColumn[]): string {
-  return columns.map((c) => QUERY_COL_DEFS[c].width).join(' ');
-}
-
-function renderQueryCell(
-  lead: QueryLead,
-  col: QueryColumn,
-  actionConfig: Record<LeadAction, { label: string; className: string }>,
-): React.ReactNode {
-  const name =
-    lead.full_name || [lead.first_name, lead.last_name].filter(Boolean).join(' ') || '—';
-  const title = lead.resolved_current_job_title || lead.job_title || '—';
-  const companyName = lead.resolved_current_company_name || lead.company_name || '—';
-
-  switch (col) {
-    case 'name':
-      return <p className="font-medium text-gray-900 truncate text-sm">{name}</p>;
-    case 'job_title':
-      return (
-        <p className="text-xs text-gray-700 truncate leading-snug">
-          {title.length > 36 ? title.slice(0, 36) + '…' : title}
-        </p>
-      );
-    case 'company': {
-      const truncated = companyName.length > 30 ? companyName.slice(0, 30) + '…' : companyName;
-      return lead.company_id ? (
-        <p className="text-sm text-arcova-teal truncate">{truncated}</p>
-      ) : (
-        <p className="text-sm text-gray-700 truncate">{truncated}</p>
-      );
-    }
-    case 'status': {
-      const companyFit = lead.company_fit_score ?? lead.companies?.company_fit_score ?? null;
-      const action = getLeadActionFromFits(
-        companyFit,
-        lead.contact_fit_score ?? null,
-        lead.intent_score ?? null,
-      );
-      const cfg = actionConfig[action];
-      return (
-        <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${cfg.className}`}>
-          {cfg.label}
-        </span>
-      );
-    }
-    case 'company_fit': {
-      const fit = lead.company_fit_score ?? lead.companies?.company_fit_score ?? null;
-      if (fit === null) return <span className="text-xs text-gray-400">—</span>;
-      const pct = Math.round(fit <= 1 ? fit * 100 : fit);
-      return (
-        <span className={`text-xs font-medium ${pct >= 70 ? 'text-emerald-600' : pct >= 50 ? 'text-amber-600' : 'text-gray-400'}`}>
-          {pct}%
-        </span>
-      );
-    }
-    case 'contact_fit': {
-      const fit = lead.contact_fit_score;
-      if (fit === null) return <span className="text-xs text-gray-400">—</span>;
-      const pct = Math.round(fit <= 1 ? fit * 100 : fit);
-      return (
-        <span className={`text-xs font-medium ${pct >= 65 ? 'text-emerald-600' : pct >= 40 ? 'text-amber-600' : 'text-gray-400'}`}>
-          {pct}%
-        </span>
-      );
-    }
-    case 'source':
-      return <span className="text-xs text-gray-500 truncate">{lead.data_provenance_type || '—'}</span>;
-    case 'signals':
-      return lead.intent_score && lead.intent_score > 0 ? (
-        <span className="inline-flex items-center gap-1 text-xs font-medium text-arcova-teal">
-          <span className="w-1.5 h-1.5 rounded-full bg-arcova-teal inline-block" />
-          Signal
-        </span>
-      ) : (
-        <span className="text-xs text-gray-400">—</span>
-      );
-    case 'icp_match':
-      return <span className="text-xs text-gray-600 truncate">{lead.matched_icp_label || '—'}</span>;
-    case 'funding_stage':
-      return <span className="text-xs text-gray-600 truncate">{lead.companies?.funding_stage || '—'}</span>;
-    case 'therapeutic_areas': {
-      const tas = lead.companies?.therapeutic_areas;
-      if (!tas || tas.length === 0) return <span className="text-xs text-gray-400">—</span>;
-      const display = tas.slice(0, 2).join(', ') + (tas.length > 2 ? ` +${tas.length - 2}` : '');
-      return <span className="text-xs text-gray-600 truncate">{display}</span>;
-    }
-    case 'seniority':
-      return <span className="text-xs text-gray-600 truncate">{lead.seniority_level || '—'}</span>;
-  }
-}
 
 function getSortValue(lead: Lead | QueryLead, col: string): string | number {
   switch (col) {
@@ -863,14 +757,10 @@ export default function LeadsPage() {
   const [enrichmentVisuals, setEnrichmentVisuals] = useState<Record<string, EnrichmentVisualState>>({});
   const [progressNow, setProgressNow] = useState(() => Date.now());
 
-  // Agent query bar state
-  const [queryResult, setQueryResult] = useState<AgentQueryResult | null>(null);
-  const [queryLoading, setQueryLoading] = useState(false);
-  const [activeQuery, setActiveQuery] = useState<string | null>(null);
-  // Full lead data fetched when a query-result row is selected but not in the paginated `leads`
-  const [querySelectedLead, setQuerySelectedLead] = useState<Lead | null>(null);
+  // Agent-driven filter state — just the set of matching contact IDs
+  const [agentFilterIds, setAgentFilterIds] = useState<Set<string> | null>(null);
 
-  // Column sort state (client-side, applies to current page / query results)
+  // Column sort state (client-side, applies to current page / agent filter)
   const [tableSortCol, setTableSortCol] = useState<string | null>(null);
   const [tableSortDir, setTableSortDir] = useState<'asc' | 'desc'>('asc');
 
@@ -1067,39 +957,15 @@ export default function LeadsPage() {
     setEditingFields(null);
   };
 
-  const handleAgentQuery = async (query: string) => {
-    setActiveQuery(query);
-    setQueryLoading(true);
-    setQueryResult(null);
+  const handleLeadsFilter = (_filter: AgentLeadsFilter, leads: QueryLead[]) => {
+    setAgentFilterIds(new Set(leads.map((l) => l.id)));
     setSelectedLeadId(null);
-    setQuerySelectedLead(null);
-    try {
-      const res = await fetch('/api/leads/query', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query }),
-      });
-      if (!res.ok) throw new Error('Query failed');
-      const data: AgentQueryResult = await res.json();
-      setQueryResult(data);
-    } catch {
-      setQueryResult({
-        interpretation: null,
-        columns: ['name', 'job_title', 'company', 'status'],
-        leads: [],
-        conversational: 'Something went wrong. Please try again.',
-      });
-    } finally {
-      setQueryLoading(false);
-    }
+    setTableSortCol(null);
   };
 
   const handleQueryClear = () => {
-    setActiveQuery(null);
-    setQueryResult(null);
-    setQueryLoading(false);
+    setAgentFilterIds(null);
     setSelectedLeadId(null);
-    setQuerySelectedLead(null);
     setTableSortCol(null);
   };
 
@@ -1111,27 +977,6 @@ export default function LeadsPage() {
       setTableSortDir('asc');
     }
   };
-
-  // When a query-result row is selected, fetch the full lead if it's not in the paginated list
-  const handleSelectQueryLead = useCallback(
-    async (leadId: string) => {
-      setSelectedLeadId(leadId);
-      setSelectedPreview('contact');
-      cancelEditingLead();
-      if (!leads.find((l) => l.id === leadId)) {
-        try {
-          const res = await fetch(`/api/leads/${leadId}`);
-          if (res.ok) {
-            const data = await res.json();
-            setQuerySelectedLead((data.lead as Lead) ?? null);
-          }
-        } catch {
-          // panel will just show limited info
-        }
-      }
-    },
-    [leads],
-  );
 
   const updateEditingField = (field: keyof EditableLeadFields, value: string) => {
     setEditingFields((prev) => (prev ? { ...prev, [field]: value } : prev));
@@ -1407,13 +1252,12 @@ export default function LeadsPage() {
   }, [anyLeadRefreshRunning, fetchLeads]);
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
-  const showSearchInput = total > 0 || searchInput.trim().length > 0 || search.trim().length > 0;
-  const sortedLeads = applySortCol(leads, tableSortCol, tableSortDir);
-  const sortedQueryLeads = queryResult
-    ? applySortCol(queryResult.leads, tableSortCol, tableSortDir)
-    : [];
-  const selectedLead =
-    leads.find((lead) => lead.id === selectedLeadId) ?? querySelectedLead ?? null;
+  const sortedLeads = applySortCol(
+    agentFilterIds ? leads.filter((l) => agentFilterIds.has(l.id)) : leads,
+    tableSortCol,
+    tableSortDir,
+  );
+  const selectedLead = leads.find((lead) => lead.id === selectedLeadId) ?? null;
   const selectedContactFitState = selectedLeadId ? contactFitByContactId[selectedLeadId] ?? null : null;
   const selectedContactFit = selectedContactFitState?.data ?? null;
   const selectedCompanyId = selectedLead?.company_id ?? null;
@@ -1897,7 +1741,7 @@ export default function LeadsPage() {
     <div className="flex h-screen bg-gray-50">
       <AppSidebar />
 
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         <div className="flex-1 overflow-auto p-6">
           <div className="w-full max-w-none">
             <div className="mb-6 flex items-center justify-between">
@@ -1999,22 +1843,11 @@ export default function LeadsPage() {
               </div>
             )}
 
-            {showSearchInput && (
-              <QueryBar
-                onQuery={handleAgentQuery}
-                onClear={handleQueryClear}
-                isLoading={queryLoading}
-                interpretation={queryResult?.interpretation ?? null}
-                conversational={queryResult?.conversational ?? null}
-                activeQuery={activeQuery}
-              />
-            )}
-
-            {loadingLeads && !queryLoading ? (
+            {loadingLeads ? (
               <div className="flex items-center justify-center py-24">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-arcova-teal" />
               </div>
-            ) : leads.length === 0 && !search && !activeQuery ? (
+            ) : leads.length === 0 && !search && !agentFilterIds ? (
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-16 text-center">
                 <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                   <Users className="w-8 h-8 text-gray-400" />
@@ -2030,7 +1863,7 @@ export default function LeadsPage() {
                   Import contacts
                 </button>
               </div>
-            ) : leads.length === 0 && search && !activeQuery ? (
+            ) : leads.length === 0 && search && !agentFilterIds ? (
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
                 <p className="text-gray-500">No leads matching &ldquo;{search}&rdquo;</p>
               </div>
@@ -2038,94 +1871,33 @@ export default function LeadsPage() {
               <div className={`grid gap-4 ${selectedLeadId ? 'xl:grid-cols-[minmax(0,1fr)_360px]' : ''}`}>
                 {/* ── Leads table ── */}
                 <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-                  {/* Header — dynamic in query mode, fixed otherwise */}
-                  {queryLoading || queryResult ? (() => {
-                    const cols: QueryColumn[] = queryResult?.columns ?? ['name', 'job_title', 'company', 'status'];
-                    return (
-                      <div
-                        className="px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide grid gap-x-6"
-                        style={{ gridTemplateColumns: queryGridCols(cols) }}
-                      >
-                        {cols.map((c) => (
-                          <button
-                            key={c}
-                            onClick={() => handleSortCol(c)}
-                            className="flex items-center gap-1 hover:text-gray-800 transition-colors text-left"
-                          >
-                            {QUERY_COL_DEFS[c].label}
-                            <SortArrow col={c} activeCol={tableSortCol} dir={tableSortDir} />
-                          </button>
-                        ))}
-                      </div>
-                    );
-                  })() : (
-                    <div
-                      className={`${LEADS_TABLE_GRID} px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide`}
-                    >
-                      {(['name', 'job_title', 'company'] as const).map((col) => (
-                        <button
-                          key={col}
-                          onClick={() => handleSortCol(col)}
-                          className="flex items-center gap-1 hover:text-gray-800 transition-colors text-left"
-                        >
-                          {col === 'name' ? 'Name' : col === 'job_title' ? 'Job title' : 'Company name'}
-                          <SortArrow col={col} activeCol={tableSortCol} dir={tableSortDir} />
-                        </button>
-                      ))}
-                      <span className="text-center leading-tight whitespace-nowrap">Account</span>
+                  {/* Table header */}
+                  <div
+                    className={`${LEADS_TABLE_GRID} px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide`}
+                  >
+                    {(['name', 'job_title', 'company'] as const).map((col) => (
                       <button
-                        onClick={() => handleSortCol('status')}
-                        className="flex items-center justify-center gap-1 w-full pl-12 hover:text-gray-800 transition-colors"
+                        key={col}
+                        onClick={() => handleSortCol(col)}
+                        className="flex items-center gap-1 hover:text-gray-800 transition-colors text-left"
                       >
-                        Action
-                        <SortArrow col="status" activeCol={tableSortCol} dir={tableSortDir} />
+                        {col === 'name' ? 'Name' : col === 'job_title' ? 'Job title' : 'Company name'}
+                        <SortArrow col={col} activeCol={tableSortCol} dir={tableSortDir} />
                       </button>
-                    </div>
-                  )}
+                    ))}
+                    <span className="text-center leading-tight whitespace-nowrap">Account</span>
+                    <button
+                      onClick={() => handleSortCol('status')}
+                      className="flex items-center justify-center gap-1 w-full pl-12 hover:text-gray-800 transition-colors"
+                    >
+                      Action
+                      <SortArrow col="status" activeCol={tableSortCol} dir={tableSortDir} />
+                    </button>
+                  </div>
 
                   <div className="divide-y divide-gray-100">
-                    {/* Skeleton rows while query is running */}
-                    {queryLoading && (() => {
-                      const cols: QueryColumn[] = ['name', 'job_title', 'company', 'status'];
-                      return Array.from({ length: 6 }).map((_, i) => (
-                        <div
-                          key={i}
-                          className="px-4 py-3 grid gap-x-6 animate-pulse"
-                          style={{ gridTemplateColumns: queryGridCols(cols) }}
-                        >
-                          {cols.map((c) => (
-                            <div key={c} className="h-4 bg-gray-100 rounded" style={{ width: c === 'status' ? '5rem' : '75%' }} />
-                          ))}
-                        </div>
-                      ));
-                    })()}
-
-                    {/* Query result rows */}
-                    {!queryLoading && queryResult && sortedQueryLeads.map((qlead) => {
-                      const cols = queryResult.columns;
-                      const isSelected = selectedLeadId === qlead.id;
-                      return (
-                        <div
-                          key={qlead.id}
-                          onClick={() => handleSelectQueryLead(qlead.id)}
-                          className={`px-4 py-3 grid gap-x-6 items-center cursor-pointer transition-all duration-150 border-l-2 ${
-                            isSelected
-                              ? 'bg-arcova-teal/10 border-arcova-teal'
-                              : 'border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30'
-                          }`}
-                          style={{ gridTemplateColumns: queryGridCols(cols) }}
-                        >
-                          {cols.map((c) => (
-                            <div key={c} className="min-w-0">
-                              {renderQueryCell(qlead, c, ACTION_CONFIG)}
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    })}
-
-                    {/* Normal rows (paginated, no query active) */}
-                    {!queryLoading && !queryResult && sortedLeads.map((lead) => {
+                    {/* Single render path — agent filter narrows sortedLeads in-place */}
+                    {sortedLeads.map((lead) => {
                       const isSelected = selectedLeadId === lead.id;
                       const enriching = isEnriching(lead);
                       const enrichmentProgress = getEnrichmentProgress(lead);
@@ -2319,16 +2091,16 @@ export default function LeadsPage() {
                     })}
                   </div>
 
-                  {/* Footer — result count in query mode, pagination otherwise */}
-                  {queryResult && !queryLoading && (
+                  {/* Footer — filtered count in agent mode, pagination otherwise */}
+                  {agentFilterIds && (
                     <div className="px-4 py-2.5 border-t border-gray-100 bg-gray-50">
                       <p className="text-xs text-gray-400">
-                        {queryResult.leads.length} contact{queryResult.leads.length !== 1 ? 's' : ''} found
+                        {sortedLeads.length} contact{sortedLeads.length !== 1 ? 's' : ''} found
                       </p>
                     </div>
                   )}
 
-                  {!queryResult && !queryLoading && totalPages > 1 && (
+                  {!agentFilterIds && totalPages > 1 && (
                     <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200 bg-gray-50">
                       <p className="text-xs text-gray-500">
                         {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of{' '}
@@ -2905,6 +2677,12 @@ export default function LeadsPage() {
             )}
           </div>
         </div>
+
+        <AgentPanel
+          page="leads"
+          onLeadsFilter={handleLeadsFilter}
+          onTableClear={handleQueryClear}
+        />
       </div>
     </div>
   );
