@@ -48,7 +48,7 @@ export async function POST() {
     .from('contacts')
     .select(`
       id, email, first_name, last_name, job_title, seniority_level, business_area,
-      contact_fit_score, overall_fit_score, contact_bio, linkedin_url,
+      contact_fit_score, intent_score, overall_fit_score, contact_bio, linkedin_url,
       companies(
         company_name,
         company_fit_score, modalities, therapeutic_areas, development_stages,

@@ -1,0 +1,15 @@
+---
+description: Avoid breaking Accounts by selecting missing company columns from Supabase
+globs: app/api/accounts/**/*,app/accounts/**/*
+alwaysApply: true
+---
+
+# Accounts page and `/api/accounts` companies embed
+
+The Accounts list loads via `contacts` with an embedded `companies (...)` select in `app/api/accounts/route.ts`.
+
+**Do not add `headquarters_state` to that embed** (or to `CompanyAggRow` / `finalizeScratch`) unless you have confirmed this column exists on `companies` in every environment you support. If the column is missing, PostgREST returns an error for the whole query and **no companies appear on Accounts**.
+
+Prefer **city and country only** for firmographics on Accounts. If you need state later, add it only after a migration is applied everywhere or gate the select behind schema detection.
+
+When touching this route, double-check the embedded `companies` field list against the live `companies` table or recent migrations.

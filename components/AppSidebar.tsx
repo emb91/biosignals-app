@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   Target,
   Building2,
+  Kanban,
   Radio,
   FileUp,
   Users,
@@ -34,6 +35,7 @@ const topNavigation: NavItem[] = [
   { name: 'Import', href: '/import', icon: FileUp },
   { name: 'Leads', href: '/results', icon: Users },
   { name: 'Accounts', href: '/accounts', icon: Building2 },
+  { name: 'Pipeline', href: '/pipeline', icon: Kanban },
   { name: 'Signals', href: '/customer-signals', icon: Radio },
 ];
 

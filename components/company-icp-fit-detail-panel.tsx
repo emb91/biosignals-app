@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 
 export type CompanyFitComponentKey =
@@ -124,17 +124,23 @@ export function CompanyIcpFitDetailPanel({
   error,
   message,
   tableCompanyFitScore,
-  tableCompanyFitCoverage,
   tableMatchedIcpLabel,
+  embedded = false,
+  companyId = null,
 }: {
   details: CompanyFitDetails | null;
   loading: boolean;
   error: string | null;
   message: string | null;
   tableCompanyFitScore: number | null;
-  tableCompanyFitCoverage: number | null;
   tableMatchedIcpLabel: string | null;
+  embedded?: boolean;
+  companyId?: string | null;
 }) {
+  const fitSummaryCacheRef = useRef(new Map<string, string | null>());
+  const [fitSummary, setFitSummary] = useState<string | null>(null);
+  const [fitSummaryLoading, setFitSummaryLoading] = useState(false);
+
   const [cardOpen, setCardOpen] = useState(true);
   const [expandedBars, setExpandedBars] = useState<Set<string>>(new Set());
   const [otherIcpsOpen, setOtherIcpsOpen] = useState(false);
@@ -148,16 +154,62 @@ export function CompanyIcpFitDetailPanel({
     });
   }, []);
 
+  useEffect(() => {
+    if (!embedded || !companyId) {
+      setFitSummary(null);
+      setFitSummaryLoading(false);
+      return;
+    }
+
+    const cache = fitSummaryCacheRef.current;
+    if (cache.has(companyId)) {
+      setFitSummary(cache.get(companyId) ?? null);
+      setFitSummaryLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setFitSummary(null);
+    setFitSummaryLoading(true);
+
+    fetch(`/api/companies/${encodeURIComponent(companyId)}/fit-summary`, { method: 'POST' })
+      .then(async (res) => {
+        const data = (await res.json().catch(() => ({}))) as { summary?: unknown };
+        if (!res.ok || cancelled) return;
+        const text = typeof data.summary === 'string' ? data.summary.trim() : '';
+        cache.set(companyId, text || null);
+        if (!cancelled) setFitSummary(text || null);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          cache.set(companyId, null);
+          setFitSummary(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setFitSummaryLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [embedded, companyId]);
+
   const headerFit = details?.company_fit_score ?? tableCompanyFitScore;
-  const headerCoverage = details?.company_fit_coverage ?? tableCompanyFitCoverage;
 
   const body = (
     <>
-      {headerCoverage != null && (
-        <p className="text-xs text-gray-500">
-          ICP coverage{' '}
-          <span className="font-semibold tabular-nums text-gray-800">{formatCompanyFitPercent(headerCoverage)}</span>
-        </p>
+      {embedded && companyId && (
+        <>
+          {fitSummaryLoading && !fitSummary && (
+            <p className="text-xs text-gray-400">Summarizing fit…</p>
+          )}
+          {fitSummary && (
+            <div className="rounded-lg border border-slate-200/80 bg-white/90 px-3 py-2.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+              <p className="text-sm text-gray-800 leading-relaxed">{fitSummary}</p>
+            </div>
+          )}
+        </>
       )}
 
       {message && <p className="text-xs text-amber-700">{message}</p>}
@@ -325,6 +377,10 @@ export function CompanyIcpFitDetailPanel({
       )}
     </>
   );
+
+  if (embedded) {
+    return <div className="space-y-3">{body}</div>;
+  }
 
   return (
     <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">

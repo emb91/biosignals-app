@@ -19,7 +19,7 @@ async function countMonitorOrReachOutAcrossAllLeads(
   for (;;) {
     const { data, error } = await supabase
       .from('contacts')
-      .select('contact_fit_score, fit_score, companies(company_fit_score)')
+      .select('contact_fit_score, fit_score, intent_score, companies(company_fit_score)')
       .eq('user_id', userId)
       .order('id', { ascending: true })
       .range(from, from + USER_LEADS_PAGE_SIZE - 1);
@@ -115,7 +115,7 @@ export async function GET(request: Request) {
       ...summary,
       processed,
       remaining,
-      /** All of your Leads classified as Monitor or Reach out (same rules as the Leads page). */
+      /** All of your Leads that are not Deprioritised (Monitor, Source, or Reach out; same rules as the Leads page). */
       monitor_or_reach_out_total: monitorOrReachOutTotal,
       batch_status: batchStatus,
     });

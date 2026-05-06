@@ -7,8 +7,8 @@ import {
 } from '@/lib/lead-action';
 
 /**
- * Per ICP: count distinct companies that have at least one contact classified as
- * Monitor or Reach out on the Leads page (same rules as getLeadAction).
+ * Per ICP: count distinct companies that have at least one contact whose recommended
+ * action is Monitor, Source, or Reach out (not Deprioritise), using the same rules as getLeadAction.
  */
 export async function GET() {
   try {
@@ -24,7 +24,9 @@ export async function GET() {
 
     const { data: contactRows, error } = await supabase
       .from('contacts')
-      .select('company_id, contact_fit_score, fit_score, companies(id, company_fit_score, matched_icp_id)')
+      .select(
+        'company_id, contact_fit_score, fit_score, intent_score, companies(id, company_fit_score, matched_icp_id)',
+      )
       .eq('user_id', user.id)
       .not('company_id', 'is', null);
 

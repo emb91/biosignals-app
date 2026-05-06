@@ -21,19 +21,16 @@ import {
   fetchUnenrichedHubSpotContacts,
 } from '@/lib/hubspot';
 import { processQueuedRowsInBackground, type QueuedRow } from '@/lib/import-queue';
+import { getLeadActionFromFits, formatLeadActionLabel } from '@/lib/lead-action';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const DEPRIORITIZE_COMPANY_BELOW = 0.45;
-const SOURCE_COMPANY_MIN = 0.5;
-const SOURCE_CONTACT_MAX = 0.65;
-
-function computeAction(companyFit: number | null, contactFit: number | null): string {
-  if (companyFit === null || companyFit < DEPRIORITIZE_COMPANY_BELOW) return 'Deprioritise';
-  if (companyFit >= SOURCE_COMPANY_MIN && (contactFit === null || contactFit < SOURCE_CONTACT_MAX)) {
-    return 'Source contact';
-  }
-  return 'Monitor';
+function computeAction(
+  companyFit: number | null,
+  contactFit: number | null,
+  intentScore: number | null,
+): string {
+  return formatLeadActionLabel(getLeadActionFromFits(companyFit, contactFit, intentScore));
 }
 
 function fmt(n: number | null | undefined): string {
@@ -66,7 +63,7 @@ async function pushUserToHubSpot(
     .from('contacts')
     .select(`
       id, email, first_name, last_name, job_title, seniority_level, business_area,
-      contact_fit_score, overall_fit_score, contact_bio, linkedin_url,
+      contact_fit_score, intent_score, overall_fit_score, contact_bio, linkedin_url,
       companies(
         company_name, company_fit_score, modalities, therapeutic_areas, development_stages,
         company_type, platform_category, bio_summary, industry, employee_count,
@@ -91,8 +88,9 @@ async function pushUserToHubSpot(
     const co = lead.companies as any;
     const companyFit = co?.company_fit_score ?? null;
     const contactFit = typeof lead.contact_fit_score === 'number' ? lead.contact_fit_score : null;
+    const intentScore = typeof lead.intent_score === 'number' ? lead.intent_score : null;
     const overallFit = lead.overall_fit_score ?? null;
-    const action = computeAction(companyFit, contactFit);
+    const action = computeAction(companyFit, contactFit, intentScore);
 
     const props: Record<string, string> = {
       arcova_action: action,

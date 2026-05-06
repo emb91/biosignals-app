@@ -62,6 +62,12 @@ type FollowUpReminder = {
   updatedAt: string;
 };
 
+type IcpCoverageRow = {
+  icp_id: string;
+  label: string;
+  company_count: number;
+};
+
 type EnrichmentJob = {
   id: string;
   kind: 'icp' | 'lead';
@@ -124,6 +130,8 @@ export default function DashboardPage() {
     skipped_contacts: { name: string; company: string | null; reason: string }[];
   } | null>(null);
   const [syncLogExpanded, setSyncLogExpanded] = useState(false);
+  const [icpCoverageRows, setIcpCoverageRows] = useState<IcpCoverageRow[]>([]);
+  const [icpCoverageUncategorized, setIcpCoverageUncategorized] = useState(0);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -163,6 +171,7 @@ export default function DashboardPage() {
           signalEventsHttp,
           topLeadsRes,
           syncLogRes,
+          icpCoverageRes,
         ] = await Promise.all([
           supabase.from('user_company').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
           fetch('/api/company-criteria'),
@@ -171,11 +180,26 @@ export default function DashboardPage() {
           fetch('/api/signal-events?recent=1&limit=12'),
           fetch('/api/leads?pageSize=5&page=1'),
           fetch('/api/hubspot/sync-log'),
+          fetch('/api/accounts/icp-coverage'),
         ]);
 
         if (syncLogRes.ok) {
           const syncJson = await syncLogRes.json() as { data: typeof hubspotSyncLog };
           setHubspotSyncLog(syncJson.data);
+        }
+
+        if (icpCoverageRes.ok) {
+          const covJson = (await icpCoverageRes.json()) as {
+            rows?: IcpCoverageRow[];
+            uncategorized_company_count?: number;
+          };
+          setIcpCoverageRows(Array.isArray(covJson.rows) ? covJson.rows : []);
+          setIcpCoverageUncategorized(
+            typeof covJson.uncategorized_company_count === 'number' ? covJson.uncategorized_company_count : 0,
+          );
+        } else {
+          setIcpCoverageRows([]);
+          setIcpCoverageUncategorized(0);
         }
 
         if (profileError) throw profileError;
@@ -333,6 +357,59 @@ export default function DashboardPage() {
   const isLiveMode = completedSteps === steps.length && steps.length > 0;
   const runningEnrichmentCount = enrichmentJobs.filter((job) => job.status === 'running').length;
   const failedEnrichmentCount = enrichmentJobs.filter((job) => job.status === 'failed').length;
+  const hasIcpCoverageData = icpCoverageRows.length > 0 || icpCoverageUncategorized > 0;
+
+  const icpCoverageSection = (
+    <div className="rounded-lg border border-gray-200 p-6 bg-white">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-xl font-semibold text-gray-900">ICP coverage</h2>
+          <p className="mt-1 text-sm text-gray-500 max-w-2xl">
+            Each line is how many distinct companies have prioritized leads (Monitor or Reach out), counted under the
+            ICP matched on the company record.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => router.push('/accounts')}
+          className="shrink-0 text-sm font-medium hover:opacity-80 sm:mt-0.5"
+          style={{ color: TEAL }}
+        >
+          View accounts →
+        </button>
+      </div>
+      {!hasIcpCoverageData ? (
+        <p className="mt-4 text-sm text-gray-500">
+          No coverage yet. When you mark leads as Monitor or Reach out, companies will appear here by matched ICP.
+        </p>
+      ) : (
+        <>
+          <ul className="mt-4 space-y-2">
+            {icpCoverageRows.map((row) => (
+              <li key={row.icp_id} className="flex items-baseline justify-between gap-4 text-sm">
+                <span className="min-w-0 text-gray-700 break-words leading-snug" title={row.label}>
+                  {row.label}
+                </span>
+                <span className="shrink-0 font-semibold tabular-nums text-gray-900">
+                  {row.company_count.toLocaleString()}{' '}
+                  <span className="font-normal text-gray-500">
+                    compan{row.company_count === 1 ? 'y' : 'ies'}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
+          {icpCoverageUncategorized > 0 && (
+            <p className="mt-4 text-xs text-gray-500 border-t border-gray-100 pt-3">
+              {icpCoverageUncategorized.toLocaleString()} other{' '}
+              {icpCoverageUncategorized === 1 ? 'company' : 'companies'} with prioritized leads but no matched ICP on
+              the company.
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -475,6 +552,8 @@ export default function DashboardPage() {
                     </div>
                   </div>
 
+                  {hasIcpCoverageData && <div className="mb-8">{icpCoverageSection}</div>}
+
                   <div className="space-y-4">
                     {steps.map((step) => (
                       <div
@@ -520,6 +599,8 @@ export default function DashboardPage() {
                   <div>
                     <h1 className="text-3xl font-bold text-gray-900">Here&apos;s what&apos;s happened since you last logged in.</h1>
                   </div>
+
+                  {icpCoverageSection}
 
                   <div className="rounded-lg border border-gray-200 p-6 bg-white">
                     <h2 className="text-xl font-semibold text-gray-900 mb-4">New signals</h2>

@@ -7,6 +7,10 @@ import {
 } from '@/lib/arcova-taxonomy';
 import { normalizePlatformTaxonomyFields } from '@/lib/platform-category';
 import { createClient } from '@/lib/supabase-server';
+import {
+  formatDataProvenanceTypeOnly,
+  resolveContactDataProvenance,
+} from '@/lib/data-provenance';
 
 function isMissingColumnError(error: unknown): boolean {
   const message =
@@ -22,6 +26,22 @@ type SupabaseClientLike = {
 };
 
 type LeadRow = Record<string, unknown>;
+
+function attachDataProvenance(rows: LeadRow[]): LeadRow[] {
+  return rows.map((row) => {
+    const { channels, importedAt } = resolveContactDataProvenance({
+      upload_batches: row.upload_batches,
+      created_at: typeof row.created_at === 'string' ? row.created_at : null,
+      source: typeof row.source === 'string' ? row.source : null,
+    });
+    const { upload_batches: _omit, ...rest } = row;
+    return {
+      ...rest,
+      data_provenance_type: formatDataProvenanceTypeOnly(channels),
+      data_provenance_imported_at: importedAt,
+    };
+  });
+}
 
 function normalizeText(value: string): string {
   return value
@@ -353,7 +373,7 @@ export async function GET(request: Request) {
     };
 
     const baseLeadSelect =
-      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, email_status, email_status_reasoning, linkedin_url, profile_photo_url, headline, location, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, intent_score, overall_fit_score, contact_fit_score, source, created_at, updated_at, company_id';
+      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, email_status, email_status_reasoning, linkedin_url, profile_photo_url, headline, location, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, intent_score, overall_fit_score, contact_fit_score, source, created_at, updated_at, company_id, upload_batches(filename, created_at)';
     const companySelectCore =
       'companies(company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_state, headquarters_country, specialties, products_services, services, technologies, company_type, company_type_display, platform_category, funding_stage, funding_status_label, total_funding_usd, latest_funding_date, funding_data_source, therapeutic_areas, modalities, development_stages, clinical_stage, matched_icp_id, company_fit_score, last_enriched_at)';
     const companySelectStable =
@@ -374,7 +394,7 @@ export async function GET(request: Request) {
     const tertiarySelect =
       `${baseLeadSelect}, ${companySelectStable}`;
     const fallbackSelect =
-      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, linkedin_url, profile_photo_url, headline, location, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, intent_score, overall_fit_score, contact_fit_score, source, created_at, updated_at, company_id';
+      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, linkedin_url, profile_photo_url, headline, location, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, intent_score, overall_fit_score, contact_fit_score, source, created_at, updated_at, company_id, upload_batches(filename, created_at)';
 
     let { data, error, count } = await runQuery(primarySelect);
 
@@ -520,9 +540,8 @@ export async function GET(request: Request) {
       ((data || []) as unknown) as LeadRow[],
     );
 
-    const enrichedRows = await attachMatchedIcpNames(
-      supabase,
-      rowsWithEnrichmentMetadata,
+    const enrichedRows = attachDataProvenance(
+      (await attachMatchedIcpNames(supabase, rowsWithEnrichmentMetadata)) as LeadRow[],
     );
 
     return NextResponse.json({

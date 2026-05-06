@@ -1,5 +1,10 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
+import {
+  type DataProvenanceChannel,
+  formatDataProvenanceTypeOnly,
+  resolveContactDataProvenance,
+} from '@/lib/data-provenance';
 
 type CompanyAggRow = {
   id: string;
@@ -39,6 +44,8 @@ type AggregatedAccount = CompanyAggRow & {
   best_contact_fit: number | null;
   worst_contact_fit: number | null;
   avg_contact_fit: number | null;
+  data_provenance_type: string;
+  data_provenance_imported_at: string | null;
 };
 
 type ScratchAgg = CompanyAggRow & {
@@ -47,6 +54,8 @@ type ScratchAgg = CompanyAggRow & {
   fit_n: number;
   best_contact_fit: number | null;
   worst_contact_fit: number | null;
+  provenance_channels: Set<DataProvenanceChannel>;
+  provenance_earliest_import_at: string | null;
 };
 
 function clamp01(value: number): number {
@@ -94,6 +103,8 @@ function finalizeScratch(row: ScratchAgg): AggregatedAccount {
     best_contact_fit: row.best_contact_fit,
     worst_contact_fit: row.worst_contact_fit,
     avg_contact_fit: row.fit_n > 0 ? row.fit_sum / row.fit_n : null,
+    data_provenance_type: formatDataProvenanceTypeOnly([...row.provenance_channels]),
+    data_provenance_imported_at: row.provenance_earliest_import_at,
   };
 }
 
@@ -110,7 +121,8 @@ export async function GET(request: Request) {
     }
 
     const { searchParams } = new URL(request.url);
-    const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
+    const rawPage = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
+    const companyIdFocus = (searchParams.get('companyId') || '').trim();
     const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get('pageSize') || '50', 10)));
     const search = (searchParams.get('search') || '').trim();
 
@@ -131,6 +143,12 @@ export async function GET(request: Request) {
         `
         company_id,
         contact_fit_score,
+        created_at,
+        source,
+        upload_batches (
+          filename,
+          created_at
+        ),
         companies (
           id,
           company_name,
@@ -186,6 +204,12 @@ export async function GET(request: Request) {
           ? row.contact_fit_score
           : null;
 
+      const prov = resolveContactDataProvenance({
+        upload_batches: row.upload_batches,
+        created_at: typeof row.created_at === 'string' ? row.created_at : null,
+        source: typeof row.source === 'string' ? row.source : null,
+      });
+
       const existing = byCompany.get(companyId);
       if (!existing) {
         byCompany.set(companyId, {
@@ -195,9 +219,18 @@ export async function GET(request: Request) {
           fit_n: contactFit == null ? 0 : 1,
           best_contact_fit: contactFit,
           worst_contact_fit: contactFit,
+          provenance_channels: new Set(prov.channels),
+          provenance_earliest_import_at: prov.importedAt,
         });
       } else {
         existing.contact_count += 1;
+        for (const c of prov.channels) existing.provenance_channels.add(c);
+        if (
+          prov.importedAt &&
+          (!existing.provenance_earliest_import_at || prov.importedAt < existing.provenance_earliest_import_at)
+        ) {
+          existing.provenance_earliest_import_at = prov.importedAt;
+        }
         if (contactFit != null) {
           existing.fit_sum += contactFit;
           existing.fit_n += 1;
@@ -272,6 +305,14 @@ export async function GET(request: Request) {
           : 0;
       return bestA - bestB;
     });
+
+    let page = rawPage;
+    if (companyIdFocus) {
+      const idx = accounts.findIndex((a) => a.id === companyIdFocus);
+      if (idx >= 0) {
+        page = Math.floor(idx / pageSize) + 1;
+      }
+    }
 
     const total = accounts.length;
     const offset = (page - 1) * pageSize;

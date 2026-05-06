@@ -22,6 +22,7 @@ import {
   type CompanyFitDetails,
   formatCompanyFitPercent,
 } from '@/components/company-icp-fit-detail-panel';
+import { formatProvenanceImportedAt } from '@/lib/data-provenance';
 
 const PAGE_SIZE = 50;
 
@@ -60,6 +61,8 @@ type AccountRow = {
   best_contact_fit: number | null;
   worst_contact_fit: number | null;
   avg_contact_fit: number | null;
+  data_provenance_type: string;
+  data_provenance_imported_at: string | null;
 };
 
 type ContactAtCompany = {
@@ -74,7 +77,7 @@ type ContactAtCompany = {
   seniority_level: string | null;
 };
 
-type PanelMode = 'details' | 'contacts' | 'coverage';
+type PanelMode = 'details' | 'fit' | 'coverage' | 'contacts';
 
 type IcpCoverageRow = {
   icp_id: string;
@@ -220,7 +223,7 @@ function TaxonomyPills({ items }: { items: string[] | null | undefined }) {
 }
 
 const TABLE_GRID =
-  'grid grid-cols-[minmax(0,1.05fr)_minmax(0,0.82fr)_minmax(0,4.25rem)_minmax(0,6rem)_minmax(6.75rem,7.5rem)_minmax(0,1fr)_minmax(0,1fr)_minmax(9rem,1fr)] gap-x-5';
+  'grid grid-cols-[minmax(0,1.05fr)_minmax(0,0.82fr)_minmax(0,4.25rem)_minmax(6.75rem,7.5rem)_minmax(0,1fr)_minmax(0,1fr)_minmax(9rem,1fr)] gap-x-5';
 
 export default function AccountsPage() {
   const { user, loading } = useAuth();
@@ -262,7 +265,6 @@ export default function AccountsPage() {
   /** When opening details from a taxonomy cell, set so Criteria stays expanded after account selection. */
   const pendingOpenCriteriaRef = useRef(false);
 
-  const [companyFitDetailOpen, setCompanyFitDetailOpen] = useState(false);
   const companyFitCacheRef = useRef<Record<string, CompanyFitDetails>>({});
   const [companyFitPanel, setCompanyFitPanel] = useState<{
     loading: boolean;
@@ -370,7 +372,7 @@ export default function AccountsPage() {
   }, [selectedAccountId, panelMode]);
 
   useEffect(() => {
-    if (!companyFitDetailOpen || !selectedAccountId) return;
+    if (panelMode !== 'fit' || !selectedAccountId) return;
 
     const cached = companyFitCacheRef.current[selectedAccountId];
     if (cached) {
@@ -423,7 +425,7 @@ export default function AccountsPage() {
     return () => {
       cancelled = true;
     };
-  }, [companyFitDetailOpen, selectedAccountId]);
+  }, [panelMode, selectedAccountId]);
 
   useEffect(() => {
     if (panelMode !== 'coverage' || !user) return;
@@ -492,20 +494,17 @@ export default function AccountsPage() {
 
   const openDetails = (id: string) => {
     pendingOpenCriteriaRef.current = false;
-    setCompanyFitDetailOpen(false);
     setSelectedAccountId(id);
     setPanelMode('details');
   };
 
-  const openCompanyFitDetail = (id: string) => {
+  const openCompanyFitTab = (id: string) => {
     pendingOpenCriteriaRef.current = false;
     setSelectedAccountId(id);
-    setPanelMode('details');
-    setCompanyFitDetailOpen(true);
+    setPanelMode('fit');
   };
 
   const openDetailsWithCriteria = (id: string) => {
-    setCompanyFitDetailOpen(false);
     setPanelMode('details');
     if (selectedAccountId === id) {
       setDetailPanelOpen({
@@ -526,13 +525,11 @@ export default function AccountsPage() {
   const openContacts = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     pendingOpenCriteriaRef.current = false;
-    setCompanyFitDetailOpen(false);
     setSelectedAccountId(id);
     setPanelMode('contacts');
   };
 
   const closePanel = () => {
-    setCompanyFitDetailOpen(false);
     setSelectedAccountId(null);
   };
 
@@ -609,11 +606,10 @@ export default function AccountsPage() {
                 <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
                   <div className="overflow-x-auto">
                     {/* Header */}
-                    <div className={cn(TABLE_GRID, 'min-w-[1200px] px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide')}>
+                    <div className={cn(TABLE_GRID, 'min-w-[1280px] px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide')}>
                       <span>Company</span>
                       <span>Company type</span>
                       <span className="text-center">Fit</span>
-                      <span className="text-center">Coverage</span>
                       <span>Contacts</span>
                       <span className="pl-2">Therapeutic areas</span>
                       <span>Modalities</span>
@@ -638,7 +634,7 @@ export default function AccountsPage() {
                             }}
                             className={cn(
                               TABLE_GRID,
-                              'min-w-[1200px] px-4 py-3 items-center cursor-pointer transition-all duration-150 border-l-2',
+                              'min-w-[1280px] px-4 py-3 items-center cursor-pointer transition-all duration-150 border-l-2',
                               isSelected
                                 ? 'bg-arcova-teal/10 border-arcova-teal'
                                 : 'border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30',
@@ -708,35 +704,18 @@ export default function AccountsPage() {
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  openCompanyFitDetail(account.id);
+                                  openCompanyFitTab(account.id);
                                 }}
                                 className={cn(
                                   'inline-flex min-w-[3rem] justify-center rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums transition-colors',
-                                  formatCompanyFitPercent(account.company_fit_score)
-                                    ? 'bg-slate-100 text-slate-700 hover:bg-arcova-teal/15 hover:text-arcova-teal'
-                                    : 'bg-gray-50 text-gray-400 hover:bg-gray-100',
+                                  isSelected && panelMode === 'fit'
+                                    ? 'bg-arcova-teal text-white'
+                                    : formatCompanyFitPercent(account.company_fit_score)
+                                      ? 'bg-slate-100 text-slate-700 hover:bg-arcova-teal/15 hover:text-arcova-teal'
+                                      : 'bg-gray-50 text-gray-400 hover:bg-gray-100',
                                 )}
                               >
                                 {formatCompanyFitPercent(account.company_fit_score) ?? '—'}
-                              </button>
-                            </div>
-
-                            {/* ICP coverage % */}
-                            <div className="flex justify-center">
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openCompanyFitDetail(account.id);
-                                }}
-                                className={cn(
-                                  'inline-flex min-w-[3rem] justify-center rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums transition-colors',
-                                  formatCompanyFitPercent(account.company_fit_coverage)
-                                    ? 'bg-slate-100 text-slate-700 hover:bg-arcova-teal/15 hover:text-arcova-teal'
-                                    : 'bg-gray-50 text-gray-400 hover:bg-gray-100',
-                                )}
-                              >
-                                {formatCompanyFitPercent(account.company_fit_coverage) ?? '—'}
                               </button>
                             </div>
 
@@ -867,29 +846,12 @@ export default function AccountsPage() {
                       </div>
                     </div>
 
-                    {/* Tab switcher or company fit sub-view */}
-                    {companyFitDetailOpen ? (
-                      <div className="flex items-center gap-2 border-b border-gray-200 px-5 py-2.5">
-                        <button
-                          type="button"
-                          onClick={() => setCompanyFitDetailOpen(false)}
-                          className="inline-flex items-center gap-1 text-xs font-medium text-gray-600 hover:text-arcova-teal transition-colors"
-                        >
-                          <ChevronLeft className="w-4 h-4" />
-                          Back
-                        </button>
-                        <span className="text-xs font-semibold text-gray-800">Company ICP fit</span>
-                      </div>
-                    ) : (
                     <div className="flex border-b border-gray-200 px-5">
-                      {(['details', 'coverage', 'contacts'] as PanelMode[]).map((mode) => (
+                      {(['details', 'fit', 'coverage', 'contacts'] as PanelMode[]).map((mode) => (
                         <button
                           key={mode}
                           type="button"
-                          onClick={() => {
-                            setCompanyFitDetailOpen(false);
-                            setPanelMode(mode);
-                          }}
+                          onClick={() => setPanelMode(mode)}
                           className={cn(
                             'py-2.5 pr-4 text-xs font-medium border-b-2 -mb-px transition-colors capitalize',
                             panelMode === mode
@@ -900,29 +862,31 @@ export default function AccountsPage() {
                           {mode === 'contacts'
                             ? `Contacts (${selectedAccount.contact_count})`
                             : mode === 'coverage'
-                            ? 'Coverage'
-                            : 'Details'}
+                              ? 'Coverage'
+                              : mode === 'fit'
+                                ? 'Fit'
+                                : 'Details'}
                         </button>
                       ))}
                     </div>
-                    )}
 
                     {/* Panel body */}
                     <div className="flex-1 overflow-auto px-5 py-4">
 
-                      {companyFitDetailOpen && (
+                      {panelMode === 'fit' && (
                         <CompanyIcpFitDetailPanel
+                          embedded
+                          companyId={selectedAccount.id}
                           details={companyFitPanel.data}
                           loading={companyFitPanel.loading}
                           error={companyFitPanel.error}
                           message={companyFitPanel.message}
                           tableCompanyFitScore={selectedAccount.company_fit_score}
-                          tableCompanyFitCoverage={selectedAccount.company_fit_coverage}
                           tableMatchedIcpLabel={selectedAccount.matched_icp_label}
                         />
                       )}
 
-                      {!companyFitDetailOpen && panelMode === 'details' && (() => {
+                      {panelMode === 'details' && (() => {
                         const ext = externalUrl(selectedAccount);
                         const aboutText = selectedAccount.bio_summary || selectedAccount.description || null;
                         const hasCriteria = !!(selectedAccount.company_type || (selectedAccount.therapeutic_areas || []).length || (selectedAccount.modalities || []).length || (selectedAccount.development_stages || []).length);
@@ -930,6 +894,22 @@ export default function AccountsPage() {
                         const hasFunding = !!(selectedAccount.funding_stage || selectedAccount.funding_status_label || selectedAccount.total_funding_usd != null || selectedAccount.latest_funding_date);
                         return (
                           <div className="space-y-3">
+                            <div className="rounded-xl border border-gray-100 bg-gray-50/70 px-3 py-3">
+                              <p className="text-xs font-semibold text-gray-700 mb-2">Data source</p>
+                              <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                                <div>
+                                  <p className="text-gray-400 text-xs">Type</p>
+                                  <p className="text-gray-900 mt-0.5">{selectedAccount.data_provenance_type}</p>
+                                </div>
+                                <div>
+                                  <p className="text-gray-400 text-xs">Imported</p>
+                                  <p className="text-gray-900 mt-0.5">
+                                    {formatProvenanceImportedAt(selectedAccount.data_provenance_imported_at)}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+
                             {/* Summary */}
                             <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
                               <button type="button" onClick={() => toggleDetail('summary')}
@@ -1132,7 +1112,7 @@ export default function AccountsPage() {
                         );
                       })()}
 
-                      {!companyFitDetailOpen && panelMode === 'contacts' && (
+                      {panelMode === 'contacts' && (
                         <div>
                           {loadingContacts ? (
                             <div className="flex justify-center py-12">
@@ -1252,7 +1232,7 @@ export default function AccountsPage() {
                         </div>
                       )}
 
-                      {!companyFitDetailOpen && panelMode === 'coverage' && (
+                      {panelMode === 'coverage' && (
                         <div className="space-y-3">
                           <div className="rounded-xl border border-gray-100 bg-gray-50/70 px-3 py-2.5">
                             <p className="text-xs font-semibold text-gray-700 mb-3">Contact coverage</p>

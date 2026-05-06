@@ -13,7 +13,9 @@ import {
   formatLeadActionLabel,
   resolveCompanyFitForLeadAction,
   resolveContactFitForLeadAction,
+  isLeadReadyAwaitingContactSignal,
 } from '@/lib/lead-action';
+import { formatProvenanceImportedAt } from '@/lib/data-provenance';
 import {
   Users,
   Search,
@@ -253,6 +255,9 @@ interface Lead {
   matched_icp_name: string | null;
   matched_icp_index?: number | null;
   matched_icp_label?: string | null;
+  /** HS / CSV / Arcova abbreviation, from API */
+  data_provenance_type?: string | null;
+  data_provenance_imported_at?: string | null;
   companies: {
     company_name: string | null;
     domain: string | null;
@@ -317,6 +322,8 @@ type EnrichmentVisualState = {
 };
 
 const PAGE_SIZE = 50;
+const LEADS_TABLE_GRID =
+  'grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.3fr)_7rem_minmax(10rem,1.35fr)] gap-x-6';
 const MAX_VISIBLE_WORK_HISTORY = 5;
 const COMPANY_FIT_COMPONENT_ORDER: CompanyFitComponentKey[] = [
   'company_type',
@@ -365,8 +372,12 @@ const ACTION_CONFIG: Record<LeadAction, { label: string; className: string }> = 
     className: 'bg-arcova-teal text-white',
   },
   source_contact: {
-    label: 'Reach out',
+    label: 'Source',
     className: 'bg-arcova-teal/10 text-arcova-teal ring-1 ring-arcova-teal/20',
+  },
+  reach_out: {
+    label: 'Reach out',
+    className: 'bg-white text-arcova-teal ring-2 ring-arcova-teal font-semibold',
   },
   deprioritize: {
     label: 'Deprioritise',
@@ -1875,7 +1886,9 @@ export default function LeadsPage() {
               <div className={`grid gap-4 ${selectedLeadId ? 'xl:grid-cols-[minmax(0,1fr)_360px]' : ''}`}>
                 {/* ── Leads table ── */}
                 <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-                  <div className="grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.3fr)_7rem_minmax(10rem,1.35fr)] gap-x-6 px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide">
+                  <div
+                    className={`${LEADS_TABLE_GRID} px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide`}
+                  >
                     <span>Name</span>
                     <span>Job title</span>
                     <span>Company name</span>
@@ -1900,7 +1913,7 @@ export default function LeadsPage() {
                               setSelectedPreview('contact');
                               cancelEditingLead();
                             }}
-                            className={`grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.3fr)_7rem_minmax(10rem,1.35fr)] gap-x-6 px-4 py-3 items-center cursor-pointer transition-all duration-150 border-b border-gray-50 last:border-0 ${
+                            className={`${LEADS_TABLE_GRID} px-4 py-3 items-center cursor-pointer transition-all duration-150 border-b border-gray-50 last:border-0 ${
                               isSelected
                                 ? 'bg-arcova-teal/10 border-l-2 border-arcova-teal'
                                 : 'border-l-2 border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30'
@@ -1953,7 +1966,7 @@ export default function LeadsPage() {
                             setSelectedPreview('contact');
                             cancelEditingLead();
                           }}
-                          className={`grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.3fr)_7rem_minmax(10rem,1.35fr)] gap-x-6 px-4 py-3 items-center cursor-pointer transition-all duration-150 opacity-100 ${
+                          className={`${LEADS_TABLE_GRID} px-4 py-3 items-center cursor-pointer transition-all duration-150 opacity-100 ${
                             isSelected
                               ? 'bg-arcova-teal/10 border-l-2 border-arcova-teal'
                               : 'border-l-2 border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30'
@@ -2272,6 +2285,22 @@ export default function LeadsPage() {
                           ) : (
                             /* ── View mode ── */
                             <div className="space-y-5">
+                              <div className="rounded-xl border border-gray-100 bg-gray-50/70 px-3 py-3">
+                                <p className="text-xs font-semibold text-gray-700 mb-2">Data source</p>
+                                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                                  <div>
+                                    <p className="text-gray-400 text-xs">Type</p>
+                                    <p className="text-gray-900 mt-0.5">{selectedLead.data_provenance_type ?? '—'}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-gray-400 text-xs">Imported</p>
+                                    <p className="text-gray-900 mt-0.5">
+                                      {formatProvenanceImportedAt(selectedLead.data_provenance_imported_at)}
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+
                               {selectedLead.contact_bio && selectedLead.contact_bio.length > 0 && (
                                 <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
                                   <button
@@ -2860,10 +2889,31 @@ export default function LeadsPage() {
                               <div className="space-y-5">
 
                                 {/* Action explanation */}
-                                {action === 'monitor' && (
+                                {action === 'monitor' &&
+                                  (isLeadReadyAwaitingContactSignal(selectedLead) ? (
                                   <div className="space-y-3">
                                     <p className="text-sm text-gray-700 leading-relaxed">
-                                      {contactName ? `${contactName} is` : 'This lead is'} a strong fit across both company and contact dimensions. No immediate action needed: keep them on your radar and wait for a buying signal before reaching out.
+                                      {contactName ? `${contactName} is` : 'This lead is'} a strong match on both the
+                                      company and the persona. Keep the account on your radar and wait for a buying
+                                      signal before reaching out.
+                                    </p>
+                                    <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
+                                      <button
+                                        type="button"
+                                        onClick={() => guardedNavigate('/customer-signals')}
+                                        className="inline-flex items-center gap-1.5 text-sm font-semibold text-arcova-teal hover:text-arcova-teal/85 transition-colors"
+                                      >
+                                        Set up signals
+                                        <ChevronRight className="w-4 h-4" aria-hidden />
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="space-y-3">
+                                    <p className="text-sm text-gray-700 leading-relaxed">
+                                      {contactName ? `${contactName} sits` : 'This lead sits'} in the watch band:
+                                      company fit is promising but not yet high enough for sourcing the ideal persona.
+                                      Keep the account visible and revisit when enrichment or the company moves.
                                     </p>
                                     <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
                                       <button
@@ -2876,6 +2926,19 @@ export default function LeadsPage() {
                                       </button>
                                     </div>
                                   </div>
+                                ))}
+
+                                {action === 'reach_out' && (
+                                  <div className="space-y-3">
+                                    <p className="text-sm text-gray-700 leading-relaxed">
+                                      This contact has a strong fit and at least one tracked buying signal. It is a
+                                      good moment for personalised outreach.
+                                    </p>
+                                    <p className="text-sm text-gray-500 leading-relaxed">
+                                      Lead with relevance to their role and therapeutic focus, and tie your message to
+                                      signals or milestones when you can.
+                                    </p>
+                                  </div>
                                 )}
 
                                 {action === 'source_contact' && (
@@ -2884,7 +2947,7 @@ export default function LeadsPage() {
                                       {selectedLead.companies?.company_name
                                         ? <><strong>{selectedLead.companies.company_name}</strong> is a strong ICP fit</>
                                         : 'The company is a strong ICP fit'
-                                      }, but {contactName || 'this contact'} isn&apos;t the right persona to approach. Look for a better-matched contact at this account before reaching out.
+                                      }, but {contactName || 'this contact'} isn&apos;t the right persona to approach this account. Source a better-matched contact before you reach out.
                                     </p>
                                     <p className="text-sm text-gray-500 leading-relaxed">
                                       Try searching LinkedIn for the right title at this company, or use enrichment to surface additional contacts.
@@ -2912,7 +2975,7 @@ export default function LeadsPage() {
                                 {action === 'deprioritize' && (
                                   <div className="space-y-3">
                                     <p className="text-sm text-gray-700 leading-relaxed">
-                                      This lead sits below minimum fit thresholds: either company fit, contact fit, or both are too weak to warrant attention right now.
+                                      Company or contact fit sits below your thresholds. Leave this one aside for now.
                                     </p>
                                     <p className="text-sm text-gray-500 leading-relaxed">
                                       This doesn&apos;t mean they are permanently out. If their company situation changes or you revisit your ICP criteria, they may score higher in a future run.
