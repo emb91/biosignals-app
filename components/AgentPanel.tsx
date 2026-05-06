@@ -11,7 +11,7 @@ import type { QueryColumn as LeadQueryColumn, LeadQueryFilters, LeadSortBy, Quer
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type AgentPage = 'accounts' | 'leads' | 'dashboard' | 'pipeline' | 'signals' | 'imports';
+export type AgentPage = 'accounts' | 'leads' | 'dashboard' | 'pipeline' | 'signals' | 'imports' | 'data';
 
 export interface AgentTableFilter {
   columns: AccountQueryColumn[];
@@ -76,9 +76,14 @@ const PROMPTS: Record<AgentPage, string[]> = {
     'How many accounts are covered vs. opportunity?',
   ],
   pipeline: [
-    'Which accounts are stalled?',
-    'What moved to the next stage recently?',
-    'Show me my highest-fit active opportunities',
+    'Where is my ICP coverage weakest?',
+    'Which ICP needs more companies?',
+    'Where do I need better contacts?',
+  ],
+  data: [
+    'Get 50 more companies for ICP 2',
+    'Show recent acquisition jobs',
+    'How much data should I source?',
   ],
   signals: [
     'What signals came in this week?',
@@ -175,7 +180,6 @@ export function AgentPanel({ page, onTableFilter, onLeadsFilter, onTableClear, c
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [hasTableFilter, setHasTableFilter] = useState(false);
   const [handoffFrom, setHandoffFrom] = useState<AgentPage | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -256,13 +260,11 @@ export function AgentPanel({ page, onTableFilter, onLeadsFilter, onTableClear, c
       // Apply accounts table filter if present
       if (data.tableFilter && onTableFilter) {
         onTableFilter(data.tableFilter, data.tableAccounts ?? []);
-        setHasTableFilter(true);
       }
 
       // Apply leads table filter if present
       if (data.leadsFilter && onLeadsFilter) {
         onLeadsFilter(data.leadsFilter, data.tableLeads ?? []);
-        setHasTableFilter(true);
       }
     } catch {
       setMessages((prev) =>
@@ -282,7 +284,6 @@ export function AgentPanel({ page, onTableFilter, onLeadsFilter, onTableClear, c
   }
 
   function handleClearFilter() {
-    setHasTableFilter(false);
     onTableClear?.();
   }
 
@@ -298,7 +299,6 @@ export function AgentPanel({ page, onTableFilter, onLeadsFilter, onTableClear, c
 
   function handleClearConversation() {
     setMessages([]);
-    setHasTableFilter(false);
     onTableClear?.();
     inputRef.current?.focus();
   }
@@ -338,19 +338,6 @@ export function AgentPanel({ page, onTableFilter, onLeadsFilter, onTableClear, c
           </button>
         )}
       </div>
-
-      {/* ── Active filter badge ── */}
-      {hasTableFilter && (
-        <div className="flex items-center justify-between gap-2 px-4 py-2 bg-arcova-teal/5 border-b border-arcova-teal/10 shrink-0">
-          <p className="text-[11px] text-arcova-teal font-medium truncate">Table filter active</p>
-          <button
-            onClick={handleClearFilter}
-            className="text-[11px] text-arcova-teal/70 hover:text-arcova-teal underline shrink-0"
-          >
-            Clear
-          </button>
-        </div>
-      )}
 
       {/* ── Suggested prompts ── */}
       {showPrompts && (

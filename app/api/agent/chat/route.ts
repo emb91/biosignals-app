@@ -22,7 +22,7 @@ import {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Page = 'accounts' | 'leads' | 'dashboard' | 'pipeline' | 'signals' | 'imports';
+type Page = 'accounts' | 'leads' | 'dashboard' | 'pipeline' | 'signals' | 'imports' | 'data';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -267,12 +267,12 @@ const TOOLS: Anthropic.Tool[] = [
       properties: {
         href: {
           type: 'string',
-          enum: ['/pipeline', '/results', '/accounts', '/import', '/dashboard'],
+          enum: ['/pipeline', '/results', '/accounts', '/import', '/dashboard', '/data'],
           description: 'The destination page path.',
         },
         label: {
           type: 'string',
-          description: 'Short button label shown to the user. e.g. "Open Pipeline Health"',
+          description: 'Short button label shown to the user. e.g. "Open Data"',
         },
       },
       required: ['href', 'label'],
@@ -345,9 +345,10 @@ function buildSystemPrompt(page: Page): string {
     accounts: `You are on the Accounts page. This shows a table of all target companies (accounts) the user has in their workspace — enriched with fit scores, contact counts, therapeutic areas, funding info, and more. The user can filter, sort, and explore these accounts. You can update the table by calling filter_accounts_table.`,
     leads: `You are on the Leads page. This shows individual contacts (leads) across all companies, with their fit scores and job details. The user can filter and prioritise contacts to reach out to.`,
     dashboard: `You are on the Dashboard page. This shows a high-level overview of the workspace: coverage stats, top accounts, recent signal events, and ICP performance.`,
-    pipeline: `You are on the Pipeline page. This shows accounts and contacts that have been progressed into a sales pipeline — with stages, activity, and prioritisation.`,
+    pipeline: `You are on the Pipeline page. This shows ICP coverage health: where the workspace has enough companies, where contact fit is weak, and where account depth is thin.`,
     signals: `You are on the Signals page. This shows recent signal events for companies and contacts — things like job changes, funding rounds, new hires, or other triggers that indicate buying intent.`,
     imports: `You are on the Imports page. This shows the history of contact data imports — CSV uploads and HubSpot syncs. The user can see what data came in and when.`,
+    data: `You are on the Data page. This is where the user starts and monitors acquisition jobs: finding more ICP-fit companies, finding better contacts, and tracking sourcing usage.`,
   };
 
   return `You are the Arcova Agent — an expert go-to-market co-pilot embedded in the Arcova platform, a life sciences GTM workspace.
@@ -408,12 +409,12 @@ Use your tools proactively to give accurate, data-driven answers. Don't guess at
 
 **When no results are found**
 - State it plainly in one sentence. Example: "You don't have any VP-level contacts at high-fit companies right now."
-- Follow with one short sentence pointing to the next step, then call suggest_navigation to show the button. Use Pipeline Health (/pipeline) when better contacts or more companies are needed. Use Import (/import) when the user should bring in more data themselves. Pick one — never list both.
+- Follow with one short sentence pointing to the next step, then call suggest_navigation to show the button. Use Data (/data) when better contacts or more companies are needed. Use Import (/import) when the user should upload data themselves. Pick one — never list both.
 - Never speculate about why the data is missing or list hypotheses.
 
 **When updating the table**
 - One sentence only: what you filtered and how many results came back. Example: "Filtered to CDMOs — 3 results." No breakdown of fit scores, no sub-categories, nothing more.
-- Only offer a follow-up if it genuinely makes sense given the result count. If there are 1–2 results, do not offer to narrow further. If there are 0 results, point to Pipeline or Import instead.
+- Only offer a follow-up if it genuinely makes sense given the result count. If there are 1–2 results, do not offer to narrow further. If there are 0 results, point to Data or Import instead.
 
 **Never say "certainly", "great question", "sure!", or similar filler.**`;
 }

@@ -824,7 +824,25 @@ export default function AccountsPage() {
               <div className={cn('grid min-w-0 gap-4', selectedAccountId ? 'xl:grid-cols-[minmax(0,1fr)_360px]' : '')}>
 
                 {/* ── Table ── */}
-                <div className="min-w-0 bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                <div className="min-w-0 flex flex-col gap-2">
+
+                {/* Agent filter banner */}
+                {agentFilterIds && (
+                  <div className="flex items-center justify-between gap-3 rounded-lg border border-arcova-teal/20 bg-arcova-teal/5 px-4 py-2.5">
+                    <p className="text-xs font-medium text-arcova-teal">
+                      Filtered by agent · {sortedAccounts.length} account{sortedAccounts.length !== 1 ? 's' : ''}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleQueryClear}
+                      className="text-xs text-arcova-teal/70 hover:text-arcova-teal underline shrink-0 transition-colors"
+                    >
+                      Clear filter
+                    </button>
+                  </div>
+                )}
+
+                <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
                   <div className="min-w-0">
                     {/* Header — always uses DEFAULT_COLUMNS */}
                     <div
@@ -887,14 +905,6 @@ export default function AccountsPage() {
                     </div>
                   </div>
 
-                  {agentFilterIds && (
-                    <div className="px-4 py-2.5 border-t border-gray-100 bg-gray-50">
-                      <p className="text-xs text-gray-400">
-                        {sortedAccounts.length} account{sortedAccounts.length !== 1 ? 's' : ''} found
-                      </p>
-                    </div>
-                  )}
-
                   {!agentFilterIds && totalPages > 1 && (
                     <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200 bg-gray-50">
                       <p className="text-xs text-gray-500">
@@ -914,6 +924,7 @@ export default function AccountsPage() {
                     </div>
                   )}
                 </div>
+                </div>{/* end table + banner wrapper */}
 
                 {/* ── Side panel ── */}
                 {selectedAccountId && selectedAccount && (
