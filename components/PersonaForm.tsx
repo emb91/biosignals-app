@@ -21,6 +21,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { BUSINESS_AREA_OPTIONS, SENIORITY_LEVEL_OPTIONS } from '@/lib/arcova-taxonomy';
 import { getSignalDisplayName } from '@/lib/signal-display-names';
+import { getDefaultContactSignalSelectionIds, isContactSignalComingSoon } from '@/lib/signals/catalog';
 // --- Constants ---
 
 const FUNCTION_OPTIONS: string[] = [...BUSINESS_AREA_OPTIONS];
@@ -245,6 +246,8 @@ interface PersonaFormProps {
   mode: 'create' | 'edit';
   initialData?: PersonaFormData;
   initialCompanyId?: string | null;
+  /** When editing, used to log interest in managed-service contact signals. */
+  personaId?: string | null;
   companyProfiles: CompanyProfile[];
   sellerProfile?: SellerProfile | null;
   companyContactsMap?: Record<string, string>;
@@ -310,6 +313,7 @@ export default function PersonaForm({
   mode,
   initialData,
   initialCompanyId,
+  personaId,
   companyProfiles,
   sellerProfile,
   companyContactsMap,
@@ -326,12 +330,18 @@ export default function PersonaForm({
 
   const [currentSection, setCurrentSection] = useState(firstStep);
   const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(initialCompanyId ?? null);
-  const [formData, setFormData] = useState<PersonaFormData>(initialData ?? {
-    name: '',
-    functions: [],
-    seniorityLevels: [],
-    jobTitles: [],
-    signals: [],
+  const [formData, setFormData] = useState<PersonaFormData>(() => {
+    const base = initialData ?? {
+      name: '',
+      functions: [],
+      seniorityLevels: [],
+      jobTitles: [],
+      signals: [],
+    };
+    return {
+      ...base,
+      signals: base.signals.filter((id) => !isContactSignalComingSoon(id)),
+    };
   });
   const [customFunction, setCustomFunction] = useState('');
   const [customRole, setCustomRole] = useState('');
@@ -597,6 +607,11 @@ export default function PersonaForm({
             setAllSignals(fallback.all || []);
           }
           toast.error('Could not load recommendations, showing all signals');
+          setFormData((prev) =>
+            prev.signals.length > 0
+              ? prev
+              : { ...prev, signals: getDefaultContactSignalSelectionIds().slice(0, 5) },
+          );
         }
       }
     } catch (error) {
@@ -608,12 +623,24 @@ export default function PersonaForm({
   };
 
   const handleSignalToggle = (signalId: string) => {
-    setFormData(prev => ({
-      ...prev,
-      signals: prev.signals.includes(signalId)
-        ? prev.signals.filter(id => id !== signalId)
-        : [...prev.signals, signalId]
-    }));
+    setFormData((prev) => {
+      if (prev.signals.includes(signalId)) {
+        return { ...prev, signals: prev.signals.filter((id) => id !== signalId) };
+      }
+      if (isContactSignalComingSoon(signalId)) {
+        toast.info(
+          'This signal is available with our managed data service. Get in touch and we can enable it for you.',
+        );
+        void fetch('/api/contact-premium-signal-interest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ signalId, personaId: personaId ?? null }),
+        }).catch(() => {});
+        return prev;
+      }
+      if (prev.signals.length >= 5) return prev;
+      return { ...prev, signals: [...prev.signals, signalId] };
+    });
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -1282,13 +1309,14 @@ export default function PersonaForm({
                                 (s) => s.category === category && !formData.signals.includes(s.id)
                               )
                               .map((signal) => {
-                                const isDisabled = formData.signals.length >= 5;
+                                const isManaged = isContactSignalComingSoon(signal.id);
+                                const isDisabled = !isManaged && formData.signals.length >= 5;
                                 return (
                                   <button
                                     key={signal.id}
                                     type="button"
                                     onClick={() => {
-                                      if (!isDisabled) handleSignalToggle(signal.id);
+                                      if (isManaged || !isDisabled) handleSignalToggle(signal.id);
                                     }}
                                     disabled={isDisabled}
                                     className={`px-3 py-1.5 rounded-full text-sm transition-colors ${

@@ -253,7 +253,6 @@ export default function AccountsPage() {
 
   // Detail panel accordion open state
   const [detailPanelOpen, setDetailPanelOpen] = useState({
-    summary: false,
     criteria: false,
     firmographics: false,
     funding: false,
@@ -282,7 +281,6 @@ export default function AccountsPage() {
     if (pendingOpenCriteriaRef.current) {
       pendingOpenCriteriaRef.current = false;
       setDetailPanelOpen({
-        summary: false,
         criteria: true,
         firmographics: false,
         funding: false,
@@ -294,7 +292,6 @@ export default function AccountsPage() {
     }
 
     setDetailPanelOpen({
-      summary: false,
       criteria: false,
       firmographics: false,
       funding: false,
@@ -522,7 +519,6 @@ export default function AccountsPage() {
     setPanelMode('details');
     if (selectedAccountId === id) {
       setDetailPanelOpen({
-        summary: false,
         criteria: true,
         firmographics: false,
         funding: false,
@@ -901,9 +897,14 @@ export default function AccountsPage() {
                       )}
 
                       {panelMode === 'details' && (() => {
-                        const ext = externalUrl(selectedAccount);
                         const aboutText = selectedAccount.bio_summary || selectedAccount.description || null;
-                        const hasCriteria = !!(selectedAccount.company_type || (selectedAccount.therapeutic_areas || []).length || (selectedAccount.modalities || []).length || (selectedAccount.development_stages || []).length);
+                        const hasCriteria = !!(
+                          aboutText ||
+                          selectedAccount.company_type ||
+                          (selectedAccount.therapeutic_areas || []).length ||
+                          (selectedAccount.modalities || []).length ||
+                          (selectedAccount.development_stages || []).length
+                        );
                         const hasFirmographics = !!(selectedAccount.employee_count != null || selectedAccount.employee_range || selectedAccount.founded_year != null || selectedAccount.headquarters_city || selectedAccount.headquarters_country);
                         const hasFunding = !!(selectedAccount.funding_stage || selectedAccount.funding_status_label || selectedAccount.total_funding_usd != null || selectedAccount.latest_funding_date);
                         return (
@@ -924,23 +925,6 @@ export default function AccountsPage() {
                               </div>
                             </div>
 
-                            {/* Summary */}
-                            <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
-                              <button type="button" onClick={() => toggleDetail('summary')}
-                                className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100/60 transition-colors">
-                                <span className="text-xs font-semibold text-gray-700">Summary</span>
-                                <ChevronDown className={cn('w-3.5 h-3.5 text-gray-400 transition-transform duration-200', detailPanelOpen.summary ? '' : '-rotate-90')} />
-                              </button>
-                              {detailPanelOpen.summary && (
-                                <div className="px-3 pb-3">
-                                  {aboutText
-                                    ? <p className="text-sm text-gray-700 leading-relaxed">{aboutText}</p>
-                                    : <p className="text-xs text-gray-400 italic">Company bio will appear after enrichment runs.</p>
-                                  }
-                                </div>
-                              )}
-                            </div>
-
                             {/* Criteria */}
                             {hasCriteria && (
                               <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
@@ -951,6 +935,12 @@ export default function AccountsPage() {
                                 </button>
                                 {detailPanelOpen.criteria && (
                                   <div className="px-3 pb-3 space-y-3">
+                                    {aboutText && (
+                                      <div>
+                                        <p className="text-gray-400 text-xs mb-1">Profile summary</p>
+                                        <p className="text-sm text-gray-700 leading-relaxed">{aboutText}</p>
+                                      </div>
+                                    )}
                                     {selectedAccount.company_type && (
                                       <div>
                                         <p className="text-gray-400 text-xs mb-1">Company type</p>
