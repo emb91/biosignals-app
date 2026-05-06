@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 import { assignFunctionWeights, assignSignalWeights, extractSignalIds } from '@/lib/signal-weights';
+import { isContactSignalComingSoon } from '@/lib/signals/catalog';
 import { rescoreAllContactsForUser } from '@/lib/rescore';
 import { hydratePersonasWithSignals, replacePersonaSignalSelections } from '@/lib/signals/selections';
 
@@ -74,7 +75,9 @@ export async function PUT(
     const body = await request.json();
 
     const weightedFunctions = assignFunctionWeights(body.functions || []);
-    const signalIds = extractSignalIds((body.signals || []) as Parameters<typeof extractSignalIds>[0]);
+    const signalIds = extractSignalIds(
+      (body.signals || []) as Parameters<typeof extractSignalIds>[0],
+    ).filter((id) => !isContactSignalComingSoon(id));
     const weightedSignals = assignSignalWeights(signalIds);
 
     const contactData = {

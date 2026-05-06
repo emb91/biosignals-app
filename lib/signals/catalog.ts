@@ -459,5 +459,10 @@ export function isContactSignalComingSoon(signalId: string): boolean {
   return CONTACT_SIGNAL_COMING_SOON_IDS.has(signalId);
 }
 
+/** Default contact signal set for new personas (managed-service signals excluded). */
+export function getDefaultContactSignalSelectionIds(): string[] {
+  return CONTACT_SIGNALS.filter((s) => !isContactSignalComingSoon(s.id)).map((s) => s.id);
+}
+
 export const getSignalById = (signalId: string) =>
   SIGNAL_CATALOG.find((signal) => signal.id === signalId) ?? null;

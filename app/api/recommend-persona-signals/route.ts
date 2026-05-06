@@ -1,6 +1,13 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { NextResponse } from 'next/server';
-import { CONTACT_SIGNALS } from '@/lib/signals/catalog';
+import {
+  CONTACT_SIGNALS,
+  getDefaultContactSignalSelectionIds,
+  isContactSignalComingSoon,
+} from '@/lib/signals/catalog';
+
+const SELECTABLE_CONTACT_SIGNALS = CONTACT_SIGNALS.filter((s) => !isContactSignalComingSoon(s.id));
+const SELECTABLE_CONTACT_ID_SET = new Set(SELECTABLE_CONTACT_SIGNALS.map((s) => s.id));
 
 export async function POST(request: Request) {
   try {
@@ -19,8 +26,8 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { name, functions, seniorityLevels, jobTitles } = body;
 
-    const signalList = CONTACT_SIGNALS.map(
-      (signal) => `- ${signal.id}: ${signal.displayName} (${signal.category})`
+    const signalList = SELECTABLE_CONTACT_SIGNALS.map(
+      (signal) => `- ${signal.id}: ${signal.displayName} (${signal.category})`,
     ).join('\n');
 
     const prompt = `You are helping a B2B sales team select the most relevant persona-level buying signals.
@@ -70,11 +77,27 @@ Return ONLY the JSON array, nothing else.`;
     for (const raw of recommendedIds) {
       const id = typeof raw === 'string' ? raw.trim() : '';
       if (!id || seen.has(id)) continue;
+      if (!SELECTABLE_CONTACT_ID_SET.has(id)) continue;
       seen.add(id);
       uniqueIds.push(id);
     }
 
-    const recommendedSignals = uniqueIds
+    const defaults = getDefaultContactSignalSelectionIds();
+    const merged: string[] = [];
+    const ordered = new Set<string>();
+    for (const id of uniqueIds) {
+      if (ordered.has(id)) continue;
+      ordered.add(id);
+      merged.push(id);
+    }
+    for (const id of defaults) {
+      if (ordered.has(id)) continue;
+      ordered.add(id);
+      merged.push(id);
+    }
+
+    const recommendedSignals = merged
+      .slice(0, 5)
       .map((id) => CONTACT_SIGNALS.find((signal) => signal.id === id))
       .filter(Boolean);
 

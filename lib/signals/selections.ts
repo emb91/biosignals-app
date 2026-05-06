@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { assignSignalWeights } from '@/lib/signal-weights';
 import { normalizePlatformTaxonomyFields } from '@/lib/platform-category';
+import { isContactSignalComingSoon } from '@/lib/signals/catalog';
 
 type DatabaseClient = SupabaseClient<any, 'public', any>;
 
@@ -250,9 +251,12 @@ export async function hydratePersonasWithSignals<T extends PersonaEntity>(
 ): Promise<Array<T & { signals: string[] }>> {
   const selections = await loadPersonaSignalSelections(supabase, userId, personas.map((p) => p.id));
 
-  return personas.map((persona) => ({
-    ...persona,
-    signals: selections.get(persona.id) ?? parseLegacySignalIds(persona.signals),
-  }));
+  return personas.map((persona) => {
+    const raw: string[] = selections.get(persona.id) ?? parseLegacySignalIds(persona.signals);
+    return {
+      ...persona,
+      signals: raw.filter((id) => !isContactSignalComingSoon(id)),
+    };
+  });
 }
 

@@ -30,6 +30,7 @@ import { resolveCustomerSegments } from '@/lib/split-customer-segments';
 import {
   COMPANY_SIGNALS,
   CONTACT_SIGNALS,
+  isContactSignalComingSoon,
   type SignalCategory,
   type SignalDefinition,
 } from '@/lib/signals/catalog';
@@ -386,6 +387,8 @@ function SignalCatalogByCategory({
   readOnly,
   onToggle,
   variant = 'all',
+  isManagedServiceSignal,
+  onManagedServiceSignalClick,
 }: {
   definitions: SignalDefinition[];
   categoryOrder: SignalCategory[];
@@ -394,6 +397,9 @@ function SignalCatalogByCategory({
   onToggle?: (id: string) => void;
   /** `all`: every catalog signal (edit). `selectedOnly`: only chosen signals (read-only summary). */
   variant?: 'all' | 'selectedOnly';
+  /** When set, these signals never show as selected; clicks call `onManagedServiceSignalClick` instead of `onToggle`. */
+  isManagedServiceSignal?: (signalId: string) => boolean;
+  onManagedServiceSignalClick?: (signalId: string) => void;
 }) {
   const selected = new Set(selectedIds);
   return (
@@ -418,13 +424,26 @@ function SignalCatalogByCategory({
                   variant === 'selectedOnly' &&
                   readOnly &&
                   SUMMARY_CATEGORIES_ALWAYS_SHOW_UNSELECTED.has(category);
-                const isOn = !forceUnselected && selected.has(signal.id);
+                const managed = Boolean(isManagedServiceSignal?.(signal.id));
+                const isOn = !forceUnselected && !managed && selected.has(signal.id);
                 const label = getSignalDisplayName(signal.id, signal.displayName);
                 const pillBase =
                   'inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors';
                 const pillState = isOn
                   ? 'border-arcova-teal/50 bg-arcova-teal/20 text-arcova-teal'
                   : 'border-white/25 bg-white/[0.10] text-white/70';
+                if (!readOnly && managed && onManagedServiceSignalClick) {
+                  return (
+                    <button
+                      key={signal.id}
+                      type="button"
+                      onClick={() => onManagedServiceSignalClick(signal.id)}
+                      className={`${pillBase} ${pillState} hover:border-white/35 hover:bg-white/[0.14] hover:text-white/85`}
+                    >
+                      {label}
+                    </button>
+                  );
+                }
                 if (!readOnly && onToggle) {
                   return (
                     <button
@@ -751,7 +770,9 @@ function ICPCard({
     });
     setEditFunctions([...functions]);
     setEditSeniority([...seniority]);
-    setEditPersonaSignals(normalizeOrderedSignalIds(persona?.signals ?? []));
+    setEditPersonaSignals(
+      normalizeOrderedSignalIds(persona?.signals ?? []).filter((id) => !isContactSignalComingSoon(id)),
+    );
     setEditCompetitors([...resolvedCompetitors()]);
     setEditTargetCustomers([...segs.customerOrganizations]);
     setEditBuyerTypes([...segs.buyerTypes]);
@@ -765,7 +786,9 @@ function ICPCard({
     const segs = resolvedSegments();
     setEditFunctions([...functions]);
     setEditSeniority([...seniority]);
-    setEditPersonaSignals(normalizeOrderedSignalIds(persona?.signals ?? []));
+    setEditPersonaSignals(
+      normalizeOrderedSignalIds(persona?.signals ?? []).filter((id) => !isContactSignalComingSoon(id)),
+    );
     setEditCompetitors([...resolvedCompetitors()]);
     setEditTargetCustomers([...segs.customerOrganizations]);
     setEditBuyerTypes([...segs.buyerTypes]);
@@ -1504,6 +1527,17 @@ function ICPCard({
                     categoryOrder={CONTACT_SIGNAL_CATEGORY_ORDER}
                     selectedIds={editPersonaSignals}
                     readOnly={false}
+                    isManagedServiceSignal={isContactSignalComingSoon}
+                    onManagedServiceSignalClick={(signalId) => {
+                      toast.info(
+                        'This signal is available with our managed data service. Get in touch and we can enable it for you.',
+                      );
+                      void fetch('/api/contact-premium-signal-interest', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ signalId, personaId: persona.id }),
+                      }).catch(() => {});
+                    }}
                     onToggle={(id) =>
                       setEditPersonaSignals((prev) =>
                         prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],

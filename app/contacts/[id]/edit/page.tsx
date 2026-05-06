@@ -113,6 +113,7 @@ export default function ContactEditPage() {
             mode="edit"
             initialData={initialData}
             initialCompanyId={initialCompanyId}
+            personaId={contactId}
             companyProfiles={companyProfiles}
             onSave={handleSave}
             onCancel={() => router.push('/personas')}
