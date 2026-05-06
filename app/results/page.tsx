@@ -24,6 +24,8 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronDown,
+  ChevronUp,
+  ChevronsUpDown,
   Pencil,
   Trash2,
   X,
@@ -733,6 +735,76 @@ function renderQueryCell(
   }
 }
 
+function getSortValue(lead: Lead | QueryLead, col: string): string | number {
+  switch (col) {
+    case 'name':
+      return (
+        (lead as Lead).full_name ||
+        [(lead as Lead).first_name, (lead as Lead).last_name].filter(Boolean).join(' ') ||
+        ''
+      ).toLowerCase();
+    case 'job_title':
+      return ((lead.resolved_current_job_title || lead.job_title) ?? '').toLowerCase();
+    case 'company':
+      return (
+        (lead.resolved_current_company_name || lead.company_name) ?? ''
+      ).toLowerCase();
+    case 'status': {
+      const companyFit =
+        (lead as QueryLead).company_fit_score ??
+        (lead as QueryLead).companies?.company_fit_score ??
+        null;
+      const order = { reach_out: 3, monitor: 2, source_contact: 1, deprioritize: 0 };
+      return order[getLeadActionFromFits(companyFit, lead.contact_fit_score ?? null, lead.intent_score ?? null)] ?? 0;
+    }
+    case 'company_fit':
+      return (
+        (lead as QueryLead).company_fit_score ??
+        (lead as QueryLead).companies?.company_fit_score ??
+        -1
+      );
+    case 'contact_fit':
+      return lead.contact_fit_score ?? -1;
+    case 'source':
+      return ((lead as QueryLead).data_provenance_type ?? '').toLowerCase();
+    case 'signals':
+      return lead.intent_score && lead.intent_score > 0 ? 1 : 0;
+    case 'icp_match':
+      return ((lead as QueryLead).matched_icp_label ?? '').toLowerCase();
+    case 'funding_stage':
+      return ((lead as QueryLead).companies?.funding_stage ?? '').toLowerCase();
+    case 'therapeutic_areas':
+      return (((lead as QueryLead).companies?.therapeutic_areas ?? [])[0] ?? '').toLowerCase();
+    case 'seniority':
+      return (lead.seniority_level ?? '').toLowerCase();
+    default:
+      return '';
+  }
+}
+
+function applySortCol<T extends Lead | QueryLead>(
+  items: T[],
+  col: string | null,
+  dir: 'asc' | 'desc',
+): T[] {
+  if (!col) return items;
+  return [...items].sort((a, b) => {
+    const va = getSortValue(a, col);
+    const vb = getSortValue(b, col);
+    const cmp = typeof va === 'number' && typeof vb === 'number'
+      ? va - vb
+      : String(va).localeCompare(String(vb));
+    return dir === 'asc' ? cmp : -cmp;
+  });
+}
+
+function SortArrow({ col, activeCol, dir }: { col: string; activeCol: string | null; dir: 'asc' | 'desc' }) {
+  if (col !== activeCol) return <ChevronsUpDown className="w-3 h-3 text-gray-300 shrink-0" />;
+  return dir === 'asc'
+    ? <ChevronUp className="w-3 h-3 text-arcova-teal shrink-0" />
+    : <ChevronDown className="w-3 h-3 text-arcova-teal shrink-0" />;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function LeadsPage() {
@@ -797,6 +869,10 @@ export default function LeadsPage() {
   const [activeQuery, setActiveQuery] = useState<string | null>(null);
   // Full lead data fetched when a query-result row is selected but not in the paginated `leads`
   const [querySelectedLead, setQuerySelectedLead] = useState<Lead | null>(null);
+
+  // Column sort state (client-side, applies to current page / query results)
+  const [tableSortCol, setTableSortCol] = useState<string | null>(null);
+  const [tableSortDir, setTableSortDir] = useState<'asc' | 'desc'>('asc');
 
   useEffect(() => {
     if (!loading && !user) router.push('/login');
@@ -1024,6 +1100,16 @@ export default function LeadsPage() {
     setQueryLoading(false);
     setSelectedLeadId(null);
     setQuerySelectedLead(null);
+    setTableSortCol(null);
+  };
+
+  const handleSortCol = (col: string) => {
+    if (tableSortCol === col) {
+      setTableSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setTableSortCol(col);
+      setTableSortDir('asc');
+    }
   };
 
   // When a query-result row is selected, fetch the full lead if it's not in the paginated list
@@ -1322,6 +1408,10 @@ export default function LeadsPage() {
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
   const showSearchInput = total > 0 || searchInput.trim().length > 0 || search.trim().length > 0;
+  const sortedLeads = applySortCol(leads, tableSortCol, tableSortDir);
+  const sortedQueryLeads = queryResult
+    ? applySortCol(queryResult.leads, tableSortCol, tableSortDir)
+    : [];
   const selectedLead =
     leads.find((lead) => lead.id === selectedLeadId) ?? querySelectedLead ?? null;
   const selectedContactFitState = selectedLeadId ? contactFitByContactId[selectedLeadId] ?? null : null;
@@ -1956,18 +2046,40 @@ export default function LeadsPage() {
                         className="px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide grid gap-x-6"
                         style={{ gridTemplateColumns: queryGridCols(cols) }}
                       >
-                        {cols.map((c) => <span key={c}>{QUERY_COL_DEFS[c].label}</span>)}
+                        {cols.map((c) => (
+                          <button
+                            key={c}
+                            onClick={() => handleSortCol(c)}
+                            className="flex items-center gap-1 hover:text-gray-800 transition-colors text-left"
+                          >
+                            {QUERY_COL_DEFS[c].label}
+                            <SortArrow col={c} activeCol={tableSortCol} dir={tableSortDir} />
+                          </button>
+                        ))}
                       </div>
                     );
                   })() : (
                     <div
                       className={`${LEADS_TABLE_GRID} px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide`}
                     >
-                      <span>Name</span>
-                      <span>Job title</span>
-                      <span>Company name</span>
+                      {(['name', 'job_title', 'company'] as const).map((col) => (
+                        <button
+                          key={col}
+                          onClick={() => handleSortCol(col)}
+                          className="flex items-center gap-1 hover:text-gray-800 transition-colors text-left"
+                        >
+                          {col === 'name' ? 'Name' : col === 'job_title' ? 'Job title' : 'Company name'}
+                          <SortArrow col={col} activeCol={tableSortCol} dir={tableSortDir} />
+                        </button>
+                      ))}
                       <span className="text-center leading-tight whitespace-nowrap">Account</span>
-                      <span className="block w-full pl-12 text-center">Action</span>
+                      <button
+                        onClick={() => handleSortCol('status')}
+                        className="flex items-center justify-center gap-1 w-full pl-12 hover:text-gray-800 transition-colors"
+                      >
+                        Action
+                        <SortArrow col="status" activeCol={tableSortCol} dir={tableSortDir} />
+                      </button>
                     </div>
                   )}
 
@@ -1989,7 +2101,7 @@ export default function LeadsPage() {
                     })()}
 
                     {/* Query result rows */}
-                    {!queryLoading && queryResult && queryResult.leads.map((qlead) => {
+                    {!queryLoading && queryResult && sortedQueryLeads.map((qlead) => {
                       const cols = queryResult.columns;
                       const isSelected = selectedLeadId === qlead.id;
                       return (
@@ -2013,7 +2125,7 @@ export default function LeadsPage() {
                     })}
 
                     {/* Normal rows (paginated, no query active) */}
-                    {!queryLoading && !queryResult && leads.map((lead) => {
+                    {!queryLoading && !queryResult && sortedLeads.map((lead) => {
                       const isSelected = selectedLeadId === lead.id;
                       const enriching = isEnriching(lead);
                       const enrichmentProgress = getEnrichmentProgress(lead);

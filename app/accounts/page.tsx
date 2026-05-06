@@ -4,14 +4,21 @@ import { useAuth } from '@/context/AuthContext';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
+import { QueryBar } from '@/app/results/components/QueryBar';
+import type {
+  AccountQueryColumn,
+  AgentAccountsQueryResult,
+  QueryAccount,
+} from '@/app/api/accounts/query/route';
 import {
   Building2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
+  ChevronsUpDown,
   ExternalLink,
   RotateCw,
-  Search,
   Users,
   X,
 } from 'lucide-react';
@@ -225,6 +232,106 @@ function TaxonomyPills({ items }: { items: string[] | null | undefined }) {
 const TABLE_GRID =
   'grid grid-cols-[minmax(0,1.05fr)_minmax(0,0.82fr)_minmax(0,4.25rem)_minmax(6.75rem,7.5rem)_minmax(0,1fr)_minmax(0,1fr)_minmax(9rem,1fr)] gap-x-5';
 
+const ACCOUNT_QUERY_PROMPTS = [
+  'Show me good fit companies with poor contacts',
+  'Find Series B oncology companies',
+  'Show CDMOs using biologics',
+  'Sort accounts by lowest fit first',
+  'Show companies with no strong contacts',
+];
+
+const ACCOUNT_QUERY_COL_DEFS: Record<AccountQueryColumn, { label: string; width: string }> = {
+  company: { label: 'Company', width: 'minmax(0,1.05fr)' },
+  company_type: { label: 'Company type', width: 'minmax(0,0.82fr)' },
+  fit: { label: 'Fit', width: '4.25rem' },
+  contacts: { label: 'Contacts', width: '7.5rem' },
+  therapeutic_areas: { label: 'Therapeutic areas', width: 'minmax(0,1fr)' },
+  modalities: { label: 'Modalities', width: 'minmax(0,1fr)' },
+  action: { label: 'Action', width: '9rem' },
+  funding_stage: { label: 'Funding', width: '9rem' },
+  icp_match: { label: 'ICP match', width: 'minmax(0,1fr)' },
+  development_stages: { label: 'Development stage', width: 'minmax(0,1fr)' },
+  employee_range: { label: 'Employees', width: '8rem' },
+  location: { label: 'Location', width: 'minmax(0,0.8fr)' },
+  source: { label: 'Source', width: '7rem' },
+};
+
+function accountQueryGridCols(columns: AccountQueryColumn[]): string {
+  return columns.map((column) => ACCOUNT_QUERY_COL_DEFS[column].width).join(' ');
+}
+
+function accountName(account: AccountRow | QueryAccount): string {
+  return account.company_name || account.domain || '';
+}
+
+function accountLocation(account: AccountRow | QueryAccount): string {
+  return [account.headquarters_city, account.headquarters_country].filter(Boolean).join(', ');
+}
+
+function getAccountSortValue(account: AccountRow | QueryAccount, col: string): string | number {
+  switch (col) {
+    case 'company':
+      return accountName(account).toLowerCase();
+    case 'company_type':
+      return (account.company_type || '').toLowerCase();
+    case 'fit':
+      return account.company_fit_score ?? -1;
+    case 'contacts':
+      return account.contact_count;
+    case 'therapeutic_areas':
+      return ((account.therapeutic_areas || [])[0] || '').toLowerCase();
+    case 'modalities':
+      return ((account.modalities || [])[0] || '').toLowerCase();
+    case 'action': {
+      const order: Record<NonNullable<CoverageStatus>, number> = {
+        opportunity: 3,
+        covered: 2,
+        weak: 1,
+      };
+      const status = getCoverageStatus(account as AccountRow);
+      return status ? order[status] : 0;
+    }
+    case 'funding_stage':
+      return (account.funding_stage || account.funding_status_label || '').toLowerCase();
+    case 'icp_match':
+      return (account.matched_icp_label || '').toLowerCase();
+    case 'development_stages':
+      return ((account.development_stages || [])[0] || '').toLowerCase();
+    case 'employee_range':
+      return account.employee_count ?? account.employee_range ?? '';
+    case 'location':
+      return accountLocation(account).toLowerCase();
+    case 'source':
+      return (account.data_provenance_type || '').toLowerCase();
+    default:
+      return '';
+  }
+}
+
+function applyAccountSort<T extends AccountRow | QueryAccount>(
+  items: T[],
+  col: string | null,
+  dir: 'asc' | 'desc',
+): T[] {
+  if (!col) return items;
+  return [...items].sort((a, b) => {
+    const va = getAccountSortValue(a, col);
+    const vb = getAccountSortValue(b, col);
+    const cmp =
+      typeof va === 'number' && typeof vb === 'number'
+        ? va - vb
+        : String(va).localeCompare(String(vb));
+    return dir === 'asc' ? cmp : -cmp;
+  });
+}
+
+function SortArrow({ col, activeCol, dir }: { col: string; activeCol: string | null; dir: 'asc' | 'desc' }) {
+  if (col !== activeCol) return <ChevronsUpDown className="w-3 h-3 text-gray-300 shrink-0" />;
+  return dir === 'asc'
+    ? <ChevronUp className="w-3 h-3 text-arcova-teal shrink-0" />
+    : <ChevronDown className="w-3 h-3 text-arcova-teal shrink-0" />;
+}
+
 export default function AccountsPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
@@ -234,9 +341,12 @@ export default function AccountsPage() {
   const [accounts, setAccounts] = useState<AccountRow[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [searchInput, setSearchInput] = useState('');
-  const [search, setSearch] = useState('');
   const [loadingAccounts, setLoadingAccounts] = useState(true);
+  const [queryResult, setQueryResult] = useState<AgentAccountsQueryResult | null>(null);
+  const [queryLoading, setQueryLoading] = useState(false);
+  const [activeQuery, setActiveQuery] = useState<string | null>(null);
+  const [tableSortCol, setTableSortCol] = useState<string | null>(null);
+  const [tableSortDir, setTableSortDir] = useState<'asc' | 'desc'>('asc');
 
   // Panel state
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
@@ -342,7 +452,6 @@ export default function AccountsPage() {
     setLoadingAccounts(true);
     try {
       const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
-      if (search) params.set('search', search);
       if (focusId) params.set('companyId', focusId);
       const res = await fetch(`/api/accounts?${params}`);
       if (res.ok) {
@@ -365,14 +474,9 @@ export default function AccountsPage() {
       if (focusId) accountsDeepLinkCompanyIdRef.current = null;
       setLoadingAccounts(false);
     }
-  }, [user, page, search]);
+  }, [user, page]);
 
   useEffect(() => { fetchAccounts(); }, [fetchAccounts]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => { setSearch(searchInput); setPage(1); }, 350);
-    return () => clearTimeout(timer);
-  }, [searchInput]);
 
   // Reset accordion when switching accounts or panel mode
   useEffect(() => {
@@ -503,6 +607,49 @@ export default function AccountsPage() {
     return () => { cancelled = true; };
   }, [selectedAccountId, panelMode]);
 
+  const handleAgentQuery = async (query: string) => {
+    setActiveQuery(query);
+    setQueryLoading(true);
+    setQueryResult(null);
+    setSelectedAccountId(null);
+    try {
+      const res = await fetch('/api/accounts/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query }),
+      });
+      if (!res.ok) throw new Error('Query failed');
+      const data: AgentAccountsQueryResult = await res.json();
+      setQueryResult(data);
+    } catch {
+      setQueryResult({
+        interpretation: null,
+        columns: ['company', 'company_type', 'fit', 'contacts', 'therapeutic_areas', 'modalities', 'action'],
+        accounts: [],
+        conversational: 'Something went wrong. Please try again.',
+      });
+    } finally {
+      setQueryLoading(false);
+    }
+  };
+
+  const handleQueryClear = () => {
+    setActiveQuery(null);
+    setQueryResult(null);
+    setQueryLoading(false);
+    setSelectedAccountId(null);
+    setTableSortCol(null);
+  };
+
+  const handleSortCol = (col: string) => {
+    if (tableSortCol === col) {
+      setTableSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setTableSortCol(col);
+      setTableSortDir('asc');
+    }
+  };
+
   const openDetails = (id: string) => {
     pendingOpenCriteriaRef.current = false;
     setSelectedAccountId(id);
@@ -543,6 +690,155 @@ export default function AccountsPage() {
     setSelectedAccountId(null);
   };
 
+  const renderAccountQueryCell = (account: AccountRow | QueryAccount, col: AccountQueryColumn) => {
+    const isSelected = selectedAccountId === account.id;
+    const href = externalUrl(account as AccountRow);
+    const companyLabel = account.company_name || account.domain || '—';
+
+    switch (col) {
+      case 'company':
+        return (
+          <div className="flex items-start gap-1.5 min-w-0">
+            {href ? (
+              <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="text-sm font-medium text-arcova-teal hover:underline line-clamp-2 break-words leading-snug min-w-0"
+                title={companyLabel}
+              >
+                {companyLabel}
+              </a>
+            ) : (
+              <span className="text-sm font-medium text-gray-900 line-clamp-2 break-words leading-snug min-w-0" title={companyLabel}>
+                {companyLabel}
+              </span>
+            )}
+            {href && (
+              <a href={href} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-arcova-teal/60 hover:text-arcova-teal shrink-0 mt-0.5">
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            )}
+          </div>
+        );
+      case 'company_type':
+        return account.company_type ? (
+          <button
+            type="button"
+            className="-m-0.5 p-0.5 text-left cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              openDetailsWithCriteria(account.id);
+            }}
+          >
+            <span className="block text-xs text-gray-700 line-clamp-2 break-words leading-snug" title={account.company_type}>
+              {account.company_type}
+            </span>
+          </button>
+        ) : (
+          <span className="text-xs text-gray-700">—</span>
+        );
+      case 'fit':
+        return (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              openCompanyFitTab(account.id);
+            }}
+            className={cn(
+              'inline-flex min-w-[3rem] justify-center rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums transition-colors',
+              isSelected && panelMode === 'fit'
+                ? 'bg-arcova-teal text-white'
+                : formatCompanyFitPercent(account.company_fit_score)
+                  ? 'bg-slate-100 text-slate-700 hover:bg-arcova-teal/15 hover:text-arcova-teal'
+                  : 'bg-gray-50 text-gray-400 hover:bg-gray-100',
+            )}
+          >
+            {formatCompanyFitPercent(account.company_fit_score) ?? '—'}
+          </button>
+        );
+      case 'contacts':
+        return (
+          <button
+            type="button"
+            onClick={(e) => openContacts(account.id, e)}
+            className={cn(
+              'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors',
+              isSelected && panelMode === 'contacts'
+                ? 'bg-arcova-teal text-white'
+                : 'bg-slate-100 text-slate-600 hover:bg-arcova-teal/10 hover:text-arcova-teal',
+            )}
+          >
+            <Users className="w-3 h-3" />
+            {account.contact_count} contact{account.contact_count !== 1 ? 's' : ''}
+          </button>
+        );
+      case 'therapeutic_areas':
+        return (
+          <InlinePills
+            items={account.therapeutic_areas}
+            max={2}
+            onActivate={
+              (account.therapeutic_areas || []).length > 0
+                ? () => openDetailsWithCriteria(account.id)
+                : undefined
+            }
+          />
+        );
+      case 'modalities':
+        return (
+          <InlinePills
+            items={account.modalities}
+            max={2}
+            onActivate={
+              (account.modalities || []).length > 0
+                ? () => openDetailsWithCriteria(account.id)
+                : undefined
+            }
+          />
+        );
+      case 'action':
+        return (
+          <div className="flex items-center justify-center">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                router.push(`/results?search=${encodeURIComponent(account.company_name || account.domain || '')}`);
+              }}
+              className="inline-flex items-center rounded-full border border-arcova-teal/30 bg-white px-2.5 py-1 text-xs font-semibold text-arcova-teal hover:border-arcova-teal hover:bg-arcova-teal/10 transition-colors"
+            >
+              View in leads
+            </button>
+          </div>
+        );
+      case 'funding_stage':
+        return <span className="text-xs text-gray-600 line-clamp-2">{account.funding_stage || account.funding_status_label || '—'}</span>;
+      case 'icp_match':
+        return <span className="text-xs text-gray-600 line-clamp-2">{account.matched_icp_label || '—'}</span>;
+      case 'development_stages':
+        return (
+          <InlinePills
+            items={account.development_stages}
+            max={2}
+            onActivate={
+              (account.development_stages || []).length > 0
+                ? () => openDetailsWithCriteria(account.id)
+                : undefined
+            }
+          />
+        );
+      case 'employee_range':
+        return <span className="text-xs text-gray-600 truncate">{account.employee_range || (account.employee_count != null ? account.employee_count.toLocaleString() : '—')}</span>;
+      case 'location':
+        return <span className="text-xs text-gray-600 line-clamp-2">{accountLocation(account) || '—'}</span>;
+      case 'source':
+        return <span className="text-xs text-gray-600 truncate">{account.data_provenance_type || '—'}</span>;
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -554,8 +850,16 @@ export default function AccountsPage() {
   if (!user) return null;
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
-  const showSearch = total > 0 || searchInput.trim().length > 0 || search.trim().length > 0;
-  const selectedAccount = selectedAccountId ? accounts.find((a) => a.id === selectedAccountId) ?? null : null;
+  const showSearch = total > 0 || Boolean(activeQuery) || queryLoading;
+  const sortedAccounts = applyAccountSort(accounts, tableSortCol, tableSortDir);
+  const sortedQueryAccounts = queryResult
+    ? applyAccountSort(queryResult.accounts, tableSortCol, tableSortDir)
+    : [];
+  const selectedAccount = selectedAccountId
+    ? accounts.find((a) => a.id === selectedAccountId) ??
+      queryResult?.accounts.find((a) => a.id === selectedAccountId) ??
+      null
+    : null;
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -571,23 +875,23 @@ export default function AccountsPage() {
             </div>
 
             {showSearch && (
-              <div className="mb-4 relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Search by company, domain, therapeutic area, modality, funding, or company type…"
-                  value={searchInput}
-                  onChange={(e) => setSearchInput(e.target.value)}
-                  className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-arcova-teal/30 bg-white"
-                />
-              </div>
+              <QueryBar
+                onQuery={handleAgentQuery}
+                onClear={handleQueryClear}
+                isLoading={queryLoading}
+                interpretation={queryResult?.interpretation ?? null}
+                conversational={queryResult?.conversational ?? null}
+                activeQuery={activeQuery}
+                placeholder="Ask anything about your accounts…"
+                suggestedPrompts={ACCOUNT_QUERY_PROMPTS}
+              />
             )}
 
-            {loadingAccounts ? (
+            {loadingAccounts && !queryLoading ? (
               <div className="flex items-center justify-center py-24">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-arcova-teal" />
               </div>
-            ) : accounts.length === 0 && !search ? (
+            ) : accounts.length === 0 && !activeQuery ? (
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-16 text-center">
                 <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                   <Building2 className="w-8 h-8 text-gray-400" />
@@ -605,10 +909,6 @@ export default function AccountsPage() {
                   Import contacts
                 </button>
               </div>
-            ) : accounts.length === 0 && search ? (
-              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-                <p className="text-gray-500">No accounts matching &ldquo;{search}&rdquo;</p>
-              </div>
             ) : (
               <div className={cn('grid gap-4', selectedAccountId ? 'xl:grid-cols-[minmax(0,1fr)_360px]' : '')}>
 
@@ -616,19 +916,117 @@ export default function AccountsPage() {
                 <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
                   <div className="overflow-x-auto">
                     {/* Header */}
-                    <div className={cn(TABLE_GRID, 'min-w-[1280px] px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide')}>
-                      <span>Company</span>
-                      <span>Company type</span>
-                      <span className="text-center">Fit</span>
-                      <span>Contacts</span>
-                      <span className="pl-2">Therapeutic areas</span>
-                      <span>Modalities</span>
-                      <span className="block w-full pl-10 text-center">Action</span>
-                    </div>
+                    {queryLoading || queryResult ? (() => {
+                      const cols: AccountQueryColumn[] =
+                        queryResult?.columns ?? ['company', 'company_type', 'fit', 'contacts', 'therapeutic_areas', 'modalities', 'action'];
+                      return (
+                        <div
+                          className="min-w-[1280px] px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide grid gap-x-5"
+                          style={{ gridTemplateColumns: accountQueryGridCols(cols) }}
+                        >
+                          {cols.map((col) => (
+                            <button
+                              key={col}
+                              type="button"
+                              onClick={() => handleSortCol(col)}
+                              className={cn(
+                                'flex items-center gap-1 hover:text-gray-800 transition-colors text-left',
+                                col === 'fit' || col === 'action' ? 'justify-center text-center' : '',
+                              )}
+                            >
+                              {ACCOUNT_QUERY_COL_DEFS[col].label}
+                              <SortArrow col={col} activeCol={tableSortCol} dir={tableSortDir} />
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })() : (
+                      <div className={cn(TABLE_GRID, 'min-w-[1280px] px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide')}>
+                        {([
+                          ['company', 'Company'],
+                          ['company_type', 'Company type'],
+                          ['fit', 'Fit'],
+                          ['contacts', 'Contacts'],
+                          ['therapeutic_areas', 'Therapeutic areas'],
+                          ['modalities', 'Modalities'],
+                          ['action', 'Action'],
+                        ] as const).map(([col, label]) => (
+                          <button
+                            key={col}
+                            type="button"
+                            onClick={() => handleSortCol(col)}
+                            className={cn(
+                              'flex items-center gap-1 hover:text-gray-800 transition-colors text-left',
+                              col === 'fit' ? 'justify-center text-center' : '',
+                              col === 'therapeutic_areas' ? 'pl-2' : '',
+                              col === 'action' ? 'justify-center pl-10 text-center' : '',
+                            )}
+                          >
+                            {label}
+                            <SortArrow col={col} activeCol={tableSortCol} dir={tableSortDir} />
+                          </button>
+                        ))}
+                      </div>
+                    )}
 
                     {/* Rows */}
                     <div className="divide-y divide-gray-100">
-                      {accounts.map((account) => {
+                      {queryLoading && (() => {
+                        const cols: AccountQueryColumn[] = ['company', 'company_type', 'fit', 'contacts', 'therapeutic_areas', 'modalities', 'action'];
+                        return Array.from({ length: 6 }).map((_, i) => (
+                          <div
+                            key={i}
+                            className="min-w-[1280px] px-4 py-3 grid gap-x-5 animate-pulse"
+                            style={{ gridTemplateColumns: accountQueryGridCols(cols) }}
+                          >
+                            {cols.map((col) => (
+                              <div
+                                key={col}
+                                className="h-4 bg-gray-100 rounded"
+                                style={{ width: col === 'fit' || col === 'contacts' || col === 'action' ? '4.5rem' : '75%' }}
+                              />
+                            ))}
+                          </div>
+                        ));
+                      })()}
+
+                      {!queryLoading && queryResult && sortedQueryAccounts.map((account) => {
+                        const isSelected = selectedAccountId === account.id;
+
+                        return (
+                          <div
+                            key={account.id}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => openDetails(account.id)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetails(account.id); }
+                            }}
+                            className={cn(
+                              'min-w-[1280px] px-4 py-3 grid gap-x-5 items-center cursor-pointer transition-all duration-150 border-l-2',
+                              isSelected
+                                ? 'bg-arcova-teal/10 border-arcova-teal'
+                                : 'border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30',
+                            )}
+                            style={{ gridTemplateColumns: accountQueryGridCols(queryResult.columns) }}
+                          >
+                            {queryResult.columns.map((col) => (
+                              <div
+                                key={col}
+                                className={cn(
+                                  'min-w-0',
+                                  col === 'fit' || col === 'action' ? 'flex justify-center' : '',
+                                  col === 'therapeutic_areas' ? 'pl-2' : '',
+                                )}
+                              >
+                                {renderAccountQueryCell(account, col)}
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })}
+
+                      {!queryLoading && !queryResult && sortedAccounts.map((account) => {
                         const isSelected = selectedAccountId === account.id;
                         const href = externalUrl(account);
                         const companyLabel = account.company_name || account.domain || '—';
@@ -788,7 +1186,15 @@ export default function AccountsPage() {
                     </div>
                   </div>
 
-                  {totalPages > 1 && (
+                  {queryResult && !queryLoading && (
+                    <div className="px-4 py-2.5 border-t border-gray-100 bg-gray-50">
+                      <p className="text-xs text-gray-400">
+                        {queryResult.accounts.length} account{queryResult.accounts.length !== 1 ? 's' : ''} found
+                      </p>
+                    </div>
+                  )}
+
+                  {!queryResult && !queryLoading && totalPages > 1 && (
                     <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200 bg-gray-50">
                       <p className="text-xs text-gray-500">
                         {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of {total.toLocaleString()}
