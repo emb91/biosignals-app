@@ -6,9 +6,12 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { ArcovaLoader } from '@/components/ArcovaLoader';
+import { QueryBar } from './components/QueryBar';
+import type { AgentQueryResult, QueryLead, QueryColumn } from '@/app/api/leads/query/route';
 import {
   type LeadAction,
   getLeadAction,
+  getLeadActionFromFits,
   formatLeadActionLabel,
   resolveCompanyFitForLeadAction,
   resolveContactFitForLeadAction,
@@ -622,6 +625,116 @@ const getLeadRefreshStatusMeta = (
   }
 };
 
+// ── Query column definitions (used in query mode) ────────────────────────────
+
+const QUERY_COL_DEFS: Record<QueryColumn, { label: string; width: string }> = {
+  name: { label: 'Name', width: 'minmax(0,1fr)' },
+  job_title: { label: 'Job title', width: 'minmax(0,1fr)' },
+  company: { label: 'Company', width: 'minmax(0,1.2fr)' },
+  status: { label: 'Status', width: '9rem' },
+  company_fit: { label: 'Company fit', width: '8rem' },
+  contact_fit: { label: 'Contact fit', width: '8rem' },
+  source: { label: 'Source', width: '7rem' },
+  signals: { label: 'Signal', width: '6rem' },
+  icp_match: { label: 'ICP match', width: 'minmax(0,1fr)' },
+  funding_stage: { label: 'Funding', width: '9rem' },
+  therapeutic_areas: { label: 'Therapeutic areas', width: 'minmax(0,1fr)' },
+  seniority: { label: 'Seniority', width: '8rem' },
+};
+
+function queryGridCols(columns: QueryColumn[]): string {
+  return columns.map((c) => QUERY_COL_DEFS[c].width).join(' ');
+}
+
+function renderQueryCell(
+  lead: QueryLead,
+  col: QueryColumn,
+  actionConfig: Record<LeadAction, { label: string; className: string }>,
+): React.ReactNode {
+  const name =
+    lead.full_name || [lead.first_name, lead.last_name].filter(Boolean).join(' ') || '—';
+  const title = lead.resolved_current_job_title || lead.job_title || '—';
+  const companyName = lead.resolved_current_company_name || lead.company_name || '—';
+
+  switch (col) {
+    case 'name':
+      return <p className="font-medium text-gray-900 truncate text-sm">{name}</p>;
+    case 'job_title':
+      return (
+        <p className="text-xs text-gray-700 truncate leading-snug">
+          {title.length > 36 ? title.slice(0, 36) + '…' : title}
+        </p>
+      );
+    case 'company': {
+      const truncated = companyName.length > 30 ? companyName.slice(0, 30) + '…' : companyName;
+      return lead.company_id ? (
+        <p className="text-sm text-arcova-teal truncate">{truncated}</p>
+      ) : (
+        <p className="text-sm text-gray-700 truncate">{truncated}</p>
+      );
+    }
+    case 'status': {
+      const companyFit = lead.company_fit_score ?? lead.companies?.company_fit_score ?? null;
+      const action = getLeadActionFromFits(
+        companyFit,
+        lead.contact_fit_score ?? null,
+        lead.intent_score ?? null,
+      );
+      const cfg = actionConfig[action];
+      return (
+        <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${cfg.className}`}>
+          {cfg.label}
+        </span>
+      );
+    }
+    case 'company_fit': {
+      const fit = lead.company_fit_score ?? lead.companies?.company_fit_score ?? null;
+      if (fit === null) return <span className="text-xs text-gray-400">—</span>;
+      const pct = Math.round(fit <= 1 ? fit * 100 : fit);
+      return (
+        <span className={`text-xs font-medium ${pct >= 70 ? 'text-emerald-600' : pct >= 50 ? 'text-amber-600' : 'text-gray-400'}`}>
+          {pct}%
+        </span>
+      );
+    }
+    case 'contact_fit': {
+      const fit = lead.contact_fit_score;
+      if (fit === null) return <span className="text-xs text-gray-400">—</span>;
+      const pct = Math.round(fit <= 1 ? fit * 100 : fit);
+      return (
+        <span className={`text-xs font-medium ${pct >= 65 ? 'text-emerald-600' : pct >= 40 ? 'text-amber-600' : 'text-gray-400'}`}>
+          {pct}%
+        </span>
+      );
+    }
+    case 'source':
+      return <span className="text-xs text-gray-500 truncate">{lead.data_provenance_type || '—'}</span>;
+    case 'signals':
+      return lead.intent_score && lead.intent_score > 0 ? (
+        <span className="inline-flex items-center gap-1 text-xs font-medium text-arcova-teal">
+          <span className="w-1.5 h-1.5 rounded-full bg-arcova-teal inline-block" />
+          Signal
+        </span>
+      ) : (
+        <span className="text-xs text-gray-400">—</span>
+      );
+    case 'icp_match':
+      return <span className="text-xs text-gray-600 truncate">{lead.matched_icp_label || '—'}</span>;
+    case 'funding_stage':
+      return <span className="text-xs text-gray-600 truncate">{lead.companies?.funding_stage || '—'}</span>;
+    case 'therapeutic_areas': {
+      const tas = lead.companies?.therapeutic_areas;
+      if (!tas || tas.length === 0) return <span className="text-xs text-gray-400">—</span>;
+      const display = tas.slice(0, 2).join(', ') + (tas.length > 2 ? ` +${tas.length - 2}` : '');
+      return <span className="text-xs text-gray-600 truncate">{display}</span>;
+    }
+    case 'seniority':
+      return <span className="text-xs text-gray-600 truncate">{lead.seniority_level || '—'}</span>;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function LeadsPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
@@ -677,6 +790,13 @@ export default function LeadsPage() {
   contactFitCacheRef.current = contactFitByContactId;
   const [enrichmentVisuals, setEnrichmentVisuals] = useState<Record<string, EnrichmentVisualState>>({});
   const [progressNow, setProgressNow] = useState(() => Date.now());
+
+  // Agent query bar state
+  const [queryResult, setQueryResult] = useState<AgentQueryResult | null>(null);
+  const [queryLoading, setQueryLoading] = useState(false);
+  const [activeQuery, setActiveQuery] = useState<string | null>(null);
+  // Full lead data fetched when a query-result row is selected but not in the paginated `leads`
+  const [querySelectedLead, setQuerySelectedLead] = useState<Lead | null>(null);
 
   useEffect(() => {
     if (!loading && !user) router.push('/login');
@@ -870,6 +990,62 @@ export default function LeadsPage() {
     setEditingLeadId(null);
     setEditingFields(null);
   };
+
+  const handleAgentQuery = async (query: string) => {
+    setActiveQuery(query);
+    setQueryLoading(true);
+    setQueryResult(null);
+    setSelectedLeadId(null);
+    setQuerySelectedLead(null);
+    try {
+      const res = await fetch('/api/leads/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query }),
+      });
+      if (!res.ok) throw new Error('Query failed');
+      const data: AgentQueryResult = await res.json();
+      setQueryResult(data);
+    } catch {
+      setQueryResult({
+        interpretation: null,
+        columns: ['name', 'job_title', 'company', 'status'],
+        leads: [],
+        conversational: 'Something went wrong. Please try again.',
+      });
+    } finally {
+      setQueryLoading(false);
+    }
+  };
+
+  const handleQueryClear = () => {
+    setActiveQuery(null);
+    setQueryResult(null);
+    setQueryLoading(false);
+    setSelectedLeadId(null);
+    setQuerySelectedLead(null);
+  };
+
+  // When a query-result row is selected, fetch the full lead if it's not in the paginated list
+  const handleSelectQueryLead = useCallback(
+    async (leadId: string) => {
+      setSelectedLeadId(leadId);
+      setSelectedPreview('contact');
+      cancelEditingLead();
+      if (!leads.find((l) => l.id === leadId)) {
+        try {
+          const res = await fetch(`/api/leads/${leadId}`);
+          if (res.ok) {
+            const data = await res.json();
+            setQuerySelectedLead((data.lead as Lead) ?? null);
+          }
+        } catch {
+          // panel will just show limited info
+        }
+      }
+    },
+    [leads],
+  );
 
   const updateEditingField = (field: keyof EditableLeadFields, value: string) => {
     setEditingFields((prev) => (prev ? { ...prev, [field]: value } : prev));
@@ -1146,7 +1322,8 @@ export default function LeadsPage() {
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
   const showSearchInput = total > 0 || searchInput.trim().length > 0 || search.trim().length > 0;
-  const selectedLead = leads.find((lead) => lead.id === selectedLeadId) || null;
+  const selectedLead =
+    leads.find((lead) => lead.id === selectedLeadId) ?? querySelectedLead ?? null;
   const selectedContactFitState = selectedLeadId ? contactFitByContactId[selectedLeadId] ?? null : null;
   const selectedContactFit = selectedContactFitState?.data ?? null;
   const selectedCompanyId = selectedLead?.company_id ?? null;
@@ -1733,23 +1910,21 @@ export default function LeadsPage() {
             )}
 
             {showSearchInput && (
-              <div className="mb-4 relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Search by name, company, job title, company type, therapeutic area, modality or development stage…"
-                  value={searchInput}
-                  onChange={(e) => setSearchInput(e.target.value)}
-                  className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-arcova-teal/30 bg-white"
-                />
-              </div>
+              <QueryBar
+                onQuery={handleAgentQuery}
+                onClear={handleQueryClear}
+                isLoading={queryLoading}
+                interpretation={queryResult?.interpretation ?? null}
+                conversational={queryResult?.conversational ?? null}
+                activeQuery={activeQuery}
+              />
             )}
 
-            {loadingLeads ? (
+            {loadingLeads && !queryLoading ? (
               <div className="flex items-center justify-center py-24">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-arcova-teal" />
               </div>
-            ) : leads.length === 0 && !search ? (
+            ) : leads.length === 0 && !search && !activeQuery ? (
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-16 text-center">
                 <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                   <Users className="w-8 h-8 text-gray-400" />
@@ -1765,7 +1940,7 @@ export default function LeadsPage() {
                   Import contacts
                 </button>
               </div>
-            ) : leads.length === 0 && search ? (
+            ) : leads.length === 0 && search && !activeQuery ? (
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
                 <p className="text-gray-500">No leads matching &ldquo;{search}&rdquo;</p>
               </div>
@@ -1773,18 +1948,72 @@ export default function LeadsPage() {
               <div className={`grid gap-4 ${selectedLeadId ? 'xl:grid-cols-[minmax(0,1fr)_360px]' : ''}`}>
                 {/* ── Leads table ── */}
                 <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-                  <div
-                    className={`${LEADS_TABLE_GRID} px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide`}
-                  >
-                    <span>Name</span>
-                    <span>Job title</span>
-                    <span>Company name</span>
-                    <span className="text-center leading-tight whitespace-nowrap">Account</span>
-                    <span className="block w-full pl-12 text-center">Action</span>
-                  </div>
+                  {/* Header — dynamic in query mode, fixed otherwise */}
+                  {queryLoading || queryResult ? (() => {
+                    const cols: QueryColumn[] = queryResult?.columns ?? ['name', 'job_title', 'company', 'status'];
+                    return (
+                      <div
+                        className="px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide grid gap-x-6"
+                        style={{ gridTemplateColumns: queryGridCols(cols) }}
+                      >
+                        {cols.map((c) => <span key={c}>{QUERY_COL_DEFS[c].label}</span>)}
+                      </div>
+                    );
+                  })() : (
+                    <div
+                      className={`${LEADS_TABLE_GRID} px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide`}
+                    >
+                      <span>Name</span>
+                      <span>Job title</span>
+                      <span>Company name</span>
+                      <span className="text-center leading-tight whitespace-nowrap">Account</span>
+                      <span className="block w-full pl-12 text-center">Action</span>
+                    </div>
+                  )}
 
                   <div className="divide-y divide-gray-100">
-                    {leads.map((lead) => {
+                    {/* Skeleton rows while query is running */}
+                    {queryLoading && (() => {
+                      const cols: QueryColumn[] = ['name', 'job_title', 'company', 'status'];
+                      return Array.from({ length: 6 }).map((_, i) => (
+                        <div
+                          key={i}
+                          className="px-4 py-3 grid gap-x-6 animate-pulse"
+                          style={{ gridTemplateColumns: queryGridCols(cols) }}
+                        >
+                          {cols.map((c) => (
+                            <div key={c} className="h-4 bg-gray-100 rounded" style={{ width: c === 'status' ? '5rem' : '75%' }} />
+                          ))}
+                        </div>
+                      ));
+                    })()}
+
+                    {/* Query result rows */}
+                    {!queryLoading && queryResult && queryResult.leads.map((qlead) => {
+                      const cols = queryResult.columns;
+                      const isSelected = selectedLeadId === qlead.id;
+                      return (
+                        <div
+                          key={qlead.id}
+                          onClick={() => handleSelectQueryLead(qlead.id)}
+                          className={`px-4 py-3 grid gap-x-6 items-center cursor-pointer transition-all duration-150 border-l-2 ${
+                            isSelected
+                              ? 'bg-arcova-teal/10 border-arcova-teal'
+                              : 'border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30'
+                          }`}
+                          style={{ gridTemplateColumns: queryGridCols(cols) }}
+                        >
+                          {cols.map((c) => (
+                            <div key={c} className="min-w-0">
+                              {renderQueryCell(qlead, c, ACTION_CONFIG)}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })}
+
+                    {/* Normal rows (paginated, no query active) */}
+                    {!queryLoading && !queryResult && leads.map((lead) => {
                       const isSelected = selectedLeadId === lead.id;
                       const enriching = isEnriching(lead);
                       const enrichmentProgress = getEnrichmentProgress(lead);
@@ -1978,7 +2207,16 @@ export default function LeadsPage() {
                     })}
                   </div>
 
-                  {totalPages > 1 && (
+                  {/* Footer — result count in query mode, pagination otherwise */}
+                  {queryResult && !queryLoading && (
+                    <div className="px-4 py-2.5 border-t border-gray-100 bg-gray-50">
+                      <p className="text-xs text-gray-400">
+                        {queryResult.leads.length} contact{queryResult.leads.length !== 1 ? 's' : ''} found
+                      </p>
+                    </div>
+                  )}
+
+                  {!queryResult && !queryLoading && totalPages > 1 && (
                     <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200 bg-gray-50">
                       <p className="text-xs text-gray-500">
                         {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of{' '}
@@ -2050,21 +2288,11 @@ export default function LeadsPage() {
                             <div className="mt-1 space-y-2">
                               <h2 className="text-lg font-semibold text-gray-900 leading-tight">Lead prioritisation</h2>
                               <div className="flex flex-wrap gap-1.5">
-                                {selectedLead.overall_fit_score !== null && (
-                                  <span className="inline-flex items-center rounded-full bg-arcova-teal px-2.5 py-0.5 text-xs font-semibold text-white">
-                                    Overall fit {formatPercentValue(selectedLead.overall_fit_score)}
-                                  </span>
-                                )}
                                 {(selectedLead.matched_icp_index != null || selectedLead.matched_icp_name) && (
                                   <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2.5 py-0.5 text-xs font-medium text-arcova-teal">
                                     {selectedLead.matched_icp_index != null
                                       ? `Best fit ICP-${selectedLead.matched_icp_index}`
                                       : `Best fit: ${selectedLead.matched_icp_name}`}
-                                  </span>
-                                )}
-                                {typeof selectedLead.fit_score === 'number' && (
-                                  <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
-                                    ICP fit {formatPercentValue(selectedLead.fit_score)}
                                   </span>
                                 )}
                                 {selectedContactFit?.contact_fit_score != null && (
@@ -2434,8 +2662,6 @@ export default function LeadsPage() {
                                   </div>
                                 )}
 
-                                {renderOverallFitActionCard()}
-                                {renderCompanyIcpFitScoresCard()}
                                 {renderContactFitScoresCard()}
                               </div>
                             );
@@ -2443,29 +2669,6 @@ export default function LeadsPage() {
                         ) : (
                           /* ── Scoring view ── */
                           <div className="space-y-3">
-
-                            {/* Priority score */}
-                            {typeof selectedLead.overall_fit_score === 'number' && (
-                              <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
-                                <button
-                                  type="button"
-                                  onClick={() => setScoringPanelOpen((s) => ({ ...s, priority: !s.priority }))}
-                                  className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-100/60 transition-colors"
-                                >
-                                  <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Overall fit score</span>
-                                  <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 ${scoringPanelOpen.priority ? '' : '-rotate-90'}`} />
-                                </button>
-                                {scoringPanelOpen.priority && (
-                                  <div className="px-4 pb-3">
-                                    <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-sm font-medium text-slate-700">
-                                      {formatPercentValue(selectedLead.overall_fit_score)}
-                                    </span>
-                                  </div>
-                                )}
-                              </div>
-                            )}
-
-                            {renderCompanyIcpFitScoresCard()}
 
                             {renderContactFitScoresCard()}
 
