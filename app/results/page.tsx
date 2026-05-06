@@ -2005,6 +2005,22 @@ export default function LeadsPage() {
                               const truncated = name.length > 30 ? name.slice(0, 30) + '…' : name;
                               const domain = companyFirmographics?.domain || lead.company_domain;
                               const href = companyFirmographics?.website || (domain ? `https://${domain}` : null);
+                              if (lead.company_id) {
+                                return (
+                                  <div className="min-w-0">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        router.push(`/accounts?companyId=${encodeURIComponent(lead.company_id!)}`);
+                                      }}
+                                      className="text-sm text-arcova-teal hover:underline truncate max-w-full text-left"
+                                    >
+                                      {truncated}
+                                    </button>
+                                  </div>
+                                );
+                              }
                               return href ? (
                                 <div className="min-w-0">
                                   <a href={href} target="_blank" rel="noopener noreferrer"
@@ -2123,10 +2139,31 @@ export default function LeadsPage() {
                                     .join(' ') ||
                                   selectedLead.full_name ||
                                   'Selected contact'
-                                : selectedCompanyFirmographics?.name ||
-                                  selectedLead.resolved_current_company_name ||
-                                  selectedLead.company_name ||
-                                  'Selected company'}
+                                : selectedPreview === 'company' && selectedLead.company_id
+                                  ? (() => {
+                                      const title =
+                                        selectedCompanyFirmographics?.name ||
+                                        selectedLead.resolved_current_company_name ||
+                                        selectedLead.company_name ||
+                                        'Selected company';
+                                      return (
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            router.push(
+                                              `/accounts?companyId=${encodeURIComponent(selectedLead.company_id!)}`,
+                                            )
+                                          }
+                                          className="text-left font-semibold text-gray-900 hover:text-arcova-teal transition-colors"
+                                        >
+                                          {title}
+                                        </button>
+                                      );
+                                    })()
+                                  : selectedCompanyFirmographics?.name ||
+                                    selectedLead.resolved_current_company_name ||
+                                    selectedLead.company_name ||
+                                    'Selected company'}
                             </h2>
                           )}
                           {selectedPreview === 'action' && (() => {

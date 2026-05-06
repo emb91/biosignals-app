@@ -1,7 +1,7 @@
 'use client';
 
 import { useAuth } from '@/context/AuthContext';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import {
@@ -228,6 +228,8 @@ const TABLE_GRID =
 export default function AccountsPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const accountsDeepLinkCompanyIdRef = useRef<string | null>(null);
 
   const [accounts, setAccounts] = useState<AccountRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -332,19 +334,30 @@ export default function AccountsPage() {
     if (!loading && !user) router.push('/login');
   }, [user, loading, router]);
 
+  useEffect(() => {
+    const id = searchParams.get('companyId')?.trim();
+    if (id) accountsDeepLinkCompanyIdRef.current = id;
+  }, [searchParams]);
+
   const fetchAccounts = useCallback(async () => {
     if (!user) return;
+    const focusId = accountsDeepLinkCompanyIdRef.current;
     setLoadingAccounts(true);
     try {
       const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
       if (search) params.set('search', search);
+      if (focusId) params.set('companyId', focusId);
       const res = await fetch(`/api/accounts?${params}`);
       if (res.ok) {
         const result = await res.json();
         const next: AccountRow[] = result.data || [];
         setAccounts(next);
         setTotal(result.total || 0);
+        if (typeof result.page === 'number' && result.page >= 1) {
+          setPage(result.page);
+        }
         setSelectedAccountId((current) => {
+          if (focusId && next.some((a) => a.id === focusId)) return focusId;
           if (current && next.some((a) => a.id === current)) return current;
           return next[0]?.id ?? null;
         });
@@ -352,6 +365,7 @@ export default function AccountsPage() {
     } catch (err) {
       console.error('Error fetching accounts:', err);
     } finally {
+      if (focusId) accountsDeepLinkCompanyIdRef.current = null;
       setLoadingAccounts(false);
     }
   }, [user, page, search]);
