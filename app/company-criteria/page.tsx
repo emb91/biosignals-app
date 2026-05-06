@@ -19,6 +19,7 @@ import {
   Save,
   RefreshCw,
   AlertTriangle,
+  Activity,
 } from 'lucide-react';
 import { getSignalDisplayName } from '@/lib/signal-display-names';
 import {
@@ -26,6 +27,13 @@ import {
   formatCurrencyShort,
 } from '@/lib/funding-display';
 import { resolveCustomerSegments } from '@/lib/split-customer-segments';
+import {
+  COMPANY_SIGNALS,
+  CONTACT_SIGNALS,
+  type SignalCategory,
+  type SignalDefinition,
+} from '@/lib/signals/catalog';
+import { normalizeOrderedSignalIds } from '@/lib/signals/normalize-client';
 import type { CompetitorItem } from '@/components/SetupProfilePanel';
 import {
   BUSINESS_AREA_OPTIONS,
@@ -347,38 +355,108 @@ function simplifyFundingStatusForIcp(value?: string | null): string | null {
   return null;
 }
 
-const COMPANY_SIGNAL_OPTIONS = [
-  'new_funding',
-  'ipo',
-  'grant_award',
-  'partnership_deal',
-  'ma',
-  'clinical_trial',
-  'phase_transition',
-  'indication_expansion',
-  'breakthrough_designation',
-  'fda_approval',
-  'cmc_hire',
-  'clinical_ops_hire',
-  'bd_hire',
-  'regulatory_hire',
-  'csuite_hire',
-  'job_surge',
-  'company_founded',
-  'new_facility',
-  'conference_presentation',
-  'publication',
-  'press_release',
-] as const;
+const COMPANY_SIGNAL_CATEGORY_ORDER: SignalCategory[] = [
+  'Funding & Financial',
+  'Pipeline & Clinical',
+  'Hiring & Team',
+  'Corporate & Strategic',
+  'First-Party Engagement',
+  'CRM & Relationship',
+];
 
-const PERSONA_SIGNAL_OPTIONS = [
-  'new_to_role',
-  'recently_promoted',
-  'recently_changed_company',
-  'active_on_linkedin',
-  'network_overlap',
-] as const;
+const CONTACT_SIGNAL_CATEGORY_ORDER: SignalCategory[] = [
+  'Career & Role Changes',
+  'Activity & Network',
+  'Publications & Recognition',
+  'Hiring & Team',
+  'First-Party Engagement',
+  'CRM & Relationship',
+];
 
+/** In read-only summary, these categories always list every signal (muted) so integration-style signals stay visible. */
+const SUMMARY_CATEGORIES_ALWAYS_SHOW_UNSELECTED = new Set<SignalCategory>([
+  'First-Party Engagement',
+  'CRM & Relationship',
+]);
+
+function SignalCatalogByCategory({
+  definitions,
+  categoryOrder,
+  selectedIds,
+  readOnly,
+  onToggle,
+  variant = 'all',
+}: {
+  definitions: SignalDefinition[];
+  categoryOrder: SignalCategory[];
+  selectedIds: readonly string[];
+  readOnly: boolean;
+  onToggle?: (id: string) => void;
+  /** `all`: every catalog signal (edit). `selectedOnly`: only chosen signals (read-only summary). */
+  variant?: 'all' | 'selectedOnly';
+}) {
+  const selected = new Set(selectedIds);
+  return (
+    <div className="space-y-3">
+      {categoryOrder.map((category) => {
+        let inCat = definitions.filter((s) => s.category === category);
+        if (variant === 'selectedOnly') {
+          const alwaysMuted = readOnly && SUMMARY_CATEGORIES_ALWAYS_SHOW_UNSELECTED.has(category);
+          if (!alwaysMuted) {
+            inCat = inCat.filter((s) => selected.has(s.id));
+          }
+        }
+        if (!inCat.length) return null;
+        return (
+          <div key={category}>
+            <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-white/45">
+              {category}
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {inCat.map((signal) => {
+                const forceUnselected =
+                  variant === 'selectedOnly' &&
+                  readOnly &&
+                  SUMMARY_CATEGORIES_ALWAYS_SHOW_UNSELECTED.has(category);
+                const isOn = !forceUnselected && selected.has(signal.id);
+                const label = getSignalDisplayName(signal.id, signal.displayName);
+                const pillBase =
+                  'inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors';
+                const pillState = isOn
+                  ? 'border-arcova-teal/50 bg-arcova-teal/20 text-arcova-teal'
+                  : 'border-white/25 bg-white/[0.10] text-white/70';
+                if (!readOnly && onToggle) {
+                  return (
+                    <button
+                      key={signal.id}
+                      type="button"
+                      onClick={() => onToggle(signal.id)}
+                      className={`${pillBase} ${pillState} ${
+                        isOn
+                          ? 'hover:bg-arcova-teal/28'
+                          : 'hover:border-white/35 hover:bg-white/[0.14] hover:text-white/85'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                }
+                return (
+                  <span
+                    key={signal.id}
+                    className={`${pillBase} ${pillState}`}
+                  >
+                    {label}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 // ── Inline edit: removable tags + add dropdown ────────────────────────────
 
@@ -389,6 +467,7 @@ function EditTagField({
   onRemove,
   onAdd,
   placeholder = 'Add…',
+  hideLabel = false,
 }: {
   label: string;
   options: readonly string[];
@@ -396,10 +475,13 @@ function EditTagField({
   onRemove: (v: string) => void;
   onAdd: (v: string) => void;
   placeholder?: string;
+  hideLabel?: boolean;
 }) {
   return (
     <div>
-      <p className="mb-1.5 text-xs text-white/85">{label}</p>
+      {!hideLabel && (
+        <p className="mb-1.5 text-xs text-white/85">{label}</p>
+      )}
       {selected.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mb-1.5">
           {selected.map((v) => (
@@ -418,12 +500,14 @@ function EditFreeformTagField({
   onRemove,
   onAdd,
   placeholder = 'Add…',
+  hideLabel = false,
 }: {
   label: string;
   selected: string[];
   onRemove: (v: string) => void;
   onAdd: (v: string) => void;
   placeholder?: string;
+  hideLabel?: boolean;
 }) {
   const [draft, setDraft] = useState('');
 
@@ -441,7 +525,9 @@ function EditFreeformTagField({
 
   return (
     <div>
-      <p className="mb-1.5 text-xs text-white/85">{label}</p>
+      {!hideLabel && (
+        <p className="mb-1.5 text-xs text-white/85">{label}</p>
+      )}
       {selected.length > 0 && (
         <div className="mb-1.5 flex flex-wrap gap-1.5">
           {selected.map((value) => (
@@ -472,6 +558,30 @@ function EditFreeformTagField({
       </div>
     </div>
   );
+}
+
+type IcpCardSegmentOpen = {
+  companySignals: boolean;
+  contactSignals: boolean;
+  criteria: boolean;
+  funding: boolean;
+  sellToCompanies: boolean;
+  competitors: boolean;
+  functions: boolean;
+  seniority: boolean;
+};
+
+function defaultIcpCardSegmentOpen(): IcpCardSegmentOpen {
+  return {
+    companySignals: false,
+    contactSignals: false,
+    criteria: false,
+    funding: false,
+    sellToCompanies: false,
+    competitors: false,
+    functions: false,
+    seniority: false,
+  };
 }
 
 // ── Combined ICP + buying team card ───────────────────────────────────────
@@ -538,6 +648,8 @@ function ICPCard({
     simplifyFundingStatusForIcp(e?.funding_status_label) ??
     simplifyFundingStatusForIcp(e?.company_status) ??
     null;
+  const icpSignalIds = normalizeOrderedSignalIds(icp.signals);
+  const personaSignalIds = normalizeOrderedSignalIds(persona?.signals ?? []);
 
   const hasModelledOnNarrative = Boolean(
     e?.description?.[0] ||
@@ -560,13 +672,20 @@ function ICPCard({
   const currentReenrichmentStatus = normalizeReenrichmentStatus(icp.reenrichment_status);
   const currentReenrichmentMeta = reenrichmentStatusMeta(currentReenrichmentStatus);
 
-  const [open, setOpen] = useState({
-    criteria: true, funding: true, functions: true, seniority: true, titles: true, personaSignals: true,
-  });
-  const toggle = (key: keyof typeof open) =>
-    setOpen((prev) => ({ ...prev, [key]: !prev[key] }));
-
+  const [open, setOpen] = useState<IcpCardSegmentOpen>(defaultIcpCardSegmentOpen);
   const [modelledOnMode, setModelledOnMode] = useState(false);
+  const prevCollapsedRef = useRef(collapsed);
+
+  useEffect(() => {
+    if (prevCollapsedRef.current && !collapsed) {
+      setOpen(defaultIcpCardSegmentOpen());
+      setModelledOnMode(false);
+    }
+    prevCollapsedRef.current = collapsed;
+  }, [collapsed]);
+
+  const toggle = (key: keyof IcpCardSegmentOpen) =>
+    setOpen((prev) => ({ ...prev, [key]: !prev[key] }));
 
   // ── Unified edit state (covers both criteria and buying team) ────────────
   const [editMode, setEditMode] = useState(false);
@@ -583,7 +702,7 @@ function ICPCard({
     company_sizes: [...icp.company_sizes],
     li_follower_sizes: [...(icp.li_follower_sizes ?? [])],
     funding_stages: [...icp.funding_stages],
-    signals: [...(icp.signals ?? [])],
+    signals: normalizeOrderedSignalIds(icp.signals ?? []),
   });
   const [editFunctions, setEditFunctions] = useState<string[]>([]);
   const [editSeniority, setEditSeniority] = useState<string[]>([]);
@@ -628,11 +747,11 @@ function ICPCard({
       company_sizes: [...icp.company_sizes],
       li_follower_sizes: [...(icp.li_follower_sizes ?? [])],
       funding_stages: [...icp.funding_stages],
-      signals: [...(icp.signals ?? [])],
+      signals: normalizeOrderedSignalIds(icp.signals ?? []),
     });
     setEditFunctions([...functions]);
     setEditSeniority([...seniority]);
-    setEditPersonaSignals([...(persona?.signals ?? [])]);
+    setEditPersonaSignals(normalizeOrderedSignalIds(persona?.signals ?? []));
     setEditCompetitors([...resolvedCompetitors()]);
     setEditTargetCustomers([...segs.customerOrganizations]);
     setEditBuyerTypes([...segs.buyerTypes]);
@@ -646,7 +765,7 @@ function ICPCard({
     const segs = resolvedSegments();
     setEditFunctions([...functions]);
     setEditSeniority([...seniority]);
-    setEditPersonaSignals([...(persona?.signals ?? [])]);
+    setEditPersonaSignals(normalizeOrderedSignalIds(persona?.signals ?? []));
     setEditCompetitors([...resolvedCompetitors()]);
     setEditTargetCustomers([...segs.customerOrganizations]);
     setEditBuyerTypes([...segs.buyerTypes]);
@@ -1013,8 +1132,10 @@ function ICPCard({
         </div>
       )}
 
-      {/* Two-column body */}
-      {!collapsed && !modelledOnMode && <div className="flex divide-x divide-white/10">
+      {/* Two-column body + full-width signals (above footer) */}
+      {!collapsed && !modelledOnMode && (
+        <div className="flex min-w-0 flex-col">
+          <div className="flex min-w-0 divide-x divide-white/10">
 
         {/* Left column — firmographics */}
         <div className="flex-1 min-w-0 px-4 py-4 space-y-2">
@@ -1037,17 +1158,17 @@ function ICPCard({
             </div>
           )}
 
-          {icpProfileSummaryDisplay.length > 0 && (
-            <div className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 space-y-1.5">
-              <p className="text-xs font-semibold text-white">Profile summary</p>
-              <p className="text-xs text-white/70 leading-snug">{icpProfileSummaryDisplay}</p>
-            </div>
-          )}
+          <div className="flex items-center gap-1.5 pb-2">
+            <Building2 className="h-3.5 w-3.5 shrink-0 text-arcova-teal" />
+            <p className="flex-1 text-sm font-semibold text-white">Company criteria</p>
+          </div>
 
-
-
-          <div className="rounded-xl border border-white/10 bg-white/[0.06] px-3 py-3">
-            <p className="text-xs font-semibold text-white mb-2.5">Criteria</p>
+          <Segment label="Summary" open={open.criteria} onToggle={() => toggle('criteria')}>
+            {icpProfileSummaryDisplay.length > 0 && (
+              <div className="pb-3 mb-3 border-b border-white/10">
+                <p className="text-xs text-white/70 leading-snug">{icpProfileSummaryDisplay}</p>
+              </div>
+            )}
             {editMode ? (
               <div className="space-y-3">
                 <div>
@@ -1131,7 +1252,7 @@ function ICPCard({
                 </>
               );
             })()}
-          </div>
+          </Segment>
 
           {!editMode && (() => {
             const derivedStage = canonicalizeFundingStage(
@@ -1164,33 +1285,38 @@ function ICPCard({
           })()}
 
           {!editMode && icpCustomerSegments.customerOrganizations.length > 0 && (
-            <div className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 space-y-2.5">
-              <div>
-                <p className="mb-1 text-xs font-semibold text-white">Sells to companies like</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {icpCustomerSegments.customerOrganizations.map((item) => (
-                    <Tag key={item} label={item} />
-                  ))}
-                </div>
+            <Segment
+              label="Sells to companies like"
+              open={open.sellToCompanies}
+              onToggle={() => toggle('sellToCompanies')}
+            >
+              <div className="flex flex-wrap gap-1.5">
+                {icpCustomerSegments.customerOrganizations.map((item) => (
+                  <Tag key={item} label={item} />
+                ))}
               </div>
-            </div>
+            </Segment>
           )}
 
           {editMode && (
-            <div className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 space-y-2">
+            <Segment
+              label="Sells to companies like"
+              open={open.sellToCompanies}
+              onToggle={() => toggle('sellToCompanies')}
+            >
               <EditFreeformTagField
+                hideLabel
                 label="Sells to companies like"
                 selected={editTargetCustomers}
                 onRemove={(value) => setEditTargetCustomers((prev) => prev.filter((item) => item !== value))}
                 onAdd={(value) => setEditTargetCustomers((prev) => [...prev, value])}
                 placeholder="Add company segment…"
               />
-            </div>
+            </Segment>
           )}
 
           {!editMode && displayCompetitors.length > 0 && (
-            <div className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 space-y-2">
-              <p className="text-xs font-semibold text-white">Competitors</p>
+            <Segment label="Competitors" open={open.competitors} onToggle={() => toggle('competitors')}>
               <div className="flex flex-wrap gap-1.5">
                 {displayCompetitors.map((c, i) => {
                   const href = c.url?.trim() || `https://www.google.com/search?q=${encodeURIComponent(c.name)}`;
@@ -1208,12 +1334,11 @@ function ICPCard({
                   );
                 })}
               </div>
-            </div>
+            </Segment>
           )}
 
           {editMode && (
-            <div className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 space-y-2">
-              <p className="text-xs font-semibold text-white">Competitors</p>
+            <Segment label="Competitors" open={open.competitors} onToggle={() => toggle('competitors')}>
               <div className="flex flex-wrap gap-1.5">
                 {editCompetitors.map((c, i) => {
                   const trimmedUrl = c.url?.trim();
@@ -1267,7 +1392,7 @@ function ICPCard({
                   className="min-w-0 flex-1 rounded-lg border border-white/15 bg-white/[0.06] px-2 py-1 text-xs text-white/80 placeholder:text-white/25 focus:outline-none focus:border-arcova-teal/50"
                 />
               </div>
-            </div>
+            </Segment>
           )}
 
         </div>
@@ -1281,21 +1406,27 @@ function ICPCard({
 
           {editMode ? (
             persona ? (
-              <div className="space-y-3">
-                <EditTagField
-                  label="Functions"
-                  options={BUSINESS_AREA_OPTIONS}
-                  selected={editFunctions}
-                  onRemove={(v) => setEditFunctions((prev) => prev.filter((f) => f !== v))}
-                  onAdd={(v) => setEditFunctions((prev) => [...prev, v])}
-                />
-                <EditTagField
-                  label="Seniority"
-                  options={SENIORITY_LEVEL_OPTIONS}
-                  selected={editSeniority}
-                  onRemove={(v) => setEditSeniority((prev) => prev.filter((s) => s !== v))}
-                  onAdd={(v) => setEditSeniority((prev) => [...prev, v])}
-                />
+              <div className="space-y-2">
+                <Segment label="Functions" open={open.functions} onToggle={() => toggle('functions')}>
+                  <EditTagField
+                    hideLabel
+                    label="Functions"
+                    options={BUSINESS_AREA_OPTIONS}
+                    selected={editFunctions}
+                    onRemove={(v) => setEditFunctions((prev) => prev.filter((f) => f !== v))}
+                    onAdd={(v) => setEditFunctions((prev) => [...prev, v])}
+                  />
+                </Segment>
+                <Segment label="Seniority" open={open.seniority} onToggle={() => toggle('seniority')}>
+                  <EditTagField
+                    hideLabel
+                    label="Seniority"
+                    options={SENIORITY_LEVEL_OPTIONS}
+                    selected={editSeniority}
+                    onRemove={(v) => setEditSeniority((prev) => prev.filter((s) => s !== v))}
+                    onAdd={(v) => setEditSeniority((prev) => [...prev, v])}
+                  />
+                </Segment>
               </div>
             ) : (
               <p className="text-xs text-white/30 leading-snug pt-1">No buying team defined yet.</p>
@@ -1312,18 +1443,6 @@ function ICPCard({
                   {seniority.map((s) => <Tag key={s} label={s} />)}
                 </div>
               </Segment>
-              {(persona?.job_titles?.length ?? 0) > 0 && (
-                <Segment label="Example titles" open={open.titles} onToggle={() => toggle('titles')}>
-                  <ul className="space-y-1">
-                    {persona!.job_titles!.map((t, i) => (
-                      <li key={i} className="flex items-center gap-1.5 text-xs text-white/70 leading-snug">
-                        <span className="h-1 w-1 shrink-0 rounded-full bg-white/70" />
-                        <span>{t}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </Segment>
-              )}
             </>
           ) : (
             <div className="space-y-3 pt-1">
@@ -1338,9 +1457,81 @@ function ICPCard({
               </button>
             </div>
           )}
+
         </div>
 
-      </div>}
+          </div>
+
+          <div className="w-full min-w-0 border-t border-white/10 px-4 py-4 space-y-2">
+            <div className="flex items-center gap-1.5 pb-2">
+              <Activity className="h-3.5 w-3.5 shrink-0 text-arcova-teal" />
+              <p className="flex-1 text-sm font-semibold text-white">Signals</p>
+            </div>
+            <Segment
+              label="Company signals"
+              open={open.companySignals}
+              onToggle={() => toggle('companySignals')}
+            >
+              {editMode ? (
+                <SignalCatalogByCategory
+                  variant="all"
+                  definitions={COMPANY_SIGNALS}
+                  categoryOrder={COMPANY_SIGNAL_CATEGORY_ORDER}
+                  selectedIds={editData.signals}
+                  readOnly={false}
+                  onToggle={(id) => toggleMulti('signals', id)}
+                />
+              ) : (
+                <SignalCatalogByCategory
+                  variant="selectedOnly"
+                  definitions={COMPANY_SIGNALS}
+                  categoryOrder={COMPANY_SIGNAL_CATEGORY_ORDER}
+                  selectedIds={icpSignalIds}
+                  readOnly
+                />
+              )}
+            </Segment>
+            <Segment
+              label="Contact signals"
+              open={open.contactSignals}
+              onToggle={() => toggle('contactSignals')}
+            >
+              {editMode ? (
+                persona ? (
+                  <SignalCatalogByCategory
+                    variant="all"
+                    definitions={CONTACT_SIGNALS}
+                    categoryOrder={CONTACT_SIGNAL_CATEGORY_ORDER}
+                    selectedIds={editPersonaSignals}
+                    readOnly={false}
+                    onToggle={(id) =>
+                      setEditPersonaSignals((prev) =>
+                        prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+                      )
+                    }
+                  />
+                ) : (
+                  <p className="text-xs text-white/40 italic">
+                    Add a buying team on this ICP to set contact signals.
+                  </p>
+                )
+              ) : persona ? (
+                <SignalCatalogByCategory
+                  variant="selectedOnly"
+                  definitions={CONTACT_SIGNALS}
+                  categoryOrder={CONTACT_SIGNAL_CATEGORY_ORDER}
+                  selectedIds={personaSignalIds}
+                  readOnly
+                />
+              ) : (
+                <p className="text-xs text-white/40 italic">
+                  No buying team on this ICP. Add a buying team to set contact signals.
+                </p>
+              )}
+            </Segment>
+          </div>
+        </div>
+      )}
 
       {!collapsed && (
         <div className="flex items-center justify-between gap-2 border-t border-white/10 px-4 py-3">
@@ -1352,7 +1543,7 @@ function ICPCard({
                   onClick={() => setModelledOnMode(false)}
                   className="flex items-center gap-1 text-xs text-white/50 underline underline-offset-2 transition-colors hover:text-white/80"
                 >
-                  <ChevronDown className="h-3 w-3 rotate-90" /> Back to criteria
+                  <ChevronDown className="h-3 w-3 rotate-90" /> Back to summary
                 </button>
               ) : (
                 <button

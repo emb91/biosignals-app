@@ -57,6 +57,14 @@ function normalizeSignalIds(signalIds: string[]): string[] {
   return normalized;
 }
 
+/** PostgREST: table not exposed or not in schema cache (migration not applied yet). */
+function isMissingPersonaSignalSelectionsTable(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error?.code) return false;
+  if (error.code !== 'PGRST205') return false;
+  const msg = error.message ?? '';
+  return msg.includes('persona_signal_selections');
+}
+
 function buildSelectionRows(
   signalIds: string[],
   owner: { user_id: string; key: 'icp_id' | 'persona_id'; id: string }
@@ -125,6 +133,68 @@ export async function loadIcpSignalSelections(
   return selections;
 }
 
+export async function replacePersonaSignalSelections(
+  supabase: DatabaseClient,
+  userId: string,
+  personaId: string,
+  signalIds: string[]
+) {
+  const { error: deleteError } = await supabase
+    .from('persona_signal_selections')
+    .delete()
+    .eq('user_id', userId)
+    .eq('persona_id', personaId);
+
+  if (deleteError && isMissingPersonaSignalSelectionsTable(deleteError)) {
+    return [];
+  }
+  if (deleteError) throw deleteError;
+
+  const rows = buildSelectionRows(signalIds, { user_id: userId, key: 'persona_id', id: personaId });
+  if (rows.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from('persona_signal_selections')
+    .insert(rows)
+    .select('signal_id, rank, weight')
+    .order('rank', { ascending: true });
+
+  if (error && isMissingPersonaSignalSelectionsTable(error)) {
+    return [];
+  }
+  if (error) throw error;
+  return (data || []) as SignalSelectionRow[];
+}
+
+export async function loadPersonaSignalSelections(
+  supabase: DatabaseClient,
+  userId: string,
+  personaIds: string[]
+) {
+  if (personaIds.length === 0) return new Map<string, string[]>();
+
+  const { data, error } = await supabase
+    .from('persona_signal_selections')
+    .select('persona_id, signal_id, rank')
+    .eq('user_id', userId)
+    .in('persona_id', personaIds)
+    .order('rank', { ascending: true });
+
+  if (error && isMissingPersonaSignalSelectionsTable(error)) {
+    return new Map();
+  }
+  if (error) throw error;
+
+  const selections = new Map<string, string[]>();
+  for (const row of (data || []) as Array<{ persona_id: string; signal_id: string }>) {
+    const current = selections.get(row.persona_id) || [];
+    current.push(row.signal_id);
+    selections.set(row.persona_id, current);
+  }
+
+  return selections;
+}
+
 
 /** Per-ICP ordered rows with weights from icp_signal_selections. */
 export async function loadIcpSignalSelectionsDetailed(
@@ -167,7 +237,22 @@ export async function hydrateIcpsWithSignals<T extends EntityWithId>(
 
   return icps.map((icp) => ({
     ...normalizePlatformTaxonomyFields(icp as T & Record<string, unknown>),
-    signals: selections.get(icp.id) || parseLegacySignalIds(icp.signals),
+    signals: selections.get(icp.id) ?? parseLegacySignalIds(icp.signals),
+  }));
+}
+
+type PersonaEntity = { id: string; signals?: unknown };
+
+export async function hydratePersonasWithSignals<T extends PersonaEntity>(
+  supabase: DatabaseClient,
+  userId: string,
+  personas: T[]
+): Promise<Array<T & { signals: string[] }>> {
+  const selections = await loadPersonaSignalSelections(supabase, userId, personas.map((p) => p.id));
+
+  return personas.map((persona) => ({
+    ...persona,
+    signals: selections.get(persona.id) ?? parseLegacySignalIds(persona.signals),
   }));
 }
 

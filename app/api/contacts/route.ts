@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
-import { assignFunctionWeights } from '@/lib/signal-weights';
+import { assignFunctionWeights, assignSignalWeights, extractSignalIds } from '@/lib/signal-weights';
 import { rescoreAllContactsForUser } from '@/lib/rescore';
+import { hydratePersonasWithSignals, replacePersonaSignalSelections } from '@/lib/signals/selections';
 
 export async function GET() {
   try {
@@ -30,7 +31,8 @@ export async function GET() {
       );
     }
 
-    return NextResponse.json({ data: data || [] });
+    const hydrated = await hydratePersonasWithSignals(supabase, user.id, data || []);
+    return NextResponse.json({ data: hydrated });
   } catch (error) {
     console.error('Error in contacts GET:', error);
     return NextResponse.json(
@@ -73,6 +75,8 @@ export async function POST(request: Request) {
     }
 
     const weightedFunctions = assignFunctionWeights(body.functions || []);
+    const signalIds = extractSignalIds((body.signals || []) as Parameters<typeof extractSignalIds>[0]);
+    const weightedSignals = assignSignalWeights(signalIds);
 
     const contactData = {
       user_id: user.id,
@@ -80,6 +84,7 @@ export async function POST(request: Request) {
       functions: weightedFunctions.map(f => JSON.stringify(f)),
       seniority_levels: body.seniorityLevels || [],
       job_titles: body.jobTitles || [],
+      signals: weightedSignals.map((s) => JSON.stringify(s)),
       icp_id: body.icpId || null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -99,14 +104,15 @@ export async function POST(request: Request) {
       );
     }
 
-
+    await replacePersonaSignalSelections(supabase, user.id, data.id, signalIds);
+    const [hydrated] = await hydratePersonasWithSignals(supabase, user.id, [data]);
 
     // Fire-and-forget rescore: new persona means existing contacts need re-evaluation.
     rescoreAllContactsForUser(user.id).catch((err) =>
       console.error('[contacts POST] Background rescore failed:', err)
     );
 
-    return NextResponse.json({ data });
+    return NextResponse.json({ data: hydrated });
   } catch (error) {
     console.error('Error in contacts POST:', error);
     return NextResponse.json(

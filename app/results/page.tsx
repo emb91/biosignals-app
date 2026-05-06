@@ -712,7 +712,6 @@ export default function LeadsPage() {
   const [selectedPreview, setSelectedPreview] = useState<'contact' | 'company' | 'scoring' | 'action'>('contact');
   const [isWorkHistoryExpanded, setIsWorkHistoryExpanded] = useState(false);
   const [companyPanelOpen, setCompanyPanelOpen] = useState<Record<string, boolean>>({
-    summary: true,
     criteria: true,
     funding: true,
     products: true,
@@ -2631,37 +2630,36 @@ export default function LeadsPage() {
                           (() => {
                             const f = selectedCompanyFirmographics;
                             const showPlatformCategory = f?.company_type === 'SaaS' && !!f?.platform_category;
-                            const hasCriteria = !!(f?.company_type || showPlatformCategory || f?.therapeutic_areas?.length || f?.modalities?.length || f?.development_stages?.length);
-                            const hasFunding = !!(f?.funding_status_label || f?.funding_stage || f?.total_funding_usd != null || f?.latest_funding_date);
-                            const hasFirmographics = !!(f?.employee_count || f?.employee_range || f?.follower_count != null || f?.founded_year || f?.hq_city || f?.hq_state || f?.hq_country);
                             const aboutText = f?.bio_summary || f?.description || null;
+                            const hasCriteria = !!(
+                              aboutText ||
+                              f?.company_type ||
+                              showPlatformCategory ||
+                              f?.therapeutic_areas?.length ||
+                              f?.modalities?.length ||
+                              f?.development_stages?.length
+                            );
+                            const hasFunding = !!(
+                              f?.funding_status_label ||
+                              f?.funding_stage ||
+                              f?.total_funding_usd != null ||
+                              f?.latest_funding_date
+                            );
+                            const hasFirmographics = !!(
+                              f?.employee_count ||
+                              f?.employee_range ||
+                              f?.follower_count != null ||
+                              f?.founded_year ||
+                              f?.hq_city ||
+                              f?.hq_state ||
+                              f?.hq_country
+                            );
                             const hasProducts = (f?.products_services?.length ?? 0) > 0;
                             const hasServices = (f?.services?.length ?? 0) > 0;
                             const hasSpecialties = (f?.specialties?.length ?? 0) > 0;
 
                             return (
                               <div className="space-y-3">
-                                {/* Summary */}
-                                <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
-                                  <button
-                                    type="button"
-                                    onClick={() => setCompanyPanelOpen((s) => ({ ...s, summary: !s.summary }))}
-                                    className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100/60 transition-colors"
-                                  >
-                                    <span className="text-xs font-semibold text-gray-700">Summary</span>
-                                    <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 ${companyPanelOpen.summary ? '' : '-rotate-90'}`} />
-                                  </button>
-                                  {companyPanelOpen.summary && (
-                                    <div className="px-3 pb-3">
-                                      {aboutText ? (
-                                        <p className="text-sm text-gray-700 leading-relaxed">{aboutText}</p>
-                                      ) : (
-                                        <p className="text-xs text-gray-400 italic">Company bio will appear after enrichment runs.</p>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-
                                 {/* Criteria — taxonomy + LI followers */}
                                 {hasCriteria && (
                                   <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
@@ -2675,6 +2673,12 @@ export default function LeadsPage() {
                                     </button>
                                     {companyPanelOpen.criteria && (
                                       <div className="px-3 pb-3 space-y-3">
+                                        {aboutText && (
+                                          <div>
+                                            <p className="text-gray-400 text-xs mb-1">Profile summary</p>
+                                            <p className="text-sm text-gray-700 leading-relaxed">{aboutText}</p>
+                                          </div>
+                                        )}
                                         {(f?.company_type || showPlatformCategory) && (
                                           <div>
                                             <p className="text-gray-400 text-xs mb-1">Company type</p>
