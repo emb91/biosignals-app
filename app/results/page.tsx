@@ -6,7 +6,6 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { ArcovaLoader } from '@/components/ArcovaLoader';
-import { CONTACT_SIGNALS, isContactSignalComingSoon } from '@/lib/signals/catalog';
 import {
   type LeadAction,
   getLeadAction,
@@ -28,7 +27,6 @@ import {
   ExternalLink,
   Briefcase,
   RotateCw,
-  Sparkles,
   Ban,
   Upload,
   Download,
@@ -346,16 +344,6 @@ const formatLastUpdated = (iso: string | null): string => {
   });
 };
 
-const formatCurrencyShort = (amount: number | null | undefined): string => {
-  if (amount == null) return '—';
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    maximumFractionDigits: 0,
-    notation: amount >= 1_000_000 ? 'compact' : 'standard',
-  }).format(amount);
-};
-
 const formatPercentValue = (value: number | null | undefined): string | null => {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
   return `${Math.round((value <= 1 ? value * 100 : value))}%`;
@@ -479,52 +467,6 @@ const getDisplayedCompanyFirmographics = (lead: Lead | null): CompanyFirmographi
     modalities: company?.modalities || null,
     development_stages: company?.development_stages || null,
   };
-};
-
-const getCompanyFirmographicsLastRefresh = (lead: Lead | null): string | null => {
-  if (!lead) return null;
-  return lead.companies?.last_enriched_at || null;
-};
-
-const normalizeInlineText = (value: string | null | undefined): string | null => {
-  if (!value) return null;
-  const normalized = value.replace(/\s+/g, ' ').trim();
-  return normalized || null;
-};
-
-const getFundingStatusDisplay = (
-  company: Lead['companies'] | null
-): { heading: 'Funding stage' | 'Funding status'; value: string } | null => {
-  const stage = normalizeInlineText(company?.funding_stage);
-  if (stage) {
-    return {
-      heading: 'Funding stage',
-      value: stage,
-    };
-  }
-
-  const statusLabel = normalizeInlineText(company?.funding_status_label);
-  if (!statusLabel) return null;
-
-  return { heading: 'Funding status', value: statusLabel };
-};
-
-const renderTaxonomyPills = (values: string[] | null | undefined) => {
-  const cleaned = (values || []).map((value) => value.trim()).filter(Boolean);
-  if (cleaned.length === 0) return null;
-
-  return (
-    <div className="flex flex-wrap gap-1.5 mt-1.5">
-      {cleaned.map((value) => (
-        <span
-          key={value}
-          className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2.5 py-0.5 text-xs font-medium text-arcova-teal"
-        >
-          {value}
-        </span>
-      ))}
-    </div>
-  );
 };
 
 const getEnrichmentStage = (lead: Lead): {
@@ -680,8 +622,6 @@ const getLeadRefreshStatusMeta = (
   }
 };
 
-const REQUESTED_COMING_SOON_CONTACT_SIGNALS_KEY = 'biosignals_requested_contact_signals_v1';
-
 export default function LeadsPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
@@ -709,22 +649,13 @@ export default function LeadsPage() {
   const [syncResultExpanded, setSyncResultExpanded] = useState(false);
   const [stoppingLeadId, setStoppingLeadId] = useState<string | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
-  const [selectedPreview, setSelectedPreview] = useState<'contact' | 'company' | 'scoring' | 'action'>('contact');
+  const [selectedPreview, setSelectedPreview] = useState<'contact' | 'scoring' | 'action'>('contact');
   const [isWorkHistoryExpanded, setIsWorkHistoryExpanded] = useState(false);
-  const [companyPanelOpen, setCompanyPanelOpen] = useState<Record<string, boolean>>({
-    criteria: true,
-    funding: true,
-    products: true,
-    services: true,
-    technology: true,
-    firmographics: true,
-  });
   const [contactPanelOpen, setContactPanelOpen] = useState({
     fit: true,
     about: true,
     details: true,
     workHistory: true,
-    signals: true,
   });
   const [scoringPanelOpen, setScoringPanelOpen] = useState({
     priority: true,
@@ -738,55 +669,14 @@ export default function LeadsPage() {
     next.has(key) ? next.delete(key) : next.add(key);
     return next;
   });
-  const [requestedComingSoonContactSignals, setRequestedComingSoonContactSignals] = useState<Set<string>>(
-    () => new Set(),
-  );
   const [companyFitByCompanyId, setCompanyFitByCompanyId] = useState<Record<string, CompanyFitFetchState>>({});
   const [contactFitByContactId, setContactFitByContactId] = useState<Record<string, ContactFitFetchState>>({});
   const companyFitCacheRef = useRef(companyFitByCompanyId);
   companyFitCacheRef.current = companyFitByCompanyId;
   const contactFitCacheRef = useRef(contactFitByContactId);
   contactFitCacheRef.current = contactFitByContactId;
-  const [showPremiumAddonNotice, setShowPremiumAddonNotice] = useState(false);
   const [enrichmentVisuals, setEnrichmentVisuals] = useState<Record<string, EnrichmentVisualState>>({});
   const [progressNow, setProgressNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(REQUESTED_COMING_SOON_CONTACT_SIGNALS_KEY);
-      if (!raw) return;
-      const ids = JSON.parse(raw) as unknown;
-      if (!Array.isArray(ids)) return;
-      setRequestedComingSoonContactSignals(
-        new Set(ids.filter((id): id is string => typeof id === 'string')),
-      );
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
-  useEffect(() => {
-    setShowPremiumAddonNotice(false);
-  }, [selectedLeadId]);
-
-  const toggleComingSoonContactSignalInterest = useCallback((signalId: string) => {
-    setRequestedComingSoonContactSignals((prev) => {
-      const next = new Set(prev);
-      const adding = !next.has(signalId);
-      if (adding) {
-        next.add(signalId);
-        queueMicrotask(() => setShowPremiumAddonNotice(true));
-      } else {
-        next.delete(signalId);
-      }
-      try {
-        localStorage.setItem(REQUESTED_COMING_SOON_CONTACT_SIGNALS_KEY, JSON.stringify([...next]));
-      } catch {
-        /* ignore */
-      }
-      return next;
-    });
-  }, []);
 
   useEffect(() => {
     if (!loading && !user) router.push('/login');
@@ -1262,8 +1152,6 @@ export default function LeadsPage() {
   const selectedCompanyId = selectedLead?.company_id ?? null;
   const selectedCompanyFitState = selectedCompanyId ? companyFitByCompanyId[selectedCompanyId] ?? null : null;
   const selectedCompanyFit = selectedCompanyFitState?.data ?? null;
-  const selectedCompanyFirmographics = getDisplayedCompanyFirmographics(selectedLead);
-  const selectedCompanyFirmographicsLastRefresh = getCompanyFirmographicsLastRefresh(selectedLead);
   const isEditingSelected = selectedLead ? editingLeadId === selectedLead.id : false;
   const isSavingSelected = selectedLead ? savingLeadId === selectedLead.id : false;
   const isDeletingSelected = selectedLead ? deletingLeadId === selectedLead.id : false;
@@ -1275,7 +1163,7 @@ export default function LeadsPage() {
   const selectedLeadRefreshStatusMeta = getLeadRefreshStatusMeta(selectedLeadRefreshStatus);
 
   useEffect(() => {
-    if ((selectedPreview !== 'company' && selectedPreview !== 'scoring' && selectedPreview !== 'action') || !selectedCompanyId) return;
+    if ((selectedPreview !== 'scoring' && selectedPreview !== 'action') || !selectedCompanyId) return;
 
     const cached = companyFitCacheRef.current[selectedCompanyId];
     const shouldRefreshForScoreMismatch =
@@ -1751,7 +1639,7 @@ export default function LeadsPage() {
                 <h1 className="text-2xl font-bold text-gray-900">Leads</h1>
                 <p className="text-gray-600 mt-1">
                   {total > 0
-                    ? `${total.toLocaleString()} contact${total !== 1 ? 's' : ''} ready to review. Click the contact or company icons on any row to preview enriched details.`
+                    ? `${total.toLocaleString()} contact${total !== 1 ? 's' : ''} ready to review. Click a row or the contact icon for details; use the briefcase to open the account on Accounts.`
                     : 'Your imported contacts will appear here once they are ready to review'}
                 </p>
                 </div>
@@ -1891,7 +1779,7 @@ export default function LeadsPage() {
                     <span>Name</span>
                     <span>Job title</span>
                     <span>Company name</span>
-                    <span className="text-center leading-tight whitespace-nowrap">Company details</span>
+                    <span className="text-center leading-tight whitespace-nowrap">Account</span>
                     <span className="block w-full pl-12 text-center">Action</span>
                   </div>
 
@@ -2043,15 +1931,22 @@ export default function LeadsPage() {
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setSelectedLeadId(lead.id);
-                                setSelectedPreview('company');
                                 cancelEditingLead();
+                                if (lead.company_id) {
+                                  router.push(`/accounts?companyId=${encodeURIComponent(lead.company_id)}`);
+                                }
                               }}
+                              disabled={!lead.company_id}
                               className={`inline-flex items-center justify-center rounded-md border p-1.5 transition-colors ${
-                                isSelected && selectedPreview === 'company'
-                                  ? 'border-arcova-teal bg-arcova-teal text-white'
-                                  : 'border-arcova-teal/40 bg-arcova-teal/10 text-arcova-teal hover:bg-arcova-teal hover:text-white hover:border-arcova-teal'
+                                lead.company_id
+                                  ? 'border-arcova-teal/40 bg-arcova-teal/10 text-arcova-teal hover:bg-arcova-teal hover:text-white hover:border-arcova-teal'
+                                  : 'border-gray-200 bg-gray-50 text-gray-300 cursor-not-allowed'
                               }`}
-                              title="Company details"
+                              title={
+                                lead.company_id
+                                  ? 'Open account on Accounts'
+                                  : 'No linked company record yet'
+                              }
                             >
                               <Briefcase className="w-5 h-5" />
                             </button>
@@ -2124,45 +2019,17 @@ export default function LeadsPage() {
                           <p className="text-xs font-medium uppercase tracking-wide text-arcova-teal">
                             {selectedPreview === 'contact'
                               ? 'Contact details'
-                              : selectedPreview === 'company'
-                                ? 'Company details'
-                                : selectedPreview === 'action'
-                                  ? 'Recommended action'
-                                  : 'Fit score'}
+                              : selectedPreview === 'action'
+                                ? 'Recommended action'
+                                : 'Fit score'}
                           </p>
-                          {selectedPreview !== 'scoring' && selectedPreview !== 'action' && (
+                          {selectedPreview === 'contact' && (
                             <h2 className="text-lg font-semibold text-gray-900 mt-1 leading-tight">
-                              {selectedPreview === 'contact'
-                                ? [selectedLead.first_name, selectedLead.last_name]
-                                    .filter(Boolean)
-                                    .join(' ') ||
-                                  selectedLead.full_name ||
-                                  'Selected contact'
-                                : selectedPreview === 'company' && selectedLead.company_id
-                                  ? (() => {
-                                      const title =
-                                        selectedCompanyFirmographics?.name ||
-                                        selectedLead.resolved_current_company_name ||
-                                        selectedLead.company_name ||
-                                        'Selected company';
-                                      return (
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            router.push(
-                                              `/accounts?companyId=${encodeURIComponent(selectedLead.company_id!)}`,
-                                            )
-                                          }
-                                          className="text-left font-semibold text-gray-900 hover:text-arcova-teal transition-colors"
-                                        >
-                                          {title}
-                                        </button>
-                                      );
-                                    })()
-                                  : selectedCompanyFirmographics?.name ||
-                                    selectedLead.resolved_current_company_name ||
-                                    selectedLead.company_name ||
-                                    'Selected company'}
+                              {[selectedLead.first_name, selectedLead.last_name]
+                                .filter(Boolean)
+                                .join(' ') ||
+                                selectedLead.full_name ||
+                                'Selected contact'}
                             </h2>
                           )}
                           {selectedPreview === 'action' && (() => {
@@ -2179,32 +2046,6 @@ export default function LeadsPage() {
                               {selectedLead.headline}
                             </p>
                           )}
-                          {selectedPreview === 'company' && (() => {
-                            const domain =
-                              selectedCompanyFirmographics?.domain ||
-                              selectedLead.resolved_current_company_domain ||
-                              selectedLead.company_domain;
-                            const href = selectedCompanyFirmographics?.website || (domain ? `https://${domain}` : null);
-                            const linkedIn = selectedCompanyFirmographics?.linkedin_url || selectedLead.company_linkedin_url;
-                            return (
-                              <div className="mt-1 space-y-2">
-                                {domain && href && (
-                                  <a href={href} target="_blank" rel="noopener noreferrer"
-                                    className="flex items-center gap-1 text-xs text-arcova-teal hover:underline">
-                                    {domain}
-                                    <ExternalLink className="w-3 h-3 flex-shrink-0" />
-                                  </a>
-                                )}
-                                {linkedIn && (
-                                  <a href={linkedIn} target="_blank" rel="noopener noreferrer"
-                                    className="flex items-center gap-1 text-xs text-arcova-teal hover:underline">
-                                    {linkedIn.replace(/^https?:\/\/(www\.)?/, '')}
-                                    <ExternalLink className="w-3 h-3 flex-shrink-0" />
-                                  </a>
-                                )}
-                              </div>
-                            );
-                          })()}
                           {selectedPreview === 'scoring' && (
                             <div className="mt-1 space-y-2">
                               <h2 className="text-lg font-semibold text-gray-900 leading-tight">Lead prioritisation</h2>
@@ -2250,24 +2091,6 @@ export default function LeadsPage() {
                                 {(
                                   selectedLead.first_name?.[0] ||
                                   selectedLead.full_name?.[0] ||
-                                  '?'
-                                ).toUpperCase()}
-                              </div>
-                            )
-                          ) : selectedPreview === 'company' ? (
-                            /* Company logo */
-                            selectedCompanyFirmographics?.logo_url ? (
-                              <img
-                                src={selectedCompanyFirmographics.logo_url}
-                                alt=""
-                                className="w-16 h-16 rounded-xl object-contain bg-gray-50 border border-gray-100 p-1"
-                              />
-                            ) : (
-                              <div className="w-16 h-16 rounded-xl bg-gray-100 flex items-center justify-center text-xl font-semibold text-gray-400">
-                                {(
-                                  selectedCompanyFirmographics?.name?.[0] ||
-                                  selectedLead.resolved_current_company_name?.[0] ||
-                                  selectedLead.company_name?.[0] ||
                                   '?'
                                 ).toUpperCase()}
                               </div>
@@ -2505,124 +2328,6 @@ export default function LeadsPage() {
                                   </div>
                                 )}
 
-                              {/* ── Tracked signals (catalog) ── */}
-                              {(() => {
-                                const categories = [
-                                  'Career & Role Changes',
-                                  'Activity & Network',
-                                  'Publications & Recognition',
-                                  'Hiring & Team',
-                                  'First-Party Engagement',
-                                  'CRM & Relationship',
-                                ] as const;
-
-                                const grouped = categories
-                                  .map((cat) => ({
-                                    category: cat,
-                                    signals: CONTACT_SIGNALS.filter((s) => s.category === cat),
-                                  }))
-                                  .filter((g) => g.signals.length > 0);
-
-                                return (
-                                  <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
-                                    <button
-                                      type="button"
-                                      onClick={() => setContactPanelOpen((s) => ({ ...s, signals: !s.signals }))}
-                                      className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100/60 transition-colors"
-                                    >
-                                      <span className="text-xs font-semibold text-gray-700">
-                                        Tracked signals
-                                      </span>
-                                      <ChevronDown
-                                        className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 ${
-                                          contactPanelOpen.signals ? '' : '-rotate-90'
-                                        }`}
-                                      />
-                                    </button>
-                                    {contactPanelOpen.signals && (
-                                      <div className="px-3 pb-3 space-y-3">
-                                        {showPremiumAddonNotice && (
-                                          <div
-                                            role="status"
-                                            className="relative overflow-hidden rounded-xl border border-arcova-teal/25 bg-white shadow-sm"
-                                          >
-                                            <div
-                                              className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-arcova-teal/50 via-arcova-teal to-arcova-teal/50"
-                                              aria-hidden
-                                            />
-                                            <button
-                                              type="button"
-                                              onClick={() => setShowPremiumAddonNotice(false)}
-                                              className="absolute right-2.5 top-2.5 rounded-md p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
-                                              aria-label="Dismiss"
-                                            >
-                                              <X className="h-4 w-4" />
-                                            </button>
-                                            <div className="flex gap-3 p-4 pr-11">
-                                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-arcova-teal/12 ring-1 ring-arcova-teal/20">
-                                                <Sparkles className="h-5 w-5 text-arcova-teal" />
-                                              </div>
-                                              <div className="min-w-0">
-                                                <p className="text-sm font-semibold text-gray-900">
-                                                  Premium add-on
-                                                </p>
-                                                <p className="mt-1.5 text-sm leading-relaxed text-gray-600">
-                                                  First-party and CRM-linked signals are delivered through managed
-                                                  integrations and data feeds we turn on per customer. They are not part
-                                                  of the core product — contact our team to discuss enablement, scope,
-                                                  and pricing for your organization.
-                                                </p>
-                                              </div>
-                                            </div>
-                                          </div>
-                                        )}
-                                        {grouped.map(({ category, signals }) => (
-                                          <div key={category}>
-                                            <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-1.5">
-                                              {category}
-                                            </p>
-                                            <div className="flex flex-wrap gap-1.5">
-                                              {signals.map((signal) => {
-                                                const comingSoon = isContactSignalComingSoon(signal.id);
-                                                const selected = requestedComingSoonContactSignals.has(signal.id);
-                                                if (comingSoon) {
-                                                  return (
-                                                    <button
-                                                      key={signal.id}
-                                                      type="button"
-                                                      onClick={() => toggleComingSoonContactSignalInterest(signal.id)}
-                                                      title={
-                                                        selected
-                                                          ? 'Selected — we will use this to prioritize integrations'
-                                                          : 'Not live yet — click to register interest'
-                                                      }
-                                                      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors ${
-                                                        selected
-                                                          ? 'border-arcova-teal/40 bg-gray-200 text-gray-700'
-                                                          : 'border-transparent bg-gray-100 text-gray-400 hover:bg-gray-200/80 hover:text-gray-500'
-                                                      }`}
-                                                    >
-                                                      {signal.displayName}
-                                                    </button>
-                                                  );
-                                                }
-                                                return (
-                                                  <span
-                                                    key={signal.id}
-                                                    className="inline-flex items-center rounded-full bg-arcova-teal px-2.5 py-0.5 text-xs font-medium text-white"
-                                                  >
-                                                    {signal.displayName}
-                                                  </span>
-                                                );
-                                              })}
-                                            </div>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
-                                );
-                              })()}
                             </div>
                           )
                         ) : selectedPreview === 'company' ? (
