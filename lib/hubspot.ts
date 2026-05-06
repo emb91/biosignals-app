@@ -20,7 +20,9 @@ export type ArcovaCompanyProperties = {
   arcova_industry: string;
   arcova_employee_count: string;
   arcova_founded_year: string;
-  arcova_headquarters: string;
+  arcova_hq_city: string;
+  arcova_hq_state: string;
+  arcova_hq_country: string;
 };
 
 type HubSpotPropertyDefinition = {
@@ -54,7 +56,9 @@ const ARCOVA_COMPANY_PROPERTIES: HubSpotPropertyDefinition[] = [
   { name: 'arcova_industry', label: 'Arcova: Industry', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
   { name: 'arcova_employee_count', label: 'Arcova: Employee Count', type: 'number', fieldType: 'number', groupName: 'arcova_intelligence' },
   { name: 'arcova_founded_year', label: 'Arcova: Founded Year', type: 'number', fieldType: 'number', groupName: 'arcova_intelligence' },
-  { name: 'arcova_headquarters', label: 'Arcova: Headquarters', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
+  { name: 'arcova_hq_city', label: 'Arcova: HQ City', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
+  { name: 'arcova_hq_state', label: 'Arcova: HQ State', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
+  { name: 'arcova_hq_country', label: 'Arcova: HQ Country', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
   { name: 'arcova_linkedin_url', label: 'Arcova: LinkedIn URL', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
   { name: 'arcova_funding_stage', label: 'Arcova: Funding Stage', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
   { name: 'arcova_funding_status', label: 'Arcova: Funding Status', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
@@ -342,6 +346,38 @@ export async function getValidAccessToken(userId: string, supabase: any): Promis
     .eq('user_id', userId);
 
   return tokens.access_token;
+}
+
+/**
+ * Fetch HubSpot contacts that have NOT yet been enriched by Arcova.
+ * Uses the search API to filter contacts where arcova_enriched_at is not set.
+ */
+export async function fetchUnenrichedHubSpotContacts(accessToken: string): Promise<HubSpotContact[]> {
+  const properties = ['firstname', 'lastname', 'email', 'jobtitle', 'company', 'website', 'hs_linkedin_url', 'city', 'country'];
+  const contacts: HubSpotContact[] = [];
+  let after: string | undefined;
+
+  do {
+    const body: Record<string, unknown> = {
+      filterGroups: [{ filters: [{ propertyName: 'arcova_enriched_at', operator: 'NOT_HAS_PROPERTY' }] }],
+      properties,
+      limit: 100,
+    };
+    if (after) body.after = after;
+
+    const res = await fetch('https://api.hubapi.com/crm/v3/objects/contacts/search', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`HubSpot unenriched contacts search failed: ${res.status}`);
+
+    const data = await res.json();
+    contacts.push(...(data.results ?? []));
+    after = data.paging?.next?.after;
+  } while (after);
+
+  return contacts;
 }
 
 export async function fetchHubSpotContacts(accessToken: string): Promise<HubSpotContact[]> {

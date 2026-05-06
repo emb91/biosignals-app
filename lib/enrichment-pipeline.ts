@@ -250,6 +250,7 @@ type CanonicalCompanyRow = {
   employee_range: string | null;
   founded_year: number | string | null;
   headquarters_city: string | null;
+  headquarters_state: string | null;
   headquarters_country: string | null;
   specialties: string[] | null;
 };
@@ -527,6 +528,7 @@ function extractCompanyFirmographics(raw: Record<string, unknown> | null): Recor
       : typeof raw.founded === 'number' ? raw.founded
       : null,
     hq_city: getFirstString(hq, ['city', 'cityName']) || null,
+    hq_state: getFirstString(hq, ['state', 'stateName', 'stateCode']) || null,
     hq_country: getFirstString(hq, ['country', 'countryName', 'countryCode']) || null,
     specialties: specialties.length > 0 ? specialties : null,
     linkedin_url: normalizeString(raw.url || raw.linkedinUrl || '') || null,
@@ -632,7 +634,7 @@ async function upsertResolvedCompany(
   const existing = await supabase
     .from('companies')
     .select(
-      'id, company_name, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_country, specialties'
+      'id, company_name, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_state, headquarters_country, specialties'
     )
     .eq('user_id', userId)
     .eq('domain', domain)
@@ -687,6 +689,11 @@ async function upsertResolvedCompany(
       apolloFirmographics?.hq_city,
       apifyFirmographics.hq_city,
       existingCompany?.headquarters_city
+    ),
+    headquarters_state: pickCanonicalString(
+      apolloFirmographics?.hq_state,
+      apifyFirmographics.hq_state,
+      existingCompany?.headquarters_state
     ),
     headquarters_country: pickCanonicalString(
       apolloFirmographics?.hq_country,
@@ -1108,6 +1115,7 @@ export async function runContactResolutionPipelineForContact(
           employee_count: apolloCompany.company_employee_count ?? null,
           founded_year: apolloCompany.company_founded_year ?? null,
           hq_city: apolloCompany.company_hq_city || null,
+          hq_state: apolloCompany.company_hq_state || null,
           hq_country: apolloCompany.company_hq_country || null,
           funding_stage: apolloCompany.company_funding_stage || null,
           total_funding_usd: apolloCompany.company_total_funding_usd ?? null,

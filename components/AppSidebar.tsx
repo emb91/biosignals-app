@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   Target,
   Building2,
+  Kanban,
   Radio,
   FileUp,
   Users,
@@ -32,9 +33,10 @@ const setupItems: NavItem[] = [
 const topNavigation: NavItem[] = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Import', href: '/import', icon: FileUp },
-  { name: 'Signals', href: '/customer-signals', icon: Radio },
-  { name: 'Accounts', href: '/accounts', icon: Building2 },
   { name: 'Leads', href: '/results', icon: Users },
+  { name: 'Accounts', href: '/accounts', icon: Building2 },
+  { name: 'Pipeline', href: '/pipeline', icon: Kanban },
+  { name: 'Signals', href: '/customer-signals', icon: Radio },
 ];
 
 const bottomNavigation: NavItem[] = [

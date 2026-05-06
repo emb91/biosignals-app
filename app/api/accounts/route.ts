@@ -1,21 +1,51 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
+import {
+  type DataProvenanceChannel,
+  formatDataProvenanceTypeOnly,
+  resolveContactDataProvenance,
+} from '@/lib/data-provenance';
 
 type CompanyAggRow = {
   id: string;
   company_name: string | null;
   domain: string | null;
-  company_website: string | null;
   logo_url: string | null;
   company_fit_score: number | null;
+  company_fit_coverage: number | null;
   matched_icp_id: string | null;
+  therapeutic_areas: string[] | null;
+  modalities: string[] | null;
+  development_stages: string[] | null;
+  funding_stage: string | null;
+  funding_status_label: string | null;
+  total_funding_usd: number | null;
+  latest_funding_date: string | null;
+  funding_resolution_summary: string | null;
+  company_type: string | null;
+  linkedin_url: string | null;
+  description: string | null;
+  bio_summary: string | null;
+  employee_count: number | null;
+  employee_range: string | null;
+  headquarters_city: string | null;
+  headquarters_country: string | null;
+  founded_year: number | null;
+  specialties: string[] | null;
+  products_services: string[] | null;
+  services: string[] | null;
+  technologies: string[] | null;
+  last_enriched_at: string | null;
 };
 
+// AggregatedAccount inherits all CompanyAggRow fields (including the new funding/founding ones)
 type AggregatedAccount = CompanyAggRow & {
   contact_count: number;
   best_contact_fit: number | null;
   worst_contact_fit: number | null;
   avg_contact_fit: number | null;
+  data_provenance_type: string;
+  data_provenance_imported_at: string | null;
 };
 
 type ScratchAgg = CompanyAggRow & {
@@ -24,6 +54,8 @@ type ScratchAgg = CompanyAggRow & {
   fit_n: number;
   best_contact_fit: number | null;
   worst_contact_fit: number | null;
+  provenance_channels: Set<DataProvenanceChannel>;
+  provenance_earliest_import_at: string | null;
 };
 
 function clamp01(value: number): number {
@@ -41,14 +73,38 @@ function finalizeScratch(row: ScratchAgg): AggregatedAccount {
     id: row.id,
     company_name: row.company_name,
     domain: row.domain,
-    company_website: row.company_website,
     logo_url: row.logo_url,
     company_fit_score: row.company_fit_score,
+    company_fit_coverage: row.company_fit_coverage,
     matched_icp_id: row.matched_icp_id,
+    therapeutic_areas: row.therapeutic_areas,
+    modalities: row.modalities,
+    development_stages: row.development_stages,
+    funding_stage: row.funding_stage,
+    funding_status_label: row.funding_status_label,
+    company_type: row.company_type,
+    linkedin_url: row.linkedin_url,
+    description: row.description,
+    bio_summary: row.bio_summary,
+    employee_count: row.employee_count,
+    employee_range: row.employee_range,
+    headquarters_city: row.headquarters_city,
+    headquarters_country: row.headquarters_country,
+    total_funding_usd: row.total_funding_usd,
+    latest_funding_date: row.latest_funding_date,
+    funding_resolution_summary: row.funding_resolution_summary,
+    founded_year: row.founded_year,
+    specialties: row.specialties,
+    products_services: row.products_services,
+    services: row.services,
+    technologies: row.technologies,
+    last_enriched_at: row.last_enriched_at,
     contact_count: row.contact_count,
     best_contact_fit: row.best_contact_fit,
     worst_contact_fit: row.worst_contact_fit,
     avg_contact_fit: row.fit_n > 0 ? row.fit_sum / row.fit_n : null,
+    data_provenance_type: formatDataProvenanceTypeOnly([...row.provenance_channels]),
+    data_provenance_imported_at: row.provenance_earliest_import_at,
   };
 }
 
@@ -65,12 +121,21 @@ export async function GET(request: Request) {
     }
 
     const { searchParams } = new URL(request.url);
-    const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
+    const rawPage = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
+    const companyIdFocus = (searchParams.get('companyId') || '').trim();
     const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get('pageSize') || '50', 10)));
     const search = (searchParams.get('search') || '').trim();
 
-    const minCompanyFit = parseThreshold(searchParams.get('minCompanyFit'), 0.65);
-    const maxBestContactFit = parseThreshold(searchParams.get('maxBestContactFit'), 0.45);
+    /** Narrow “strong ICP / weak persona” slice. Off by default so Accounts lists every company you have contacts on. */
+    const coverageGapsOnly =
+      searchParams.get('coverageGaps') === '1' || searchParams.get('coverageGaps') === 'true';
+
+    const minCompanyFit = coverageGapsOnly
+      ? parseThreshold(searchParams.get('minCompanyFit'), 0.65)
+      : 0;
+    const maxBestContactFit = coverageGapsOnly
+      ? parseThreshold(searchParams.get('maxBestContactFit'), 0.45)
+      : 1;
 
     const { data: rows, error } = await supabase
       .from('contacts')
@@ -78,14 +143,42 @@ export async function GET(request: Request) {
         `
         company_id,
         contact_fit_score,
+        created_at,
+        source,
+        upload_batches (
+          filename,
+          created_at
+        ),
         companies (
           id,
           company_name,
           domain,
-          company_website,
           logo_url,
           company_fit_score,
-          matched_icp_id
+          company_fit_coverage,
+          matched_icp_id,
+          therapeutic_areas,
+          modalities,
+          development_stages,
+          funding_stage,
+          funding_status_label,
+          company_type,
+          linkedin_url,
+          description,
+          bio_summary,
+          employee_count,
+          employee_range,
+          headquarters_city,
+          headquarters_country,
+          total_funding_usd,
+          latest_funding_date,
+          funding_resolution_summary,
+          founded_year,
+          specialties,
+          products_services,
+          services,
+          technologies,
+          last_enriched_at
         )
       `,
       )
@@ -111,6 +204,12 @@ export async function GET(request: Request) {
           ? row.contact_fit_score
           : null;
 
+      const prov = resolveContactDataProvenance({
+        upload_batches: row.upload_batches,
+        created_at: typeof row.created_at === 'string' ? row.created_at : null,
+        source: typeof row.source === 'string' ? row.source : null,
+      });
+
       const existing = byCompany.get(companyId);
       if (!existing) {
         byCompany.set(companyId, {
@@ -120,9 +219,18 @@ export async function GET(request: Request) {
           fit_n: contactFit == null ? 0 : 1,
           best_contact_fit: contactFit,
           worst_contact_fit: contactFit,
+          provenance_channels: new Set(prov.channels),
+          provenance_earliest_import_at: prov.importedAt,
         });
       } else {
         existing.contact_count += 1;
+        for (const c of prov.channels) existing.provenance_channels.add(c);
+        if (
+          prov.importedAt &&
+          (!existing.provenance_earliest_import_at || prov.importedAt < existing.provenance_earliest_import_at)
+        ) {
+          existing.provenance_earliest_import_at = prov.importedAt;
+        }
         if (contactFit != null) {
           existing.fit_sum += contactFit;
           existing.fit_n += 1;
@@ -140,27 +248,39 @@ export async function GET(request: Request) {
 
     let accounts: AggregatedAccount[] = [...byCompany.values()].map(finalizeScratch);
 
-    accounts = accounts.filter((account) => {
-      const companyFit =
-        typeof account.company_fit_score === 'number' && Number.isFinite(account.company_fit_score)
-          ? account.company_fit_score
-          : null;
-      if (companyFit == null || companyFit < minCompanyFit) return false;
+    if (coverageGapsOnly) {
+      accounts = accounts.filter((account) => {
+        const companyFit =
+          typeof account.company_fit_score === 'number' && Number.isFinite(account.company_fit_score)
+            ? account.company_fit_score
+            : null;
+        if (companyFit == null || companyFit < minCompanyFit) return false;
 
-      const best =
-        typeof account.best_contact_fit === 'number' && Number.isFinite(account.best_contact_fit)
-          ? account.best_contact_fit
-          : 0;
+        const best =
+          typeof account.best_contact_fit === 'number' && Number.isFinite(account.best_contact_fit)
+            ? account.best_contact_fit
+            : 0;
 
-      return best <= maxBestContactFit;
-    });
+        return best <= maxBestContactFit;
+      });
+    }
 
     if (search) {
       const q = search.toLowerCase();
+      const listMatch = (arr: string[] | null | undefined) =>
+        (arr || []).some((s) => s.toLowerCase().includes(q));
       accounts = accounts.filter((account) => {
         const name = (account.company_name || '').toLowerCase();
         const domain = (account.domain || '').toLowerCase();
-        return name.includes(q) || domain.includes(q);
+        if (name.includes(q) || domain.includes(q)) return true;
+        if (listMatch(account.therapeutic_areas)) return true;
+        if (listMatch(account.modalities)) return true;
+        if (listMatch(account.development_stages)) return true;
+        const funding = (account.funding_stage || account.funding_status_label || '').toLowerCase();
+        if (funding.includes(q)) return true;
+        const ctype = (account.company_type || '').toLowerCase();
+        if (ctype.includes(q)) return true;
+        return false;
       });
     }
 
@@ -185,6 +305,14 @@ export async function GET(request: Request) {
           : 0;
       return bestA - bestB;
     });
+
+    let page = rawPage;
+    if (companyIdFocus) {
+      const idx = accounts.findIndex((a) => a.id === companyIdFocus);
+      if (idx >= 0) {
+        page = Math.floor(idx / pageSize) + 1;
+      }
+    }
 
     const total = accounts.length;
     const offset = (page - 1) * pageSize;
@@ -228,7 +356,8 @@ export async function GET(request: Request) {
       total,
       page,
       pageSize,
-      thresholds: { minCompanyFit, maxBestContactFit },
+      coverageGapsOnly,
+      thresholds: coverageGapsOnly ? { minCompanyFit, maxBestContactFit } : null,
     });
   } catch (err) {
     console.error('Error in accounts GET:', err);

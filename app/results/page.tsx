@@ -8,6 +8,15 @@ import AppSidebar from '@/components/AppSidebar';
 import { ArcovaLoader } from '@/components/ArcovaLoader';
 import { CONTACT_SIGNALS, isContactSignalComingSoon } from '@/lib/signals/catalog';
 import {
+  type LeadAction,
+  getLeadAction,
+  formatLeadActionLabel,
+  resolveCompanyFitForLeadAction,
+  resolveContactFitForLeadAction,
+  isLeadReadyAwaitingContactSignal,
+} from '@/lib/lead-action';
+import { formatProvenanceImportedAt } from '@/lib/data-provenance';
+import {
   Users,
   Search,
   ChevronLeft,
@@ -22,6 +31,7 @@ import {
   Sparkles,
   Ban,
   Upload,
+  Download,
 } from 'lucide-react';
 
 interface EmploymentHistoryItem {
@@ -48,6 +58,7 @@ interface CompanyFirmographics {
   industry?: string | null;
   founded_year?: number | null;
   hq_city?: string | null;
+  hq_state?: string | null;
   hq_country?: string | null;
   specialties?: string[] | null;
   products_services?: string[] | null;
@@ -244,6 +255,9 @@ interface Lead {
   matched_icp_name: string | null;
   matched_icp_index?: number | null;
   matched_icp_label?: string | null;
+  /** HS / CSV / Arcova abbreviation, from API */
+  data_provenance_type?: string | null;
+  data_provenance_imported_at?: string | null;
   companies: {
     company_name: string | null;
     domain: string | null;
@@ -265,6 +279,7 @@ interface Lead {
     funding_resolution_summary: string | null;
     founded_year: number | null;
     headquarters_city: string | null;
+    headquarters_state: string | null;
     headquarters_country: string | null;
     specialties: string[] | null;
     products_services: string[] | null;
@@ -307,6 +322,8 @@ type EnrichmentVisualState = {
 };
 
 const PAGE_SIZE = 50;
+const LEADS_TABLE_GRID =
+  'grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.3fr)_7rem_minmax(10rem,1.35fr)] gap-x-6';
 const MAX_VISIBLE_WORK_HISTORY = 5;
 const COMPANY_FIT_COMPONENT_ORDER: CompanyFitComponentKey[] = [
   'company_type',
@@ -349,75 +366,6 @@ const formatPercent = (value: number | null | undefined): string | null => {
   return percent ? `${percent} fit` : null;
 };
 
-type LeadAction = 'source_contact' | 'monitor' | 'deprioritize';
-
-/**
- * Thresholds for action classification.
- *
- * Company fit is the primary gate — if the account isn't worth pursuing, nothing else matters.
- * Contact fit then determines the action:
- *   - contact strong → Monitor (right person, wait for signal)
- *   - contact weak/missing → Source (right account, find the right person)
- *
- * A weak contact with a strong company should NEVER deprioritise — that's the Source case.
- */
-const DEPRIORITIZE_COMPANY_BELOW = 0.45;  // company_fit below this → deprioritise regardless
-const SOURCE_COMPANY_MIN = 0.5;           // company must clear this to be worth sourcing a contact
-const SOURCE_CONTACT_MAX = 0.65;          // contact below this → Source (find the right person)
-
-/**
- * Effective overall fit score: company × (0.3 + 0.7 × contact)
- *
- * Multiplicative formula with company as the base and contact as a multiplier ranging
- * from 0.3 (no contact fit) to 1.0 (perfect contact). Properties:
- *   - Company gates the ceiling — a weak company can't be rescued by a perfect contact.
- *   - A contact-less or zero-contact lead at a great company still scores at 30% of company,
- *     reflecting that the account is worth pursuing even if this specific contact isn't.
- *   - Perfect contact returns the raw company score; perfect both = 100%.
- */
-
-/** Company ICP fit for UX pills: API sends `fit_score` on the contact row; optional joins expose `companies.company_fit_score`. */
-function resolveCompanyFitForLeadAction(lead: Lead): number | null {
-  if (typeof lead.company_fit_score === 'number' && Number.isFinite(lead.company_fit_score)) {
-    return lead.company_fit_score;
-  }
-  const nested =
-    lead.companies &&
-    typeof lead.companies.company_fit_score === 'number' &&
-    Number.isFinite(lead.companies.company_fit_score)
-      ? lead.companies.company_fit_score
-      : null;
-  if (nested != null) return nested;
-  if (typeof lead.fit_score === 'number' && Number.isFinite(lead.fit_score)) {
-    return lead.fit_score;
-  }
-  return null;
-}
-
-function resolveContactFitForLeadAction(lead: Lead): number | null {
-  if (typeof lead.contact_fit_score === 'number' && Number.isFinite(lead.contact_fit_score)) {
-    return lead.contact_fit_score;
-  }
-  return null;
-}
-
-const getLeadAction = (lead: Lead): LeadAction => {
-  const company = resolveCompanyFitForLeadAction(lead);
-  const contact = resolveContactFitForLeadAction(lead);
-
-  // Company fit is the primary gate — weak company means the account isn't worth pursuing
-  if (company === null || company < DEPRIORITIZE_COMPANY_BELOW) return 'deprioritize';
-
-  // Company clears the bar — now contact fit determines the action
-  // Weak or missing contact on a good company = Source (find the right person there)
-  if (company >= SOURCE_COMPANY_MIN && (contact === null || contact < SOURCE_CONTACT_MAX)) {
-    return 'source_contact';
-  }
-
-  // Both dimensions are solid — monitor and wait for signals
-  return 'monitor';
-};
-
 const ACTION_CONFIG: Record<LeadAction, { label: string; className: string }> = {
   monitor: {
     label: 'Monitor',
@@ -426,6 +374,10 @@ const ACTION_CONFIG: Record<LeadAction, { label: string; className: string }> = 
   source_contact: {
     label: 'Source',
     className: 'bg-arcova-teal/10 text-arcova-teal ring-1 ring-arcova-teal/20',
+  },
+  reach_out: {
+    label: 'Reach out',
+    className: 'bg-white text-arcova-teal ring-2 ring-arcova-teal font-semibold',
   },
   deprioritize: {
     label: 'Deprioritise',
@@ -511,6 +463,7 @@ const getDisplayedCompanyFirmographics = (lead: Lead | null): CompanyFirmographi
     industry: company?.industry || null,
     founded_year: company?.founded_year ?? null,
     hq_city: company?.headquarters_city || null,
+    hq_state: company?.headquarters_state || null,
     hq_country: company?.headquarters_country || null,
     specialties: company?.specialties || null,
     products_services: company?.products_services || null,
@@ -748,7 +701,12 @@ export default function LeadsPage() {
   const [refreshingLeadId, setRefreshingLeadId] = useState<string | null>(null);
   const [hubspotConnected, setHubspotConnected] = useState(false);
   const [pushingToHubspot, setPushingToHubspot] = useState(false);
-  const [hubspotPushResult, setHubspotPushResult] = useState<{ contacts?: { upserted: number; errors: number }; total?: number; message?: string } | null>(null);
+  const [hubspotSyncResult, setHubspotSyncResult] = useState<{
+    contacts: { upserted: number; errors: number };
+    skipped: number;
+    skippedContacts: { name: string; company: string | null; reason: string }[];
+  } | null>(null);
+  const [syncResultExpanded, setSyncResultExpanded] = useState(false);
   const [stoppingLeadId, setStoppingLeadId] = useState<string | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [selectedPreview, setSelectedPreview] = useState<'contact' | 'company' | 'scoring' | 'action'>('contact');
@@ -882,12 +840,13 @@ export default function LeadsPage() {
   const handlePushToHubspot = useCallback(async () => {
     if (pushingToHubspot) return;
     setPushingToHubspot(true);
-    setHubspotPushResult(null);
+    setHubspotSyncResult(null);
+    setSyncResultExpanded(false);
     try {
       const res = await fetch('/api/hubspot/push-enrichment', { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
-        setHubspotPushResult(data);
+        if (data.contacts) setHubspotSyncResult(data);
       } else {
         console.error('HubSpot push failed:', await res.text());
       }
@@ -914,17 +873,7 @@ export default function LeadsPage() {
       p++;
     }
 
-    const DEPRIORITIZE_COMPANY_BELOW_CSV = 0.45;
-    const SOURCE_COMPANY_MIN_CSV = 0.5;
-    const SOURCE_CONTACT_MAX_CSV = 0.65;
-    const actionLabel = (lead: Lead) => {
-      const co = typeof lead.company_fit_score === 'number' ? lead.company_fit_score
-        : lead.companies?.company_fit_score ?? null;
-      const ct = lead.contact_fit_score;
-      if (co === null || co < DEPRIORITIZE_COMPANY_BELOW_CSV) return 'Deprioritise';
-      if (co >= SOURCE_COMPANY_MIN_CSV && (ct === null || ct < SOURCE_CONTACT_MAX_CSV)) return 'Source contact';
-      return 'Monitor';
-    };
+    const actionLabel = (lead: Lead) => formatLeadActionLabel(getLeadAction(lead));
 
     const pct = (n: number | null | undefined) =>
       n != null && Number.isFinite(n) ? `${Math.round(n * 100)}%` : '';
@@ -1811,40 +1760,6 @@ export default function LeadsPage() {
 
               {total > 0 && (
                 <div className="flex items-center gap-2">
-                  {hubspotConnected && (
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={handlePushToHubspot}
-                        disabled={pushingToHubspot}
-                        className="inline-flex items-center gap-2 px-3 py-2 bg-[#ff7a59] text-white rounded-lg text-sm font-medium hover:bg-[#e8693f] transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
-                        title="Sync enrichment data to HubSpot"
-                      >
-                        {pushingToHubspot ? (
-                          <RotateCw className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M18.164 7.932V5.085a2.198 2.198 0 0 0 1.268-1.978V3.06A2.199 2.199 0 0 0 17.235.862h-.047a2.199 2.199 0 0 0-2.197 2.197v.047a2.199 2.199 0 0 0 1.268 1.978v2.847a6.232 6.232 0 0 0-2.962 1.302L5.028 3.617a2.44 2.44 0 0 0 .072-.573A2.455 2.455 0 1 0 2.645 5.5a2.43 2.43 0 0 0 1.194-.315l8.122 4.707a6.248 6.248 0 0 0 0 4.208L4.123 18.5a2.432 2.432 0 0 0-1.478-.498 2.455 2.455 0 1 0 2.455 2.455 2.43 2.43 0 0 0-.388-1.337l7.91-4.583a6.266 6.266 0 0 0 8.976-5.628 6.25 6.25 0 0 0-3.434-5.977zm-1.023 9.565a3.59 3.59 0 1 1 0-7.181 3.59 3.59 0 0 1 0 7.181z"/>
-                          </svg>
-                        )}
-                        {pushingToHubspot ? 'Syncing…' : 'HubSpot Sync'}
-                      </button>
-                      {hubspotPushResult && (
-                        <span className="text-xs text-gray-500">
-                          {hubspotPushResult.contacts
-                            ? `${hubspotPushResult.contacts.upserted} contact${hubspotPushResult.contacts.upserted !== 1 ? 's' : ''} synced${hubspotPushResult.contacts.errors > 0 ? `, ${hubspotPushResult.contacts.errors} errors` : ''}`
-                            : hubspotPushResult.message ?? 'Done'}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                  <button
-                    onClick={handleDownloadCsv}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 border border-gray-200 bg-white text-gray-700 rounded-lg text-sm hover:bg-gray-50 transition-colors"
-                    title="Download all leads as CSV"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                    Download CSV
-                  </button>
                   <button
                     onClick={() => router.push('/import')}
                     className="inline-flex items-center gap-1.5 px-4 py-2 bg-arcova-teal text-white rounded-lg text-sm hover:bg-arcova-teal/90 transition-colors"
@@ -1852,9 +1767,83 @@ export default function LeadsPage() {
                     <Upload className="w-3.5 h-3.5" />
                     Import
                   </button>
+                  <button
+                    onClick={handleDownloadCsv}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 border border-gray-200 bg-white text-gray-700 rounded-lg text-sm hover:bg-gray-50 transition-colors"
+                    title="Export leads as CSV"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Export CSV
+                  </button>
+                  {hubspotConnected && (
+                    <button
+                      onClick={handlePushToHubspot}
+                      disabled={pushingToHubspot}
+                      className="inline-flex items-center gap-2 px-3 py-2 bg-[#ff7a59] text-white rounded-lg text-sm font-medium hover:bg-[#e8693f] transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
+                      title="Sync enrichment data to HubSpot"
+                    >
+                      {pushingToHubspot ? (
+                        <RotateCw className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M18.164 7.932V5.085a2.198 2.198 0 0 0 1.268-1.978V3.06A2.199 2.199 0 0 0 17.235.862h-.047a2.199 2.199 0 0 0-2.197 2.197v.047a2.199 2.199 0 0 0 1.268 1.978v2.847a6.232 6.232 0 0 0-2.962 1.302L5.028 3.617a2.44 2.44 0 0 0 .072-.573A2.455 2.455 0 1 0 2.645 5.5a2.43 2.43 0 0 0 1.194-.315l8.122 4.707a6.248 6.248 0 0 0 0 4.208L4.123 18.5a2.432 2.432 0 0 0-1.478-.498 2.455 2.455 0 1 0 2.455 2.455 2.43 2.43 0 0 0-.388-1.337l7.91-4.583a6.266 6.266 0 0 0 8.976-5.628 6.25 6.25 0 0 0-3.434-5.977zm-1.023 9.565a3.59 3.59 0 1 1 0-7.181 3.59 3.59 0 0 1 0 7.181z"/>
+                        </svg>
+                      )}
+                      {pushingToHubspot ? 'Syncing…' : 'HubSpot Sync'}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
+
+            {hubspotSyncResult && (
+              <div className="mb-4 rounded-lg border border-[#ff7a59]/30 bg-[#fff5f2] pl-4 pr-4 pt-3.5 pb-3.5 flex items-start justify-between gap-4">
+                <div className="flex items-start gap-3 min-w-0">
+                  <svg className="w-4 h-4 shrink-0 mt-0.5 text-[#ff7a59]" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M18.164 7.932V5.085a2.198 2.198 0 0 0 1.268-1.978V3.06A2.199 2.199 0 0 0 17.235.862h-.047a2.199 2.199 0 0 0-2.197 2.197v.047a2.199 2.199 0 0 0 1.268 1.978v2.847a6.232 6.232 0 0 0-2.962 1.302L5.028 3.617a2.44 2.44 0 0 0 .072-.573A2.455 2.455 0 1 0 2.645 5.5a2.43 2.43 0 0 0 1.194-.315l8.122 4.707a6.248 6.248 0 0 0 0 4.208L4.123 18.5a2.432 2.432 0 0 0-1.478-.498 2.455 2.455 0 1 0 2.455 2.455 2.43 2.43 0 0 0-.388-1.337l7.91-4.583a6.266 6.266 0 0 0 8.976-5.628 6.25 6.25 0 0 0-3.434-5.977zm-1.023 9.565a3.59 3.59 0 1 1 0-7.181 3.59 3.59 0 0 1 0 7.181z"/>
+                  </svg>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <span className="text-sm font-semibold text-gray-900">
+                        {hubspotSyncResult.contacts.upserted} contact{hubspotSyncResult.contacts.upserted !== 1 ? 's' : ''} synced
+                      </span>
+                      {hubspotSyncResult.contacts.errors > 0 && (
+                        <span className="text-xs font-medium text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full">
+                          {hubspotSyncResult.contacts.errors} error{hubspotSyncResult.contacts.errors !== 1 ? 's' : ''}
+                        </span>
+                      )}
+                      {hubspotSyncResult.skipped > 0 && (
+                        <button
+                          onClick={() => setSyncResultExpanded((v) => !v)}
+                          className="text-xs font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full flex items-center gap-1 hover:bg-amber-100 transition-colors"
+                        >
+                          <svg className={`w-2.5 h-2.5 transition-transform ${syncResultExpanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                          {hubspotSyncResult.skipped} skipped
+                        </button>
+                      )}
+                    </div>
+                    {syncResultExpanded && hubspotSyncResult.skippedContacts.length > 0 && (
+                      <ul className="mt-2 space-y-1.5">
+                        {hubspotSyncResult.skippedContacts.map((c, i) => (
+                          <li key={i} className="text-xs text-gray-600">
+                            <span className="font-medium text-gray-800">{c.name}</span>
+                            {c.company && <span className="text-gray-400"> · {c.company}</span>}
+                            <span className="ml-1.5 text-amber-600">— {c.reason.toLowerCase()}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={() => setHubspotSyncResult(null)}
+                  className="shrink-0 text-gray-400 hover:text-gray-600 mt-0.5"
+                  aria-label="Dismiss"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
 
             {showSearchInput && (
               <div className="mb-4 relative">
@@ -1897,7 +1886,9 @@ export default function LeadsPage() {
               <div className={`grid gap-4 ${selectedLeadId ? 'xl:grid-cols-[minmax(0,1fr)_360px]' : ''}`}>
                 {/* ── Leads table ── */}
                 <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-                  <div className="grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.3fr)_7rem_minmax(10rem,1.35fr)] gap-x-6 px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide">
+                  <div
+                    className={`${LEADS_TABLE_GRID} px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide`}
+                  >
                     <span>Name</span>
                     <span>Job title</span>
                     <span>Company name</span>
@@ -1922,7 +1913,7 @@ export default function LeadsPage() {
                               setSelectedPreview('contact');
                               cancelEditingLead();
                             }}
-                            className={`grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.3fr)_7rem_minmax(10rem,1.35fr)] gap-x-6 px-4 py-3 items-center cursor-pointer transition-all duration-150 border-b border-gray-50 last:border-0 ${
+                            className={`${LEADS_TABLE_GRID} px-4 py-3 items-center cursor-pointer transition-all duration-150 border-b border-gray-50 last:border-0 ${
                               isSelected
                                 ? 'bg-arcova-teal/10 border-l-2 border-arcova-teal'
                                 : 'border-l-2 border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30'
@@ -1975,7 +1966,7 @@ export default function LeadsPage() {
                             setSelectedPreview('contact');
                             cancelEditingLead();
                           }}
-                          className={`grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.3fr)_7rem_minmax(10rem,1.35fr)] gap-x-6 px-4 py-3 items-center cursor-pointer transition-all duration-150 opacity-100 ${
+                          className={`${LEADS_TABLE_GRID} px-4 py-3 items-center cursor-pointer transition-all duration-150 opacity-100 ${
                             isSelected
                               ? 'bg-arcova-teal/10 border-l-2 border-arcova-teal'
                               : 'border-l-2 border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30'
@@ -2014,6 +2005,22 @@ export default function LeadsPage() {
                               const truncated = name.length > 30 ? name.slice(0, 30) + '…' : name;
                               const domain = companyFirmographics?.domain || lead.company_domain;
                               const href = companyFirmographics?.website || (domain ? `https://${domain}` : null);
+                              if (lead.company_id) {
+                                return (
+                                  <div className="min-w-0">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        router.push(`/accounts?companyId=${encodeURIComponent(lead.company_id!)}`);
+                                      }}
+                                      className="text-sm text-arcova-teal hover:underline truncate max-w-full text-left"
+                                    >
+                                      {truncated}
+                                    </button>
+                                  </div>
+                                );
+                              }
                               return href ? (
                                 <div className="min-w-0">
                                   <a href={href} target="_blank" rel="noopener noreferrer"
@@ -2132,10 +2139,31 @@ export default function LeadsPage() {
                                     .join(' ') ||
                                   selectedLead.full_name ||
                                   'Selected contact'
-                                : selectedCompanyFirmographics?.name ||
-                                  selectedLead.resolved_current_company_name ||
-                                  selectedLead.company_name ||
-                                  'Selected company'}
+                                : selectedPreview === 'company' && selectedLead.company_id
+                                  ? (() => {
+                                      const title =
+                                        selectedCompanyFirmographics?.name ||
+                                        selectedLead.resolved_current_company_name ||
+                                        selectedLead.company_name ||
+                                        'Selected company';
+                                      return (
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            router.push(
+                                              `/accounts?companyId=${encodeURIComponent(selectedLead.company_id!)}`,
+                                            )
+                                          }
+                                          className="text-left font-semibold text-gray-900 hover:text-arcova-teal transition-colors"
+                                        >
+                                          {title}
+                                        </button>
+                                      );
+                                    })()
+                                  : selectedCompanyFirmographics?.name ||
+                                    selectedLead.resolved_current_company_name ||
+                                    selectedLead.company_name ||
+                                    'Selected company'}
                             </h2>
                           )}
                           {selectedPreview === 'action' && (() => {
@@ -2294,6 +2322,22 @@ export default function LeadsPage() {
                           ) : (
                             /* ── View mode ── */
                             <div className="space-y-5">
+                              <div className="rounded-xl border border-gray-100 bg-gray-50/70 px-3 py-3">
+                                <p className="text-xs font-semibold text-gray-700 mb-2">Data source</p>
+                                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                                  <div>
+                                    <p className="text-gray-400 text-xs">Type</p>
+                                    <p className="text-gray-900 mt-0.5">{selectedLead.data_provenance_type ?? '—'}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-gray-400 text-xs">Imported</p>
+                                    <p className="text-gray-900 mt-0.5">
+                                      {formatProvenanceImportedAt(selectedLead.data_provenance_imported_at)}
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+
                               {selectedLead.contact_bio && selectedLead.contact_bio.length > 0 && (
                                 <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
                                   <button
@@ -2586,12 +2630,10 @@ export default function LeadsPage() {
                           /* ── Company view ── */
                           (() => {
                             const f = selectedCompanyFirmographics;
-                            const hqParts = [f?.hq_city, f?.hq_country].filter(Boolean);
-                            const hq = hqParts.join(', ') || null;
                             const showPlatformCategory = f?.company_type === 'SaaS' && !!f?.platform_category;
                             const hasCriteria = !!(f?.company_type || showPlatformCategory || f?.therapeutic_areas?.length || f?.modalities?.length || f?.development_stages?.length);
                             const hasFunding = !!(f?.funding_status_label || f?.funding_stage || f?.total_funding_usd != null || f?.latest_funding_date);
-                            const hasFirmographics = !!(f?.employee_count || f?.employee_range || f?.follower_count != null || f?.founded_year || hq);
+                            const hasFirmographics = !!(f?.employee_count || f?.employee_range || f?.follower_count != null || f?.founded_year || f?.hq_city || f?.hq_state || f?.hq_country);
                             const aboutText = f?.bio_summary || f?.description || null;
                             const hasProducts = (f?.products_services?.length ?? 0) > 0;
                             const hasServices = (f?.services?.length ?? 0) > 0;
@@ -2703,10 +2745,22 @@ export default function LeadsPage() {
                                               <p className="text-gray-900 text-sm mt-0.5">{f.founded_year}</p>
                                             </div>
                                           )}
-                                          {hq && (
+                                          {f?.hq_city && (
                                             <div>
-                                              <p className="text-gray-400 text-xs">HQ</p>
-                                              <p className="text-gray-900 text-sm mt-0.5">{hq}</p>
+                                              <p className="text-gray-400 text-xs">City</p>
+                                              <p className="text-gray-900 text-sm mt-0.5">{f.hq_city}</p>
+                                            </div>
+                                          )}
+                                          {f?.hq_state && (
+                                            <div>
+                                              <p className="text-gray-400 text-xs">State</p>
+                                              <p className="text-gray-900 text-sm mt-0.5">{f.hq_state}</p>
+                                            </div>
+                                          )}
+                                          {f?.hq_country && (
+                                            <div>
+                                              <p className="text-gray-400 text-xs">Country</p>
+                                              <p className="text-gray-900 text-sm mt-0.5">{f.hq_country}</p>
                                             </div>
                                           )}
                                         </div>
@@ -2872,10 +2926,31 @@ export default function LeadsPage() {
                               <div className="space-y-5">
 
                                 {/* Action explanation */}
-                                {action === 'monitor' && (
+                                {action === 'monitor' &&
+                                  (isLeadReadyAwaitingContactSignal(selectedLead) ? (
                                   <div className="space-y-3">
                                     <p className="text-sm text-gray-700 leading-relaxed">
-                                      {contactName ? `${contactName} is` : 'This lead is'} a strong fit across both company and contact dimensions. No immediate action needed: keep them on your radar and wait for a buying signal before reaching out.
+                                      {contactName ? `${contactName} is` : 'This lead is'} a strong match on both the
+                                      company and the persona. Keep the account on your radar and wait for a buying
+                                      signal before reaching out.
+                                    </p>
+                                    <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
+                                      <button
+                                        type="button"
+                                        onClick={() => guardedNavigate('/customer-signals')}
+                                        className="inline-flex items-center gap-1.5 text-sm font-semibold text-arcova-teal hover:text-arcova-teal/85 transition-colors"
+                                      >
+                                        Set up signals
+                                        <ChevronRight className="w-4 h-4" aria-hidden />
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="space-y-3">
+                                    <p className="text-sm text-gray-700 leading-relaxed">
+                                      {contactName ? `${contactName} sits` : 'This lead sits'} in the watch band:
+                                      company fit is promising but not yet high enough for sourcing the ideal persona.
+                                      Keep the account visible and revisit when enrichment or the company moves.
                                     </p>
                                     <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
                                       <button
@@ -2888,6 +2963,19 @@ export default function LeadsPage() {
                                       </button>
                                     </div>
                                   </div>
+                                ))}
+
+                                {action === 'reach_out' && (
+                                  <div className="space-y-3">
+                                    <p className="text-sm text-gray-700 leading-relaxed">
+                                      This contact has a strong fit and at least one tracked buying signal. It is a
+                                      good moment for personalised outreach.
+                                    </p>
+                                    <p className="text-sm text-gray-500 leading-relaxed">
+                                      Lead with relevance to their role and therapeutic focus, and tie your message to
+                                      signals or milestones when you can.
+                                    </p>
+                                  </div>
                                 )}
 
                                 {action === 'source_contact' && (
@@ -2896,7 +2984,7 @@ export default function LeadsPage() {
                                       {selectedLead.companies?.company_name
                                         ? <><strong>{selectedLead.companies.company_name}</strong> is a strong ICP fit</>
                                         : 'The company is a strong ICP fit'
-                                      }, but {contactName || 'this contact'} isn&apos;t the right persona to approach. Look for a better-matched contact at this account before reaching out.
+                                      }, but {contactName || 'this contact'} isn&apos;t the right persona to approach this account. Source a better-matched contact before you reach out.
                                     </p>
                                     <p className="text-sm text-gray-500 leading-relaxed">
                                       Try searching LinkedIn for the right title at this company, or use enrichment to surface additional contacts.
@@ -2924,7 +3012,7 @@ export default function LeadsPage() {
                                 {action === 'deprioritize' && (
                                   <div className="space-y-3">
                                     <p className="text-sm text-gray-700 leading-relaxed">
-                                      This lead sits below minimum fit thresholds: either company fit, contact fit, or both are too weak to warrant attention right now.
+                                      Company or contact fit sits below your thresholds. Leave this one aside for now.
                                     </p>
                                     <p className="text-sm text-gray-500 leading-relaxed">
                                       This doesn&apos;t mean they are permanently out. If their company situation changes or you revisit your ICP criteria, they may score higher in a future run.
