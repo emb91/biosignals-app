@@ -5,14 +5,14 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { toast } from 'sonner';
-import { Kanban, Loader2, Plus } from 'lucide-react';
+import { Building2, Kanban, Loader2, Plus, Users, ArrowRight } from 'lucide-react';
 import {
-  healthDotClass,
   healthLabel,
   isWeakDim,
   type HealthDim,
   type PipelineDataRequestType,
 } from '@/lib/pipeline-icp-health';
+import { cn } from '@/lib/utils';
 
 interface IcpPipelineCard {
   icp_id: string;
@@ -28,22 +28,59 @@ interface IcpPipelineCard {
   overall: HealthDim;
 }
 
+function healthAccentClass(d: HealthDim): string {
+  switch (d) {
+    case 'red':    return 'border-l-red-400';
+    case 'amber':  return 'border-l-amber-400';
+    case 'green':  return 'border-l-emerald-400';
+  }
+}
+
+function HealthBadge({ dim }: { dim: HealthDim }) {
+  const cls =
+    dim === 'red'
+      ? 'bg-red-50 text-red-700 border-red-200'
+      : dim === 'amber'
+        ? 'bg-amber-50 text-amber-700 border-amber-200'
+        : 'bg-emerald-50 text-emerald-700 border-emerald-200';
+  return (
+    <span className={cn('inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium', cls)}>
+      {healthLabel(dim)}
+    </span>
+  );
+}
+
+function DimStatusDot({ dim }: { dim: HealthDim }) {
+  const cls =
+    dim === 'red'
+      ? 'bg-red-400'
+      : dim === 'amber'
+        ? 'bg-amber-400'
+        : 'bg-emerald-400';
+  return <span className={cn('inline-block h-1.5 w-1.5 shrink-0 rounded-full', cls)} />;
+}
+
 function MetricBlock({
+  icon,
   title,
-  valueLine,
+  value,
   dim,
 }: {
+  icon: React.ReactNode;
   title: string;
-  valueLine: string;
+  value: string;
   dim: HealthDim;
 }) {
   return (
-    <div className="rounded-lg border border-gray-100 bg-gray-50/80 px-3 py-3">
-      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{title}</p>
-      <p className="mt-1 text-lg font-semibold text-gray-900 tabular-nums">{valueLine}</p>
-      <div className="mt-2 flex items-center gap-2">
-        <span className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${healthDotClass(dim)}`} title={healthLabel(dim)} />
-        <span className="text-xs text-gray-600">{healthLabel(dim)}</span>
+    <div className="flex flex-col gap-1.5 px-4 py-3 min-w-0">
+      <div className="flex items-center gap-1.5 text-[11px] font-medium text-gray-400 uppercase tracking-wide">
+        {icon}
+        {title}
+      </div>
+      <p className="text-base font-semibold text-gray-900 tabular-nums leading-snug">{value}</p>
+      <div className="flex items-center gap-1.5">
+        <DimStatusDot dim={dim} />
+        <span className="text-[11px] text-gray-500">{healthLabel(dim)}</span>
       </div>
     </div>
   );
@@ -52,16 +89,10 @@ function MetricBlock({
 function buildCtas(card: IcpPipelineCard): { type: PipelineDataRequestType; label: string }[] {
   const out: { type: PipelineDataRequestType; label: string }[] = [];
   if (isWeakDim(card.coverage)) {
-    out.push({
-      type: 'expand_companies',
-      label: 'Find more companies for this ICP',
-    });
+    out.push({ type: 'expand_companies', label: 'Find more companies for this ICP' });
   }
   if (card.company_count > 0 && isWeakDim(card.contact_fit)) {
-    out.push({
-      type: 'better_contacts',
-      label: 'Find better contacts for this ICP',
-    });
+    out.push({ type: 'better_contacts', label: 'Find better contacts for this ICP' });
   }
   if (card.company_count > 0 && isWeakDim(card.depth)) {
     out.push({
@@ -75,14 +106,14 @@ function buildCtas(card: IcpPipelineCard): { type: PipelineDataRequestType; labe
   return out;
 }
 
-function formatFitLine(avg: number | null): string {
+function formatFitValue(avg: number | null): string {
   if (avg == null || !Number.isFinite(avg)) return '—';
-  return `${Math.round(avg * 100)}% avg fit`;
+  return `${Math.round(avg * 100)}%`;
 }
 
-function formatDepthLine(avg: number | null): string {
+function formatDepthValue(avg: number | null): string {
   if (avg == null || !Number.isFinite(avg)) return '—';
-  return `${avg.toFixed(1)} contacts / company`;
+  return `${avg.toFixed(1)}`;
 }
 
 export default function PipelinePage() {
@@ -153,41 +184,43 @@ export default function PipelinePage() {
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="flex-1 overflow-auto p-6">
-          <div className="w-full max-w-3xl mx-auto">
-            <div className="mb-8">
+          <div className="w-full max-w-2xl mx-auto">
+
+            <div className="mb-6">
               <h1 className="text-2xl font-bold text-gray-900">Pipeline</h1>
-              <p className="text-gray-600 mt-1 text-sm leading-relaxed">
-                One card per ICP. We order by health so the weakest coverage, contact quality, and depth float to
-                the top. CTAs raise an Arcova data request; batches land in Import.
+              <p className="text-gray-500 mt-1 text-sm">
+                ICP health at a glance — weakest coverage floats to the top.
               </p>
             </div>
 
             {cards === null ? (
               <div className="flex justify-center py-20">
-                <Loader2 className="h-8 w-8 animate-spin text-arcova-teal" />
+                <Loader2 className="h-6 w-6 animate-spin text-arcova-teal" />
               </div>
             ) : loadError ? (
-              <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{loadError}</div>
+              <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                {loadError}
+              </div>
             ) : cards.length === 0 ? (
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-12 text-center">
-                <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Kanban className="w-8 h-8 text-gray-400" />
+                <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Kanban className="w-6 h-6 text-gray-400" />
                 </div>
-                <h2 className="text-lg font-semibold text-gray-900 mb-2">No ICPs yet</h2>
-                <p className="text-gray-500 text-sm mb-6 max-w-md mx-auto">
-                  Define at least one ICP under My ICPs to see pipeline health here.
+                <h2 className="text-base font-semibold text-gray-900 mb-1">No ICPs yet</h2>
+                <p className="text-gray-400 text-sm mb-5 max-w-xs mx-auto">
+                  Define at least one ICP to see pipeline health here.
                 </p>
                 <button
                   type="button"
                   onClick={() => router.push('/company-criteria/new')}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-arcova-teal text-white text-sm font-semibold rounded-lg hover:bg-arcova-teal/90 transition-colors"
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-arcova-teal text-white text-sm font-semibold rounded-lg hover:bg-arcova-teal/90 transition-colors"
                 >
                   <Plus className="w-4 h-4" />
                   Add an ICP
                 </button>
               </div>
             ) : (
-              <div className="space-y-4">
+              <div className="space-y-3">
                 {cards.map((card) => {
                   const ctas = buildCtas(card);
                   const showCtas = ctas.length > 0;
@@ -195,75 +228,72 @@ export default function PipelinePage() {
                   return (
                     <article
                       key={card.icp_id}
-                      className={`rounded-xl border shadow-sm overflow-hidden transition-colors ${
-                        card.thin_data
-                          ? 'border-dashed border-gray-300 bg-gray-50/90'
-                          : 'border-gray-200 bg-white'
-                      }`}
+                      className={cn(
+                        'bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden border-l-4',
+                        healthAccentClass(card.overall),
+                      )}
                     >
-                      <div className="p-5 space-y-4">
-                        {card.thin_data && (
-                          <p className="text-sm text-gray-500 leading-relaxed rounded-lg bg-white/60 border border-gray-100 px-3 py-2">
-                            Not enough data to assess — import more contacts or find companies for this ICP
-                            (fewer than five companies matched so far).
-                          </p>
-                        )}
-
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <h2 className="text-base font-semibold text-gray-900 leading-snug">{card.label}</h2>
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            <span className="text-xs font-medium text-gray-500">Overall</span>
-                            <span
-                              className={`inline-block h-3 w-3 rounded-full ${healthDotClass(card.overall)}`}
-                              title={healthLabel(card.overall)}
-                            />
-                            <span className="text-xs text-gray-600">{healthLabel(card.overall)}</span>
-                          </div>
+                      {/* Header */}
+                      <div className="flex items-start justify-between gap-3 px-5 pt-4 pb-3">
+                        <div className="min-w-0">
+                          <h2 className="text-sm font-semibold text-gray-900 leading-snug">{card.label}</h2>
                         </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                          <MetricBlock
-                            title="Company coverage"
-                            valueLine={`${card.company_count} compan${card.company_count === 1 ? 'y' : 'ies'}`}
-                            dim={card.coverage}
-                          />
-                          <MetricBlock
-                            title="Average contact fit"
-                            valueLine={formatFitLine(card.avg_contact_fit)}
-                            dim={card.contact_fit}
-                          />
-                          <MetricBlock
-                            title="Contact depth"
-                            valueLine={formatDepthLine(card.avg_contacts_per_company)}
-                            dim={card.depth}
-                          />
+                        <div className="shrink-0 flex items-center gap-2">
+                          <span className="text-[11px] text-gray-400">Overall</span>
+                          <HealthBadge dim={card.overall} />
                         </div>
-
-                        {showCtas && (
-                          <div className="pt-2 border-t border-gray-100 space-y-2">
-                            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Next steps</p>
-                            <div className="flex flex-col sm:flex-row flex-wrap gap-2">
-                              {ctas.map((cta) => {
-                                const busy = requesting === `${card.icp_id}:${cta.type}`;
-                                return (
-                                  <button
-                                    key={cta.type}
-                                    type="button"
-                                    disabled={busy}
-                                    onClick={() => void submitDataRequest(card.icp_id, cta.type)}
-                                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-arcova-teal px-4 py-2.5 text-sm font-semibold text-white hover:bg-arcova-teal/90 disabled:opacity-60 transition-colors"
-                                  >
-                                    {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                                    {cta.label}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
                       </div>
+
+                      {card.thin_data && (
+                        <div className="mx-5 mb-3 rounded-lg bg-gray-50 border border-gray-100 px-3 py-2 text-[11px] text-gray-500 leading-relaxed">
+                          Not enough data to assess — fewer than 5 companies matched so far.
+                        </div>
+                      )}
+
+                      {/* Metrics */}
+                      <div className="mx-5 mb-4 grid grid-cols-3 divide-x divide-gray-100 rounded-lg border border-gray-100 bg-gray-50/60 overflow-hidden">
+                        <MetricBlock
+                          icon={<Building2 className="w-3 h-3" />}
+                          title="Companies"
+                          value={`${card.company_count}`}
+                          dim={card.coverage}
+                        />
+                        <MetricBlock
+                          icon={<Users className="w-3 h-3" />}
+                          title="Avg fit"
+                          value={formatFitValue(card.avg_contact_fit)}
+                          dim={card.contact_fit}
+                        />
+                        <MetricBlock
+                          icon={<Users className="w-3 h-3" />}
+                          title="Depth"
+                          value={formatDepthValue(card.avg_contacts_per_company)}
+                          dim={card.depth}
+                        />
+                      </div>
+
+                      {/* CTAs */}
+                      {showCtas && (
+                        <div className="border-t border-gray-100 px-5 py-3 flex flex-col sm:flex-row flex-wrap gap-2">
+                          {ctas.map((cta) => {
+                            const busy = requesting === `${card.icp_id}:${cta.type}`;
+                            return (
+                              <button
+                                key={cta.type}
+                                type="button"
+                                disabled={busy}
+                                onClick={() => void submitDataRequest(card.icp_id, cta.type)}
+                                className="inline-flex items-center gap-1.5 rounded-full border border-arcova-teal/30 bg-white px-3 py-1.5 text-xs font-semibold text-arcova-teal hover:border-arcova-teal hover:bg-arcova-teal/5 disabled:opacity-60 transition-colors"
+                              >
+                                {busy
+                                  ? <Loader2 className="h-3 w-3 animate-spin" />
+                                  : <ArrowRight className="h-3 w-3" />}
+                                {cta.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
                     </article>
                   );
                 })}
