@@ -18,6 +18,8 @@ interface QueryBarProps {
   interpretation: string | null;
   conversational: string | null;
   activeQuery: string | null;
+  placeholder?: string;
+  suggestedPrompts?: string[];
 }
 
 export function QueryBar({
@@ -27,6 +29,8 @@ export function QueryBar({
   interpretation,
   conversational,
   activeQuery,
+  placeholder = 'Ask anything about your leads…',
+  suggestedPrompts = SUGGESTED_PROMPTS,
 }: QueryBarProps) {
   const [input, setInput] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -66,7 +70,7 @@ export function QueryBar({
               if (e.key === 'Enter') handleSubmit();
               if (e.key === 'Escape') handleClear();
             }}
-            placeholder="Ask anything about your leads…"
+            placeholder={placeholder}
             className="w-full pl-9 pr-10 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-arcova-teal/30 bg-white placeholder:text-gray-400"
             disabled={isLoading}
           />
@@ -97,7 +101,7 @@ export function QueryBar({
       {/* Suggested chips */}
       {showChips && (
         <div className="flex flex-wrap gap-2">
-          {SUGGESTED_PROMPTS.map((prompt) => (
+          {suggestedPrompts.map((prompt) => (
             <button
               key={prompt}
               onClick={() => handleChip(prompt)}
