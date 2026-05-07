@@ -847,8 +847,14 @@ export default function AccountsPage() {
           <div className="w-full max-w-none">
 
             <div className="mb-6">
-              <h1 className="text-2xl font-bold text-gray-900">Accounts</h1>
-              <p className="text-gray-600 mt-1">One row per company — firmographics and ICP fit at a glance.</p>
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-arcova-teal">
+                <Building2 className="h-3.5 w-3.5" />
+                Leads
+              </div>
+              <h1 className="mt-2 text-2xl font-semibold leading-tight text-slate-950 sm:text-3xl">Accounts</h1>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
+                One row per company, with firmographics and ICP fit at a glance.
+              </p>
             </div>
 
             {loadingAccounts ? (

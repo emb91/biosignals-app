@@ -48,6 +48,7 @@ export interface LeadQueryFilters {
   nameSearch?: string;
   companyNameSearch?: string;
   sources?: string[];
+  latestImportOnly?: boolean;
 }
 
 export interface QueryLead {
@@ -232,11 +233,56 @@ export async function fetchFilteredLeads(
   sortBy: LeadSortBy,
   limit = 200,
 ): Promise<{ leads: QueryLead[]; error: string | null }> {
+  let latestBatchId: string | null = null;
+  if (filters.latestImportOnly) {
+    const { data: latestContactBatchRows, error: latestBatchError } = await supabase
+      .from('contacts')
+      .select('batch_id, created_at, upload_batches(created_at)')
+      .eq('user_id', userId)
+      .not('batch_id', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(100);
+
+    if (latestBatchError) return { leads: [], error: latestBatchError.message };
+    const batchSummaries = new Map<string, { count: number; newestAt: string }>();
+    for (const row of (latestContactBatchRows ?? []) as Record<string, unknown>[]) {
+      const batchId = typeof row.batch_id === 'string' ? row.batch_id : null;
+      if (!batchId) continue;
+      const batch = row.upload_batches;
+      const batchCreatedAt =
+        batch && typeof batch === 'object' && !Array.isArray(batch)
+          ? (batch as Record<string, unknown>).created_at
+          : Array.isArray(batch)
+            ? (batch[0] as Record<string, unknown> | undefined)?.created_at
+            : null;
+      const newestAt =
+        typeof batchCreatedAt === 'string'
+          ? batchCreatedAt
+          : typeof row.created_at === 'string'
+            ? row.created_at
+            : '';
+      const current = batchSummaries.get(batchId);
+      batchSummaries.set(batchId, {
+        count: (current?.count ?? 0) + 1,
+        newestAt: current?.newestAt && current.newestAt > newestAt ? current.newestAt : newestAt,
+      });
+    }
+
+    const sortedBatches = [...batchSummaries.entries()].sort((a, b) =>
+      new Date(b[1].newestAt).getTime() - new Date(a[1].newestAt).getTime(),
+    );
+    latestBatchId =
+      sortedBatches.find(([, summary]) => summary.count > 1)?.[0] ??
+      sortedBatches[0]?.[0] ??
+      null;
+    if (!latestBatchId) return { leads: [], error: null };
+  }
+
   // Fetch contacts ordered by fit score
   const selectClause =
     'id, full_name, first_name, last_name, job_title, resolved_current_job_title, seniority_level, business_area, company_name, resolved_current_company_name, company_id, company_domain, fit_score, overall_fit_score, contact_fit_score, intent_score, source, created_at, upload_batches(filename, created_at)';
 
-  const { data: rawData, error: contactsError } = await supabase
+  let contactsQuery = supabase
     .from('contacts')
     .select(selectClause)
     .eq('user_id', userId)
@@ -244,6 +290,12 @@ export async function fetchFilteredLeads(
     .order('fit_score', { ascending: false, nullsFirst: false })
     .order('created_at', { ascending: false })
     .limit(500);
+
+  if (latestBatchId) {
+    contactsQuery = contactsQuery.eq('batch_id', latestBatchId);
+  }
+
+  const { data: rawData, error: contactsError } = await contactsQuery;
 
   if (contactsError) return { leads: [], error: contactsError.message };
 

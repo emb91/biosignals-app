@@ -1,7 +1,7 @@
 'use client';
 
 import { ChangeEvent, DragEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { RotateCw, Unlink, ChevronDown, Trash2 } from 'lucide-react';
+import { RotateCw, Unlink, ChevronDown, Trash2, Upload } from 'lucide-react';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
@@ -743,8 +743,12 @@ export default function ImportPage() {
           {!currentBatchId ? (
             <>
               <div className="mb-8">
-                <h1 className="text-2xl font-semibold text-gray-900">Import contacts</h1>
-                <p className="text-sm text-gray-500 mt-1">
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-arcova-teal">
+                  <Upload className="h-3.5 w-3.5" />
+                  Import
+                </div>
+                <h1 className="mt-2 text-2xl font-semibold leading-tight text-slate-950 sm:text-3xl">Import contacts</h1>
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
                   Connect your CRM or upload a CSV — Arcova will enrich, score against your ICP, and tell you who to prioritise.
                 </p>
               </div>
@@ -1244,10 +1248,14 @@ export default function ImportPage() {
                 <>
                   <div className="mb-8 flex items-start justify-between gap-4">
                     <div>
-                      <h1 className="text-2xl font-semibold text-gray-900">
+                      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-arcova-teal">
+                        <Upload className="h-3.5 w-3.5" />
+                        Import
+                      </div>
+                      <h1 className="mt-2 text-2xl font-semibold leading-tight text-slate-950 sm:text-3xl">
                         {importCancelled ? 'Import stopped' : 'Import complete'}
                       </h1>
-                      <p className="text-sm text-gray-500 mt-1">
+                      <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
                         {importCancelled
                           ? 'Enriched, scored contacts were added to Leads before stopping.'
                           : 'All enriched, scored contacts have been added to your Leads view.'}

@@ -41,7 +41,7 @@ const leadsItems: NavItem[] = [
 ];
 
 const topNavigation: NavItem[] = [
-  { name: 'Dashboard', href: ROUTES.dashboard, icon: LayoutDashboard },
+  { name: 'Briefing', href: ROUTES.dashboard, icon: LayoutDashboard },
   { name: 'Import', href: ROUTES.import, icon: FileUp },
   { name: 'Health', href: ROUTES.leads.health, icon: Activity },
   { name: 'Data', href: ROUTES.leads.data, icon: Database },
@@ -310,8 +310,8 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
             </div>
           ) : (
             <>
-              {/* Dashboard */}
-              {renderNavItem({ name: 'Dashboard', href: ROUTES.dashboard, icon: LayoutDashboard })}
+              {/* Briefing */}
+              {renderNavItem({ name: 'Briefing', href: ROUTES.dashboard, icon: LayoutDashboard })}
 
               {/* Import */}
               {renderNavItem({ name: 'Import', href: ROUTES.import, icon: FileUp })}

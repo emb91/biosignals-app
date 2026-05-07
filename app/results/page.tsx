@@ -692,9 +692,10 @@ export default function LeadsPage() {
   const { guardedNavigate } = useEnrichmentGuard();
   const searchParams = useSearchParams();
 
-  const [agentTrigger, setAgentTrigger] = useState<{ text: string; nonce: number } | undefined>();
+  const [agentTrigger, setAgentTrigger] = useState<{ text: string; nonce: number; isHidden?: boolean } | undefined>();
   const fireAgent = (text: string) =>
     setAgentTrigger((prev) => ({ text, nonce: (prev?.nonce ?? 0) + 1 }));
+  const dashboardAgentTaskFiredRef = useRef<string | null>(null);
 
   const [leads, setLeads] = useState<Lead[]>([]);
   const [total, setTotal] = useState(0);
@@ -920,6 +921,28 @@ export default function LeadsPage() {
     setSearch(q);
     setPage(1);
   }, [urlSearchParam]);
+
+  const dashboardAgentTask = searchParams.get('agentTask') ?? '';
+  useEffect(() => {
+    if (!user || dashboardAgentTaskFiredRef.current === dashboardAgentTask) return;
+
+    const taskMessages: Record<string, string> = {
+      new_contacts:
+        'Filter the contacts table to the newest contacts from the latest import batch. Use filter_leads_table with filters.latestImportOnly=true, columns name/job_title/company/status/company_fit/contact_fit/source, sort by status_best_first. Keep your reply short and friendly.',
+      best_leads:
+        'Filter the contacts table to the best leads to work now. Use filter_leads_table with filters.actions=["reach_out","monitor"], columns name/job_title/company/status/company_fit/contact_fit/source, sort by status_best_first. Keep your reply short and friendly.',
+    };
+
+    const message = taskMessages[dashboardAgentTask];
+    if (!message) return;
+
+    dashboardAgentTaskFiredRef.current = dashboardAgentTask;
+    setAgentTrigger((prev) => ({
+      text: message,
+      nonce: (prev?.nonce ?? 0) + 1,
+      isHidden: true,
+    }));
+  }, [dashboardAgentTask, user]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -1730,16 +1753,18 @@ export default function LeadsPage() {
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden min-[1280px]:flex-row">
         <div className="flex-1 overflow-auto p-6">
           <div className="w-full max-w-none">
-            <div className="mb-6 flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div>
-                <h1 className="text-2xl font-bold text-gray-900">Leads</h1>
-                <p className="text-gray-600 mt-1">
-                  {total > 0
-                    ? `${total.toLocaleString()} contact${total !== 1 ? 's' : ''} ready to review. Click a row or the contact icon for details, or the company name to open the account on Accounts.`
-                    : 'Your imported contacts will appear here once they are ready to review'}
-                </p>
+            <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-arcova-teal">
+                  <Users className="h-3.5 w-3.5" />
+                  Leads
                 </div>
+                <h1 className="mt-2 text-2xl font-semibold leading-tight text-slate-950 sm:text-3xl">Contacts</h1>
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
+                  {total > 0
+                    ? `${total.toLocaleString()} contact${total !== 1 ? 's' : ''} ready to review. Click a row for details, or the company name to open the account.`
+                    : 'Your imported contacts will appear here once they are ready to review.'}
+                </p>
               </div>
 
               {total > 0 && (

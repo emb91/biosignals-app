@@ -7,24 +7,16 @@ import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel } from '@/components/AgentPanel';
 import { supabase } from '@/lib/supabase';
 import {
-  AlertTriangle,
-  ArrowRight,
   Bot,
-  Clock3,
-  Database,
   Loader2,
-  RefreshCw,
-  Target,
-  Users,
-  Zap,
 } from 'lucide-react';
 import {
   COMPANY_FIT_GAP_BELOW,
-  isWeakDim,
   type HealthDim,
   type PipelineDataRequestType,
 } from '@/lib/pipeline-icp-health';
 import { ROUTES, withQuery } from '@/lib/routes';
+import { getDisplayName } from '@/lib/auth-helpers';
 
 type SetupStep = {
   id: 'profile' | 'companies' | 'personas' | 'import' | 'signals';
@@ -47,7 +39,6 @@ type TopLead = {
   id: string;
   name: string;
   priorityScore: number;
-  updatedAt: string;
   href: string;
 };
 
@@ -83,41 +74,14 @@ type AgendaItem = {
   detail: string;
   href: string;
   cta: string;
-  icon: typeof AlertTriangle;
-  tone: 'urgent' | 'next' | 'steady';
 };
 
 const hasSignals = (signals?: string[] | null) => Array.isArray(signals) && signals.length > 0;
-
-const formatTimeAgo = (isoTimestamp?: string | null) => {
-  if (!isoTimestamp) return 'just now';
-  const then = new Date(isoTimestamp).getTime();
-  if (!Number.isFinite(then)) return 'just now';
-  const diff = Math.max(0, Date.now() - then);
-
-  const minutes = Math.floor(diff / (1000 * 60));
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes} min ago`;
-
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} hr ago`;
-
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days} day${days === 1 ? '' : 's'} ago`;
-
-  const months = Math.floor(days / 30);
-  return `${months} mo ago`;
-};
 
 function pct(value: unknown): number {
   const n = typeof value === 'number' ? value : value == null ? 0 : Number(value);
   if (!Number.isFinite(n)) return 0;
   return Math.round(n <= 1 ? n * 100 : n);
-}
-
-function fitLabel(value: number | null): string {
-  if (value == null || !Number.isFinite(value)) return 'unknown';
-  return `${Math.round(value * 100)}%`;
 }
 
 function isCoverageGap(card: IcpPipelineCard): boolean {
@@ -129,26 +93,15 @@ function isCoverageGap(card: IcpPipelineCard): boolean {
 }
 
 function dataHrefForIcp(card: IcpPipelineCard, requestType: PipelineDataRequestType): string {
-  const mode = requestType === 'expand_companies' ? 'companies' : 'contacts_for_icp';
   return withQuery(
     ROUTES.leads.data,
     new URLSearchParams({
-      mode,
+      mode: 'companies',
       icpId: card.icp_id,
       requestType,
       source: 'dashboard',
     }),
   );
-}
-
-function toneClasses(tone: AgendaItem['tone']) {
-  if (tone === 'urgent') {
-    return 'bg-rose-50 text-rose-700 ring-rose-100';
-  }
-  if (tone === 'next') {
-    return 'bg-amber-50 text-amber-700 ring-amber-100';
-  }
-  return 'bg-arcova-teal/10 text-arcova-teal ring-arcova-teal/15';
 }
 
 export default function DashboardPage() {
@@ -235,12 +188,6 @@ export default function DashboardPage() {
                 id,
                 name,
                 priorityScore: pct(lead.overall_fit_score),
-                updatedAt:
-                  typeof lead.updated_at === 'string'
-                    ? lead.updated_at
-                    : typeof lead.created_at === 'string'
-                      ? lead.created_at
-                      : new Date().toISOString(),
                 href: withQuery(ROUTES.leads.contacts, `lead=${encodeURIComponent(id)}`),
               };
             }),
@@ -319,7 +266,6 @@ export default function DashboardPage() {
   const totalCoveredCompanies =
     icpCoverageRows.reduce((sum, row) => sum + row.company_count, 0) + icpCoverageUncategorized;
   const coverageGap = icpHealthCards.find(isCoverageGap) ?? null;
-  const weakContactIcp = icpHealthCards.find((card) => card.company_count > 0 && isWeakDim(card.contact_fit)) ?? null;
   const syncProblemCount = (hubspotSyncLog?.contacts_errors ?? 0) + (hubspotSyncLog?.contacts_skipped ?? 0);
 
   const agenda: AgendaItem[] = [
@@ -331,57 +277,37 @@ export default function DashboardPage() {
           detail: 'The rest of the product depends on this being complete.',
           href: nextStep.actionPath,
           cta: 'Continue',
-          icon: Clock3,
-          tone: 'urgent' as const,
         }]
       : []),
     ...(showImportReady
       ? [{
           id: 'import-ready',
           label: nextStep ? '2' : '1',
-          title: 'Review the new lead scoring',
+          title: 'Review new contacts',
           detail: 'The import has finished, so Leads can now show what is Ready, Monitor, Source, or Deprioritised.',
-          href: ROUTES.leads.contacts,
+          href: withQuery(ROUTES.leads.contacts, 'agentTask=new_contacts'),
           cta: 'Open leads',
-          icon: Zap,
-          tone: 'next' as const,
         }]
       : []),
     ...failedJobs.slice(0, 2).map((job, index) => ({
       id: job.id,
       label: String(index + 1 + (nextStep ? 1 : 0) + (showImportReady ? 1 : 0)),
-      title: `${job.kind === 'icp' ? 'ICP' : 'Contact'} enrichment failed`,
+      title: `Review ${failedJobs.length} enrichment${failedJobs.length === 1 ? '' : 's'} failed`,
       detail: `${job.title}${job.subtitle ? ` at ${job.subtitle}` : ''} needs a retry or inspection.`,
       href: job.href,
       cta: 'Inspect',
-      icon: AlertTriangle,
-      tone: 'urgent' as const,
     })),
     ...(coverageGap && !nextStep
       ? [{
           id: `coverage-${coverageGap.icp_id}`,
           label: '2',
-          title: 'Fill a company coverage gap',
+          title: `Improve coverage of ${coverageGap.label}`,
           detail:
             coverageGap.company_count === 0
               ? `${coverageGap.label} has no matched companies.`
               : `${coverageGap.label} only has ${coverageGap.company_count} matched ${coverageGap.company_count === 1 ? 'company' : 'companies'}.`,
           href: dataHrefForIcp(coverageGap, 'expand_companies'),
           cta: 'Source companies',
-          icon: Target,
-          tone: 'next' as const,
-        }]
-      : []),
-    ...(weakContactIcp && !nextStep
-      ? [{
-          id: `contacts-${weakContactIcp.icp_id}`,
-          label: '3',
-          title: 'Improve contact quality',
-          detail: `${weakContactIcp.label} average contact fit is ${fitLabel(weakContactIcp.avg_contact_fit)}.`,
-          href: ROUTES.leads.health,
-          cta: 'Open health',
-          icon: Users,
-          tone: 'next' as const,
         }]
       : []),
     ...(topLeads.length > 0
@@ -390,10 +316,8 @@ export default function DashboardPage() {
           label: '4',
           title: 'Work the best leads',
           detail: `${topLeads.length} high-fit contacts are ready to review.`,
-          href: ROUTES.leads.contacts,
+          href: withQuery(ROUTES.leads.contacts, 'agentTask=best_leads'),
           cta: 'Review',
-          icon: Users,
-          tone: 'steady' as const,
         }]
       : []),
     ...(hubspotSyncLog?.synced_at && syncProblemCount > 0
@@ -404,8 +328,6 @@ export default function DashboardPage() {
           detail: `${hubspotSyncLog.contacts_synced ?? 0} synced cleanly; ${syncProblemCount} need attention.`,
           href: ROUTES.import,
           cta: 'View import',
-          icon: Database,
-          tone: 'next' as const,
         }]
       : []),
   ].slice(0, 5).map((item, index) => ({ ...item, label: String(index + 1) }));
@@ -416,18 +338,17 @@ export default function DashboardPage() {
     failedJobs.length > 0 ? `${failedJobs.length} enrichment failed` : 'no enrichment failures',
     runningJobs.length > 0 ? `${runningJobs.length} enrichment running` : 'no enrichment running',
     coverageGap ? `company coverage gap: ${coverageGap.label}, ${coverageGap.company_count} companies` : 'no urgent company coverage gap detected',
-    weakContactIcp ? `contact quality gap: ${weakContactIcp.label}, avg contact fit ${fitLabel(weakContactIcp.avg_contact_fit)}` : 'no urgent contact quality gap detected',
     `${topLeads.length} high-fit leads available`,
     `${totalCoveredCompanies} prioritised companies`,
     hubspotSyncLog?.synced_at
       ? `HubSpot sync: ${hubspotSyncLog.contacts_synced ?? 0} synced, ${hubspotSyncLog.contacts_errors ?? 0} errors, ${hubspotSyncLog.contacts_skipped ?? 0} skipped`
       : 'no HubSpot sync summary',
   ].join('; ');
-
   useEffect(() => {
     if (loading || loadingDashboard || !user || agentOpener) return;
+    const firstName = getDisplayName(user);
     setAgentOpener({
-      text: `The dashboard just loaded. Act like an executive assistant giving a morning GTM briefing. Use this brief: ${briefing}. Reel off the top 2-4 things to do today in priority order, give the user clear options like "we can start with 1, 2, or 3", and end by inviting them to choose what to work on first. Keep it warm, crisp, and under 110 words.`,
+      text: `The dashboard just loaded. The user's first name is ${firstName}. Open with "Good morning, ${firstName}" or "Hi ${firstName}" depending on the time-of-day vibe. Do not say operational filler like "everything looks clean", "import landed", "HubSpot is tidy", or anything similar. Do not summarise the brief yet. Just ask whether they already know what they want to tackle today, or whether they would like you to suggest an easy place to begin. Keep it conversational and under 45 words. Silent context only: ${briefing}.`,
       nonce: Date.now(),
       isHidden: true,
     });
@@ -459,11 +380,11 @@ export default function DashboardPage() {
                 What should we do today?
               </h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-                Start here, choose the work, then jump into the right part of the app.
+                Start here, choose the work, then jump into it.
               </p>
             </div>
 
-            <div className="h-[min(72vh,760px)] min-h-[560px]">
+            <div className="h-[calc(100vh-11rem)] min-h-[680px]">
               <AgentPanel
                 page="dashboard"
                 pageContext={{
@@ -472,11 +393,12 @@ export default function DashboardPage() {
                 }}
                 pendingMessage={agentOpener}
                 wide
+                className="h-full"
               />
             </div>
           </section>
 
-          <aside className="space-y-4">
+          <aside className="space-y-4 lg:pt-[12.1rem]">
             <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
               <div className="border-b border-slate-100 px-4 py-3.5">
                 <h2 className="text-sm font-semibold text-slate-950">Today&apos;s options</h2>
@@ -489,90 +411,27 @@ export default function DashboardPage() {
                 </div>
               ) : (
                 <div className="divide-y divide-slate-100">
-                  {agenda.map((item) => {
-                    const Icon = item.icon;
-                    return (
+                  {agenda.map((item) => (
+                    <div key={item.id} className="px-4 py-3.5">
+                      <div className="flex items-baseline gap-2">
+                        <span className="shrink-0 text-sm font-semibold tabular-nums text-slate-400">
+                          {item.label}.
+                        </span>
+                        <h3 className="min-w-0 text-sm font-semibold text-slate-950">{item.title}</h3>
+                      </div>
                       <button
-                        key={item.id}
                         type="button"
                         onClick={() => router.push(item.href)}
-                        className="flex w-full items-start gap-3 px-4 py-3.5 text-left transition-colors hover:bg-slate-50"
+                        className="mt-1.5 pl-5 text-left text-xs font-semibold text-arcova-teal hover:text-arcova-blue"
                       >
-                        <span className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-xs font-semibold ring-1 ${toneClasses(item.tone)}`}>
-                          {item.label}
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <Icon className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                            <p className="truncate text-sm font-semibold text-slate-950">{item.title}</p>
-                          </div>
-                          <p className="mt-1 text-xs leading-5 text-slate-500">{item.detail}</p>
-                          <span className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-arcova-teal">
-                            {item.cta}
-                            <ArrowRight className="h-3 w-3" />
-                          </span>
-                        </div>
+                        {item.cta}
                       </button>
-                    );
-                  })}
+                    </div>
+                  ))}
                 </div>
               )}
             </section>
 
-            <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-              <h2 className="text-sm font-semibold text-slate-950">Quick read</h2>
-              <div className="mt-3 grid gap-2 text-sm">
-                <div className="flex items-center justify-between rounded-md bg-slate-50 px-3 py-2">
-                  <span className="text-slate-500">Setup</span>
-                  <span className="font-semibold text-slate-950">{completedSteps}/{steps.length}</span>
-                </div>
-                <div className="flex items-center justify-between rounded-md bg-slate-50 px-3 py-2">
-                  <span className="text-slate-500">Prioritised companies</span>
-                  <span className="font-semibold tabular-nums text-slate-950">{totalCoveredCompanies.toLocaleString()}</span>
-                </div>
-                <div className="flex items-center justify-between rounded-md bg-slate-50 px-3 py-2">
-                  <span className="text-slate-500">High-fit leads</span>
-                  <span className="font-semibold tabular-nums text-slate-950">{topLeads.length}</span>
-                </div>
-                <div className="flex items-center justify-between rounded-md bg-slate-50 px-3 py-2">
-                  <span className="text-slate-500">Running enrichments</span>
-                  <span className="font-semibold tabular-nums text-slate-950">{runningJobs.length}</span>
-                </div>
-              </div>
-            </section>
-
-            {topLeads.length > 0 && (
-              <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="flex items-center justify-between gap-3">
-                  <h2 className="text-sm font-semibold text-slate-950">Best leads</h2>
-                  <button
-                    type="button"
-                    onClick={() => router.push(ROUTES.leads.contacts)}
-                    className="text-xs font-semibold text-arcova-teal hover:text-arcova-blue"
-                  >
-                    All leads
-                  </button>
-                </div>
-                <div className="mt-3 divide-y divide-slate-100">
-                  {topLeads.slice(0, 3).map((lead) => (
-                    <button
-                      key={lead.id}
-                      type="button"
-                      onClick={() => router.push(lead.href)}
-                      className="flex w-full items-center justify-between gap-3 py-2.5 text-left first:pt-0 last:pb-0"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-slate-950">{lead.name}</p>
-                        <p className="mt-0.5 text-xs text-slate-500">{formatTimeAgo(lead.updatedAt)}</p>
-                      </div>
-                      <span className="shrink-0 rounded-full bg-arcova-teal/10 px-2 py-0.5 text-xs font-semibold tabular-nums text-arcova-teal">
-                        {lead.priorityScore}%
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </section>
-            )}
           </aside>
         </div>
       </main>
