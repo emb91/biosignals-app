@@ -14,6 +14,7 @@ import {
   type PipelineDataRequestType,
 } from '@/lib/pipeline-icp-health';
 import { cn } from '@/lib/utils';
+import { ROUTES, withQuery } from '@/lib/routes';
 
 interface IcpPipelineCard {
   icp_id: string;
@@ -96,7 +97,7 @@ function buildCtas(card: IcpPipelineCard): { type: PipelineDataRequestType; labe
     out.push({ type: 'expand_companies', label: 'Find more companies for this ICP' });
   }
   if (card.company_count > 0 && isWeakDim(card.contact_fit)) {
-    out.push({ type: 'better_contacts', label: 'Find better contacts for this ICP' });
+    out.push({ type: 'more_contacts_at_accounts', label: 'Find contacts at these companies' });
   }
   if (card.company_count > 0 && isWeakDim(card.depth)) {
     out.push({
@@ -160,7 +161,7 @@ export default function HealthPage() {
       requestType,
       source: 'health',
     });
-    router.push(`/data?${params.toString()}`);
+    router.push(withQuery(ROUTES.leads.data, params));
   };
 
   const fireAgent = (text: string) => {
@@ -183,12 +184,16 @@ export default function HealthPage() {
     <div className="flex h-screen bg-gray-50">
       <AppSidebar />
 
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden min-[1280px]:flex-row">
         <div className="flex-1 overflow-auto p-6">
           <div className="w-full max-w-6xl mx-auto">
             <div className="mb-6">
-              <h1 className="text-2xl font-bold text-gray-900">Pipeline health</h1>
-              <p className="text-gray-500 mt-1 text-sm">
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-arcova-teal">
+                <Activity className="h-3.5 w-3.5" />
+                Health
+              </div>
+              <h1 className="mt-2 text-2xl font-semibold leading-tight text-slate-950 sm:text-3xl">Pipeline health</h1>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
                 One row per ICP. Weakest overall health sorts first.
               </p>
             </div>

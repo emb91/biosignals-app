@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test:journey": "tsc -p tsconfig.test.json && node --test /private/tmp/arcova-journey-tests/agent-journey-state.test.js",
     "gen-sitemap": "node generate-sitemap.js"
   },
   "dependencies": {

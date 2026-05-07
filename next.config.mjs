@@ -13,6 +13,31 @@ const nextConfig = {
         destination: '/invite',
         permanent: true,
       },
+      {
+        source: '/results',
+        destination: '/leads/contacts',
+        permanent: false,
+      },
+      {
+        source: '/accounts',
+        destination: '/leads/accounts',
+        permanent: false,
+      },
+      {
+        source: '/health',
+        destination: '/leads/health',
+        permanent: false,
+      },
+      {
+        source: '/data',
+        destination: '/leads/data',
+        permanent: false,
+      },
+      {
+        source: '/pipeline',
+        destination: '/leads/health',
+        permanent: false,
+      },
     ]
   },
 }

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
+import { ROUTES, withQuery } from '@/lib/routes';
 
 type EnrichmentJob = {
   id: string;
@@ -96,7 +97,7 @@ export async function GET() {
         status,
         title: getContactName(row),
         subtitle: getCompanyName(row),
-        href: `/results?lead=${encodeURIComponent(id)}`,
+        href: withQuery(ROUTES.leads.contacts, `lead=${encodeURIComponent(id)}`),
         started_at: typeof row.enrichment_refresh_started_at === 'string' ? row.enrichment_refresh_started_at : null,
         finished_at: typeof row.enrichment_refresh_finished_at === 'string' ? row.enrichment_refresh_finished_at : null,
         last_error: typeof row.enrichment_refresh_last_error === 'string' ? row.enrichment_refresh_last_error : null,

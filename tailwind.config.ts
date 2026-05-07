@@ -6,6 +6,7 @@ const config = {
     "./pages/**/*.{ts,tsx}",
     "./components/**/*.{ts,tsx}",
     "./app/**/*.{ts,tsx}",
+    "./lib/**/*.{ts,tsx}",
     "./src/**/*.{ts,tsx}",
     "*.{js,ts,jsx,tsx,mdx}",
   ],
@@ -61,6 +62,9 @@ const config = {
           beige: "#E8D6A0",
           white: "#F8F8F8",
           navy: "#0d3547" /* Added navy color */,
+          /** Pale coral for cautious / needs-attention pills (pairs with teal family) */
+          coralPale: "#F3E6E4",
+          coral: "#B85C52",
         },
         blue: {
           50: "#f0f9ff",

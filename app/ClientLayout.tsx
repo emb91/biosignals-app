@@ -9,12 +9,33 @@ import { SiteFooter } from "@/components/site-footer"
 import { useAuth } from "@/context/AuthContext"
 import { useSetupState, getNextSetupPath } from "@/lib/use-setup-state"
 import { Toaster } from "sonner"
+import { LEGACY_ROUTES, ROUTES } from "@/lib/routes"
 
 // Routes that are part of the authenticated app (no header/footer)
-const APP_ROUTES = ['/accounts', '/arcova-setup', '/company-criteria', '/contacts', '/dashboard', '/find-more-leads', '/health', '/import', '/my-profile', '/personas', '/pipeline', '/results', '/signals', '/upload']
+const APP_ROUTES = [
+  LEGACY_ROUTES.accounts,
+  LEGACY_ROUTES.contacts,
+  LEGACY_ROUTES.data,
+  LEGACY_ROUTES.health,
+  LEGACY_ROUTES.pipeline,
+  ROUTES.dashboard,
+  ROUTES.import,
+  ROUTES.leads.contacts,
+  ROUTES.leads.accounts,
+  ROUTES.leads.health,
+  ROUTES.leads.data,
+  ROUTES.setup.company,
+  ROUTES.setup.icps,
+  ROUTES.setup.personas,
+  '/arcova-setup',
+  '/contacts',
+  '/find-more-leads',
+  '/signals',
+  '/upload',
+]
 
 // Routes that are part of the setup flow — the guard does NOT redirect away from these
-const SETUP_ROUTES = ['/arcova-setup', '/my-profile', '/company-criteria/new', '/contacts/new', '/personas/new']
+const SETUP_ROUTES = ['/arcova-setup', ROUTES.setup.company, ROUTES.setup.newIcp, '/contacts/new', ROUTES.setup.newPersona]
 
 function matchesRoutePrefix(pathname: string, route: string) {
   return pathname === route || pathname.startsWith(`${route}/`);
