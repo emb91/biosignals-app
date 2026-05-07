@@ -1,7 +1,7 @@
 'use client';
 
 import { useAuth } from '@/context/AuthContext';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel } from '@/components/AgentPanel';
@@ -100,7 +100,6 @@ function formatRequestType(type: string): string {
 
 function DataPageContent() {
   const { user, loading: authLoading } = useAuth();
-  const router = useRouter();
   const searchParams = useSearchParams();
 
   const [icps, setIcps] = useState<IcpCard[]>([]);
@@ -270,12 +269,13 @@ function DataPageContent() {
 
       {/* Main: centered agent + jobs rail */}
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        <div className="flex min-h-0 min-w-0 flex-1 justify-center overflow-hidden">
-          <div className="flex h-full min-h-0 w-full max-w-xl flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 items-stretch justify-center overflow-hidden">
+          <div className="flex min-h-0 w-full max-w-xl flex-col self-stretch">
             <AgentPanel
               page="data"
               pageContext={pageContext}
               wide
+              hideHeader
               pendingMessage={agentOpener ? { text: agentOpener.text, nonce: agentOpener.nonce, isHidden: true } : undefined}
               onJobStarted={handleJobStarted}
             />
@@ -283,7 +283,7 @@ function DataPageContent() {
         </div>
 
         {/* Recent jobs */}
-        <div className="flex w-80 shrink-0 flex-col border-l border-gray-200 bg-white">
+        <div className="flex min-h-0 w-80 shrink-0 flex-col border-l border-gray-200 bg-white">
             <div className="flex items-center justify-between gap-2 border-b border-gray-100 px-4 py-3">
               <div>
                 <p className="text-sm font-semibold text-gray-900">Recent jobs</p>
@@ -347,7 +347,6 @@ function DataPageContent() {
                 </div>
               )}
             </div>
-          </div>
         </div>
       </div>
     </div>

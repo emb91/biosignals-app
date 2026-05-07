@@ -59,6 +59,8 @@ interface AgentPanelProps {
   /** When true, the panel fills its container width instead of the fixed w-80 default. */
   wide?: boolean;
   onJobStarted?: (job: { requestType: string; icpId?: string; companyId?: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[]; quantity: number }) => void;
+  /** Hide the Arcova Agent title row (full-bleed chat, e.g. Data page). */
+  hideHeader?: boolean;
   className?: string;
 }
 
@@ -168,7 +170,7 @@ function stripMarkdown(text: string): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, onLeadsFilter, onTableClear, wide, onJobStarted, className }: AgentPanelProps) {
+export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, onLeadsFilter, onTableClear, wide, onJobStarted, hideHeader, className }: AgentPanelProps) {
   const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -320,7 +322,9 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
     <div
       className={cn(
         'flex min-h-0 flex-col',
-        wide ? 'flex-1 p-4' : 'shrink-0 self-stretch py-3 pr-3 pl-2',
+        wide
+          ? cn('min-h-0 flex-1 px-4', hideHeader ? 'py-2' : 'py-4')
+          : 'shrink-0 self-stretch py-3 pr-3 pl-2',
         className,
       )}
     >
@@ -333,7 +337,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
           'ring-1 ring-gray-950/[0.06]',
         )}
       >
-      {/* ── Header ── */}
+      {!hideHeader && (
       <div className="flex items-center gap-2.5 px-4 py-3 border-b border-gray-100 bg-gray-50/60 shrink-0">
         <Image
           src="/images/network-og.png"
@@ -345,7 +349,9 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
         <div className="flex-1 min-w-0">
           <p className="text-xs font-semibold text-gray-800 leading-none">Arcova Agent</p>
           <p className="text-[11px] text-gray-400 mt-0.5 leading-tight">
-            Ask me anything about your accounts
+            {page === 'data'
+              ? 'Run sourcing jobs and watch the queue on the right'
+              : 'Ask me anything about your accounts'}
           </p>
         </div>
         {messages.length > 0 && (
@@ -359,6 +365,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
           </button>
         )}
       </div>
+      )}
 
       {/* ── Suggested prompts ── */}
       {showPrompts && (
@@ -473,35 +480,49 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
 
       {/* ── Input bar ── */}
       <div className="px-3 pb-3 pt-2 shrink-0 border-t border-gray-100">
-        <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 focus-within:ring-2 focus-within:ring-arcova-teal/25 focus-within:border-arcova-teal/40 transition-all shadow-sm">
-          <Sparkles className="w-3.5 h-3.5 text-arcova-teal/40 shrink-0" />
-          <input
-            ref={inputRef}
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') sendMessage(input);
-            }}
-            placeholder={messages.length > 0 ? 'Ask a follow-up…' : 'Ask me anything…'}
-            className="flex-1 bg-transparent text-sm text-gray-800 placeholder:text-gray-400 focus:outline-none min-w-0"
-            disabled={isLoading}
-          />
-          <button
-            onClick={() => sendMessage(input)}
-            disabled={!input.trim() || isLoading}
-            className="shrink-0 p-1.5 rounded-lg bg-arcova-teal text-white hover:bg-arcova-teal/90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-            aria-label="Send"
-          >
-            {isLoading ? (
-              <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            ) : (
-              <Send className="w-3.5 h-3.5" />
-            )}
-          </button>
+        <div className="flex items-center gap-2">
+          {hideHeader && messages.length > 0 && (
+            <button
+              type="button"
+              onClick={handleClearConversation}
+              className="shrink-0 p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors"
+              aria-label="Clear conversation"
+              title="Clear conversation"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 focus-within:ring-2 focus-within:ring-arcova-teal/25 focus-within:border-arcova-teal/40 transition-all shadow-sm">
+            <Sparkles className="w-3.5 h-3.5 text-arcova-teal/40 shrink-0" />
+            <input
+              ref={inputRef}
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') sendMessage(input);
+              }}
+              placeholder={messages.length > 0 ? 'Ask a follow-up…' : 'Ask me anything…'}
+              className="flex-1 bg-transparent text-sm text-gray-800 placeholder:text-gray-400 focus:outline-none min-w-0"
+              disabled={isLoading}
+            />
+            <button
+              type="button"
+              onClick={() => sendMessage(input)}
+              disabled={!input.trim() || isLoading}
+              className="shrink-0 p-1.5 rounded-lg bg-arcova-teal text-white hover:bg-arcova-teal/90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              aria-label="Send"
+            >
+              {isLoading ? (
+                <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                <Send className="w-3.5 h-3.5" />
+              )}
+            </button>
+          </div>
         </div>
       </div>
     </div>
-    </div>
+  </div>
   );
 }
