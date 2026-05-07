@@ -10,6 +10,8 @@ import type {
   QueryAccount,
 } from '@/lib/accounts-data';
 import {
+  Activity,
+  AlertTriangle,
   Building2,
   ChevronDown,
   ChevronLeft,
@@ -29,6 +31,11 @@ import {
   formatCompanyFitPercent,
 } from '@/components/company-icp-fit-detail-panel';
 import { formatProvenanceImportedAt } from '@/lib/data-provenance';
+import {
+  getAccountRowAction,
+  LEAD_ACTION_PILL_CLASS,
+  LEAD_ACTION_SORT_ORDER,
+} from '@/lib/lead-action';
 
 const PAGE_SIZE = 50;
 
@@ -67,6 +74,7 @@ type AccountRow = {
   best_contact_fit: number | null;
   worst_contact_fit: number | null;
   avg_contact_fit: number | null;
+  max_contact_intent_score: number | null;
   data_provenance_type: string;
   data_provenance_imported_at: string | null;
 };
@@ -267,13 +275,8 @@ function getAccountSortValue(account: AccountRow | QueryAccount, col: string): s
     case 'modalities':
       return ((account.modalities || [])[0] || '').toLowerCase();
     case 'action': {
-      const order: Record<NonNullable<CoverageStatus>, number> = {
-        opportunity: 3,
-        covered: 2,
-        weak: 1,
-      };
-      const status = getCoverageStatus(account as AccountRow);
-      return status ? order[status] : 0;
+      const action = getAccountRowAction(account);
+      return LEAD_ACTION_SORT_ORDER[action];
     }
     case 'funding_stage':
       return (account.funding_stage || account.funding_status_label || '').toLowerCase();
@@ -326,6 +329,10 @@ export default function AccountsPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loadingAccounts, setLoadingAccounts] = useState(true);
+  const [agentTrigger, setAgentTrigger] = useState<{ text: string; nonce: number } | undefined>();
+  const fireAgent = (text: string) =>
+    setAgentTrigger((prev) => ({ text, nonce: (prev?.nonce ?? 0) + 1 }));
+
   const [agentFilterIds, setAgentFilterIds] = useState<Set<string> | null>(null);
   const [tableSortCol, setTableSortCol] = useState<string | null>(null);
   const [tableSortDir, setTableSortDir] = useState<'asc' | 'desc'>('asc');
@@ -611,6 +618,17 @@ export default function AccountsPage() {
     setPanelMode('contacts');
   };
 
+  const openContactAcquisition = (account: AccountRow) => {
+    const params = new URLSearchParams({
+      mode: 'contacts_at_company',
+      companyId: account.id,
+      companyName: account.company_name || account.domain || 'Selected company',
+      source: 'accounts',
+    });
+    if (account.matched_icp_id) params.set('icpId', account.matched_icp_id);
+    router.push(`/data?${params.toString()}`);
+  };
+
   const closePanel = () => {
     setSelectedAccountId(null);
   };
@@ -724,21 +742,30 @@ export default function AccountsPage() {
             }
           />
         );
-      case 'action':
+      case 'action': {
+        const action = getAccountRowAction(account);
+        const config = LEAD_ACTION_PILL_CLASS[action];
         return (
           <div className="flex items-center justify-center">
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                router.push(`/results?search=${encodeURIComponent(account.company_name || account.domain || '')}`);
+                openDetails(account.id);
+                if (action === 'source_contact') setPanelMode('contacts');
+                else if (action === 'deprioritize') setPanelMode('fit');
+                else setPanelMode('details');
               }}
-              className="inline-flex items-center rounded-full border border-arcova-teal/30 bg-white px-2.5 py-1 text-xs font-semibold text-arcova-teal hover:border-arcova-teal hover:bg-arcova-teal/10 transition-colors"
+              className={cn(
+                'inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium transition-opacity hover:opacity-80',
+                config.className,
+              )}
             >
-              View in leads
+              {config.label}
             </button>
           </div>
         );
+      }
       case 'funding_stage':
         return <span className="text-xs text-gray-600 line-clamp-2">{account.funding_stage || account.funding_status_label || '—'}</span>;
       case 'icp_match':
@@ -825,6 +852,41 @@ export default function AccountsPage() {
 
                 {/* ── Table ── */}
                 <div className="min-w-0 flex flex-col gap-2">
+
+                {/* Contact coverage gap banner */}
+                {(() => {
+                  const opportunityAccounts = accounts.filter(
+                    (a) => getCoverageStatus(a) === 'opportunity',
+                  );
+                  if (opportunityAccounts.length === 0) return null;
+                  const names = opportunityAccounts
+                    .slice(0, 5)
+                    .map((a) => a.company_name || a.domain || 'Unknown')
+                    .join(', ');
+                  const more = opportunityAccounts.length > 5
+                    ? ` and ${opportunityAccounts.length - 5} more`
+                    : '';
+                  return (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        fireAgent(
+                          `${opportunityAccounts.length === 1 ? 'One account is' : `${opportunityAccounts.length} accounts are`} missing strong contact coverage: ${names}${more}. Explain what is going on and what I should do next.`,
+                        )
+                      }
+                      className="w-full flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-left transition-colors hover:bg-amber-100"
+                    >
+                      <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
+                      <p className="text-sm font-medium text-amber-800">
+                        {opportunityAccounts.length === 1
+                          ? '1 account is missing strong contact coverage.'
+                          : `${opportunityAccounts.length} accounts are missing strong contact coverage.`}
+                        <span className="ml-1.5 font-normal text-amber-600">Click to learn more.</span>
+                      </p>
+                      <Activity className="ml-auto h-4 w-4 shrink-0 text-amber-400" />
+                    </button>
+                  );
+                })()}
 
                 {/* Agent filter banner */}
                 {agentFilterIds && (
@@ -1250,6 +1312,16 @@ export default function AccountsPage() {
                                 <p className="text-lg font-semibold text-gray-900">{formatPct(selectedAccount.avg_contact_fit) ?? '—'}</p>
                               </div>
                             </div>
+                            {(selectedAccount.best_contact_fit == null || selectedAccount.best_contact_fit < 1) && (
+                              <button
+                                type="button"
+                                onClick={() => openContactAcquisition(selectedAccount)}
+                                className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-white px-3 py-2 text-xs font-semibold text-arcova-teal hover:border-arcova-teal hover:bg-arcova-teal/5 transition-colors"
+                              >
+                                <Users className="h-3.5 w-3.5" />
+                                Find buyer-persona contacts
+                              </button>
+                            )}
                           </div>
 
                           {loadingContacts ? (
@@ -1401,6 +1473,20 @@ export default function AccountsPage() {
         {/* ── Agent panel (far right) ── */}
         <AgentPanel
           page="accounts"
+          pendingMessage={agentTrigger}
+          pageContext={
+            selectedAccount
+              ? {
+                  selectedAccount: {
+                    id: selectedAccount.id,
+                    name: selectedAccount.company_name || selectedAccount.domain,
+                    matchedIcpId: selectedAccount.matched_icp_id,
+                    bestContactFit: selectedAccount.best_contact_fit,
+                    contactCount: selectedAccount.contact_count,
+                  },
+                }
+              : undefined
+          }
           onTableFilter={handleTableFilter}
           onTableClear={handleQueryClear}
         />

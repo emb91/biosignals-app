@@ -14,7 +14,17 @@ const REQUEST_TYPES: PipelineDataRequestType[] = [
   'expand_companies',
   'better_contacts',
   'more_contacts_at_accounts',
+  'contacts_at_company',
 ];
+
+type CompanyContext = {
+  id: string;
+  company_name: string | null;
+  domain: string | null;
+  company_website: string | null;
+  linkedin_url: string | null;
+  matched_icp_id: string | null;
+};
 
 function requestFilename(
   userId: string,
@@ -42,6 +52,7 @@ export async function POST(request: Request) {
     let body: {
       icpId?: string;
       requestType?: string;
+      companyId?: string;
       targetCompanyCount?: number | string;
       targetContactCount?: number | string;
       maxCreditUnits?: number | string;
@@ -52,10 +63,36 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
     }
 
-    const icpId = typeof body.icpId === 'string' ? body.icpId.trim() : '';
+    let icpId = typeof body.icpId === 'string' ? body.icpId.trim() : '';
+    const companyId = typeof body.companyId === 'string' ? body.companyId.trim() : '';
     const requestType = body.requestType as PipelineDataRequestType;
-    if (!icpId || !REQUEST_TYPES.includes(requestType)) {
-      return NextResponse.json({ error: 'icpId and valid requestType required' }, { status: 400 });
+    if (!REQUEST_TYPES.includes(requestType)) {
+      return NextResponse.json({ error: 'valid requestType required' }, { status: 400 });
+    }
+
+    let companyContext: CompanyContext | null = null;
+
+    if (requestType === 'contacts_at_company') {
+      if (!companyId) {
+        return NextResponse.json({ error: 'companyId required for contacts_at_company' }, { status: 400 });
+      }
+      const { data: company, error: companyErr } = await supabase
+        .from('companies')
+        .select('id, company_name, domain, company_website, linkedin_url, matched_icp_id')
+        .eq('user_id', user.id)
+        .eq('id', companyId)
+        .maybeSingle();
+
+      if (companyErr || !company) {
+        return NextResponse.json({ error: 'Company not found' }, { status: 404 });
+      }
+
+      companyContext = company as unknown as CompanyContext;
+      icpId = icpId || companyContext.matched_icp_id || '';
+    }
+
+    if (!icpId) {
+      return NextResponse.json({ error: 'icpId required' }, { status: 400 });
     }
 
     const targetCompanyCount = normalizePositiveInt(
@@ -63,7 +100,13 @@ export async function POST(request: Request) {
       requestType === 'expand_companies' ? DEFAULT_ACQUISITION_TARGET_COMPANIES : 0,
     );
     const targetContactCount =
-      body.targetContactCount == null ? null : normalizePositiveInt(body.targetContactCount, 0);
+      body.targetContactCount == null
+        ? requestType === 'contacts_at_company'
+          ? 5
+          : requestType === 'better_contacts' || requestType === 'more_contacts_at_accounts'
+            ? DEFAULT_ACQUISITION_TARGET_COMPANIES
+            : null
+        : normalizePositiveInt(body.targetContactCount, 0);
     const rawMaxCreditUnits =
       typeof body.maxCreditUnits === 'number'
         ? body.maxCreditUnits
@@ -77,6 +120,14 @@ export async function POST(request: Request) {
 
     if (requestType === 'expand_companies' && targetCompanyCount <= 0) {
       return NextResponse.json({ error: 'targetCompanyCount must be greater than 0' }, { status: 400 });
+    }
+    if (
+      (requestType === 'contacts_at_company' ||
+        requestType === 'better_contacts' ||
+        requestType === 'more_contacts_at_accounts') &&
+      (!targetContactCount || targetContactCount <= 0)
+    ) {
+      return NextResponse.json({ error: 'targetContactCount must be greater than 0' }, { status: 400 });
     }
 
     const { data: icp, error: icpErr } = await supabase
@@ -94,7 +145,7 @@ export async function POST(request: Request) {
     const estimate = estimateDataAcquisitionUsage({
       requestType,
       targetCompanyCount,
-      targetContactCount,
+      targetContactCount: requestType === 'expand_companies' ? null : targetContactCount,
     });
 
     const { data: batch, error: batchErr } = await supabase
@@ -135,7 +186,8 @@ export async function POST(request: Request) {
         estimated_max_credit_units: estimate.estimatedMaxCreditUnits,
         metadata: {
           estimate,
-          requested_from: 'pipeline',
+          requested_from: requestType === 'contacts_at_company' ? 'data' : 'pipeline',
+          company: companyContext,
         },
       })
       .select('id')
@@ -146,16 +198,22 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Failed to create acquisition job' }, { status: 500 });
     }
 
+    const jobRequestQuantity =
+      requestType === 'expand_companies'
+        ? targetCompanyCount
+        : estimate.targetContactCount;
+
     await recordDataAcquisitionUsageEvent(supabase, {
       jobId: job.id as string,
       userId: user.id,
       eventType: 'job_requested',
-      quantity: targetCompanyCount,
+      quantity: jobRequestQuantity,
       provider: 'arcova',
       metadata: {
         requestType,
         targetCompanyCount,
         targetContactCount: estimate.targetContactCount,
+        companyId: companyContext?.id ?? null,
         estimate,
       },
     });

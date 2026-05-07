@@ -113,3 +113,53 @@ export function formatLeadActionLabel(action: LeadAction): string {
       return 'Monitor';
   }
 }
+
+/** Pill styles aligned with Leads and Accounts tables. */
+export const LEAD_ACTION_PILL_CLASS: Record<LeadAction, { label: string; className: string }> = {
+  monitor: {
+    label: 'Monitor',
+    className: 'bg-arcova-teal text-white',
+  },
+  source_contact: {
+    label: 'Source',
+    className: 'bg-arcova-teal/10 text-arcova-teal ring-1 ring-arcova-teal/20',
+  },
+  reach_out: {
+    label: 'Reach out',
+    className: 'bg-white text-arcova-teal ring-2 ring-arcova-teal font-semibold',
+  },
+  deprioritize: {
+    label: 'Deprioritise',
+    className: 'bg-gray-100 text-gray-500 ring-1 ring-gray-200',
+  },
+};
+
+/** Sort key for action columns (higher = more urgency). */
+export const LEAD_ACTION_SORT_ORDER: Record<LeadAction, number> = {
+  reach_out: 3,
+  monitor: 2,
+  source_contact: 1,
+  deprioritize: 0,
+};
+
+function score01ForAction(value: number | null | undefined): number | null {
+  if (value == null || !Number.isFinite(value)) return null;
+  if (value > 1 && value <= 100) return value / 100;
+  if (value >= 0 && value <= 1) return value;
+  return null;
+}
+
+/**
+ * Recommended action for an aggregated account row (company + best contact fit + any contact-level intent).
+ */
+export function getAccountRowAction(account: {
+  company_fit_score?: number | null;
+  best_contact_fit?: number | null;
+  max_contact_intent_score?: number | null;
+}): LeadAction {
+  return getLeadActionFromFits(
+    score01ForAction(account.company_fit_score ?? null),
+    score01ForAction(account.best_contact_fit ?? null),
+    account.max_contact_intent_score ?? null,
+  );
+}

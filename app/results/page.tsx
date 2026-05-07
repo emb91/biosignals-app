@@ -16,9 +16,13 @@ import {
   resolveCompanyFitForLeadAction,
   resolveContactFitForLeadAction,
   isLeadReadyAwaitingContactSignal,
+  LEAD_ACTION_PILL_CLASS,
+  LEAD_ACTION_SORT_ORDER,
 } from '@/lib/lead-action';
 import { formatProvenanceImportedAt } from '@/lib/data-provenance';
 import {
+  Activity,
+  AlertTriangle,
   Users,
   Search,
   ChevronLeft,
@@ -30,7 +34,6 @@ import {
   Trash2,
   X,
   ExternalLink,
-  Briefcase,
   RotateCw,
   Ban,
   Upload,
@@ -326,7 +329,7 @@ type EnrichmentVisualState = {
 
 const PAGE_SIZE = 50;
 const LEADS_TABLE_GRID =
-  'grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.3fr)_7rem_minmax(10rem,1.35fr)] gap-x-6';
+  'grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.3fr)_minmax(10rem,1.35fr)] gap-x-6';
 const MAX_VISIBLE_WORK_HISTORY = 5;
 const COMPANY_FIT_COMPONENT_ORDER: CompanyFitComponentKey[] = [
   'company_type',
@@ -357,25 +360,6 @@ const formatPercentValue = (value: number | null | undefined): string | null => 
 const formatPercent = (value: number | null | undefined): string | null => {
   const percent = formatPercentValue(value);
   return percent ? `${percent} fit` : null;
-};
-
-const ACTION_CONFIG: Record<LeadAction, { label: string; className: string }> = {
-  monitor: {
-    label: 'Monitor',
-    className: 'bg-arcova-teal text-white',
-  },
-  source_contact: {
-    label: 'Source',
-    className: 'bg-arcova-teal/10 text-arcova-teal ring-1 ring-arcova-teal/20',
-  },
-  reach_out: {
-    label: 'Reach out',
-    className: 'bg-white text-arcova-teal ring-2 ring-arcova-teal font-semibold',
-  },
-  deprioritize: {
-    label: 'Deprioritise',
-    className: 'bg-gray-100 text-gray-500 ring-1 ring-gray-200',
-  },
 };
 
 const formatCoverage = (value: number | null | undefined): string | null => {
@@ -611,8 +595,8 @@ const getLeadRefreshStatusMeta = (
       };
     case 'failed':
       return {
-        label: 'Enrichment failed',
-        className: 'border-rose-200 bg-rose-50 text-rose-700',
+        label: 'Previous enrichment failed to run',
+        className: 'border-amber-200 bg-amber-50 text-amber-700',
       };
     case 'cancelled':
       return {
@@ -648,7 +632,7 @@ function getSortValue(lead: Lead | QueryLead, col: string): string | number {
         (lead as QueryLead).company_fit_score ??
         (lead as QueryLead).companies?.company_fit_score ??
         null;
-      const order = { reach_out: 3, monitor: 2, source_contact: 1, deprioritize: 0 };
+      const order = LEAD_ACTION_SORT_ORDER;
       return order[getLeadActionFromFits(companyFit, lead.contact_fit_score ?? null, lead.intent_score ?? null)] ?? 0;
     }
     case 'company_fit':
@@ -707,6 +691,10 @@ export default function LeadsPage() {
   const { guardedNavigate } = useEnrichmentGuard();
   const searchParams = useSearchParams();
 
+  const [agentTrigger, setAgentTrigger] = useState<{ text: string; nonce: number } | undefined>();
+  const fireAgent = (text: string) =>
+    setAgentTrigger((prev) => ({ text, nonce: (prev?.nonce ?? 0) + 1 }));
+
   const [leads, setLeads] = useState<Lead[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -727,6 +715,7 @@ export default function LeadsPage() {
   } | null>(null);
   const [syncResultExpanded, setSyncResultExpanded] = useState(false);
   const [stoppingLeadId, setStoppingLeadId] = useState<string | null>(null);
+  const [stopEnrichmentError, setStopEnrichmentError] = useState<string | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [selectedPreview, setSelectedPreview] = useState<'contact' | 'scoring' | 'action'>('contact');
   const [isWorkHistoryExpanded, setIsWorkHistoryExpanded] = useState(false);
@@ -1115,24 +1104,20 @@ export default function LeadsPage() {
 
   const stopLeadEnrichment = async (leadId: string) => {
     setStoppingLeadId(leadId);
+    setStopEnrichmentError(null);
     try {
-      const response = await fetch(`/api/enrich/${leadId}`, {
-        method: 'DELETE',
-      });
-      const result = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        throw new Error(
+      const response = await fetch(`/api/enrich/${leadId}`, { method: 'DELETE' });
+      // 409 means enrichment already finished — not an error worth surfacing
+      if (!response.ok && response.status !== 409) {
+        const result = await response.json().catch(() => ({}));
+        setStopEnrichmentError(
           typeof result.error === 'string' ? result.error : 'Could not stop enrichment.',
         );
       }
-
       await fetchLeads(true);
     } catch (error) {
       console.error('Error stopping enrichment:', error);
-      window.alert(
-        error instanceof Error ? error.message : 'Could not stop enrichment. Please try again.',
-      );
+      setStopEnrichmentError('Could not stop enrichment. Please try again.');
       await fetchLeads(true);
     } finally {
       setStoppingLeadId(null);
@@ -1750,7 +1735,7 @@ export default function LeadsPage() {
                 <h1 className="text-2xl font-bold text-gray-900">Leads</h1>
                 <p className="text-gray-600 mt-1">
                   {total > 0
-                    ? `${total.toLocaleString()} contact${total !== 1 ? 's' : ''} ready to review. Click a row or the contact icon for details; use the briefcase to open the account on Accounts.`
+                    ? `${total.toLocaleString()} contact${total !== 1 ? 's' : ''} ready to review. Click a row or the contact icon for details, or the company name to open the account on Accounts.`
                     : 'Your imported contacts will appear here once they are ready to review'}
                 </p>
                 </div>
@@ -1870,25 +1855,109 @@ export default function LeadsPage() {
             ) : (
               <div className={`grid gap-4 ${selectedLeadId ? 'xl:grid-cols-[minmax(0,1fr)_360px]' : ''}`}>
                 {/* ── Leads table ── */}
+                <div className="flex flex-col gap-2">
+
+                {/* Contact coverage gap banner */}
+                {(() => {
+                  // Group leads by company_id; find companies with good fit but no perfect contact
+                  const byCompany = new Map<string, { name: string; bestContactFit: number }>();
+                  for (const lead of leads) {
+                    if (!lead.company_id) continue;
+                    const companyFit =
+                      lead.company_fit_score ??
+                      lead.companies?.company_fit_score ??
+                      0;
+                    if (companyFit < 0.6) continue;
+                    const contactFit = lead.contact_fit_score ?? 0;
+                    const existing = byCompany.get(lead.company_id);
+                    if (existing) {
+                      existing.bestContactFit = Math.max(existing.bestContactFit, contactFit);
+                    } else {
+                      byCompany.set(lead.company_id, {
+                        name:
+                          lead.resolved_current_company_name ??
+                          lead.company_name ??
+                          lead.companies?.company_name ??
+                          'Unknown',
+                        bestContactFit: contactFit,
+                      });
+                    }
+                  }
+                  const gapCompanies = Array.from(byCompany.values()).filter(
+                    (c) => c.bestContactFit < 1,
+                  );
+                  if (gapCompanies.length === 0) return null;
+                  const names = gapCompanies
+                    .slice(0, 5)
+                    .map((c) => c.name)
+                    .join(', ');
+                  const more = gapCompanies.length > 5 ? ` and ${gapCompanies.length - 5} more` : '';
+                  return (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        fireAgent(
+                          `${gapCompanies.length === 1 ? 'One company in my leads is' : `${gapCompanies.length} companies in my leads are`} missing strong contact coverage: ${names}${more}. Explain what is going on and what I should do next.`,
+                        )
+                      }
+                      className="w-full flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-left transition-colors hover:bg-amber-100"
+                    >
+                      <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
+                      <p className="text-sm font-medium text-amber-800">
+                        {gapCompanies.length === 1
+                          ? '1 company is missing strong contact coverage.'
+                          : `${gapCompanies.length} companies are missing strong contact coverage.`}{' '}
+                        <span className="font-normal text-amber-600">Click to learn more.</span>
+                      </p>
+                      <Activity className="ml-auto h-4 w-4 shrink-0 text-amber-400" />
+                    </button>
+                  );
+                })()}
+
+                {/* Agent filter banner */}
+                {agentFilterIds && (
+                  <div className="flex items-center justify-between gap-3 rounded-lg border border-arcova-teal/20 bg-arcova-teal/5 px-4 py-2.5">
+                    <p className="text-xs font-medium text-arcova-teal">
+                      Filtered by agent · {sortedLeads.length} contact{sortedLeads.length !== 1 ? 's' : ''}
+                    </p>
+                    <button
+                      onClick={handleQueryClear}
+                      className="text-xs text-arcova-teal/70 hover:text-arcova-teal underline shrink-0 transition-colors"
+                    >
+                      Clear filter
+                    </button>
+                  </div>
+                )}
+
                 <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
                   {/* Table header */}
                   <div
-                    className={`${LEADS_TABLE_GRID} px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide`}
+                    className={`${LEADS_TABLE_GRID} items-start px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide`}
                   >
                     {(['name', 'job_title', 'company'] as const).map((col) => (
                       <button
                         key={col}
                         onClick={() => handleSortCol(col)}
-                        className="flex items-center gap-1 hover:text-gray-800 transition-colors text-left"
+                        className={`${
+                          col === 'company'
+                            ? 'flex flex-col items-start gap-0.5'
+                            : 'flex items-start gap-1'
+                        } hover:text-gray-800 transition-colors text-left`}
                       >
-                        {col === 'name' ? 'Name' : col === 'job_title' ? 'Job title' : 'Company name'}
-                        <SortArrow col={col} activeCol={tableSortCol} dir={tableSortDir} />
+                        <span className="flex items-start gap-1">
+                          {col === 'name' ? 'Name' : col === 'job_title' ? 'Job title' : 'Company name'}
+                          <SortArrow col={col} activeCol={tableSortCol} dir={tableSortDir} />
+                        </span>
+                        {col === 'company' ? (
+                          <span className="text-[10px] font-normal normal-case tracking-normal text-gray-400">
+                            (click to view)
+                          </span>
+                        ) : null}
                       </button>
                     ))}
-                    <span className="text-center leading-tight whitespace-nowrap">Account</span>
                     <button
                       onClick={() => handleSortCol('status')}
-                      className="flex items-center justify-center gap-1 w-full pl-12 hover:text-gray-800 transition-colors"
+                      className="flex items-start justify-center gap-1 w-full pl-12 hover:text-gray-800 transition-colors"
                     >
                       Action
                       <SortArrow col="status" activeCol={tableSortCol} dir={tableSortDir} />
@@ -1901,8 +1970,6 @@ export default function LeadsPage() {
                       const isSelected = selectedLeadId === lead.id;
                       const enriching = isEnriching(lead);
                       const enrichmentProgress = getEnrichmentProgress(lead);
-                      const leadRefreshStatus = getLeadRefreshStatus(lead);
-                      const leadRefreshError = getEnrichmentErrorMessage(lead);
 
                       if (enriching) {
                         return (
@@ -1949,8 +2016,6 @@ export default function LeadsPage() {
                               </div>
                             </div>
 
-                            <div className="min-w-0 flex justify-center justify-self-center w-full max-w-[7rem]" />
-
                             <div className="min-w-0 flex items-center justify-center pl-12">
                               <ArcovaLoader size={28} />
                             </div>
@@ -1979,11 +2044,6 @@ export default function LeadsPage() {
                                 [lead.first_name, lead.last_name].filter(Boolean).join(' ') ||
                                 '—'}
                             </p>
-                            {leadRefreshStatus === 'failed' && leadRefreshError && (
-                              <p className="mt-0.5 truncate text-[11px] text-rose-600">
-                                Enrichment failed
-                              </p>
-                            )}
                           </div>
 
                           {/* Job title */}
@@ -2037,39 +2097,11 @@ export default function LeadsPage() {
                             })()}
                           </div>
 
-                          {/* Company details */}
-                          <div className="min-w-0 flex justify-center justify-self-center w-full max-w-[7rem]">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedLeadId(lead.id);
-                                cancelEditingLead();
-                                if (lead.company_id) {
-                                  router.push(`/accounts?companyId=${encodeURIComponent(lead.company_id)}`);
-                                }
-                              }}
-                              disabled={!lead.company_id}
-                              className={`inline-flex items-center justify-center rounded-md border p-1.5 transition-colors ${
-                                lead.company_id
-                                  ? 'border-arcova-teal/40 bg-arcova-teal/10 text-arcova-teal hover:bg-arcova-teal hover:text-white hover:border-arcova-teal'
-                                  : 'border-gray-200 bg-gray-50 text-gray-300 cursor-not-allowed'
-                              }`}
-                              title={
-                                lead.company_id
-                                  ? 'Open account on Accounts'
-                                  : 'No linked company record yet'
-                              }
-                            >
-                              <Briefcase className="w-5 h-5" />
-                            </button>
-                          </div>
-
                           {/* Action */}
                           <div className="min-w-0 flex items-center justify-center pl-12">
                             {(() => {
                               const action = getLeadAction(lead);
-                              const config = ACTION_CONFIG[action];
+                              const config = LEAD_ACTION_PILL_CLASS[action];
                               return (
                                 <button
                                   type="button"
@@ -2091,15 +2123,7 @@ export default function LeadsPage() {
                     })}
                   </div>
 
-                  {/* Footer — filtered count in agent mode, pagination otherwise */}
-                  {agentFilterIds && (
-                    <div className="px-4 py-2.5 border-t border-gray-100 bg-gray-50">
-                      <p className="text-xs text-gray-400">
-                        {sortedLeads.length} contact{sortedLeads.length !== 1 ? 's' : ''} found
-                      </p>
-                    </div>
-                  )}
-
+                  {/* Footer — pagination when not filtered */}
                   {!agentFilterIds && totalPages > 1 && (
                     <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200 bg-gray-50">
                       <p className="text-xs text-gray-500">
@@ -2128,6 +2152,7 @@ export default function LeadsPage() {
                     </div>
                   )}
                 </div>
+                </div>{/* end table + banner wrapper */}
 
                 {/* ── Detail panel ── */}
                 {selectedLeadId && (
@@ -2156,7 +2181,7 @@ export default function LeadsPage() {
                           )}
                           {selectedPreview === 'action' && (() => {
                             const action = getLeadAction(selectedLead);
-                            const config = ACTION_CONFIG[action];
+                            const config = LEAD_ACTION_PILL_CLASS[action];
                             return (
                               <span className={`mt-2 inline-flex items-center rounded-full px-3 py-1 text-sm font-medium ${config.className}`}>
                                 {config.label}
@@ -2460,16 +2485,6 @@ export default function LeadsPage() {
                                       company and the persona. Keep the account on your radar and wait for a buying
                                       signal before reaching out.
                                     </p>
-                                    <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
-                                      <button
-                                        type="button"
-                                        onClick={() => guardedNavigate('/customer-signals')}
-                                        className="inline-flex items-center gap-1.5 text-sm font-semibold text-arcova-teal hover:text-arcova-teal/85 transition-colors"
-                                      >
-                                        Set up signals
-                                        <ChevronRight className="w-4 h-4" aria-hidden />
-                                      </button>
-                                    </div>
                                   </div>
                                 ) : (
                                   <div className="space-y-3">
@@ -2572,16 +2587,19 @@ export default function LeadsPage() {
                             <div className={`rounded-lg border px-3 py-2 text-xs ${selectedLeadRefreshStatusMeta.className}`}>
                               <p className="font-medium">{selectedLeadRefreshStatusMeta.label}</p>
                               {selectedLeadRefreshStatus === 'running' && (
-                                <div className="mt-2">
+                                <div className="mt-2 flex flex-col gap-1.5">
                                   <button
                                     type="button"
                                     onClick={() => stopLeadEnrichment(selectedLead.id)}
                                     disabled={isStoppingSelected}
-                                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors self-start"
                                   >
                                     <Ban className="w-3.5 h-3.5" aria-hidden />
                                     {isStoppingSelected ? 'Stopping…' : 'Stop enrichment'}
                                   </button>
+                                  {stopEnrichmentError && (
+                                    <p className="text-xs text-red-500">{stopEnrichmentError}</p>
+                                  )}
                                 </div>
                               )}
                               {selectedLeadRefreshStatus === 'cancelled' &&
@@ -2595,8 +2613,8 @@ export default function LeadsPage() {
                                   Finished {formatLastUpdated(selectedLead.enrichment_refresh_finished_at)}.
                                 </p>
                               )}
-                              {selectedLeadRefreshStatus === 'failed' && selectedEnrichmentError && (
-                                <p className="mt-1">{selectedEnrichmentError}</p>
+                              {selectedLeadRefreshStatus === 'failed' && (
+                                <p className="mt-1">Showing last known data.</p>
                               )}
                             </div>
                           )}
@@ -2680,6 +2698,7 @@ export default function LeadsPage() {
 
         <AgentPanel
           page="leads"
+          pendingMessage={agentTrigger}
           onLeadsFilter={handleLeadsFilter}
           onTableClear={handleQueryClear}
         />

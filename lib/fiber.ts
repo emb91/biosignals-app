@@ -68,6 +68,7 @@ type FiberCompanyRecord = {
   employee_range?: string;
   founded_year?: number;
   headquarters_city?: string;
+  headquarters_state?: string;
   headquarters_country?: string;
   funding_stage?: string;
   total_funding_usd?: number;
@@ -116,6 +117,7 @@ export type FiberEnrichmentResult = {
   company_employee_range?: string;
   company_founded_year?: number;
   company_hq_city?: string;
+  company_hq_state?: string;
   company_hq_country?: string;
   company_funding_stage?: string;
   company_total_funding_usd?: number;
@@ -635,6 +637,7 @@ export async function enrichContactWithFiber(input: FiberLookupInput): Promise<F
     company_employee_range: company?.employee_range,
     company_founded_year: company?.founded_year,
     company_hq_city: company?.headquarters_city || company?.inferred_location?.city || undefined,
+    company_hq_state: company?.headquarters_state || undefined,
     company_hq_country: company?.headquarters_country || company?.inferred_location?.country_name || undefined,
     company_funding_stage: company?.funding_stage,
     company_total_funding_usd: company?.total_funding_usd,

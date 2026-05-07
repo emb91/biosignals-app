@@ -53,6 +53,15 @@ type ImportBatch = {
   created_at: string;
 };
 
+type HubspotSyncLog = {
+  synced_at: string;
+  auto_pull_at: string | null;
+  auto_pull_count: number | null;
+  contacts_synced: number | null;
+  contacts_errors: number | null;
+  contacts_skipped: number | null;
+};
+
 type ImportBatchRow = {
   id: string;
   status: string;
@@ -78,6 +87,17 @@ const CSV_PREVIEW_ROW_COUNT = 3;
 const formatBatchDate = (iso: string) => {
   const date = new Date(iso);
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+};
+
+const formatSyncDateTime = (iso: string) => {
+  const date = new Date(iso);
+  return date.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
 };
 
 const HIGH_FIT_TARGET = 200;
@@ -228,6 +248,7 @@ export default function ImportPage() {
   const [expandedBatchSection, setExpandedBatchSection] = useState<'failed' | 'duplicate' | 'enriched' | 'uploaded' | null>(null);
   const [hubspotConnected, setHubspotConnected] = useState(false);
   const [hubspotDomain, setHubspotDomain] = useState<string | null>(null);
+  const [hubspotSyncLog, setHubspotSyncLog] = useState<HubspotSyncLog | null>(null);
   const [hubspotSyncing, setHubspotSyncing] = useState(false);
   const [hubspotDisconnecting, setHubspotDisconnecting] = useState(false);
   const [pastImportsExpanded, setPastImportsExpanded] = useState(false);
@@ -268,6 +289,20 @@ export default function ImportPage() {
     }
   };
 
+  const fetchHubspotSyncLog = useCallback(async () => {
+    try {
+      const res = await fetch('/api/hubspot/sync-log');
+      if (!res.ok) {
+        setHubspotSyncLog(null);
+        return;
+      }
+      const json = await res.json();
+      setHubspotSyncLog((json.data as HubspotSyncLog | null) ?? null);
+    } catch {
+      setHubspotSyncLog(null);
+    }
+  }, []);
+
   useEffect(() => {
     if (!loading && !user) {
       router.push('/login');
@@ -294,7 +329,8 @@ export default function ImportPage() {
 
   useEffect(() => {
     if (!user) return;
-    fetchImportHistory();
+    void fetchImportHistory();
+    void fetchHubspotSyncLog();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, hiddenBatchIds.join('|')]);
 
@@ -318,7 +354,8 @@ export default function ImportPage() {
         batchStatus,
       });
       if (batchStatus === 'complete') {
-        fetchImportHistory();
+        void fetchImportHistory();
+        void fetchHubspotSyncLog();
       }
     };
 
@@ -398,6 +435,8 @@ export default function ImportPage() {
             body: JSON.stringify({ integrationId: providerConfigKey, connectionId }),
           });
           setHubspotConnected(true);
+          void fetchHubspotStatus();
+          void fetchHubspotSyncLog();
         }
       },
     });
@@ -433,6 +472,7 @@ export default function ImportPage() {
       await fetch('/api/hubspot/disconnect', { method: 'DELETE' });
       setHubspotConnected(false);
       setHubspotDomain(null);
+      setHubspotSyncLog(null);
     } finally {
       setHubspotDisconnecting(false);
     }
@@ -890,8 +930,8 @@ export default function ImportPage() {
                 </div>
               )}
 
-              {/* Past imports */}
-              {!parsedCsv && importHistory.length > 0 && (
+              {/* Past imports + HubSpot sync log */}
+              {!parsedCsv && (importHistory.length > 0 || hubspotConnected) && (
                 <div className="mt-8">
                   <div className="rounded-xl border border-gray-200 overflow-hidden bg-white">
                     <button
@@ -901,11 +941,71 @@ export default function ImportPage() {
                     >
                       <span className="text-sm font-semibold text-gray-700 group-hover:text-gray-900 transition-colors">
                         Past imports
-                        <span className="ml-2 text-xs font-normal text-gray-400">({importHistory.length})</span>
+                        {importHistory.length > 0 ? (
+                          <span className="ml-2 text-xs font-normal text-gray-400">({importHistory.length})</span>
+                        ) : null}
                       </span>
                       <ChevronDown className={`w-4 h-4 text-gray-400 group-hover:text-gray-600 transition-all ${pastImportsExpanded ? 'rotate-180' : ''}`} />
                     </button>
-                    {pastImportsExpanded && importHistory.map((batch) => {
+
+                    {hubspotConnected && (
+                      <div className="px-4 py-3 border-b border-gray-100 bg-[#fff5f2]/40">
+                        <p className="text-xs font-semibold text-gray-700 uppercase tracking-wide">HubSpot sync</p>
+                        {hubspotSyncLog?.synced_at ? (
+                          <div className="mt-2 space-y-1 text-xs text-gray-600 leading-relaxed">
+                            <p>
+                              <span className="font-medium text-gray-700">Last sync:</span>{' '}
+                              {formatSyncDateTime(hubspotSyncLog.synced_at)}
+                            </p>
+                            <p>
+                              Pulled {(hubspotSyncLog.auto_pull_count ?? 0).toLocaleString()} contact
+                              {(hubspotSyncLog.auto_pull_count ?? 0) !== 1 ? 's' : ''} from HubSpot for enrichment. Pushed{' '}
+                              {(hubspotSyncLog.contacts_synced ?? 0).toLocaleString()} enriched contact
+                              {(hubspotSyncLog.contacts_synced ?? 0) !== 1 ? 's' : ''} to HubSpot.
+                            </p>
+                            {((hubspotSyncLog.contacts_errors ?? 0) > 0 ||
+                              (hubspotSyncLog.contacts_skipped ?? 0) > 0) && (
+                              <p className="text-amber-700">
+                                {(hubspotSyncLog.contacts_errors ?? 0) > 0 && (
+                                  <span>
+                                    {(hubspotSyncLog.contacts_errors ?? 0).toLocaleString()} push error
+                                    {(hubspotSyncLog.contacts_errors ?? 0) !== 1 ? 's' : ''}
+                                  </span>
+                                )}
+                                {(hubspotSyncLog.contacts_errors ?? 0) > 0 &&
+                                (hubspotSyncLog.contacts_skipped ?? 0) > 0
+                                  ? ' · '
+                                  : null}
+                                {(hubspotSyncLog.contacts_skipped ?? 0) > 0 && (
+                                  <span>
+                                    {(hubspotSyncLog.contacts_skipped ?? 0).toLocaleString()} skipped on push
+                                  </span>
+                                )}
+                              </p>
+                            )}
+                            <p className="text-gray-400 pt-0.5">
+                              While HubSpot is connected, the daily job logs each run here so you can confirm sync is
+                              firing.
+                            </p>
+                          </div>
+                        ) : (
+                          <p className="mt-2 text-xs text-gray-500 leading-relaxed">
+                            No HubSpot sync logged for this account yet. After the first daily job or enrichment push,
+                            the last run time and counts will show here.
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {pastImportsExpanded && importHistory.length === 0 && (
+                      <p className="px-4 py-4 text-xs text-gray-400 border-b border-gray-100 last:border-0">
+                        No import batches in this list yet. CSV uploads and HubSpot pulls still create batches below once
+                        they exist.
+                      </p>
+                    )}
+
+                    {pastImportsExpanded &&
+                      importHistory.map((batch) => {
                       const isOpen = expandedHistoryBatchId === batch.id;
                       const enriched = Math.max(0, (batch.processed_rows || 0) - (batch.duplicate_rows || 0) - (batch.failed_rows || 0));
                       return (

@@ -22,7 +22,7 @@ import {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Page = 'accounts' | 'leads' | 'dashboard' | 'pipeline' | 'signals' | 'imports' | 'data';
+type Page = 'accounts' | 'leads' | 'dashboard' | 'health' | 'signals' | 'imports' | 'data';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -34,6 +34,20 @@ interface PageContext {
   filteredAccounts?: number;
   activeQuery?: string;
   totalLeads?: number;
+  selectedAccount?: {
+    id?: string;
+    name?: string | null;
+    matchedIcpId?: string | null;
+    bestContactFit?: number | null;
+    contactCount?: number | null;
+  };
+  // Data page context
+  acquisitionMode?: 'companies' | 'contacts_at_company' | 'contacts_at_companies';
+  acquisitionIcpId?: string;
+  acquisitionIcpLabel?: string;
+  acquisitionCompanyId?: string;
+  acquisitionCompanyName?: string;
+  acquisitionBatchCompanies?: { id: string; name: string; icpId?: string | null }[];
 }
 
 interface TableFilter {
@@ -58,7 +72,8 @@ interface ChatResponse {
   tableAccounts?: import('@/lib/accounts-data').QueryAccount[];
   leadsFilter?: LeadsTableFilter;
   tableLeads?: QueryLead[];
-  suggestedNavigation?: { href: string; label: string };
+  suggestedNavigation?: { href: string; label: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[] };
+  pendingJobStart?: { requestType: string; icpId?: string; companyId?: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[]; quantity: number };
 }
 
 // ─── Anthropic client ─────────────────────────────────────────────────────────
@@ -68,6 +83,16 @@ const anthropic = new Anthropic();
 // ─── Tool definitions ─────────────────────────────────────────────────────────
 
 const TOOLS: Anthropic.Tool[] = [
+  {
+    name: 'get_import_history',
+    description:
+      'Get the history of data imports: recent CSV upload batches and the last HubSpot sync. Call this when the user asks about when data was last synced, what was imported, import counts, HubSpot sync status, or anything about where their contacts came from.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: [],
+    },
+  },
   {
     name: 'get_workspace_summary',
     description:
@@ -261,21 +286,62 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'suggest_navigation',
     description:
-      'Suggest that the user navigate to another page in the app. Call this whenever the next action for the user requires them to go somewhere else — always pair it with a short explanation of what to do there. Only call this once per response.',
+      'Suggest that the user navigate to another page in the app. Call this whenever the next action for the user requires them to go somewhere else — always pair it with a short explanation of what to do there. Only call this once per response. When sending multiple accounts for batch contact sourcing, set href to /data?mode=contacts_at_companies and populate batchCompanies with the full list.',
     input_schema: {
       type: 'object' as const,
       properties: {
         href: {
           type: 'string',
-          enum: ['/pipeline', '/results', '/accounts', '/import', '/dashboard', '/data'],
-          description: 'The destination page path.',
+          description:
+            'The destination page path. Use /data for generic acquisition, /data?mode=contacts_at_company&companyId=...&companyName=...&icpId=... for a single company, or /data?mode=contacts_at_companies when sending a batch of accounts.',
         },
         label: {
           type: 'string',
-          description: 'Short button label shown to the user. e.g. "Open Data"',
+          description: 'Short button label shown to the user. e.g. "Open Data" or "Source contacts for all 12 accounts"',
+        },
+        batchCompanies: {
+          type: 'array',
+          description: 'When navigating to contacts_at_companies batch mode, provide the list of companies to source contacts for.',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', description: 'Company ID' },
+              name: { type: 'string', description: 'Company name' },
+              icpId: { type: 'string', description: 'Matched ICP ID (optional)' },
+            },
+            required: ['id', 'name'],
+          },
         },
       },
       required: ['href', 'label'],
+    },
+  },
+  {
+    name: 'start_acquisition_job',
+    description:
+      'Start a data acquisition job once the user has confirmed they want to proceed. Use this on the Data page only. The job will be queued and appear in the recent jobs panel.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        requestType: {
+          type: 'string',
+          enum: ['expand_companies', 'contacts_at_company', 'contacts_at_companies'],
+          description: '"expand_companies" = find more ICP-fit companies. "contacts_at_company" = source contacts at a single company. "contacts_at_companies" = batch-source contacts across multiple companies.',
+        },
+        quantity: {
+          type: 'number',
+          description: 'How many companies (for expand_companies) or contacts per account (for contacts modes) to target.',
+        },
+        icpId: {
+          type: 'string',
+          description: 'The ICP id to use. For contacts_at_company/contacts_at_companies, falls back to the company\'s matched ICP.',
+        },
+        companyId: {
+          type: 'string',
+          description: 'Company id for contacts_at_company mode.',
+        },
+      },
+      required: ['requestType', 'quantity'],
     },
   },
   {
@@ -340,20 +406,59 @@ const TOOLS: Anthropic.Tool[] = [
 
 // ─── System prompt ─────────────────────────────────────────────────────────────
 
-function buildSystemPrompt(page: Page): string {
+function buildSystemPrompt(page: Page, context?: PageContext): string {
   const pageContext: Record<Page, string> = {
     accounts: `You are on the Accounts page. This shows a table of all target companies (accounts) the user has in their workspace — enriched with fit scores, contact counts, therapeutic areas, funding info, and more. The user can filter, sort, and explore these accounts. You can update the table by calling filter_accounts_table.`,
     leads: `You are on the Leads page. This shows individual contacts (leads) across all companies, with their fit scores and job details. The user can filter and prioritise contacts to reach out to.`,
     dashboard: `You are on the Dashboard page. This shows a high-level overview of the workspace: coverage stats, top accounts, recent signal events, and ICP performance.`,
-    pipeline: `You are on the Pipeline page. This shows ICP coverage health: where the workspace has enough companies, where contact fit is weak, and where account depth is thin.`,
+    health: `You are on the Health page. This shows ICP coverage health: where the workspace has enough companies, where contact fit is weak, and where account depth is thin.`,
     signals: `You are on the Signals page. This shows recent signal events for companies and contacts — things like job changes, funding rounds, new hires, or other triggers that indicate buying intent.`,
     imports: `You are on the Imports page. This shows the history of contact data imports — CSV uploads and HubSpot syncs. The user can see what data came in and when.`,
-    data: `You are on the Data page. This is where the user starts and monitors acquisition jobs: finding more ICP-fit companies, finding better contacts, and tracking sourcing usage.`,
+    data: `You are on the Data page. You help the user start data acquisition jobs conversationally. Jobs available: (1) find more companies for an ICP, (2) source contacts at a specific account, (3) source contacts across a batch of accounts. Your goal is to understand what the user wants, ask one clarifying question (how many?), get confirmation, then call start_acquisition_job. Keep the conversation to 2–3 turns maximum.`,
   };
+
+  const selectedAccountContext = context?.selectedAccount?.id
+    ? `
+## Current selection
+The selected account is ${context.selectedAccount.name || 'the selected company'}.
+Company id: ${context.selectedAccount.id}.
+Matched ICP id: ${context.selectedAccount.matchedIcpId || 'unknown'}.
+If the user asks to find contacts, buyer personas, or more coverage for this selected account, call suggest_navigation with /data?mode=contacts_at_company&companyId=${encodeURIComponent(context.selectedAccount.id)}&companyName=${encodeURIComponent(context.selectedAccount.name || 'Selected company')}${context.selectedAccount.matchedIcpId ? `&icpId=${encodeURIComponent(context.selectedAccount.matchedIcpId)}` : ''}.`
+    : '';
+
+  const dataPageContext = page === 'data' && context?.acquisitionMode
+    ? (() => {
+        const mode = context.acquisitionMode;
+        if (mode === 'contacts_at_companies' && context.acquisitionBatchCompanies?.length) {
+          const names = context.acquisitionBatchCompanies.map((c) => c.name).join(', ');
+          const n = context.acquisitionBatchCompanies.length;
+          return `
+## Queued job context
+The user has arrived with ${n} account${n !== 1 ? 's' : ''} queued for contact sourcing: ${names}.
+Company ids and ICP ids: ${JSON.stringify(context.acquisitionBatchCompanies)}.
+Open the conversation by summarising what you see, then ask how many contacts they want per account. Suggest 3 to 5 for typical biotech or CRO-sized companies. When they confirm, call start_acquisition_job with requestType "contacts_at_companies". The batch list will be resolved from context.`;
+        }
+        if (mode === 'contacts_at_company' && context.acquisitionCompanyId) {
+          return `
+## Queued job context
+The user wants to source contacts at ${context.acquisitionCompanyName || 'a specific company'} (id: ${context.acquisitionCompanyId}, icpId: ${context.acquisitionIcpId || 'unknown'}).
+Open the conversation by confirming the company, then ask how many contacts they want. Suggest 3 to 5. When they confirm, call start_acquisition_job with requestType "contacts_at_company", companyId "${context.acquisitionCompanyId}", quantity [what the user said].`;
+        }
+        if (mode === 'companies' && context.acquisitionIcpId) {
+          return `
+## Queued job context
+The user wants to find more companies for ${context.acquisitionIcpLabel || 'their ICP'} (id: ${context.acquisitionIcpId}).
+Open the conversation by confirming the ICP, then ask how many companies they want to add. Suggest 20 to 50 for an initial run. When they confirm, call start_acquisition_job with requestType "expand_companies", icpId "${context.acquisitionIcpId}", quantity [what the user said].`;
+        }
+        return '';
+      })()
+    : '';
 
   return `You are the Arcova Agent — an expert go-to-market co-pilot embedded in the Arcova platform, a life sciences GTM workspace.
 
 ${pageContext[page]}
+${selectedAccountContext}
+${dataPageContext}
 
 ## Your role
 You help users understand their data, prioritise accounts and contacts, diagnose scoring, and take action. You're knowledgeable, direct, and concise — like a smart colleague who knows the platform inside-out. You don't use filler phrases like "certainly!" or "great question!".
@@ -389,23 +494,43 @@ Use your tools proactively to give accurate, data-driven answers. Don't guess at
 
 ## Navigation rules
 - Only offer to do things you can actually do right now with your tools on the current page.
-- Never say "Want me to do X?" if X requires the user to navigate somewhere else. Instead, tell them what to do there and call suggest_navigation so a button appears.
+- Navigation is a gentle follow-up, not the answer. Always give the explanation or diagnosis first. Only add a suggest_navigation call at the end if the user would genuinely benefit from going there — and only if it feels like a natural next step, not a push.
+- Never lead with navigation. Never make "go to the Data page" the headline of a response.
 - One navigation suggestion per response maximum.
+
+## Batch contact sourcing
+When the user wants to source contacts for multiple accounts at once (e.g. "source contacts for all opportunity accounts", "find contacts for all these companies"), do this in one response:
+1. Call query_companies with coverageStatuses: ["opportunity"] (and limit: 50) to get the full list.
+2. Explain the situation in 1–2 sentences: how many accounts need contacts and what that means.
+3. Call suggest_navigation with href: "/data?mode=contacts_at_companies", a label like "Source contacts for all N accounts", and batchCompanies set to the full list of {id, name, icpId} objects from the query results. The id field must be the company's database id (use the raw id from the query result — if unavailable fall back to domain or name as a key).
+Never ask the user to confirm each account one-by-one. Batch them all in a single suggest_navigation call.
 
 ## Response style — strict rules
 
 **Format**
+- CRITICAL TOOL CALL RULE: When you call tools, write NO text in that same turn. Silence while calling. Write your full response only AFTER you have received all tool results back. This is the most important rule.
+- When you call a tool to answer a question, you MUST use the data it returns in your prose. Never discard tool results. If you fetched company details, mention what you found. If you fetched contacts, say what they showed. A response that ignores its own tool results is wrong.
+- You MUST always write text in your final response turn. Never end with an empty message.
 - Plain prose only. Absolutely no markdown of any kind: no asterisks, no bold, no bullet points, no numbered lists, no headers, no tables, no pipe characters (|).
-- Keep it short — 1 to 3 sentences maximum for most answers. Never write a wall of text.
+- Keep it short. 1–2 sentences per paragraph. Never write a wall of text.
+- For multi-part answers (diagnosis + implication + offer), use separate short paragraphs separated by a blank line. Each paragraph becomes its own chat bubble. Example: "These two accounts are flagged as opportunities — they both match your ICP well.\n\nNeither has a contact that fits your buyer persona yet, which is why they're flagged.\n\nWant me to send both to the Data page so you can source better contacts?" Note how each paragraph is one tight thought, and there's no redundancy between them.
+- For simple answers, a single sentence is enough.
 - Lead with the direct answer. No preamble.
 - If you need to share multiple numbers, weave them into a sentence. Never format data as a table.
 - Write at an 8th-grade reading level or below. Short words, short sentences. Fewer words always beats more words.
-- Never list raw metrics. Synthesise them into a 1–2 sentence story. "You have 8 accounts — 3 are ready to action, 2 need better contacts, and 3 are weak fit." Not a breakdown of each number on its own line.
-- End with one short follow-up question only when it would genuinely be useful — not after every single response. Skip it when the result is small (1–2 items), when the answer is complete on its own, or when there is nothing meaningful left to offer.
+- Never list raw metrics or per-company breakdowns. Synthesise into a short story.
+- End with one short follow-up question only when it would genuinely help. Skip it when the answer is complete.
 
 **No internal details**
 - Never mention score thresholds, cutoff numbers, or internal filter values. The user has no context for what "≥ 0.7" means and cannot change it, so do not say it.
 - Never offer to "lower the threshold", "broaden the search", or present multiple technical options for the user to choose from. Just pick the most helpful answer and give it.
+
+**When the user asks "why" or "explain" or "what is going on"**
+- You MUST use the data you fetched to write a real explanation. Never skip this. The text response IS the answer — not navigation.
+- Write 1–2 sentences saying what's actually wrong: the company fit, what contacts exist, what's missing and why that matters. Use the actual company names and facts from the tool result.
+- Example of a GOOD response: "Both PhenoVista and BioOra are strong fits for your ICP but neither has a contact that fully matches your buyer persona yet — the contacts you have are there but none reach 100% fit." Example of a BAD response: "Head to the Data page to pull the right contacts." The bad example tells the user nothing.
+- Only add a suggest_navigation call after the explanation, and only if it genuinely helps. It is never the answer itself.
+- The goal is to help the user understand the problem well enough that they decide what to do next on their own. Explain. Don't instruct.
 
 **When no results are found**
 - State it plainly in one sentence. Example: "You don't have any VP-level contacts at high-fit companies right now."
@@ -560,7 +685,9 @@ async function toolQueryCompanies(
     total_matching: filtered.length,
     showing: top.length,
     companies: top.map((a) => ({
+      id: a.id ?? null,
       name: a.company_name ?? a.domain ?? 'Unknown',
+      icp_id: a.matched_icp_id ?? null,
       company_type: a.company_type,
       company_fit: finiteNumber(a.company_fit_score) != null
         ? `${Math.round((finiteNumber(a.company_fit_score) ?? 0) * 100)}%`
@@ -693,6 +820,51 @@ async function toolQueryContacts(
   });
 }
 
+async function toolGetImportHistory(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+): Promise<string> {
+  const [batchesResult, syncLogResult] = await Promise.all([
+    supabase
+      .from('upload_batches')
+      .select('filename, total_rows, processed_rows, duplicate_rows, failed_rows, status, created_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(5),
+    supabase
+      .from('hubspot_sync_log')
+      .select(
+        'synced_at, contacts_synced, contacts_errors, contacts_skipped, auto_pull_at, auto_pull_count',
+      )
+      .eq('user_id', userId)
+      .order('synced_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+
+  return JSON.stringify({
+    hubspot_last_sync: syncLogResult.data
+      ? {
+          synced_at: syncLogResult.data.synced_at,
+          contacts_synced: syncLogResult.data.contacts_synced,
+          contacts_errors: syncLogResult.data.contacts_errors,
+          contacts_skipped: syncLogResult.data.contacts_skipped,
+          auto_pull_at: syncLogResult.data.auto_pull_at,
+          auto_pull_count: syncLogResult.data.auto_pull_count,
+        }
+      : null,
+    csv_imports: (batchesResult.data ?? []).map((b) => ({
+      filename: b.filename,
+      status: b.status,
+      total_rows: b.total_rows,
+      processed_rows: b.processed_rows,
+      duplicate_rows: b.duplicate_rows,
+      failed_rows: b.failed_rows,
+      imported_at: b.created_at,
+    })),
+  });
+}
+
 // ─── Agentic loop ─────────────────────────────────────────────────────────────
 
 async function runAgentLoop(
@@ -700,22 +872,39 @@ async function runAgentLoop(
   userId: string,
   page: Page,
   messages: ChatMessage[],
-): Promise<{ message: string; toolsUsed: string[]; tableFilter?: TableFilter; tableAccounts?: import('@/lib/accounts-data').QueryAccount[]; leadsFilter?: LeadsTableFilter; tableLeads?: QueryLead[]; suggestedNavigation?: { href: string; label: string } }> {
-  const systemPrompt = buildSystemPrompt(page);
+  pageContext?: PageContext,
+): Promise<{ message: string; toolsUsed: string[]; tableFilter?: TableFilter; tableAccounts?: import('@/lib/accounts-data').QueryAccount[]; leadsFilter?: LeadsTableFilter; tableLeads?: QueryLead[]; suggestedNavigation?: { href: string; label: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[] }; pendingJobStart?: { requestType: string; icpId?: string; companyId?: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[]; quantity: number } }> {
+  const systemPrompt = buildSystemPrompt(page, pageContext);
   const toolsUsed: string[] = [];
   let tableFilter: TableFilter | undefined;
   let tableAccounts: import('@/lib/accounts-data').QueryAccount[] | undefined;
   let leadsFilter: LeadsTableFilter | undefined;
   let tableLeads: QueryLead[] | undefined;
-  let suggestedNavigation: { href: string; label: string } | undefined;
+  let suggestedNavigation: { href: string; label: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[] } | undefined;
+  let pendingJobStart: { requestType: string; icpId?: string; companyId?: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[]; quantity: number } | undefined;
 
-  // Build Anthropic message history
-  const anthropicMessages: Anthropic.MessageParam[] = messages.map((m) => ({
-    role: m.role,
-    content: m.content,
-  }));
+  const DATA_PAGE_OPEN_TRIGGER = '__OPEN__';
+
+  // Build Anthropic message history (normalize programmatic Data page opener)
+  const anthropicMessages: Anthropic.MessageParam[] = messages.map((m) => {
+    if (
+      m.role === 'user' &&
+      page === 'data' &&
+      m.content.trim() === DATA_PAGE_OPEN_TRIGGER
+    ) {
+      return {
+        role: 'user' as const,
+        content:
+          'The Data page just loaded with the Queued job context from your instructions. Speak first: greet the user and follow that context. Do not mention a code word, a blank message, or that the user sent this line.',
+      };
+    }
+    return { role: m.role, content: m.content };
+  });
 
   const MAX_ITERATIONS = 5;
+  // Carry text written in the same turn as tool calls — it won't appear in the
+  // next turn so we preserve it and prepend to the eventual final message.
+  let spilloverText = '';
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const response = await anthropic.messages.create({
@@ -732,11 +921,16 @@ async function runAgentLoop(
       (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use',
     );
 
-    // If no tool calls, we're done
+    // If no tool calls, we're done — combine any spillover with this turn's text
     if (response.stop_reason === 'end_turn' || toolUseBlocks.length === 0) {
-      const finalMessage = textBlocks.map((b) => b.text).join('');
-      return { message: finalMessage, toolsUsed, tableFilter, tableAccounts, leadsFilter, tableLeads, suggestedNavigation };
+      const turnText = textBlocks.map((b) => b.text).join('');
+      const finalMessage = [spilloverText, turnText].filter(Boolean).join(' ');
+      return { message: finalMessage, toolsUsed, tableFilter, tableAccounts, leadsFilter, tableLeads, suggestedNavigation, pendingJobStart };
     }
+
+    // The model wrote text alongside tool calls — save it so it isn't lost
+    const turnText = textBlocks.map((b) => b.text).join('').trim();
+    if (turnText) spilloverText = [spilloverText, turnText].filter(Boolean).join(' ');
 
     // Add assistant turn with all content blocks
     anthropicMessages.push({ role: 'assistant', content: response.content });
@@ -754,6 +948,9 @@ async function runAgentLoop(
 
       try {
         switch (toolName) {
+          case 'get_import_history':
+            result = await toolGetImportHistory(supabase, userId);
+            break;
           case 'get_workspace_summary':
             result = await toolGetWorkspaceSummary(supabase, userId);
             break;
@@ -769,10 +966,32 @@ async function runAgentLoop(
           case 'query_contacts':
             result = await toolQueryContacts(supabase, userId, toolInput);
             break;
+          case 'start_acquisition_job': {
+            const requestType = typeof toolInput.requestType === 'string' ? toolInput.requestType : undefined;
+            const quantity = typeof toolInput.quantity === 'number' ? Math.round(toolInput.quantity) : 5;
+            const jobIcpId = typeof toolInput.icpId === 'string' ? toolInput.icpId : pageContext?.acquisitionIcpId;
+            const jobCompanyId = typeof toolInput.companyId === 'string' ? toolInput.companyId : pageContext?.acquisitionCompanyId;
+            const jobBatch = pageContext?.acquisitionBatchCompanies;
+            if (requestType) {
+              pendingJobStart = {
+                requestType,
+                quantity,
+                ...(jobIcpId ? { icpId: jobIcpId } : {}),
+                ...(jobCompanyId ? { companyId: jobCompanyId } : {}),
+                ...(jobBatch?.length ? { batchCompanies: jobBatch } : {}),
+              };
+            }
+            result = JSON.stringify({ success: true, message: 'Job queued.' });
+            break;
+          }
+
           case 'suggest_navigation': {
             const href = typeof toolInput.href === 'string' ? toolInput.href : undefined;
             const label = typeof toolInput.label === 'string' ? toolInput.label : 'Go there';
-            if (href) suggestedNavigation = { href, label };
+            const batchCompanies = Array.isArray(toolInput.batchCompanies)
+              ? (toolInput.batchCompanies as { id: string; name: string; icpId?: string | null }[])
+              : undefined;
+            if (href) suggestedNavigation = { href, label, ...(batchCompanies ? { batchCompanies } : {}) };
             result = JSON.stringify({ success: true });
             break;
           }
@@ -946,12 +1165,15 @@ async function runAgentLoop(
     messages: anthropicMessages,
   });
 
-  const finalText = finalResponse.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-    .map((b) => b.text)
-    .join('');
+  const finalText = [
+    spilloverText,
+    finalResponse.content
+      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+      .map((b) => b.text)
+      .join(''),
+  ].filter(Boolean).join(' ');
 
-  return { message: finalText, toolsUsed, tableFilter, tableAccounts, leadsFilter, tableLeads, suggestedNavigation };
+  return { message: finalText, toolsUsed, tableFilter, tableAccounts, leadsFilter, tableLeads, suggestedNavigation, pendingJobStart };
 }
 
 // ─── Route handler ─────────────────────────────────────────────────────────────
@@ -971,12 +1193,14 @@ export async function POST(request: Request) {
     const body = await request.json();
     const messages: ChatMessage[] = Array.isArray(body.messages) ? body.messages : [];
     const page: Page = body.page ?? 'accounts';
+    const pageContext: PageContext | undefined =
+      body.pageContext && typeof body.pageContext === 'object' ? body.pageContext : undefined;
 
     if (messages.length === 0) {
       return NextResponse.json({ error: 'messages array is required' }, { status: 400 });
     }
 
-    const result = await runAgentLoop(supabase, user.id, page, messages);
+    const result = await runAgentLoop(supabase, user.id, page, messages, pageContext);
 
     return NextResponse.json(result satisfies ChatResponse);
   } catch (err) {

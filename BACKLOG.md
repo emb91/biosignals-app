@@ -3,12 +3,15 @@
 ## Product briefing — for agents
 
 ### What Arcova is
+
 Arcova is a **biotech-specific data sourcing and intelligence layer**. It is not a CRM, not a sequencing tool, and not a workflow product. It sits behind the tools CROs already use (HubSpot, LinkedIn Sales Nav) and makes their data smarter.
 
 ### The customer
+
 CROs at early-stage biotech companies. They typically have HubSpot with ZoomInfo data, but their contacts are stale, their TAM/SAM coverage is incomplete, and they have no systematic prioritisation process. Their current workflow: open HubSpot, pick accounts by gut feel, go to Sales Nav, find people, send emails. No signal awareness, no fit scoring, entirely manual.
 
 ### The core insight from customer research
+
 CROs think they have a data problem solved because they have thousands of contacts in HubSpot. What they actually have is stale contact details, poor TAM/SAM coverage, and no fit context. The pain they articulate is "I don't know who to reach out to." The real pain is "I don't have good enough data."
 
 ### The four value layers — in build order
@@ -26,18 +29,21 @@ Find net-new contacts at good-fit companies the user already knows, and net-new 
 Third-party public signals (job postings, funding announcements, clinical trial registrations, LinkedIn activity, FDA approvals, conference presentations). Signals are **triggers**, not ranking inputs. Fit gets the shortlist, signals tell you when to act and what to say. Signal strength hierarchy: pricing/demo intent (strong) → webinar/content engagement (medium) → LinkedIn activity (weak). Biotech-specific signals (CMC hires, phase transitions, IND filings) are the moat — meaningless to generic tools, highly relevant to biotech BD.
 
 ### The product sequence
+
 1. **HubSpot sync** — closes the data quality loop, delivers the enriched/scored data where the CRO works
 2. **Monitoring infrastructure** — built on top of sync, watches for changes that trigger re-enrichment
 3. **Signals** — built on top of monitoring infrastructure
 4. **Coverage / new data** — the upsell once the base is sticky
 
 ### What Arcova is not trying to be
+
 - Not replacing HubSpot or Sales Nav
 - Not a first-party signal tracker (email opens, website visits — those stay in HubSpot)
 - Not a sequencing or outreach tool
 - Not a place people live day-to-day long-term — the UI is a configuration and review surface; the value is delivered into HubSpot
 
 ### The moat
+
 Biotech-specific ICP modelling, taxonomy (therapeutic areas, modalities, development stages), and signal awareness. Generic tools cannot replicate this without domain knowledge baked into the scoring and enrichment pipeline.
 
 ---
@@ -61,6 +67,7 @@ Arcova is a **data enrichment and intelligence layer that sits behind HubSpot**,
 The workflow Arcova replaces: open HubSpot → pick some accounts by gut feel → go to Sales Nav → find people → send emails. No prioritisation, no signal awareness, entirely manual.
 
 The Arcova loop:
+
 1. Sync contacts from HubSpot
 2. Enrich and score against ICP (fit score)
 3. Monitor public signals on high-fit accounts (trigger layer)
@@ -69,6 +76,7 @@ The Arcova loop:
 6. Backward: push enriched data + fit scores back to HubSpot as custom fields (never overwriting native fields)
 
 **Key decisions:**
+
 - Arcova owns fit score and signals. HubSpot owns contact identity. No field conflicts.
 - Multiple email fields: HubSpot native email untouched, Arcova verified email as a custom property. Only surfaced if meaningfully different.
 - Leads view is a monitoring/review surface, not an action surface. Action happens in LinkedIn and HubSpot.
@@ -78,16 +86,19 @@ The Arcova loop:
 ## HubSpot integration
 
 **Sync architecture:**
+
 - **Primary:** HubSpot webhooks — register a webhook URL, HubSpot POSTs on contact create/update. Simple to implement (one API route, signature verification, idempotent processing). Not as much infrastructure as it sounds.
 - **Safety net:** nightly pull using `lastmodifieddate` filter to catch anything missed by webhooks.
 - New contacts added to HubSpot overnight are picked up automatically via webhook or next nightly pull.
 
 **Enrichment cadence:**
+
 - **Nightly:** signal scrape on high-fit accounts
 - **Monthly:** full re-enrichment of contact details
 - **Triggered:** immediate re-enrichment when a signal like a job change is detected (job change = contact details likely stale)
 
 **Push back to HubSpot:**
+
 - Arcova fit score, signal alerts, talking points written as custom HubSpot properties
 - Never touch HubSpot native fields
 - Additive layer only — CRO sees Arcova fields alongside existing data in HubSpot
@@ -132,3 +143,24 @@ The Arcova loop:
 - Add visible progress cues such as "Step 1 of 4", "Step 2 of 4", and so on, so the user knows where they are and how much setup is left.
 - Keep the layout more minimal during onboarding so the user is not distracted by empty states, advanced functionality, or unfinished areas of the product.
 - Reintroduce the broader navigation only after the user has completed the key setup flow.
+
+## Data acquisition — target counts and tolerances
+
+User expectation and contracts should **not** treat requested volumes as exact guarantees. Market size, source coverage, and ICP strictness all cap what is achievable.
+
+**Principles**
+
+- Communicate a **target**, not a promise (e.g. “aim for ~1,000 companies,” not “deliver 1,000”).
+- Define a **tolerance band** that scales with batch size: e.g. an absolute band for small batches (such as ±50) and a **percent band** for large batches (e.g. 2–5% of target), using whichever framing is clearest in the UI.
+- **Bias toward under-delivery** versus over-delivery relative to the stated target: overshooting what the user hoped for is worse for trust and usage than a shortfall that still lands inside the stated band.
+- **Zero is a valid outcome** when criteria are too narrow or external supply is exhausted. Copy should explain why (criteria, screening budget, source pool) instead of accepting low-quality rows just to hit a number.
+
+**Engineering alignment (when we implement)**
+
+- Treat user-entered `target_company_count` (and analogous contact targets) as a **ceiling**: stop once reached; do not keep sourcing “extras” unless the user explicitly opts in.
+- If the runner stops early, surface **requested vs delivered** and the reason (supply exhausted, screening cap, low qualification rate).
+- Optional: derive tolerance rules in code (e.g. `max(floor(target * pct), minAbsoluteDelta)`) so small jobs get sensible messaging, not noisy percentages.
+
+**Testing note**
+
+- During end-to-end testing, validate messaging and metrics when delivered count is below target, within band, and zero.

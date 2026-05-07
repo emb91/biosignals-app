@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
+import { createAdminClient } from '@/lib/supabase-admin';
 import { nango, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
 import {
   ensureArcovaHubSpotProperties,
@@ -43,8 +44,9 @@ export async function POST() {
     return NextResponse.json({ error: 'Failed to get HubSpot token' }, { status: 400 });
   }
 
-  // Fetch ALL leads — including those without email so we can report skipped
-  const { data: leads, error: leadsError } = await supabase
+  // Fetch ALL leads — use admin client to bypass RLS on the companies join
+  const admin = createAdminClient();
+  const { data: leads, error: leadsError } = await admin
     .from('contacts')
     .select(`
       id, email, first_name, last_name, job_title, seniority_level, business_area,
@@ -60,7 +62,8 @@ export async function POST() {
     .eq('user_id', user.id);
 
   if (leadsError) {
-    return NextResponse.json({ error: 'Failed to fetch leads' }, { status: 500 });
+    console.error('HubSpot push — failed to fetch leads:', leadsError);
+    return NextResponse.json({ error: 'Failed to fetch leads', detail: leadsError.message }, { status: 500 });
   }
 
   if (!leads?.length) {
@@ -179,7 +182,13 @@ export async function POST() {
     ? await batchUpdateCompanies(accessToken, companyUpdates)
     : { updated: 0, errors: 0 };
 
-  // Persist sync log
+  const { data: existingLog } = await supabase
+    .from('hubspot_sync_log')
+    .select('auto_pull_at, auto_pull_count')
+    .eq('user_id', user.id)
+    .maybeSingle();
+
+  // Persist sync log (keep last pull stats from daily cron when push runs alone)
   await supabase.from('hubspot_sync_log').upsert({
     user_id: user.id,
     synced_at: new Date().toISOString(),
@@ -187,6 +196,8 @@ export async function POST() {
     contacts_errors: contactResult.errors,
     contacts_skipped: skippedContacts.length,
     skipped_contacts: skippedContacts,
+    auto_pull_at: existingLog?.auto_pull_at ?? null,
+    auto_pull_count: existingLog?.auto_pull_count ?? null,
   }, { onConflict: 'user_id' });
 
   return NextResponse.json({
