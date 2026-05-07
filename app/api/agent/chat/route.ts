@@ -86,7 +86,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'get_import_history',
     description:
-      'Get the history of data imports: recent CSV upload batches and the last HubSpot sync. Call this when the user asks about when data was last synced, what was imported, import counts, HubSpot sync status, or anything about where their contacts came from.',
+      'Get recent upload_batches (CSV and HubSpot pull batches) and the last HubSpot CRM sync log. IMPORTANT: sync log "contacts pushed to HubSpot" is OUTBOUND (Arcova enrichment written to HubSpot). It is NOT how many contacts arrived FROM HubSpot. Inbound contacts from HubSpot use auto_pull_count / hubspot_contacts_pulled count and batches whose filename suggests HubSpot (e.g. hubspot-auto-, hubspot-sync-). For "where did my contacts come from", combine upload batch filenames with contact source in other tools if needed.',
     input_schema: {
       type: 'object' as const,
       properties: {},
@@ -413,7 +413,7 @@ function buildSystemPrompt(page: Page, context?: PageContext): string {
     dashboard: `You are on the Dashboard page. This shows a high-level overview of the workspace: coverage stats, top accounts, recent signal events, and ICP performance.`,
     health: `You are on the Health page. This shows ICP coverage health: where the workspace has enough companies, where contact fit is weak, and where account depth is thin.`,
     signals: `You are on the Signals page. This shows recent signal events for companies and contacts — things like job changes, funding rounds, new hires, or other triggers that indicate buying intent.`,
-    imports: `You are on the Imports page. This shows the history of contact data imports — CSV uploads and HubSpot syncs. The user can see what data came in and when.`,
+    imports: `You are on the Imports page. This shows upload batch history (CSV uploads and any HubSpot pull batches) plus a HubSpot sync summary. HubSpot sync logs two directions: contacts pulled FROM HubSpot into Arcova as new import rows, and enriched contacts pushed FROM Arcova TO HubSpot. When the user asks how many contacts came from HubSpot, use inbound pull counts and HubSpot-named batches, not the push count.`,
     data: `You are on the Data page. You help the user start data acquisition jobs conversationally. Jobs available: (1) find more companies for an ICP, (2) source contacts at a specific account, (3) source contacts across a batch of accounts. Your goal is to understand what the user wants, ask one clarifying question (how many?), get confirmation, then call start_acquisition_job. Keep the conversation to 2–3 turns maximum.`,
   };
 
@@ -830,7 +830,7 @@ async function toolGetImportHistory(
       .select('filename, total_rows, processed_rows, duplicate_rows, failed_rows, status, created_at')
       .eq('user_id', userId)
       .order('created_at', { ascending: false })
-      .limit(5),
+      .limit(25),
     supabase
       .from('hubspot_sync_log')
       .select(
@@ -842,26 +842,49 @@ async function toolGetImportHistory(
       .maybeSingle(),
   ]);
 
+  const batches = batchesResult.data ?? [];
+  const isHubspotSourcedFilename = (name: string | null) =>
+    /\bhubspot/i.test(String(name ?? ''));
+
+  const batchRow = (b: {
+    filename: string;
+    total_rows: number | null;
+    processed_rows: number | null;
+    duplicate_rows: number | null;
+    failed_rows: number | null;
+    status: string;
+    created_at: string;
+  }) => ({
+    filename: b.filename,
+    status: b.status,
+    total_rows: b.total_rows,
+    processed_rows: b.processed_rows,
+    duplicate_rows: b.duplicate_rows,
+    failed_rows: b.failed_rows,
+    imported_at: b.created_at,
+    likely_hubspot_pull_batch: isHubspotSourcedFilename(b.filename),
+  });
+
+  const sync = syncLogResult.data;
+
   return JSON.stringify({
-    hubspot_last_sync: syncLogResult.data
+    hubspot_sync_last_job: sync
       ? {
-          synced_at: syncLogResult.data.synced_at,
-          contacts_synced: syncLogResult.data.contacts_synced,
-          contacts_errors: syncLogResult.data.contacts_errors,
-          contacts_skipped: syncLogResult.data.contacts_skipped,
-          auto_pull_at: syncLogResult.data.auto_pull_at,
-          auto_pull_count: syncLogResult.data.auto_pull_count,
+          completed_at: sync.synced_at,
+          outbound_arcova_contacts_written_to_hubspot: sync.contacts_synced,
+          outbound_push_errors: sync.contacts_errors,
+          outbound_push_skipped: sync.contacts_skipped,
+          inbound_hubspot_contacts_queued_for_enrichment: sync.auto_pull_count,
+          inbound_pull_recorded_at: sync.auto_pull_at,
         }
       : null,
-    csv_imports: (batchesResult.data ?? []).map((b) => ({
-      filename: b.filename,
-      status: b.status,
-      total_rows: b.total_rows,
-      processed_rows: b.processed_rows,
-      duplicate_rows: b.duplicate_rows,
-      failed_rows: b.failed_rows,
-      imported_at: b.created_at,
-    })),
+    recent_upload_batches: batches.map(batchRow),
+    batches_that_look_like_hubspot_pulls: batches.filter((b) => isHubspotSourcedFilename(b.filename)).map(batchRow),
+    _never_confuse: [
+      'outbound_arcova_contacts_written_to_hubspot counts enrichment synced TO HubSpot.',
+      'inbound_hubspot_contacts_queued_for_enrichment counts new contacts pulled FROM HubSpot into Arcova on the last job.',
+      'If inbound is 0 and batches_that_look_like_hubspot_pulls is empty, say no HubSpot-sourced import batches appear in recent history; outbound push may still be non-zero.',
+    ],
   });
 }
 

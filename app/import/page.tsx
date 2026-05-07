@@ -958,10 +958,14 @@ export default function ImportPage() {
                               {formatSyncDateTime(hubspotSyncLog.synced_at)}
                             </p>
                             <p>
-                              Pulled {(hubspotSyncLog.auto_pull_count ?? 0).toLocaleString()} contact
-                              {(hubspotSyncLog.auto_pull_count ?? 0) !== 1 ? 's' : ''} from HubSpot for enrichment. Pushed{' '}
-                              {(hubspotSyncLog.contacts_synced ?? 0).toLocaleString()} enriched contact
-                              {(hubspotSyncLog.contacts_synced ?? 0) !== 1 ? 's' : ''} to HubSpot.
+                              <span className="font-medium text-gray-800">Into Arcova from HubSpot</span> (last job):{' '}
+                              {(hubspotSyncLog.auto_pull_count ?? 0).toLocaleString()} contact
+                              {(hubspotSyncLog.auto_pull_count ?? 0) !== 1 ? 's' : ''} queued for enrichment.
+                            </p>
+                            <p>
+                              <span className="font-medium text-gray-800">Into HubSpot from Arcova</span> (enrichment push):{' '}
+                              {(hubspotSyncLog.contacts_synced ?? 0).toLocaleString()} contact record
+                              {(hubspotSyncLog.contacts_synced ?? 0) !== 1 ? 's' : ''} written.
                             </p>
                             {((hubspotSyncLog.contacts_errors ?? 0) > 0 ||
                               (hubspotSyncLog.contacts_skipped ?? 0) > 0) && (
@@ -983,9 +987,9 @@ export default function ImportPage() {
                                 )}
                               </p>
                             )}
-                            <p className="text-gray-400 pt-0.5">
-                              While HubSpot is connected, the daily job logs each run here so you can confirm sync is
-                              firing.
+                            <p className="text-gray-500">
+                              Inbound and outbound are different. File uploads (including CSV) are listed under Past
+                              imports.
                             </p>
                           </div>
                         ) : (
