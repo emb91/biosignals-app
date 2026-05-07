@@ -70,6 +70,52 @@ export function estimateDataAcquisitionUsage(params: {
       ? Math.max(0, Math.floor(params.targetContactCount))
       : targetCompanyCount * DEFAULT_CONTACTS_PER_COMPANY;
 
+  if (params.requestType === 'contacts_at_company') {
+    const peopleSearchResultsMin = targetContactCount * DEFAULT_SCREENING_MULTIPLIER_MIN;
+    const peopleSearchResultsMax = targetContactCount * DEFAULT_SCREENING_MULTIPLIER_MAX;
+    const minCredits =
+      peopleSearchResultsMin * CREDIT_WEIGHTS.apollo_people_search_result +
+      targetContactCount * CREDIT_WEIGHTS.apollo_person_enrichment;
+    const maxCredits =
+      peopleSearchResultsMax * CREDIT_WEIGHTS.apollo_people_search_result +
+      targetContactCount * CREDIT_WEIGHTS.apollo_person_enrichment;
+
+    return {
+      screenedCompaniesMin: 0,
+      screenedCompaniesMax: 0,
+      companyEnrichmentsMin: 0,
+      companyEnrichmentsMax: 0,
+      targetContactCount,
+      estimatedMinCreditUnits: Math.round(minCredits * 100) / 100,
+      estimatedMaxCreditUnits: Math.round(maxCredits * 100) / 100,
+    };
+  }
+
+  if (params.requestType === 'better_contacts' || params.requestType === 'more_contacts_at_accounts') {
+    const tc =
+      params.targetContactCount != null
+        ? Math.max(1, Math.floor(params.targetContactCount))
+        : DEFAULT_ACQUISITION_TARGET_COMPANIES;
+    const peopleSearchResultsMin = tc * DEFAULT_SCREENING_MULTIPLIER_MIN;
+    const peopleSearchResultsMax = tc * DEFAULT_SCREENING_MULTIPLIER_MAX;
+    const minCredits =
+      peopleSearchResultsMin * CREDIT_WEIGHTS.apollo_people_search_result +
+      tc * CREDIT_WEIGHTS.apollo_person_enrichment;
+    const maxCredits =
+      peopleSearchResultsMax * CREDIT_WEIGHTS.apollo_people_search_result +
+      tc * CREDIT_WEIGHTS.apollo_person_enrichment;
+
+    return {
+      screenedCompaniesMin: 0,
+      screenedCompaniesMax: 0,
+      companyEnrichmentsMin: 0,
+      companyEnrichmentsMax: 0,
+      targetContactCount: tc,
+      estimatedMinCreditUnits: Math.round(minCredits * 100) / 100,
+      estimatedMaxCreditUnits: Math.round(maxCredits * 100) / 100,
+    };
+  }
+
   const screenedCompaniesMin = targetCompanyCount * DEFAULT_SCREENING_MULTIPLIER_MIN;
   const screenedCompaniesMax = targetCompanyCount * DEFAULT_SCREENING_MULTIPLIER_MAX;
   const companyEnrichmentsMin = Math.ceil(targetCompanyCount * 1.5);

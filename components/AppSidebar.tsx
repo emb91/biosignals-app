@@ -6,12 +6,12 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard,
   Target,
-  Building2,
-  Kanban,
+  Activity,
   Radio,
   FileUp,
   Database,
   Users,
+  Building2,
   Settings,
   User,
   Wrench,
@@ -31,13 +31,16 @@ const setupItems: NavItem[] = [
   { name: 'My ICPs', href: '/company-criteria', icon: Target },
 ];
 
+const leadsItems: NavItem[] = [
+  { name: 'Contacts', href: '/results', icon: Users },
+  { name: 'Accounts', href: '/accounts', icon: Building2 },
+];
+
 const topNavigation: NavItem[] = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Import', href: '/import', icon: FileUp },
+  { name: 'Health', href: '/health', icon: Activity },
   { name: 'Data', href: '/data', icon: Database },
-  { name: 'Leads', href: '/results', icon: Users },
-  { name: 'Accounts', href: '/accounts', icon: Building2 },
-  { name: 'Pipeline', href: '/pipeline', icon: Kanban },
   { name: 'Signals', href: '/customer-signals', icon: Radio },
 ];
 
@@ -46,10 +49,6 @@ const bottomNavigation: NavItem[] = [
 ];
 
 interface AppSidebarProps {
-  /**
-   * When true, hide the rest of the app nav and show setup as a single focus state
-   * (no links to profile / companies / teams so first-time users stay in the guided flow).
-   */
   setupFlowOnly?: boolean;
 }
 
@@ -57,7 +56,6 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
   const pathname = usePathname();
   const { guardedNavigate } = useEnrichmentGuard();
   const [showCompaniesDot, setShowCompaniesDot] = useState(false);
-
   const [showMyProfileDot, setShowMyProfileDot] = useState(false);
   const [showImportDot, setShowImportDot] = useState(false);
 
@@ -67,8 +65,15 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
     return pathname.startsWith(`${href}/`);
   };
 
+  const leadsActive = leadsItems.some((item) => isActive(item.href));
   const setupActive = setupItems.some((item) => isActive(item.href));
+
+  const [leadsOpen, setLeadsOpen] = useState(leadsActive);
   const [setupOpen, setSetupOpen] = useState(setupActive);
+
+  useEffect(() => {
+    if (leadsActive) setLeadsOpen(true);
+  }, [leadsActive]);
 
   useEffect(() => {
     if (setupActive) setSetupOpen(true);
@@ -83,29 +88,22 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
           fetch('/api/import-ready'),
         ]);
 
-        let companiesEmpty = true;
-
         if (companiesRes.ok) {
-          const companiesResult = await companiesRes.json();
-          const companies = companiesResult.data || [];
-          companiesEmpty = companies.length === 0;
-          setShowCompaniesDot(companiesEmpty);
+          const result = await companiesRes.json();
+          setShowCompaniesDot((result.data || []).length === 0);
         }
 
         if (profileRes.ok) {
-          const profileResult = await profileRes.json();
-          const profile = profileResult.data;
-          const hasCompletedProfile = Boolean(
-            profile &&
-            typeof profile.company_name === 'string' &&
-            profile.company_name.trim()
+          const result = await profileRes.json();
+          const profile = result.data;
+          setShowMyProfileDot(
+            !(profile && typeof profile.company_name === 'string' && profile.company_name.trim())
           );
-          setShowMyProfileDot(!hasCompletedProfile);
         }
 
         if (importRes.ok) {
-          const importResult = await importRes.json();
-          setShowImportDot(Boolean(importResult.ready));
+          const result = await importRes.json();
+          setShowImportDot(Boolean(result.ready));
         }
       } catch (error) {
         console.error('Error loading sidebar completion status:', error);
@@ -118,9 +116,6 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
   const setupDotVisible = showCompaniesDot || showMyProfileDot;
 
   const shouldShowDot = (itemName: string) => {
-    if (itemName === 'Companies') return showCompaniesDot;
-
-    if (itemName === 'My company') return showMyProfileDot;
     if (itemName === 'Import') return showImportDot;
     return false;
   };
@@ -131,10 +126,10 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
         type="button"
         onClick={() => guardedNavigate(item.href)}
         className={cn(
-          "w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors text-left",
+          'w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors text-left',
           isActive(item.href)
-            ? "bg-arcova-teal text-white"
-            : "text-white hover:bg-arcova-mint/20 hover:text-white"
+            ? 'bg-arcova-teal text-white'
+            : 'text-white hover:bg-arcova-mint/20 hover:text-white',
         )}
       >
         <div className="relative">
@@ -145,6 +140,54 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
         </div>
         <span>{item.name}</span>
       </button>
+    </div>
+  );
+
+  const renderAccordion = ({
+    label,
+    icon: Icon,
+    items,
+    open,
+    onToggle,
+    active,
+    dotVisible,
+  }: {
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+    items: NavItem[];
+    open: boolean;
+    onToggle: () => void;
+    active: boolean;
+    dotVisible?: boolean;
+  }) => (
+    <div>
+      <button
+        type="button"
+        onClick={onToggle}
+        className={cn(
+          'w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+          active ? 'bg-arcova-teal text-white' : 'text-white hover:bg-arcova-mint/20',
+        )}
+      >
+        <div className="flex items-center space-x-3">
+          <div className="relative">
+            <Icon className="w-5 h-5" />
+            {dotVisible && !open && (
+              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-[#EF4444] shadow-[0_0_8px_#EF4444]" />
+            )}
+          </div>
+          <span>{label}</span>
+        </div>
+        <ChevronDown
+          className={cn('w-4 h-4 transition-transform duration-200', open && 'rotate-180')}
+        />
+      </button>
+
+      {open && (
+        <div className="mt-1 ml-4 space-y-1 border-l border-arcova-mint/20 pl-3">
+          {items.map(renderNavItem)}
+        </div>
+      )}
     </div>
   );
 
@@ -181,40 +224,43 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
             </div>
           ) : (
             <>
-              {topNavigation.map(renderNavItem)}
+              {/* Dashboard */}
+              {renderNavItem({ name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard })}
 
-              <div>
-                <button
-                  type="button"
-                  onClick={() => setSetupOpen((o) => !o)}
-                  className={cn(
-                    'w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-colors',
-                    setupActive
-                      ? 'bg-arcova-teal text-white'
-                      : 'text-white hover:bg-arcova-mint/20'
-                  )}
-                >
-                  <div className="flex items-center space-x-3">
-                    <div className="relative">
-                      <Wrench className="w-5 h-5" />
-                      {setupDotVisible && !setupOpen && (
-                        <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-[#EF4444] shadow-[0_0_8px_#EF4444]" />
-                      )}
-                    </div>
-                    <span>Setup</span>
-                  </div>
-                  <ChevronDown
-                    className={cn('w-4 h-4 transition-transform duration-200', setupOpen && 'rotate-180')}
-                  />
-                </button>
+              {/* Import */}
+              {renderNavItem({ name: 'Import', href: '/import', icon: FileUp })}
 
-                {setupOpen && (
-                  <div className="mt-1 ml-4 space-y-1 border-l border-arcova-mint/20 pl-3">
-                    {setupItems.map(renderNavItem)}
-                  </div>
-                )}
-              </div>
+              {/* Leads (Contacts + Accounts) */}
+              {renderAccordion({
+                label: 'Leads',
+                icon: Users,
+                items: leadsItems,
+                open: leadsOpen,
+                onToggle: () => setLeadsOpen((o) => !o),
+                active: leadsActive && !leadsOpen,
+              })}
 
+              {/* Health (formerly Pipeline) */}
+              {renderNavItem({ name: 'Health', href: '/health', icon: Activity })}
+
+              {/* Data */}
+              {renderNavItem({ name: 'Data', href: '/data', icon: Database })}
+
+              {/* Signals */}
+              {renderNavItem({ name: 'Signals', href: '/customer-signals', icon: Radio })}
+
+              {/* Setup */}
+              {renderAccordion({
+                label: 'Setup',
+                icon: Wrench,
+                items: setupItems,
+                open: setupOpen,
+                onToggle: () => setSetupOpen((o) => !o),
+                active: setupActive && !setupOpen,
+                dotVisible: setupDotVisible,
+              })}
+
+              {/* Settings */}
               {bottomNavigation.map(renderNavItem)}
             </>
           )}

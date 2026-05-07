@@ -13,8 +13,6 @@ import { TypewriterQueryBuilder, CompanyTypewriter } from "@/components/Typewrit
 import { SearchAnimation } from "@/components/SearchAnimation"
 import { StaticMobileSearch } from "@/components/StaticMobileSearch"
 import { SignalsTimeline } from "@/components/SignalsTimeline"
-import { BeamsBackground } from "@/components/BeamsBackground"
-import { ElegantShape } from "@/components/ElegantShape"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useState, useEffect } from "react"
 

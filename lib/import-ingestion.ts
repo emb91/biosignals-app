@@ -32,6 +32,7 @@ export type EnrichedImportRecord = {
   company_employee_range?: string;
   company_founded_year?: number;
   company_hq_city?: string;
+  company_hq_state?: string;
   company_hq_country?: string;
   company_funding_stage?: string;
   company_total_funding_usd?: number;
@@ -128,6 +129,7 @@ type ExistingCompany = {
   employee_range: string | null;
   founded_year: number | string | null;
   headquarters_city: string | null;
+  headquarters_state: string | null;
   headquarters_country: string | null;
   therapeutic_areas: string[] | null;
   modalities: string[] | null;
@@ -192,7 +194,7 @@ async function upsertCompany(
   const existing = await supabase
     .from('companies')
     .select(
-      'id, company_name, linkedin_url, description, industry, sub_industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_country, therapeutic_areas, modalities, clinical_stage, source'
+      'id, company_name, linkedin_url, description, industry, sub_industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_state, headquarters_country, therapeutic_areas, modalities, clinical_stage, source'
     )
     .eq('user_id', userId)
     .eq('domain', domain)
@@ -221,6 +223,7 @@ async function upsertCompany(
     )[0] ?? null,
     founded_year: pickCanonicalNumber(record.company_founded_year, existingCompany?.founded_year),
     headquarters_city: pickCanonicalString(record.company_hq_city, existingCompany?.headquarters_city),
+    headquarters_state: pickCanonicalString(record.company_hq_state, existingCompany?.headquarters_state),
     headquarters_country: pickCanonicalString(
       record.company_hq_country,
       existingCompany?.headquarters_country

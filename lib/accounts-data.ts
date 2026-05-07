@@ -80,6 +80,7 @@ export interface QueryAccount {
   employee_count: number | null;
   employee_range: string | null;
   headquarters_city: string | null;
+  headquarters_state: string | null;
   headquarters_country: string | null;
   total_funding_usd: number | null;
   latest_funding_date: string | null;
@@ -94,6 +95,8 @@ export interface QueryAccount {
   best_contact_fit: number | null;
   worst_contact_fit: number | null;
   avg_contact_fit: number | null;
+  /** Max `contacts.intent_score` for this company among linked contacts; drives Reach out vs Monitor at account level. */
+  max_contact_intent_score: number | null;
   data_provenance_type: string;
   data_provenance_imported_at: string | null;
 }
@@ -131,6 +134,7 @@ type CompanyAggRow = {
   employee_count: number | null;
   employee_range: string | null;
   headquarters_city: string | null;
+  headquarters_state: string | null;
   headquarters_country: string | null;
   founded_year: number | null;
   specialties: string[] | null;
@@ -146,6 +150,7 @@ type ScratchAgg = CompanyAggRow & {
   fit_n: number;
   best_contact_fit: number | null;
   worst_contact_fit: number | null;
+  max_contact_intent_score: number | null;
   provenance_channels: Set<DataProvenanceChannel>;
   provenance_earliest_import_at: string | null;
 };
@@ -162,6 +167,11 @@ export function normalizeScore01(value: number | null | undefined): number | nul
   if (n > 1 && n <= 100) return n / 100;
   if (n >= 0 && n <= 1) return n;
   return null;
+}
+
+function maxPositiveIntent(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return null;
+  return value;
 }
 
 export function getCoverageStatus(account: QueryAccount): 'opportunity' | 'covered' | 'weak' | null {
@@ -196,6 +206,7 @@ function finalizeScratch(row: ScratchAgg): QueryAccount {
     employee_count: row.employee_count,
     employee_range: row.employee_range,
     headquarters_city: row.headquarters_city,
+    headquarters_state: row.headquarters_state,
     headquarters_country: row.headquarters_country,
     total_funding_usd: row.total_funding_usd,
     latest_funding_date: row.latest_funding_date,
@@ -210,6 +221,7 @@ function finalizeScratch(row: ScratchAgg): QueryAccount {
     best_contact_fit: row.best_contact_fit,
     worst_contact_fit: row.worst_contact_fit,
     avg_contact_fit: row.fit_n > 0 ? row.fit_sum / row.fit_n : null,
+    max_contact_intent_score: row.max_contact_intent_score,
     data_provenance_type: formatDataProvenanceTypeOnly([...row.provenance_channels]),
     data_provenance_imported_at: row.provenance_earliest_import_at,
   };
@@ -228,6 +240,7 @@ export async function fetchAggregatedAccounts(
       `
       company_id,
       contact_fit_score,
+      intent_score,
       created_at,
       source,
       upload_batches (
@@ -254,6 +267,7 @@ export async function fetchAggregatedAccounts(
         employee_count,
         employee_range,
         headquarters_city,
+        headquarters_state,
         headquarters_country,
         total_funding_usd,
         latest_funding_date,
@@ -296,6 +310,7 @@ export async function fetchAggregatedAccounts(
         fit_n: contactFit == null ? 0 : 1,
         best_contact_fit: contactFit,
         worst_contact_fit: contactFit,
+        max_contact_intent_score: maxPositiveIntent(row.intent_score),
         provenance_channels: new Set(prov.channels),
         provenance_earliest_import_at: prov.importedAt,
       });
@@ -315,6 +330,13 @@ export async function fetchAggregatedAccounts(
           existing.best_contact_fit == null ? contactFit : Math.max(existing.best_contact_fit, contactFit);
         existing.worst_contact_fit =
           existing.worst_contact_fit == null ? contactFit : Math.min(existing.worst_contact_fit, contactFit);
+      }
+      const rowIntent = maxPositiveIntent(row.intent_score);
+      if (rowIntent != null) {
+        existing.max_contact_intent_score =
+          existing.max_contact_intent_score == null
+            ? rowIntent
+            : Math.max(existing.max_contact_intent_score, rowIntent);
       }
     }
   }
@@ -389,7 +411,7 @@ export function applyServerSideFilters(accounts: QueryAccount[], filters: Accoun
     if (!listIncludesAny(account.development_stages, filters.developmentStages)) return false;
     if (!includesAny(account.employee_range, filters.employeeRanges)) return false;
     if (filters.locations && filters.locations.length > 0) {
-      const loc = [account.headquarters_city, account.headquarters_country].filter(Boolean).join(' ');
+      const loc = [account.headquarters_city, account.headquarters_state, account.headquarters_country].filter(Boolean).join(' ');
       if (!includesAny(loc, filters.locations)) return false;
     }
     if (filters.icpSearch) {

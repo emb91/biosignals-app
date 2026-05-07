@@ -44,6 +44,7 @@ type AggregatedAccount = CompanyAggRow & {
   best_contact_fit: number | null;
   worst_contact_fit: number | null;
   avg_contact_fit: number | null;
+  max_contact_intent_score: number | null;
   data_provenance_type: string;
   data_provenance_imported_at: string | null;
 };
@@ -54,6 +55,7 @@ type ScratchAgg = CompanyAggRow & {
   fit_n: number;
   best_contact_fit: number | null;
   worst_contact_fit: number | null;
+  max_contact_intent_score: number | null;
   provenance_channels: Set<DataProvenanceChannel>;
   provenance_earliest_import_at: string | null;
 };
@@ -67,6 +69,11 @@ function normalizeScore01(value: number | null | undefined): number | null {
   if (value > 1 && value <= 100) return value / 100;
   if (value >= 0 && value <= 1) return value;
   return null;
+}
+
+function maxPositiveIntent(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return null;
+  return value;
 }
 
 function parseThreshold(raw: string | null, fallback: number): number {
@@ -110,6 +117,7 @@ function finalizeScratch(row: ScratchAgg): AggregatedAccount {
     best_contact_fit: row.best_contact_fit,
     worst_contact_fit: row.worst_contact_fit,
     avg_contact_fit: row.fit_n > 0 ? row.fit_sum / row.fit_n : null,
+    max_contact_intent_score: row.max_contact_intent_score,
     data_provenance_type: formatDataProvenanceTypeOnly([...row.provenance_channels]),
     data_provenance_imported_at: row.provenance_earliest_import_at,
   };
@@ -150,6 +158,7 @@ export async function GET(request: Request) {
         `
         company_id,
         contact_fit_score,
+        intent_score,
         created_at,
         source,
         upload_batches (
@@ -223,6 +232,7 @@ export async function GET(request: Request) {
           fit_n: contactFit == null ? 0 : 1,
           best_contact_fit: contactFit,
           worst_contact_fit: contactFit,
+          max_contact_intent_score: maxPositiveIntent(row.intent_score),
           provenance_channels: new Set(prov.channels),
           provenance_earliest_import_at: prov.importedAt,
         });
@@ -246,6 +256,13 @@ export async function GET(request: Request) {
             existing.worst_contact_fit == null
               ? contactFit
               : Math.min(existing.worst_contact_fit, contactFit);
+        }
+        const rowIntent = maxPositiveIntent(row.intent_score);
+        if (rowIntent != null) {
+          existing.max_contact_intent_score =
+            existing.max_contact_intent_score == null
+              ? rowIntent
+              : Math.max(existing.max_contact_intent_score, rowIntent);
         }
       }
     }

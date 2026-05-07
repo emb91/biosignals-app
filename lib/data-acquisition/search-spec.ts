@@ -133,3 +133,31 @@ export function buildApolloPeopleSearchRecipe(personas: AcquisitionPersona[]): A
     seniorities,
   };
 }
+
+/** Lowercased keyword tokens from ICP-derived Apollo recipes, used to pre-filter org search results. */
+export function icpKeywordCorpus(icp: AcquisitionIcp): string[] {
+  const recipes = buildApolloCompanySearchRecipes(icp, 'expand_companies');
+  const tokens = new Set<string>();
+  for (const recipe of recipes) {
+    for (const keyword of recipe.keywords) {
+      const token = keyword.trim().toLowerCase();
+      if (token.length >= 2) tokens.add(token);
+    }
+  }
+  return [...tokens];
+}
+
+export function apolloOrganizationMatchesIcpKeywords(
+  org: { name?: string | null; short_description?: string | null; industry?: string | null },
+  keywords: string[],
+): boolean {
+  if (keywords.length === 0) return true;
+  const haystack = [org.name, org.short_description, org.industry]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  return keywords.some((keyword) => {
+    const k = keyword.trim().toLowerCase();
+    return k.length >= 2 && haystack.includes(k);
+  });
+}

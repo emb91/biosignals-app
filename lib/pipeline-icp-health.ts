@@ -15,11 +15,18 @@ export const COVERAGE_AMBER_MAX = 9;
 export const FIT_RED_BELOW = 0.4;
 export const FIT_GREEN_ABOVE = 0.7;
 
+/** Average company fit below this is a coverage gap regardless of company count. */
+export const COMPANY_FIT_GAP_BELOW = 0.6;
+
 /** Average contacts per company. */
 export const DEPTH_RED_BELOW = 1.5;
 export const DEPTH_GREEN_ABOVE = 3;
 
-export type PipelineDataRequestType = 'expand_companies' | 'better_contacts' | 'more_contacts_at_accounts';
+export type PipelineDataRequestType =
+  | 'expand_companies'
+  | 'better_contacts'
+  | 'more_contacts_at_accounts'
+  | 'contacts_at_company';
 
 export function normalizeFitScore01(value: number | null | undefined): number | null {
   if (value == null || !Number.isFinite(value)) return null;

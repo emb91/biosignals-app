@@ -8,7 +8,6 @@ import {
   depthHealth,
   normalizeFitScore01,
   overallHealth,
-  type HealthDim,
 } from '@/lib/pipeline-icp-health';
 
 export async function GET() {
@@ -36,7 +35,7 @@ export async function GET() {
 
     const { data: companyRows, error: coErr } = await supabase
       .from('companies')
-      .select('id, matched_icp_id')
+      .select('id, matched_icp_id, company_fit_score')
       .eq('user_id', user.id);
 
     if (coErr) {
@@ -90,9 +89,26 @@ export async function GET() {
       if (fit != null) agg.fitValues.push(fit);
     }
 
+    const companyFitById = new Map<string, number | null>();
+    for (const row of companyRows || []) {
+      const id = row.id as string;
+      const raw = row.company_fit_score as number | null | undefined;
+      companyFitById.set(id, normalizeFitScore01(typeof raw === 'number' ? raw : null));
+    }
+
     const cards = orderedIcps.map((icp) => {
       const companyIds = [...(companiesByIcp.get(icp.id) ?? [])];
       const company_count = companyIds.length;
+
+      const companyFitSamples: number[] = [];
+      for (const cid of companyIds) {
+        const f = companyFitById.get(cid);
+        if (f != null) companyFitSamples.push(f);
+      }
+      const avg_company_fit =
+        companyFitSamples.length > 0
+          ? companyFitSamples.reduce((s, v) => s + v, 0) / companyFitSamples.length
+          : null;
 
       const fitSamples: number[] = [];
       let contactTotal = 0;
@@ -119,6 +135,8 @@ export async function GET() {
         icp_index: indexById.get(icp.id) ?? 0,
         label: labelFor(icp.id),
         company_count,
+        avg_company_fit,
+        contact_count: contactTotal,
         avg_contact_fit,
         avg_contacts_per_company,
         thin_data: company_count < PIPELINE_MIN_COMPANIES_FOR_ASSESSMENT,
