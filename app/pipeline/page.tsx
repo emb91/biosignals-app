@@ -4,7 +4,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
-import { toast } from 'sonner';
+import { AgentPanel } from '@/components/AgentPanel';
 import { Building2, Kanban, Loader2, Plus, Users, ArrowRight } from 'lucide-react';
 import {
   healthLabel,
@@ -121,7 +121,6 @@ export default function PipelinePage() {
   const router = useRouter();
   const [cards, setCards] = useState<IcpPipelineCard[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [requesting, setRequesting] = useState<string | null>(null);
 
   const loadCards = useCallback(async () => {
     setLoadError(null);
@@ -142,30 +141,15 @@ export default function PipelinePage() {
     if (user) void loadCards();
   }, [user, loadCards]);
 
-  const submitDataRequest = async (icpId: string, requestType: PipelineDataRequestType) => {
-    const key = `${icpId}:${requestType}`;
-    setRequesting(key);
-    try {
-      const res = await fetch('/api/pipeline/data-request', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ icpId, requestType }),
-      });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(typeof payload.error === 'string' ? payload.error : 'Request failed');
-      }
-      toast.success('Data request recorded. Open Import to follow the new Arcova-sourced batch.', {
-        action: {
-          label: 'Open Import',
-          onClick: () => router.push('/import'),
-        },
-      });
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Request failed');
-    } finally {
-      setRequesting(null);
-    }
+  const openDataRequest = (card: IcpPipelineCard, requestType: PipelineDataRequestType) => {
+    const mode = requestType === 'expand_companies' ? 'companies' : 'contacts_for_icp';
+    const params = new URLSearchParams({
+      mode,
+      icpId: card.icp_id,
+      requestType,
+      source: 'pipeline',
+    });
+    router.push(`/data?${params.toString()}`);
   };
 
   if (authLoading) {
@@ -182,7 +166,7 @@ export default function PipelinePage() {
     <div className="flex h-screen bg-gray-50">
       <AppSidebar />
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         <div className="flex-1 overflow-auto p-6">
           <div className="w-full max-w-2xl mx-auto">
 
@@ -276,18 +260,14 @@ export default function PipelinePage() {
                       {showCtas && (
                         <div className="border-t border-gray-100 px-5 py-3 flex flex-col sm:flex-row flex-wrap gap-2">
                           {ctas.map((cta) => {
-                            const busy = requesting === `${card.icp_id}:${cta.type}`;
                             return (
                               <button
                                 key={cta.type}
                                 type="button"
-                                disabled={busy}
-                                onClick={() => void submitDataRequest(card.icp_id, cta.type)}
+                                onClick={() => openDataRequest(card, cta.type)}
                                 className="inline-flex items-center gap-1.5 rounded-full border border-arcova-teal/30 bg-white px-3 py-1.5 text-xs font-semibold text-arcova-teal hover:border-arcova-teal hover:bg-arcova-teal/5 disabled:opacity-60 transition-colors"
                               >
-                                {busy
-                                  ? <Loader2 className="h-3 w-3 animate-spin" />
-                                  : <ArrowRight className="h-3 w-3" />}
+                                <ArrowRight className="h-3 w-3" />
                                 {cta.label}
                               </button>
                             );
@@ -301,6 +281,8 @@ export default function PipelinePage() {
             )}
           </div>
         </div>
+
+        <AgentPanel page="pipeline" />
       </div>
     </div>
   );

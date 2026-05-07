@@ -4,6 +4,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
+import { AgentPanel } from '@/components/AgentPanel';
 import { supabase } from '@/lib/supabase';
 import { getSignalDisplayName } from '@/lib/signal-display-names';
 type SetupStep = {
@@ -415,7 +416,7 @@ export default function DashboardPage() {
     <div className="flex h-screen bg-gray-50">
       <AppSidebar />
 
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         <div className="flex-1 overflow-auto p-6">
           <div className="max-w-6xl mx-auto">
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8">
@@ -704,6 +705,8 @@ export default function DashboardPage() {
             </div>
           </div>
         </div>
+
+        <AgentPanel page="dashboard" />
       </div>
     </div>
   );

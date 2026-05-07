@@ -35,10 +35,28 @@ const COMPONENT_KEYS = [
   'funding',
 ] as const;
 
+type SummaryScoreRow = {
+  icp_id: string | null;
+  final_score: number | null;
+  raw_score: number | null;
+  score_cap: number | null;
+  coverage: number | null;
+  company_type_match_status: string | null;
+  breakdown: Record<string, unknown> | null;
+};
+
 function pct01(value: number | null | undefined): string | null {
   if (value == null || !Number.isFinite(value)) return null;
   const pct = value <= 1 ? Math.round(value * 100) : Math.round(value);
   return `${pct}%`;
+}
+
+function toSingleSentence(value: string | null): string | null {
+  const text = (value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  const firstSentence = text.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? text;
+  const trimmed = firstSentence.trim();
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
 }
 
 function simplifyBreakdown(breakdown: Record<string, unknown> | null): Record<string, unknown> {
@@ -128,9 +146,15 @@ export async function POST(
       return NextResponse.json({ error: 'Failed to load fit data.' }, { status: 500 });
     }
 
-    const scoreRows = ((scoreResult.data || []) as Array<Record<string, unknown>>).map((row) => ({
-      ...row,
-      breakdown: normalizeObject(row.breakdown as unknown as Record<string, unknown> | null),
+    const scoreRows: SummaryScoreRow[] = ((scoreResult.data || []) as Array<Record<string, unknown>>).map((row) => ({
+      icp_id: typeof row.icp_id === 'string' ? row.icp_id : null,
+      final_score: normalizeNumber(row.final_score),
+      raw_score: normalizeNumber(row.raw_score),
+      score_cap: normalizeNumber(row.score_cap),
+      coverage: normalizeNumber(row.coverage),
+      company_type_match_status:
+        typeof row.company_type_match_status === 'string' ? row.company_type_match_status : null,
+      breakdown: normalizeObject(row.breakdown),
     }));
 
     const icpResult = await supabase
@@ -197,15 +221,16 @@ export async function POST(
     };
 
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    const userPrompt = `Here is structured scoring output from our ICP engine (ideal customer profile fit for life science sales). Write 2 or 3 sentences for a rep who is looking at this company record.
+    const userPrompt = `Here is structured scoring output from our ICP engine (ideal customer profile fit for life science sales). Write exactly one concise sentence for a rep who is looking at this company record.
 
-Explain which ICP profile the company lines up with, the overall fit percentage, and what dimensions drove the score (use plain names like company type, therapeutic areas, modalities, funding, company size, or development stage, only where the criteria object includes them). If criteria is empty or sparse, rely on the percentages and keep the explanation high level.
+Explain which ICP profile the company lines up with and the overall fit percentage. Mention score drivers only if they fit naturally inside that same single sentence.
 
 Data (JSON):
 ${JSON.stringify(payload, null, 2)}
 
 Rules for your reply:
 - Plain English only, no bullet points, no markdown.
+- One sentence only. Do not add a second sentence.
 - Do not use em dashes; use commas or periods.
 - Stay faithful to the numbers and keys in the JSON; do not invent ICP rules or matches that are not supported by the criteria object.
 - Refer to the company by the name given in "company".
@@ -222,7 +247,7 @@ Rules for your reply:
 
     const block = message.content[0];
     const text = block?.type === 'text' ? block.text.trim() : '';
-    const summary = text.replace(/\s+/g, ' ').trim() || null;
+    const summary = toSingleSentence(text);
 
     return NextResponse.json({ summary });
   } catch (error) {

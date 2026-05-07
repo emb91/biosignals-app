@@ -19,7 +19,7 @@ type ApolloEmployment = {
   title?: string | null;
 };
 
-type ApolloOrganization = {
+export type ApolloOrganization = {
   id?: string;
   name?: string;
   website_url?: string | null;
@@ -47,7 +47,20 @@ type ApolloOrganizationEnrichResponse = {
   organization?: ApolloOrganization | null;
 };
 
-type ApolloPerson = {
+type ApolloSearchPagination = {
+  page?: number;
+  per_page?: number;
+  total_entries?: number;
+  total_pages?: number;
+};
+
+type ApolloOrganizationSearchResponse = {
+  organizations?: ApolloOrganization[] | null;
+  accounts?: ApolloOrganization[] | null;
+  pagination?: ApolloSearchPagination | null;
+};
+
+export type ApolloPerson = {
   id?: string;
   first_name?: string | null;
   last_name?: string | null;
@@ -70,6 +83,12 @@ type ApolloPerson = {
 type ApolloMatchResponse = {
   person?: ApolloPerson | null;
   request_id?: string | number;
+};
+
+type ApolloPeopleSearchResponse = {
+  people?: ApolloPerson[] | null;
+  contacts?: ApolloPerson[] | null;
+  pagination?: ApolloSearchPagination | null;
 };
 
 type ApolloLookupRoute =
@@ -141,6 +160,38 @@ export type ApolloOrganizationEnrichmentResult = {
   raw_company?: unknown;
 };
 
+export type ApolloOrganizationSearchParams = {
+  page?: number;
+  perPage?: number;
+  keywords?: string[];
+  organizationLocations?: string[];
+  employeeRanges?: string[];
+  fundingStages?: string[];
+  organizationIds?: string[];
+};
+
+export type ApolloOrganizationSearchResult = {
+  organizations: ApolloOrganization[];
+  pagination: ApolloSearchPagination | null;
+  raw: unknown;
+};
+
+export type ApolloPeopleSearchParams = {
+  page?: number;
+  perPage?: number;
+  organizationIds?: string[];
+  organizationDomains?: string[];
+  personTitles?: string[];
+  personSeniorities?: string[];
+  locations?: string[];
+};
+
+export type ApolloPeopleSearchResult = {
+  people: ApolloPerson[];
+  pagination: ApolloSearchPagination | null;
+  raw: unknown;
+};
+
 function getApolloApiKey(): string {
   const apiKey = process.env.APOLLO_API_KEY;
   if (!apiKey) {
@@ -152,6 +203,28 @@ function getApolloApiKey(): string {
 function normalizeDomain(value?: string | null): string | undefined {
   if (!value) return undefined;
   return value.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '');
+}
+
+function compactPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(payload).filter(([, value]) => {
+      if (Array.isArray(value)) return value.length > 0;
+      return value !== undefined && value !== null && value !== '';
+    }),
+  );
+}
+
+function employeeRangeToApollo(value: string): string | null {
+  const normalized = value.toLowerCase().replace(/\s+/g, '');
+  const match = normalized.match(/(\d+)[–-](\d+)/);
+  if (match) return `${match[1]},${match[2]}`;
+  if (normalized.includes('500+')) return '501,1000000';
+  if (normalized.includes('1') && normalized.includes('10')) return '1,10';
+  return null;
+}
+
+function fundingStageToApollo(value: string): string {
+  return value.trim().toLowerCase().replace(/[\s-]+/g, '_');
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -364,6 +437,80 @@ export async function enrichOrganizationWithApollo(input: {
     company_total_funding_usd: organization.total_funding ?? undefined,
     company_latest_funding_date: organization.latest_funding_round_date || undefined,
     raw_company: organization,
+  };
+}
+
+export async function searchOrganizationsWithApollo(
+  input: ApolloOrganizationSearchParams,
+): Promise<ApolloOrganizationSearchResult> {
+  const payload = compactPayload({
+    page: input.page ?? 1,
+    per_page: input.perPage ?? 25,
+    q_organization_keyword_tags: input.keywords,
+    organization_locations: input.organizationLocations,
+    organization_num_employees_ranges: input.employeeRanges
+      ?.map(employeeRangeToApollo)
+      .filter((value): value is string => Boolean(value)),
+    organization_latest_funding_stage_cd: input.fundingStages?.map(fundingStageToApollo),
+    organization_ids: input.organizationIds,
+  });
+
+  const response = await fetch('https://api.apollo.io/api/v1/mixed_companies/search', {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'x-api-key': getApolloApiKey(),
+      'cache-control': 'no-cache',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '');
+    throw new Error(`Apollo organization search failed (${response.status}): ${errorText.slice(0, 300)}`);
+  }
+
+  const raw = (await response.json()) as ApolloOrganizationSearchResponse;
+  return {
+    organizations: raw.organizations || raw.accounts || [],
+    pagination: raw.pagination || null,
+    raw,
+  };
+}
+
+export async function searchPeopleWithApollo(input: ApolloPeopleSearchParams): Promise<ApolloPeopleSearchResult> {
+  const payload = compactPayload({
+    page: input.page ?? 1,
+    per_page: input.perPage ?? 25,
+    organization_ids: input.organizationIds,
+    q_organization_domains: input.organizationDomains,
+    person_titles: input.personTitles,
+    person_seniorities: input.personSeniorities,
+    person_locations: input.locations,
+  });
+
+  const response = await fetch('https://api.apollo.io/api/v1/mixed_people/search', {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'x-api-key': getApolloApiKey(),
+      'cache-control': 'no-cache',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '');
+    throw new Error(`Apollo people search failed (${response.status}): ${errorText.slice(0, 300)}`);
+  }
+
+  const raw = (await response.json()) as ApolloPeopleSearchResponse;
+  return {
+    people: raw.people || raw.contacts || [],
+    pagination: raw.pagination || null,
+    raw,
   };
 }
 

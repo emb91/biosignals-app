@@ -1,6 +1,14 @@
 import { NextResponse } from 'next/server';
+import { after } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 import type { PipelineDataRequestType } from '@/lib/pipeline-icp-health';
+import {
+  DEFAULT_ACQUISITION_TARGET_COMPANIES,
+  estimateDataAcquisitionUsage,
+  normalizePositiveInt,
+  recordDataAcquisitionUsageEvent,
+} from '@/lib/data-acquisition-metering';
+import { runDataAcquisitionJob } from '@/lib/data-acquisition/job-runner';
 
 const REQUEST_TYPES: PipelineDataRequestType[] = [
   'expand_companies',
@@ -31,7 +39,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    let body: { icpId?: string; requestType?: string };
+    let body: {
+      icpId?: string;
+      requestType?: string;
+      targetCompanyCount?: number | string;
+      targetContactCount?: number | string;
+      maxCreditUnits?: number | string;
+    };
     try {
       body = (await request.json()) as { icpId?: string; requestType?: string };
     } catch {
@@ -42,6 +56,27 @@ export async function POST(request: Request) {
     const requestType = body.requestType as PipelineDataRequestType;
     if (!icpId || !REQUEST_TYPES.includes(requestType)) {
       return NextResponse.json({ error: 'icpId and valid requestType required' }, { status: 400 });
+    }
+
+    const targetCompanyCount = normalizePositiveInt(
+      body.targetCompanyCount,
+      requestType === 'expand_companies' ? DEFAULT_ACQUISITION_TARGET_COMPANIES : 0,
+    );
+    const targetContactCount =
+      body.targetContactCount == null ? null : normalizePositiveInt(body.targetContactCount, 0);
+    const rawMaxCreditUnits =
+      typeof body.maxCreditUnits === 'number'
+        ? body.maxCreditUnits
+        : typeof body.maxCreditUnits === 'string'
+          ? Number.parseFloat(body.maxCreditUnits)
+          : null;
+    const maxCreditUnits =
+      rawMaxCreditUnits != null && Number.isFinite(rawMaxCreditUnits)
+        ? Math.max(0, rawMaxCreditUnits)
+        : null;
+
+    if (requestType === 'expand_companies' && targetCompanyCount <= 0) {
+      return NextResponse.json({ error: 'targetCompanyCount must be greater than 0' }, { status: 400 });
     }
 
     const { data: icp, error: icpErr } = await supabase
@@ -56,7 +91,11 @@ export async function POST(request: Request) {
     }
 
     const filename = requestFilename(user.id, icpId, requestType);
-    const now = new Date().toISOString();
+    const estimate = estimateDataAcquisitionUsage({
+      requestType,
+      targetCompanyCount,
+      targetContactCount,
+    });
 
     const { data: batch, error: batchErr } = await supabase
       .from('upload_batches')
@@ -64,12 +103,11 @@ export async function POST(request: Request) {
         user_id: user.id,
         filename,
         total_rows: 0,
-        status: 'complete',
+        status: 'processing',
         duplicate_rows: 0,
         enriched_rows: 0,
         failed_rows: 0,
         processed_rows: 0,
-        completed_at: now,
       })
       .select('id')
       .single();
@@ -79,9 +117,76 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Failed to record data request' }, { status: 500 });
     }
 
+    const { data: job, error: jobErr } = await supabase
+      .from('data_acquisition_jobs')
+      .insert({
+        user_id: user.id,
+        icp_id: icpId,
+        upload_batch_id: batch.id,
+        request_type: requestType,
+        source_strategy: 'apollo_first',
+        status: 'queued',
+        target_company_count: targetCompanyCount,
+        target_contact_count: estimate.targetContactCount,
+        max_screened_companies: estimate.screenedCompaniesMax,
+        max_contact_enrichments: estimate.targetContactCount,
+        max_credit_units: maxCreditUnits ?? estimate.estimatedMaxCreditUnits,
+        estimated_min_credit_units: estimate.estimatedMinCreditUnits,
+        estimated_max_credit_units: estimate.estimatedMaxCreditUnits,
+        metadata: {
+          estimate,
+          requested_from: 'pipeline',
+        },
+      })
+      .select('id')
+      .single();
+
+    if (jobErr || !job) {
+      console.error('[pipeline/data-request] job', jobErr);
+      return NextResponse.json({ error: 'Failed to create acquisition job' }, { status: 500 });
+    }
+
+    await recordDataAcquisitionUsageEvent(supabase, {
+      jobId: job.id as string,
+      userId: user.id,
+      eventType: 'job_requested',
+      quantity: targetCompanyCount,
+      provider: 'arcova',
+      metadata: {
+        requestType,
+        targetCompanyCount,
+        targetContactCount: estimate.targetContactCount,
+        estimate,
+      },
+    });
+
+    const backgroundTask = () =>
+      runDataAcquisitionJob(job.id as string).catch((error) => {
+        console.error('[pipeline/data-request] acquisition job failed', error);
+      });
+
+    if (process.env.NODE_ENV === 'development') {
+      setTimeout(() => {
+        void backgroundTask();
+      }, 0);
+    } else {
+      after(backgroundTask);
+    }
+
     return NextResponse.json({
+      jobId: job.id as string,
       batchId: batch.id as string,
       filename,
+      targetCompanyCount,
+      targetContactCount: estimate.targetContactCount,
+      estimatedScreenedCompanies: {
+        min: estimate.screenedCompaniesMin,
+        max: estimate.screenedCompaniesMax,
+      },
+      estimatedCreditUnits: {
+        min: estimate.estimatedMinCreditUnits,
+        max: estimate.estimatedMaxCreditUnits,
+      },
     });
   } catch (e) {
     console.error('[pipeline/data-request]', e);

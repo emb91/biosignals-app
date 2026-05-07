@@ -62,6 +62,13 @@ function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
 
+function normalizeScore01(value: number | null | undefined): number | null {
+  if (value == null || !Number.isFinite(value)) return null;
+  if (value > 1 && value <= 100) return value / 100;
+  if (value >= 0 && value <= 1) return value;
+  return null;
+}
+
 function parseThreshold(raw: string | null, fallback: number): number {
   const n = parseFloat(raw ?? '');
   if (!Number.isFinite(n)) return fallback;
@@ -134,7 +141,7 @@ export async function GET(request: Request) {
       ? parseThreshold(searchParams.get('minCompanyFit'), 0.65)
       : 0;
     const maxBestContactFit = coverageGapsOnly
-      ? parseThreshold(searchParams.get('maxBestContactFit'), 0.45)
+      ? parseThreshold(searchParams.get('maxBestContactFit'), 0.999999)
       : 1;
 
     const { data: rows, error } = await supabase
@@ -199,10 +206,7 @@ export async function GET(request: Request) {
 
       if (!companyId || !resolvedCompany?.id) continue;
 
-      const contactFit =
-        typeof row.contact_fit_score === 'number' && Number.isFinite(row.contact_fit_score)
-          ? row.contact_fit_score
-          : null;
+      const contactFit = normalizeScore01(row.contact_fit_score as number | null);
 
       const prov = resolveContactDataProvenance({
         upload_batches: row.upload_batches,
@@ -256,10 +260,7 @@ export async function GET(request: Request) {
             : null;
         if (companyFit == null || companyFit < minCompanyFit) return false;
 
-        const best =
-          typeof account.best_contact_fit === 'number' && Number.isFinite(account.best_contact_fit)
-            ? account.best_contact_fit
-            : 0;
+        const best = normalizeScore01(account.best_contact_fit) ?? 0;
 
         return best <= maxBestContactFit;
       });
@@ -295,14 +296,8 @@ export async function GET(request: Request) {
           : 0;
       if (cfB !== cfA) return cfB - cfA;
 
-      const bestA =
-        typeof a.best_contact_fit === 'number' && Number.isFinite(a.best_contact_fit)
-          ? a.best_contact_fit
-          : 0;
-      const bestB =
-        typeof b.best_contact_fit === 'number' && Number.isFinite(b.best_contact_fit)
-          ? b.best_contact_fit
-          : 0;
+      const bestA = normalizeScore01(a.best_contact_fit) ?? 0;
+      const bestB = normalizeScore01(b.best_contact_fit) ?? 0;
       return bestA - bestB;
     });
 

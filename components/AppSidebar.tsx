@@ -10,6 +10,7 @@ import {
   Kanban,
   Radio,
   FileUp,
+  Database,
   Users,
   Settings,
   User,
@@ -33,6 +34,7 @@ const setupItems: NavItem[] = [
 const topNavigation: NavItem[] = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Import', href: '/import', icon: FileUp },
+  { name: 'Data', href: '/data', icon: Database },
   { name: 'Leads', href: '/results', icon: Users },
   { name: 'Accounts', href: '/accounts', icon: Building2 },
   { name: 'Pipeline', href: '/pipeline', icon: Kanban },

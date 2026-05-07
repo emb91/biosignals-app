@@ -4,12 +4,11 @@ import { useAuth } from '@/context/AuthContext';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
-import { QueryBar } from '@/app/results/components/QueryBar';
+import { AgentPanel, type AgentTableFilter } from '@/components/AgentPanel';
 import type {
   AccountQueryColumn,
-  AgentAccountsQueryResult,
   QueryAccount,
-} from '@/app/api/accounts/query/route';
+} from '@/lib/accounts-data';
 import {
   Building2,
   ChevronDown,
@@ -84,13 +83,7 @@ type ContactAtCompany = {
   seniority_level: string | null;
 };
 
-type PanelMode = 'details' | 'fit' | 'coverage' | 'contacts';
-
-type IcpCoverageRow = {
-  icp_id: string;
-  label: string;
-  company_count: number;
-};
+type PanelMode = 'details' | 'fit' | 'contacts';
 
 type ContactFitComponentKey = 'business_area' | 'seniority';
 
@@ -150,8 +143,8 @@ function getCoverageStatus(account: AccountRow): CoverageStatus {
     typeof account.best_contact_fit === 'number' && Number.isFinite(account.best_contact_fit)
       ? account.best_contact_fit
       : null;
-  if (best == null || best < 0.45) return 'opportunity';
-  if (best >= 0.5) return 'covered';
+  if (best == null || best < 1) return 'opportunity';
+  if (best >= 1) return 'covered';
   return null;
 }
 
@@ -229,31 +222,22 @@ function TaxonomyPills({ items }: { items: string[] | null | undefined }) {
   );
 }
 
-const TABLE_GRID =
-  'grid grid-cols-[minmax(0,1.05fr)_minmax(0,0.82fr)_minmax(0,4.25rem)_minmax(6.75rem,7.5rem)_minmax(0,1fr)_minmax(0,1fr)_minmax(9rem,1fr)] gap-x-5';
-
-const ACCOUNT_QUERY_PROMPTS = [
-  'Show me good fit companies with poor contacts',
-  'Find Series B oncology companies',
-  'Show CDMOs using biologics',
-  'Sort accounts by lowest fit first',
-  'Show companies with no strong contacts',
-];
+const DEFAULT_COLUMNS: AccountQueryColumn[] = ['company', 'company_type', 'fit', 'contacts', 'action'];
 
 const ACCOUNT_QUERY_COL_DEFS: Record<AccountQueryColumn, { label: string; width: string }> = {
   company: { label: 'Company', width: 'minmax(0,1.05fr)' },
   company_type: { label: 'Company type', width: 'minmax(0,0.82fr)' },
-  fit: { label: 'Fit', width: '4.25rem' },
-  contacts: { label: 'Contacts', width: '7.5rem' },
+  fit: { label: 'Fit', width: 'minmax(0,4.25rem)' },
+  contacts: { label: 'Contacts', width: 'minmax(0,7.5rem)' },
   therapeutic_areas: { label: 'Therapeutic areas', width: 'minmax(0,1fr)' },
   modalities: { label: 'Modalities', width: 'minmax(0,1fr)' },
-  action: { label: 'Action', width: '9rem' },
-  funding_stage: { label: 'Funding', width: '9rem' },
+  action: { label: 'Action', width: 'minmax(0,9rem)' },
+  funding_stage: { label: 'Funding', width: 'minmax(0,9rem)' },
   icp_match: { label: 'ICP match', width: 'minmax(0,1fr)' },
   development_stages: { label: 'Development stage', width: 'minmax(0,1fr)' },
-  employee_range: { label: 'Employees', width: '8rem' },
+  employee_range: { label: 'Employees', width: 'minmax(0,8rem)' },
   location: { label: 'Location', width: 'minmax(0,0.8fr)' },
-  source: { label: 'Source', width: '7rem' },
+  source: { label: 'Source', width: 'minmax(0,7rem)' },
 };
 
 function accountQueryGridCols(columns: AccountQueryColumn[]): string {
@@ -342,9 +326,7 @@ export default function AccountsPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loadingAccounts, setLoadingAccounts] = useState(true);
-  const [queryResult, setQueryResult] = useState<AgentAccountsQueryResult | null>(null);
-  const [queryLoading, setQueryLoading] = useState(false);
-  const [activeQuery, setActiveQuery] = useState<string | null>(null);
+  const [agentFilterIds, setAgentFilterIds] = useState<Set<string> | null>(null);
   const [tableSortCol, setTableSortCol] = useState<string | null>(null);
   const [tableSortDir, setTableSortDir] = useState<'asc' | 'desc'>('asc');
 
@@ -355,11 +337,6 @@ export default function AccountsPage() {
   // Contacts panel
   const [contacts, setContacts] = useState<ContactAtCompany[]>([]);
   const [loadingContacts, setLoadingContacts] = useState(false);
-
-  // Workspace ICP coverage (coverage tab): companies with Monitor or Reach out leads, by matched ICP
-  const [icpCoverageRows, setIcpCoverageRows] = useState<IcpCoverageRow[] | null>(null);
-  const [icpCoverageUncategorized, setIcpCoverageUncategorized] = useState(0);
-  const [icpCoverageLoading, setIcpCoverageLoading] = useState(false);
 
   // Detail panel accordion open state
   const [detailPanelOpen, setDetailPanelOpen] = useState({
@@ -542,36 +519,6 @@ export default function AccountsPage() {
     };
   }, [panelMode, selectedAccountId]);
 
-  useEffect(() => {
-    if (panelMode !== 'coverage' || !user) return;
-    let cancelled = false;
-    setIcpCoverageLoading(true);
-    setIcpCoverageRows(null);
-    fetch('/api/accounts/icp-coverage')
-      .then(async (res) => {
-        if (!res.ok) throw new Error('Failed to load ICP coverage');
-        return res.json() as Promise<{ rows: IcpCoverageRow[]; uncategorized_company_count: number }>;
-      })
-      .then((data) => {
-        if (!cancelled) {
-          setIcpCoverageRows(data.rows ?? []);
-          setIcpCoverageUncategorized(data.uncategorized_company_count ?? 0);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setIcpCoverageRows([]);
-          setIcpCoverageUncategorized(0);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setIcpCoverageLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [panelMode, user]);
-
   const toggleContact = (contactId: string) => {
     setExpandedContactId((prev) => {
       const opening = prev !== contactId;
@@ -607,36 +554,14 @@ export default function AccountsPage() {
     return () => { cancelled = true; };
   }, [selectedAccountId, panelMode]);
 
-  const handleAgentQuery = async (query: string) => {
-    setActiveQuery(query);
-    setQueryLoading(true);
-    setQueryResult(null);
+  const handleTableFilter = (_filter: AgentTableFilter, filteredAccounts: QueryAccount[]) => {
+    setAgentFilterIds(new Set(filteredAccounts.map((a) => a.id)));
+    setTableSortCol(null);
     setSelectedAccountId(null);
-    try {
-      const res = await fetch('/api/accounts/query', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query }),
-      });
-      if (!res.ok) throw new Error('Query failed');
-      const data: AgentAccountsQueryResult = await res.json();
-      setQueryResult(data);
-    } catch {
-      setQueryResult({
-        interpretation: null,
-        columns: ['company', 'company_type', 'fit', 'contacts', 'therapeutic_areas', 'modalities', 'action'],
-        accounts: [],
-        conversational: 'Something went wrong. Please try again.',
-      });
-    } finally {
-      setQueryLoading(false);
-    }
   };
 
   const handleQueryClear = () => {
-    setActiveQuery(null);
-    setQueryResult(null);
-    setQueryLoading(false);
+    setAgentFilterIds(null);
     setSelectedAccountId(null);
     setTableSortCol(null);
   };
@@ -850,23 +775,22 @@ export default function AccountsPage() {
   if (!user) return null;
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
-  const showSearch = total > 0 || Boolean(activeQuery) || queryLoading;
-  const sortedAccounts = applyAccountSort(accounts, tableSortCol, tableSortDir);
-  const sortedQueryAccounts = queryResult
-    ? applyAccountSort(queryResult.accounts, tableSortCol, tableSortDir)
-    : [];
+  const sortedAccounts = applyAccountSort(
+    agentFilterIds ? accounts.filter((a) => agentFilterIds.has(a.id)) : accounts,
+    tableSortCol,
+    tableSortDir,
+  );
   const selectedAccount = selectedAccountId
-    ? accounts.find((a) => a.id === selectedAccountId) ??
-      queryResult?.accounts.find((a) => a.id === selectedAccountId) ??
-      null
+    ? accounts.find((a) => a.id === selectedAccountId) ?? null
     : null;
 
   return (
     <div className="flex h-screen bg-gray-50">
       <AppSidebar />
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div className="flex-1 overflow-auto p-6">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        {/* ── Main scrollable content ── */}
+        <div className="flex-1 overflow-auto p-6 min-w-0">
           <div className="w-full max-w-none">
 
             <div className="mb-6">
@@ -874,24 +798,11 @@ export default function AccountsPage() {
               <p className="text-gray-600 mt-1">One row per company — firmographics and ICP fit at a glance.</p>
             </div>
 
-            {showSearch && (
-              <QueryBar
-                onQuery={handleAgentQuery}
-                onClear={handleQueryClear}
-                isLoading={queryLoading}
-                interpretation={queryResult?.interpretation ?? null}
-                conversational={queryResult?.conversational ?? null}
-                activeQuery={activeQuery}
-                placeholder="Ask anything about your accounts…"
-                suggestedPrompts={ACCOUNT_QUERY_PROMPTS}
-              />
-            )}
-
-            {loadingAccounts && !queryLoading ? (
+            {loadingAccounts ? (
               <div className="flex items-center justify-center py-24">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-arcova-teal" />
               </div>
-            ) : accounts.length === 0 && !activeQuery ? (
+            ) : accounts.length === 0 && !agentFilterIds ? (
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-16 text-center">
                 <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                   <Building2 className="w-8 h-8 text-gray-400" />
@@ -910,87 +821,53 @@ export default function AccountsPage() {
                 </button>
               </div>
             ) : (
-              <div className={cn('grid gap-4', selectedAccountId ? 'xl:grid-cols-[minmax(0,1fr)_360px]' : '')}>
+              <div className={cn('grid min-w-0 gap-4', selectedAccountId ? 'xl:grid-cols-[minmax(0,1fr)_360px]' : '')}>
 
                 {/* ── Table ── */}
+                <div className="min-w-0 flex flex-col gap-2">
+
+                {/* Agent filter banner */}
+                {agentFilterIds && (
+                  <div className="flex items-center justify-between gap-3 rounded-lg border border-arcova-teal/20 bg-arcova-teal/5 px-4 py-2.5">
+                    <p className="text-xs font-medium text-arcova-teal">
+                      Filtered by agent · {sortedAccounts.length} account{sortedAccounts.length !== 1 ? 's' : ''}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleQueryClear}
+                      className="text-xs text-arcova-teal/70 hover:text-arcova-teal underline shrink-0 transition-colors"
+                    >
+                      Clear filter
+                    </button>
+                  </div>
+                )}
+
                 <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-                  <div className="overflow-x-auto">
-                    {/* Header */}
-                    {queryLoading || queryResult ? (() => {
-                      const cols: AccountQueryColumn[] =
-                        queryResult?.columns ?? ['company', 'company_type', 'fit', 'contacts', 'therapeutic_areas', 'modalities', 'action'];
-                      return (
-                        <div
-                          className="min-w-[1280px] px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide grid gap-x-5"
-                          style={{ gridTemplateColumns: accountQueryGridCols(cols) }}
+                  <div className="min-w-0">
+                    {/* Header — always uses DEFAULT_COLUMNS */}
+                    <div
+                      className="grid w-full min-w-0 px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide gap-x-5"
+                      style={{ gridTemplateColumns: accountQueryGridCols(DEFAULT_COLUMNS) }}
+                    >
+                      {DEFAULT_COLUMNS.map((col) => (
+                        <button
+                          key={col}
+                          type="button"
+                          onClick={() => handleSortCol(col)}
+                          className={cn(
+                            'flex min-w-0 items-center gap-1 hover:text-gray-800 transition-colors text-left',
+                            col === 'fit' || col === 'action' ? 'justify-center text-center' : '',
+                          )}
                         >
-                          {cols.map((col) => (
-                            <button
-                              key={col}
-                              type="button"
-                              onClick={() => handleSortCol(col)}
-                              className={cn(
-                                'flex items-center gap-1 hover:text-gray-800 transition-colors text-left',
-                                col === 'fit' || col === 'action' ? 'justify-center text-center' : '',
-                              )}
-                            >
-                              {ACCOUNT_QUERY_COL_DEFS[col].label}
-                              <SortArrow col={col} activeCol={tableSortCol} dir={tableSortDir} />
-                            </button>
-                          ))}
-                        </div>
-                      );
-                    })() : (
-                      <div className={cn(TABLE_GRID, 'min-w-[1280px] px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide')}>
-                        {([
-                          ['company', 'Company'],
-                          ['company_type', 'Company type'],
-                          ['fit', 'Fit'],
-                          ['contacts', 'Contacts'],
-                          ['therapeutic_areas', 'Therapeutic areas'],
-                          ['modalities', 'Modalities'],
-                          ['action', 'Action'],
-                        ] as const).map(([col, label]) => (
-                          <button
-                            key={col}
-                            type="button"
-                            onClick={() => handleSortCol(col)}
-                            className={cn(
-                              'flex items-center gap-1 hover:text-gray-800 transition-colors text-left',
-                              col === 'fit' ? 'justify-center text-center' : '',
-                              col === 'therapeutic_areas' ? 'pl-2' : '',
-                              col === 'action' ? 'justify-center pl-10 text-center' : '',
-                            )}
-                          >
-                            {label}
-                            <SortArrow col={col} activeCol={tableSortCol} dir={tableSortDir} />
-                          </button>
-                        ))}
-                      </div>
-                    )}
+                          {ACCOUNT_QUERY_COL_DEFS[col].label}
+                          <SortArrow col={col} activeCol={tableSortCol} dir={tableSortDir} />
+                        </button>
+                      ))}
+                    </div>
 
-                    {/* Rows */}
+                    {/* Rows — single render path; agent filter narrows sortedAccounts in-place */}
                     <div className="divide-y divide-gray-100">
-                      {queryLoading && (() => {
-                        const cols: AccountQueryColumn[] = ['company', 'company_type', 'fit', 'contacts', 'therapeutic_areas', 'modalities', 'action'];
-                        return Array.from({ length: 6 }).map((_, i) => (
-                          <div
-                            key={i}
-                            className="min-w-[1280px] px-4 py-3 grid gap-x-5 animate-pulse"
-                            style={{ gridTemplateColumns: accountQueryGridCols(cols) }}
-                          >
-                            {cols.map((col) => (
-                              <div
-                                key={col}
-                                className="h-4 bg-gray-100 rounded"
-                                style={{ width: col === 'fit' || col === 'contacts' || col === 'action' ? '4.5rem' : '75%' }}
-                              />
-                            ))}
-                          </div>
-                        ));
-                      })()}
-
-                      {!queryLoading && queryResult && sortedQueryAccounts.map((account) => {
+                      {sortedAccounts.map((account) => {
                         const isSelected = selectedAccountId === account.id;
 
                         return (
@@ -1003,14 +880,14 @@ export default function AccountsPage() {
                               if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetails(account.id); }
                             }}
                             className={cn(
-                              'min-w-[1280px] px-4 py-3 grid gap-x-5 items-center cursor-pointer transition-all duration-150 border-l-2',
+                              'grid w-full min-w-0 px-4 py-3 gap-x-5 items-center cursor-pointer transition-all duration-150 border-l-2',
                               isSelected
                                 ? 'bg-arcova-teal/10 border-arcova-teal'
                                 : 'border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30',
                             )}
-                            style={{ gridTemplateColumns: accountQueryGridCols(queryResult.columns) }}
+                            style={{ gridTemplateColumns: accountQueryGridCols(DEFAULT_COLUMNS) }}
                           >
-                            {queryResult.columns.map((col) => (
+                            {DEFAULT_COLUMNS.map((col) => (
                               <div
                                 key={col}
                                 className={cn(
@@ -1025,176 +902,10 @@ export default function AccountsPage() {
                           </div>
                         );
                       })}
-
-                      {!queryLoading && !queryResult && sortedAccounts.map((account) => {
-                        const isSelected = selectedAccountId === account.id;
-                        const href = externalUrl(account);
-                        const companyLabel = account.company_name || account.domain || '—';
-
-                        return (
-                          <div
-                            key={account.id}
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => openDetails(account.id)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetails(account.id); }
-                            }}
-                            className={cn(
-                              TABLE_GRID,
-                              'min-w-[1280px] px-4 py-3 items-center cursor-pointer transition-all duration-150 border-l-2',
-                              isSelected
-                                ? 'bg-arcova-teal/10 border-arcova-teal'
-                                : 'border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30',
-                            )}
-                          >
-                            {/* Company */}
-                            <div className="min-w-0">
-                              <div className="flex items-start gap-1.5 min-w-0">
-                                {href ? (
-                                  <a
-                                    href={href}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    onClick={(e) => e.stopPropagation()}
-                                    className="text-sm font-medium text-arcova-teal hover:underline line-clamp-2 break-words leading-snug min-w-0"
-                                    title={companyLabel}
-                                  >
-                                    {companyLabel}
-                                  </a>
-                                ) : (
-                                  <span className="text-sm font-medium text-gray-900 line-clamp-2 break-words leading-snug min-w-0" title={companyLabel}>
-                                    {companyLabel}
-                                  </span>
-                                )}
-                                {href && (
-                                  <a href={href} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-arcova-teal/60 hover:text-arcova-teal shrink-0 mt-0.5">
-                                    <ExternalLink className="w-3 h-3" />
-                                  </a>
-                                )}
-                              </div>
-                            </div>
-
-                            {/* Company type — up to two lines; click opens details with Criteria expanded */}
-                            <div className="min-w-0">
-                              {account.company_type ? (
-                                <div
-                                  role="button"
-                                  tabIndex={0}
-                                  className="-m-0.5 p-0.5 cursor-pointer"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    openDetailsWithCriteria(account.id);
-                                  }}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter' || e.key === ' ') {
-                                      e.preventDefault();
-                                      e.stopPropagation();
-                                      openDetailsWithCriteria(account.id);
-                                    }
-                                  }}
-                                >
-                                  <p
-                                    className="text-xs text-gray-700 line-clamp-2 break-words leading-snug"
-                                    title={account.company_type}
-                                  >
-                                    {account.company_type}
-                                  </p>
-                                </div>
-                              ) : (
-                                <p className="text-xs text-gray-700 line-clamp-2 break-words leading-snug">—</p>
-                              )}
-                            </div>
-
-                            {/* Company fit % */}
-                            <div className="flex justify-center">
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openCompanyFitTab(account.id);
-                                }}
-                                className={cn(
-                                  'inline-flex min-w-[3rem] justify-center rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums transition-colors',
-                                  isSelected && panelMode === 'fit'
-                                    ? 'bg-arcova-teal text-white'
-                                    : formatCompanyFitPercent(account.company_fit_score)
-                                      ? 'bg-slate-100 text-slate-700 hover:bg-arcova-teal/15 hover:text-arcova-teal'
-                                      : 'bg-gray-50 text-gray-400 hover:bg-gray-100',
-                                )}
-                              >
-                                {formatCompanyFitPercent(account.company_fit_score) ?? '—'}
-                              </button>
-                            </div>
-
-                            {/* Contacts */}
-                            <div className="min-w-0">
-                              <button
-                                type="button"
-                                onClick={(e) => openContacts(account.id, e)}
-                                className={cn(
-                                  'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors',
-                                  isSelected && panelMode === 'contacts'
-                                    ? 'bg-arcova-teal text-white'
-                                    : 'bg-slate-100 text-slate-600 hover:bg-arcova-teal/10 hover:text-arcova-teal',
-                                )}
-                              >
-                                <Users className="w-3 h-3" />
-                                {account.contact_count} contact{account.contact_count !== 1 ? 's' : ''}
-                              </button>
-                            </div>
-
-                            {/* Therapeutic areas */}
-                            <div className="min-w-0 pl-2">
-                              <InlinePills
-                                items={account.therapeutic_areas}
-                                max={2}
-                                onActivate={
-                                  (account.therapeutic_areas || []).length > 0
-                                    ? () => openDetailsWithCriteria(account.id)
-                                    : undefined
-                                }
-                              />
-                            </div>
-
-                            {/* Modalities */}
-                            <div className="min-w-0">
-                              <InlinePills
-                                items={account.modalities}
-                                max={2}
-                                onActivate={
-                                  (account.modalities || []).length > 0
-                                    ? () => openDetailsWithCriteria(account.id)
-                                    : undefined
-                                }
-                              />
-                            </div>
-
-                            {/* Action */}
-                            <div className="flex items-center justify-center pl-10">
-                              <button
-                                type="button"
-                                onClick={(e) => { e.stopPropagation(); router.push(`/results?search=${encodeURIComponent(account.company_name || account.domain || '')}`); }}
-                                className="inline-flex items-center rounded-full border border-arcova-teal/30 bg-white px-2.5 py-1 text-xs font-semibold text-arcova-teal hover:border-arcova-teal hover:bg-arcova-teal/10 transition-colors"
-                              >
-                                View in leads
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
                     </div>
                   </div>
 
-                  {queryResult && !queryLoading && (
-                    <div className="px-4 py-2.5 border-t border-gray-100 bg-gray-50">
-                      <p className="text-xs text-gray-400">
-                        {queryResult.accounts.length} account{queryResult.accounts.length !== 1 ? 's' : ''} found
-                      </p>
-                    </div>
-                  )}
-
-                  {!queryResult && !queryLoading && totalPages > 1 && (
+                  {!agentFilterIds && totalPages > 1 && (
                     <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200 bg-gray-50">
                       <p className="text-xs text-gray-500">
                         {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of {total.toLocaleString()}
@@ -1213,6 +924,7 @@ export default function AccountsPage() {
                     </div>
                   )}
                 </div>
+                </div>{/* end table + banner wrapper */}
 
                 {/* ── Side panel ── */}
                 {selectedAccountId && selectedAccount && (
@@ -1263,7 +975,7 @@ export default function AccountsPage() {
                     </div>
 
                     <div className="flex border-b border-gray-200 px-5">
-                      {(['details', 'fit', 'coverage', 'contacts'] as PanelMode[]).map((mode) => (
+                      {(['details', 'fit', 'contacts'] as PanelMode[]).map((mode) => (
                         <button
                           key={mode}
                           type="button"
@@ -1277,11 +989,9 @@ export default function AccountsPage() {
                         >
                           {mode === 'contacts'
                             ? `Contacts (${selectedAccount.contact_count})`
-                            : mode === 'coverage'
-                              ? 'Coverage'
-                              : mode === 'fit'
-                                ? 'Fit'
-                                : 'Details'}
+                            : mode === 'fit'
+                              ? 'Fit'
+                              : 'Details'}
                         </button>
                       ))}
                     </div>
@@ -1523,7 +1233,25 @@ export default function AccountsPage() {
                       })()}
 
                       {panelMode === 'contacts' && (
-                        <div>
+                        <div className="space-y-3">
+                          <div className="rounded-xl border border-gray-100 bg-gray-50/70 px-3 py-2.5">
+                            <p className="text-xs font-semibold text-gray-700 mb-3">Contact coverage</p>
+                            <div className="grid grid-cols-3 gap-3 text-xs">
+                              <div>
+                                <p className="text-gray-400 mb-0.5">Contacts</p>
+                                <p className="text-lg font-semibold text-gray-900">{selectedAccount.contact_count}</p>
+                              </div>
+                              <div>
+                                <p className="text-gray-400 mb-0.5">Best fit</p>
+                                <p className="text-lg font-semibold text-gray-900">{formatPct(selectedAccount.best_contact_fit) ?? '—'}</p>
+                              </div>
+                              <div>
+                                <p className="text-gray-400 mb-0.5">Avg fit</p>
+                                <p className="text-lg font-semibold text-gray-900">{formatPct(selectedAccount.avg_contact_fit) ?? '—'}</p>
+                              </div>
+                            </div>
+                          </div>
+
                           {loadingContacts ? (
                             <div className="flex justify-center py-12">
                               <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-arcova-teal" />
@@ -1641,61 +1369,6 @@ export default function AccountsPage() {
                           )}
                         </div>
                       )}
-
-                      {panelMode === 'coverage' && (
-                        <div className="space-y-3">
-                          <div className="rounded-xl border border-gray-100 bg-gray-50/70 px-3 py-2.5">
-                            <p className="text-xs font-semibold text-gray-700 mb-3">Contact coverage</p>
-                            <div className="grid grid-cols-3 gap-3 text-xs">
-                              <div>
-                                <p className="text-gray-400 mb-0.5">Contacts</p>
-                                <p className="text-lg font-semibold text-gray-900">{selectedAccount.contact_count}</p>
-                              </div>
-                              <div>
-                                <p className="text-gray-400 mb-0.5">Best fit</p>
-                                <p className="text-lg font-semibold text-gray-900">{formatPct(selectedAccount.best_contact_fit) ?? '—'}</p>
-                              </div>
-                              <div>
-                                <p className="text-gray-400 mb-0.5">Avg fit</p>
-                                <p className="text-lg font-semibold text-gray-900">{formatPct(selectedAccount.avg_contact_fit) ?? '—'}</p>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="rounded-xl border border-gray-100 bg-gray-50/70 px-3 py-2.5">
-                            <p className="text-xs font-semibold text-gray-700 mb-1">ICP coverage</p>
-                            <p className="text-[11px] text-gray-500 mb-3">
-                              Companies with at least one lead in Monitor or Reach out, by the ICP matched on the company record.
-                            </p>
-                            {icpCoverageLoading ? (
-                              <p className="text-xs text-gray-400">Loading…</p>
-                            ) : icpCoverageRows && icpCoverageRows.length === 0 && icpCoverageUncategorized === 0 ? (
-                              <p className="text-xs text-gray-400">No qualifying companies yet.</p>
-                            ) : (
-                              <>
-                                <ul className="space-y-2">
-                                  {(icpCoverageRows ?? []).map((row) => (
-                                    <li key={row.icp_id} className="flex justify-between gap-3 text-xs">
-                                      <span className="text-gray-700 min-w-0 break-words leading-snug" title={row.label}>
-                                        {row.label}
-                                      </span>
-                                      <span className="font-semibold text-gray-900 shrink-0 tabular-nums">
-                                        {row.company_count.toLocaleString()}
-                                      </span>
-                                    </li>
-                                  ))}
-                                </ul>
-                                {icpCoverageUncategorized > 0 && (
-                                  <p className="text-[11px] text-gray-500 mt-3 pt-2 border-t border-gray-100">
-                                    {icpCoverageUncategorized.toLocaleString()}{' '}
-                                    compan{icpCoverageUncategorized !== 1 ? 'ies' : 'y'} with prioritized leads but no matched ICP on the company
-                                  </p>
-                                )}
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      )}
                     </div>
 
                     {/* Panel footer */}
@@ -1724,6 +1397,13 @@ export default function AccountsPage() {
             )}
           </div>
         </div>
+
+        {/* ── Agent panel (far right) ── */}
+        <AgentPanel
+          page="accounts"
+          onTableFilter={handleTableFilter}
+          onTableClear={handleQueryClear}
+        />
       </div>
     </div>
   );

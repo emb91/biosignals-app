@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import AppSidebar from '@/components/AppSidebar';
+import { AgentPanel } from '@/components/AgentPanel';
 import Nango from '@nangohq/frontend';
 
 const HUBSPOT_INTEGRATION_ID = 'hubspot';
@@ -674,7 +675,8 @@ export default function ImportPage() {
     <div className="flex h-screen bg-gray-50">
       <AppSidebar />
 
-      <div className="flex-1 overflow-auto">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <div className="flex-1 overflow-auto">
         <div className="max-w-3xl mx-auto px-6 py-10">
 
           {!currentBatchId ? (
@@ -1128,6 +1130,9 @@ export default function ImportPage() {
             </>
           )}
         </div>
+        </div>
+
+        <AgentPanel page="imports" />
       </div>
     </div>
   );

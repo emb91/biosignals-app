@@ -27,8 +27,18 @@ export async function proxy(request: NextRequest) {
     }
   )
 
-  // Refresh session if expired
-  await supabase.auth.getUser()
+  // Refresh session if expired — race with a 3s timeout so a Supabase
+  // connectivity hiccup never blocks the full request for 10+ seconds.
+  try {
+    await Promise.race([
+      supabase.auth.getUser(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('auth timeout')), 3000),
+      ),
+    ]);
+  } catch {
+    // Silently continue — the page/API route will handle unauthenticated state.
+  }
 
   return supabaseResponse
 }
