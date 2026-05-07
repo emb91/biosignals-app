@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import AppSidebar from '@/components/AppSidebar';
+import { ROUTES } from '@/lib/routes';
 
 export default function FindMoreLeadsPage() {
   return (
@@ -22,13 +23,13 @@ export default function FindMoreLeadsPage() {
 
           <div className="mt-8 flex flex-wrap gap-3">
             <Link
-              href="/results"
+              href={ROUTES.leads.contacts}
               className="px-4 py-2 rounded-lg bg-arcova-teal text-white text-sm font-medium hover:bg-arcova-teal/90 transition-colors"
             >
               View Leads
             </Link>
             <Link
-              href="/import"
+              href={ROUTES.import}
               className="px-4 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:border-gray-400 hover:text-gray-900 transition-colors"
             >
               Back to import summary

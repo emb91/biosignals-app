@@ -81,9 +81,9 @@ const PROMPTS: Record<AgentPage, string[]> = {
     'Show me recently imported contacts',
   ],
   dashboard: [
-    'How healthy is my pipeline?',
-    'What should I focus on this week?',
-    'How many accounts are covered vs. opportunity?',
+    'Let’s work on item 1 first',
+    'What should I do after that?',
+    'Show me the highest-leverage option',
   ],
   health: [
     'Where is my ICP coverage weakest?',
@@ -178,6 +178,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
   const [handoffFrom, setHandoffFrom] = useState<AgentPage | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const lastPendingNonceRef = useRef<number | null>(null);
 
   // Restore conversation handed off from another page
   useEffect(() => {
@@ -206,6 +207,8 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
   // Fire a programmatic message when the parent sets pendingMessage
   useEffect(() => {
     if (pendingMessage?.text) {
+      if (lastPendingNonceRef.current === pendingMessage.nonce) return;
+      lastPendingNonceRef.current = pendingMessage.nonce;
       void sendMessage(pendingMessage.text, pendingMessage.isHidden);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -317,38 +320,53 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
   }
 
   const showPrompts = messages.length === 0 && !isLoading;
+  const lightSetupChat = page === 'data';
 
   return (
     <div
       className={cn(
         'flex min-h-0 flex-col',
         wide
-          ? cn('min-h-0 flex-1 px-4', hideHeader ? 'py-2' : 'py-4')
-          : 'shrink-0 self-stretch py-3 pr-3 pl-2',
+          ? cn('min-h-0 flex-1 px-4', lightSetupChat ? 'py-3' : 'py-4')
+          : 'shrink-0 self-stretch py-3 pr-3 pl-2 max-[1279px]:h-80 max-[1279px]:self-auto max-[1279px]:px-4 max-[1279px]:pb-4 max-[1279px]:pt-0 sm:max-[1279px]:px-6',
         className,
       )}
     >
       <div
         className={cn(
           'flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl',
-          wide ? 'w-full' : 'w-80',
-          'border border-gray-200 bg-white',
-          'shadow-lg shadow-gray-900/5',
-          'ring-1 ring-gray-950/[0.06]',
+          wide ? 'w-full' : 'w-80 max-[1279px]:w-full',
+          lightSetupChat
+            ? 'border border-slate-200/80 bg-white shadow-[0_24px_70px_-34px_rgba(15,23,42,0.45)] ring-1 ring-white'
+            : cn(
+                'border border-gray-200 bg-white',
+                'shadow-lg shadow-gray-900/5',
+                'ring-1 ring-gray-950/[0.06]',
+              ),
         )}
       >
       {!hideHeader && (
-      <div className="flex items-center gap-2.5 px-4 py-3 border-b border-gray-100 bg-gray-50/60 shrink-0">
+      <div
+        className={cn(
+          'flex shrink-0 items-center gap-2.5 border-b',
+          lightSetupChat
+            ? 'border-slate-200 bg-white px-5 py-4'
+            : 'border-gray-100 bg-gray-50/60 px-4 py-3',
+        )}
+      >
         <Image
           src="/images/network-og.png"
           alt="Arcova"
-          width={28}
-          height={28}
-          className="h-7 w-7 shrink-0 rounded-full object-cover ring-1 ring-arcova-teal/20"
+          width={lightSetupChat ? 36 : 28}
+          height={lightSetupChat ? 36 : 28}
+          className={cn(
+            'shrink-0 rounded-full object-cover',
+            lightSetupChat ? 'h-9 w-9 ring-2 ring-slate-100 shadow-sm' : 'h-7 w-7 ring-1 ring-arcova-teal/20',
+          )}
         />
         <div className="flex-1 min-w-0">
-          <p className="text-xs font-semibold text-gray-800 leading-none">Arcova Agent</p>
-          <p className="text-[11px] text-gray-400 mt-0.5 leading-tight">
+          <p className={cn('font-semibold leading-none text-gray-900', lightSetupChat ? 'text-sm' : 'text-xs')}>Arcova Agent</p>
+          <p className={cn('mt-1 leading-tight text-gray-500', lightSetupChat ? 'text-xs' : 'text-[11px]')}>
             {page === 'data'
               ? 'Run sourcing jobs and watch the queue on the right'
               : 'Ask me anything about your accounts'}
@@ -357,7 +375,10 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
         {messages.length > 0 && (
           <button
             onClick={handleClearConversation}
-            className="shrink-0 text-gray-400 hover:text-gray-600 transition-colors"
+            className={cn(
+              'shrink-0 text-gray-400 transition-colors hover:text-gray-600',
+              lightSetupChat && 'rounded-lg p-2 hover:bg-slate-50',
+            )}
             aria-label="Clear conversation"
             title="Clear conversation"
           >
@@ -369,18 +390,23 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
 
       {/* ── Suggested prompts ── */}
       {showPrompts && (
-        <div className="px-4 pt-4 pb-2 shrink-0">
-          <p className="text-[11px] text-gray-400 font-medium uppercase tracking-wide mb-2">
+        <div className={cn('shrink-0', lightSetupChat ? 'px-5 pt-5 pb-3' : 'px-4 pt-4 pb-2', !wide && 'max-[1279px]:hidden')}>
+          <p className={cn('font-medium uppercase tracking-wide', lightSetupChat ? 'mb-3 text-[10px] text-slate-400' : 'mb-2 text-[11px] text-gray-400')}>
             Try asking
           </p>
-          <div className="flex flex-col gap-1.5">
+          <div className={cn('flex flex-col', lightSetupChat ? 'gap-2' : 'gap-1.5')}>
             {PROMPTS[page].map((prompt) => (
               <button
                 key={prompt}
                 onClick={() => sendMessage(prompt)}
-                className="flex items-start gap-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-left text-xs text-gray-600 hover:border-arcova-teal/30 hover:text-arcova-teal hover:bg-arcova-teal/5 transition-colors"
+                className={cn(
+                  'flex items-start gap-2 text-left transition-colors',
+                  lightSetupChat
+                    ? 'rounded-xl border border-slate-200 bg-slate-50/80 px-3.5 py-2.5 text-sm text-slate-600 hover:border-arcova-teal/30 hover:bg-white hover:text-slate-900'
+                    : 'rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-600 hover:border-arcova-teal/30 hover:text-arcova-teal hover:bg-arcova-teal/5',
+                )}
               >
-                <Sparkles className="w-3 h-3 shrink-0 mt-0.5 text-arcova-teal/50" />
+                <Sparkles className={cn('shrink-0 text-arcova-teal/50', lightSetupChat ? 'mt-0.5 h-3.5 w-3.5' : 'mt-0.5 h-3 w-3')} />
                 {prompt}
               </button>
             ))}
@@ -391,7 +417,10 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
       {/* ── Message thread ── */}
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto px-4 py-3 space-y-4 min-h-0"
+        className={cn(
+          'min-h-0 flex-1 overflow-y-auto',
+          lightSetupChat ? 'space-y-5 bg-slate-50/70 px-5 py-5' : 'space-y-4 px-4 py-3',
+        )}
       >
         {/* Handoff indicator */}
         {handoffFrom && messages.length > 0 && (
@@ -406,7 +435,14 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
           if (msg.role === 'user') {
             return (
               <div key={i} className="flex justify-end">
-                <div className="rounded-2xl rounded-tr-none bg-arcova-teal px-3.5 py-2.5 text-sm text-white leading-snug shadow-sm max-w-[calc(100%-2.5rem)]">
+                <div
+                  className={cn(
+                    'rounded-2xl rounded-tr-none bg-arcova-teal text-white shadow-sm',
+                    lightSetupChat
+                      ? 'max-w-[min(100%,28rem)] px-4 py-3 text-base leading-relaxed'
+                      : 'max-w-[calc(100%-2.5rem)] px-3.5 py-2.5 text-sm leading-snug',
+                  )}
+                >
                   {msg.content}
                 </div>
               </div>
@@ -423,24 +459,32 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
           if (bubbles.length === 0) bubbles.push('');
 
           return (
-            <div key={i} className="flex items-start gap-2.5">
+            <div key={i} className={cn('flex items-start', lightSetupChat ? 'gap-3' : 'gap-2.5')}>
               <div className="shrink-0 mt-0.5">
                 {msg.isPending ? (
-                  <ArcovaLoader size={24} />
+                  <ArcovaLoader size={lightSetupChat ? 36 : 24} />
                 ) : (
                   <Image
                     src="/images/network-og.png"
                     alt="Arcova"
-                    width={24}
-                    height={24}
-                    className="h-6 w-6 rounded-full object-cover ring-1 ring-arcova-teal/20"
+                    width={lightSetupChat ? 36 : 24}
+                    height={lightSetupChat ? 36 : 24}
+                    className={cn(
+                      'rounded-full object-cover',
+                      lightSetupChat ? 'h-9 w-9 ring-2 ring-white shadow-sm' : 'h-6 w-6 ring-1 ring-arcova-teal/20',
+                    )}
                   />
                 )}
               </div>
 
-              <div className="flex flex-col gap-1.5 min-w-0 max-w-[calc(100%-2.5rem)]">
+              <div className={cn('flex min-w-0 flex-col', lightSetupChat ? 'max-w-[min(100%,28rem)] gap-2' : 'max-w-[calc(100%-2.5rem)] gap-1.5')}>
                 {msg.isPending ? (
-                  <div className="rounded-2xl rounded-tl-none border border-gray-100 bg-gray-50 px-3.5 py-2.5 text-sm text-gray-800 leading-snug">
+                  <div
+                    className={cn(
+                      'rounded-2xl rounded-tl-none border bg-white shadow-sm',
+                      lightSetupChat ? 'border-slate-200 px-4 py-3 text-base leading-relaxed text-slate-800' : 'border-gray-100 px-3.5 py-2.5 text-sm leading-snug text-gray-800',
+                    )}
+                  >
                     <div className="flex items-center gap-1 h-4">
                       {[0, 120, 240].map((d) => (
                         <span
@@ -455,7 +499,10 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                   bubbles.map((bubble, bi) => (
                     <div
                       key={bi}
-                      className="rounded-2xl rounded-tl-none border border-gray-100 bg-gray-50 px-3.5 py-2.5 text-sm text-gray-800 leading-snug"
+                      className={cn(
+                        'rounded-2xl rounded-tl-none border bg-white shadow-sm',
+                        lightSetupChat ? 'border-slate-200 px-4 py-3 text-base leading-relaxed text-slate-800' : 'border-gray-100 bg-gray-50 px-3.5 py-2.5 text-sm leading-snug text-gray-800',
+                      )}
                     >
                       {bubble}
                     </div>
@@ -479,7 +526,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
       </div>
 
       {/* ── Input bar ── */}
-      <div className="px-3 pb-3 pt-2 shrink-0 border-t border-gray-100">
+      <div className={cn('shrink-0 border-t', lightSetupChat ? 'border-slate-200 bg-white px-4 py-3' : 'border-gray-100 px-3 pb-3 pt-2')}>
         <div className="flex items-center gap-2">
           {hideHeader && messages.length > 0 && (
             <button
@@ -492,7 +539,12 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
               <X className="w-4 h-4" />
             </button>
           )}
-          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 focus-within:ring-2 focus-within:ring-arcova-teal/25 focus-within:border-arcova-teal/40 transition-all shadow-sm">
+          <div
+            className={cn(
+              'flex min-w-0 flex-1 items-center gap-2 rounded-xl border bg-white transition-all focus-within:border-arcova-teal/40 focus-within:ring-2 focus-within:ring-arcova-teal/25',
+              lightSetupChat ? 'border-slate-200 px-4 py-3 shadow-sm' : 'border-gray-200 px-3 py-2 shadow-sm',
+            )}
+          >
             <Sparkles className="w-3.5 h-3.5 text-arcova-teal/40 shrink-0" />
             <input
               ref={inputRef}
@@ -503,14 +555,17 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                 if (e.key === 'Enter') sendMessage(input);
               }}
               placeholder={messages.length > 0 ? 'Ask a follow-up…' : 'Ask me anything…'}
-              className="flex-1 bg-transparent text-sm text-gray-800 placeholder:text-gray-400 focus:outline-none min-w-0"
+              className={cn('min-w-0 flex-1 bg-transparent text-gray-800 placeholder:text-gray-400 focus:outline-none', lightSetupChat ? 'text-base' : 'text-sm')}
               disabled={isLoading}
             />
             <button
               type="button"
               onClick={() => sendMessage(input)}
               disabled={!input.trim() || isLoading}
-              className="shrink-0 p-1.5 rounded-lg bg-arcova-teal text-white hover:bg-arcova-teal/90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              className={cn(
+                'shrink-0 rounded-lg bg-arcova-teal text-white transition-colors hover:bg-arcova-teal/90 disabled:cursor-not-allowed disabled:opacity-30',
+                lightSetupChat ? 'p-2' : 'p-1.5',
+              )}
               aria-label="Send"
             >
               {isLoading ? (

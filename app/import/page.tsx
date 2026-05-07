@@ -8,6 +8,7 @@ import { useRouter } from 'next/navigation';
 import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel } from '@/components/AgentPanel';
 import Nango from '@nangohq/frontend';
+import { ROUTES } from '@/lib/routes';
 
 const HUBSPOT_INTEGRATION_ID = 'hubspot';
 
@@ -54,12 +55,18 @@ type ImportBatch = {
 };
 
 type HubspotSyncLog = {
-  synced_at: string;
+  synced_at: string | null;
   auto_pull_at: string | null;
   auto_pull_count: number | null;
   contacts_synced: number | null;
   contacts_errors: number | null;
   contacts_skipped: number | null;
+  last_pull_batch: {
+    total_rows: number;
+    duplicate_rows: number;
+    failed_rows: number;
+    processed_rows: number;
+  } | null;
 };
 
 type ImportBatchRow = {
@@ -82,6 +89,10 @@ type ImportBatchDetails = {
 
 const BATCH_ID_STORAGE_KEY = 'arcova_current_batch_id';
 const HIDDEN_IMPORTS_STORAGE_KEY = 'arcova_hidden_import_batch_ids';
+/** When set, the HubSpot sync summary row is hidden from Past imports (local only). */
+const HIDE_HUBSPOT_SYNC_ROW_STORAGE_KEY = 'arcova_hide_hubspot_sync_row';
+/** Expanded row id for HubSpot sync in Past imports. */
+const HUBSPOT_SYNC_HISTORY_ROW_ID = '__hubspot_sync__';
 const CSV_PREVIEW_ROW_COUNT = 3;
 
 const formatBatchDate = (iso: string) => {
@@ -89,16 +100,14 @@ const formatBatchDate = (iso: string) => {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 };
 
-const formatSyncDateTime = (iso: string) => {
+const formatActivityTime = (iso: string) => {
   const date = new Date(iso);
-  return date.toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
+  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 };
+
+/** Grid: Source | Details | Date | Time | Status | Actions */
+const IMPORT_HISTORY_TABLE_GRID =
+  'grid grid-cols-[4.75rem_minmax(0,1fr)_6.75rem_4.75rem_5.5rem_4.75rem] gap-x-3 items-center';
 
 const HIGH_FIT_TARGET = 200;
 
@@ -253,6 +262,10 @@ export default function ImportPage() {
   const [hubspotDisconnecting, setHubspotDisconnecting] = useState(false);
   const [pastImportsExpanded, setPastImportsExpanded] = useState(false);
   const [expandedHistoryBatchId, setExpandedHistoryBatchId] = useState<string | null>(null);
+  const [hubspotHistoryRowHidden, setHubspotHistoryRowHidden] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem(HIDE_HUBSPOT_SYNC_ROW_STORAGE_KEY) === '1';
+  });
 
   const persistBatchId = (id: string | null) => {
     setCurrentBatchId(id);
@@ -473,6 +486,8 @@ export default function ImportPage() {
       setHubspotConnected(false);
       setHubspotDomain(null);
       setHubspotSyncLog(null);
+      localStorage.removeItem(HIDE_HUBSPOT_SYNC_ROW_STORAGE_KEY);
+      setHubspotHistoryRowHidden(false);
     } finally {
       setHubspotDisconnecting(false);
     }
@@ -675,6 +690,12 @@ export default function ImportPage() {
     }
   };
 
+  const handleHideHubspotHistoryRow = () => {
+    localStorage.setItem(HIDE_HUBSPOT_SYNC_ROW_STORAGE_KEY, '1');
+    setHubspotHistoryRowHidden(true);
+    setExpandedHistoryBatchId((id) => (id === HUBSPOT_SYNC_HISTORY_ROW_ID ? null : id));
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -715,7 +736,7 @@ export default function ImportPage() {
     <div className="flex h-screen bg-gray-50">
       <AppSidebar />
 
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden min-[1280px]:flex-row">
         <div className="flex-1 overflow-auto">
         <div className="max-w-3xl mx-auto px-6 py-10">
 
@@ -930,7 +951,7 @@ export default function ImportPage() {
                 </div>
               )}
 
-              {/* Past imports + HubSpot sync log */}
+              {/* Past imports: single table (HubSpot + CSV) */}
               {!parsedCsv && (importHistory.length > 0 || hubspotConnected) && (
                 <div className="mt-8">
                   <div className="rounded-xl border border-gray-200 overflow-hidden bg-white">
@@ -941,133 +962,278 @@ export default function ImportPage() {
                     >
                       <span className="text-sm font-semibold text-gray-700 group-hover:text-gray-900 transition-colors">
                         Past imports
-                        {importHistory.length > 0 ? (
-                          <span className="ml-2 text-xs font-normal text-gray-400">({importHistory.length})</span>
-                        ) : null}
+                        <span className="ml-2 text-xs font-normal text-gray-400">
+                          (
+                          {importHistory.length +
+                            (hubspotConnected && !hubspotHistoryRowHidden ? 1 : 0)}
+                          )
+                        </span>
                       </span>
-                      <ChevronDown className={`w-4 h-4 text-gray-400 group-hover:text-gray-600 transition-all ${pastImportsExpanded ? 'rotate-180' : ''}`} />
+                      <ChevronDown className={`w-4 h-4 text-gray-400 group-hover:text-gray-600 transition-all shrink-0 ${pastImportsExpanded ? 'rotate-180' : ''}`} />
                     </button>
 
-                    {hubspotConnected && (
-                      <div className="px-4 py-3 border-b border-gray-100 bg-[#fff5f2]/40">
-                        <p className="text-xs font-semibold text-gray-700 uppercase tracking-wide">HubSpot sync</p>
-                        {hubspotSyncLog?.synced_at ? (
-                          <div className="mt-2 space-y-1 text-xs text-gray-600 leading-relaxed">
-                            <p>
-                              <span className="font-medium text-gray-700">Last sync:</span>{' '}
-                              {formatSyncDateTime(hubspotSyncLog.synced_at)}
-                            </p>
-                            <p>
-                              <span className="font-medium text-gray-800">Into Arcova from HubSpot</span> (last job):{' '}
-                              {(hubspotSyncLog.auto_pull_count ?? 0).toLocaleString()} contact
-                              {(hubspotSyncLog.auto_pull_count ?? 0) !== 1 ? 's' : ''} queued for enrichment.
-                            </p>
-                            <p>
-                              <span className="font-medium text-gray-800">Into HubSpot from Arcova</span> (enrichment push):{' '}
-                              {(hubspotSyncLog.contacts_synced ?? 0).toLocaleString()} contact record
-                              {(hubspotSyncLog.contacts_synced ?? 0) !== 1 ? 's' : ''} written.
-                            </p>
-                            {((hubspotSyncLog.contacts_errors ?? 0) > 0 ||
-                              (hubspotSyncLog.contacts_skipped ?? 0) > 0) && (
-                              <p className="text-amber-700">
-                                {(hubspotSyncLog.contacts_errors ?? 0) > 0 && (
-                                  <span>
-                                    {(hubspotSyncLog.contacts_errors ?? 0).toLocaleString()} push error
-                                    {(hubspotSyncLog.contacts_errors ?? 0) !== 1 ? 's' : ''}
-                                  </span>
+                    {pastImportsExpanded && (
+                      <div className="overflow-x-auto">
+                        <div className="min-w-[44rem]">
+                          <div
+                            className={`${IMPORT_HISTORY_TABLE_GRID} border-b border-gray-100 bg-gray-50/90 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500`}
+                          >
+                            <span>Source</span>
+                            <span>Details</span>
+                            <span>Date</span>
+                            <span>Time</span>
+                            <span>Status</span>
+                            <span className="text-right pr-0.5" aria-hidden>
+                              {'\u00a0'}
+                            </span>
+                          </div>
+
+                          {hubspotConnected && !hubspotHistoryRowHidden && (() => {
+                            const skipped = hubspotSyncLog?.contacts_skipped ?? 0;
+                            const errs = hubspotSyncLog?.contacts_errors ?? 0;
+                            const syncedAt = hubspotSyncLog?.synced_at;
+                            const isHubspotOpen = expandedHistoryBatchId === HUBSPOT_SYNC_HISTORY_ROW_ID;
+                            const pull = hubspotSyncLog?.last_pull_batch;
+                            const uploaded = pull?.total_rows ?? 0;
+                            const duplicates = pull?.duplicate_rows ?? 0;
+                            const notEnriched = pull?.failed_rows ?? 0;
+                            const processed = pull?.processed_rows ?? 0;
+                            const enriched = Math.max(0, processed - duplicates - notEnriched);
+                            const pushed = hubspotSyncLog?.contacts_synced ?? 0;
+                            const hubspotStatusPill =
+                              !syncedAt ? (
+                                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 border border-gray-200/80">
+                                  No run yet
+                                </span>
+                              ) : errs > 0 ? (
+                                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">
+                                  Sync issue
+                                </span>
+                              ) : (
+                                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-100">
+                                  Complete
+                                </span>
+                              );
+                            return (
+                              <div key="hubspot-sync-row" className="border-b border-gray-100 last:border-0">
+                                <div
+                                  className={`${IMPORT_HISTORY_TABLE_GRID} px-4 py-3 bg-[#fff5f2]/30 hover:bg-[#fff5f2]/50 transition-colors cursor-pointer`}
+                                  onClick={() =>
+                                    setExpandedHistoryBatchId(isHubspotOpen ? null : HUBSPOT_SYNC_HISTORY_ROW_ID)
+                                  }
+                                >
+                                  <div>
+                                    <span className="inline-flex items-center rounded-md border border-[#ff7a59]/35 bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#c2410c]">
+                                      HubSpot
+                                    </span>
+                                  </div>
+                                  <div className="min-w-0">
+                                    <p className="text-sm font-medium text-gray-900 truncate">CRM sync</p>
+                                  </div>
+                                  <div className="text-xs text-gray-600 tabular-nums whitespace-nowrap">
+                                    {syncedAt ? formatBatchDate(syncedAt) : '-'}
+                                  </div>
+                                  <div className="text-xs text-gray-600 tabular-nums whitespace-nowrap">
+                                    {syncedAt ? formatActivityTime(syncedAt) : '-'}
+                                  </div>
+                                  <div className="justify-self-start">{hubspotStatusPill}</div>
+                                  <div className="flex items-center justify-end gap-1 shrink-0">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleHideHubspotHistoryRow();
+                                      }}
+                                      className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-red-50 text-red-400 hover:bg-red-100 hover:text-red-600 transition-colors"
+                                      aria-label="Remove HubSpot sync row from list"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                    <div className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-arcova-teal/10 text-arcova-teal pointer-events-none">
+                                      <ChevronDown
+                                        className={`w-4 h-4 transition-transform ${isHubspotOpen ? 'rotate-180' : ''}`}
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                                {isHubspotOpen && (
+                                  <div className="px-4 pb-3 pt-2 bg-gray-50/60 border-b border-gray-100 space-y-2 sm:pl-6">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      {[
+                                        {
+                                          label: 'enriched',
+                                          value: enriched,
+                                          className: 'bg-arcova-teal/10 text-arcova-teal',
+                                        },
+                                        {
+                                          label: 'uploaded',
+                                          value: uploaded,
+                                          className: 'bg-gray-100 text-gray-600',
+                                        },
+                                        {
+                                          label: 'duplicates',
+                                          value: duplicates,
+                                          className: 'bg-gray-100 text-gray-500',
+                                        },
+                                        {
+                                          label: 'not enriched',
+                                          value: notEnriched,
+                                          className: 'bg-gray-100 text-gray-500',
+                                        },
+                                        {
+                                          label: 'pushed',
+                                          value: pushed,
+                                          className: 'bg-[#fff5f2] text-[#c2410c] border border-[#ff7a59]/25',
+                                        },
+                                      ].map(({ label, value, className: pillClass }) => (
+                                        <span
+                                          key={label}
+                                          className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium ${pillClass}`}
+                                        >
+                                          <span className="font-semibold tabular-nums">{value.toLocaleString()}</span>{' '}
+                                          {label}
+                                        </span>
+                                      ))}
+                                    </div>
+                                    {(skipped > 0 || errs > 0) && (
+                                      <div className="text-xs text-gray-700 space-y-1.5 tabular-nums">
+                                        {skipped > 0 && (
+                                          <p className="text-gray-600">Skipped {skipped.toLocaleString()} on push</p>
+                                        )}
+                                        {errs > 0 && (
+                                          <p className="text-amber-800">
+                                            {errs.toLocaleString()} push error{errs !== 1 ? 's' : ''}
+                                          </p>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
                                 )}
-                                {(hubspotSyncLog.contacts_errors ?? 0) > 0 &&
-                                (hubspotSyncLog.contacts_skipped ?? 0) > 0
-                                  ? ' · '
-                                  : null}
-                                {(hubspotSyncLog.contacts_skipped ?? 0) > 0 && (
-                                  <span>
-                                    {(hubspotSyncLog.contacts_skipped ?? 0).toLocaleString()} skipped on push
-                                  </span>
-                                )}
+                              </div>
+                            );
+                          })()}
+
+                          {importHistory.length === 0 &&
+                            (!hubspotConnected || hubspotHistoryRowHidden) && (
+                              <p className="px-4 py-6 text-xs text-gray-400 text-center">
+                                No import batches in this list.
                               </p>
                             )}
-                            <p className="text-gray-500">
-                              Inbound and outbound are different. File uploads (including CSV) are listed under Past
-                              imports.
-                            </p>
-                          </div>
-                        ) : (
-                          <p className="mt-2 text-xs text-gray-500 leading-relaxed">
-                            No HubSpot sync logged for this account yet. After the first daily job or enrichment push,
-                            the last run time and counts will show here.
-                          </p>
-                        )}
+
+                          {importHistory.map((batch) => {
+                            const isOpen = expandedHistoryBatchId === batch.id;
+                            const enriched = Math.max(
+                              0,
+                              (batch.processed_rows || 0) -
+                                (batch.duplicate_rows || 0) -
+                                (batch.failed_rows || 0),
+                            );
+                            const statusPill =
+                              batch.status === 'complete' ? (
+                                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-100">
+                                  Complete
+                                </span>
+                              ) : batch.status === 'cancelled' ? (
+                                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 border border-gray-200/80">
+                                  Cancelled
+                                </span>
+                              ) : batch.status === 'failed' ? (
+                                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-red-50 text-red-600 border border-red-100">
+                                  Failed
+                                </span>
+                              ) : (
+                                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-100">
+                                  Processing
+                                </span>
+                              );
+                            return (
+                              <div key={batch.id} className="border-b border-gray-100 last:border-0">
+                                <div
+                                  className={`${IMPORT_HISTORY_TABLE_GRID} px-4 py-3 hover:bg-gray-50/80 transition-colors cursor-pointer`}
+                                  onClick={() => setExpandedHistoryBatchId(isOpen ? null : batch.id)}
+                                >
+                                  <div>
+                                    <span className="inline-flex items-center rounded-md border border-gray-200 bg-gray-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-600">
+                                      CSV
+                                    </span>
+                                  </div>
+                                  <div className="min-w-0">
+                                    <p
+                                      className="text-sm font-medium text-gray-900 truncate pr-1"
+                                      title={batch.filename}
+                                    >
+                                      {batch.filename}
+                                    </p>
+                                    <p className="text-xs text-gray-400 mt-0.5 tabular-nums">
+                                      {(batch.total_rows || 0).toLocaleString()} rows
+                                    </p>
+                                  </div>
+                                  <div className="text-xs text-gray-600 tabular-nums whitespace-nowrap">
+                                    {formatBatchDate(batch.created_at)}
+                                  </div>
+                                  <div className="text-xs text-gray-600 tabular-nums whitespace-nowrap">
+                                    {formatActivityTime(batch.created_at)}
+                                  </div>
+                                  <div className="justify-self-start">{statusPill}</div>
+                                  <div className="flex items-center justify-end gap-1 shrink-0">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleHideImport(batch.id);
+                                      }}
+                                      className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-red-50 text-red-400 hover:bg-red-100 hover:text-red-600 transition-colors"
+                                      aria-label={`Remove ${batch.filename} from list`}
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                    <div className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-arcova-teal/10 text-arcova-teal pointer-events-none">
+                                      <ChevronDown
+                                        className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                                {isOpen && (
+                                  <div className="px-4 pb-3 pt-2 bg-gray-50/60 flex items-center gap-2 flex-wrap border-b border-gray-100 sm:pl-6">
+                                    {[
+                                      {
+                                        label: 'enriched',
+                                        value: enriched,
+                                        className: 'bg-arcova-teal/10 text-arcova-teal',
+                                      },
+                                      {
+                                        label: 'uploaded',
+                                        value: batch.total_rows || 0,
+                                        className: 'bg-gray-100 text-gray-600',
+                                      },
+                                      {
+                                        label: 'duplicates',
+                                        value: batch.duplicate_rows || 0,
+                                        className: 'bg-gray-100 text-gray-500',
+                                      },
+                                      {
+                                        label: 'not enriched',
+                                        value: batch.failed_rows || 0,
+                                        className: 'bg-gray-100 text-gray-500',
+                                      },
+                                    ].map(({ label, value, className: pillClass }) => (
+                                      <span
+                                        key={label}
+                                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium ${pillClass}`}
+                                      >
+                                        <span className="font-semibold tabular-nums">{value.toLocaleString()}</span>{' '}
+                                        {label}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
-
-                    {pastImportsExpanded && importHistory.length === 0 && (
-                      <p className="px-4 py-4 text-xs text-gray-400 border-b border-gray-100 last:border-0">
-                        No import batches in this list yet. CSV uploads and HubSpot pulls still create batches below once
-                        they exist.
-                      </p>
-                    )}
-
-                    {pastImportsExpanded &&
-                      importHistory.map((batch) => {
-                      const isOpen = expandedHistoryBatchId === batch.id;
-                      const enriched = Math.max(0, (batch.processed_rows || 0) - (batch.duplicate_rows || 0) - (batch.failed_rows || 0));
-                      return (
-                        <div key={batch.id} className="border-b border-gray-100 last:border-0">
-                          <div
-                            className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors cursor-pointer"
-                            onClick={() => setExpandedHistoryBatchId(isOpen ? null : batch.id)}
-                          >
-                            <div className="min-w-0 flex-1">
-                              <p className="text-sm font-medium text-gray-900 truncate max-w-xs" title={batch.filename}>
-                                {batch.filename}
-                              </p>
-                              <p className="text-xs text-gray-400 mt-0.5">
-                                {formatBatchDate(batch.created_at)} · {(batch.total_rows || 0).toLocaleString()} rows
-                              </p>
-                            </div>
-                            <div className="flex items-center gap-2 shrink-0 ml-4">
-                              <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                                batch.status === 'complete' ? 'bg-green-50 text-green-700'
-                                : batch.status === 'cancelled' ? 'bg-gray-100 text-gray-500'
-                                : batch.status === 'failed' ? 'bg-red-50 text-red-600'
-                                : 'bg-amber-50 text-amber-600'
-                              }`}>
-                                {batch.status === 'complete' ? 'Complete'
-                                  : batch.status === 'cancelled' ? 'Cancelled'
-                                  : batch.status === 'failed' ? 'Failed'
-                                  : 'Processing'}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={(e) => { e.stopPropagation(); handleHideImport(batch.id); }}
-                                className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-red-50 text-red-400 hover:bg-red-100 hover:text-red-600 transition-colors"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                              <div className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-arcova-teal/10 text-arcova-teal">
-                                <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-                              </div>
-                            </div>
-                          </div>
-                          {isOpen && (
-                            <div className="px-4 pb-3 pt-2 bg-gray-50/60 flex items-center gap-2 flex-wrap">
-                              {[
-                                { label: 'enriched', value: enriched, className: 'bg-arcova-teal/10 text-arcova-teal' },
-                                { label: 'uploaded', value: batch.total_rows || 0, className: 'bg-gray-100 text-gray-600' },
-                                { label: 'duplicates', value: batch.duplicate_rows || 0, className: 'bg-gray-100 text-gray-500' },
-                                { label: 'not enriched', value: batch.failed_rows || 0, className: 'bg-gray-100 text-gray-500' },
-                              ].map(({ label, value, className }) => (
-                                <span key={label} className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium ${className}`}>
-                                  <span className="font-semibold">{value.toLocaleString()}</span> {label}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-
                   </div>
                 </div>
               )}
@@ -1149,7 +1315,7 @@ export default function ImportPage() {
                       high fit lead{(progress?.monitorOrReachOutLeads || 0) !== 1 ? 's' : ''} ready to view
                     </p>
                     <div className="mt-4 flex flex-wrap gap-2">
-                      <Link href="/results" className="px-4 py-2 rounded-lg bg-arcova-teal text-white text-sm font-medium hover:bg-arcova-teal/90 transition-colors">
+                      <Link href={ROUTES.leads.contacts} className="px-4 py-2 rounded-lg bg-arcova-teal text-white text-sm font-medium hover:bg-arcova-teal/90 transition-colors">
                         View Leads
                       </Link>
                       {!enoughMonitorOrReachOutLeads && (

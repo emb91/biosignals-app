@@ -19,6 +19,9 @@ import {
   type QueryLead,
   fetchFilteredLeads,
 } from '@/lib/leads-data';
+import { getLeadActionFromFits } from '@/lib/lead-action';
+import { buildWorkspaceJourneyState } from '@/lib/agent-journey-state';
+import { ROUTES, withQuery } from '@/lib/routes';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -30,6 +33,7 @@ interface ChatMessage {
 }
 
 interface PageContext {
+  leadsView?: 'contacts' | 'accounts';
   totalAccounts?: number;
   filteredAccounts?: number;
   activeQuery?: string;
@@ -48,6 +52,8 @@ interface PageContext {
   acquisitionCompanyId?: string;
   acquisitionCompanyName?: string;
   acquisitionBatchCompanies?: { id: string; name: string; icpId?: string | null }[];
+  dashboardBrief?: string;
+  dashboardAgenda?: { title?: string; detail?: string; href?: string }[];
 }
 
 interface TableFilter {
@@ -83,6 +89,16 @@ const anthropic = new Anthropic();
 // ─── Tool definitions ─────────────────────────────────────────────────────────
 
 const TOOLS: Anthropic.Tool[] = [
+  {
+    name: 'get_workspace_journey_state',
+    description:
+      'Diagnose where the user is in the Arcova journey and what they should do next. This combines setup, import, lead status, account coverage, ICP gaps, and Data acquisition recommendations. Call this whenever the user asks "what should I do next?", "where am I?", "help me", seems lost, asks for guidance, or asks what matters on any page.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+      required: [],
+    },
+  },
   {
     name: 'get_import_history',
     description:
@@ -286,14 +302,14 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'suggest_navigation',
     description:
-      'Suggest that the user navigate to another page in the app. Call this whenever the next action for the user requires them to go somewhere else — always pair it with a short explanation of what to do there. Only call this once per response. When sending multiple accounts for batch contact sourcing, set href to /data?mode=contacts_at_companies and populate batchCompanies with the full list.',
+      `Suggest that the user navigate to another page in the app. Call this whenever the next action for the user requires them to go somewhere else — always pair it with a short explanation of what to do there. Only call this once per response. When sending multiple accounts for batch contact sourcing, set href to ${withQuery(ROUTES.leads.data, 'mode=contacts_at_companies')} and populate batchCompanies with the full list.`,
     input_schema: {
       type: 'object' as const,
       properties: {
         href: {
           type: 'string',
           description:
-            'The destination page path. Use /data for generic acquisition, /data?mode=contacts_at_company&companyId=...&companyName=...&icpId=... for a single company, or /data?mode=contacts_at_companies when sending a batch of accounts.',
+            `The destination page path. Use ${ROUTES.leads.data} for generic acquisition, ${ROUTES.leads.data}?mode=contacts_at_company&companyId=...&companyName=...&icpId=... for a single company, or ${withQuery(ROUTES.leads.data, 'mode=contacts_at_companies')} when sending a batch of accounts.`,
         },
         label: {
           type: 'string',
@@ -410,7 +426,7 @@ function buildSystemPrompt(page: Page, context?: PageContext): string {
   const pageContext: Record<Page, string> = {
     accounts: `You are on the Accounts page. This shows a table of all target companies (accounts) the user has in their workspace — enriched with fit scores, contact counts, therapeutic areas, funding info, and more. The user can filter, sort, and explore these accounts. You can update the table by calling filter_accounts_table.`,
     leads: `You are on the Leads page. This shows individual contacts (leads) across all companies, with their fit scores and job details. The user can filter and prioritise contacts to reach out to.`,
-    dashboard: `You are on the Dashboard page. This shows a high-level overview of the workspace: coverage stats, top accounts, recent signal events, and ICP performance.`,
+    dashboard: `You are on the Dashboard page. This is not a reporting page. It is the user's daily briefing room: you act like an executive assistant, summarise what needs attention, help them choose what to work on first, and route them into the right workflow only after they choose.`,
     health: `You are on the Health page. This shows ICP coverage health: where the workspace has enough companies, where contact fit is weak, and where account depth is thin.`,
     signals: `You are on the Signals page. This shows recent signal events for companies and contacts — things like job changes, funding rounds, new hires, or other triggers that indicate buying intent.`,
     imports: `You are on the Imports page. This shows upload batch history (CSV uploads and any HubSpot pull batches) plus a HubSpot sync summary. HubSpot sync logs two directions: contacts pulled FROM HubSpot into Arcova as new import rows, and enriched contacts pushed FROM Arcova TO HubSpot. When the user asks how many contacts came from HubSpot, use inbound pull counts and HubSpot-named batches, not the push count.`,
@@ -423,7 +439,7 @@ function buildSystemPrompt(page: Page, context?: PageContext): string {
 The selected account is ${context.selectedAccount.name || 'the selected company'}.
 Company id: ${context.selectedAccount.id}.
 Matched ICP id: ${context.selectedAccount.matchedIcpId || 'unknown'}.
-If the user asks to find contacts, buyer personas, or more coverage for this selected account, call suggest_navigation with /data?mode=contacts_at_company&companyId=${encodeURIComponent(context.selectedAccount.id)}&companyName=${encodeURIComponent(context.selectedAccount.name || 'Selected company')}${context.selectedAccount.matchedIcpId ? `&icpId=${encodeURIComponent(context.selectedAccount.matchedIcpId)}` : ''}.`
+If the user asks to find contacts, buyer personas, or more coverage for this selected account, call suggest_navigation with ${withQuery(ROUTES.leads.data, `mode=contacts_at_company&companyId=${encodeURIComponent(context.selectedAccount.id)}&companyName=${encodeURIComponent(context.selectedAccount.name || 'Selected company')}${context.selectedAccount.matchedIcpId ? `&icpId=${encodeURIComponent(context.selectedAccount.matchedIcpId)}` : ''}`)}.`
     : '';
 
   const dataPageContext = page === 'data' && context?.acquisitionMode
@@ -454,11 +470,42 @@ Open the conversation by confirming the ICP, then ask how many companies they wa
       })()
     : '';
 
+  const dashboardContext = page === 'dashboard'
+    ? `
+## Dashboard briefing context
+Current dashboard brief: ${context?.dashboardBrief || 'No dashboard brief was supplied.'}
+Agenda options shown beside the chat: ${JSON.stringify(context?.dashboardAgenda ?? [])}
+
+On Dashboard, behave like an executive assistant starting the user's work session.
+- When the page opens, give a crisp ranked briefing: what to do first, second, and third.
+- Do not explain the whole product. Do not turn this into analytics commentary.
+- Give the user options, e.g. "I would start with 1; we can do 2 after that."
+- If the user says they want to work on an item, acknowledge the sequence and call suggest_navigation for the matching agenda href when available.
+- After routing them, remind them briefly that Dashboard is where they can come back to decide what to do next.
+- Keep dashboard messages short, practical, and work-session oriented.`
+    : '';
+
+  const leadsViewContext = context?.leadsView
+    ? `
+## Active Leads lens
+The user is in the ${context.leadsView === 'accounts' ? 'Accounts view of Leads' : 'Contacts view of Leads'}.
+${context.leadsView === 'accounts'
+  ? 'Use the account lens: talk about company coverage, fit, contact depth, and which accounts need better contacts.'
+  : 'Use the contacts lens: talk about individual people, contact status, seniority/function fit, and which contacts are Ready, Monitor, Source, or Deprioritised.'}`
+    : '';
+
   return `You are the Arcova Agent — an expert go-to-market co-pilot embedded in the Arcova platform, a life sciences GTM workspace.
 
 ${pageContext[page]}
 ${selectedAccountContext}
 ${dataPageContext}
+${dashboardContext}
+${leadsViewContext}
+
+## Journey model
+Arcova has a clear user journey. Setup teaches the product who the user is and who they target. Import brings in contacts from HubSpot or CSV. Leads reveals contact quality: Ready, Monitor, Source, and Deprioritised. Accounts reveals company-level coverage gaps. Health reveals ICP-level strategic gaps. Data fixes those gaps by sourcing companies for an ICP, contacts at specific high-fit accounts, or contacts across an ICP. Signals comes later, once coverage is good, to show timing and intent.
+
+Your job is to narrate that journey and route users to the highest-leverage next step. Make Data feel like the precise fix for a diagnosed gap, not a generic upsell.
 
 ## Your role
 You help users understand their data, prioritise accounts and contacts, diagnose scoring, and take action. You're knowledgeable, direct, and concise — like a smart colleague who knows the platform inside-out. You don't use filler phrases like "certainly!" or "great question!".
@@ -483,6 +530,7 @@ Arcova helps life sciences sales and BD teams identify, score, and prioritise ta
 Use your tools proactively to give accurate, data-driven answers. Don't guess at numbers — call a tool if you're not sure.
 
 - Use get_workspace_summary for broad "overview" or "how am I doing" questions.
+- Use get_workspace_journey_state whenever the user asks what to do next, asks where they are in the process, seems unsure, asks for guidance, or asks what matters on the current page. This is the main navigation and upsell tool.
 - Use get_icp_definitions when the user asks about scoring logic or ICPs.
 - Use query_companies to answer specific questions about accounts (counts, top lists, filtered subsets).
 - Use get_company_details for questions about a specific named company.
@@ -498,11 +546,21 @@ Use your tools proactively to give accurate, data-driven answers. Don't guess at
 - Never lead with navigation. Never make "go to the Data page" the headline of a response.
 - One navigation suggestion per response maximum.
 
+## Journey guidance rules
+- If setup is incomplete, point the user back to setup before discussing enrichment, scoring, or Data.
+- If setup is complete but there are no imports, point them to Import. Mention HubSpot if connected or CSV if not.
+- If imports exist but there are no scored leads or accounts yet, explain that enrichment/import processing is the next thing to wait for or check.
+- If Source contacts exist at high-fit companies, explain that the companies are good but the people are wrong, then suggest Data for contact sourcing.
+- If high-fit accounts have no strong contacts, explain the account coverage gap, then suggest Data for contacts at those accounts.
+- If an ICP has low or zero company coverage, explain that this is a strategic coverage gap, then suggest Data to find companies for that ICP.
+- If an ICP has enough companies but weak average contact fit, explain that contact quality is the gap, then suggest Data to source contacts across that ICP.
+- If coverage looks healthy, point them toward Signals or prioritising Ready/Monitor leads.
+
 ## Batch contact sourcing
 When the user wants to source contacts for multiple accounts at once (e.g. "source contacts for all opportunity accounts", "find contacts for all these companies"), do this in one response:
 1. Call query_companies with coverageStatuses: ["opportunity"] (and limit: 50) to get the full list.
 2. Explain the situation in 1–2 sentences: how many accounts need contacts and what that means.
-3. Call suggest_navigation with href: "/data?mode=contacts_at_companies", a label like "Source contacts for all N accounts", and batchCompanies set to the full list of {id, name, icpId} objects from the query results. The id field must be the company's database id (use the raw id from the query result — if unavailable fall back to domain or name as a key).
+3. Call suggest_navigation with href: "${withQuery(ROUTES.leads.data, 'mode=contacts_at_companies')}", a label like "Source contacts for all N accounts", and batchCompanies set to the full list of {id, name, icpId} objects from the query results. The id field must be the company's database id (use the raw id from the query result — if unavailable fall back to domain or name as a key).
 Never ask the user to confirm each account one-by-one. Batch them all in a single suggest_navigation call.
 
 ## Response style — strict rules
@@ -534,7 +592,7 @@ Never ask the user to confirm each account one-by-one. Batch them all in a singl
 
 **When no results are found**
 - State it plainly in one sentence. Example: "You don't have any VP-level contacts at high-fit companies right now."
-- Follow with one short sentence pointing to the next step, then call suggest_navigation to show the button. Use Data (/data) when better contacts or more companies are needed. Use Import (/import) when the user should upload data themselves. Pick one — never list both.
+- Follow with one short sentence pointing to the next step, then call suggest_navigation to show the button. Use Data (${ROUTES.leads.data}) when better contacts or more companies are needed. Use Import (${ROUTES.import}) when the user should upload data themselves. Pick one — never list both.
 - Never speculate about why the data is missing or list hypotheses.
 
 **When updating the table**
@@ -545,6 +603,198 @@ Never ask the user to confirm each account one-by-one. Batch them all in a singl
 }
 
 // ─── Tool implementations ─────────────────────────────────────────────────────
+
+async function toolGetWorkspaceJourneyState(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+): Promise<string> {
+  const [companyResult, icpsResult, personasResult, batchesResult, syncLogResult, accountsResult, leadsResult] =
+    await Promise.all([
+      supabase
+        .from('user_company')
+        .select('company_name, domain, analyzed_at')
+        .eq('user_id', userId)
+        .order('analyzed_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from('icps')
+        .select('id, name, created_at')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('personas')
+        .select('id, icp_id')
+        .eq('user_id', userId),
+      supabase
+        .from('upload_batches')
+        .select('id, filename, status, total_rows, processed_rows, created_at')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(10),
+      supabase
+        .from('hubspot_sync_log')
+        .select('synced_at, auto_pull_at, auto_pull_count, contacts_synced')
+        .eq('user_id', userId)
+        .order('synced_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      fetchAggregatedAccounts(supabase, userId),
+      fetchFilteredLeads(supabase, userId, {}, 'status_best_first', 500),
+    ]);
+
+  const icps = icpsResult.data ?? [];
+  const personas = personasResult.data ?? [];
+  const batches = batchesResult.data ?? [];
+  const accounts = accountsResult.accounts ?? [];
+  const leads = leadsResult.leads ?? [];
+  const sync = syncLogResult.data;
+
+  const setup = {
+    company_profile_complete: !!companyResult.data,
+    company_name: companyResult.data?.company_name ?? companyResult.data?.domain ?? null,
+    icps_defined: icps.length,
+    personas_defined: personas.length,
+    setup_complete: !!companyResult.data && icps.length > 0,
+  };
+
+  const importState = {
+    has_imported_contacts: batches.length > 0 || leads.length > 0 || !!sync?.auto_pull_count,
+    recent_batches: batches.map((b) => ({
+      filename: b.filename,
+      status: b.status,
+      total_rows: b.total_rows,
+      processed_rows: b.processed_rows,
+      created_at: b.created_at,
+      likely_hubspot_pull: /\bhubspot/i.test(String(b.filename ?? '')),
+    })),
+    hubspot_last_job: sync
+      ? {
+          synced_at: sync.synced_at,
+          inbound_hubspot_contacts: sync.auto_pull_count,
+          inbound_recorded_at: sync.auto_pull_at,
+          outbound_contacts_written_to_hubspot: sync.contacts_synced,
+        }
+      : null,
+  };
+
+  const leadStatusCounts = { ready: 0, monitor: 0, source: 0, deprioritized: 0 };
+  const sourceContactsAtHighFitCompanies: Array<{
+    id: string;
+    name: string;
+    job_title: string | null;
+    company_id: string | null;
+    company_name: string | null;
+    icp: string | null;
+  }> = [];
+
+  for (const lead of leads) {
+    const companyFit = lead.company_fit_score ?? lead.companies?.company_fit_score ?? null;
+    const action = getLeadActionFromFits(companyFit, lead.contact_fit_score ?? null, lead.intent_score ?? null);
+    if (action === 'reach_out') leadStatusCounts.ready++;
+    else if (action === 'monitor') leadStatusCounts.monitor++;
+    else if (action === 'source_contact') {
+      leadStatusCounts.source++;
+      if (sourceContactsAtHighFitCompanies.length < 8) {
+        sourceContactsAtHighFitCompanies.push({
+          id: lead.id,
+          name: lead.full_name ?? 'Unknown contact',
+          job_title: lead.resolved_current_job_title ?? lead.job_title,
+          company_id: lead.company_id,
+          company_name: lead.resolved_current_company_name ?? lead.company_name,
+          icp: lead.matched_icp_label ?? lead.matched_icp_name,
+        });
+      }
+    } else if (action === 'deprioritize') {
+      leadStatusCounts.deprioritized++;
+    }
+  }
+
+  const accountCoverage = { covered: 0, opportunity: 0, weak: 0, unscored: 0 };
+  const highFitPoorCoverage: Array<{
+    id: string;
+    name: string;
+    icpId: string | null;
+    icp: string | null;
+    contact_count: number;
+    best_contact_fit: number | null;
+    issue: string;
+  }> = [];
+
+  for (const account of accounts) {
+    const status = getCoverageStatus(account);
+    if (status === 'covered') accountCoverage.covered++;
+    else if (status === 'opportunity') {
+      accountCoverage.opportunity++;
+      if (highFitPoorCoverage.length < 50) {
+        highFitPoorCoverage.push({
+          id: account.id,
+          name: account.company_name ?? account.domain ?? 'Unknown company',
+          icpId: account.matched_icp_id,
+          icp: account.matched_icp_label,
+          contact_count: account.contact_count,
+          best_contact_fit: normalizeScore01(account.best_contact_fit),
+          issue: account.contact_count === 0 ? 'no contacts' : 'contacts exist but none fully match the buyer persona',
+        });
+      }
+    } else if (status === 'weak') accountCoverage.weak++;
+    else accountCoverage.unscored++;
+  }
+
+  const icpRows = icps.map((icp, index) => {
+    const icpAccounts = accounts.filter((a) => a.matched_icp_id === icp.id);
+    const avgContactFit =
+      icpAccounts.length > 0
+        ? icpAccounts.reduce((sum, account) => sum + (normalizeScore01(account.avg_contact_fit) ?? 0), 0) / icpAccounts.length
+        : null;
+    const opportunityAccounts = icpAccounts.filter((a) => getCoverageStatus(a) === 'opportunity').length;
+    return {
+      id: icp.id,
+      label: icp.name?.trim() ? `ICP ${index + 1}: ${icp.name}` : `ICP ${index + 1}`,
+      company_count: icpAccounts.length,
+      opportunity_accounts: opportunityAccounts,
+      average_contact_fit: avgContactFit,
+    };
+  });
+
+  const lowCompanyCoverageIcps = icpRows
+    .filter((icp) => icp.company_count < 5)
+    .sort((a, b) => a.company_count - b.company_count);
+
+  const poorContactFitIcps = icpRows
+    .filter((icp) => icp.company_count >= 5 && (icp.average_contact_fit ?? 0) < 0.6)
+    .sort((a, b) => (a.average_contact_fit ?? 0) - (b.average_contact_fit ?? 0));
+
+  const journeyState = buildWorkspaceJourneyState({
+    setup,
+    import_state: importState,
+    leads: {
+      total: leads.length,
+      status_counts: leadStatusCounts,
+      source_contacts_at_high_fit_companies: sourceContactsAtHighFitCompanies,
+    },
+    accounts: {
+      total: accounts.length,
+      coverage: accountCoverage,
+      high_fit_poor_coverage_examples: highFitPoorCoverage.slice(0, 12),
+    },
+    icps: {
+      rows: icpRows.map((icp) => ({
+        ...icp,
+        average_contact_fit:
+          icp.average_contact_fit == null ? null : `${Math.round(icp.average_contact_fit * 100)}%`,
+      })),
+      low_company_coverage: lowCompanyCoverageIcps,
+      poor_average_contact_fit: poorContactFitIcps.map((icp) => ({
+        ...icp,
+        average_contact_fit:
+          icp.average_contact_fit == null ? null : `${Math.round(icp.average_contact_fit * 100)}%`,
+      })),
+    },
+  });
+
+  return JSON.stringify(journeyState);
+}
 
 async function toolGetWorkspaceSummary(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -971,6 +1221,9 @@ async function runAgentLoop(
 
       try {
         switch (toolName) {
+          case 'get_workspace_journey_state':
+            result = await toolGetWorkspaceJourneyState(supabase, userId);
+            break;
           case 'get_import_history':
             result = await toolGetImportHistory(supabase, userId);
             break;

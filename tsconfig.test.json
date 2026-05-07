@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/private/tmp/arcova-journey-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/agent-journey-state.ts",
+    "lib/agent-journey-state.test.ts",
+    "lib/routes.ts"
+  ]
+}

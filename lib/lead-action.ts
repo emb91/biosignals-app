@@ -114,23 +114,27 @@ export function formatLeadActionLabel(action: LeadAction): string {
   }
 }
 
-/** Pill styles aligned with Leads and Accounts tables. */
+/** Pill styles: soft traffic-light semantics tuned to Arcova's pastel teal palette. */
 export const LEAD_ACTION_PILL_CLASS: Record<LeadAction, { label: string; className: string }> = {
+  reach_out: {
+    label: 'Reach out',
+    className:
+      'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/80 font-semibold shadow-sm shadow-arcova-teal/10',
+  },
   monitor: {
     label: 'Monitor',
-    className: 'bg-arcova-teal text-white',
+    className:
+      'bg-amber-50 text-amber-700 ring-1 ring-amber-200/80 font-medium',
   },
   source_contact: {
     label: 'Source',
-    className: 'bg-arcova-teal/10 text-arcova-teal ring-1 ring-arcova-teal/20',
-  },
-  reach_out: {
-    label: 'Reach out',
-    className: 'bg-white text-arcova-teal ring-2 ring-arcova-teal font-semibold',
+    className:
+      'bg-rose-50 text-rose-700 ring-1 ring-rose-200/80 font-medium',
   },
   deprioritize: {
     label: 'Deprioritise',
-    className: 'bg-gray-100 text-gray-500 ring-1 ring-gray-200',
+    className:
+      'bg-slate-50 text-slate-500 ring-1 ring-slate-200/80 font-medium',
   },
 };
 

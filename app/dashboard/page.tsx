@@ -6,7 +6,26 @@ import { useCallback, useEffect, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel } from '@/components/AgentPanel';
 import { supabase } from '@/lib/supabase';
-import { getSignalDisplayName } from '@/lib/signal-display-names';
+import {
+  AlertTriangle,
+  ArrowRight,
+  Bot,
+  Clock3,
+  Database,
+  Loader2,
+  RefreshCw,
+  Target,
+  Users,
+  Zap,
+} from 'lucide-react';
+import {
+  COMPANY_FIT_GAP_BELOW,
+  isWeakDim,
+  type HealthDim,
+  type PipelineDataRequestType,
+} from '@/lib/pipeline-icp-health';
+import { ROUTES, withQuery } from '@/lib/routes';
+
 type SetupStep = {
   id: 'profile' | 'companies' | 'personas' | 'import' | 'signals';
   label: string;
@@ -16,57 +35,34 @@ type SetupStep = {
 
 type IcpRecord = {
   id: string;
-  name: string | null;
-  company_type?: string | null;
-  therapeutic_areas?: string[] | null;
-  modalities?: string[] | null;
-  development_stages?: string[] | null;
-  company_sizes?: string[] | null;
-  funding_stages?: string[] | null;
-  example_companies?: string[] | null;
   signals?: string[] | null;
-  created_at?: string | null;
-  updated_at?: string | null;
 };
 
 type ContactRecord = {
   id: string;
-  name: string;
-  icp_id?: string | null;
   signals?: string[] | null;
-  created_at?: string | null;
-  updated_at?: string | null;
-  status?: string | null;
-};
-
-type SignalEvent = {
-  id: string;
-  label: string;
-  signalType: string;
-  timestamp: string;
-  href: string;
 };
 
 type TopLead = {
   id: string;
   name: string;
   priorityScore: number;
-  latestSignalType: string;
-  latestSignalAt: string;
+  updatedAt: string;
   href: string;
 };
 
-type FollowUpReminder = {
-  id: string;
-  contactName: string;
-  companyName: string;
-  updatedAt: string;
+type IcpCoverageRow = {
+  company_count: number;
 };
 
-type IcpCoverageRow = {
+type IcpPipelineCard = {
   icp_id: string;
   label: string;
   company_count: number;
+  avg_company_fit: number | null;
+  avg_contact_fit: number | null;
+  contact_fit: HealthDim;
+  coverage: HealthDim;
 };
 
 type EnrichmentJob = {
@@ -78,19 +74,26 @@ type EnrichmentJob = {
   href: string;
   started_at: string | null;
   finished_at: string | null;
-  last_error: string | null;
 };
 
-const TEAL = '#1D9E75';
-const MILLIS_IN_DAY = 1000 * 60 * 60 * 24;
+type AgendaItem = {
+  id: string;
+  label: string;
+  title: string;
+  detail: string;
+  href: string;
+  cta: string;
+  icon: typeof AlertTriangle;
+  tone: 'urgent' | 'next' | 'steady';
+};
 
 const hasSignals = (signals?: string[] | null) => Array.isArray(signals) && signals.length > 0;
 
 const formatTimeAgo = (isoTimestamp?: string | null) => {
   if (!isoTimestamp) return 'just now';
-  const now = Date.now();
   const then = new Date(isoTimestamp).getTime();
-  const diff = Math.max(0, now - then);
+  if (!Number.isFinite(then)) return 'just now';
+  const diff = Math.max(0, Date.now() - then);
 
   const minutes = Math.floor(diff / (1000 * 60));
   if (minutes < 1) return 'just now';
@@ -106,54 +109,79 @@ const formatTimeAgo = (isoTimestamp?: string | null) => {
   return `${months} mo ago`;
 };
 
-const daysSince = (isoTimestamp?: string | null) => {
-  if (!isoTimestamp) return 999;
-  return Math.floor((Date.now() - new Date(isoTimestamp).getTime()) / MILLIS_IN_DAY);
-};
+function pct(value: unknown): number {
+  const n = typeof value === 'number' ? value : value == null ? 0 : Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n <= 1 ? n * 100 : n);
+}
+
+function fitLabel(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) return 'unknown';
+  return `${Math.round(value * 100)}%`;
+}
+
+function isCoverageGap(card: IcpPipelineCard): boolean {
+  return (
+    card.company_count === 0 ||
+    card.coverage === 'red' ||
+    (card.avg_company_fit != null && card.avg_company_fit < COMPANY_FIT_GAP_BELOW)
+  );
+}
+
+function dataHrefForIcp(card: IcpPipelineCard, requestType: PipelineDataRequestType): string {
+  const mode = requestType === 'expand_companies' ? 'companies' : 'contacts_for_icp';
+  return withQuery(
+    ROUTES.leads.data,
+    new URLSearchParams({
+      mode,
+      icpId: card.icp_id,
+      requestType,
+      source: 'dashboard',
+    }),
+  );
+}
+
+function toneClasses(tone: AgendaItem['tone']) {
+  if (tone === 'urgent') {
+    return 'bg-rose-50 text-rose-700 ring-rose-100';
+  }
+  if (tone === 'next') {
+    return 'bg-amber-50 text-amber-700 ring-amber-100';
+  }
+  return 'bg-arcova-teal/10 text-arcova-teal ring-arcova-teal/15';
+}
 
 export default function DashboardPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
 
-  const [isLoadingDashboard, setIsLoadingDashboard] = useState(true);
+  const [loadingDashboard, setLoadingDashboard] = useState(true);
   const [steps, setSteps] = useState<SetupStep[]>([]);
-  const [newSignals, setNewSignals] = useState<SignalEvent[]>([]);
   const [topLeads, setTopLeads] = useState<TopLead[]>([]);
-  const [followUpReminders, setFollowUpReminders] = useState<FollowUpReminder[]>([]);
-  const [showImportReadyBanner, setShowImportReadyBanner] = useState(false);
+  const [showImportReady, setShowImportReady] = useState(false);
   const [enrichmentJobs, setEnrichmentJobs] = useState<EnrichmentJob[]>([]);
-  const [hasRunningEnrichmentJobs, setHasRunningEnrichmentJobs] = useState(false);
+  const [icpCoverageRows, setIcpCoverageRows] = useState<IcpCoverageRow[]>([]);
+  const [icpCoverageUncategorized, setIcpCoverageUncategorized] = useState(0);
+  const [icpHealthCards, setIcpHealthCards] = useState<IcpPipelineCard[]>([]);
   const [hubspotSyncLog, setHubspotSyncLog] = useState<{
     synced_at: string;
     contacts_synced: number;
     contacts_errors: number;
     contacts_skipped: number;
-    skipped_contacts: { name: string; company: string | null; reason: string }[];
   } | null>(null);
-  const [syncLogExpanded, setSyncLogExpanded] = useState(false);
-  const [icpCoverageRows, setIcpCoverageRows] = useState<IcpCoverageRow[]>([]);
-  const [icpCoverageUncategorized, setIcpCoverageUncategorized] = useState(0);
+  const [agentOpener, setAgentOpener] = useState<{ text: string; nonce: number; isHidden: true } | undefined>();
 
   useEffect(() => {
-    if (!loading && !user) {
-      router.push('/login');
-    }
-  }, [user, loading, router]);
+    if (!loading && !user) router.push('/login');
+  }, [loading, router, user]);
 
   const fetchEnrichmentJobs = useCallback(async () => {
     if (!user) return;
-
     try {
       const response = await fetch('/api/enrichment-jobs/active');
       if (!response.ok) return;
-
-      const result = await response.json() as {
-        data?: EnrichmentJob[];
-        hasRunning?: boolean;
-      };
-
+      const result = (await response.json()) as { data?: EnrichmentJob[] };
       setEnrichmentJobs(result.data ?? []);
-      setHasRunningEnrichmentJobs(Boolean(result.hasRunning));
     } catch (error) {
       console.error('Error loading enrichment jobs:', error);
     }
@@ -167,22 +195,57 @@ export default function DashboardPage() {
         const [
           { data: profileData, error: profileError },
           icpsBootstrap,
-          personasBootstrap,
+          contactsBootstrap,
           { data: importData, error: importError },
-          signalEventsHttp,
           topLeadsRes,
           syncLogRes,
           icpCoverageRes,
+          icpHealthRes,
+          importReadyRes,
         ] = await Promise.all([
           supabase.from('user_company').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
           fetch('/api/company-criteria'),
           fetch('/api/contacts'),
           supabase.from('raw_uploads').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
-          fetch('/api/signal-events?recent=1&limit=12'),
           fetch('/api/leads?pageSize=5&page=1'),
           fetch('/api/hubspot/sync-log'),
           fetch('/api/accounts/icp-coverage'),
+          fetch('/api/pipeline/icp-cards'),
+          fetch('/api/import-ready'),
         ]);
+
+        if (profileError) throw profileError;
+        if (importError) throw importError;
+
+        const icpsJson = icpsBootstrap.ok ? await icpsBootstrap.json() : {};
+        const contactsJson = contactsBootstrap.ok ? await contactsBootstrap.json() : {};
+        const icps = ((icpsJson as { data?: IcpRecord[] }).data ?? []) as IcpRecord[];
+        const contacts = ((contactsJson as { data?: ContactRecord[] }).data ?? []) as ContactRecord[];
+
+        if (topLeadsRes.ok) {
+          const leadJson = (await topLeadsRes.json()) as { data?: Array<Record<string, unknown>> };
+          setTopLeads(
+            (leadJson.data ?? []).slice(0, 5).map((lead) => {
+              const name =
+                (typeof lead.full_name === 'string' && lead.full_name.trim()
+                  ? lead.full_name
+                  : `${lead.first_name || ''} ${lead.last_name || ''}`).trim() || 'Imported contact';
+              const id = typeof lead.id === 'string' ? lead.id : '';
+              return {
+                id,
+                name,
+                priorityScore: pct(lead.overall_fit_score),
+                updatedAt:
+                  typeof lead.updated_at === 'string'
+                    ? lead.updated_at
+                    : typeof lead.created_at === 'string'
+                      ? lead.created_at
+                      : new Date().toISOString(),
+                href: withQuery(ROUTES.leads.contacts, `lead=${encodeURIComponent(id)}`),
+              };
+            }),
+          );
+        }
 
         if (syncLogRes.ok) {
           const syncJson = await syncLogRes.json() as { data: typeof hubspotSyncLog };
@@ -190,524 +253,329 @@ export default function DashboardPage() {
         }
 
         if (icpCoverageRes.ok) {
-          const covJson = (await icpCoverageRes.json()) as {
+          const coverageJson = (await icpCoverageRes.json()) as {
             rows?: IcpCoverageRow[];
             uncategorized_company_count?: number;
           };
-          setIcpCoverageRows(Array.isArray(covJson.rows) ? covJson.rows : []);
+          setIcpCoverageRows(Array.isArray(coverageJson.rows) ? coverageJson.rows : []);
           setIcpCoverageUncategorized(
-            typeof covJson.uncategorized_company_count === 'number' ? covJson.uncategorized_company_count : 0,
+            typeof coverageJson.uncategorized_company_count === 'number'
+              ? coverageJson.uncategorized_company_count
+              : 0,
           );
-        } else {
-          setIcpCoverageRows([]);
-          setIcpCoverageUncategorized(0);
         }
 
-        if (profileError) throw profileError;
-        if (importError) throw importError;
-
-        const icpsJson = icpsBootstrap.ok ? await icpsBootstrap.json() : {};
-        const personaJson = personasBootstrap.ok ? await personasBootstrap.json() : {};
-
-        const icps = ((icpsJson as { data?: IcpRecord[] }).data ?? []) as IcpRecord[];
-        const contacts = ((personaJson as { data?: ContactRecord[] }).data ?? []) as ContactRecord[];
-
-        let recentEventsPayload: SignalEvent[] = [];
-        if (signalEventsHttp.ok) {
-          const recentJson = (await signalEventsHttp.json()) as { data?: Array<Record<string, unknown>> };
-          recentEventsPayload = (recentJson.data ?? []).slice(0, 5).map((row, idx) => ({
-            id: String(row.id ?? `evt-${idx}`),
-            label:
-              typeof row.title === 'string' && row.title.trim()
-                ? row.title.trim()
-                : row.signal_scope === 'contact'
-                  ? 'Buyer signal'
-                  : 'Account signal',
-            signalType: getSignalDisplayName(String(row.signal_type ?? '')),
-            timestamp: String(row.detected_at ?? row.created_at ?? new Date().toISOString()),
-            href: '/results',
-          }));
+        if (icpHealthRes.ok) {
+          const healthJson = (await icpHealthRes.json()) as { cards?: IcpPipelineCard[] };
+          setIcpHealthCards(Array.isArray(healthJson.cards) ? healthJson.cards : []);
         }
 
-        const lastSignInAt = user.last_sign_in_at ? new Date(user.last_sign_in_at).getTime() : 0;
-        const signalEventsFiltered = recentEventsPayload.filter((item) => {
-          const ts = new Date(item.timestamp).getTime();
-          return ts > lastSignInAt && Number.isFinite(ts);
-        });
-
-        let nextTopLeads: TopLead[] = [];
-        if (topLeadsRes.ok) {
-          const tlJson = (await topLeadsRes.json()) as { data?: Array<Record<string, unknown>> };
-          nextTopLeads = (tlJson.data ?? []).slice(0, 5).map((leadRow) => {
-            const pct = (v: unknown) => {
-              const n = typeof v === 'number' ? v : v == null ? 0 : Number(v);
-              if (!Number.isFinite(n)) return 0;
-              return Math.round((n <= 1 ? n * 100 : n));
-            };
-            const name =
-              (typeof leadRow.full_name === 'string' && leadRow.full_name.trim()
-                ? leadRow.full_name
-                : `${leadRow.first_name || ''} ${leadRow.last_name || ''}`).trim() || 'Imported contact';
-
-            const leadIdVal = typeof leadRow.id === 'string' ? leadRow.id : '';
-            return {
-              id: leadIdVal,
-              name,
-              priorityScore: pct(leadRow.overall_fit_score),
-              latestSignalType: 'Intent & fit tuned',
-              latestSignalAt:
-                typeof leadRow.updated_at === 'string'
-                  ? leadRow.updated_at
-                  : typeof leadRow.created_at === 'string'
-                    ? leadRow.created_at
-                    : new Date().toISOString(),
-              href: `/results?lead=${encodeURIComponent(leadIdVal)}`,
-            };
-          });
+        if (importReadyRes.ok) {
+          const readyJson = (await importReadyRes.json()) as { ready?: boolean };
+          setShowImportReady(Boolean(readyJson.ready));
         }
 
-        const profileComplete = !!profileData;
+        const profileComplete = Boolean(profileData);
         const companiesComplete = icps.length > 0;
-        const personasComplete = contacts.length > 0;
-        const importComplete = !!importData;
-        const signalsComplete = icps.some((icp) => hasSignals(icp.signals)) || contacts.some((contact) => hasSignals(contact.signals));
+        const contactsComplete = contacts.length > 0;
+        const importComplete = Boolean(importData);
+        const signalsComplete =
+          icps.some((icp) => hasSignals(icp.signals)) || contacts.some((contact) => hasSignals(contact.signals));
 
-        const checklistSteps: SetupStep[] = [
-          { id: 'profile', label: 'My company', completed: profileComplete, actionPath: profileComplete ? '/my-profile' : '/arcova-setup' },
-          { id: 'companies', label: 'Target Companies', completed: companiesComplete, actionPath: '/company-criteria' },
-          { id: 'personas', label: 'Teams', completed: personasComplete, actionPath: '/personas' },
-          { id: 'import', label: 'Upload your CSV', completed: importComplete, actionPath: '/import' },
-          { id: 'signals', label: 'Signals', completed: signalsComplete, actionPath: '/company-criteria' },
-        ];
-        setSteps(checklistSteps);
-
-        const blendedFeed =
-          signalEventsFiltered.length > 0 ? signalEventsFiltered : recentEventsPayload;
-        blendedFeed.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-        setNewSignals(blendedFeed.slice(0, 5));
-        setTopLeads(nextTopLeads);
-
-        const reminders = contacts
-          .filter((contact) => {
-            const status = (contact.status || '').toLowerCase();
-            return status === 'follow up' && daysSince(contact.updated_at) > 7;
-          })
-          .slice(0, 3)
-          .map((contact) => {
-            const company = icps.find((icp) => icp.id === contact.icp_id);
-            return {
-              id: contact.id,
-              contactName: contact.name || 'Unnamed contact',
-              companyName: company?.name || 'Unknown company',
-              updatedAt: contact.updated_at || new Date().toISOString(),
-            };
-          });
-
-        setFollowUpReminders(reminders);
+        setSteps([
+          { id: 'profile', label: 'company profile', completed: profileComplete, actionPath: profileComplete ? ROUTES.setup.company : '/arcova-setup' },
+          { id: 'companies', label: 'ICPs', completed: companiesComplete, actionPath: ROUTES.setup.icps },
+          { id: 'personas', label: 'buying teams', completed: contactsComplete, actionPath: ROUTES.setup.personas },
+          { id: 'import', label: 'contact import', completed: importComplete, actionPath: ROUTES.import },
+          { id: 'signals', label: 'signals setup', completed: signalsComplete, actionPath: ROUTES.setup.icps },
+        ]);
       } catch (error) {
         console.error('Error loading dashboard data:', error);
       } finally {
-        setIsLoadingDashboard(false);
+        setLoadingDashboard(false);
       }
     };
 
-    fetchDashboardData();
+    void fetchDashboardData();
   }, [user]);
 
   useEffect(() => {
-    fetchEnrichmentJobs();
+    void fetchEnrichmentJobs();
   }, [fetchEnrichmentJobs]);
 
   useEffect(() => {
-    if (!hasRunningEnrichmentJobs) return;
-
+    const hasRunning = enrichmentJobs.some((job) => job.status === 'running');
+    if (!hasRunning) return;
     const interval = setInterval(() => {
-      fetchEnrichmentJobs();
+      void fetchEnrichmentJobs();
     }, 15000);
-
     return () => clearInterval(interval);
-  }, [fetchEnrichmentJobs, hasRunningEnrichmentJobs]);
+  }, [enrichmentJobs, fetchEnrichmentJobs]);
+
+  const completedSteps = steps.filter((step) => step.completed).length;
+  const nextStep = steps.find((step) => !step.completed) ?? null;
+  const runningJobs = enrichmentJobs.filter((job) => job.status === 'running');
+  const failedJobs = enrichmentJobs.filter((job) => job.status === 'failed');
+  const totalCoveredCompanies =
+    icpCoverageRows.reduce((sum, row) => sum + row.company_count, 0) + icpCoverageUncategorized;
+  const coverageGap = icpHealthCards.find(isCoverageGap) ?? null;
+  const weakContactIcp = icpHealthCards.find((card) => card.company_count > 0 && isWeakDim(card.contact_fit)) ?? null;
+  const syncProblemCount = (hubspotSyncLog?.contacts_errors ?? 0) + (hubspotSyncLog?.contacts_skipped ?? 0);
+
+  const agenda: AgendaItem[] = [
+    ...(nextStep
+      ? [{
+          id: `setup-${nextStep.id}`,
+          label: '1',
+          title: `Finish ${nextStep.label}`,
+          detail: 'The rest of the product depends on this being complete.',
+          href: nextStep.actionPath,
+          cta: 'Continue',
+          icon: Clock3,
+          tone: 'urgent' as const,
+        }]
+      : []),
+    ...(showImportReady
+      ? [{
+          id: 'import-ready',
+          label: nextStep ? '2' : '1',
+          title: 'Review the new lead scoring',
+          detail: 'The import has finished, so Leads can now show what is Ready, Monitor, Source, or Deprioritised.',
+          href: ROUTES.leads.contacts,
+          cta: 'Open leads',
+          icon: Zap,
+          tone: 'next' as const,
+        }]
+      : []),
+    ...failedJobs.slice(0, 2).map((job, index) => ({
+      id: job.id,
+      label: String(index + 1 + (nextStep ? 1 : 0) + (showImportReady ? 1 : 0)),
+      title: `${job.kind === 'icp' ? 'ICP' : 'Contact'} enrichment failed`,
+      detail: `${job.title}${job.subtitle ? ` at ${job.subtitle}` : ''} needs a retry or inspection.`,
+      href: job.href,
+      cta: 'Inspect',
+      icon: AlertTriangle,
+      tone: 'urgent' as const,
+    })),
+    ...(coverageGap && !nextStep
+      ? [{
+          id: `coverage-${coverageGap.icp_id}`,
+          label: '2',
+          title: 'Fill a company coverage gap',
+          detail:
+            coverageGap.company_count === 0
+              ? `${coverageGap.label} has no matched companies.`
+              : `${coverageGap.label} only has ${coverageGap.company_count} matched ${coverageGap.company_count === 1 ? 'company' : 'companies'}.`,
+          href: dataHrefForIcp(coverageGap, 'expand_companies'),
+          cta: 'Source companies',
+          icon: Target,
+          tone: 'next' as const,
+        }]
+      : []),
+    ...(weakContactIcp && !nextStep
+      ? [{
+          id: `contacts-${weakContactIcp.icp_id}`,
+          label: '3',
+          title: 'Improve contact quality',
+          detail: `${weakContactIcp.label} average contact fit is ${fitLabel(weakContactIcp.avg_contact_fit)}.`,
+          href: ROUTES.leads.health,
+          cta: 'Open health',
+          icon: Users,
+          tone: 'next' as const,
+        }]
+      : []),
+    ...(topLeads.length > 0
+      ? [{
+          id: 'top-leads',
+          label: '4',
+          title: 'Work the best leads',
+          detail: `${topLeads.length} high-fit contacts are ready to review.`,
+          href: ROUTES.leads.contacts,
+          cta: 'Review',
+          icon: Users,
+          tone: 'steady' as const,
+        }]
+      : []),
+    ...(hubspotSyncLog?.synced_at && syncProblemCount > 0
+      ? [{
+          id: 'hubspot-sync',
+          label: '5',
+          title: 'Check HubSpot sync exceptions',
+          detail: `${hubspotSyncLog.contacts_synced ?? 0} synced cleanly; ${syncProblemCount} need attention.`,
+          href: ROUTES.import,
+          cta: 'View import',
+          icon: Database,
+          tone: 'next' as const,
+        }]
+      : []),
+  ].slice(0, 5).map((item, index) => ({ ...item, label: String(index + 1) }));
+
+  const briefing = [
+    nextStep ? `setup incomplete: ${nextStep.label}` : 'setup complete',
+    showImportReady ? 'new import ready for lead review' : 'no new import-ready event',
+    failedJobs.length > 0 ? `${failedJobs.length} enrichment failed` : 'no enrichment failures',
+    runningJobs.length > 0 ? `${runningJobs.length} enrichment running` : 'no enrichment running',
+    coverageGap ? `company coverage gap: ${coverageGap.label}, ${coverageGap.company_count} companies` : 'no urgent company coverage gap detected',
+    weakContactIcp ? `contact quality gap: ${weakContactIcp.label}, avg contact fit ${fitLabel(weakContactIcp.avg_contact_fit)}` : 'no urgent contact quality gap detected',
+    `${topLeads.length} high-fit leads available`,
+    `${totalCoveredCompanies} prioritised companies`,
+    hubspotSyncLog?.synced_at
+      ? `HubSpot sync: ${hubspotSyncLog.contacts_synced ?? 0} synced, ${hubspotSyncLog.contacts_errors ?? 0} errors, ${hubspotSyncLog.contacts_skipped ?? 0} skipped`
+      : 'no HubSpot sync summary',
+  ].join('; ');
 
   useEffect(() => {
-    const loadImportReadyStatus = async () => {
-      if (!user) return;
-      try {
-        const response = await fetch('/api/import-ready');
-        if (!response.ok) return;
-        const result = await response.json();
-        setShowImportReadyBanner(Boolean(result.ready));
-      } catch (error) {
-        console.error('Error loading import-ready status:', error);
-      }
-    };
+    if (loading || loadingDashboard || !user || agentOpener) return;
+    setAgentOpener({
+      text: `The dashboard just loaded. Act like an executive assistant giving a morning GTM briefing. Use this brief: ${briefing}. Reel off the top 2-4 things to do today in priority order, give the user clear options like "we can start with 1, 2, or 3", and end by inviting them to choose what to work on first. Keep it warm, crisp, and under 110 words.`,
+      nonce: Date.now(),
+      isHidden: true,
+    });
+  }, [agentOpener, briefing, loading, loadingDashboard, user]);
 
-    loadImportReadyStatus();
-  }, [user]);
-
-  if (loading || isLoadingDashboard) {
+  if (loading || loadingDashboard) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-arcova-teal"></div>
+      <div className="flex min-h-screen items-center justify-center bg-slate-50">
+        <Loader2 className="h-8 w-8 animate-spin text-arcova-teal" />
       </div>
     );
   }
 
   if (!user) return null;
 
-  const completedSteps = steps.filter((step) => step.completed).length;
-  const isLiveMode = completedSteps === steps.length && steps.length > 0;
-  const runningEnrichmentCount = enrichmentJobs.filter((job) => job.status === 'running').length;
-  const failedEnrichmentCount = enrichmentJobs.filter((job) => job.status === 'failed').length;
-  const hasIcpCoverageData = icpCoverageRows.length > 0 || icpCoverageUncategorized > 0;
-
-  const icpCoverageSection = (
-    <div className="rounded-lg border border-gray-200 p-6 bg-white">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h2 className="text-xl font-semibold text-gray-900">ICP coverage</h2>
-          <p className="mt-1 text-sm text-gray-500 max-w-2xl">
-            Each line is how many distinct companies have prioritized leads (Monitor or Reach out), counted under the
-            ICP matched on the company record.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => router.push('/accounts')}
-          className="shrink-0 text-sm font-medium hover:opacity-80 sm:mt-0.5"
-          style={{ color: TEAL }}
-        >
-          View accounts →
-        </button>
-      </div>
-      {!hasIcpCoverageData ? (
-        <p className="mt-4 text-sm text-gray-500">
-          No coverage yet. When you mark leads as Monitor or Reach out, companies will appear here by matched ICP.
-        </p>
-      ) : (
-        <>
-          <ul className="mt-4 space-y-2">
-            {icpCoverageRows.map((row) => (
-              <li key={row.icp_id} className="flex items-baseline justify-between gap-4 text-sm">
-                <span className="min-w-0 text-gray-700 break-words leading-snug" title={row.label}>
-                  {row.label}
-                </span>
-                <span className="shrink-0 font-semibold tabular-nums text-gray-900">
-                  {row.company_count.toLocaleString()}{' '}
-                  <span className="font-normal text-gray-500">
-                    compan{row.company_count === 1 ? 'y' : 'ies'}
-                  </span>
-                </span>
-              </li>
-            ))}
-          </ul>
-          {icpCoverageUncategorized > 0 && (
-            <p className="mt-4 text-xs text-gray-500 border-t border-gray-100 pt-3">
-              {icpCoverageUncategorized.toLocaleString()} other{' '}
-              {icpCoverageUncategorized === 1 ? 'company' : 'companies'} with prioritized leads but no matched ICP on
-              the company.
-            </p>
-          )}
-        </>
-      )}
-    </div>
-  );
-
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex h-screen bg-slate-50">
       <AppSidebar />
 
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        <div className="flex-1 overflow-auto p-6">
-          <div className="max-w-6xl mx-auto">
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8">
-              {showImportReadyBanner && (
-                <div className="mb-6 rounded-lg border border-arcova-teal/30 bg-arcova-teal/10 p-4 flex items-center justify-between gap-4">
-                  <p className="text-sm font-medium text-gray-900">Your contacts are ready - view your leads.</p>
-                  <button
-                    onClick={() => router.push('/results')}
-                    className="text-sm font-semibold text-arcova-teal hover:opacity-80"
-                  >
-                    View leads
-                  </button>
-                </div>
-              )}
+      <main className="min-h-0 flex-1 overflow-y-auto bg-[linear-gradient(180deg,#f8fafc_0%,#eef6f7_100%)] px-4 py-5 sm:px-6">
+        <div className="mx-auto grid min-h-full w-full max-w-6xl gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
+          <section className="flex min-h-0 flex-col gap-4">
+            <div>
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-arcova-teal">
+                <Bot className="h-3.5 w-3.5" />
+                Daily briefing
+              </div>
+              <h1 className="mt-2 text-2xl font-semibold leading-tight text-slate-950 sm:text-3xl">
+                What should we do today?
+              </h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
+                Start here, choose the work, then jump into the right part of the app.
+              </p>
+            </div>
 
-              {enrichmentJobs.length > 0 && (
-                <div className="mb-6 rounded-lg border border-gray-200 bg-white p-4">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <h2 className="text-base font-semibold text-gray-900">
-                        {runningEnrichmentCount > 0 ? 'Enrichment in progress' : 'Enrichment needs attention'}
-                      </h2>
-                      <p className="mt-1 text-sm text-gray-500">
-                        {runningEnrichmentCount > 0
-                          ? "You don't need to wait on these pages."
-                          : `${failedEnrichmentCount} enrichment${failedEnrichmentCount === 1 ? '' : 's'} failed.`}
-                      </p>
-                    </div>
-                    {runningEnrichmentCount > 0 && (
-                      <span className="rounded-full bg-arcova-teal/10 px-2.5 py-1 text-xs font-semibold text-arcova-teal">
-                        {runningEnrichmentCount} running
-                      </span>
-                    )}
-                  </div>
+            <div className="h-[min(72vh,760px)] min-h-[560px]">
+              <AgentPanel
+                page="dashboard"
+                pageContext={{
+                  dashboardBrief: briefing,
+                  dashboardAgenda: agenda.map(({ title, detail, href }) => ({ title, detail, href })),
+                }}
+                pendingMessage={agentOpener}
+                wide
+              />
+            </div>
+          </section>
 
-                  <div className="mt-4 divide-y divide-gray-100">
-                    {enrichmentJobs.slice(0, 5).map((job) => (
-                      <div key={job.id} className="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                                job.status === 'running'
-                                  ? 'bg-arcova-teal/10 text-arcova-teal'
-                                  : 'bg-rose-50 text-rose-700'
-                              }`}
-                            >
-                              {job.status === 'running' ? 'Running' : 'Failed'}
-                            </span>
-                            <p className="truncate text-sm font-semibold text-gray-900">{job.title}</p>
-                          </div>
-                          <p className="mt-1 truncate text-xs text-gray-500">
-                            {job.kind === 'icp' ? 'ICP' : 'Lead'}
-                            {job.subtitle ? ` · ${job.subtitle}` : ''}
-                            {' · '}
-                            {formatTimeAgo(job.started_at || job.finished_at)}
-                          </p>
-                          {job.status === 'failed' && job.last_error && (
-                            <p className="mt-1 truncate text-xs text-rose-600">{job.last_error}</p>
-                          )}
-                        </div>
-                        <button
-                          onClick={() => router.push(job.href)}
-                          className="shrink-0 text-sm font-medium hover:opacity-80"
-                          style={{ color: TEAL }}
-                        >
-                          Open
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+          <aside className="space-y-4">
+            <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+              <div className="border-b border-slate-100 px-4 py-3.5">
+                <h2 className="text-sm font-semibold text-slate-950">Today&apos;s options</h2>
+                <p className="mt-0.5 text-xs text-slate-500">Pick one here or tell the agent what to tackle first.</p>
+              </div>
 
-              {hubspotSyncLog && (
-                <div className="mb-6 rounded-lg border border-gray-200 bg-white p-4">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex items-center gap-2">
-                      <svg className="w-4 h-4 shrink-0 text-[#ff7a59]" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M18.164 7.932V5.085a2.198 2.198 0 0 0 1.268-1.978V3.06A2.199 2.199 0 0 0 17.235.862h-.047a2.199 2.199 0 0 0-2.197 2.197v.047a2.199 2.199 0 0 0 1.268 1.978v2.847a6.232 6.232 0 0 0-2.962 1.302L5.028 3.617a2.44 2.44 0 0 0 .072-.573A2.455 2.455 0 1 0 2.645 5.5a2.43 2.43 0 0 0 1.194-.315l8.122 4.707a6.248 6.248 0 0 0 0 4.208L4.123 18.5a2.432 2.432 0 0 0-1.478-.498 2.455 2.455 0 1 0 2.455 2.455 2.43 2.43 0 0 0-.388-1.337l7.91-4.583a6.266 6.266 0 0 0 8.976-5.628 6.25 6.25 0 0 0-3.434-5.977zm-1.023 9.565a3.59 3.59 0 1 1 0-7.181 3.59 3.59 0 0 1 0 7.181z"/>
-                      </svg>
-                      <div>
-                        <h2 className="text-base font-semibold text-gray-900">Last HubSpot sync</h2>
-                        <p className="text-xs text-gray-500 mt-0.5">{formatTimeAgo(hubspotSyncLog.synced_at)}</p>
-                      </div>
-                    </div>
-                    <button onClick={() => router.push('/results')} className="shrink-0 text-sm font-medium hover:opacity-80" style={{ color: TEAL }}>
-                      Go to leads
-                    </button>
-                  </div>
-                  <div className="mt-3 flex items-center gap-4 text-sm text-gray-600">
-                    <span><span className="font-semibold text-gray-900">{hubspotSyncLog.contacts_synced}</span> synced</span>
-                    {hubspotSyncLog.contacts_errors > 0 && (
-                      <span><span className="font-semibold text-rose-600">{hubspotSyncLog.contacts_errors}</span> errors</span>
-                    )}
-                    {hubspotSyncLog.contacts_skipped > 0 && (
-                      <button
-                        onClick={() => setSyncLogExpanded((v) => !v)}
-                        className="flex items-center gap-1 text-gray-500 hover:text-gray-700"
-                      >
-                        <svg className={`w-3 h-3 transition-transform ${syncLogExpanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
-                        <span><span className="font-semibold">{hubspotSyncLog.contacts_skipped}</span> skipped</span>
-                      </button>
-                    )}
-                  </div>
-                  {syncLogExpanded && hubspotSyncLog.skipped_contacts.length > 0 && (
-                    <ul className="mt-2 space-y-1.5 border-t border-gray-100 pt-2">
-                      {hubspotSyncLog.skipped_contacts.map((c, i) => (
-                        <li key={i} className="text-xs text-gray-600">
-                          <span className="font-medium text-gray-800">{c.name}</span>
-                          {c.company && <span className="text-gray-400"> · {c.company}</span>}
-                          <span className="ml-1.5 text-amber-600">— {c.reason.toLowerCase()}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )}
-
-              {!isLiveMode ? (
-                <div>
-                  <h1 className="text-3xl font-bold text-gray-900">Welcome to Arcova</h1>
-                  <p className="text-lg text-gray-600 mt-2">Complete your setup to start seeing leads.</p>
-
-                  <div className="mt-6 mb-8">
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-sm font-medium text-gray-700">{completedSteps} of {steps.length} steps complete</p>
-                    </div>
-                    <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
-                      <div
-                        className="h-full rounded-full transition-all duration-300"
-                        style={{ width: `${steps.length > 0 ? (completedSteps / steps.length) * 100 : 0}%`, backgroundColor: TEAL }}
-                      />
-                    </div>
-                  </div>
-
-                  {hasIcpCoverageData && <div className="mb-8">{icpCoverageSection}</div>}
-
-                  <div className="space-y-4">
-                    {steps.map((step) => (
-                      <div
-                        key={step.id}
-                        className={`rounded-lg border p-4 flex items-center justify-between ${
-                          step.completed ? 'bg-gray-50 border-gray-200 opacity-80' : 'bg-white border-gray-200'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3">
-                          {step.completed ? (
-                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full text-white" style={{ backgroundColor: TEAL }}>
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
-                              </svg>
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full border border-gray-300 text-gray-400">
-                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
-                              </svg>
-                            </span>
-                          )}
-                          <p className={`text-base ${step.completed ? 'text-gray-600' : 'text-gray-900 font-semibold'}`}>{step.label}</p>
-                        </div>
-
-                        {step.completed ? (
-                          <span className="text-sm text-gray-500">Completed</span>
-                        ) : (
-                          <button
-                            onClick={() => router.push(step.actionPath)}
-                            className="text-sm font-semibold px-3 py-1.5 rounded-md text-white hover:opacity-90 transition-opacity"
-                            style={{ backgroundColor: TEAL }}
-                          >
-                            Set up →
-                          </button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
+              {agenda.length === 0 ? (
+                <div className="px-4 py-8 text-sm leading-6 text-slate-500">
+                  Nothing urgent is blocking the workspace. Ask the agent what to review next, or start with Leads.
                 </div>
               ) : (
-                <div className="space-y-8">
-                  <div>
-                    <h1 className="text-3xl font-bold text-gray-900">Here&apos;s what&apos;s happened since you last logged in.</h1>
-                  </div>
-
-                  {icpCoverageSection}
-
-                  <div className="rounded-lg border border-gray-200 p-6 bg-white">
-                    <h2 className="text-xl font-semibold text-gray-900 mb-4">New signals</h2>
-
-                    {newSignals.length === 0 ? (
-                      <p className="text-sm text-gray-500">No new signals since your last visit. Check back tomorrow.</p>
-                    ) : (
-                      <div className="space-y-3">
-                        {newSignals.map((item) => (
-                          <div key={item.id} className="flex items-center justify-between gap-4 text-sm">
-                            <div className="min-w-0">
-                              <button
-                                onClick={() => router.push(item.href)}
-                                className="font-semibold text-gray-900 hover:underline truncate"
-                              >
-                                {item.label}
-                              </button>
-                              <span className="text-gray-500"> {' - '} {item.signalType}</span>
-                            </div>
-                            <p className="text-gray-500 whitespace-nowrap">{formatTimeAgo(item.timestamp)}</p>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    <div className="mt-4 flex justify-end">
+                <div className="divide-y divide-slate-100">
+                  {agenda.map((item) => {
+                    const Icon = item.icon;
+                    return (
                       <button
-                        onClick={() => router.push('/customer-signals')}
-                        className="text-sm font-medium hover:opacity-80"
-                        style={{ color: TEAL }}
+                        key={item.id}
+                        type="button"
+                        onClick={() => router.push(item.href)}
+                        className="flex w-full items-start gap-3 px-4 py-3.5 text-left transition-colors hover:bg-slate-50"
                       >
-                        See all signals →
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="rounded-lg border border-gray-200 p-6 bg-white">
-                    <h2 className="text-xl font-semibold text-gray-900 mb-4">Top leads right now</h2>
-
-                    {topLeads.length === 0 ? (
-                      <p className="text-sm text-gray-500">No ranked leads yet. Complete more setup details to improve scoring.</p>
-                    ) : (
-                      <div className="space-y-3">
-                        {topLeads.map((lead) => (
-                          <div key={lead.id} className="flex items-center justify-between gap-4 text-sm">
-                            <div className="min-w-0">
-                              <button onClick={() => router.push(lead.href)} className="font-semibold text-gray-900 hover:underline truncate">
-                                {lead.name}
-                              </button>
-                              <p className="text-gray-500 truncate">
-                                {lead.latestSignalType} · {formatTimeAgo(lead.latestSignalAt)}
-                              </p>
-                            </div>
-                            <span className="px-2.5 py-1 rounded-full text-xs font-semibold text-white" style={{ backgroundColor: TEAL }}>
-                              {lead.priorityScore}%
-                            </span>
+                        <span className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-xs font-semibold ring-1 ${toneClasses(item.tone)}`}>
+                          {item.label}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <Icon className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                            <p className="truncate text-sm font-semibold text-slate-950">{item.title}</p>
                           </div>
-                        ))}
-                      </div>
-                    )}
-
-                    <div className="mt-4 flex justify-end">
-                      <button
-                        onClick={() => router.push('/results')}
-                        className="text-sm font-medium hover:opacity-80"
-                        style={{ color: TEAL }}
-                      >
-                        See all leads →
+                          <p className="mt-1 text-xs leading-5 text-slate-500">{item.detail}</p>
+                          <span className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-arcova-teal">
+                            {item.cta}
+                            <ArrowRight className="h-3 w-3" />
+                          </span>
+                        </div>
                       </button>
-                    </div>
-                  </div>
-
-                  {followUpReminders.length > 0 && (
-                    <div className="rounded-lg border border-gray-200 p-6 bg-white">
-                      <h2 className="text-xl font-semibold text-gray-900 mb-4">Follow up reminders</h2>
-                      <div className="space-y-3">
-                        {followUpReminders.map((item) => (
-                          <div key={item.id} className="flex items-center justify-between gap-4 text-sm">
-                            <div className="min-w-0">
-                              <p className="font-semibold text-gray-900 truncate">{item.contactName}</p>
-                              <p className="text-gray-500 truncate">{item.companyName}</p>
-                            </div>
-                            <p className="text-gray-500 whitespace-nowrap">Last updated {daysSince(item.updatedAt)} days ago</p>
-                          </div>
-                        ))}
-                      </div>
-
-                      <div className="mt-4 flex justify-end">
-                        <button
-                          onClick={() => router.push('/results')}
-                          className="text-sm font-medium hover:opacity-80"
-                          style={{ color: TEAL }}
-                        >
-                          See all contacts →
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                    );
+                  })}
                 </div>
               )}
-            </div>
-          </div>
-        </div>
+            </section>
 
-        <AgentPanel page="dashboard" />
-      </div>
+            <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              <h2 className="text-sm font-semibold text-slate-950">Quick read</h2>
+              <div className="mt-3 grid gap-2 text-sm">
+                <div className="flex items-center justify-between rounded-md bg-slate-50 px-3 py-2">
+                  <span className="text-slate-500">Setup</span>
+                  <span className="font-semibold text-slate-950">{completedSteps}/{steps.length}</span>
+                </div>
+                <div className="flex items-center justify-between rounded-md bg-slate-50 px-3 py-2">
+                  <span className="text-slate-500">Prioritised companies</span>
+                  <span className="font-semibold tabular-nums text-slate-950">{totalCoveredCompanies.toLocaleString()}</span>
+                </div>
+                <div className="flex items-center justify-between rounded-md bg-slate-50 px-3 py-2">
+                  <span className="text-slate-500">High-fit leads</span>
+                  <span className="font-semibold tabular-nums text-slate-950">{topLeads.length}</span>
+                </div>
+                <div className="flex items-center justify-between rounded-md bg-slate-50 px-3 py-2">
+                  <span className="text-slate-500">Running enrichments</span>
+                  <span className="font-semibold tabular-nums text-slate-950">{runningJobs.length}</span>
+                </div>
+              </div>
+            </section>
+
+            {topLeads.length > 0 && (
+              <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <h2 className="text-sm font-semibold text-slate-950">Best leads</h2>
+                  <button
+                    type="button"
+                    onClick={() => router.push(ROUTES.leads.contacts)}
+                    className="text-xs font-semibold text-arcova-teal hover:text-arcova-blue"
+                  >
+                    All leads
+                  </button>
+                </div>
+                <div className="mt-3 divide-y divide-slate-100">
+                  {topLeads.slice(0, 3).map((lead) => (
+                    <button
+                      key={lead.id}
+                      type="button"
+                      onClick={() => router.push(lead.href)}
+                      className="flex w-full items-center justify-between gap-3 py-2.5 text-left first:pt-0 last:pb-0"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-slate-950">{lead.name}</p>
+                        <p className="mt-0.5 text-xs text-slate-500">{formatTimeAgo(lead.updatedAt)}</p>
+                      </div>
+                      <span className="shrink-0 rounded-full bg-arcova-teal/10 px-2 py-0.5 text-xs font-semibold tabular-nums text-arcova-teal">
+                        {lead.priorityScore}%
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
+          </aside>
+        </div>
+      </main>
     </div>
   );
 }

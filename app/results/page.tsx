@@ -20,6 +20,7 @@ import {
   LEAD_ACTION_SORT_ORDER,
 } from '@/lib/lead-action';
 import { formatProvenanceImportedAt } from '@/lib/data-provenance';
+import { ROUTES, withQuery } from '@/lib/routes';
 import {
   Activity,
   AlertTriangle,
@@ -1726,7 +1727,7 @@ export default function LeadsPage() {
     <div className="flex h-screen bg-gray-50">
       <AppSidebar />
 
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden min-[1280px]:flex-row">
         <div className="flex-1 overflow-auto p-6">
           <div className="w-full max-w-none">
             <div className="mb-6 flex items-center justify-between">
@@ -2072,7 +2073,7 @@ export default function LeadsPage() {
                                       type="button"
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        router.push(`/accounts?companyId=${encodeURIComponent(lead.company_id!)}`);
+                                        router.push(withQuery(ROUTES.leads.accounts, `companyId=${encodeURIComponent(lead.company_id!)}`));
                                       }}
                                       className="text-sm text-arcova-teal hover:underline truncate max-w-full text-left"
                                     >
@@ -2698,6 +2699,7 @@ export default function LeadsPage() {
 
         <AgentPanel
           page="leads"
+          pageContext={{ leadsView: 'contacts' }}
           pendingMessage={agentTrigger}
           onLeadsFilter={handleLeadsFilter}
           onTableClear={handleQueryClear}

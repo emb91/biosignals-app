@@ -156,7 +156,6 @@ export async function POST(request: Request) {
         total_rows: 0,
         status: 'processing',
         duplicate_rows: 0,
-        enriched_rows: 0,
         failed_rows: 0,
         processed_rows: 0,
       })

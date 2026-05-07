@@ -16,9 +16,13 @@ import {
   User,
   Wrench,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Menu,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useEnrichmentGuard } from '@/context/EnrichmentGuardContext';
+import { ROUTES } from '@/lib/routes';
 
 interface NavItem {
   name: string;
@@ -27,26 +31,29 @@ interface NavItem {
 }
 
 const setupItems: NavItem[] = [
-  { name: 'My Company', href: '/my-profile', icon: User },
-  { name: 'My ICPs', href: '/company-criteria', icon: Target },
+  { name: 'My Company', href: ROUTES.setup.company, icon: User },
+  { name: 'My ICPs', href: ROUTES.setup.icps, icon: Target },
 ];
 
 const leadsItems: NavItem[] = [
-  { name: 'Contacts', href: '/results', icon: Users },
-  { name: 'Accounts', href: '/accounts', icon: Building2 },
+  { name: 'Contacts', href: ROUTES.leads.contacts, icon: Users },
+  { name: 'Accounts', href: ROUTES.leads.accounts, icon: Building2 },
 ];
 
 const topNavigation: NavItem[] = [
-  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-  { name: 'Import', href: '/import', icon: FileUp },
-  { name: 'Health', href: '/health', icon: Activity },
-  { name: 'Data', href: '/data', icon: Database },
+  { name: 'Dashboard', href: ROUTES.dashboard, icon: LayoutDashboard },
+  { name: 'Import', href: ROUTES.import, icon: FileUp },
+  { name: 'Health', href: ROUTES.leads.health, icon: Activity },
+  { name: 'Data', href: ROUTES.leads.data, icon: Database },
   { name: 'Signals', href: '/customer-signals', icon: Radio },
 ];
 
 const bottomNavigation: NavItem[] = [
   { name: 'Settings', href: '/settings', icon: Settings },
 ];
+
+const SIDEBAR_HIDDEN_STORAGE_KEY = 'arcova_sidebar_hidden';
+const NARROW_SCREEN_QUERY = '(max-width: 1024px)';
 
 interface AppSidebarProps {
   setupFlowOnly?: boolean;
@@ -58,10 +65,12 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
   const [showCompaniesDot, setShowCompaniesDot] = useState(false);
   const [showMyProfileDot, setShowMyProfileDot] = useState(false);
   const [showImportDot, setShowImportDot] = useState(false);
+  const [sidebarHidden, setSidebarHidden] = useState(false);
+  const [sidebarPreviewOpen, setSidebarPreviewOpen] = useState(false);
 
   const isActive = (href: string) => {
     if (pathname === href) return true;
-    if (href === '/dashboard') return false;
+    if (href === ROUTES.dashboard) return false;
     return pathname.startsWith(`${href}/`);
   };
 
@@ -70,6 +79,37 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
 
   const [leadsOpen, setLeadsOpen] = useState(leadsActive);
   const [setupOpen, setSetupOpen] = useState(setupActive);
+
+  useEffect(() => {
+    const stored = localStorage.getItem(SIDEBAR_HIDDEN_STORAGE_KEY);
+    if (stored === '1' || stored === '0') {
+      setSidebarHidden(stored === '1');
+      return;
+    }
+    setSidebarHidden(window.matchMedia(NARROW_SCREEN_QUERY).matches);
+  }, []);
+
+  useEffect(() => {
+    const media = window.matchMedia(NARROW_SCREEN_QUERY);
+    const handleChange = (event: MediaQueryListEvent) => {
+      const stored = localStorage.getItem(SIDEBAR_HIDDEN_STORAGE_KEY);
+      if (stored === '1' || stored === '0') return;
+      setSidebarHidden(event.matches);
+    };
+
+    media.addEventListener('change', handleChange);
+    return () => media.removeEventListener('change', handleChange);
+  }, []);
+
+  const updateSidebarHidden = (hidden: boolean) => {
+    setSidebarHidden(hidden);
+    setSidebarPreviewOpen(false);
+    localStorage.setItem(SIDEBAR_HIDDEN_STORAGE_KEY, hidden ? '1' : '0');
+  };
+
+  const pinSidebarOpen = () => {
+    updateSidebarHidden(false);
+  };
 
   useEffect(() => {
     if (leadsActive) setLeadsOpen(true);
@@ -191,12 +231,46 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
     </div>
   );
 
+  const shellClassName = cn(
+    'flex h-screen bg-white',
+    sidebarHidden && sidebarPreviewOpen && 'fixed inset-y-0 left-0 z-50 shadow-2xl shadow-slate-950/20',
+  );
+
+  if (sidebarHidden && !sidebarPreviewOpen) {
+    return (
+      <button
+        type="button"
+        onClick={() => setSidebarPreviewOpen(true)}
+        onMouseEnter={() => setSidebarPreviewOpen(true)}
+        className="fixed left-3 top-3 z-50 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-600 shadow-sm transition-colors hover:bg-gray-50 hover:text-gray-900"
+        aria-label="Preview sidebar"
+        title="Preview sidebar"
+      >
+        <Menu className="h-4 w-4" />
+      </button>
+    );
+  }
+
   return (
-    <div className="flex h-screen bg-white">
+    <div
+      className={shellClassName}
+      onMouseLeave={() => {
+        if (sidebarHidden) setSidebarPreviewOpen(false);
+      }}
+    >
       <div className="w-64 bg-arcova-darkblue border-r border-arcova-mint/20 flex flex-col">
         {/* Logo */}
-        <div className="p-6 border-b border-arcova-mint/20">
-          <button type="button" onClick={() => guardedNavigate('/')} className="flex items-center space-x-2">
+        <div className="flex items-center justify-between gap-3 p-6 border-b border-arcova-mint/20">
+          <button
+            type="button"
+            onClick={() => {
+              if (sidebarHidden) pinSidebarOpen();
+              else guardedNavigate('/');
+            }}
+            className="flex min-w-0 flex-1 items-center space-x-2 rounded-lg text-left transition-colors hover:bg-white/5"
+            aria-label={sidebarHidden ? 'Keep sidebar open' : 'Go to home'}
+            title={sidebarHidden ? 'Keep sidebar open' : 'Go to home'}
+          >
             <Image
               src="/images/network-og.png"
               alt="Arcova"
@@ -205,6 +279,18 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
               className="rounded-lg"
             />
             <span className="text-white font-semibold text-lg">arcova</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (sidebarHidden) pinSidebarOpen();
+              else updateSidebarHidden(true);
+            }}
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white/55 transition-colors hover:bg-white/10 hover:text-white"
+            aria-label={sidebarHidden ? 'Keep sidebar open' : 'Hide sidebar'}
+            title={sidebarHidden ? 'Keep sidebar open' : 'Hide sidebar'}
+          >
+            {sidebarHidden ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
           </button>
         </div>
 
@@ -225,10 +311,10 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
           ) : (
             <>
               {/* Dashboard */}
-              {renderNavItem({ name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard })}
+              {renderNavItem({ name: 'Dashboard', href: ROUTES.dashboard, icon: LayoutDashboard })}
 
               {/* Import */}
-              {renderNavItem({ name: 'Import', href: '/import', icon: FileUp })}
+              {renderNavItem({ name: 'Import', href: ROUTES.import, icon: FileUp })}
 
               {/* Leads (Contacts + Accounts) */}
               {renderAccordion({
@@ -241,10 +327,10 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
               })}
 
               {/* Health (formerly Pipeline) */}
-              {renderNavItem({ name: 'Health', href: '/health', icon: Activity })}
+              {renderNavItem({ name: 'Health', href: ROUTES.leads.health, icon: Activity })}
 
               {/* Data */}
-              {renderNavItem({ name: 'Data', href: '/data', icon: Database })}
+              {renderNavItem({ name: 'Data', href: ROUTES.leads.data, icon: Database })}
 
               {/* Signals */}
               {renderNavItem({ name: 'Signals', href: '/customer-signals', icon: Radio })}

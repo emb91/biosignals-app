@@ -14,6 +14,7 @@ import {
   type PipelineDataRequestType,
 } from '@/lib/pipeline-icp-health';
 import { cn } from '@/lib/utils';
+import { ROUTES, withQuery } from '@/lib/routes';
 
 interface IcpPipelineCard {
   icp_id: string;
@@ -160,7 +161,7 @@ export default function HealthPage() {
       requestType,
       source: 'health',
     });
-    router.push(`/data?${params.toString()}`);
+    router.push(withQuery(ROUTES.leads.data, params));
   };
 
   const fireAgent = (text: string) => {
@@ -183,7 +184,7 @@ export default function HealthPage() {
     <div className="flex h-screen bg-gray-50">
       <AppSidebar />
 
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden min-[1280px]:flex-row">
         <div className="flex-1 overflow-auto p-6">
           <div className="w-full max-w-6xl mx-auto">
             <div className="mb-6">

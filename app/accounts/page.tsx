@@ -36,6 +36,7 @@ import {
   LEAD_ACTION_PILL_CLASS,
   LEAD_ACTION_SORT_ORDER,
 } from '@/lib/lead-action';
+import { ROUTES, withQuery } from '@/lib/routes';
 
 const PAGE_SIZE = 50;
 
@@ -231,6 +232,8 @@ function TaxonomyPills({ items }: { items: string[] | null | undefined }) {
 }
 
 const DEFAULT_COLUMNS: AccountQueryColumn[] = ['company', 'company_type', 'fit', 'contacts', 'action'];
+const MEDIUM_COLUMNS: AccountQueryColumn[] = ['company', 'fit', 'contacts', 'action'];
+const SMALL_COLUMNS: AccountQueryColumn[] = ['company', 'fit', 'action'];
 
 const ACCOUNT_QUERY_COL_DEFS: Record<AccountQueryColumn, { label: string; width: string }> = {
   company: { label: 'Company', width: 'minmax(0,1.05fr)' },
@@ -250,6 +253,28 @@ const ACCOUNT_QUERY_COL_DEFS: Record<AccountQueryColumn, { label: string; width:
 
 function accountQueryGridCols(columns: AccountQueryColumn[]): string {
   return columns.map((column) => ACCOUNT_QUERY_COL_DEFS[column].width).join(' ');
+}
+
+function useResponsiveAccountColumns(): AccountQueryColumn[] {
+  const [columns, setColumns] = useState<AccountQueryColumn[]>(DEFAULT_COLUMNS);
+
+  useEffect(() => {
+    const updateColumns = () => {
+      if (window.innerWidth < 640) {
+        setColumns(SMALL_COLUMNS);
+      } else if (window.innerWidth < 900) {
+        setColumns(MEDIUM_COLUMNS);
+      } else {
+        setColumns(DEFAULT_COLUMNS);
+      }
+    };
+
+    updateColumns();
+    window.addEventListener('resize', updateColumns);
+    return () => window.removeEventListener('resize', updateColumns);
+  }, []);
+
+  return columns;
 }
 
 function accountName(account: AccountRow | QueryAccount): string {
@@ -324,6 +349,7 @@ export default function AccountsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const accountsDeepLinkCompanyIdRef = useRef<string | null>(null);
+  const tableColumns = useResponsiveAccountColumns();
 
   const [accounts, setAccounts] = useState<AccountRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -626,7 +652,7 @@ export default function AccountsPage() {
       source: 'accounts',
     });
     if (account.matched_icp_id) params.set('icpId', account.matched_icp_id);
-    router.push(`/data?${params.toString()}`);
+    router.push(withQuery(ROUTES.leads.data, params));
   };
 
   const closePanel = () => {
@@ -815,9 +841,9 @@ export default function AccountsPage() {
     <div className="flex h-screen bg-gray-50">
       <AppSidebar />
 
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden min-[1280px]:flex-row">
         {/* ── Main scrollable content ── */}
-        <div className="flex-1 overflow-auto p-6 min-w-0">
+        <div className="flex-1 overflow-auto p-4 min-w-0 sm:p-6">
           <div className="w-full max-w-none">
 
             <div className="mb-6">
@@ -848,7 +874,7 @@ export default function AccountsPage() {
                 </button>
               </div>
             ) : (
-              <div className={cn('grid min-w-0 gap-4', selectedAccountId ? 'xl:grid-cols-[minmax(0,1fr)_360px]' : '')}>
+              <div className={cn('grid min-w-0 gap-4', selectedAccountId ? 'min-[1700px]:grid-cols-[minmax(0,1fr)_360px]' : '')}>
 
                 {/* ── Table ── */}
                 <div className="min-w-0 flex flex-col gap-2">
@@ -906,12 +932,12 @@ export default function AccountsPage() {
 
                 <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
                   <div className="min-w-0">
-                    {/* Header — always uses DEFAULT_COLUMNS */}
+                    {/* Header */}
                     <div
                       className="grid w-full min-w-0 px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide gap-x-5"
-                      style={{ gridTemplateColumns: accountQueryGridCols(DEFAULT_COLUMNS) }}
+                      style={{ gridTemplateColumns: accountQueryGridCols(tableColumns) }}
                     >
-                      {DEFAULT_COLUMNS.map((col) => (
+                      {tableColumns.map((col) => (
                         <button
                           key={col}
                           type="button"
@@ -947,9 +973,9 @@ export default function AccountsPage() {
                                 ? 'bg-arcova-teal/10 border-arcova-teal'
                                 : 'border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30',
                             )}
-                            style={{ gridTemplateColumns: accountQueryGridCols(DEFAULT_COLUMNS) }}
+                            style={{ gridTemplateColumns: accountQueryGridCols(tableColumns) }}
                           >
-                            {DEFAULT_COLUMNS.map((col) => (
+                            {tableColumns.map((col) => (
                               <div
                                 key={col}
                                 className={cn(
@@ -1376,7 +1402,7 @@ export default function AccountsPage() {
                                           <>
                                             <button
                                               type="button"
-                                              onClick={() => router.push(`/results?search=${encodeURIComponent(contact.full_name || contact.email || '')}`)}
+                                              onClick={() => router.push(withQuery(ROUTES.leads.contacts, `search=${encodeURIComponent(contact.full_name || contact.email || '')}`))}
                                               className="inline-flex items-center gap-1 rounded-full border border-arcova-teal/30 bg-white px-2.5 py-1 text-xs font-semibold text-arcova-teal hover:border-arcova-teal hover:bg-arcova-teal/10 transition-colors"
                                             >
                                               View contact
@@ -1477,6 +1503,7 @@ export default function AccountsPage() {
           pageContext={
             selectedAccount
               ? {
+                  leadsView: 'accounts',
                   selectedAccount: {
                     id: selectedAccount.id,
                     name: selectedAccount.company_name || selectedAccount.domain,
@@ -1485,7 +1512,7 @@ export default function AccountsPage() {
                     contactCount: selectedAccount.contact_count,
                   },
                 }
-              : undefined
+              : { leadsView: 'accounts' }
           }
           onTableFilter={handleTableFilter}
           onTableClear={handleQueryClear}
