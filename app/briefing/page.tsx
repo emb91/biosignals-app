@@ -544,7 +544,7 @@ export default function BriefingPage() {
                   {clock.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} local
                 </span>
               </div>
-              <div className="bt-agent-panel-host">
+              <div className="bt-agent-panel-host bt-agent-panel-host--fill">
                 <AgentPanel
                   page="dashboard"
                   pageContext={{
@@ -558,7 +558,7 @@ export default function BriefingPage() {
                   briefingWelcome={briefingAgentWelcome}
                   briefingIdleChips={briefingAgentIdleChips}
                   onBusyChange={setAgentBusy}
-                  className="h-full min-h-[420px]"
+                  className="min-h-0 flex-1 overflow-hidden"
                 />
               </div>
             </section>

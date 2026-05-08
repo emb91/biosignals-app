@@ -1,5 +1,5 @@
 /**
- * Derives HS / CSV / Arcova labels from import batch metadata and contact row.
+ * Derives HubSpot / CSV / Arcova labels from import batch metadata and contacts.source.
  */
 
 export type DataProvenanceChannel = 'hubspot' | 'csv' | 'arcova';
@@ -27,17 +27,22 @@ export function resolveContactDataProvenance(row: {
   const importedAt = batchCreated?.trim() || contactCreated?.trim() || null;
 
   const fn = (filename || '').toLowerCase();
-  if (fn.startsWith('arcova-pipeline-') || fn.includes('arcova')) {
+  if (fn.startsWith('arcova-pipeline-')) {
     return { channels: ['arcova'], importedAt };
   }
-  if (fn.startsWith('hubspot-auto-') || fn.includes('hubspot')) {
+  if (fn.startsWith('hubspot-auto-') || fn.startsWith('hubspot-sync-') || fn.includes('hubspot')) {
     return { channels: ['hubspot'], importedAt };
   }
   if (filename != null && String(filename).trim().length > 0) {
     return { channels: ['csv'], importedAt };
   }
 
-  return { channels: ['arcova'], importedAt: contactCreated };
+  const src = typeof row.source === 'string' ? row.source.trim().toLowerCase() : '';
+  if (src === 'arcova' || src === 'fiber' || src === 'apollo') {
+    return { channels: ['arcova'], importedAt };
+  }
+
+  return { channels: [], importedAt };
 }
 
 export function sortProvenanceChannels(channels: Iterable<DataProvenanceChannel>): DataProvenanceChannel[] {
@@ -47,7 +52,7 @@ export function sortProvenanceChannels(channels: Iterable<DataProvenanceChannel>
 function channelToAbbrev(ch: DataProvenanceChannel): string {
   switch (ch) {
     case 'hubspot':
-      return 'HS';
+      return 'HubSpot';
     case 'csv':
       return 'CSV';
     case 'arcova':

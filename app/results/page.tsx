@@ -22,6 +22,7 @@ import {
 import { formatProvenanceImportedAt } from '@/lib/data-provenance';
 import { ROUTES, withQuery } from '@/lib/routes';
 import { cn } from '@/lib/utils';
+import '@/app/leads/contacts-layout.css';
 import {
   Activity,
   AlertTriangle,
@@ -263,7 +264,7 @@ interface Lead {
   matched_icp_name: string | null;
   matched_icp_index?: number | null;
   matched_icp_label?: string | null;
-  /** HS / CSV / Arcova abbreviation, from API */
+  /** CSV, HubSpot, Arcova label from API */
   data_provenance_type?: string | null;
   data_provenance_imported_at?: string | null;
   companies: {
@@ -332,7 +333,7 @@ type EnrichmentVisualState = {
 const PAGE_SIZE = 50;
 const LEADS_TABLE_GRID =
   'grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.3fr)_minmax(10rem,1.35fr)] gap-x-6';
-const MAX_VISIBLE_WORK_HISTORY = 5;
+const MAX_VISIBLE_WORK_HISTORY = 3;
 const COMPANY_FIT_COMPONENT_ORDER: CompanyFitComponentKey[] = [
   'company_type',
   'platform_category',
@@ -358,6 +359,37 @@ const formatPercentValue = (value: number | null | undefined): string | null => 
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
   return `${Math.round((value <= 1 ? value * 100 : value))}%`;
 };
+
+/** Integer 0–100 for progress bars */
+const percentDisplayNumber = (value: number | null | undefined): number | null => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  return Math.round(value <= 1 ? value * 100 : value);
+};
+
+function actionDrawerRelativeTime(iso?: string | null): string | null {
+  if (!iso) return null;
+  const diff = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(diff)) return null;
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 2) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo ago`;
+  return `${Math.floor(months / 12)}y ago`;
+}
+
+type ActionFitCriterion = { ok: 'pass' | 'warn' | 'miss'; text: string; val: string };
+
+function score01ToFitOk(score01: number, matchStatus?: string | null): ActionFitCriterion['ok'] {
+  if (matchStatus === 'mismatch') return 'miss';
+  if (score01 >= 0.84) return 'pass';
+  if (score01 >= 0.45) return 'warn';
+  return 'miss';
+}
 
 const formatPercent = (value: number | null | undefined): string | null => {
   const percent = formatPercentValue(value);
@@ -683,21 +715,6 @@ function SortArrow({ col, activeCol, dir }: { col: string; activeCol: string | n
   return dir === 'asc'
     ? <ChevronUp className="w-3 h-3 text-arcova-teal shrink-0" />
     : <ChevronDown className="w-3 h-3 text-arcova-teal shrink-0" />;
-}
-
-function ProvenanceBadge({ value }: { value?: string | null }) {
-  const label = value || '—';
-  const isArcova = label.toLowerCase().includes('arcova');
-  return (
-    <span
-      className={cn(
-        'inline-flex max-w-full items-center rounded-full px-2 py-0.5 text-[10px] font-semibold',
-        isArcova ? 'bg-arcova-teal/10 text-arcova-teal' : 'bg-gray-100 text-gray-500',
-      )}
-    >
-      {label}
-    </span>
-  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1302,9 +1319,37 @@ export default function LeadsPage() {
   const isRefreshingSelected = selectedLead ? refreshingLeadId === selectedLead.id : false;
   const isStoppingSelected = selectedLead ? stoppingLeadId === selectedLead.id : false;
   const isSelectedLeadRefreshRunning = selectedLead ? isLeadRefreshRunning(selectedLead) : false;
-  const selectedEnrichmentError = selectedLead ? getEnrichmentErrorMessage(selectedLead) : null;
   const selectedLeadRefreshStatus = selectedLead ? getLeadRefreshStatus(selectedLead) : 'idle';
   const selectedLeadRefreshStatusMeta = getLeadRefreshStatusMeta(selectedLeadRefreshStatus);
+
+  const selectedLeadDataSourceTypeLabel =
+    !selectedLead
+      ? '—'
+      : (selectedLead.data_provenance_type ?? '').toLowerCase() === 'arcova'
+        ? 'Arcova enrich'
+        : (selectedLead.data_provenance_type ?? '').toLowerCase() === 'csv'
+          ? 'CSV upload'
+          : selectedLead.data_provenance_type ?? '—';
+
+  const enrichmentFinishedDisplayIso: string | null =
+    !selectedLead
+      ? null
+      : selectedLeadRefreshStatus === 'succeeded'
+        ? selectedLead.enrichment_refresh_finished_at ?? selectedLead.profile_enrichment_completed_at ?? null
+        : selectedLeadRefreshStatus === 'idle' &&
+            ['completed', 'ambiguous'].includes(selectedLead.profile_enrichment_status || '')
+          ? selectedLead.profile_enrichment_completed_at ?? null
+          : null;
+
+  const showEnrichmentDoneCopy =
+    !!selectedLead &&
+    !!enrichmentFinishedDisplayIso &&
+    selectedLeadRefreshStatus !== 'running' &&
+    selectedLeadRefreshStatus !== 'failed' &&
+    selectedLeadRefreshStatus !== 'cancelled' &&
+    (selectedLeadRefreshStatus === 'succeeded' ||
+      (selectedLeadRefreshStatus === 'idle' &&
+        ['completed', 'ambiguous'].includes(selectedLead.profile_enrichment_status || '')));
 
   useEffect(() => {
     if ((selectedPreview !== 'scoring' && selectedPreview !== 'action') || !selectedCompanyId) return;
@@ -1739,6 +1784,79 @@ export default function LeadsPage() {
     );
   };
 
+  const renderActionFitDesignCard = (
+    title: string,
+    pct01: number | null | undefined,
+    criteria: ActionFitCriterion[],
+    opts?: { emptyHint?: string; loading?: boolean },
+  ) => {
+    const n = percentDisplayNumber(pct01 ?? null);
+    return (
+      <div className="contacts-fit-card">
+        <div className="contacts-fit-head">
+          <span className="contacts-fit-head-title">{title}</span>
+          <span className="contacts-fit-head-num">
+            {opts?.loading ? (
+              <span className="text-[13px] font-medium text-[#7d909a]">…</span>
+            ) : n != null ? (
+              <>
+                {n}
+                <span>%</span>
+              </>
+            ) : (
+              <span className="text-[15px] font-semibold text-[#7d909a]">—</span>
+            )}
+          </span>
+        </div>
+        <div className="contacts-fit-bar" aria-hidden>
+          {!opts?.loading && n != null ? (
+            <span className="contacts-fit-bar-fill" style={{ width: `${Math.min(100, n)}%` }} />
+          ) : null}
+        </div>
+        <div className="contacts-fit-criteria">
+          {opts?.loading ? (
+            <p className="text-xs text-[#7d909a]">Loading…</p>
+          ) : criteria.length ? (
+            criteria.map((row, i) => (
+              <div key={`${row.text}-${i}`} className="contacts-fit-criterion">
+                <span
+                  className={cn(
+                    'contacts-fit-criterion-icon',
+                    row.ok === 'pass' && 'contacts-fit-criterion-pass',
+                    row.ok === 'warn' && 'contacts-fit-criterion-warn',
+                    row.ok === 'miss' && 'contacts-fit-criterion-miss',
+                  )}
+                >
+                  {row.ok === 'pass' ? '✓' : row.ok === 'warn' ? '~' : '✗'}
+                </span>
+                <span className="contacts-fit-criterion-text">{row.text}</span>
+                <span className="contacts-fit-criterion-val">{row.val}</span>
+              </div>
+            ))
+          ) : (
+            <p className="text-xs text-[#7d909a]">{opts?.emptyHint ?? 'No breakdown yet.'}</p>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const buildActionContactFitCriteria = (): ActionFitCriterion[] => {
+    const fitBreakdown = selectedContactFit?.winning_breakdown;
+    if (!fitBreakdown) return [];
+    const out: ActionFitCriterion[] = [];
+    for (const key of CONTACT_FIT_COMPONENT_ORDER) {
+      const c = fitBreakdown.components[key];
+      if (!c?.active) continue;
+      out.push({
+        ok: score01ToFitOk(c.score01, c.matchStatus ?? null),
+        text: c.label,
+        val: formatPercentValue(c.score01) ?? '—',
+      });
+    }
+    return out;
+  };
+
   const renderOverallFitActionCard = () => {
     const overall =
       selectedLead &&
@@ -1771,19 +1889,21 @@ export default function LeadsPage() {
   if (!user) return null;
 
   return (
-    <div className="flex h-screen bg-transparent">
+    <div className="flex min-h-0 h-screen bg-transparent">
       <AppSidebar />
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden min-[1280px]:flex-row">
-        <div className="arcova-scroll-surface flex-1 overflow-auto p-6">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-3.5 p-3.5 min-[1280px]:flex-row min-[1280px]:overflow-hidden">
+        <div className="arcova-scroll-surface contacts-leads-main min-h-0 min-w-0 flex-1 overflow-y-auto rounded-[1.75rem] px-3 py-3 sm:px-5 sm:py-4">
           <div className="w-full max-w-none">
-            <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-arcova-teal">
                   <Users className="h-3.5 w-3.5" />
                   Leads
                 </div>
-                <h1 className="mt-2 text-2xl font-semibold leading-tight text-slate-950 sm:text-3xl">Contacts</h1>
+                <h1 className="font-manrope mt-2 text-3xl font-semibold leading-tight tracking-[-0.028em] text-slate-950 sm:text-[2.25rem]">
+                  Contacts
+                </h1>
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
                   {total > 0
                     ? `${total.toLocaleString()} contact${total !== 1 ? 's' : ''} ready to review. Click a row for details, or the company name to open the account.`
@@ -1903,7 +2023,8 @@ export default function LeadsPage() {
                 <p className="text-gray-500">No leads matching &ldquo;{search}&rdquo;</p>
               </div>
             ) : (
-              <div className={`grid gap-4 ${selectedLeadId ? 'xl:grid-cols-[minmax(0,1fr)_360px]' : ''}`}>
+              <>
+              <div className="flex flex-col gap-4">
                 {/* ── Leads table ── */}
                 <div className="flex flex-col gap-2">
 
@@ -1979,10 +2100,10 @@ export default function LeadsPage() {
                   </div>
                 )}
 
-                <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                <div className="overflow-hidden rounded-[1.5rem] border border-[rgba(13,53,71,0.1)] bg-[rgba(255,255,255,0.52)] shadow-[0_24px_60px_-32px_rgba(13,53,71,0.16),0_2px_6px_-2px_rgba(13,53,71,0.06)] backdrop-blur-2xl backdrop-saturate-150">
                   {/* Table header */}
                   <div
-                    className={`${LEADS_TABLE_GRID} items-start px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide`}
+                    className={`${LEADS_TABLE_GRID} items-start px-4 py-3 border-b border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.4)] text-xs font-semibold uppercase tracking-wide text-[#7d909a]`}
                   >
                     {(['name', 'job_title', 'company'] as const).map((col) => (
                       <button
@@ -2014,11 +2135,10 @@ export default function LeadsPage() {
                     </button>
                   </div>
 
-                  <div className="divide-y divide-gray-100">
+                  <div className="divide-y divide-[rgba(13,53,71,0.06)]">
                     {/* Single render path — agent filter narrows sortedLeads in-place */}
                     {sortedLeads.map((lead) => {
                       const isSelected = selectedLeadId === lead.id;
-                      const isArcovaLead = (lead.data_provenance_type || '').toLowerCase().includes('arcova');
                       const enriching = isEnriching(lead);
                       const enrichmentProgress = getEnrichmentProgress(lead);
 
@@ -2096,7 +2216,6 @@ export default function LeadsPage() {
                                   [lead.first_name, lead.last_name].filter(Boolean).join(' ') ||
                                   '—'}
                               </p>
-                              {isArcovaLead && <ProvenanceBadge value={lead.data_provenance_type} />}
                             </div>
                           </div>
 
@@ -2179,7 +2298,7 @@ export default function LeadsPage() {
 
                   {/* Footer — pagination when not filtered */}
                   {!agentFilterIds && totalPages > 1 && (
-                    <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200 bg-gray-50">
+                    <div className="flex items-center justify-between border-t border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.35)] px-4 py-3">
                       <p className="text-xs text-gray-500">
                         {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of{' '}
                         {total.toLocaleString()}
@@ -2208,16 +2327,48 @@ export default function LeadsPage() {
                 </div>
                 </div>{/* end table + banner wrapper */}
 
-                {/* ── Detail panel ── */}
+                </div>{/* end flex flex-col gap-4 */}
+
+                {/* ── Detail panel (overlays main column; sits left of agent on wide screens) ── */}
                 {selectedLeadId && (
-                <aside className="bg-white rounded-lg shadow-sm border border-gray-200 min-h-[520px]">
+                  <>
+                    <button
+                      type="button"
+                      className="fixed inset-0 z-40 bg-[rgba(13,53,71,0.14)] backdrop-blur-[1px] transition-opacity min-[1280px]:pointer-events-none min-[1280px]:opacity-0"
+                      aria-label="Close panel"
+                      onClick={() => {
+                        setSelectedLeadId(null);
+                        cancelEditingLead();
+                      }}
+                    />
+                    <aside
+                      className={cn(
+                        'contacts-leads-drawer fixed z-50 flex max-h-[calc(100vh-1.75rem)] min-h-0 w-[min(480px,calc(100vw-1.75rem))] flex-col overflow-hidden rounded-[1.75rem] border border-[rgba(255,255,255,0.88)] bg-[rgba(255,255,255,0.55)] shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2)] backdrop-blur-2xl backdrop-saturate-150',
+                        'bottom-3.5 top-3.5 max-[1279px]:left-3.5 max-[1279px]:right-3.5 max-[1279px]:w-auto',
+                        'min-[1280px]:right-[calc(360px+1.75rem)]',
+                      )}
+                    >
                   {selectedLead ? (
-                    <div className="h-full flex flex-col">
+                    <div
+                      className={cn(
+                        'flex h-full flex-col',
+                        selectedPreview === 'contact' &&
+                          'relative z-[1] before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:z-0 before:h-36 before:bg-gradient-to-b before:from-[rgba(227,243,241,0.75)] before:via-[rgba(255,255,255,0.35)] before:to-transparent',
+                      )}
+                    >
                       {/* Panel header */}
-                      <div className="flex items-start gap-3 px-5 py-4 border-b border-gray-200">
+                      <div className="relative z-[1] flex items-start gap-4 border-b border-[rgba(13,53,71,0.08)] px-6 pb-5 pt-6">
                         {/* Name / label */}
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-medium uppercase tracking-wide text-arcova-teal">
+                        <div className="min-w-0 flex-1">
+                          <p
+                            className={cn(
+                              selectedPreview === 'contact'
+                                ? 'text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]'
+                                : selectedPreview === 'action'
+                                  ? 'text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]'
+                                  : 'text-xs font-medium uppercase tracking-wide text-arcova-teal',
+                            )}
+                          >
                             {selectedPreview === 'contact'
                               ? 'Contact details'
                               : selectedPreview === 'action'
@@ -2225,7 +2376,7 @@ export default function LeadsPage() {
                                 : 'Fit score'}
                           </p>
                           {selectedPreview === 'contact' && (
-                            <h2 className="text-lg font-semibold text-gray-900 mt-1 leading-tight">
+                            <h2 className="font-manrope mt-2 break-words text-[1.75rem] font-bold leading-[1.12] tracking-[-0.024em] text-[rgb(13,53,71)] sm:text-[2rem]">
                               {[selectedLead.first_name, selectedLead.last_name]
                                 .filter(Boolean)
                                 .join(' ') ||
@@ -2233,20 +2384,38 @@ export default function LeadsPage() {
                                 'Selected contact'}
                             </h2>
                           )}
-                          {selectedPreview === 'action' && (() => {
-                            const action = getLeadAction(selectedLead);
-                            const config = LEAD_ACTION_PILL_CLASS[action];
-                            return (
-                              <span className={`mt-2 inline-flex items-center rounded-full px-3 py-1 text-sm font-medium ${config.className}`}>
-                                {config.label}
-                              </span>
-                            );
-                          })()}
-                          {selectedPreview === 'contact' && selectedLead.headline && (
-                            <p className="text-sm text-gray-500 mt-1 leading-snug line-clamp-2">
-                              {selectedLead.headline}
-                            </p>
-                          )}
+                          {selectedPreview === 'action' &&
+                            (() => {
+                              const action = getLeadAction(selectedLead);
+                              const config = LEAD_ACTION_PILL_CLASS[action];
+                              const contactName =
+                                [selectedLead.first_name, selectedLead.last_name].filter(Boolean).join(' ') ||
+                                selectedLead.full_name ||
+                                'Selected contact';
+                              const updatedIso =
+                                selectedContactFit?.contact_fit_scored_at ??
+                                selectedLead.updated_at ??
+                                selectedLead.created_at ??
+                                null;
+                              const rel = actionDrawerRelativeTime(updatedIso);
+                              return (
+                                <>
+                                  <h2 className="mt-1.5 font-manrope text-[22px] font-semibold leading-[1.1] tracking-[-0.02em] text-[#0d3547]">
+                                    {contactName}
+                                  </h2>
+                                  <div className="mt-1 flex flex-wrap items-center gap-2.5">
+                                    <span
+                                      className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-medium ${config.className}`}
+                                    >
+                                      {config.label}
+                                    </span>
+                                    {rel ? (
+                                      <span className="text-[11px] text-[#7d909a]">Updated {rel}</span>
+                                    ) : null}
+                                  </div>
+                                </>
+                              );
+                            })()}
                           {selectedPreview === 'scoring' && (
                             <div className="mt-1 space-y-2">
                               <h2 className="text-lg font-semibold text-gray-900 leading-tight">Lead prioritisation</h2>
@@ -2275,10 +2444,10 @@ export default function LeadsPage() {
                               <img
                                 src={selectedLead.profile_photo_url}
                                 alt=""
-                                className="w-16 h-16 rounded-xl object-cover"
+                                className="h-[4.5rem] w-[4.5rem] shrink-0 rounded-xl object-cover shadow-sm ring-1 ring-black/5"
                               />
                             ) : (
-                              <div className="w-16 h-16 rounded-xl bg-gray-200 flex items-center justify-center text-lg font-medium text-gray-500">
+                              <div className="flex h-[4.5rem] w-[4.5rem] shrink-0 items-center justify-center rounded-xl bg-gray-200 text-xl font-medium text-gray-500 shadow-sm ring-1 ring-black/5">
                                 {(
                                   selectedLead.first_name?.[0] ||
                                   selectedLead.full_name?.[0] ||
@@ -2293,16 +2462,21 @@ export default function LeadsPage() {
                               setSelectedLeadId(null);
                               cancelEditingLead();
                             }}
-                            className="text-gray-400 hover:text-gray-700 transition-colors"
+                            className="contacts-drawer-close"
                             aria-label="Close details"
                           >
-                            <X className="w-5 h-5" />
+                            <X className="h-3.5 w-3.5" strokeWidth={2} />
                           </button>
                         </div>
                       </div>
 
                       {/* Panel body */}
-                      <div className="flex-1 overflow-auto px-5 py-4 space-y-5">
+                      <div
+                        className={cn(
+                          'flex-1 overflow-auto',
+                          selectedPreview === 'contact' ? 'space-y-6 px-6 py-6' : 'space-y-5 px-5 py-4',
+                        )}
+                      >
                         {selectedPreview === 'contact' ? (
                           isEditingSelected ? (
                             /* ── Edit mode ── */
@@ -2334,48 +2508,34 @@ export default function LeadsPage() {
                             </div>
                           ) : (
                             /* ── View mode ── */
-                            <div className="space-y-5">
-                              <div className="rounded-xl border border-gray-100 bg-gray-50/70 px-3 py-3">
-                                <p className="text-xs font-semibold text-gray-700 mb-2">Data source</p>
-                                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-                                  <div>
-                                    <p className="text-gray-400 text-xs">Type</p>
-                                    <p className="text-gray-900 mt-0.5">{selectedLead.data_provenance_type ?? '—'}</p>
-                                  </div>
-                                  <div>
-                                    <p className="text-gray-400 text-xs">Imported</p>
-                                    <p className="text-gray-900 mt-0.5">
-                                      {formatProvenanceImportedAt(selectedLead.data_provenance_imported_at)}
-                                    </p>
-                                  </div>
-                                </div>
-                              </div>
-
+                            <div className="space-y-6">
                               {selectedLead.contact_bio && selectedLead.contact_bio.length > 0 && (
-                                <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
+                                <div className="overflow-hidden rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
                                   <button
                                     type="button"
                                     onClick={() => setContactPanelOpen((s) => ({ ...s, about: !s.about }))}
-                                    className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100/60 transition-colors"
+                                    className="flex w-full items-center justify-between px-[18px] py-3.5 text-left transition-colors hover:bg-[rgba(255,255,255,0.95)]"
                                   >
-                                    <span className="text-xs font-semibold text-gray-700">About</span>
+                                    <span className="font-manrope text-[13px] font-semibold text-[#0d3547]">
+                                      About
+                                    </span>
                                     <ChevronDown
-                                      className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 ${
+                                      className={`h-4 w-4 shrink-0 text-[#7d909a] transition-transform duration-200 ${
                                         contactPanelOpen.about ? '' : '-rotate-90'
                                       }`}
                                     />
                                   </button>
                                   {contactPanelOpen.about && (
-                                    <div className="px-3 pb-3">
+                                    <div className="border-t border-[rgba(13,53,71,0.06)] px-[18px] pb-[18px] pt-4">
                                       {selectedLead.contact_bio.length === 1 ? (
-                                        <p className="text-sm text-gray-700 leading-relaxed">
+                                        <p className="text-[15px] leading-[1.55] text-[#4a6470]">
                                           {selectedLead.contact_bio[0]}
                                         </p>
                                       ) : (
-                                        <ul className="space-y-1.5">
+                                        <ul className="space-y-3">
                                           {selectedLead.contact_bio.map((bullet, i) => (
-                                            <li key={i} className="flex gap-2 text-sm text-gray-700 leading-snug">
-                                              <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-arcova-teal flex-shrink-0" />
+                                            <li key={i} className="flex gap-3 text-[15px] leading-snug text-[#4a6470]">
+                                              <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-arcova-teal" />
                                               {bullet}
                                             </li>
                                           ))}
@@ -2386,109 +2546,131 @@ export default function LeadsPage() {
                                 </div>
                               )}
 
-                              <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
+                              <div className="overflow-hidden rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
                                 <button
                                   type="button"
                                   onClick={() => setContactPanelOpen((s) => ({ ...s, details: !s.details }))}
-                                  className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100/60 transition-colors"
+                                  className="flex w-full items-center justify-between px-[18px] py-3.5 text-left transition-colors hover:bg-[rgba(255,255,255,0.95)]"
                                 >
-                                  <span className="text-xs font-semibold text-gray-700">Role &amp; contact</span>
+                                  <span className="font-manrope text-[13px] font-semibold text-[#0d3547]">
+                                    Role &amp; contact
+                                  </span>
                                   <ChevronDown
-                                    className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 ${
+                                    className={`h-4 w-4 shrink-0 text-[#7d909a] transition-transform duration-200 ${
                                       contactPanelOpen.details ? '' : '-rotate-90'
                                     }`}
                                   />
                                 </button>
                                 {contactPanelOpen.details && (
-                                  <div className="px-3 pb-3 space-y-3 text-sm">
-                                    <div>
-                                      <p className="text-gray-400 text-xs">Job title</p>
-                                      <p className="text-gray-900 mt-0.5">
-                                        {selectedLead.resolved_current_job_title ||
-                                          selectedLead.job_title ||
-                                          '—'}
-                                      </p>
-                                    </div>
-                                    <div>
-                                      <p className="text-gray-400 text-xs">Location</p>
-                                      <p className="text-gray-900 mt-0.5">
-                                        {selectedLead.location || '—'}
-                                      </p>
-                                    </div>
-                                    <div>
-                                      <p className="text-gray-400 text-xs">Email</p>
-                                      <p className="text-gray-900 mt-0.5">{selectedLead.email || '—'}</p>
-                                      {selectedLead.email &&
-                                        (selectedLead.email_status === 'candidate' ||
-                                          selectedLead.email_status === 'stale_suspected') && (
-                                          <p className="text-xs text-gray-500 mt-1">
-                                            This email may be outdated.
-                                          </p>
+                                  <div className="border-t border-[rgba(13,53,71,0.06)] px-[18px] pb-[18px] pt-4">
+                                    <div className="min-w-0 space-y-5">
+                                      <div className="min-w-0">
+                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          Job title
+                                        </p>
+                                        <p className="mt-2 break-words text-[15px] leading-snug text-[#0d3547]">
+                                          {selectedLead.resolved_current_job_title ||
+                                            selectedLead.job_title ||
+                                            '—'}
+                                        </p>
+                                      </div>
+                                      <div className="min-w-0">
+                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          Location
+                                        </p>
+                                        <p className="mt-2 break-words text-[15px] leading-snug text-[#0d3547]">
+                                          {selectedLead.location || '—'}
+                                        </p>
+                                      </div>
+                                      <div className="min-w-0">
+                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          Email
+                                        </p>
+                                        <p className="mt-2 break-all text-[15px] leading-snug text-[#0d3547]">
+                                          {selectedLead.email || '—'}
+                                        </p>
+                                      </div>
+                                      <div className="min-w-0">
+                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          LinkedIn
+                                        </p>
+                                        {selectedLead.linkedin_url ? (
+                                          <a
+                                            href={selectedLead.linkedin_url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="mt-2 inline-flex min-w-0 items-start gap-1.5 break-all text-[15px] font-medium leading-snug text-arcova-teal hover:underline"
+                                          >
+                                            <span className="min-w-0">
+                                              {selectedLead.linkedin_url.replace(/^https?:\/\/(www\.)?/, '')}
+                                            </span>
+                                            <ExternalLink className="mt-0.5 h-4 w-4 shrink-0 text-arcova-teal" />
+                                          </a>
+                                        ) : (
+                                          <p className="mt-2 text-[15px] leading-snug text-[#0d3547]">—</p>
                                         )}
+                                      </div>
                                     </div>
-                                    <div>
-                                      <p className="text-gray-400 text-xs">LinkedIn</p>
-                                      {selectedLead.linkedin_url ? (
-                                        <a
-                                          href={selectedLead.linkedin_url}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className="inline-flex items-center gap-1 text-arcova-teal hover:underline text-xs break-all mt-0.5"
-                                        >
-                                          {selectedLead.linkedin_url}
-                                          <ExternalLink className="w-3 h-3 flex-shrink-0" />
-                                        </a>
-                                      ) : (
-                                        <p className="text-gray-900 mt-0.5">—</p>
+                                    {selectedLead.email &&
+                                      (selectedLead.email_status === 'candidate' ||
+                                        selectedLead.email_status === 'stale_suspected') && (
+                                        <p className="mt-4 text-[13px] leading-snug text-[#7d909a]">
+                                          This email may be outdated.
+                                        </p>
                                       )}
-                                    </div>
                                   </div>
                                 )}
                               </div>
 
                               {selectedLead.resolved_employment_history &&
                                 selectedLead.resolved_employment_history.length > 0 && (
-                                  <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
+                                  <div className="overflow-hidden rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
                                     <button
                                       type="button"
                                       onClick={() =>
                                         setContactPanelOpen((s) => ({ ...s, workHistory: !s.workHistory }))
                                       }
-                                      className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-gray-100/60 transition-colors"
+                                      className="flex w-full items-center justify-between px-[18px] py-3.5 text-left transition-colors hover:bg-[rgba(255,255,255,0.95)]"
                                     >
-                                      <span className="text-xs font-semibold text-gray-700">Work history</span>
+                                      <span className="font-manrope text-[13px] font-semibold text-[#0d3547]">
+                                        Work history
+                                      </span>
                                       <ChevronDown
-                                        className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 ${
+                                        className={`h-4 w-4 shrink-0 text-[#7d909a] transition-transform duration-200 ${
                                           contactPanelOpen.workHistory ? '' : '-rotate-90'
                                         }`}
                                       />
                                     </button>
                                     {contactPanelOpen.workHistory && (
-                                      <div className="px-3 pb-3 space-y-3">
-                                        <div className="space-y-3">
+                                      <div className="space-y-5 border-t border-[rgba(13,53,71,0.06)] px-[18px] pb-[18px] pt-5">
+                                        <div className="space-y-5">
                                           {(isWorkHistoryExpanded
                                             ? selectedLead.resolved_employment_history
-                                            : selectedLead.resolved_employment_history.slice(0, MAX_VISIBLE_WORK_HISTORY)
-                                          ).map((job, i) => (
-                                            <div key={i} className="flex gap-3">
-                                              <div className="mt-1.5 flex-shrink-0">
+                                            : selectedLead.resolved_employment_history.slice(
+                                                0,
+                                                MAX_VISIBLE_WORK_HISTORY,
+                                              )
+                                          ).map((job, i, arr) => (
+                                            <div key={i} className="flex items-stretch gap-4">
+                                              <div className="flex w-4 shrink-0 flex-col items-center pt-1">
                                                 <div
-                                                  className={`w-2 h-2 rounded-full ${
-                                                    job.current ? 'bg-arcova-teal' : 'bg-gray-300'
+                                                  className={`z-[1] h-2.5 w-2.5 rounded-full ${
+                                                    job.current ? 'bg-arcova-teal' : 'bg-[rgba(13,53,71,0.2)]'
                                                   }`}
                                                 />
+                                                {i < arr.length - 1 ? (
+                                                  <div className="mx-auto mt-1 w-px flex-1 bg-[rgba(13,53,71,0.1)]" />
+                                                ) : null}
                                               </div>
-                                              <div className="min-w-0">
-                                                <p className="text-sm font-medium text-gray-900">
+                                              <div className="min-w-0 pb-1">
+                                                <p className="text-[15px] font-semibold leading-snug text-[#0d3547]">
                                                   {job.title || '—'}
                                                 </p>
-                                                <p className="text-sm text-gray-600">
+                                                <p className="mt-1 text-[15px] leading-snug text-[#4a6470]">
                                                   {job.company_name || '—'}
                                                 </p>
-                                                <p className="text-xs text-gray-400">
-                                                  {[job.start_date, job.end_date]
-                                                    .filter(Boolean)
-                                                    .join(' → ')}
+                                                <p className="mt-1.5 text-[13px] tabular-nums text-[#7d909a]">
+                                                  {[job.start_date, job.end_date].filter(Boolean).join(' → ')}
                                                 </p>
                                               </div>
                                             </div>
@@ -2499,10 +2681,10 @@ export default function LeadsPage() {
                                           <button
                                             type="button"
                                             onClick={() => setIsWorkHistoryExpanded((prev) => !prev)}
-                                            className="inline-flex items-center gap-1.5 text-sm font-medium text-arcova-teal hover:text-arcova-teal/80 transition-colors"
+                                            className="inline-flex items-center gap-1.5 pt-1 text-[15px] font-semibold text-arcova-teal transition-colors hover:text-arcova-teal/85"
                                           >
                                             <ChevronDown
-                                              className={`w-4 h-4 transition-transform ${
+                                              className={`h-4 w-4 transition-transform ${
                                                 isWorkHistoryExpanded ? 'rotate-180' : ''
                                               }`}
                                             />
@@ -2519,54 +2701,158 @@ export default function LeadsPage() {
                                   </div>
                                 )}
 
+                              <div className="rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-[18px] py-[18px] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
+                                <p className="mb-5 font-manrope text-[13px] font-semibold text-[#0d3547]">Data source</p>
+                                <div className="grid grid-cols-2 gap-x-10 gap-y-3">
+                                  <div className="min-w-0">
+                                    <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                      Type
+                                    </p>
+                                    <p className="mt-2 text-[15px] leading-snug text-[#0d3547]">
+                                      {selectedLeadDataSourceTypeLabel}
+                                    </p>
+                                  </div>
+                                  <div className="min-w-0">
+                                    <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                      Imported
+                                    </p>
+                                    <p className="mt-2 text-[15px] leading-snug text-[#0d3547]">
+                                      {formatProvenanceImportedAt(selectedLead.data_provenance_imported_at)}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <div className="mt-6 space-y-3 border-t border-[rgba(13,53,71,0.06)] pt-5">
+                                  <p className="text-[13px] leading-snug text-[#4a6470]">
+                                    Last updated {formatLastUpdated(selectedLead.updated_at || selectedLead.created_at)}
+                                  </p>
+
+                                  {selectedLeadRefreshStatus === 'running' && (
+                                    <div
+                                      className={`rounded-lg border px-3 py-2 text-xs ${selectedLeadRefreshStatusMeta.className}`}
+                                    >
+                                      <p className="font-medium">{selectedLeadRefreshStatusMeta.label}</p>
+                                      <div className="mt-2 flex flex-col gap-1.5">
+                                        <button
+                                          type="button"
+                                          onClick={() => stopLeadEnrichment(selectedLead.id)}
+                                          disabled={isStoppingSelected}
+                                          className="inline-flex items-center gap-1.5 self-start rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                        >
+                                          <Ban className="h-3.5 w-3.5" aria-hidden />
+                                          {isStoppingSelected ? 'Stopping…' : 'Stop enrichment'}
+                                        </button>
+                                        {stopEnrichmentError && (
+                                          <p className="text-xs text-red-500">{stopEnrichmentError}</p>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {showEnrichmentDoneCopy && enrichmentFinishedDisplayIso ? (
+                                    <>
+                                      <p className="text-[13px] font-semibold text-[rgb(13,53,71)]">Enrichment done</p>
+                                      <p className="text-[13px] leading-snug text-[#4a6470]">
+                                        Finished {formatLastUpdated(enrichmentFinishedDisplayIso)}.
+                                      </p>
+                                    </>
+                                  ) : null}
+
+                                  {selectedLeadRefreshStatus === 'cancelled' &&
+                                    selectedLead.enrichment_refresh_finished_at && (
+                                      <p className="text-[13px] leading-snug text-[#4a6470]">
+                                        Stopped {formatLastUpdated(selectedLead.enrichment_refresh_finished_at)}.
+                                      </p>
+                                    )}
+
+                                  {selectedLeadRefreshStatus === 'failed' && (
+                                    <>
+                                      <p className="text-[13px] font-semibold text-[rgb(13,53,71)]">
+                                        {selectedLeadRefreshStatusMeta.label}
+                                      </p>
+                                      <p className="text-[13px] leading-snug text-[#7d909a]">Showing last known data.</p>
+                                    </>
+                                  )}
+
+                                  {selectedLeadRefreshStatus !== 'running' && (
+                                    <p className="text-[13px] leading-snug text-[#7d909a]">
+                                      You can refresh this enrichment again whenever you need updated data.
+                                    </p>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => rerunEnrichment(selectedLead.id)}
+                                    disabled={
+                                      isRefreshingSelected ||
+                                      isStoppingSelected ||
+                                      isEditingSelected ||
+                                      isSelectedLeadRefreshRunning
+                                    }
+                                    className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-arcova-teal/5 px-4 py-2 text-sm font-medium text-arcova-teal transition-colors hover:bg-arcova-teal/10 disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    <RotateCw
+                                      className={`h-4 w-4 ${isRefreshingSelected || isSelectedLeadRefreshRunning ? 'animate-spin' : ''}`}
+                                    />
+                                    {isRefreshingSelected
+                                      ? 'Starting enrichment…'
+                                      : isSelectedLeadRefreshRunning
+                                        ? 'Enrichment running…'
+                                        : 'Refresh enrichment'}
+                                  </button>
+                                </div>
+                              </div>
                             </div>
                           )
                         ) : selectedPreview === 'action' ? (
                           /* ── Action view ── */
                           (() => {
                             const action = getLeadAction(selectedLead);
-                            const contactName = [selectedLead.first_name, selectedLead.last_name].filter(Boolean).join(' ') || selectedLead.full_name;
+                            const contactName =
+                              [selectedLead.first_name, selectedLead.last_name].filter(Boolean).join(' ') ||
+                              selectedLead.full_name;
+
+                            const contactLoading = Boolean(selectedContactFitState?.loading);
+                            const contactCriteria = contactLoading ? [] : buildActionContactFitCriteria();
 
                             return (
-                              <div className="space-y-5">
-
+                              <div className="flex flex-col gap-3.5">
                                 {/* Action explanation */}
                                 {action === 'monitor' &&
                                   (isLeadReadyAwaitingContactSignal(selectedLead) ? (
-                                  <div className="space-y-3">
-                                    <p className="text-sm text-gray-700 leading-relaxed">
-                                      {contactName ? `${contactName} is` : 'This lead is'} a strong match on both the
-                                      company and the persona. Keep the account on your radar and wait for a buying
-                                      signal before reaching out.
-                                    </p>
-                                  </div>
-                                ) : (
-                                  <div className="space-y-3">
-                                    <p className="text-sm text-gray-700 leading-relaxed">
-                                      {contactName ? `${contactName} sits` : 'This lead sits'} in the watch band:
-                                      company fit is promising but not yet high enough for sourcing the ideal persona.
-                                      Keep the account visible and revisit when enrichment or the company moves.
-                                    </p>
-                                    <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
-                                      <button
-                                        type="button"
-                                        onClick={() => guardedNavigate('/customer-signals')}
-                                        className="inline-flex items-center gap-1.5 text-sm font-semibold text-arcova-teal hover:text-arcova-teal/85 transition-colors"
-                                      >
-                                        View Signals
-                                        <ChevronRight className="w-4 h-4" aria-hidden />
-                                      </button>
+                                    <div className="space-y-3">
+                                      <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
+                                        {contactName ? `${contactName} is` : 'This lead is'} a strong match on both the
+                                        company and the persona. Keep the account on your radar and wait for a buying
+                                        signal before reaching out.
+                                      </p>
                                     </div>
-                                  </div>
-                                ))}
+                                  ) : (
+                                    <div className="space-y-3">
+                                      <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
+                                        {contactName ? `${contactName} sits` : 'This lead sits'} in the watch band:
+                                        company fit is promising but not yet high enough for sourcing the ideal persona.
+                                        Keep the account visible and revisit when enrichment or the company moves.
+                                      </p>
+                                      <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
+                                        <button
+                                          type="button"
+                                          onClick={() => guardedNavigate('/customer-signals')}
+                                          className="inline-flex items-center gap-1.5 text-sm font-semibold text-arcova-teal hover:text-arcova-teal/85 transition-colors"
+                                        >
+                                          View Signals
+                                          <ChevronRight className="w-4 h-4" aria-hidden />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ))}
 
                                 {action === 'reach_out' && (
                                   <div className="space-y-3">
-                                    <p className="text-sm text-gray-700 leading-relaxed">
+                                    <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
                                       This contact has a strong fit and at least one tracked buying signal. It is a
                                       good moment for personalised outreach.
                                     </p>
-                                    <p className="text-sm text-gray-500 leading-relaxed">
+                                    <p className="text-[13.5px] leading-[1.55] text-[#4a6470]">
                                       Lead with relevance to their role and therapeutic focus, and tie your message to
                                       signals or milestones when you can.
                                     </p>
@@ -2575,14 +2861,20 @@ export default function LeadsPage() {
 
                                 {action === 'source_contact' && (
                                   <div className="space-y-3">
-                                    <p className="text-sm text-gray-700 leading-relaxed">
-                                      {selectedLead.companies?.company_name
-                                        ? <><strong>{selectedLead.companies.company_name}</strong> is a strong ICP fit</>
-                                        : 'The company is a strong ICP fit'
-                                      }, but {contactName || 'this contact'} isn&apos;t the right persona to approach this account. Source a better-matched contact before you reach out.
+                                    <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
+                                      {selectedLead.companies?.company_name ? (
+                                        <>
+                                          <strong>{selectedLead.companies.company_name}</strong> is a strong ICP fit
+                                        </>
+                                      ) : (
+                                        'The company is a strong ICP fit'
+                                      )}
+                                      , but {contactName || 'this contact'} isn&apos;t the right persona to approach
+                                      this account. Source a better-matched contact before you reach out.
                                     </p>
-                                    <p className="text-sm text-gray-500 leading-relaxed">
-                                      Try searching LinkedIn for the right title at this company, or use enrichment to surface additional contacts.
+                                    <p className="text-[13.5px] leading-[1.55] text-[#4a6470]">
+                                      Try searching LinkedIn for the right title at this company, or use enrichment to
+                                      surface additional contacts.
                                     </p>
                                     {(selectedLead.companies?.linkedin_url || selectedLead.companies?.company_name) && (
                                       <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
@@ -2606,16 +2898,29 @@ export default function LeadsPage() {
 
                                 {action === 'deprioritize' && (
                                   <div className="space-y-3">
-                                    <p className="text-sm text-gray-700 leading-relaxed">
+                                    <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
                                       Company or contact fit sits below your thresholds. Leave this one aside for now.
                                     </p>
-                                    <p className="text-sm text-gray-500 leading-relaxed">
-                                      This doesn&apos;t mean they are permanently out. If their company situation changes or you revisit your ICP criteria, they may score higher in a future run.
+                                    <p className="text-[13.5px] leading-[1.55] text-[#4a6470]">
+                                      This doesn&apos;t mean they are permanently out. If their company situation changes
+                                      or you revisit your ICP criteria, they may score higher in a future run.
                                     </p>
                                   </div>
                                 )}
 
-                                {renderContactFitScoresCard()}
+                                {renderActionFitDesignCard(
+                                  'Contact fit',
+                                  selectedContactFit?.contact_fit_score ??
+                                    resolveContactFitForLeadAction(selectedLead),
+                                  contactCriteria,
+                                  {
+                                    loading: contactLoading,
+                                    emptyHint:
+                                      !contactLoading && contactCriteria.length === 0
+                                        ? 'Run enrichment to see contact-level criteria.'
+                                        : undefined,
+                                  },
+                                )}
                               </div>
                             );
                           })()
@@ -2630,74 +2935,92 @@ export default function LeadsPage() {
                       </div>
 
                       {/* Panel footer */}
-                      <div className="px-5 py-4 border-t border-gray-100 space-y-2">
-                        <p className="text-xs text-gray-400">
-                          Last updated{' '}
-                          {formatLastUpdated(selectedLead.updated_at || selectedLead.created_at)}
-                        </p>
+                      <div
+                        className={cn(
+                          'border-t border-[rgba(13,53,71,0.08)] space-y-4 py-4',
+                          selectedPreview === 'contact' ? 'px-6' : 'px-5',
+                        )}
+                      >
+                        {selectedPreview !== 'contact' && (
+                          <div className="space-y-3">
+                            <p className="text-[13px] leading-snug text-[#4a6470]">
+                              Last updated {formatLastUpdated(selectedLead.updated_at || selectedLead.created_at)}
+                            </p>
 
-                        <div className="space-y-2">
-                          {selectedLeadRefreshStatus !== 'idle' && (
-                            <div className={`rounded-lg border px-3 py-2 text-xs ${selectedLeadRefreshStatusMeta.className}`}>
-                              <p className="font-medium">{selectedLeadRefreshStatusMeta.label}</p>
-                              {selectedLeadRefreshStatus === 'running' && (
+                            {selectedLeadRefreshStatus === 'running' && (
+                              <div
+                                className={`rounded-lg border px-3 py-2 text-xs ${selectedLeadRefreshStatusMeta.className}`}
+                              >
+                                <p className="font-medium">{selectedLeadRefreshStatusMeta.label}</p>
                                 <div className="mt-2 flex flex-col gap-1.5">
                                   <button
                                     type="button"
                                     onClick={() => stopLeadEnrichment(selectedLead.id)}
                                     disabled={isStoppingSelected}
-                                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors self-start"
+                                    className="inline-flex items-center gap-1.5 self-start rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                                   >
-                                    <Ban className="w-3.5 h-3.5" aria-hidden />
+                                    <Ban className="h-3.5 w-3.5" aria-hidden />
                                     {isStoppingSelected ? 'Stopping…' : 'Stop enrichment'}
                                   </button>
                                   {stopEnrichmentError && (
                                     <p className="text-xs text-red-500">{stopEnrichmentError}</p>
                                   )}
                                 </div>
-                              )}
-                              {selectedLeadRefreshStatus === 'cancelled' &&
-                                selectedLead.enrichment_refresh_finished_at && (
-                                  <p className="mt-1">
-                                    Stopped {formatLastUpdated(selectedLead.enrichment_refresh_finished_at)}.
-                                  </p>
-                                )}
-                              {selectedLeadRefreshStatus === 'succeeded' && selectedLead.enrichment_refresh_finished_at && (
-                                <p className="mt-1">
-                                  Finished {formatLastUpdated(selectedLead.enrichment_refresh_finished_at)}.
+                              </div>
+                            )}
+
+                            {showEnrichmentDoneCopy && enrichmentFinishedDisplayIso ? (
+                              <>
+                                <p className="text-[13px] font-semibold text-[rgb(13,53,71)]">Enrichment done</p>
+                                <p className="text-[13px] leading-snug text-[#4a6470]">
+                                  Finished {formatLastUpdated(enrichmentFinishedDisplayIso)}.
+                                </p>
+                              </>
+                            ) : null}
+
+                            {selectedLeadRefreshStatus === 'cancelled' &&
+                              selectedLead.enrichment_refresh_finished_at && (
+                                <p className="text-[13px] leading-snug text-[#4a6470]">
+                                  Stopped {formatLastUpdated(selectedLead.enrichment_refresh_finished_at)}.
                                 </p>
                               )}
-                              {selectedLeadRefreshStatus === 'failed' && (
-                                <p className="mt-1">Showing last known data.</p>
-                              )}
-                            </div>
-                          )}
-                          {selectedLeadRefreshStatus !== 'running' && (
-                            <p className="text-xs text-gray-500">
-                              You can refresh this enrichment again whenever you need updated data.
-                            </p>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => rerunEnrichment(selectedLead.id)}
-                            disabled={
-                              isRefreshingSelected ||
-                              isStoppingSelected ||
-                              isEditingSelected ||
-                              isSelectedLeadRefreshRunning
-                            }
-                            className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-arcova-teal/5 px-4 py-2 text-sm font-medium text-arcova-teal hover:bg-arcova-teal/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                          >
-                            <RotateCw
-                              className={`w-4 h-4 ${isRefreshingSelected || isSelectedLeadRefreshRunning ? 'animate-spin' : ''}`}
-                            />
-                            {isRefreshingSelected
-                              ? 'Starting enrichment…'
-                              : isSelectedLeadRefreshRunning
-                                ? 'Enrichment running…'
-                                : 'Refresh enrichment'}
-                          </button>
-                        </div>
+
+                            {selectedLeadRefreshStatus === 'failed' && (
+                              <>
+                                <p className="text-[13px] font-semibold text-[rgb(13,53,71)]">
+                                  {selectedLeadRefreshStatusMeta.label}
+                                </p>
+                                <p className="text-[13px] leading-snug text-[#7d909a]">Showing last known data.</p>
+                              </>
+                            )}
+
+                            {selectedLeadRefreshStatus !== 'running' && (
+                              <p className="text-[13px] leading-snug text-[#7d909a]">
+                                You can refresh this enrichment again whenever you need updated data.
+                              </p>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => rerunEnrichment(selectedLead.id)}
+                              disabled={
+                                isRefreshingSelected ||
+                                isStoppingSelected ||
+                                isEditingSelected ||
+                                isSelectedLeadRefreshRunning
+                              }
+                              className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-arcova-teal/5 px-4 py-2 text-sm font-medium text-arcova-teal transition-colors hover:bg-arcova-teal/10 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              <RotateCw
+                                className={`h-4 w-4 ${isRefreshingSelected || isSelectedLeadRefreshRunning ? 'animate-spin' : ''}`}
+                              />
+                              {isRefreshingSelected
+                                ? 'Starting enrichment…'
+                                : isSelectedLeadRefreshRunning
+                                  ? 'Enrichment running…'
+                                  : 'Refresh enrichment'}
+                            </button>
+                          </div>
+                        )}
 
                         {selectedPreview === 'contact' && (
                           isEditingSelected ? (
@@ -2743,20 +3066,26 @@ export default function LeadsPage() {
                       </div>
                     </div>
                   ) : null}
-                </aside>
+                    </aside>
+                  </>
                 )}
-              </div>
+              </>
             )}
           </div>
         </div>
 
-        <AgentPanel
-          page="leads"
-          pageContext={{ leadsView: 'contacts' }}
-          pendingMessage={agentTrigger}
-          onLeadsFilter={handleLeadsFilter}
-          onTableClear={handleQueryClear}
-        />
+        <div className="flex min-h-0 w-full shrink-0 flex-col min-[1280px]:w-[360px] min-[1280px]:self-start">
+          <AgentPanel
+            wide
+            page="leads"
+            pageContext={{ leadsView: 'contacts' }}
+            pendingMessage={agentTrigger}
+            onLeadsFilter={handleLeadsFilter}
+            onTableClear={handleQueryClear}
+            surfaceClassName="relative w-full rounded-[inherit] border border-[rgba(13,53,71,0.1)] bg-[rgba(255,255,255,0.52)] shadow-[0_24px_60px_-32px_rgba(13,53,71,0.18),0_2px_6px_-2px_rgba(13,53,71,0.06)] ring-1 ring-white/80 backdrop-blur-2xl backdrop-saturate-150"
+            className="min-h-0 min-[1280px]:sticky min-[1280px]:top-3.5 min-[1280px]:h-[calc(100vh-1.75rem)] max-[1279px]:h-80 max-[1279px]:shrink-0"
+          />
+        </div>
       </div>
     </div>
   );
