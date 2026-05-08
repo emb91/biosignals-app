@@ -20,18 +20,18 @@ export default function NavBar() {
   if (!user) return null;
 
   return (
-    <nav className="bg-white shadow-sm border-b">
+    <nav className="border-b bg-white shadow-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
           <div className="flex items-center">
-            <h1 className="text-xl font-semibold text-gray-900">
+            <h1 className="font-manrope text-xl font-semibold text-gray-900">
               Arcova Signals
             </h1>
           </div>
           
           <div className="flex items-center space-x-4">
-            <span className="text-sm text-gray-600">
-              Logged in as <span className="font-medium">{user.email}</span>
+            <span className="font-manrope text-sm text-gray-600">
+              Logged in as <span className="font-semibold">{user.email}</span>
             </span>
             <Button
               variant="outline"

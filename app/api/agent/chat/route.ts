@@ -284,7 +284,9 @@ const TOOLS: Anthropic.Tool[] = [
             titleKeywords: { type: 'array', items: { type: 'string' }, description: 'Keywords in job title' },
             nameSearch: { type: 'string' },
             companyNameSearch: { type: 'string' },
+            companyIds: { type: 'array', items: { type: 'string' } },
             sources: { type: 'array', items: { type: 'string' } },
+            importedToday: { type: 'boolean' },
             latestImportOnly: {
               type: 'boolean',
               description: 'When true, filter to contacts whose batch_id equals the newest contact-bearing import batch with more than one contact for this user, falling back to the newest contact-bearing batch only if no multi-contact batch exists. Use this for "new contacts", "latest import", or "newly imported contacts"; do not interpret "new" as high score or recently updated.',
@@ -389,6 +391,8 @@ const TOOLS: Anthropic.Tool[] = [
           description: 'Filters to apply. Mirrors the query_companies filter params.',
           properties: {
             companyTypes: { type: 'array', items: { type: 'string' } },
+            icpSearch: { type: 'string' },
+            sources: { type: 'array', items: { type: 'string' } },
             therapeuticAreas: { type: 'array', items: { type: 'string' } },
             modalities: { type: 'array', items: { type: 'string' } },
             fundingStages: { type: 'array', items: { type: 'string' } },
@@ -1313,7 +1317,9 @@ async function runAgentLoop(
               titleKeywords: Array.isArray(rawFilters.titleKeywords) ? (rawFilters.titleKeywords as string[]) : undefined,
               nameSearch: typeof rawFilters.nameSearch === 'string' ? rawFilters.nameSearch : undefined,
               companyNameSearch: typeof rawFilters.companyNameSearch === 'string' ? rawFilters.companyNameSearch : undefined,
+              companyIds: Array.isArray(rawFilters.companyIds) ? (rawFilters.companyIds as string[]) : undefined,
               sources: Array.isArray(rawFilters.sources) ? (rawFilters.sources as string[]) : undefined,
+              importedToday: rawFilters.importedToday === true ? true : undefined,
               latestImportOnly: rawFilters.latestImportOnly === true ? true : undefined,
             };
 
@@ -1368,6 +1374,8 @@ async function runAgentLoop(
 
             const parsedFilters: AccountQueryFilters = {
               companyTypes: Array.isArray(rawFilters.companyTypes) ? (rawFilters.companyTypes as string[]) : undefined,
+              icpSearch: typeof rawFilters.icpSearch === 'string' ? rawFilters.icpSearch : undefined,
+              sources: Array.isArray(rawFilters.sources) ? (rawFilters.sources as string[]) : undefined,
               therapeuticAreas: Array.isArray(rawFilters.therapeuticAreas) ? (rawFilters.therapeuticAreas as string[]) : undefined,
               modalities: Array.isArray(rawFilters.modalities) ? (rawFilters.modalities as string[]) : undefined,
               fundingStages: Array.isArray(rawFilters.fundingStages) ? (rawFilters.fundingStages as string[]) : undefined,

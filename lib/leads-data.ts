@@ -47,8 +47,10 @@ export interface LeadQueryFilters {
   titleKeywords?: string[];
   nameSearch?: string;
   companyNameSearch?: string;
+  companyIds?: string[];
   sources?: string[];
   latestImportOnly?: boolean;
+  importedToday?: boolean;
 }
 
 export interface QueryLead {
@@ -67,6 +69,8 @@ export interface QueryLead {
   contact_fit_score: number | null;
   intent_score: number | null;
   source: string | null;
+  created_at: string | null;
+  data_provenance_imported_at: string | null;
   data_provenance_type: string | null;
   matched_icp_name: string | null;
   matched_icp_label: string | null;
@@ -214,10 +218,27 @@ export function applyLeadsFilters(leads: QueryLead[], filters: LeadQueryFilters)
       const cn = (lead.resolved_current_company_name || lead.company_name || '').toLowerCase();
       if (!cn.includes(needle)) return false;
     }
+    if (filters.companyIds && filters.companyIds.length > 0) {
+      if (!lead.company_id || !filters.companyIds.includes(lead.company_id)) return false;
+    }
     if (filters.sources && filters.sources.length > 0) {
       const prov = (lead.data_provenance_type || '').toLowerCase();
       const src = (lead.source || '').toLowerCase();
       if (!filters.sources.some((s) => prov.includes(s.toLowerCase()) || src.includes(s.toLowerCase()))) return false;
+    }
+    if (filters.importedToday) {
+      const importedAt = lead.data_provenance_imported_at || lead.created_at;
+      const t = importedAt ? Date.parse(importedAt) : NaN;
+      if (!Number.isFinite(t)) return false;
+      const imported = new Date(t);
+      const now = new Date();
+      if (
+        imported.getFullYear() !== now.getFullYear() ||
+        imported.getMonth() !== now.getMonth() ||
+        imported.getDate() !== now.getDate()
+      ) {
+        return false;
+      }
     }
     return true;
   });
@@ -392,8 +413,6 @@ export async function fetchFilteredLeads(
       (typeof r.overall_fit_score === 'number' ? r.overall_fit_score : null) ??
       (typeof r.fit_score === 'number' ? r.fit_score : null);
 
-    void importedAt; // used indirectly via resolveContactDataProvenance side-effects
-
     return {
       id: r.id as string,
       full_name: (r.full_name as string | null) ?? null,
@@ -410,6 +429,8 @@ export async function fetchFilteredLeads(
       contact_fit_score: typeof r.contact_fit_score === 'number' ? r.contact_fit_score : null,
       intent_score: typeof r.intent_score === 'number' ? r.intent_score : null,
       source: typeof r.source === 'string' ? r.source : null,
+      created_at: typeof r.created_at === 'string' ? r.created_at : null,
+      data_provenance_imported_at: importedAt,
       data_provenance_type: formatDataProvenanceTypeOnly(channels),
       matched_icp_name: matchedIcpName,
       matched_icp_label:

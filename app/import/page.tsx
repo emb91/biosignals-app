@@ -9,6 +9,7 @@ import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel } from '@/components/AgentPanel';
 import Nango from '@nangohq/frontend';
 import { ROUTES } from '@/lib/routes';
+import { getDisplayName } from '@/lib/auth-helpers';
 
 const HUBSPOT_INTEGRATION_ID = 'hubspot';
 
@@ -251,6 +252,7 @@ export default function ImportPage() {
   const [hiddenBatchIds, setHiddenBatchIds] = useState<string[]>([]);
   const [tableScrolledToEnd, setTableScrolledToEnd] = useState(false);
   const [importHistory, setImportHistory] = useState<ImportBatch[]>([]);
+  const [importHistoryLoaded, setImportHistoryLoaded] = useState(false);
   const [batchDetails, setBatchDetails] = useState<ImportBatchDetails | null>(null);
   const [batchDetailsError, setBatchDetailsError] = useState<string | null>(null);
   const [isLoadingBatchDetails, setIsLoadingBatchDetails] = useState(false);
@@ -262,6 +264,7 @@ export default function ImportPage() {
   const [hubspotDisconnecting, setHubspotDisconnecting] = useState(false);
   const [pastImportsExpanded, setPastImportsExpanded] = useState(false);
   const [expandedHistoryBatchId, setExpandedHistoryBatchId] = useState<string | null>(null);
+  const [agentOpener, setAgentOpener] = useState<{ text: string; nonce: number; isHidden: true } | undefined>();
   const [hubspotHistoryRowHidden, setHubspotHistoryRowHidden] = useState(() => {
     if (typeof window === 'undefined') return false;
     return localStorage.getItem(HIDE_HUBSPOT_SYNC_ROW_STORAGE_KEY) === '1';
@@ -299,6 +302,8 @@ export default function ImportPage() {
       setImportHistory((data.batches || []).filter((batch: ImportBatch) => !hiddenIds.has(batch.id)));
     } catch {
       // non-critical, fail silently
+    } finally {
+      setImportHistoryLoaded(true);
     }
   };
 
@@ -346,6 +351,25 @@ export default function ImportPage() {
     void fetchHubspotSyncLog();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, hiddenBatchIds.join('|')]);
+
+  useEffect(() => {
+    if (!user || agentOpener || !importHistoryLoaded) return;
+
+    const firstName = getDisplayName(user);
+    const stateContext = currentBatchId || progress
+      ? `The user has an import batch in progress or recently active. Open with "Hey ${firstName}" or similar, say you can see an import is underway, and tell them you'll help keep an eye on it or explain what happens next.`
+      : parsedCsv
+        ? `The user has selected a CSV and is mapping columns. Open with "Hey ${firstName}" or similar, say the file is ready to map, and guide them to match the key columns before starting the import.`
+        : importHistory.length > 0
+          ? `The user has imported data before and has ${importHistory.length} past import ${importHistory.length === 1 ? 'batch' : 'batches'}. Open with "Hey ${firstName}, welcome back" or similar, and ask whether they are looking to import more data today, sync HubSpot, or check a previous batch.`
+          : `The user has just finished setup and landed on Import. Open with "Hey ${firstName}" or similar, congratulate them on finishing setup, then explain the next step: bring in contacts so Arcova can enrich and score them. Tell them to use HubSpot Sync if their contacts live in HubSpot, or upload a CSV if they have a file.`;
+
+    setAgentOpener({
+      text: `The Import page just loaded. The user's first name is ${firstName}. ${stateContext} Keep it conversational, helpful, and under 90 words. Do not say "try asking" or list generic sample questions.`,
+      nonce: Date.now(),
+      isHidden: true,
+    });
+  }, [agentOpener, currentBatchId, importHistory.length, importHistoryLoaded, parsedCsv, progress, user]);
 
   useEffect(() => {
     if (!currentBatchId) return;
@@ -733,11 +757,11 @@ export default function ImportPage() {
   );
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex h-screen bg-transparent">
       <AppSidebar />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden min-[1280px]:flex-row">
-        <div className="flex-1 overflow-auto">
+        <div className="arcova-scroll-surface flex-1 overflow-auto">
         <div className="max-w-3xl mx-auto px-6 py-10">
 
           {!currentBatchId ? (
@@ -1399,7 +1423,7 @@ export default function ImportPage() {
                     >
                       Start new import
                     </button>
-                    <Link href="/dashboard" onClick={() => persistBatchId(null)} className="text-xs text-gray-400 hover:text-gray-600">
+                    <Link href="/briefing" onClick={() => persistBatchId(null)} className="text-xs text-gray-400 hover:text-gray-600">
                       I&apos;ll check back later
                     </Link>
                   </div>
@@ -1410,7 +1434,11 @@ export default function ImportPage() {
         </div>
         </div>
 
-        <AgentPanel page="imports" />
+        <AgentPanel
+          page="imports"
+          pendingMessage={agentOpener}
+          suppressPrompts
+        />
       </div>
     </div>
   );

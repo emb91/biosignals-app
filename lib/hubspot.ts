@@ -4,6 +4,8 @@ export type ArcovaContactProperties = {
   arcova_action: string;
   arcova_seniority: string;
   arcova_function: string;
+  arcova_enriched: string;
+  arcova_data_sourced_from: string;
   arcova_enriched_email: string;
   arcova_enriched_at: string;
   arcova_person_summary: string;
@@ -29,7 +31,7 @@ type HubSpotPropertyDefinition = {
   name: string;
   label: string;
   type: 'string' | 'number' | 'date' | 'datetime' | 'enumeration' | 'bool';
-  fieldType: 'text' | 'textarea' | 'number' | 'date' | 'select' | 'checkbox';
+  fieldType: 'text' | 'textarea' | 'number' | 'date' | 'select' | 'checkbox' | 'booleancheckbox';
   groupName: string;
 };
 
@@ -39,6 +41,8 @@ const ARCOVA_CONTACT_PROPERTIES: HubSpotPropertyDefinition[] = [
   { name: 'arcova_action', label: 'Arcova: Recommended Action', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
   { name: 'arcova_seniority', label: 'Arcova: Seniority Level', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
   { name: 'arcova_function', label: 'Arcova: Business Function', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
+  { name: 'arcova_enriched', label: 'Arcova: Enriched', type: 'bool', fieldType: 'booleancheckbox', groupName: 'arcova_intelligence' },
+  { name: 'arcova_data_sourced_from', label: 'Arcova: Data Sourced From', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
   { name: 'arcova_enriched_email', label: 'Arcova: Enriched Email', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
   { name: 'arcova_enriched_at', label: 'Arcova: Enriched At', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
   { name: 'arcova_person_summary', label: 'Arcova: Person Summary', type: 'string', fieldType: 'textarea', groupName: 'arcova_intelligence' },

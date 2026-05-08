@@ -1,7 +1,7 @@
 import type { Config } from "tailwindcss"
 
 const config = {
-  darkMode: ["class"],
+  darkMode: "class",
   content: [
     "./pages/**/*.{ts,tsx}",
     "./components/**/*.{ts,tsx}",
@@ -20,6 +20,14 @@ const config = {
       },
     },
     extend: {
+      backgroundImage: {
+        'arcova-wash':
+          'linear-gradient(180deg, #f6fbfb 0%, #eef6f6 45%, #f3f1ea 100%)',
+      },
+      boxShadow: {
+        arcova:
+          '0 24px 60px -32px rgba(13, 53, 71, 0.18), 0 2px 6px -2px rgba(13, 53, 71, 0.06)',
+      },
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
@@ -93,6 +101,9 @@ const config = {
       },
       fontFamily: {
         poppins: ["var(--font-poppins)", "sans-serif"],
+        inter: ["var(--font-inter)", "sans-serif"],
+        manrope: ["var(--font-manrope)", "sans-serif"],
+        jakarta: ["var(--font-plus-jakarta)", "sans-serif"],
       },
       borderRadius: {
         lg: "var(--radius)",

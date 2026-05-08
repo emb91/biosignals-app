@@ -9,7 +9,7 @@ const arcovaColors = {
 
 export default function PrivacyPage() {
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-dvh min-h-screen bg-transparent">
       <div className="container py-8 md:py-12">
         <div className="max-w-3xl mx-auto">
           <h1 className="text-4xl font-bold mb-8">Privacy Policy</h1>

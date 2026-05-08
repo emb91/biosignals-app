@@ -1,6 +1,8 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@config "../tailwind.config.ts";
+@import "./untitled.css";
+
+@custom-variant dark (&:is(.dark *));
 
 :root {
   --background: 0 0% 100%;
@@ -33,8 +35,24 @@
 
   --radius: 0.5rem;
 
-  /* Ensure font-family variable is defined */
   --font-poppins: "Poppins", sans-serif;
+  --font-manrope: "Manrope", sans-serif;
+  --font-plus-jakarta: "Plus Jakarta Sans", sans-serif;
+
+  /* Arcova surface system (Today / glass) */
+  --arcova-ink: #0d3547;
+  --arcova-ink-soft: #4a6470;
+  --arcova-ink-mute: #7d909a;
+  --arcova-accent: #00a4b4;
+  --arcova-accent-soft: #8cd9c9;
+  --arcova-glass: rgba(255, 255, 255, 0.55);
+  --arcova-glass-strong: rgba(255, 255, 255, 0.72);
+  --arcova-glass-edge: rgba(255, 255, 255, 0.85);
+  --arcova-glass-line: rgba(13, 53, 71, 0.07);
+  --arcova-shadow-card: 0 24px 60px -32px rgba(13, 53, 71, 0.18), 0 2px 6px -2px rgba(13, 53, 71, 0.06);
+  --arcova-radius-lg: 28px;
+  --arcova-radius-md: 18px;
+  --arcova-surface-wash: linear-gradient(180deg, #f6fbfb 0%, #eef6f6 45%, #f3f1ea 100%);
 }
 
 .dark {
@@ -70,6 +88,77 @@
 html {
   scroll-padding-top: 80px; /* Add scroll padding to account for fixed header */
   scroll-behavior: smooth;
+}
+
+@keyframes arcova-drift {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  25% {
+    transform: translate3d(40px, -30px, 0) scale(1.04);
+  }
+  50% {
+    transform: translate3d(-20px, 30px, 0) scale(0.98);
+  }
+  75% {
+    transform: translate3d(-40px, -10px, 0) scale(1.02);
+  }
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+.arcova-aurora-blob {
+  animation: arcova-drift linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arcova-aurora-blob {
+    animation: none;
+  }
+}
+
+/* Authenticated app: page content above fixed aurora */
+.arcova-app-root {
+  position: relative;
+  z-index: 1;
+  isolation: isolate;
+  min-height: 100dvh;
+  color: var(--arcova-ink);
+  letter-spacing: -0.005em;
+  -webkit-font-smoothing: antialiased;
+}
+
+/**
+ * Scroll columns with overflow-y-auto: fills the full scroll height with the wash.
+ * Nested scrolling + viewport-fixed body/aurora reliably causes a hard horizontal band
+ * (flat white) in Chromium/WebKit.
+ */
+.arcova-scroll-surface {
+  background: var(--arcova-surface-wash);
+  background-attachment: local;
+}
+
+/* Reusable glass panel (cards, shells). Parent should set position relative when using ::before highlight. */
+.arcova-glass-panel {
+  position: relative;
+  background: var(--arcova-glass);
+  border: 1px solid var(--arcova-glass-edge);
+  border-radius: var(--arcova-radius-lg);
+  box-shadow: var(--arcova-shadow-card);
+  backdrop-filter: blur(28px) saturate(150%);
+  -webkit-backdrop-filter: blur(28px) saturate(150%);
+  overflow: hidden;
+}
+
+.arcova-glass-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0) 22%);
+  mix-blend-mode: overlay;
 }
 
 /* ── Arcova enrichment progress bar (shared: leads page + setup flow) ── */
@@ -132,14 +221,30 @@ html {
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground;
+    margin: 0;
+    background: var(--arcova-surface-wash);
+    color: hsl(var(--foreground));
+    font-family: var(--font-plus-jakarta), system-ui, sans-serif;
+    font-feature-settings: 'rlig' 1, 'calt' 1;
+  }
+
+  .dark body {
+    background: hsl(var(--background));
   }
   h1,
   h2,
-  h3 {
-    font-family: var(--font-poppins);
-    font-weight: 400;
-    color: #0d3547; /* Navy color for headings on light backgrounds */
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-manrope), system-ui, sans-serif;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--arcova-ink);
+  }
+
+  [class*='uppercase'][class*='tracking-wide'] {
+    font-family: var(--font-manrope);
   }
 
   /* Override for headings in dark background sections */
@@ -164,8 +269,39 @@ html {
     color: white;
   }
 
-  /* Ensure .font-poppins class works correctly */
+  .font-manrope {
+    font-family: var(--font-manrope);
+  }
+
+  .font-jakarta {
+    font-family: var(--font-plus-jakarta);
+  }
+
   .font-poppins {
-    font-family: var(--font-poppins);
+    font-family: var(--font-plus-jakarta);
+  }
+}
+
+@theme inline {
+  --animate-shimmer-slide: shimmer-slide var(--speed) ease-in-out infinite alternate;
+  --animate-spin-around: spin-around calc(var(--speed) * 2) infinite linear;
+  @keyframes shimmer-slide {
+  to {
+    transform: translate(calc(100cqw - 100%), 0);
+    }
+  }
+  @keyframes spin-around {
+  0% {
+    transform: translateZ(0) rotate(0);
+    }
+  15%, 35% {
+    transform: translateZ(0) rotate(90deg);
+    }
+  65%, 85% {
+    transform: translateZ(0) rotate(270deg);
+    }
+  100% {
+    transform: translateZ(0) rotate(360deg);
+    }
   }
 }

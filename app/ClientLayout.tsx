@@ -3,6 +3,7 @@
 import type React from "react"
 import { useEffect } from "react"
 import { usePathname, useRouter } from "next/navigation"
+import { AppAmbientBackground } from "@/components/AppAmbientBackground"
 import { Navigation } from "@/components/navigation"
 import { ScrollToTop } from "@/components/scroll-to-top"
 import { SiteFooter } from "@/components/site-footer"
@@ -18,6 +19,8 @@ const APP_ROUTES = [
   LEGACY_ROUTES.data,
   LEGACY_ROUTES.health,
   LEGACY_ROUTES.pipeline,
+  ROUTES.agentLab,
+  ROUTES.briefing,
   ROUTES.dashboard,
   ROUTES.import,
   ROUTES.leads.contacts,
@@ -72,14 +75,14 @@ function SetupGuard({ children }: { children: React.ReactNode }) {
   // Still waiting for auth or setup state — render nothing to avoid a flash of the
   // wrong page before the redirect fires.
   if (authLoading || setupLoading) {
-    return <div className="min-h-screen bg-gray-50" />
+    return <div className="min-h-dvh bg-transparent" />
   }
 
   // Redirect is about to fire (effect hasn't run yet this tick) — keep the blank.
   const redirectImminent =
     !!user && isNonSetupAppRoute && !setupComplete && !!nextSetupPath && !matchesRoutePrefix(pathname, nextSetupPath)
   if (redirectImminent) {
-    return <div className="min-h-screen bg-gray-50" />
+    return <div className="min-h-dvh bg-transparent" />
   }
 
   return <>{children}</>
@@ -99,8 +102,11 @@ export default function ClientLayout({
   if (isAppRoute) {
     return (
       <>
+        <AppAmbientBackground />
         <Toaster position="top-center" richColors />
-        <SetupGuard>{children}</SetupGuard>
+        <div className="arcova-app-root font-jakarta">
+          <SetupGuard>{children}</SetupGuard>
+        </div>
       </>
     )
   }

@@ -21,6 +21,7 @@ import {
 } from '@/lib/lead-action';
 import { formatProvenanceImportedAt } from '@/lib/data-provenance';
 import { ROUTES, withQuery } from '@/lib/routes';
+import { cn } from '@/lib/utils';
 import {
   Activity,
   AlertTriangle,
@@ -684,6 +685,21 @@ function SortArrow({ col, activeCol, dir }: { col: string; activeCol: string | n
     : <ChevronDown className="w-3 h-3 text-arcova-teal shrink-0" />;
 }
 
+function ProvenanceBadge({ value }: { value?: string | null }) {
+  const label = value || '—';
+  const isArcova = label.toLowerCase().includes('arcova');
+  return (
+    <span
+      className={cn(
+        'inline-flex max-w-full items-center rounded-full px-2 py-0.5 text-[10px] font-semibold',
+        isArcova ? 'bg-arcova-teal/10 text-arcova-teal' : 'bg-gray-100 text-gray-500',
+      )}
+    >
+      {label}
+    </span>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function LeadsPage() {
@@ -931,7 +947,15 @@ export default function LeadsPage() {
         'Filter the contacts table to the newest contacts from the latest import batch. Use filter_leads_table with filters.latestImportOnly=true, columns name/job_title/company/status/company_fit/contact_fit/source, sort by status_best_first. Keep your reply short and friendly.',
       best_leads:
         'Filter the contacts table to the best leads to work now. Use filter_leads_table with filters.actions=["reach_out","monitor"], columns name/job_title/company/status/company_fit/contact_fit/source, sort by status_best_first. Keep your reply short and friendly.',
+      arcova_contacts_today:
+        'Filter the contacts table to Arcova-sourced contacts imported today. Use filter_leads_table with filters.sources=["arcova"] and filters.importedToday=true, columns name/job_title/company/status/company_fit/contact_fit/source, sort by status_best_first. Keep your reply short and friendly, and mention these are the new Arcova contacts from today.',
     };
+
+    const companyId = searchParams.get('companyId') ?? '';
+    if (dashboardAgentTask === 'arcova_contacts_at_company' && companyId) {
+      taskMessages.arcova_contacts_at_company =
+        `Filter the contacts table to Arcova-sourced contacts at company id ${companyId}. Use filter_leads_table with filters.companyIds=["${companyId}"] and filters.sources=["arcova"], columns name/job_title/company/status/company_fit/contact_fit/source, sort by status_best_first. Keep your reply short and friendly, and mention these are the new Arcova contacts for this company.`;
+    }
 
     const message = taskMessages[dashboardAgentTask];
     if (!message) return;
@@ -1747,11 +1771,11 @@ export default function LeadsPage() {
   if (!user) return null;
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex h-screen bg-transparent">
       <AppSidebar />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden min-[1280px]:flex-row">
-        <div className="flex-1 overflow-auto p-6">
+        <div className="arcova-scroll-surface flex-1 overflow-auto p-6">
           <div className="w-full max-w-none">
             <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
@@ -1994,6 +2018,7 @@ export default function LeadsPage() {
                     {/* Single render path — agent filter narrows sortedLeads in-place */}
                     {sortedLeads.map((lead) => {
                       const isSelected = selectedLeadId === lead.id;
+                      const isArcovaLead = (lead.data_provenance_type || '').toLowerCase().includes('arcova');
                       const enriching = isEnriching(lead);
                       const enrichmentProgress = getEnrichmentProgress(lead);
 
@@ -2008,7 +2033,7 @@ export default function LeadsPage() {
                             }}
                             className={`${LEADS_TABLE_GRID} px-4 py-3 items-center cursor-pointer transition-all duration-150 border-b border-gray-50 last:border-0 ${
                               isSelected
-                                ? 'bg-arcova-teal/10 border-l-2 border-arcova-teal'
+                                ? 'border-l-2 border-arcova-teal'
                                 : 'border-l-2 border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30'
                             }`}
                           >
@@ -2059,17 +2084,20 @@ export default function LeadsPage() {
                           }}
                           className={`${LEADS_TABLE_GRID} px-4 py-3 items-center cursor-pointer transition-all duration-150 opacity-100 ${
                             isSelected
-                              ? 'bg-arcova-teal/10 border-l-2 border-arcova-teal'
+                              ? 'border-l-2 border-arcova-teal'
                               : 'border-l-2 border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30'
                           }`}
                         >
                           {/* Full name */}
                           <div className="min-w-0">
-                            <p className="font-medium text-gray-900 truncate text-sm">
-                              {lead.full_name ||
-                                [lead.first_name, lead.last_name].filter(Boolean).join(' ') ||
-                                '—'}
-                            </p>
+                            <div className="flex min-w-0 items-center gap-2">
+                              <p className="font-medium text-gray-900 truncate text-sm">
+                                {lead.full_name ||
+                                  [lead.first_name, lead.last_name].filter(Boolean).join(' ') ||
+                                  '—'}
+                              </p>
+                              {isArcovaLead && <ProvenanceBadge value={lead.data_provenance_type} />}
+                            </div>
                           </div>
 
                           {/* Job title */}
