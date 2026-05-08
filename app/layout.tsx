@@ -69,7 +69,7 @@ export const metadata = {
   },
   // twitter: {
   //   card: "summary_large_image",
-  //   title: "Arcova | Scientific Evidence for Business Decisions",Right, so this is all right, I think. 
+  //   title: "Arcova | Scientific Evidence for Business Decisions",
   //   description: "Oxford-trained PhD team turning raw biomedical literature into decision-ready insight.",
   //   images: ["/images/og-image.png"],
   //   creator: "@arcova",

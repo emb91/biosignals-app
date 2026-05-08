@@ -50,8 +50,8 @@
   --arcova-glass-edge: rgba(255, 255, 255, 0.85);
   --arcova-glass-line: rgba(13, 53, 71, 0.07);
   --arcova-shadow-card: 0 24px 60px -32px rgba(13, 53, 71, 0.18), 0 2px 6px -2px rgba(13, 53, 71, 0.06);
-  --arcova-radius-lg: 28px;
-  --arcova-radius-md: 18px;
+  --arcova-radius-lg: 1.75rem;
+  --arcova-radius-md: 1.125rem;
   --arcova-surface-wash: linear-gradient(180deg, #f6fbfb 0%, #eef6f6 45%, #f3f1ea 100%);
 }
 
@@ -86,8 +86,16 @@
 }
 
 html {
-  scroll-padding-top: 80px; /* Add scroll padding to account for fixed header */
+  scroll-padding-top: 5rem; /* scales with root; was 80px at 16px */
   scroll-behavior: smooth;
+  /* Match perceived density of ~75% browser zoom at 100% zoom: rem-based Tailwind + tokens scale together (no zoom hack). */
+  font-size: 75%;
+}
+
+@media print {
+  html {
+    font-size: 100%;
+  }
 }
 
 @keyframes arcova-drift {
@@ -95,13 +103,13 @@ html {
     transform: translate3d(0, 0, 0) scale(1);
   }
   25% {
-    transform: translate3d(40px, -30px, 0) scale(1.04);
+    transform: translate3d(2.5rem, -1.875rem, 0) scale(1.04);
   }
   50% {
-    transform: translate3d(-20px, 30px, 0) scale(0.98);
+    transform: translate3d(-1.25rem, 1.875rem, 0) scale(0.98);
   }
   75% {
-    transform: translate3d(-40px, -10px, 0) scale(1.02);
+    transform: translate3d(-2.5rem, -0.625rem, 0) scale(1.02);
   }
   100% {
     transform: translate3d(0, 0, 0) scale(1);
@@ -146,8 +154,8 @@ html {
   border: 1px solid var(--arcova-glass-edge);
   border-radius: var(--arcova-radius-lg);
   box-shadow: var(--arcova-shadow-card);
-  backdrop-filter: blur(28px) saturate(150%);
-  -webkit-backdrop-filter: blur(28px) saturate(150%);
+  backdrop-filter: blur(1.75rem) saturate(150%);
+  -webkit-backdrop-filter: blur(1.75rem) saturate(150%);
   overflow: hidden;
 }
 

@@ -67,6 +67,8 @@ interface AgentPanelProps {
   suppressPrompts?: boolean;
   /** Sit inside a glass bento card: no outer chrome, transparent thread (briefing Today layout). */
   embedInBriefingBento?: boolean;
+  /** Replace default inner panel chrome (e.g. glass rail on Leads contacts). */
+  surfaceClassName?: string;
   /** Fires when a message request is in flight (for parent UI, e.g. briefing status dot). */
   onBusyChange?: (busy: boolean) => void;
   /** Today bento: static opener shown before the user sends anything (no automatic agent round-trip). */
@@ -188,7 +190,7 @@ function stripMarkdown(text: string): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, onLeadsFilter, onTableClear, wide, onJobStarted, hideHeader, suppressPrompts, embedInBriefingBento, onBusyChange, briefingWelcome, briefingIdleChips, className }: AgentPanelProps) {
+export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, onLeadsFilter, onTableClear, wide, onJobStarted, hideHeader, suppressPrompts, embedInBriefingBento, onBusyChange, briefingWelcome, briefingIdleChips, surfaceClassName, className }: AgentPanelProps) {
   const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -219,12 +221,12 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
     }
   }, [embedInBriefingBento, page]);
 
-  // Auto-scroll to bottom on new messages
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [messages]);
+  // Keep the latest exchanges in view inside the fixed-height briefing tile (runs before paint)
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [messages, isLoading]);
 
   useEffect(() => {
     onBusyChange?.(isLoading);
@@ -356,181 +358,10 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
   const showBriefingIdleWelcome = embedGlass && briefingWelcome && messages.length === 0;
   const briefingChips = briefingIdleChips ?? (briefingWelcome ? DEFAULT_BRIEFING_IDLE_CHIPS : []);
 
-  return (
-    <div
-      className={cn(
-        'flex min-h-0 flex-col',
-        wide
-          ? cn(
-              'min-h-0 flex-1',
-              embedGlass ? 'px-0 py-0' : cn('px-4', lightSetupChat ? 'py-3' : 'py-4'),
-            )
-          : 'shrink-0 self-stretch py-3 pr-3 pl-2 max-[1279px]:h-80 max-[1279px]:self-auto max-[1279px]:px-4 max-[1279px]:pb-4 max-[1279px]:pt-0 sm:max-[1279px]:px-6',
-        className,
-      )}
-    >
-      <div
-        className={cn(
-          'flex min-h-0 flex-1 flex-col overflow-hidden rounded-[inherit]',
-          wide ? 'w-full' : 'w-80 max-[1279px]:w-full',
-          embedGlass
-            ? 'relative border-0 bg-transparent shadow-none ring-0'
-            : lightSetupChat
-              ? 'border border-slate-200/80 bg-white shadow-[0_24px_70px_-34px_rgba(15,23,42,0.45)] ring-1 ring-white'
-              : briefingChat
-                ? 'relative border border-slate-200/90 bg-white shadow-[0_28px_80px_-44px_rgba(15,23,42,0.22)] ring-1 ring-slate-900/[0.04]'
-                : cn(
-                    'border border-gray-200 bg-white',
-                    'shadow-lg shadow-gray-900/5',
-                    'ring-1 ring-gray-950/[0.06]',
-                  ),
-        )}
-      >
-      {briefingChat && !embedGlass ? (
-        <BorderBeam
-          size={100}
-          duration={9}
-          borderWidth={1.5}
-          colorFrom="rgb(0, 164, 180)"
-          colorTo="rgb(140, 217, 201)"
-          delay={0}
-        />
-      ) : null}
-      {!hideHeader && (
-      <div
-        className={cn(
-          'flex shrink-0 items-center gap-2.5 border-b',
-          lightSetupChat
-            ? 'border-slate-200 bg-white px-5 py-4'
-            : briefingChat
-              ? 'border-slate-100 bg-white px-4 py-3'
-              : 'border-gray-100 bg-gray-50/60 px-4 py-3',
-        )}
-      >
-        <Image
-          src="/images/network-og.png"
-          alt="Arcova"
-          width={lightSetupChat ? 36 : 28}
-          height={lightSetupChat ? 36 : 28}
-          className={cn(
-            'shrink-0 rounded-full object-cover',
-            lightSetupChat
-              ? 'h-9 w-9 ring-2 ring-slate-100 shadow-sm'
-              : briefingChat
-                ? 'h-8 w-8 ring-2 ring-slate-100/80 shadow-sm'
-                : 'h-7 w-7 ring-1 ring-arcova-teal/20',
-          )}
-        />
-        <div className="flex-1 min-w-0">
-          <p className={cn('font-semibold leading-none', lightSetupChat ? 'text-sm text-gray-900' : briefingChat ? 'text-sm text-slate-900' : 'text-xs text-gray-900')}>Arcova Agent</p>
-          <p className={cn('mt-1 leading-tight', lightSetupChat ? 'text-xs text-gray-500' : briefingChat ? 'text-xs text-slate-500' : 'text-[11px] text-gray-500')}>
-            {page === 'data'
-              ? 'Run sourcing jobs and watch the queue on the right'
-              : 'Ask me anything about your accounts'}
-          </p>
-        </div>
-        {messages.length > 0 && (
-          <button
-            onClick={handleClearConversation}
-            className={cn(
-              'shrink-0 transition-colors',
-              lightSetupChat
-                ? 'text-gray-400 hover:text-gray-600 rounded-lg p-2 hover:bg-slate-50'
-                : briefingChat
-                  ? 'text-slate-400 hover:text-slate-700 rounded-lg p-2 hover:bg-slate-100'
-                  : 'text-gray-400 hover:text-gray-600',
-            )}
-            aria-label="Clear conversation"
-            title="Clear conversation"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        )}
-      </div>
-      )}
+  const briefingEmbedThreadVisible = embedGlass && (messages.length > 0 || isLoading);
 
-      {/* ── Suggested prompts ── */}
-      {showPrompts && (
-        <div className={cn('shrink-0', lightSetupChat ? 'px-5 pt-5 pb-3' : 'px-4 pt-4 pb-2', !wide && 'max-[1279px]:hidden')}>
-          <p className={cn('font-medium uppercase tracking-wide', lightSetupChat ? 'mb-3 text-[10px] text-slate-400' : briefingChat ? 'mb-2 text-[11px] text-slate-400' : 'mb-2 text-[11px] text-gray-400')}>
-            Try asking
-          </p>
-          <div className={cn('flex flex-col', lightSetupChat ? 'gap-2' : 'gap-1.5')}>
-            {PROMPTS[page].map((prompt) => (
-              <button
-                key={prompt}
-                onClick={() => sendMessage(prompt)}
-                className={cn(
-                  'flex items-start gap-2 text-left transition-colors',
-                  lightSetupChat
-                    ? 'rounded-xl border border-slate-200 bg-slate-50/80 px-3.5 py-2.5 text-sm text-slate-600 hover:border-arcova-teal/30 hover:bg-white hover:text-slate-900'
-                    : briefingChat
-                      ? 'rounded-xl border border-slate-200/80 bg-slate-50/90 px-3.5 py-2.5 text-sm text-slate-600 hover:border-arcova-teal/25 hover:bg-white hover:text-slate-900'
-                      : 'rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-600 hover:border-arcova-teal/30 hover:text-arcova-teal hover:bg-arcova-teal/5',
-                )}
-              >
-                <Sparkles className={cn('shrink-0 text-arcova-teal/50', lightSetupChat ? 'mt-0.5 h-3.5 w-3.5' : 'mt-0.5 h-3 w-3')} />
-                {prompt}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {embedGlass ? (
-        <div
-          className={cn(
-            'flex shrink-0 flex-col items-center justify-center overflow-hidden transition-[max-height,opacity,margin] duration-300 ease-out',
-            showBriefingOrb
-              ? 'mb-0 max-h-[min(320px,46vh)] opacity-100'
-              : 'pointer-events-none mb-0 max-h-0 opacity-0',
-          )}
-          aria-hidden={!showBriefingOrb}
-        >
-          <BriefingAgentOrb />
-        </div>
-      ) : null}
-
-      {showBriefingIdleWelcome && briefingWelcome ? (
-        <div className="shrink-0 px-1 pb-1 sm:px-2">
-          <p className="font-manrope text-sm font-medium text-slate-400">{briefingWelcome.greeting}</p>
-          <p className="mt-3 font-manrope text-[1.25rem] leading-[1.42] tracking-[-0.02em] text-slate-800">{briefingWelcome.body}</p>
-          {briefingChips.length > 0 ? (
-            <div className="mt-3 flex flex-wrap gap-2">
-              {briefingChips.map((chip) => (
-                <button
-                  key={chip.label}
-                  type="button"
-                  onClick={() => sendMessage(chip.prompt)}
-                  disabled={isLoading}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-slate-200/90 bg-white/95 px-3.5 py-2 font-manrope text-sm font-semibold text-arcova-teal shadow-sm transition-colors hover:border-arcova-teal/35 hover:bg-slate-50/90 disabled:pointer-events-none disabled:opacity-40"
-                >
-                  <Sparkles className="h-3.5 w-3.5 shrink-0 text-arcova-teal/70" />
-                  {chip.label}
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
-      {/* ── Message thread ── */}
-      <div
-        ref={scrollRef}
-        className={cn(
-          'overflow-y-auto',
-          lightSetupChat
-            ? 'min-h-0 flex-1 space-y-5 bg-slate-50/70 px-5 py-5'
-            : briefingChat
-              ? embedGlass
-                ? cn(
-                    'space-y-5 px-1 sm:px-2',
-                    messages.length === 0 && !isLoading ? 'max-h-0 min-h-0 shrink-0 flex-none py-0' : 'min-h-0 flex-1 py-2',
-                  )
-                : 'min-h-0 flex-1 space-y-5 px-5 py-5 sm:px-6'
-              : 'min-h-0 flex-1 space-y-4 px-4 py-3',
-        )}
-      >
+  const messageThread = (
+    <>
         {/* Handoff indicator */}
         {handoffFrom && messages.length > 0 && (
           <div className={cn('flex items-center justify-center gap-1.5 text-[10px]', briefingChat ? 'text-slate-400' : 'text-gray-400')}>
@@ -682,7 +513,209 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
             </div>
           );
         })}
+    </>
+  );
+
+  return (
+    <div
+      className={cn(
+        'flex min-h-0 flex-col',
+        wide
+          ? cn(
+              'min-h-0 flex-1',
+              embedGlass && 'h-full min-h-0 overflow-hidden',
+              embedGlass ? 'px-0 py-0' : cn('px-4', lightSetupChat ? 'py-3' : 'py-4'),
+            )
+          : 'shrink-0 self-stretch py-3 pr-3 pl-2 max-[1279px]:h-80 max-[1279px]:self-auto max-[1279px]:px-4 max-[1279px]:pb-4 max-[1279px]:pt-0 sm:max-[1279px]:px-6',
+        className,
+      )}
+    >
+      <div
+        className={cn(
+          'flex min-h-0 flex-1 flex-col overflow-hidden rounded-[inherit]',
+          embedGlass && 'h-full min-h-0',
+          wide ? 'w-full' : 'w-80 max-[1279px]:w-full',
+          embedGlass
+            ? 'relative border-0 bg-transparent shadow-none ring-0'
+            : surfaceClassName
+              ? surfaceClassName
+              : lightSetupChat
+              ? 'border border-slate-200/80 bg-white shadow-[0_24px_70px_-34px_rgba(15,23,42,0.45)] ring-1 ring-white'
+              : briefingChat
+                ? 'relative border border-slate-200/90 bg-white shadow-[0_28px_80px_-44px_rgba(15,23,42,0.22)] ring-1 ring-slate-900/[0.04]'
+                : cn(
+                    'border border-gray-200 bg-white',
+                    'shadow-lg shadow-gray-900/5',
+                    'ring-1 ring-gray-950/[0.06]',
+                  ),
+        )}
+      >
+      {briefingChat && !embedGlass ? (
+        <BorderBeam
+          size={100}
+          duration={9}
+          borderWidth={1.5}
+          colorFrom="rgb(0, 164, 180)"
+          colorTo="rgb(140, 217, 201)"
+          delay={0}
+        />
+      ) : null}
+      {!hideHeader && (
+      <div
+        className={cn(
+          'flex shrink-0 items-center gap-2.5 border-b',
+          lightSetupChat
+            ? 'border-slate-200 bg-white px-5 py-4'
+            : briefingChat
+              ? 'border-slate-100 bg-white px-4 py-3'
+              : 'border-gray-100 bg-gray-50/60 px-4 py-3',
+        )}
+      >
+        <Image
+          src="/images/network-og.png"
+          alt="Arcova"
+          width={lightSetupChat ? 36 : 28}
+          height={lightSetupChat ? 36 : 28}
+          className={cn(
+            'shrink-0 rounded-full object-cover',
+            lightSetupChat
+              ? 'h-9 w-9 ring-2 ring-slate-100 shadow-sm'
+              : briefingChat
+                ? 'h-8 w-8 ring-2 ring-slate-100/80 shadow-sm'
+                : 'h-7 w-7 ring-1 ring-arcova-teal/20',
+          )}
+        />
+        <div className="flex-1 min-w-0">
+          <p className={cn('font-semibold leading-none', lightSetupChat ? 'text-sm text-gray-900' : briefingChat ? 'text-sm text-slate-900' : 'text-xs text-gray-900')}>Arcova Agent</p>
+          <p className={cn('mt-1 leading-tight', lightSetupChat ? 'text-xs text-gray-500' : briefingChat ? 'text-xs text-slate-500' : 'text-[11px] text-gray-500')}>
+            {page === 'data'
+              ? 'Run sourcing jobs and watch the queue on the right'
+              : 'Ask me anything about your accounts'}
+          </p>
+        </div>
+        {messages.length > 0 && (
+          <button
+            onClick={handleClearConversation}
+            className={cn(
+              'shrink-0 transition-colors',
+              lightSetupChat
+                ? 'text-gray-400 hover:text-gray-600 rounded-lg p-2 hover:bg-slate-50'
+                : briefingChat
+                  ? 'text-slate-400 hover:text-slate-700 rounded-lg p-2 hover:bg-slate-100'
+                  : 'text-gray-400 hover:text-gray-600',
+            )}
+            aria-label="Clear conversation"
+            title="Clear conversation"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
       </div>
+      )}
+
+      {/* ── Suggested prompts ── */}
+      {showPrompts && (
+        <div className={cn('shrink-0', lightSetupChat ? 'px-5 pt-5 pb-3' : 'px-4 pt-4 pb-2', !wide && 'max-[1279px]:hidden')}>
+          <p className={cn('font-medium uppercase tracking-wide', lightSetupChat ? 'mb-3 text-[10px] text-slate-400' : briefingChat ? 'mb-2 text-[11px] text-slate-400' : 'mb-2 text-[11px] text-gray-400')}>
+            Try asking
+          </p>
+          <div className={cn('flex flex-col', lightSetupChat ? 'gap-2' : 'gap-1.5')}>
+            {PROMPTS[page].map((prompt) => (
+              <button
+                key={prompt}
+                onClick={() => sendMessage(prompt)}
+                className={cn(
+                  'flex items-start gap-2 text-left transition-colors',
+                  lightSetupChat
+                    ? 'rounded-xl border border-slate-200 bg-slate-50/80 px-3.5 py-2.5 text-sm text-slate-600 hover:border-arcova-teal/30 hover:bg-white hover:text-slate-900'
+                    : briefingChat
+                      ? 'rounded-xl border border-slate-200/80 bg-slate-50/90 px-3.5 py-2.5 text-sm text-slate-600 hover:border-arcova-teal/25 hover:bg-white hover:text-slate-900'
+                      : 'rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-600 hover:border-arcova-teal/30 hover:text-arcova-teal hover:bg-arcova-teal/5',
+                )}
+              >
+                <Sparkles className={cn('shrink-0 text-arcova-teal/50', lightSetupChat ? 'mt-0.5 h-3.5 w-3.5' : 'mt-0.5 h-3 w-3')} />
+                {prompt}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {embedGlass && briefingWelcome && messages.length === 0 ? (
+        <div className="flex min-h-0 flex-1 flex-col justify-start px-1 pt-5 pb-2 sm:px-3 sm:pt-6 sm:pb-3">
+          <div
+            className={cn(
+              'flex shrink-0 flex-col items-center justify-center overflow-hidden transition-[max-height,opacity,margin] duration-300 ease-out',
+              showBriefingOrb
+                ? 'max-h-[min(17.5rem,42vh)] opacity-100'
+                : 'pointer-events-none max-h-0 opacity-0',
+            )}
+            aria-hidden={!showBriefingOrb}
+          >
+            <BriefingAgentOrb />
+          </div>
+          {showBriefingIdleWelcome && briefingWelcome ? (
+            <div className="mt-auto shrink-0 px-0.5 pb-0.5 sm:px-1 sm:pb-1">
+              <p className="font-manrope text-sm font-medium text-slate-400">{briefingWelcome.greeting}</p>
+              <p className="mt-3 font-manrope text-[1.25rem] leading-[1.42] tracking-[-0.02em] text-slate-800">
+                {briefingWelcome.body}
+              </p>
+              {briefingChips.length > 0 ? (
+                <div className="mt-5 flex flex-wrap gap-2">
+                  {briefingChips.map((chip) => (
+                    <button
+                      key={chip.label}
+                      type="button"
+                      onClick={() => sendMessage(chip.prompt)}
+                      disabled={isLoading}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-slate-200/90 bg-white/95 px-3.5 py-2 font-manrope text-sm font-semibold text-arcova-teal shadow-sm transition-colors hover:border-arcova-teal/35 hover:bg-slate-50/90 disabled:pointer-events-none disabled:opacity-40"
+                    >
+                      <Sparkles className="h-3.5 w-3.5 shrink-0 text-arcova-teal/70" />
+                      {chip.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* ── Message thread ── */}
+      {embedGlass ? (
+        <div
+          className={cn(
+            'relative min-h-0 w-full',
+            briefingEmbedThreadVisible ? 'flex-1' : 'max-h-0 shrink-0 overflow-hidden',
+          )}
+        >
+          <div
+            ref={scrollRef}
+            className={cn(
+              'space-y-5 px-1 sm:px-2',
+              briefingEmbedThreadVisible
+                ? 'absolute inset-0 box-border min-h-0 overflow-y-auto overscroll-contain py-2 [touch-action:pan-y]'
+                : 'max-h-0 min-h-0 overflow-hidden py-0',
+            )}
+          >
+            {messageThread}
+          </div>
+        </div>
+      ) : (
+        <div
+          ref={scrollRef}
+          className={cn(
+            'min-h-0 overflow-y-auto overscroll-y-contain',
+            lightSetupChat
+              ? 'flex-1 space-y-5 bg-slate-50/70 px-5 py-5'
+              : briefingChat
+                ? 'flex-1 space-y-5 px-5 py-5 sm:px-6'
+                : 'flex-1 space-y-4 px-4 py-3',
+          )}
+        >
+          {messageThread}
+        </div>
+      )}
 
       {/* ── Input bar ── */}
       <div
@@ -692,7 +725,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
             ? 'border-t border-slate-200 bg-white px-4 py-3'
             : briefingChat
               ? embedGlass
-                ? 'border-t border-[rgba(13,53,71,0.07)] bg-transparent px-0 pb-0 pt-2'
+                ? 'border-t border-[rgba(13,53,71,0.07)] bg-transparent px-0 pb-2 pt-2'
                 : 'border-t border-slate-100 bg-white px-4 py-4'
               : 'border-t border-gray-100 px-3 pb-3 pt-2',
         )}
@@ -714,12 +747,13 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
           )}
           <div
             className={cn(
-              'flex min-w-0 flex-1 items-center gap-2 transition-all focus-within:ring-2 focus-within:ring-arcova-teal/20',
+              'flex min-w-0 flex-1 items-center gap-2 transition-all',
+              !(briefingChat && embedGlass) && 'focus-within:ring-2 focus-within:ring-arcova-teal/20',
               lightSetupChat
                 ? 'rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm focus-within:border-arcova-teal/40'
                 : briefingChat
                   ? embedGlass
-                    ? 'rounded-2xl bg-white/90 px-3 py-2.5 shadow-[0_8px_32px_-20px_rgba(13,53,71,0.18)] ring-1 ring-[rgba(13,53,71,0.09)] backdrop-blur-md focus-within:ring-arcova-teal/25'
+                    ? 'rounded-2xl border border-[rgba(13,53,71,0.12)] bg-white/90 px-3 py-2.5 shadow-[0_8px_32px_-20px_rgba(13,53,71,0.18)] backdrop-blur-md focus-within:border-arcova-teal/45 focus-within:shadow-[0_8px_28px_-18px_rgba(0,164,180,0.22)]'
                     : 'rounded-2xl bg-slate-100/85 px-3 py-2 ring-1 ring-slate-200/70 focus-within:ring-arcova-teal/25'
                   : 'rounded-xl border border-gray-200 bg-white px-3 py-2 shadow-sm focus-within:border-arcova-teal/40',
             )}

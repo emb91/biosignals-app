@@ -3,25 +3,23 @@
 import { useEffect, useState } from 'react';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
+import { ChevronDown, ChevronLeft } from 'lucide-react';
 import {
-  Clock,
-  Gauge,
-  Handshake,
-  Target,
-  Activity,
-  Radio,
-  FileUp,
-  Database,
-  UserRound,
-  Building2,
-  Settings,
-  User,
-  Wrench,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  Bot,
-} from 'lucide-react';
+  NavIconAccount,
+  NavIconAgentLab,
+  NavIconContact,
+  NavIconData,
+  NavIconGtmBase,
+  NavIconHealth,
+  NavIconImport,
+  NavIconLeads,
+  NavIconMyCompany,
+  NavIconMyIcps,
+  NavIconSettings,
+  NavIconSetup,
+  NavIconSignals,
+  NavIconToday,
+} from '@/components/NavRailIcons';
 import { cn } from '@/lib/utils';
 import { useEnrichmentGuard } from '@/context/EnrichmentGuardContext';
 import { ROUTES } from '@/lib/routes';
@@ -33,27 +31,27 @@ interface NavItem {
 }
 
 const setupItems: NavItem[] = [
-  { name: 'My Company', href: ROUTES.setup.company, icon: User },
-  { name: 'My ICPs', href: ROUTES.setup.icps, icon: Target },
+  { name: 'My Company', href: ROUTES.setup.company, icon: NavIconMyCompany },
+  { name: 'My ICPs', href: ROUTES.setup.icps, icon: NavIconMyIcps },
 ];
 
 const leadsItems: NavItem[] = [
-  { name: 'Contacts', href: ROUTES.leads.contacts, icon: UserRound },
-  { name: 'Accounts', href: ROUTES.leads.accounts, icon: Building2 },
+  { name: 'Contacts', href: ROUTES.leads.contacts, icon: NavIconContact },
+  { name: 'Accounts', href: ROUTES.leads.accounts, icon: NavIconAccount },
 ];
 
 const topNavigation: NavItem[] = [
-  { name: 'Today', href: ROUTES.briefing, icon: Clock },
-  { name: 'GTM base', href: ROUTES.dashboard, icon: Gauge },
-  { name: 'Import', href: ROUTES.import, icon: FileUp },
-  { name: 'Health', href: ROUTES.leads.health, icon: Activity },
-  { name: 'Data', href: ROUTES.leads.data, icon: Database },
-  { name: 'Signals', href: '/customer-signals', icon: Radio },
-  { name: 'Agent lab', href: ROUTES.agentLab, icon: Bot },
+  { name: 'Today', href: ROUTES.briefing, icon: NavIconToday },
+  { name: 'GTM base', href: ROUTES.dashboard, icon: NavIconGtmBase },
+  { name: 'Import', href: ROUTES.import, icon: NavIconImport },
+  { name: 'Health', href: ROUTES.leads.health, icon: NavIconHealth },
+  { name: 'Data', href: ROUTES.leads.data, icon: NavIconData },
+  { name: 'Signals', href: '/customer-signals', icon: NavIconSignals },
+  { name: 'Agent lab', href: ROUTES.agentLab, icon: NavIconAgentLab },
 ];
 
 const bottomNavigation: NavItem[] = [
-  { name: 'Settings', href: '/settings', icon: Settings },
+  { name: 'Settings', href: '/settings', icon: NavIconSettings },
 ];
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'arcova_sidebar_collapsed';
@@ -62,6 +60,13 @@ const NAV_DOT_DISMISS_PREFIX = 'arcova_nav_dot_seen';
 
 const railGlass = cn(
   'border border-[rgba(13,53,71,0.1)] bg-[rgba(255,255,255,0.55)] shadow-[0_12px_40px_-24px_rgba(13,53,71,0.35),inset_0_1px_0_rgba(255,255,255,0.85)] backdrop-blur-2xl backdrop-saturate-150',
+);
+
+/** Collapse control: shrinks on hover (matches compact chrome in design refs). */
+const sidebarChromeToggleClass = cn(
+  'inline-flex shrink-0 items-center justify-center rounded-lg border border-[rgba(13,53,71,0.12)] bg-white/55 text-[#4a6470] shadow-sm',
+  'origin-center transition-[transform,background-color,color] duration-150 ease-out',
+  'hover:scale-[0.72] hover:bg-white/90 hover:text-arcova-navy',
 );
 
 function dismissibleDotVisible(key: string, signature: string | null, visited: boolean): boolean {
@@ -275,14 +280,14 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
         type="button"
         onClick={() => guardedNavigate(item.href)}
         className={cn(
-          'w-full flex items-center space-x-3 px-3 py-2 rounded-xl text-sm font-medium font-manrope transition-colors text-left',
+          'w-full flex items-center space-x-3 rounded-xl px-3.5 py-2.5 text-[0.9375rem] font-medium font-manrope leading-snug transition-colors text-left',
           isActive(item.href)
-            ? 'bg-arcova-teal text-white shadow-sm'
+            ? 'bg-arcova-navy text-white shadow-sm'
             : 'text-[#4a6470] hover:bg-white/70 hover:text-arcova-navy',
         )}
       >
         <div className="relative">
-          <item.icon className="w-5 h-5" />
+          <item.icon className="h-[1.375rem] w-[1.375rem] shrink-0" />
           {shouldShowDot(item.name) && (
             <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-arcova-teal shadow-[0_0_0_2px_rgba(255,255,255,0.95)]" />
           )}
@@ -314,13 +319,13 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
         type="button"
         onClick={onToggle}
         className={cn(
-          'w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm font-medium font-manrope transition-colors',
-          active ? 'bg-arcova-teal text-white shadow-sm' : 'text-[#4a6470] hover:bg-white/70 hover:text-arcova-navy',
+          'w-full flex items-center justify-between rounded-xl px-3.5 py-2.5 text-[0.9375rem] font-medium font-manrope leading-snug transition-colors',
+          active ? 'bg-arcova-navy text-white shadow-sm' : 'text-[#4a6470] hover:bg-white/70 hover:text-arcova-navy',
         )}
       >
         <div className="flex items-center space-x-3">
           <div className="relative">
-            <Icon className="w-5 h-5" />
+            <Icon className="h-[1.375rem] w-[1.375rem] shrink-0" />
             {dotVisible && !open && (
               <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-arcova-teal shadow-[0_0_0_2px_rgba(255,255,255,0.95)]" />
             )}
@@ -328,12 +333,12 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
           <span>{label}</span>
         </div>
         <ChevronDown
-          className={cn('w-4 h-4 transition-transform duration-200', open && 'rotate-180')}
+          className={cn('h-[1.125rem] w-[1.125rem] shrink-0 transition-transform duration-200', open && 'rotate-180')}
         />
       </button>
 
       {open && (
-        <div className="mt-1 ml-4 space-y-1 border-l border-[rgba(13,53,71,0.1)] pl-3">
+        <div className="ml-[1.125rem] mt-1.5 space-y-1 border-l border-[rgba(13,53,71,0.1)] pl-3.5">
           {items.map(renderNavItem)}
         </div>
       )}
@@ -352,13 +357,13 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
         title={opts.title}
         aria-label={opts.title}
         className={cn(
-          'relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors',
+          'relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition-colors',
           opts.active
-            ? 'bg-arcova-teal text-white shadow-sm'
+            ? 'bg-arcova-navy text-white shadow-sm'
             : 'text-[#4a6470] hover:bg-white/80 hover:text-arcova-navy',
         )}
       >
-        <Icon className="h-5 w-5" />
+        <Icon className="h-[1.375rem] w-[1.375rem]" />
         {opts.dot ? (
           <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-arcova-teal ring-2 ring-[rgba(255,255,255,0.95)]" />
         ) : null}
@@ -370,7 +375,7 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
     if (setupFlowOnly) {
       return (
         <>
-          {railIconButton('setup-flow', Wrench, {
+          {railIconButton('setup-flow', NavIconSetup, {
             onClick: () => guardedNavigate(ROUTES.setup.company),
             active: setupActive,
             title: 'Setup',
@@ -388,7 +393,7 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
             dot: shouldShowDot(item.name),
           }),
         )}
-        {railIconButton('leads', Handshake, {
+        {railIconButton('leads', NavIconLeads, {
           onClick: () => guardedNavigate(ROUTES.leads.contacts),
           active: leadsActive,
           title: 'Leads',
@@ -402,7 +407,7 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
             dot: shouldShowDot(item.name),
           }),
         )}
-        {railIconButton('setup', Wrench, {
+        {railIconButton('setup', NavIconSetup, {
           onClick: () => guardedNavigate(ROUTES.setup.company),
           active: setupActive,
           title: 'Setup',
@@ -413,45 +418,36 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
   };
 
   return (
-    <div className="flex h-screen min-h-0 shrink-0 bg-transparent py-3 pl-3">
+    <div className="flex h-full min-h-0 shrink-0 bg-transparent pl-3">
       <div
         className={cn(
-          'flex min-h-0 flex-col overflow-hidden transition-[width] duration-200 ease-out',
+          'flex h-full min-h-0 flex-col overflow-hidden transition-[width] duration-200 ease-out',
           railGlass,
-          sidebarCollapsed ? 'w-[4.75rem]' : 'w-[15.5rem]',
+          sidebarCollapsed ? 'w-[6rem]' : 'w-[18.25rem]',
           'rounded-[1.75rem]',
         )}
       >
         {/* Header */}
         {sidebarCollapsed ? (
-          <div className="flex flex-col items-center gap-3 border-b border-[rgba(13,53,71,0.08)] px-2 py-4">
+          <div className="flex flex-col items-center border-b border-[rgba(13,53,71,0.08)] px-2.5 py-5">
             <button
               type="button"
-              onClick={() => guardedNavigate('/')}
+              onClick={() => setCollapsed(false)}
               className="rounded-xl p-0.5 transition-colors hover:bg-white/65"
-              aria-label="Go to home"
-              title="Go to home"
+              aria-label="Expand sidebar"
+              title="Expand sidebar"
             >
               <Image
                 src="/images/network-og.png"
                 alt=""
-                width={36}
-                height={36}
+                width={40}
+                height={40}
                 className="rounded-xl shadow-sm ring-1 ring-black/5"
               />
             </button>
-            <button
-              type="button"
-              onClick={() => setCollapsed(false)}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[rgba(13,53,71,0.12)] bg-white/55 text-[#4a6470] shadow-sm transition-colors hover:bg-white/90 hover:text-arcova-navy"
-              aria-label="Expand sidebar"
-              title="Expand sidebar"
-            >
-              <ChevronRight className="h-4 w-4" strokeWidth={2.2} />
-            </button>
           </div>
         ) : (
-          <div className="flex items-center gap-2 border-b border-[rgba(13,53,71,0.08)] px-3.5 py-4">
+          <div className="flex items-center gap-2 border-b border-[rgba(13,53,71,0.08)] px-4 py-[1.125rem]">
             <button
               type="button"
               onClick={() => guardedNavigate('/')}
@@ -462,31 +458,31 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
               <Image
                 src="/images/network-og.png"
                 alt=""
-                width={32}
-                height={32}
+                width={40}
+                height={40}
                 className="shrink-0 rounded-lg shadow-sm ring-1 ring-black/5"
               />
-              <span className="truncate text-lg font-semibold font-manrope text-arcova-navy">arcova</span>
+              <span className="truncate text-xl font-semibold font-manrope text-arcova-navy">arcova</span>
             </button>
             <button
               type="button"
               onClick={() => setCollapsed(true)}
-              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[rgba(13,53,71,0.12)] bg-white/55 text-[#4a6470] shadow-sm transition-colors hover:bg-white/90 hover:text-arcova-navy"
+              className={cn(sidebarChromeToggleClass, 'h-9 w-9')}
               aria-label="Collapse sidebar"
               title="Collapse sidebar"
             >
-              <ChevronLeft className="h-4 w-4" strokeWidth={2.2} />
+              <ChevronLeft className="h-[1.125rem] w-[1.125rem]" strokeWidth={2.2} />
             </button>
           </div>
         )}
 
         {sidebarCollapsed ? (
           <nav className="flex min-h-0 flex-1 flex-col">
-            <div className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto overflow-x-hidden px-1.5 py-3">
+            <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden px-2 py-4">
               {renderCollapsedRail()}
             </div>
             {!setupFlowOnly ? (
-              <div className="shrink-0 border-t border-[rgba(13,53,71,0.08)] px-1.5 pb-3 pt-2">
+              <div className="shrink-0 border-t border-[rgba(13,53,71,0.08)] px-2 pb-4 pt-3">
                 {bottomNavigation.map((item) =>
                   railIconButton(item.name, item.icon, {
                     onClick: () => guardedNavigate(item.href),
@@ -499,11 +495,11 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
           </nav>
         ) : (
           <nav className="flex min-h-0 flex-1 flex-col">
-            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4">
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-5">
               {setupFlowOnly ? (
                 <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-white/45 px-3 py-3 backdrop-blur-sm">
                   <div className="flex items-start gap-3">
-                    <Wrench className="mt-0.5 h-5 w-5 shrink-0 text-arcova-teal" aria-hidden />
+                    <NavIconSetup className="mt-0.5 h-5 w-5 text-arcova-teal" />
                     <div>
                       <p className="text-sm font-semibold font-manrope text-arcova-navy">Setup</p>
                       <p className="mt-1 text-xs leading-relaxed text-[#4a6470]">
@@ -514,25 +510,25 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
                 </div>
               ) : (
                 <>
-                  {renderNavItem({ name: 'Today', href: ROUTES.briefing, icon: Clock })}
-                  {renderNavItem({ name: 'GTM base', href: ROUTES.dashboard, icon: Gauge })}
-                  {renderNavItem({ name: 'Import', href: ROUTES.import, icon: FileUp })}
+                  {renderNavItem({ name: 'Today', href: ROUTES.briefing, icon: NavIconToday })}
+                  {renderNavItem({ name: 'GTM base', href: ROUTES.dashboard, icon: NavIconGtmBase })}
+                  {renderNavItem({ name: 'Import', href: ROUTES.import, icon: NavIconImport })}
                   {renderAccordion({
                     label: 'Leads',
-                    icon: Handshake,
+                    icon: NavIconLeads,
                     items: leadsItems,
                     open: leadsOpen,
                     onToggle: () => setLeadsOpen((o) => !o),
                     active: leadsActive && !leadsOpen,
                     dotVisible: showContactsDot || showAccountsDot,
                   })}
-                  {renderNavItem({ name: 'Health', href: ROUTES.leads.health, icon: Activity })}
-                  {renderNavItem({ name: 'Data', href: ROUTES.leads.data, icon: Database })}
-                  {renderNavItem({ name: 'Signals', href: '/customer-signals', icon: Radio })}
-                  {renderNavItem({ name: 'Agent lab', href: ROUTES.agentLab, icon: Bot })}
+                  {renderNavItem({ name: 'Health', href: ROUTES.leads.health, icon: NavIconHealth })}
+                  {renderNavItem({ name: 'Data', href: ROUTES.leads.data, icon: NavIconData })}
+                  {renderNavItem({ name: 'Signals', href: '/customer-signals', icon: NavIconSignals })}
+                  {renderNavItem({ name: 'Agent lab', href: ROUTES.agentLab, icon: NavIconAgentLab })}
                   {renderAccordion({
                     label: 'Setup',
-                    icon: Wrench,
+                    icon: NavIconSetup,
                     items: setupItems,
                     open: setupOpen,
                     onToggle: () => setSetupOpen((o) => !o),
@@ -543,7 +539,7 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
               )}
             </div>
             {!setupFlowOnly ? (
-              <div className="shrink-0 border-t border-[rgba(13,53,71,0.08)] p-3">
+              <div className="shrink-0 border-t border-[rgba(13,53,71,0.08)] px-4 py-3.5">
                 {bottomNavigation.map(renderNavItem)}
               </div>
             ) : null}

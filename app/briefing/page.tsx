@@ -2,7 +2,7 @@
 
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel } from '@/components/AgentPanel';
 import { BriefingSparkline } from '@/components/briefing/BriefingSparkline';
@@ -30,6 +30,11 @@ type ContactRecord = {
   id: string;
   signals?: string[] | null;
 };
+
+type BriefingPulseSeriesState =
+  | { state: 'loading' }
+  | { state: 'ready'; values: number[] }
+  | { state: 'off' };
 
 type TopLead = {
   id: string;
@@ -108,6 +113,14 @@ function formatBriefingHeroDate(d: Date) {
   return `${weekday}, ${day} ${month}`;
 }
 
+/** Uses local clock hour only (matches hero clock display). */
+function briefingTimeOfDayGreeting(d: Date): string {
+  const hour = d.getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
 function formatInt(n: number) {
   return new Intl.NumberFormat('en-GB').format(n);
 }
@@ -142,6 +155,9 @@ export default function BriefingPage() {
   const [doneTaskIds, setDoneTaskIds] = useState<Set<string>>(() => new Set());
   const [agentBusy, setAgentBusy] = useState(false);
   const [clock, setClock] = useState(() => new Date());
+  /** Pulse chart: stable layout while series loads so the card height (and shadow) does not jump */
+  const [pulseSeries, setPulseSeries] = useState<BriefingPulseSeriesState>({ state: 'loading' });
+  const prevBriefingUserIdRef = useRef<string | undefined>(undefined);
 
   const taskStateStorageKey = user
     ? `${TASK_STATE_STORAGE_PREFIX}:${user.id}:${todayStorageDate()}`
@@ -170,6 +186,8 @@ export default function BriefingPage() {
     const id = setInterval(() => setClock(new Date()), 30000);
     return () => clearInterval(id);
   }, []);
+
+  const timeOfDayGreeting = useMemo(() => briefingTimeOfDayGreeting(clock), [clock]);
 
   const persistDoneIds = (next: Set<string>) => {
     if (taskStateStorageKey) {
@@ -210,9 +228,15 @@ export default function BriefingPage() {
   }, [user]);
 
   useEffect(() => {
-    const fetchDashboardData = async () => {
-      if (!user) return;
+    if (!user) return;
 
+    const uid = user.id;
+    if (prevBriefingUserIdRef.current !== undefined && prevBriefingUserIdRef.current !== uid) {
+      setPulseSeries({ state: 'loading' });
+    }
+    prevBriefingUserIdRef.current = uid;
+
+    const fetchDashboardData = async () => {
       try {
         const [
           { data: profileData, error: profileError },
@@ -224,6 +248,7 @@ export default function BriefingPage() {
           icpCoverageRes,
           icpHealthRes,
           importReadyRes,
+          pulseSeriesRes,
         ] = await Promise.all([
           supabase.from('user_company').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
           fetch('/api/company-criteria'),
@@ -234,6 +259,7 @@ export default function BriefingPage() {
           fetch('/api/accounts/icp-coverage'),
           fetch('/api/pipeline/icp-cards'),
           fetch('/api/import-ready'),
+          fetch('/api/briefing/pulse-series'),
         ]);
 
         if (profileError) throw profileError;
@@ -291,6 +317,18 @@ export default function BriefingPage() {
           setShowImportReady(Boolean(readyJson.ready));
         }
 
+        if (pulseSeriesRes.ok) {
+          const pulseJson = (await pulseSeriesRes.json()) as { data?: unknown };
+          const arr = pulseJson.data;
+          if (Array.isArray(arr) && arr.length >= 2 && arr.every((n) => typeof n === 'number' && Number.isFinite(n))) {
+            setPulseSeries({ state: 'ready', values: arr as number[] });
+          } else {
+            setPulseSeries({ state: 'off' });
+          }
+        } else {
+          setPulseSeries({ state: 'off' });
+        }
+
         const profileComplete = Boolean(profileData);
         const companiesComplete = icps.length > 0;
         const contactsComplete = contacts.length > 0;
@@ -307,6 +345,7 @@ export default function BriefingPage() {
         ]);
       } catch (error) {
         console.error('Error loading dashboard data:', error);
+        setPulseSeries({ state: 'off' });
       } finally {
         setLoadingDashboard(false);
       }
@@ -498,7 +537,7 @@ export default function BriefingPage() {
   const pipeReady = topLeads.length;
 
   const briefingAgentWelcome = {
-    greeting: `Good morning, ${displayName}.`,
+    greeting: `${timeOfDayGreeting}, ${displayName}.`,
     body: `Do you already know what you want to work on today, or would you like me to suggest a good place to start?`,
   };
 
@@ -526,7 +565,7 @@ export default function BriefingPage() {
           <header className="bt-hero">
             <p className="bt-hero-eyebrow">Daily briefing · {formatBriefingHeroDate(clock)}</p>
             <h1 className="bt-hero-title font-manrope">
-              Good morning, <span className="bt-hero-accent">{displayName}</span>.
+              {timeOfDayGreeting}, <span className="bt-hero-accent">{displayName}</span>.
             </h1>
             <p className="bt-hero-sub">
               The assistant has read overnight. Your priorities are below. Open one, or let the agent walk you through.
@@ -544,7 +583,7 @@ export default function BriefingPage() {
                   {clock.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} local
                 </span>
               </div>
-              <div className="bt-agent-panel-host">
+              <div className="bt-agent-panel-host bt-agent-panel-host--fill">
                 <AgentPanel
                   page="dashboard"
                   pageContext={{
@@ -558,117 +597,137 @@ export default function BriefingPage() {
                   briefingWelcome={briefingAgentWelcome}
                   briefingIdleChips={briefingAgentIdleChips}
                   onBusyChange={setAgentBusy}
-                  className="h-full min-h-[420px]"
+                  className="min-h-0 flex-1 overflow-hidden"
                 />
               </div>
             </section>
 
-            <section className="bt-bento bt-priorities-tile">
-              <header className="bt-tile-head">
-                <div>
-                  <p className="bt-tile-eyebrow">Today</p>
-                  <h2 className="bt-tile-title">Priorities</h2>
-                </div>
-                {agenda.length > 0 ? (
-                  <span className="bt-tile-pill">
-                    <span className="bt-pill-num" style={{ color: BT_ACCENT }}>
-                      {prioritiesDone}
+            <div className="bt-right-stack">
+              <section className="bt-bento bt-priorities-tile">
+                <header className="bt-tile-head">
+                  <div>
+                    <p className="bt-tile-eyebrow">Today</p>
+                    <h2 className="bt-tile-title">Priorities</h2>
+                  </div>
+                  {agenda.length > 0 ? (
+                    <span className="bt-tile-pill">
+                      <span className="bt-pill-num" style={{ color: BT_ACCENT }}>
+                        {prioritiesDone}
+                      </span>
+                      <span className="bt-pill-sep">/</span>
+                      <span>{agenda.length}</span>
                     </span>
-                    <span className="bt-pill-sep">/</span>
-                    <span>{agenda.length}</span>
-                  </span>
-                ) : null}
-              </header>
-              {agenda.length === 0 ? (
-                <div className="bt-p-empty">
-                  Nothing urgent is blocking the workspace. Ask the agent what to review next, or start with Leads.
-                </div>
-              ) : (
-                <>
-                  <ul className="bt-p-list">
-                    {agenda.map((item, index) => (
-                      <li
-                        key={item.id}
-                        className={cn('bt-p-row', doneTaskIds.has(item.id) && 'is-done')}
-                        style={{ animationDelay: `${index * 60 + 80}ms` }}
-                      >
-                        <button
-                          type="button"
-                          className="bt-p-check"
-                          aria-label={doneTaskIds.has(item.id) ? 'Mark not done' : 'Mark done'}
-                          onClick={() => toggleTaskDone(item)}
+                  ) : null}
+                </header>
+                {agenda.length === 0 ? (
+                  <div className="bt-p-empty">
+                    Nothing urgent is blocking the workspace. Ask the agent what to review next, or start with Leads.
+                  </div>
+                ) : (
+                  <>
+                    <ul className="bt-p-list">
+                      {agenda.map((item, index) => (
+                        <li
+                          key={item.id}
+                          className={cn('bt-p-row', doneTaskIds.has(item.id) && 'is-done')}
+                          style={{ animationDelay: `${index * 60 + 80}ms` }}
                         >
-                          <span className="bt-p-check-num">{index + 1}</span>
-                          <Check className="bt-p-check-tick h-3.5 w-3.5" strokeWidth={2.4} />
-                        </button>
-                        <button type="button" className="bt-p-body" onClick={() => openTask(item)}>
-                          <span className="bt-p-title">{item.title}</span>
-                          <span className="bt-p-detail">{item.detail}</span>
-                        </button>
-                        <button type="button" className="bt-p-cta" onClick={() => openTask(item)}>
-                          {item.cta}
-                          <ArrowRight className="h-3 w-3" strokeWidth={2} />
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                  <footer className="bt-p-foot">
-                    <span
-                      className="bt-p-foot-line"
-                      style={{
-                        background: `linear-gradient(90deg, ${BT_ACCENT}, transparent)`,
-                        width: agenda.length > 0 ? `${(prioritiesDone / agenda.length) * 100}%` : '0%',
-                      }}
-                    />
-                    <span className="bt-p-foot-text">
-                      {prioritiesDone === agenda.length
-                        ? 'All clear for this list.'
-                        : `${agenda.length - prioritiesDone} left for today`}
-                    </span>
-                  </footer>
-                </>
-              )}
-            </section>
+                          <button
+                            type="button"
+                            className="bt-p-check"
+                            aria-label={doneTaskIds.has(item.id) ? 'Mark not done' : 'Mark done'}
+                            onClick={() => toggleTaskDone(item)}
+                          >
+                            <span className="bt-p-check-num">{index + 1}</span>
+                            <Check className="bt-p-check-tick h-3.5 w-3.5" strokeWidth={2.4} />
+                          </button>
+                          <button type="button" className="bt-p-body" onClick={() => openTask(item)}>
+                            <span className="bt-p-title">{item.title}</span>
+                            <span className="bt-p-detail">{item.detail}</span>
+                          </button>
+                          <button type="button" className="bt-p-cta" onClick={() => openTask(item)}>
+                            {item.cta}
+                            <ArrowRight className="h-3 w-3" strokeWidth={2} />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                    <footer className="bt-p-foot">
+                      <span
+                        className="bt-p-foot-line"
+                        style={{
+                          background: `linear-gradient(90deg, ${BT_ACCENT}, transparent)`,
+                          width: agenda.length > 0 ? `${(prioritiesDone / agenda.length) * 100}%` : '0%',
+                        }}
+                      />
+                      <span className="bt-p-foot-text">
+                        {prioritiesDone === agenda.length
+                          ? 'All clear for this list.'
+                          : `${agenda.length - prioritiesDone} left for today`}
+                      </span>
+                    </footer>
+                  </>
+                )}
+              </section>
 
-            <section className="bt-bento bt-pipe-tile">
-              <header className="bt-tile-head">
-                <div>
-                  <p className="bt-tile-eyebrow">Pipeline</p>
-                  <h2 className="bt-tile-title">Pulse</h2>
+              <section className="bt-bento bt-pipe-tile">
+                <header className="bt-tile-head">
+                  <div>
+                    <p className="bt-tile-eyebrow">Pipeline</p>
+                    <h2 className="bt-tile-title">Pulse</h2>
+                  </div>
+                  <span className="bt-tile-trend" style={{ color: BT_ACCENT }}>
+                    {runningJobs.length > 0 ? (
+                      <>
+                        <TrendingUp className="h-3 w-3" strokeWidth={2.2} />
+                        {runningJobs.length} active
+                      </>
+                    ) : (
+                      <>steady</>
+                    )}
+                  </span>
+                </header>
+                <div className="bt-pipe-grid">
+                  <div>
+                    <p className="bt-pipe-num">{formatInt(totalCoveredCompanies)}</p>
+                    <p className="bt-pipe-label">prioritised companies</p>
+                  </div>
+                  <div>
+                    <p className="bt-pipe-num bt-pipe-num-sub">{pipeReady}</p>
+                    <p className="bt-pipe-label">high-fit · surfaced</p>
+                  </div>
                 </div>
-                <span className="bt-tile-trend" style={{ color: BT_ACCENT }}>
-                  {runningJobs.length > 0 ? (
+                <div className="bt-pipe-series-slot">
+                  {pulseSeries.state === 'ready' ? (
                     <>
-                      <TrendingUp className="h-3 w-3" strokeWidth={2.2} />
-                      {runningJobs.length} active
+                      <BriefingSparkline accent={BT_ACCENT} values={pulseSeries.values} />
+                      <div className="bt-pipe-legend">
+                        <span>
+                          <i style={{ background: BT_ACCENT }} />
+                          signals / day (last 28 days)
+                        </span>
+                        <span>
+                          <i className="dim" />
+                          trailing 7-day average
+                        </span>
+                      </div>
                     </>
+                  ) : pulseSeries.state === 'loading' ? (
+                    <div className="bt-pipe-series-pending" aria-busy="true" aria-label="Loading signal trend">
+                      <div className="bt-pipe-chart-skeleton" />
+                      <div className="bt-pipe-legend-skeleton" aria-hidden>
+                        <span />
+                        <span />
+                      </div>
+                    </div>
                   ) : (
-                    <>steady</>
+                    <div className="bt-pipe-series-pending bt-pipe-series-off" role="status">
+                      <p className="bt-pipe-off-text">Signal trend unavailable</p>
+                    </div>
                   )}
-                </span>
-              </header>
-              <div className="bt-pipe-grid">
-                <div>
-                  <p className="bt-pipe-num">{formatInt(totalCoveredCompanies)}</p>
-                  <p className="bt-pipe-label">prioritised companies</p>
                 </div>
-                <div>
-                  <p className="bt-pipe-num bt-pipe-num-sub">{pipeReady}</p>
-                  <p className="bt-pipe-label">high-fit · surfaced</p>
-                </div>
-              </div>
-              <BriefingSparkline accent={BT_ACCENT} />
-              <div className="bt-pipe-legend">
-                <span>
-                  <i style={{ background: BT_ACCENT }} />
-                  workspace
-                </span>
-                <span>
-                  <i className="dim" />
-                  trailing window
-                </span>
-              </div>
-            </section>
+              </section>
+            </div>
 
             <section className="bt-bento bt-signals-tile">
               <header className="bt-tile-head">

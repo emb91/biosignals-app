@@ -1,38 +1,51 @@
 'use client';
 
-import { useEffect, useId, useState } from 'react';
+import { useId } from 'react';
 
 const W = 240;
 const H = 56;
-const P = 2;
+const PAD = 2;
 
-export function BriefingSparkline({ accent }: { accent: string }) {
+function trailingAverage(values: number[], windowSize: number): number[] {
+  return values.map((_, i) => {
+    const start = Math.max(0, i - windowSize + 1);
+    const slice = values.slice(start, i + 1);
+    const sum = slice.reduce((a, b) => a + b, 0);
+    return sum / slice.length;
+  });
+}
+
+/** Pulse tile: workspace signal counts (daily) vs 7-day trailing average, same vertical scale */
+export function BriefingSparkline({ accent, values }: { accent: string; values: number[] }) {
   const gradId = useId().replace(/:/g, '');
-  const [data, setData] = useState(() => Array.from({ length: 28 }, () => 12 + Math.random() * 22));
 
-  useEffect(() => {
-    const t = setInterval(() => {
-      setData((prev) => {
-        const next = prev.slice(1);
-        const last = prev[prev.length - 1]!;
-        next.push(Math.max(6, Math.min(36, last + (Math.random() * 8 - 4))));
-        return next;
-      });
-    }, 1600);
-    return () => clearInterval(t);
-  }, []);
+  const data = values.length >= 2 ? values : [...values, ...values];
+  const avg = trailingAverage(values.length >= 2 ? values : data, 7);
+  const maxSeries = Math.max(...data, ...avg, 1);
+  const minSeries = 0;
 
-  const max = 38;
-  const min = 4;
-  const xs = data.map((_, i) => P + (i * (W - P * 2)) / (data.length - 1));
-  const ys = data.map((v) => H - P - ((v - min) / (max - min)) * (H - P * 2));
-  const path = xs.map((x, i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${ys[i]!.toFixed(1)}`).join(' ');
-  const area = `${path} L${xs[xs.length - 1]!.toFixed(1)},${H} L${xs[0]!.toFixed(1)},${H} Z`;
+  const xs = data.map((_, i) => PAD + (i * (W - PAD * 2)) / Math.max(data.length - 1, 1));
+  const toY = (v: number) => H - PAD - ((v - minSeries) / (maxSeries - minSeries)) * (H - PAD * 2);
+  const ys = data.map((v) => toY(Math.max(0, v)));
+  const ysAvg = avg.map((v) => toY(v));
+
+  const line = (yCoords: number[]) =>
+    xs.map((x, i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${yCoords[i]!.toFixed(1)}`).join(' ');
+
+  const pathMain = line(ys);
+  const pathAvg = line(ysAvg);
+  const area = `${pathMain} L${xs[xs.length - 1]!.toFixed(1)},${H} L${xs[0]!.toFixed(1)},${H} Z`;
   const lastX = xs[xs.length - 1]!;
   const lastY = ys[ys.length - 1]!;
 
   return (
-    <svg className="mt-1 block w-full" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" height={H} aria-hidden>
+    <svg
+      className="mt-1 block h-[3.5rem] w-full"
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="none"
+      role="img"
+      aria-label="Chart of signal events per day for the last four weeks, teal line is daily count and grey line is seven day average"
+    >
       <defs>
         <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor={accent} stopOpacity="0.32" />
@@ -41,7 +54,16 @@ export function BriefingSparkline({ accent }: { accent: string }) {
       </defs>
       <path d={area} fill={`url(#${gradId})`} />
       <path
-        d={path}
+        d={pathAvg}
+        fill="none"
+        stroke="rgb(13 53 71)"
+        strokeOpacity={0.28}
+        strokeWidth="1.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d={pathMain}
         fill="none"
         stroke={accent}
         strokeWidth="1.5"
