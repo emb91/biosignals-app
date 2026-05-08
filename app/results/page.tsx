@@ -41,6 +41,7 @@ import {
   Ban,
   Upload,
   Download,
+  Check,
 } from 'lucide-react';
 
 interface EmploymentHistoryItem {
@@ -1797,14 +1798,14 @@ export default function LeadsPage() {
           <span className="contacts-fit-head-title">{title}</span>
           <span className="contacts-fit-head-num">
             {opts?.loading ? (
-              <span className="text-[13px] font-medium text-[#7d909a]">…</span>
+              <span className="text-xs font-medium text-[#7d909a]">…</span>
             ) : n != null ? (
               <>
                 {n}
                 <span>%</span>
               </>
             ) : (
-              <span className="text-[15px] font-semibold text-[#7d909a]">—</span>
+              <span className="text-sm font-semibold text-[#7d909a]">—</span>
             )}
           </span>
         </div>
@@ -2343,9 +2344,9 @@ export default function LeadsPage() {
                     />
                     <aside
                       className={cn(
-                        'contacts-leads-drawer fixed z-50 flex max-h-[calc(100vh-1.75rem)] min-h-0 w-[min(480px,calc(100vw-1.75rem))] flex-col overflow-hidden rounded-[1.75rem] border border-[rgba(255,255,255,0.88)] bg-[rgba(255,255,255,0.55)] shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2)] backdrop-blur-2xl backdrop-saturate-150',
+                        'contacts-leads-drawer fixed z-50 flex max-h-[calc(100vh-1.75rem)] min-h-0 w-[min(22.5rem,calc(100vw-1.75rem))] flex-col overflow-hidden rounded-[1.3125rem] border border-[rgba(255,255,255,0.88)] bg-[rgba(255,255,255,0.55)] shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2)] backdrop-blur-2xl backdrop-saturate-150',
                         'bottom-3.5 top-3.5 max-[1279px]:left-3.5 max-[1279px]:right-3.5 max-[1279px]:w-auto',
-                        'min-[1280px]:right-[calc(360px+1.75rem)]',
+                        'min-[1280px]:right-[calc(22.5rem+1.75rem)]',
                       )}
                     >
                   {selectedLead ? (
@@ -2353,11 +2354,18 @@ export default function LeadsPage() {
                       className={cn(
                         'flex h-full flex-col',
                         selectedPreview === 'contact' &&
-                          'relative z-[1] before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:z-0 before:h-36 before:bg-gradient-to-b before:from-[rgba(227,243,241,0.75)] before:via-[rgba(255,255,255,0.35)] before:to-transparent',
+                          'relative z-[1] before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:z-0 before:h-28 before:bg-gradient-to-b before:from-[rgba(227,243,241,0.75)] before:via-[rgba(255,255,255,0.35)] before:to-transparent',
                       )}
                     >
                       {/* Panel header */}
-                      <div className="relative z-[1] flex items-start gap-4 border-b border-[rgba(13,53,71,0.08)] px-6 pb-5 pt-6">
+                      <div
+                        className={cn(
+                          'relative z-[1] flex items-start border-b border-[rgba(13,53,71,0.08)]',
+                          selectedPreview === 'contact'
+                            ? 'gap-3 px-4 pb-4 pt-5'
+                            : 'gap-4 px-6 pb-5 pt-6',
+                        )}
+                      >
                         {/* Name / label */}
                         <div className="min-w-0 flex-1">
                           <p
@@ -2376,7 +2384,7 @@ export default function LeadsPage() {
                                 : 'Fit score'}
                           </p>
                           {selectedPreview === 'contact' && (
-                            <h2 className="font-manrope mt-2 break-words text-[1.75rem] font-bold leading-[1.12] tracking-[-0.024em] text-[rgb(13,53,71)] sm:text-[2rem]">
+                            <h2 className="font-manrope mt-1.5 break-words text-xl font-bold leading-tight tracking-[-0.024em] text-[rgb(13,53,71)] sm:text-2xl">
                               {[selectedLead.first_name, selectedLead.last_name]
                                 .filter(Boolean)
                                 .join(' ') ||
@@ -2444,10 +2452,10 @@ export default function LeadsPage() {
                               <img
                                 src={selectedLead.profile_photo_url}
                                 alt=""
-                                className="h-[4.5rem] w-[4.5rem] shrink-0 rounded-xl object-cover shadow-sm ring-1 ring-black/5"
+                                className="h-[3.375rem] w-[3.375rem] shrink-0 rounded-xl object-cover shadow-sm ring-1 ring-black/5"
                               />
                             ) : (
-                              <div className="flex h-[4.5rem] w-[4.5rem] shrink-0 items-center justify-center rounded-xl bg-gray-200 text-xl font-medium text-gray-500 shadow-sm ring-1 ring-black/5">
+                              <div className="flex h-[3.375rem] w-[3.375rem] shrink-0 items-center justify-center rounded-xl bg-gray-200 text-lg font-medium text-gray-500 shadow-sm ring-1 ring-black/5">
                                 {(
                                   selectedLead.first_name?.[0] ||
                                   selectedLead.full_name?.[0] ||
@@ -2474,7 +2482,7 @@ export default function LeadsPage() {
                       <div
                         className={cn(
                           'flex-1 overflow-auto',
-                          selectedPreview === 'contact' ? 'space-y-6 px-6 py-6' : 'space-y-5 px-5 py-4',
+                          selectedPreview === 'contact' ? 'space-y-4 px-4 py-4' : 'space-y-5 px-5 py-4',
                         )}
                       >
                         {selectedPreview === 'contact' ? (
@@ -2508,15 +2516,15 @@ export default function LeadsPage() {
                             </div>
                           ) : (
                             /* ── View mode ── */
-                            <div className="space-y-6">
+                            <div className="space-y-4">
                               {selectedLead.contact_bio && selectedLead.contact_bio.length > 0 && (
-                                <div className="overflow-hidden rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
+                                <div className="overflow-hidden rounded-xl border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
                                   <button
                                     type="button"
                                     onClick={() => setContactPanelOpen((s) => ({ ...s, about: !s.about }))}
-                                    className="flex w-full items-center justify-between px-[18px] py-3.5 text-left transition-colors hover:bg-[rgba(255,255,255,0.95)]"
+                                    className="flex w-full items-center justify-between px-3 py-2.5 text-left transition-colors hover:bg-[rgba(255,255,255,0.95)]"
                                   >
-                                    <span className="font-manrope text-[13px] font-semibold text-[#0d3547]">
+                                    <span className="font-manrope text-xs font-semibold text-[#0d3547]">
                                       About
                                     </span>
                                     <ChevronDown
@@ -2526,15 +2534,15 @@ export default function LeadsPage() {
                                     />
                                   </button>
                                   {contactPanelOpen.about && (
-                                    <div className="border-t border-[rgba(13,53,71,0.06)] px-[18px] pb-[18px] pt-4">
+                                    <div className="border-t border-[rgba(13,53,71,0.06)] px-3 pb-3 pt-3">
                                       {selectedLead.contact_bio.length === 1 ? (
-                                        <p className="text-[15px] leading-[1.55] text-[#4a6470]">
+                                        <p className="text-sm leading-[1.55] text-[#4a6470]">
                                           {selectedLead.contact_bio[0]}
                                         </p>
                                       ) : (
                                         <ul className="space-y-3">
                                           {selectedLead.contact_bio.map((bullet, i) => (
-                                            <li key={i} className="flex gap-3 text-[15px] leading-snug text-[#4a6470]">
+                                            <li key={i} className="flex gap-3 text-sm leading-snug text-[#4a6470]">
                                               <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-arcova-teal" />
                                               {bullet}
                                             </li>
@@ -2546,13 +2554,13 @@ export default function LeadsPage() {
                                 </div>
                               )}
 
-                              <div className="overflow-hidden rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
+                              <div className="overflow-hidden rounded-xl border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
                                 <button
                                   type="button"
                                   onClick={() => setContactPanelOpen((s) => ({ ...s, details: !s.details }))}
-                                  className="flex w-full items-center justify-between px-[18px] py-3.5 text-left transition-colors hover:bg-[rgba(255,255,255,0.95)]"
+                                  className="flex w-full items-center justify-between px-3 py-2.5 text-left transition-colors hover:bg-[rgba(255,255,255,0.95)]"
                                 >
-                                  <span className="font-manrope text-[13px] font-semibold text-[#0d3547]">
+                                  <span className="font-manrope text-xs font-semibold text-[#0d3547]">
                                     Role &amp; contact
                                   </span>
                                   <ChevronDown
@@ -2562,13 +2570,13 @@ export default function LeadsPage() {
                                   />
                                 </button>
                                 {contactPanelOpen.details && (
-                                  <div className="border-t border-[rgba(13,53,71,0.06)] px-[18px] pb-[18px] pt-4">
+                                  <div className="border-t border-[rgba(13,53,71,0.06)] px-3 pb-3 pt-3">
                                     <div className="min-w-0 space-y-5">
                                       <div className="min-w-0">
                                         <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
                                           Job title
                                         </p>
-                                        <p className="mt-2 break-words text-[15px] leading-snug text-[#0d3547]">
+                                        <p className="mt-2 break-words text-sm leading-snug text-[#0d3547]">
                                           {selectedLead.resolved_current_job_title ||
                                             selectedLead.job_title ||
                                             '—'}
@@ -2578,7 +2586,7 @@ export default function LeadsPage() {
                                         <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
                                           Location
                                         </p>
-                                        <p className="mt-2 break-words text-[15px] leading-snug text-[#0d3547]">
+                                        <p className="mt-2 break-words text-sm leading-snug text-[#0d3547]">
                                           {selectedLead.location || '—'}
                                         </p>
                                       </div>
@@ -2586,7 +2594,7 @@ export default function LeadsPage() {
                                         <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
                                           Email
                                         </p>
-                                        <p className="mt-2 break-all text-[15px] leading-snug text-[#0d3547]">
+                                        <p className="mt-2 break-all text-sm leading-snug text-[#0d3547]">
                                           {selectedLead.email || '—'}
                                         </p>
                                       </div>
@@ -2599,7 +2607,7 @@ export default function LeadsPage() {
                                             href={selectedLead.linkedin_url}
                                             target="_blank"
                                             rel="noopener noreferrer"
-                                            className="mt-2 inline-flex min-w-0 items-start gap-1.5 break-all text-[15px] font-medium leading-snug text-arcova-teal hover:underline"
+                                            className="mt-2 inline-flex min-w-0 items-start gap-1.5 break-all text-sm font-medium leading-snug text-arcova-teal hover:underline"
                                           >
                                             <span className="min-w-0">
                                               {selectedLead.linkedin_url.replace(/^https?:\/\/(www\.)?/, '')}
@@ -2607,14 +2615,14 @@ export default function LeadsPage() {
                                             <ExternalLink className="mt-0.5 h-4 w-4 shrink-0 text-arcova-teal" />
                                           </a>
                                         ) : (
-                                          <p className="mt-2 text-[15px] leading-snug text-[#0d3547]">—</p>
+                                          <p className="mt-2 text-sm leading-snug text-[#0d3547]">—</p>
                                         )}
                                       </div>
                                     </div>
                                     {selectedLead.email &&
                                       (selectedLead.email_status === 'candidate' ||
                                         selectedLead.email_status === 'stale_suspected') && (
-                                        <p className="mt-4 text-[13px] leading-snug text-[#7d909a]">
+                                        <p className="mt-4 text-xs leading-snug text-[#7d909a]">
                                           This email may be outdated.
                                         </p>
                                       )}
@@ -2624,15 +2632,15 @@ export default function LeadsPage() {
 
                               {selectedLead.resolved_employment_history &&
                                 selectedLead.resolved_employment_history.length > 0 && (
-                                  <div className="overflow-hidden rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
+                                  <div className="overflow-hidden rounded-xl border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
                                     <button
                                       type="button"
                                       onClick={() =>
                                         setContactPanelOpen((s) => ({ ...s, workHistory: !s.workHistory }))
                                       }
-                                      className="flex w-full items-center justify-between px-[18px] py-3.5 text-left transition-colors hover:bg-[rgba(255,255,255,0.95)]"
+                                      className="flex w-full items-center justify-between px-3 py-2.5 text-left transition-colors hover:bg-[rgba(255,255,255,0.95)]"
                                     >
-                                      <span className="font-manrope text-[13px] font-semibold text-[#0d3547]">
+                                      <span className="font-manrope text-xs font-semibold text-[#0d3547]">
                                         Work history
                                       </span>
                                       <ChevronDown
@@ -2642,7 +2650,7 @@ export default function LeadsPage() {
                                       />
                                     </button>
                                     {contactPanelOpen.workHistory && (
-                                      <div className="space-y-5 border-t border-[rgba(13,53,71,0.06)] px-[18px] pb-[18px] pt-5">
+                                      <div className="space-y-4 border-t border-[rgba(13,53,71,0.06)] px-3 pb-3 pt-4">
                                         <div className="space-y-5">
                                           {(isWorkHistoryExpanded
                                             ? selectedLead.resolved_employment_history
@@ -2663,13 +2671,13 @@ export default function LeadsPage() {
                                                 ) : null}
                                               </div>
                                               <div className="min-w-0 pb-1">
-                                                <p className="text-[15px] font-semibold leading-snug text-[#0d3547]">
+                                                <p className="text-sm font-semibold leading-snug text-[#0d3547]">
                                                   {job.title || '—'}
                                                 </p>
-                                                <p className="mt-1 text-[15px] leading-snug text-[#4a6470]">
+                                                <p className="mt-1 text-sm leading-snug text-[#4a6470]">
                                                   {job.company_name || '—'}
                                                 </p>
-                                                <p className="mt-1.5 text-[13px] tabular-nums text-[#7d909a]">
+                                                <p className="mt-1.5 text-xs tabular-nums text-[#7d909a]">
                                                   {[job.start_date, job.end_date].filter(Boolean).join(' → ')}
                                                 </p>
                                               </div>
@@ -2681,7 +2689,7 @@ export default function LeadsPage() {
                                           <button
                                             type="button"
                                             onClick={() => setIsWorkHistoryExpanded((prev) => !prev)}
-                                            className="inline-flex items-center gap-1.5 pt-1 text-[15px] font-semibold text-arcova-teal transition-colors hover:text-arcova-teal/85"
+                                            className="inline-flex items-center gap-1.5 pt-1 text-sm font-semibold text-arcova-teal transition-colors hover:text-arcova-teal/85"
                                           >
                                             <ChevronDown
                                               className={`h-4 w-4 transition-transform ${
@@ -2701,14 +2709,14 @@ export default function LeadsPage() {
                                   </div>
                                 )}
 
-                              <div className="rounded-[14px] border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-[18px] py-[18px] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
-                                <p className="mb-5 font-manrope text-[13px] font-semibold text-[#0d3547]">Data source</p>
-                                <div className="grid grid-cols-2 gap-x-10 gap-y-3">
+                              <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-3 py-3 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
+                                <p className="mb-3 font-manrope text-xs font-semibold text-[#0d3547]">Data source</p>
+                                <div className="grid grid-cols-2 gap-x-6 gap-y-2">
                                   <div className="min-w-0">
                                     <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
                                       Type
                                     </p>
-                                    <p className="mt-2 text-[15px] leading-snug text-[#0d3547]">
+                                    <p className="mt-2 text-sm leading-snug text-[#0d3547]">
                                       {selectedLeadDataSourceTypeLabel}
                                     </p>
                                   </div>
@@ -2716,14 +2724,14 @@ export default function LeadsPage() {
                                     <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
                                       Imported
                                     </p>
-                                    <p className="mt-2 text-[15px] leading-snug text-[#0d3547]">
+                                    <p className="mt-2 text-sm leading-snug text-[#0d3547]">
                                       {formatProvenanceImportedAt(selectedLead.data_provenance_imported_at)}
                                     </p>
                                   </div>
                                 </div>
 
-                                <div className="mt-6 space-y-3 border-t border-[rgba(13,53,71,0.06)] pt-5">
-                                  <p className="text-[13px] leading-snug text-[#4a6470]">
+                                <div className="mt-4 space-y-3 border-t border-[rgba(13,53,71,0.06)] pt-4">
+                                  <p className="text-xs leading-snug text-[#4a6470]">
                                     Last updated {formatLastUpdated(selectedLead.updated_at || selectedLead.created_at)}
                                   </p>
 
@@ -2750,32 +2758,41 @@ export default function LeadsPage() {
                                   )}
 
                                   {showEnrichmentDoneCopy && enrichmentFinishedDisplayIso ? (
-                                    <>
-                                      <p className="text-[13px] font-semibold text-[rgb(13,53,71)]">Enrichment done</p>
-                                      <p className="text-[13px] leading-snug text-[#4a6470]">
-                                        Finished {formatLastUpdated(enrichmentFinishedDisplayIso)}.
-                                      </p>
-                                    </>
+                                    <div className="rounded-xl bg-[#E6F4F1] px-4 py-3">
+                                      <div className="flex gap-2.5">
+                                        <Check
+                                          className="mt-0.5 h-4 w-4 shrink-0 text-[#2D8A8A]"
+                                          strokeWidth={2.25}
+                                          aria-hidden
+                                        />
+                                        <div className="min-w-0 space-y-1">
+                                          <p className="text-xs font-semibold text-[#2D8A8A]">Enrichment done</p>
+                                          <p className="text-xs leading-snug text-[#6B7280]">
+                                            Finished {formatLastUpdated(enrichmentFinishedDisplayIso)}.
+                                          </p>
+                                        </div>
+                                      </div>
+                                    </div>
                                   ) : null}
 
                                   {selectedLeadRefreshStatus === 'cancelled' &&
                                     selectedLead.enrichment_refresh_finished_at && (
-                                      <p className="text-[13px] leading-snug text-[#4a6470]">
+                                      <p className="text-xs leading-snug text-[#6B7280]">
                                         Stopped {formatLastUpdated(selectedLead.enrichment_refresh_finished_at)}.
                                       </p>
                                     )}
 
                                   {selectedLeadRefreshStatus === 'failed' && (
                                     <>
-                                      <p className="text-[13px] font-semibold text-[rgb(13,53,71)]">
+                                      <p className="text-xs font-semibold text-[rgb(13,53,71)]">
                                         {selectedLeadRefreshStatusMeta.label}
                                       </p>
-                                      <p className="text-[13px] leading-snug text-[#7d909a]">Showing last known data.</p>
+                                      <p className="text-xs leading-snug text-[#7d909a]">Showing last known data.</p>
                                     </>
                                   )}
 
                                   {selectedLeadRefreshStatus !== 'running' && (
-                                    <p className="text-[13px] leading-snug text-[#7d909a]">
+                                    <p className="text-xs leading-relaxed text-[#6B7280]">
                                       You can refresh this enrichment again whenever you need updated data.
                                     </p>
                                   )}
@@ -2788,10 +2805,10 @@ export default function LeadsPage() {
                                       isEditingSelected ||
                                       isSelectedLeadRefreshRunning
                                     }
-                                    className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-arcova-teal/5 px-4 py-2 text-sm font-medium text-arcova-teal transition-colors hover:bg-arcova-teal/10 disabled:cursor-not-allowed disabled:opacity-50"
+                                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#1F2937] transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
                                   >
                                     <RotateCw
-                                      className={`h-4 w-4 ${isRefreshingSelected || isSelectedLeadRefreshRunning ? 'animate-spin' : ''}`}
+                                      className={`h-4 w-4 text-[#1F2937] ${isRefreshingSelected || isSelectedLeadRefreshRunning ? 'animate-spin' : ''}`}
                                     />
                                     {isRefreshingSelected
                                       ? 'Starting enrichment…'
@@ -2938,12 +2955,12 @@ export default function LeadsPage() {
                       <div
                         className={cn(
                           'border-t border-[rgba(13,53,71,0.08)] space-y-4 py-4',
-                          selectedPreview === 'contact' ? 'px-6' : 'px-5',
+                          selectedPreview === 'contact' ? 'px-4' : 'px-5',
                         )}
                       >
                         {selectedPreview !== 'contact' && (
-                          <div className="space-y-3">
-                            <p className="text-[13px] leading-snug text-[#4a6470]">
+                          <div className="space-y-4">
+                            <p className="text-xs leading-snug text-[#4a6470]">
                               Last updated {formatLastUpdated(selectedLead.updated_at || selectedLead.created_at)}
                             </p>
 
@@ -2970,32 +2987,41 @@ export default function LeadsPage() {
                             )}
 
                             {showEnrichmentDoneCopy && enrichmentFinishedDisplayIso ? (
-                              <>
-                                <p className="text-[13px] font-semibold text-[rgb(13,53,71)]">Enrichment done</p>
-                                <p className="text-[13px] leading-snug text-[#4a6470]">
-                                  Finished {formatLastUpdated(enrichmentFinishedDisplayIso)}.
-                                </p>
-                              </>
+                              <div className="rounded-xl bg-[#E6F4F1] px-4 py-3">
+                                <div className="flex gap-2.5">
+                                  <Check
+                                    className="mt-0.5 h-4 w-4 shrink-0 text-[#2D8A8A]"
+                                    strokeWidth={2.25}
+                                    aria-hidden
+                                  />
+                                  <div className="min-w-0 space-y-1">
+                                    <p className="text-xs font-semibold text-[#2D8A8A]">Enrichment done</p>
+                                    <p className="text-xs leading-snug text-[#6B7280]">
+                                      Finished {formatLastUpdated(enrichmentFinishedDisplayIso)}.
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
                             ) : null}
 
                             {selectedLeadRefreshStatus === 'cancelled' &&
                               selectedLead.enrichment_refresh_finished_at && (
-                                <p className="text-[13px] leading-snug text-[#4a6470]">
+                                <p className="text-xs leading-snug text-[#6B7280]">
                                   Stopped {formatLastUpdated(selectedLead.enrichment_refresh_finished_at)}.
                                 </p>
                               )}
 
                             {selectedLeadRefreshStatus === 'failed' && (
                               <>
-                                <p className="text-[13px] font-semibold text-[rgb(13,53,71)]">
+                                <p className="text-xs font-semibold text-[rgb(13,53,71)]">
                                   {selectedLeadRefreshStatusMeta.label}
                                 </p>
-                                <p className="text-[13px] leading-snug text-[#7d909a]">Showing last known data.</p>
+                                <p className="text-xs leading-snug text-[#7d909a]">Showing last known data.</p>
                               </>
                             )}
 
                             {selectedLeadRefreshStatus !== 'running' && (
-                              <p className="text-[13px] leading-snug text-[#7d909a]">
+                              <p className="text-xs leading-relaxed text-[#6B7280]">
                                 You can refresh this enrichment again whenever you need updated data.
                               </p>
                             )}
@@ -3008,10 +3034,10 @@ export default function LeadsPage() {
                                 isEditingSelected ||
                                 isSelectedLeadRefreshRunning
                               }
-                              className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-arcova-teal/5 px-4 py-2 text-sm font-medium text-arcova-teal transition-colors hover:bg-arcova-teal/10 disabled:cursor-not-allowed disabled:opacity-50"
+                              className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#1F2937] transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               <RotateCw
-                                className={`h-4 w-4 ${isRefreshingSelected || isSelectedLeadRefreshRunning ? 'animate-spin' : ''}`}
+                                className={`h-4 w-4 text-[#1F2937] ${isRefreshingSelected || isSelectedLeadRefreshRunning ? 'animate-spin' : ''}`}
                               />
                               {isRefreshingSelected
                                 ? 'Starting enrichment…'
@@ -3074,7 +3100,7 @@ export default function LeadsPage() {
           </div>
         </div>
 
-        <div className="flex min-h-0 w-full shrink-0 flex-col min-[1280px]:w-[360px] min-[1280px]:self-start">
+        <div className="flex min-h-0 w-full shrink-0 flex-col min-[1280px]:w-[22.5rem] min-[1280px]:self-start">
           <AgentPanel
             wide
             page="leads"

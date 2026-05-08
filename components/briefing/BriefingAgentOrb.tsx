@@ -3,8 +3,10 @@
 import { cn } from '@/lib/utils';
 
 const ACCENT = '#00A4B4';
-const ORB_SZ = 120;
-const ORB_HALF = ORB_SZ / 2;
+/** 120px at 16px root → scales with html root font-size (defaults → ~90px when root is 75%). */
+const ORB_REM = 7.5;
+const ORB_HALF_REM = ORB_REM / 2;
+const ORB_STAGE_REM = ORB_REM + 3; /* +48px padding */
 
 /** Centered "standing" orb for Today briefing chat (idle / empty input). Styles: `briefing-today` scope in briefing-today.css */
 export function BriefingAgentOrb({ className }: { className?: string }) {
@@ -13,16 +15,16 @@ export function BriefingAgentOrb({ className }: { className?: string }) {
       {/* Single stage: rings and sphere share the same center (rings use margin offset so pulse keyframes only scale). */}
       <div
         className="relative shrink-0"
-        style={{ width: ORB_SZ + 48, height: ORB_SZ + 48 }}
+        style={{ width: `${ORB_STAGE_REM}rem`, height: `${ORB_STAGE_REM}rem` }}
       >
         <div
           className="pointer-events-none absolute left-1/2 top-1/2 z-0 rounded-full motion-safe:opacity-90 motion-reduce:opacity-70"
           style={{
-            width: ORB_SZ * 2.2,
-            height: ORB_SZ * 2.2,
+            width: `${ORB_REM * 2.2}rem`,
+            height: `${ORB_REM * 2.2}rem`,
             transform: 'translate(-50%, -50%)',
             background: `radial-gradient(circle, ${ACCENT}44 0%, transparent 62%)`,
-            filter: 'blur(20px)',
+            filter: 'blur(1.25rem)',
           }}
           aria-hidden
         />
@@ -31,10 +33,10 @@ export function BriefingAgentOrb({ className }: { className?: string }) {
             key={i}
             className="bt-orb-ring pointer-events-none absolute left-1/2 top-1/2 rounded-full border border-[rgba(13,53,71,0.11)]"
             style={{
-              width: ORB_SZ,
-              height: ORB_SZ,
-              marginLeft: -ORB_HALF,
-              marginTop: -ORB_HALF,
+              width: `${ORB_REM}rem`,
+              height: `${ORB_REM}rem`,
+              marginLeft: `-${ORB_HALF_REM}rem`,
+              marginTop: `-${ORB_HALF_REM}rem`,
               animationDelay: `${i * 1.55}s`,
             }}
             aria-hidden
@@ -45,8 +47,8 @@ export function BriefingAgentOrb({ className }: { className?: string }) {
           style={{ transform: 'translate(-50%, -50%)' }}
         >
           <div
-            className="bt-orb-core relative overflow-hidden rounded-full shadow-[0_16px_36px_-12px_rgba(0,164,180,0.36),inset_0_-8px_20px_rgba(13,53,71,0.16),inset_0_4px_14px_rgba(255,255,255,0.45)]"
-            style={{ width: ORB_SZ, height: ORB_SZ }}
+            className="bt-orb-core relative overflow-hidden rounded-full shadow-[0_1rem_2.25rem_-0.75rem_rgba(0,164,180,0.36),inset_0_-0.5rem_1.25rem_rgba(13,53,71,0.16),inset_0_0.25rem_0.875rem_rgba(255,255,255,0.45)]"
+            style={{ width: `${ORB_REM}rem`, height: `${ORB_REM}rem` }}
           >
             <div
               className="absolute inset-0"
@@ -75,10 +77,10 @@ export function BriefingAgentOrb({ className }: { className?: string }) {
                 style={{
                   left: `${x}%`,
                   top: `${y}%`,
-                  width: r,
-                  height: r,
+                  width: `${r / 16}rem`,
+                  height: `${r / 16}rem`,
                   transform: 'translate(-50%, -50%)',
-                  boxShadow: `0 0 6px ${ACCENT}`,
+                  boxShadow: `0 0 0.375rem ${ACCENT}`,
                   opacity: 0.55,
                 }}
                 aria-hidden
@@ -94,9 +96,9 @@ export function BriefingAgentOrb({ className }: { className?: string }) {
         {[0, 1, 2, 3, 4, 5, 6].map((i) => (
           <span
             key={i}
-            className="bt-orb-vbar w-[3px] origin-bottom rounded-sm bg-arcova-teal/75"
+            className="bt-orb-vbar w-[0.1875rem] origin-bottom rounded-sm bg-arcova-teal/75"
             style={{
-              height: 6,
+              height: '0.375rem',
               animationDelay: `${i * 90}ms`,
             }}
           />
