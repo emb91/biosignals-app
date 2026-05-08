@@ -355,9 +355,10 @@ export default function AccountsPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loadingAccounts, setLoadingAccounts] = useState(true);
-  const [agentTrigger, setAgentTrigger] = useState<{ text: string; nonce: number } | undefined>();
+  const [agentTrigger, setAgentTrigger] = useState<{ text: string; nonce: number; isHidden?: boolean } | undefined>();
   const fireAgent = (text: string) =>
     setAgentTrigger((prev) => ({ text, nonce: (prev?.nonce ?? 0) + 1 }));
+  const agentTaskFiredRef = useRef<string | null>(null);
 
   const [agentFilterIds, setAgentFilterIds] = useState<Set<string> | null>(null);
   const [tableSortCol, setTableSortCol] = useState<string | null>(null);
@@ -487,6 +488,20 @@ export default function AccountsPage() {
   }, [user, page]);
 
   useEffect(() => { fetchAccounts(); }, [fetchAccounts]);
+
+  const accountAgentTask = searchParams.get('agentTask') ?? '';
+  useEffect(() => {
+    if (!user || agentTaskFiredRef.current === accountAgentTask) return;
+    const icpId = searchParams.get('icpId') ?? '';
+    if (accountAgentTask !== 'arcova_companies_for_icp' || !icpId) return;
+
+    agentTaskFiredRef.current = accountAgentTask;
+    setAgentTrigger((prev) => ({
+      text: `Filter the accounts table to Arcova-sourced companies for ICP id ${icpId}. Use filter_accounts_table with filters.icpSearch="${icpId}" and filters.sources=["arcova"], columns company/company_type/fit/contacts/action/source/icp_match, sort by company_fit_desc. Keep your reply short and friendly, and mention these are the new Arcova companies for this ICP.`,
+      nonce: (prev?.nonce ?? 0) + 1,
+      isHidden: true,
+    }));
+  }, [accountAgentTask, searchParams, user]);
 
   // Reset accordion when switching accounts or panel mode
   useEffect(() => {
@@ -663,6 +678,7 @@ export default function AccountsPage() {
     const isSelected = selectedAccountId === account.id;
     const href = externalUrl(account as AccountRow);
     const companyLabel = account.company_name || account.domain || '—';
+    const isArcovaAccount = (account.data_provenance_type || '').toLowerCase().includes('arcova');
 
     switch (col) {
       case 'company':
@@ -813,7 +829,16 @@ export default function AccountsPage() {
       case 'location':
         return <span className="text-xs text-gray-600 line-clamp-2">{accountLocation(account) || '—'}</span>;
       case 'source':
-        return <span className="text-xs text-gray-600 truncate">{account.data_provenance_type || '—'}</span>;
+        return (
+          <span
+            className={cn(
+              'inline-flex max-w-full items-center rounded-full px-2 py-0.5 text-[10px] font-semibold',
+              isArcovaAccount ? 'bg-arcova-teal/10 text-arcova-teal' : 'bg-gray-100 text-gray-500',
+            )}
+          >
+            {account.data_provenance_type || '—'}
+          </span>
+        );
     }
   };
 
@@ -838,12 +863,12 @@ export default function AccountsPage() {
     : null;
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex h-screen bg-transparent">
       <AppSidebar />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden min-[1280px]:flex-row">
         {/* ── Main scrollable content ── */}
-        <div className="flex-1 overflow-auto p-4 min-w-0 sm:p-6">
+        <div className="arcova-scroll-surface flex-1 overflow-auto p-4 min-w-0 sm:p-6">
           <div className="w-full max-w-none">
 
             <div className="mb-6">
@@ -976,7 +1001,7 @@ export default function AccountsPage() {
                             className={cn(
                               'grid w-full min-w-0 px-4 py-3 gap-x-5 items-center cursor-pointer transition-all duration-150 border-l-2',
                               isSelected
-                                ? 'bg-arcova-teal/10 border-arcova-teal'
+                                ? 'border-arcova-teal'
                                 : 'border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30',
                             )}
                             style={{ gridTemplateColumns: accountQueryGridCols(tableColumns) }}

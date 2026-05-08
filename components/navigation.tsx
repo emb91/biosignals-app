@@ -20,7 +20,7 @@ export const Navigation = () => {
 
   return (
     <header className="w-full flex justify-center bg-transparent sticky top-0 z-50">
-      <nav className="w-full flex items-center justify-between bg-white/80 backdrop-blur-md shadow-sm border-b border-gray-200 px-6 py-4 relative">
+      <nav className="relative flex w-full items-center justify-between border-b border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.55)] px-6 py-4 shadow-[0_6px_24px_-18px_rgba(13,53,71,0.12)] backdrop-blur-xl backdrop-saturate-150">
         {/* Logo (always visible) */}
         <div className="flex items-center gap-4 flex-shrink-0 min-w-[120px] justify-start">
           <LogoLink />

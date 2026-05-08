@@ -161,7 +161,7 @@ export default function MyProfilePage() {
     if (id) {
       await fetch(`/api/user-company?id=${id}`, { method: 'DELETE' }).catch(() => {});
     }
-    router.replace('/dashboard');
+    router.replace('/briefing');
   };
 
   const runEnrichment = async (website: string) => {

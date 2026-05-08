@@ -10,6 +10,7 @@ import {
   batchReadContactsByEmail,
 } from '@/lib/hubspot';
 import { getLeadAction, formatLeadActionLabel } from '@/lib/lead-action';
+import { formatDataSourceLabel, resolveContactDataProvenance } from '@/lib/data-provenance';
 
 function fmt(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return '';
@@ -49,8 +50,9 @@ export async function POST() {
   const { data: leads, error: leadsError } = await admin
     .from('contacts')
     .select(`
-      id, email, first_name, last_name, job_title, seniority_level, business_area,
+      id, email, first_name, last_name, job_title, seniority_level, business_area, source, created_at,
       contact_fit_score, intent_score, overall_fit_score, contact_bio, linkedin_url,
+      upload_batches(filename, created_at),
       companies(
         company_name,
         company_fit_score, modalities, therapeutic_areas, development_stages,
@@ -100,8 +102,15 @@ export async function POST() {
 
     const props: Record<string, string> = {
       arcova_action: action,
+      arcova_enriched: 'true',
       arcova_enriched_at: enrichedAt,
     };
+    const provenance = resolveContactDataProvenance({
+      upload_batches: (lead as any).upload_batches,
+      created_at: typeof lead.created_at === 'string' ? lead.created_at : null,
+      source: typeof lead.source === 'string' ? lead.source : null,
+    });
+    props.arcova_data_sourced_from = formatDataSourceLabel(provenance.channels);
 
     if (overallFit !== null) props.arcova_overall_fit_score = fmt(overallFit);
     if (contactFit !== null) props.arcova_contact_fit_score = fmt(contactFit);

@@ -27,6 +27,9 @@ export function resolveContactDataProvenance(row: {
   const importedAt = batchCreated?.trim() || contactCreated?.trim() || null;
 
   const fn = (filename || '').toLowerCase();
+  if (fn.startsWith('arcova-pipeline-') || fn.includes('arcova')) {
+    return { channels: ['arcova'], importedAt };
+  }
   if (fn.startsWith('hubspot-auto-') || fn.includes('hubspot')) {
     return { channels: ['hubspot'], importedAt };
   }
@@ -56,6 +59,14 @@ export function formatDataProvenanceTypeOnly(channels: DataProvenanceChannel[]):
   const sorted = sortProvenanceChannels(channels);
   if (sorted.length === 0) return '—';
   return sorted.map(channelToAbbrev).join(', ');
+}
+
+export function formatDataSourceLabel(channels: DataProvenanceChannel[]): string {
+  const sorted = sortProvenanceChannels(channels);
+  if (sorted.includes('arcova')) return 'Arcova purchased data';
+  if (sorted.includes('hubspot')) return 'Imported by HubSpot';
+  if (sorted.includes('csv')) return 'Imported by CSV';
+  return 'Imported data';
 }
 
 export function formatProvenanceImportedAt(iso: string | null | undefined): string {

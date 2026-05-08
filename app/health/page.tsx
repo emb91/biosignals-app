@@ -1,8 +1,8 @@
 'use client';
 
 import { useAuth } from '@/context/AuthContext';
-import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel } from '@/components/AgentPanel';
 import { Activity, AlertTriangle, Kanban, Loader2, Plus } from 'lucide-react';
@@ -121,6 +121,76 @@ function formatDepthValue(avg: number | null): string {
   return `${avg.toFixed(1)}`;
 }
 
+function buildHealthHandoffPrompt(card: IcpPipelineCard, task: string): string {
+  const weakDims = [
+    card.coverage !== 'green' ? `coverage is ${healthLabel(card.coverage)}` : null,
+    card.contact_fit !== 'green' ? `contact fit is ${healthLabel(card.contact_fit)}` : null,
+    card.depth !== 'green' ? `account depth is ${healthLabel(card.depth)}` : null,
+  ].filter(Boolean).join(', ');
+
+  const commonContext =
+    `"${card.label}" has ${card.company_count} matched ${card.company_count === 1 ? 'company' : 'companies'}, ` +
+    `${card.contact_count} contacts, avg company fit ${formatFitValue(card.avg_company_fit)}, ` +
+    `avg contact fit ${formatFitValue(card.avg_contact_fit)}, and avg contacts per company ${formatDepthValue(card.avg_contacts_per_company)}. ` +
+    `Health details: ${weakDims || 'all visible health dimensions are healthy'}, overall ${healthLabel(card.overall)}.`;
+  const companiesHref = withQuery(
+    ROUTES.leads.data,
+    new URLSearchParams({
+      mode: 'companies',
+      icpId: card.icp_id,
+      requestType: 'expand_companies',
+      source: 'health',
+    }),
+  );
+
+  if (task === 'coverage_gap') {
+    return `The user clicked a Today priority to improve coverage for this ICP. Context: ${commonContext} Open by picking up that thread and spotlighting the actionable issue. Explain that the next move is to add more companies for this ICP before thinking about contacts, because contacts are nested inside companies. Then call suggest_navigation with href "${companiesHref}" and a label like "Find companies for ${card.label}". Keep it warm, direct, and short.`;
+  }
+
+  return `The user clicked a Today priority to review pipeline health. Context: ${commonContext} Open by picking up that thread and showcasing the actionable issue for this ICP. If company coverage is weak, guide toward finding companies first and call suggest_navigation with href "${companiesHref}". If company coverage is OK but contact fit or depth is weak, explain that we should identify the specific companies with thin buyer coverage, then source contacts at those companies. Offer one sensible next step. Keep it warm, direct, and short.`;
+}
+
+function isHealthIssue(card: IcpPipelineCard): boolean {
+  return (
+    card.overall === 'red' ||
+    card.overall === 'amber' ||
+    card.coverage === 'red' ||
+    card.contact_fit === 'red' ||
+    card.depth === 'red'
+  );
+}
+
+function buildAllHealthHandoffPrompt(cards: IcpPipelineCard[]): string {
+  const issueCards = cards.filter(isHealthIssue);
+  const cardsToDiscuss = issueCards.length > 0 ? issueCards : cards;
+  const summary = cardsToDiscuss
+    .map((card) => {
+      const weakDims = [
+        card.coverage !== 'green' ? `coverage ${healthLabel(card.coverage)}` : null,
+        card.contact_fit !== 'green' ? `contact fit ${healthLabel(card.contact_fit)}` : null,
+        card.depth !== 'green' ? `depth ${healthLabel(card.depth)}` : null,
+      ].filter(Boolean).join(', ');
+      return `${card.label}: ${card.company_count} companies, ${card.contact_count} contacts, avg company fit ${formatFitValue(card.avg_company_fit)}, avg contact fit ${formatFitValue(card.avg_contact_fit)}, overall ${healthLabel(card.overall)}${weakDims ? ` (${weakDims})` : ''}`;
+    })
+    .join('; ');
+  const firstCoverageGap = cardsToDiscuss.find(
+    (card) => card.company_count === 0 || card.coverage === 'red' || (card.avg_company_fit != null && card.avg_company_fit < COMPANY_FIT_GAP_BELOW),
+  );
+  const suggestedHref = firstCoverageGap
+    ? withQuery(
+        ROUTES.leads.data,
+        new URLSearchParams({
+          mode: 'companies',
+          icpId: firstCoverageGap.icp_id,
+          requestType: 'expand_companies',
+          source: 'health',
+        }),
+      )
+    : null;
+
+  return `The user clicked Today to review pipeline health, and the page shows the full ICP health table. Do not focus on only one ICP as if it is the whole story. Open by saying there are ${issueCards.length || cards.length} ICPs worth reviewing here, then summarise the visible pattern across them. Context: ${summary}. If one ICP is the sensible starting point, say "I'd start with..." and explain why. If the first issue is company coverage, remind them that the fix is companies first, then contacts because contacts are nested inside companies.${suggestedHref && firstCoverageGap ? ` If you suggest taking action, call suggest_navigation with href "${suggestedHref}" and label "Find companies for ${firstCoverageGap.label}".` : ''} Keep it warm, direct, and short.`;
+}
+
 const TH_HEAD = 'text-left text-[11px] font-semibold uppercase tracking-wide text-gray-500 px-3 py-3';
 const TD = 'px-3 py-3 text-sm text-gray-900 align-top';
 const TD_NUM = 'px-3 py-3 text-sm text-gray-900 tabular-nums text-right align-top';
@@ -128,11 +198,13 @@ const TD_NUM = 'px-3 py-3 text-sm text-gray-900 tabular-nums text-right align-to
 export default function HealthPage() {
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [cards, setCards] = useState<IcpPipelineCard[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const agentTaskFiredRef = useRef<string | null>(null);
 
   // Agent trigger: nonce increments to re-fire even with the same message text
-  const [agentTrigger, setAgentTrigger] = useState<{ text: string; nonce: number } | undefined>();
+  const [agentTrigger, setAgentTrigger] = useState<{ text: string; nonce: number; isHidden?: boolean } | undefined>();
 
   const loadCards = useCallback(async () => {
     setLoadError(null);
@@ -153,6 +225,33 @@ export default function HealthPage() {
     if (user) void loadCards();
   }, [user, loadCards]);
 
+  const healthAgentTask = searchParams.get('agentTask') ?? '';
+  const healthAgentIcpId = searchParams.get('icpId') ?? '';
+  useEffect(() => {
+    if (!user || !cards || !healthAgentTask) return;
+
+    const taskKey = `${healthAgentTask}:${healthAgentIcpId || 'all'}`;
+    if (agentTaskFiredRef.current === taskKey) return;
+
+    let prompt: string | null = null;
+    if (healthAgentTask === 'health_review') {
+      prompt = buildAllHealthHandoffPrompt(cards);
+    } else if (healthAgentIcpId) {
+      const card = cards.find((candidate) => candidate.icp_id === healthAgentIcpId);
+      if (!card) return;
+      prompt = buildHealthHandoffPrompt(card, healthAgentTask);
+    }
+
+    if (!prompt) return;
+
+    agentTaskFiredRef.current = taskKey;
+    setAgentTrigger((prev) => ({
+      text: prompt,
+      nonce: (prev?.nonce ?? 0) + 1,
+      isHidden: true,
+    }));
+  }, [cards, healthAgentIcpId, healthAgentTask, user]);
+
   const openDataRequest = (card: IcpPipelineCard, requestType: PipelineDataRequestType) => {
     const mode = requestType === 'expand_companies' ? 'companies' : 'contacts_for_icp';
     const params = new URLSearchParams({
@@ -172,7 +271,7 @@ export default function HealthPage() {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="flex min-h-screen items-center justify-center bg-transparent">
         <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-arcova-teal" />
       </div>
     );
@@ -181,11 +280,11 @@ export default function HealthPage() {
   if (!user) return null;
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex h-screen bg-transparent">
       <AppSidebar />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden min-[1280px]:flex-row">
-        <div className="flex-1 overflow-auto p-6">
+        <div className="arcova-scroll-surface flex-1 overflow-auto p-6">
           <div className="w-full max-w-6xl mx-auto">
             <div className="mb-6">
               <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-arcova-teal">
@@ -302,7 +401,15 @@ export default function HealthPage() {
           </div>
         </div>
 
-        <AgentPanel page="health" pendingMessage={agentTrigger} />
+        <AgentPanel
+          page="health"
+          pageContext={{
+            healthCards: cards ?? [],
+            healthTask: healthAgentTask || null,
+            healthTaskIcpId: healthAgentIcpId || null,
+          }}
+          pendingMessage={agentTrigger}
+        />
       </div>
     </div>
   );

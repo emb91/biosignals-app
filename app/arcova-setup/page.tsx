@@ -20,13 +20,13 @@ export default function ArcovaSetupPage() {
 
   useEffect(() => {
     if (!setupLoading && step1Complete) {
-      router.replace('/dashboard');
+      router.replace('/import');
     }
   }, [setupLoading, step1Complete, router]);
 
   if (loading || setupLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center bg-transparent">
         <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-arcova-teal"></div>
       </div>
     );

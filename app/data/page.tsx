@@ -1,7 +1,7 @@
 'use client';
 
 import { useAuth } from '@/context/AuthContext';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel } from '@/components/AgentPanel';
@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { BATCH_CONTACTS_KEY, type BatchCompany } from '@/lib/batch-contacts';
+import { ROUTES, withQuery } from '@/lib/routes';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -32,6 +33,7 @@ interface IcpCard {
 interface AcquisitionJob {
   id: string;
   icp_id: string | null;
+  upload_batch_id: string | null;
   request_type: string;
   status: string;
   target_company_count: number | null;
@@ -45,6 +47,22 @@ interface AcquisitionJob {
   started_at: string | null;
   completed_at: string | null;
 }
+
+type PendingAcquisitionRoute =
+  | {
+      kind: 'companies_for_icp';
+      jobIds: string[];
+      icpId: string;
+    }
+  | {
+      kind: 'contacts_at_company';
+      jobIds: string[];
+      companyId: string;
+    }
+  | {
+      kind: 'contacts_at_companies';
+      jobIds: string[];
+    };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -101,12 +119,14 @@ function formatRequestType(type: string): string {
 
 function DataPageContent() {
   const { user, loading: authLoading } = useAuth();
+  const router = useRouter();
   const searchParams = useSearchParams();
 
   const [icps, setIcps] = useState<IcpCard[]>([]);
   const [jobs, setJobs] = useState<AcquisitionJob[]>([]);
   const [loadingData, setLoadingData] = useState(true);
   const [recentJobsExpanded, setRecentJobsExpanded] = useState(false);
+  const [pendingRoute, setPendingRoute] = useState<PendingAcquisitionRoute | null>(null);
 
   // Batch companies from sessionStorage (set by agent navigation)
   const [batchCompanies, setBatchCompanies] = useState<BatchCompany[]>([]);
@@ -146,6 +166,47 @@ function DataPageContent() {
     const interval = setInterval(() => void loadData(), 8000);
     return () => clearInterval(interval);
   }, [user, anyJobActive, loadData]);
+
+  useEffect(() => {
+    if (!pendingRoute) return;
+
+    const watchedJobs = pendingRoute.jobIds
+      .map((jobId) => jobs.find((job) => job.id === jobId))
+      .filter((job): job is AcquisitionJob => Boolean(job));
+    if (watchedJobs.length !== pendingRoute.jobIds.length) return;
+    if (watchedJobs.some((job) => jobIsActive(job.status))) return;
+
+    const completedJobs = watchedJobs.filter((job) => job.status === 'complete' || job.status === 'completed');
+    if (completedJobs.length === 0) {
+      toast.error('Acquisition finished, but no rows were imported.');
+      setPendingRoute(null);
+      return;
+    }
+
+    setPendingRoute(null);
+
+    if (pendingRoute.kind === 'companies_for_icp') {
+      router.push(
+        withQuery(
+          ROUTES.leads.accounts,
+          `agentTask=arcova_companies_for_icp&icpId=${encodeURIComponent(pendingRoute.icpId)}`,
+        ),
+      );
+      return;
+    }
+
+    if (pendingRoute.kind === 'contacts_at_company') {
+      router.push(
+        withQuery(
+          ROUTES.leads.contacts,
+          `agentTask=arcova_contacts_at_company&companyId=${encodeURIComponent(pendingRoute.companyId)}`,
+        ),
+      );
+      return;
+    }
+
+    router.push(withQuery(ROUTES.leads.contacts, 'agentTask=arcova_contacts_today'));
+  }, [jobs, pendingRoute, router]);
 
   // ── Read URL/sessionStorage context and fire agent opener ─────────────────
 
@@ -199,6 +260,7 @@ function DataPageContent() {
     if (job.requestType === 'contacts_at_companies' && companies.length > 0) {
       let succeeded = 0;
       let failed = 0;
+      const jobIds: string[] = [];
       for (const company of companies) {
         try {
           const res = await fetch('/api/pipeline/data-request', {
@@ -211,11 +273,18 @@ function DataPageContent() {
               targetContactCount: job.quantity,
             }),
           });
-          if (res.ok) succeeded++; else failed++;
+          if (res.ok) {
+            const payload = await res.json().catch(() => ({}));
+            if (typeof payload.jobId === 'string') jobIds.push(payload.jobId);
+            succeeded++;
+          } else failed++;
         } catch { failed++; }
       }
       if (failed === 0) toast.success(`${succeeded} job${succeeded !== 1 ? 's' : ''} queued.`);
       else toast.warning(`${succeeded} queued, ${failed} failed.`);
+      if (jobIds.length > 0) {
+        setPendingRoute({ kind: 'contacts_at_companies', jobIds });
+      }
     } else {
       const body =
         job.requestType === 'contacts_at_company'
@@ -228,8 +297,25 @@ function DataPageContent() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
-        if (res.ok) toast.success('Job queued.');
-        else toast.error('Failed to start job.');
+        if (res.ok) {
+          const payload = await res.json().catch(() => ({}));
+          toast.success('Job queued.');
+          if (typeof payload.jobId === 'string') {
+            if (job.requestType === 'contacts_at_company' && job.companyId) {
+              setPendingRoute({
+                kind: 'contacts_at_company',
+                jobIds: [payload.jobId],
+                companyId: job.companyId,
+              });
+            } else if (job.icpId) {
+              setPendingRoute({
+                kind: 'companies_for_icp',
+                jobIds: [payload.jobId],
+                icpId: job.icpId,
+              });
+            }
+          }
+        } else toast.error('Failed to start job.');
       } catch { toast.error('Failed to start job.'); }
     }
 
@@ -257,7 +343,7 @@ function DataPageContent() {
 
   if (authLoading || loadingData) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50">
+      <div className="flex min-h-screen items-center justify-center bg-transparent">
         <Loader2 className="h-8 w-8 animate-spin text-arcova-teal" />
       </div>
     );
@@ -266,11 +352,11 @@ function DataPageContent() {
   if (!user) return null;
 
   return (
-    <div className="flex h-screen bg-slate-50">
+    <div className="flex h-screen bg-transparent">
       <AppSidebar />
 
       {/* Main: centered agent + recent jobs log */}
-      <div className="min-h-0 flex-1 overflow-y-auto bg-[linear-gradient(180deg,#f8fafc_0%,#eef6f7_100%)] px-4 py-5 sm:px-6">
+      <div className="arcova-scroll-surface min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
         <div className="mx-auto flex min-h-0 w-full max-w-2xl flex-col gap-4">
           <div>
             <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-arcova-teal">
@@ -396,7 +482,7 @@ export default function DataPage() {
   return (
     <Suspense
       fallback={
-        <div className="flex min-h-screen items-center justify-center bg-gray-50">
+        <div className="flex min-h-screen items-center justify-center bg-transparent">
           <Loader2 className="h-8 w-8 animate-spin text-arcova-teal" />
         </div>
       }

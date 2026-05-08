@@ -1,4 +1,6 @@
 export const ROUTES = {
+  agentLab: '/agent-lab',
+  briefing: '/briefing',
   dashboard: '/dashboard',
   import: '/import',
   signals: '/signals',

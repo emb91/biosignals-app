@@ -74,7 +74,7 @@ export default function SignalsPage() {
   }
 
   return (
-    <div className="flex flex-col min-h-screen bg-white">
+    <div className="flex min-h-dvh min-h-screen flex-col bg-transparent">
       <main className="flex-1">
         {/* Hero Section */}
         <div className="relative w-full overflow-hidden bg-gradient-to-br from-white via-arcova-mint/3 to-white py-16 md:py-20">
