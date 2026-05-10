@@ -21,10 +21,13 @@ import {
 } from '@/lib/lead-action';
 import { formatProvenanceImportedAt } from '@/lib/data-provenance';
 import { ROUTES, withQuery } from '@/lib/routes';
-import { looksLikeEmail, type ContactEmailCategory, type ContactEmailRow } from '@/lib/contact-emails';
+import { looksLikeEmail, type ContactEmailRow } from '@/lib/contact-emails';
+import {
+  buildContactEmailDisplayRows,
+  formatContactLocationDisplay,
+} from '@/lib/contact-profile-display';
 import { cn } from '@/lib/utils';
 import { TableFitGaugeButton } from '@/components/TableFitGaugeButton';
-import { ContactFitRingButton } from '@/components/ContactFitRingButton';
 import '@/app/leads/contacts-layout.css';
 import {
   Activity,
@@ -350,7 +353,7 @@ type EnrichmentVisualState = {
 
 const PAGE_SIZE = 50;
 const LEADS_TABLE_GRID =
-  'grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,5.25rem)_minmax(0,5.25rem)_minmax(9.5rem,1.25fr)] gap-x-5';
+  'grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,5.25rem)_minmax(9.5rem,1.25fr)] gap-x-5';
 
 function blurInputOnEnter(e: KeyboardEvent<HTMLInputElement>) {
   if (e.key !== 'Enter') return;
@@ -388,13 +391,6 @@ const formatPercentValue = (value: number | null | undefined): string | null => 
 const percentDisplayNumber = (value: number | null | undefined): number | null => {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
   return Math.round(value <= 1 ? value * 100 : value);
-};
-
-const CONTACT_EMAIL_CATEGORY_LABEL: Record<ContactEmailCategory, string> = {
-  import: 'Import',
-  user: 'You added',
-  enriched_work: 'Enriched (work)',
-  enriched_personal: 'Enriched (personal)',
 };
 
 const LEAD_EDIT_INPUT_CLASS =
@@ -1010,17 +1006,17 @@ export default function LeadsPage() {
 
     const taskMessages: Record<string, string> = {
       new_contacts:
-        'Filter the contacts table to the newest contacts from the latest import batch. Use filter_leads_table with filters.latestImportOnly=true, columns name/job_title/company/status/company_fit/contact_fit/source, sort by status_best_first. Keep your reply short and friendly.',
+        'Filter the contacts table to the newest contacts from the latest import batch. Use filter_leads_table with filters.latestImportOnly=true, columns name/job_title/company/status/contact_fit/source, sort by status_best_first. Keep your reply short and friendly.',
       best_leads:
-        'Filter the contacts table to the best leads to work now. Use filter_leads_table with filters.actions=["reach_out","monitor"], columns name/job_title/company/status/company_fit/contact_fit/source, sort by status_best_first. Keep your reply short and friendly.',
+        'Filter the contacts table to the best leads to work now. Use filter_leads_table with filters.actions=["reach_out","monitor"], columns name/job_title/company/status/contact_fit/source, sort by status_best_first. Keep your reply short and friendly.',
       arcova_contacts_today:
-        'Filter the contacts table to Arcova-sourced contacts imported today. Use filter_leads_table with filters.sources=["arcova"] and filters.importedToday=true, columns name/job_title/company/status/company_fit/contact_fit/source, sort by status_best_first. Keep your reply short and friendly, and mention these are the new Arcova contacts from today.',
+        'Filter the contacts table to Arcova-sourced contacts imported today. Use filter_leads_table with filters.sources=["arcova"] and filters.importedToday=true, columns name/job_title/company/status/contact_fit/source, sort by status_best_first. Keep your reply short and friendly, and mention these are the new Arcova contacts from today.',
     };
 
     const companyId = searchParams.get('companyId') ?? '';
     if (dashboardAgentTask === 'arcova_contacts_at_company' && companyId) {
       taskMessages.arcova_contacts_at_company =
-        `Filter the contacts table to Arcova-sourced contacts at company id ${companyId}. Use filter_leads_table with filters.companyIds=["${companyId}"] and filters.sources=["arcova"], columns name/job_title/company/status/company_fit/contact_fit/source, sort by status_best_first. Keep your reply short and friendly, and mention these are the new Arcova contacts for this company.`;
+        `Filter the contacts table to Arcova-sourced contacts at company id ${companyId}. Use filter_leads_table with filters.companyIds=["${companyId}"] and filters.sources=["arcova"], columns name/job_title/company/status/contact_fit/source, sort by status_best_first. Keep your reply short and friendly, and mention these are the new Arcova contacts for this company.`;
     }
 
     const message = taskMessages[dashboardAgentTask];
@@ -2274,16 +2270,6 @@ export default function LeadsPage() {
                     ))}
                     <button
                       type="button"
-                      onClick={() => handleSortCol('company_fit')}
-                      className="flex w-full items-start justify-center gap-1 hover:text-gray-800 transition-colors"
-                    >
-                      <span className="flex items-center gap-1">
-                        Company fit
-                        <SortArrow col="company_fit" activeCol={tableSortCol} dir={tableSortDir} />
-                      </span>
-                    </button>
-                    <button
-                      type="button"
                       onClick={() => handleSortCol('contact_fit')}
                       className="flex w-full items-start justify-center gap-1 hover:text-gray-800 transition-colors"
                     >
@@ -2354,9 +2340,6 @@ export default function LeadsPage() {
                               </div>
                             </div>
 
-                            <div className="min-w-0 flex items-center justify-center">
-                              <span className="text-[11px] text-gray-300 tabular-nums">—</span>
-                            </div>
                             <div className="min-w-0 flex items-center justify-center">
                               <span className="text-[11px] text-gray-300 tabular-nums">—</span>
                             </div>
@@ -2444,30 +2427,10 @@ export default function LeadsPage() {
                             })()}
                           </div>
 
-                          {/* Company fit */}
-                          <div className="min-w-0 flex items-center justify-center">
-                            <TableFitGaugeButton
-                              score={
-                                lead.company_fit_score ?? lead.companies?.company_fit_score ?? null
-                              }
-                              isRowSelected={isSelected}
-                              isGaugeHighlighted={isSelected && selectedPreview === 'scoring'}
-                              title="View company fit"
-                              onOpen={(e) => {
-                                e.stopPropagation();
-                                setSelectedLeadId(lead.id);
-                                setSelectedPreview('scoring');
-                                cancelEditingLead();
-                              }}
-                            />
-                          </div>
-
                           {/* Contact fit */}
                           <div className="min-w-0 flex items-center justify-center">
-                            <ContactFitRingButton
+                            <TableFitGaugeButton
                               score={lead.contact_fit_score}
-                              isRowSelected={isSelected}
-                              isGaugeHighlighted={isSelected && selectedPreview === 'scoring'}
                               title="View contact fit"
                               onOpen={(e) => {
                                 e.stopPropagation();
@@ -2672,30 +2635,23 @@ export default function LeadsPage() {
                                 <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
                                   Import and enrichment emails (read-only)
                                 </p>
-                                <div className="mt-2 space-y-3 text-xs">
-                                  {(['import', 'enriched_work', 'enriched_personal'] as const).map((cat) => {
-                                    const list = (selectedLead.contact_emails ?? []).filter((r) => r.category === cat);
-                                    if (list.length === 0) return null;
-                                    return (
-                                      <div key={cat}>
-                                        <p className="font-medium text-gray-600">
-                                          {CONTACT_EMAIL_CATEGORY_LABEL[cat]}
-                                        </p>
-                                        <ul className="mt-1 list-inside list-disc text-gray-700">
-                                          {list.map((row) => (
-                                            <li key={row.id} className="break-all">
-                                              {row.email}
-                                            </li>
-                                          ))}
-                                        </ul>
-                                      </div>
+                                <div className="mt-2 space-y-2 text-xs text-gray-700">
+                                  {(() => {
+                                    const dirRows = buildContactEmailDisplayRows(
+                                      selectedLead.email,
+                                      selectedLead.contact_emails,
+                                      'enrichmentOnly',
                                     );
-                                  })}
-                                  {(selectedLead.contact_emails ?? []).filter((r) =>
-                                    ['import', 'enriched_work', 'enriched_personal'].includes(r.category),
-                                  ).length === 0 ? (
-                                    <p className="text-gray-500">None on file yet.</p>
-                                  ) : null}
+                                    if (dirRows.length === 0) {
+                                      return <p className="text-gray-500">None on file yet.</p>;
+                                    }
+                                    return dirRows.map((r, i) => (
+                                      <p key={`${r.label}-${r.email}-${i}`} className="break-all leading-snug">
+                                        <span className="font-medium text-gray-600">{r.label}: </span>
+                                        {r.email}
+                                      </p>
+                                    ));
+                                  })()}
                                 </div>
                               </div>
 
@@ -2932,22 +2888,15 @@ export default function LeadsPage() {
                                           Location
                                         </p>
                                         {(() => {
-                                          const loc = (selectedLead.location || '').trim();
-                                          const city = (selectedLead.city || '').trim();
-                                          const country = (selectedLead.country || '').trim();
-                                          const cityCountry = [city, country].filter(Boolean).join(', ');
-                                          if (!loc && !cityCountry) {
-                                            return (
-                                              <p className="mt-2 break-words text-sm leading-snug text-[#0d3547]">—</p>
-                                            );
-                                          }
+                                          const line = formatContactLocationDisplay(
+                                            selectedLead.location,
+                                            selectedLead.city,
+                                            selectedLead.country,
+                                          );
                                           return (
-                                            <div className="mt-2 space-y-1 break-words text-sm leading-snug text-[#0d3547]">
-                                              {loc ? <p>{loc}</p> : null}
-                                              {cityCountry ? (
-                                                <p className={loc ? 'text-xs text-[#7d909a]' : ''}>{cityCountry}</p>
-                                              ) : null}
-                                            </div>
+                                            <p className="mt-2 break-words text-sm leading-snug text-[#0d3547]">
+                                              {line ?? '—'}
+                                            </p>
                                           );
                                         })()}
                                       </div>
@@ -2955,35 +2904,28 @@ export default function LeadsPage() {
                                         <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
                                           Emails
                                         </p>
-                                        <div className="mt-2 space-y-4">
-                                          <div className="min-w-0">
-                                            <p className="text-xs font-medium leading-snug text-[#7d909a]">
-                                              Primary (Leads / sync)
-                                            </p>
-                                            <p className="mt-1 break-all text-sm leading-snug text-[#0d3547]">
-                                              {selectedLead.email || '—'}
-                                            </p>
-                                          </div>
-                                          {(['import', 'user', 'enriched_work', 'enriched_personal'] as const).map(
-                                            (cat) => {
-                                              const list = (selectedLead.contact_emails ?? []).filter(
-                                                (r) => r.category === cat,
-                                              );
-                                              if (list.length === 0) return null;
+                                        <div className="mt-2 space-y-2">
+                                          {(() => {
+                                            const emailRows = buildContactEmailDisplayRows(
+                                              selectedLead.email,
+                                              selectedLead.contact_emails,
+                                              'full',
+                                            );
+                                            if (emailRows.length === 0) {
                                               return (
-                                                <div key={cat} className="min-w-0">
-                                                  <p className="text-xs font-medium leading-snug text-[#7d909a]">
-                                                    {CONTACT_EMAIL_CATEGORY_LABEL[cat]}
-                                                  </p>
-                                                  <ul className="mt-1 list-inside list-disc space-y-0.5 break-all text-sm leading-snug text-[#0d3547]">
-                                                    {list.map((row) => (
-                                                      <li key={row.id}>{row.email}</li>
-                                                    ))}
-                                                  </ul>
-                                                </div>
+                                                <p className="break-words text-sm leading-snug text-[#0d3547]">—</p>
                                               );
-                                            },
-                                          )}
+                                            }
+                                            return emailRows.map((r, i) => (
+                                              <p
+                                                key={`${r.label}-${r.email}-${i}`}
+                                                className="break-all text-sm leading-snug text-[#0d3547]"
+                                              >
+                                                <span className="font-medium text-[#7d909a]">{r.label}: </span>
+                                                {r.email}
+                                              </p>
+                                            ));
+                                          })()}
                                         </div>
                                       </div>
                                       <div className="min-w-0">

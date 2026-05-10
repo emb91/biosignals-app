@@ -754,8 +754,6 @@ export default function AccountsPage() {
           <div className="flex items-center justify-center">
             <TableFitGaugeButton
               score={account.company_fit_score}
-              isRowSelected={isSelected}
-              isGaugeHighlighted={panelMode === 'fit'}
               title="View company fit"
               onOpen={(e) => {
                 e.stopPropagation();

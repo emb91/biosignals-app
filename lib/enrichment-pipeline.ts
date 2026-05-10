@@ -1139,7 +1139,7 @@ export async function runContactResolutionPipelineForContact(
       normalizeDomain(apifyCompanyFirmographics.domain as string | null) ||
       resolved.resolvedCompanyDomainForEmailCheck;
 
-    // If Apollo still carries a different reachable email, file it under enriched_work / enriched_personal
+    // Apollo mailbox is added via contact_emails only (work / personal). We do not replace contacts.email.
     const apolloMailbox = trimContactEmail(getFirstString(apolloPerson, ['email']));
     if (apolloMailbox) {
       const apolloEmailStatusValue = getFirstString(apolloPerson, ['email_status']);

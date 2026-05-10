@@ -132,6 +132,54 @@ const getExactCompanyFitPillLabels = (
   return [];
 };
 
+function renderFitCriterionPills(
+  key: CompanyFitComponentKey,
+  component: CompanyFitBreakdownComponent,
+) {
+  const exactPillLabels = getExactCompanyFitPillLabels(key, component.detail);
+  return (
+    <div className="mt-1.5 space-y-1">
+      {component.matchedValues && component.matchedValues.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {component.matchedValues.map((v) => (
+            <span
+              key={v}
+              className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal"
+            >
+              {v}
+            </span>
+          ))}
+        </div>
+      )}
+      {!(component.matchedValues && component.matchedValues.length > 0) &&
+        exactPillLabels.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {exactPillLabels.map((label) => (
+              <span
+                key={label}
+                className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal"
+              >
+                {label}
+              </span>
+            ))}
+          </div>
+        )}
+      {component.unmatchedValues && component.unmatchedValues.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {component.unmatchedValues.map((v) => (
+            <span
+              key={v}
+              className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500"
+            >
+              {v}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function normalizeBreakdown(row: CompanyFitIcpScoreRow): CompanyFitBreakdown | null {
   const raw = row.breakdown;
   if (!raw || typeof raw !== 'object' || !('components' in raw)) return null;
@@ -225,34 +273,41 @@ export function CompanyIcpFitDetailPanel({
   const headerFit = details?.company_fit_score ?? tableCompanyFitScore;
   const displayedFitSummary = fitSummary ? toSingleSentence(fitSummary) : null;
 
-  const heroCriterionRows = (): { ok: FitCriterionOk; text: string; val: string }[] => {
-    if (loading) return [];
+  type HeroCritRow = { ok: FitCriterionOk; text: string; val: string; fitKey?: CompanyFitComponentKey };
+
+  const heroCritState: {
+    rows: HeroCritRow[];
+    icpId: string | null;
+    components: CompanyFitBreakdown['components'] | null;
+  } = (() => {
+    if (loading) return { rows: [], icpId: null, components: null };
     if (details?.icp_scores?.length) {
       const matchedId = details.matched_icp_id;
       const bestScore =
         details.icp_scores.find((s) => s.icp_id === matchedId) ?? details.icp_scores[0];
       const breakdown = normalizeBreakdown(bestScore);
       if (breakdown) {
-        const out: { ok: FitCriterionOk; text: string; val: string }[] = [];
+        const rows: HeroCritRow[] = [];
         for (const key of COMPANY_FIT_COMPONENT_ORDER) {
           const c = breakdown.components[key];
           if (!c?.active) continue;
-          out.push({
+          rows.push({
             ok: score01ToFitCriterionOk(c.score01),
             text: c.label,
             val: formatCompanyFitPercent(c.score01) ?? '—',
+            fitKey: key,
           });
-          if (out.length >= 6) break;
+          if (rows.length >= 6) break;
         }
-        if (out.length) return out;
+        if (rows.length) return { rows, icpId: bestScore.icp_id, components: breakdown.components };
       }
     }
-    if (headerFit != null) return COMPANY_FIT_PLACEHOLDER_CRITERIA;
-    return [];
-  };
+    if (headerFit != null)
+      return { rows: [...COMPANY_FIT_PLACEHOLDER_CRITERIA], icpId: null, components: null };
+    return { rows: [], icpId: null, components: null };
+  })();
 
   const heroN = percentDisplayNumberFit(headerFit);
-  const heroCrit = heroCriterionRows();
 
   const heroFitCard = (
     <div className="contacts-fit-card">
@@ -279,25 +334,66 @@ export function CompanyIcpFitDetailPanel({
       <div className="contacts-fit-criteria">
         {loading ? (
           <p className="text-xs text-[#7d909a]">Loading…</p>
-        ) : heroCrit.length ? (
-          heroCrit.map((row, i) => (
-            <div key={`${row.text}-${i}`} className="contacts-fit-criterion">
-              <span
-                className={[
-                  'contacts-fit-criterion-icon',
-                  row.ok === 'pass' ? 'contacts-fit-criterion-pass' : '',
-                  row.ok === 'warn' ? 'contacts-fit-criterion-warn' : '',
-                  row.ok === 'miss' ? 'contacts-fit-criterion-miss' : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ')}
-              >
-                {row.ok === 'pass' ? '✓' : row.ok === 'warn' ? '~' : '✗'}
-              </span>
-              <span className="contacts-fit-criterion-text">{row.text}</span>
-              <span className="contacts-fit-criterion-val">{row.val}</span>
-            </div>
-          ))
+        ) : heroCritState.rows.length ? (
+          <>
+            {heroCritState.rows.map((row, i) => {
+            const component =
+              row.fitKey && heroCritState.components ? heroCritState.components[row.fitKey] : null;
+            const barKey =
+              row.fitKey && heroCritState.icpId ? `icp:${heroCritState.icpId}:${row.fitKey}` : null;
+            const isOpen = barKey ? expandedBars.has(barKey) : false;
+            const iconClass = [
+              'contacts-fit-criterion-icon',
+              row.ok === 'pass' ? 'contacts-fit-criterion-pass' : '',
+              row.ok === 'warn' ? 'contacts-fit-criterion-warn' : '',
+              row.ok === 'miss' ? 'contacts-fit-criterion-miss' : '',
+            ]
+              .filter(Boolean)
+              .join(' ');
+
+            if (!row.fitKey || !component || !barKey) {
+              return (
+                <div key={`${row.text}-${i}`} className="contacts-fit-criterion">
+                  <span className={iconClass}>
+                    {row.ok === 'pass' ? '✓' : row.ok === 'warn' ? '~' : '✗'}
+                  </span>
+                  <span className="contacts-fit-criterion-text">{row.text}</span>
+                  <span className="contacts-fit-criterion-val">{row.val}</span>
+                </div>
+              );
+            }
+
+            return (
+              <div key={`${row.text}-${i}`} className="space-y-0">
+                <button
+                  type="button"
+                  aria-expanded={isOpen}
+                  onClick={() => toggleBar(barKey)}
+                  className="contacts-fit-criterion w-full cursor-pointer rounded-md border-0 bg-transparent p-0 text-left transition-colors hover:bg-[rgba(13,53,71,0.06)]"
+                >
+                  <span className={iconClass}>
+                    {row.ok === 'pass' ? '✓' : row.ok === 'warn' ? '~' : '✗'}
+                  </span>
+                  <span className="contacts-fit-criterion-text">{row.text}</span>
+                  <span className="flex items-center gap-0.5 justify-self-end">
+                    <span className="contacts-fit-criterion-val">{row.val}</span>
+                    <ChevronDown
+                      className={`h-3 w-3 shrink-0 text-[#7d909a] transition-transform duration-200 ${isOpen ? 'rotate-0' : '-rotate-90'}`}
+                      aria-hidden
+                    />
+                  </span>
+                </button>
+                {isOpen ? (
+                  <div className="pl-[22px]">{renderFitCriterionPills(row.fitKey, component)}</div>
+                ) : null}
+              </div>
+            );
+          })}
+            {heroCritState.icpId &&
+              heroCritState.rows.some((r) => typeof r.fitKey === 'string' && !!r.fitKey) && (
+                <p className="mt-1.5 text-[11px] leading-snug text-[#7d909a]">Click a row to unfold.</p>
+              )}
+          </>
         ) : (
           <p className="text-xs text-[#7d909a]">No ICP fit yet.</p>
         )}
@@ -305,108 +401,10 @@ export function CompanyIcpFitDetailPanel({
     </div>
   );
 
-  const renderScoreInner = (
-    score: CompanyFitIcpScoreRow,
-    matchedId: string | null,
-    opts?: { expandOnly?: boolean },
-  ) => {
+  const renderScoreInner = (score: CompanyFitIcpScoreRow, matchedId: string | null) => {
     const isBest = score.icp_id === matchedId;
     const breakdown = normalizeBreakdown(score);
     const components = breakdown?.components;
-
-    if (opts?.expandOnly) {
-      if (!isBest || !components) return null;
-      return (
-        <div
-          key={score.icp_id}
-          className="rounded-[14px] border border-[rgba(13,53,71,0.07)] bg-[rgba(255,255,255,0.55)] px-3 py-3"
-        >
-          <p className="mb-2 text-[11px] font-medium text-[#7d909a]">Criterion detail</p>
-          <div className="space-y-2.5">
-            <p className="text-[11px] text-gray-400">Click a row to unfold detail</p>
-            {COMPANY_FIT_COMPONENT_ORDER.map((key) => {
-              const component = components[key];
-              if (!component?.active) return null;
-              const componentPercent = formatCompanyFitPercent(component.score01);
-              const exactPillLabels = getExactCompanyFitPillLabels(key, component.detail);
-              const barKey = `icp:${score.icp_id}:${key}`;
-              const isOpen = expandedBars.has(barKey);
-              return (
-                <div key={key}>
-                  <button
-                    type="button"
-                    onClick={() => toggleBar(barKey)}
-                    className="w-full rounded-md px-1 -mx-1 py-0.5 text-left transition-colors hover:bg-gray-100/80"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-xs font-medium text-gray-700">{component.label}</p>
-                      <div className="flex shrink-0 items-center gap-1">
-                        {componentPercent && (
-                          <span className="text-[11px] text-slate-500">{componentPercent}</span>
-                        )}
-                        <ChevronDown
-                          className={`h-3 w-3 shrink-0 text-gray-400 transition-transform duration-200 ${isOpen ? 'rotate-0' : '-rotate-90'}`}
-                          aria-hidden
-                        />
-                      </div>
-                    </div>
-                    <div className="mt-1 h-1 overflow-hidden rounded-full bg-slate-200">
-                      <div
-                        className={`h-full rounded-full ${component.available ? 'bg-arcova-teal' : 'bg-slate-300'}`}
-                        style={{
-                          width: `${Math.max(0, Math.min(100, Math.round(component.score01 * 100)))}%`,
-                        }}
-                      />
-                    </div>
-                  </button>
-                  {isOpen && (
-                    <div className="mt-1.5 space-y-1">
-                      {component.matchedValues && component.matchedValues.length > 0 && (
-                        <div className="flex flex-wrap gap-1">
-                          {component.matchedValues.map((v) => (
-                            <span
-                              key={v}
-                              className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal"
-                            >
-                              {v}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                      {!(component.matchedValues && component.matchedValues.length > 0) &&
-                        exactPillLabels.length > 0 && (
-                          <div className="flex flex-wrap gap-1">
-                            {exactPillLabels.map((label) => (
-                              <span
-                                key={label}
-                                className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal"
-                              >
-                                {label}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      {component.unmatchedValues && component.unmatchedValues.length > 0 && (
-                        <div className="flex flex-wrap gap-1">
-                          {component.unmatchedValues.map((v) => (
-                            <span
-                              key={v}
-                              className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500"
-                            >
-                              {v}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      );
-    }
 
     return (
       <div
@@ -439,7 +437,6 @@ export function CompanyIcpFitDetailPanel({
               const component = components[key];
               if (!component?.active) return null;
               const componentPercent = formatCompanyFitPercent(component.score01);
-              const exactPillLabels = getExactCompanyFitPillLabels(key, component.detail);
               const barKey = `icp:${score.icp_id}:${key}`;
               const isOpen = expandedBars.has(barKey);
               return (
@@ -450,10 +447,10 @@ export function CompanyIcpFitDetailPanel({
                     className="w-full rounded-md px-1 -mx-1 py-0.5 text-left transition-colors hover:bg-gray-100/80"
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <p className="text-xs font-medium text-gray-700">{component.label}</p>
+                      <p className="text-[11px] font-medium leading-snug text-gray-700">{component.label}</p>
                       <div className="flex items-center gap-1 shrink-0">
                         {componentPercent && (
-                          <span className="text-[11px] text-slate-500">{componentPercent}</span>
+                          <span className="text-[11px] tabular-nums text-slate-500">{componentPercent}</span>
                         )}
                         <ChevronDown
                           className={`h-3 w-3 shrink-0 text-gray-400 transition-transform duration-200 ${isOpen ? 'rotate-0' : '-rotate-90'}`}
@@ -470,47 +467,7 @@ export function CompanyIcpFitDetailPanel({
                       />
                     </div>
                   </button>
-                  {isOpen && (
-                    <div className="mt-1.5 space-y-1">
-                      {component.matchedValues && component.matchedValues.length > 0 && (
-                        <div className="flex flex-wrap gap-1">
-                          {component.matchedValues.map((v) => (
-                            <span
-                              key={v}
-                              className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal"
-                            >
-                              {v}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                      {!(component.matchedValues && component.matchedValues.length > 0) &&
-                        exactPillLabels.length > 0 && (
-                          <div className="flex flex-wrap gap-1">
-                            {exactPillLabels.map((label) => (
-                              <span
-                                key={label}
-                                className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal"
-                              >
-                                {label}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      {component.unmatchedValues && component.unmatchedValues.length > 0 && (
-                        <div className="flex flex-wrap gap-1">
-                          {component.unmatchedValues.map((v) => (
-                            <span
-                              key={v}
-                              className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500"
-                            >
-                              {v}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  {isOpen ? renderFitCriterionPills(key, component) : null}
                 </div>
               );
             })}
@@ -538,39 +495,38 @@ export function CompanyIcpFitDetailPanel({
       {message && <p className="text-xs text-amber-700">{message}</p>}
       {error && <p className="text-xs text-red-600">{error}</p>}
 
-      {!loading && details?.icp_scores?.length ? (
-        (() => {
-          const matchedId = details.matched_icp_id;
-          const bestScore =
-            details.icp_scores.find((s) => s.icp_id === matchedId) ?? details.icp_scores[0];
-          const otherScores = details.icp_scores.filter((s) => s.icp_id !== bestScore?.icp_id);
+      {!loading && details?.icp_scores?.length
+        ? (() => {
+            const matchedId = details.matched_icp_id;
+            const bestScore =
+              details.icp_scores.find((s) => s.icp_id === matchedId) ?? details.icp_scores[0];
+            const otherScores = details.icp_scores.filter((s) => s.icp_id !== bestScore?.icp_id);
 
-          return (
-            <div className="space-y-3">
-              {bestScore && renderScoreInner(bestScore, matchedId, { expandOnly: true })}
-              {otherScores.length > 0 && (
-                <div className="border-t border-gray-100 pt-3">
-                  <button
-                    type="button"
-                    onClick={() => setOtherIcpsOpen((o) => !o)}
-                    className="flex items-center gap-1.5 text-xs text-gray-400 transition-colors hover:text-gray-600"
-                  >
-                    <ChevronDown
-                      className={`w-3 h-3 transition-transform duration-200 ${otherIcpsOpen ? '' : '-rotate-90'}`}
-                    />
-                    {otherIcpsOpen
-                      ? 'Hide'
-                      : `${otherScores.length} other ICP${otherScores.length > 1 ? 's' : ''}`}
-                  </button>
-                  {otherIcpsOpen && (
-                    <div className="mt-3 space-y-3">{otherScores.map((s) => renderScoreInner(s, matchedId))}</div>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })()
-      ) : null}
+            if (otherScores.length === 0) return null;
+
+            return (
+              <div className="border-t border-gray-100 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setOtherIcpsOpen((o) => !o)}
+                  className="flex items-center gap-1.5 text-xs text-gray-400 transition-colors hover:text-gray-600"
+                >
+                  <ChevronDown
+                    className={`w-3 h-3 transition-transform duration-200 ${otherIcpsOpen ? '' : '-rotate-90'}`}
+                  />
+                  {otherIcpsOpen
+                    ? 'Hide'
+                    : `${otherScores.length} other ICP${otherScores.length > 1 ? 's' : ''}`}
+                </button>
+                {otherIcpsOpen && (
+                  <div className="mt-3 space-y-3">
+                    {otherScores.map((s) => renderScoreInner(s, matchedId))}
+                  </div>
+                )}
+              </div>
+            );
+          })()
+        : null}
 
       {!loading && !details?.icp_scores?.length && tableCompanyFitScore != null && tableMatchedIcpLabel ? (
         <div className="flex flex-wrap items-center gap-2">
