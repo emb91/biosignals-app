@@ -33,8 +33,11 @@ import { TableFitGaugeButton } from '@/components/TableFitGaugeButton';
 import { formatProvenanceImportedAt } from '@/lib/data-provenance';
 import {
   getAccountRowAction,
+  hasContactBuyingSignal,
   LEAD_ACTION_PILL_CLASS,
   LEAD_ACTION_SORT_ORDER,
+  SOURCE_COMPANY_MIN,
+  SOURCE_CONTACT_MAX,
 } from '@/lib/lead-action';
 import { ROUTES, withQuery } from '@/lib/routes';
 
@@ -80,6 +83,22 @@ type AccountRow = {
   data_provenance_imported_at: string | null;
 };
 
+function score01ForActionCopy(value: number | null | undefined): number | null {
+  if (value == null || !Number.isFinite(value)) return null;
+  if (value > 1 && value <= 100) return value / 100;
+  if (value >= 0 && value <= 1) return value;
+  return null;
+}
+
+/** Account-scope analogue of lead "monitor, awaiting signal" (company + best contact fit, no aggregate buying signal). */
+function isAccountMonitorAwaitingSignal(account: AccountRow): boolean {
+  const company = score01ForActionCopy(account.company_fit_score);
+  const contact = score01ForActionCopy(account.best_contact_fit);
+  if (company === null || company < SOURCE_COMPANY_MIN) return false;
+  if (contact === null || contact < SOURCE_CONTACT_MAX) return false;
+  return !hasContactBuyingSignal(account.max_contact_intent_score);
+}
+
 type ContactAtCompany = {
   id: string;
   full_name: string | null;
@@ -92,7 +111,7 @@ type ContactAtCompany = {
   seniority_level: string | null;
 };
 
-type PanelMode = 'details' | 'fit' | 'contacts';
+type PanelMode = 'details' | 'fit' | 'action' | 'contacts';
 
 type ContactFitComponentKey = 'business_area' | 'seniority';
 
@@ -659,6 +678,12 @@ export default function AccountsPage() {
     setPanelMode('contacts');
   };
 
+  const openActionTab = (id: string) => {
+    pendingOpenCriteriaRef.current = false;
+    setSelectedAccountId(id);
+    setPanelMode('action');
+  };
+
   const openContactAcquisition = (account: AccountRow) => {
     const params = new URLSearchParams({
       mode: 'contacts_at_company',
@@ -730,7 +755,7 @@ export default function AccountsPage() {
             <TableFitGaugeButton
               score={account.company_fit_score}
               isRowSelected={isSelected}
-              isGaugeHighlighted={isSelected && panelMode === 'fit'}
+              isGaugeHighlighted={panelMode === 'fit'}
               title="View company fit"
               onOpen={(e) => {
                 e.stopPropagation();
@@ -782,22 +807,14 @@ export default function AccountsPage() {
       case 'action': {
         const action = getAccountRowAction(account);
         const config = LEAD_ACTION_PILL_CLASS[action];
-        /** Solid pill when the open panel matches the journey from this action (avoid generic teal ring or mute). */
-        const actionPillEmphasized =
-          isSelected &&
-          ((action === 'source_contact' && panelMode === 'contacts') ||
-            (action === 'deprioritize' && panelMode === 'fit') ||
-            ((action === 'monitor' || action === 'reach_out') && panelMode === 'details'));
+        const actionPillEmphasized = isSelected && panelMode === 'action';
         return (
           <div className="flex items-center justify-center">
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                openDetails(account.id);
-                if (action === 'source_contact') setPanelMode('contacts');
-                else if (action === 'deprioritize') setPanelMode('fit');
-                else setPanelMode('details');
+                openActionTab(account.id);
               }}
               className={cn(
                 'inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium cursor-pointer select-none',
@@ -1003,10 +1020,10 @@ export default function AccountsPage() {
                               if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetails(account.id); }
                             }}
                             className={cn(
-                              'grid w-full min-w-0 px-4 py-3 gap-x-5 items-center cursor-pointer transition-all duration-150 border-l-2',
+                              "relative grid w-full min-w-0 px-4 py-3 gap-x-5 items-center cursor-pointer transition-all duration-150 before:pointer-events-none before:absolute before:left-0 before:top-2 before:bottom-2 before:w-[3px] before:rounded-sm before:content-[''] before:transition-colors",
                               isSelected
-                                ? 'border-arcova-teal'
-                                : 'border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30',
+                                ? 'bg-arcova-teal/10 before:bg-arcova-teal'
+                                : 'before:bg-transparent hover:bg-arcova-teal/5 hover:before:bg-arcova-teal/35',
                             )}
                             style={{ gridTemplateColumns: accountQueryGridCols(tableColumns) }}
                           >
@@ -1098,7 +1115,7 @@ export default function AccountsPage() {
                     </div>
 
                     <div className="flex border-b border-gray-200 px-5">
-                      {(['details', 'fit', 'contacts'] as PanelMode[]).map((mode) => (
+                      {(['details', 'fit', 'action', 'contacts'] as PanelMode[]).map((mode) => (
                         <button
                           key={mode}
                           type="button"
@@ -1114,7 +1131,9 @@ export default function AccountsPage() {
                             ? `Contacts (${selectedAccount.contact_count})`
                             : mode === 'fit'
                               ? 'Fit'
-                              : 'Details'}
+                              : mode === 'action'
+                                ? 'Action'
+                                : 'Details'}
                         </button>
                       ))}
                     </div>
@@ -1134,6 +1153,127 @@ export default function AccountsPage() {
                           tableMatchedIcpLabel={selectedAccount.matched_icp_label}
                         />
                       )}
+
+                      {panelMode === 'action' && (() => {
+                        const action = getAccountRowAction(selectedAccount);
+                        const companyLabel =
+                          selectedAccount.company_name || selectedAccount.domain || 'This company';
+                        return (
+                          <div className="flex flex-col gap-3.5">
+                            {action === 'monitor' &&
+                              (isAccountMonitorAwaitingSignal(selectedAccount) ? (
+                                <div className="space-y-3">
+                                  <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
+                                    <strong>{companyLabel}</strong> is a strong match on both the company and the best
+                                    contact fit we have. Keep the account on your radar and wait for a buying signal
+                                    before reaching out.
+                                  </p>
+                                </div>
+                              ) : (
+                                <div className="space-y-3">
+                                  <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
+                                    <strong>{companyLabel}</strong> sits in the watch band: company fit is promising but
+                                    contact coverage or fit is not yet where you want it. Keep the account visible and
+                                    revisit when enrichment or the company moves.
+                                  </p>
+                                  <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
+                                    <button
+                                      type="button"
+                                      onClick={() => router.push('/customer-signals')}
+                                      className="inline-flex items-center gap-1.5 text-sm font-semibold text-arcova-teal hover:text-arcova-teal/85 transition-colors"
+                                    >
+                                      View Signals
+                                      <ChevronRight className="w-4 h-4" aria-hidden />
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+
+                            {action === 'reach_out' && (
+                              <div className="space-y-3">
+                                <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
+                                  At least one contact shows strong fit and a tracked buying signal for{' '}
+                                  <strong>{companyLabel}</strong>. It is a good moment for personalised outreach.
+                                </p>
+                                <p className="text-[13.5px] leading-[1.55] text-[#4a6470]">
+                                  Lead with relevance to their role and therapeutic focus, and tie your message to
+                                  signals or milestones when you can.
+                                </p>
+                              </div>
+                            )}
+
+                            {action === 'source_contact' && (
+                              <div className="space-y-3">
+                                <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
+                                  <strong>{companyLabel}</strong> is a strong ICP fit, but the contacts on file are not
+                                  the right personas to approach yet. Source a better-matched contact before you reach
+                                  out.
+                                </p>
+                                <p className="text-[13.5px] leading-[1.55] text-[#4a6470]">
+                                  Try searching LinkedIn for the right title at this company, or use enrichment to
+                                  surface additional contacts.
+                                </p>
+                                {(selectedAccount.linkedin_url || selectedAccount.company_name) && (
+                                  <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
+                                    <a
+                                      href={
+                                        selectedAccount.linkedin_url
+                                          ? `${selectedAccount.linkedin_url.replace(/\/$/, '')}/people/`
+                                          : `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(selectedAccount.company_name ?? '')}`
+                                      }
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1.5 text-sm font-semibold text-arcova-teal hover:text-arcova-teal/85 transition-colors"
+                                    >
+                                      Search contacts on LinkedIn
+                                      <ExternalLink className="w-3.5 h-3.5" aria-hidden />
+                                    </a>
+                                  </div>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => openContactAcquisition(selectedAccount)}
+                                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-arcova-teal/30 bg-white px-4 py-2.5 text-sm font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/5"
+                                >
+                                  <Users className="h-4 w-4" />
+                                  Find buyer-persona contacts
+                                </button>
+                              </div>
+                            )}
+
+                            {action === 'deprioritize' && (
+                              <div className="space-y-3">
+                                <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
+                                  Company or contact fit for <strong>{companyLabel}</strong> sits below your
+                                  thresholds. Leave this one aside for now.
+                                </p>
+                                <p className="text-[13.5px] leading-[1.55] text-[#4a6470]">
+                                  This does not mean they are permanently out. If their situation changes or you revisit
+                                  your ICP criteria, they may score higher in a future run.
+                                </p>
+                              </div>
+                            )}
+
+                            <div className="rounded-xl border border-gray-100 bg-gray-50/70 px-3 py-3">
+                              <p className="text-xs font-semibold text-gray-700 mb-2">Fit snapshot</p>
+                              <div className="grid grid-cols-2 gap-3 text-sm">
+                                <div>
+                                  <p className="text-gray-400 text-xs">Company fit</p>
+                                  <p className="text-gray-900 font-semibold mt-0.5 tabular-nums">
+                                    {formatPct(selectedAccount.company_fit_score) ?? '—'}
+                                  </p>
+                                </div>
+                                <div>
+                                  <p className="text-gray-400 text-xs">Best contact fit</p>
+                                  <p className="text-gray-900 font-semibold mt-0.5 tabular-nums">
+                                    {formatPct(selectedAccount.best_contact_fit) ?? '—'}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       {panelMode === 'details' && (() => {
                         const aboutText = selectedAccount.bio_summary || selectedAccount.description || null;

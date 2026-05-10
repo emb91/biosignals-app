@@ -3,7 +3,7 @@
 import { useAuth } from '@/context/AuthContext';
 import { useEnrichmentGuard } from '@/context/EnrichmentGuardContext';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, type KeyboardEvent } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel, type AgentLeadsFilter } from '@/components/AgentPanel';
 import { ArcovaLoader } from '@/components/ArcovaLoader';
@@ -21,9 +21,10 @@ import {
 } from '@/lib/lead-action';
 import { formatProvenanceImportedAt } from '@/lib/data-provenance';
 import { ROUTES, withQuery } from '@/lib/routes';
-import type { ContactEmailCategory, ContactEmailRow } from '@/lib/contact-emails';
+import { looksLikeEmail, type ContactEmailCategory, type ContactEmailRow } from '@/lib/contact-emails';
 import { cn } from '@/lib/utils';
 import { TableFitGaugeButton } from '@/components/TableFitGaugeButton';
+import { ContactFitRingButton } from '@/components/ContactFitRingButton';
 import '@/app/leads/contacts-layout.css';
 import {
   Activity,
@@ -337,6 +338,12 @@ type EnrichmentVisualState = {
 const PAGE_SIZE = 50;
 const LEADS_TABLE_GRID =
   'grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,5.25rem)_minmax(0,5.25rem)_minmax(9.5rem,1.25fr)] gap-x-5';
+
+function blurInputOnEnter(e: KeyboardEvent<HTMLInputElement>) {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  e.currentTarget.blur();
+}
 const MAX_VISIBLE_WORK_HISTORY = 3;
 const COMPANY_FIT_COMPONENT_ORDER: CompanyFitComponentKey[] = [
   'company_type',
@@ -755,6 +762,7 @@ export default function LeadsPage() {
   const [loadingLeads, setLoadingLeads] = useState(true);
   const [editingLeadId, setEditingLeadId] = useState<string | null>(null);
   const [editingFields, setEditingFields] = useState<EditableLeadFields | null>(null);
+  const [leadEditError, setLeadEditError] = useState<string | null>(null);
   const [savingLeadId, setSavingLeadId] = useState<string | null>(null);
   const [deletingLeadId, setDeletingLeadId] = useState<string | null>(null);
   const [refreshingLeadId, setRefreshingLeadId] = useState<string | null>(null);
@@ -1016,6 +1024,7 @@ export default function LeadsPage() {
 
   const startEditingLead = (lead: Lead) => {
     setEditingLeadId(lead.id);
+    setLeadEditError(null);
     setEditingFields({
       first_name: lead.first_name || '',
       last_name: lead.last_name || '',
@@ -1026,7 +1035,16 @@ export default function LeadsPage() {
   const cancelEditingLead = () => {
     setEditingLeadId(null);
     setEditingFields(null);
+    setLeadEditError(null);
   };
+
+  useEffect(() => {
+    if (selectedPreview !== 'contact' && editingLeadId) {
+      setEditingLeadId(null);
+      setEditingFields(null);
+      setLeadEditError(null);
+    }
+  }, [selectedPreview, editingLeadId]);
 
   const handleLeadsFilter = (_filter: AgentLeadsFilter, leads: QueryLead[]) => {
     setAgentFilterIds(new Set(leads.map((l) => l.id)));
@@ -1050,12 +1068,20 @@ export default function LeadsPage() {
   };
 
   const updateEditingField = (field: keyof EditableLeadFields, value: string) => {
+    setLeadEditError(null);
     setEditingFields((prev) => (prev ? { ...prev, [field]: value } : prev));
   };
 
   const saveLead = async (leadId: string) => {
     if (!editingFields) return;
 
+    const primaryTrim = editingFields.email.trim();
+    if (primaryTrim && !looksLikeEmail(primaryTrim)) {
+      setLeadEditError('Enter a valid email address (for example name@company.com).');
+      return;
+    }
+
+    setLeadEditError(null);
     setSavingLeadId(leadId);
     try {
       const response = await fetch(`/api/leads/${leadId}`, {
@@ -1069,7 +1095,10 @@ export default function LeadsPage() {
 
       const result = await response.json();
       if (!response.ok) {
-        throw new Error(result.error || 'Failed to update lead.');
+        setLeadEditError(
+          typeof result.error === 'string' && result.error ? result.error : 'Failed to update lead.',
+        );
+        return;
       }
 
       setLeads((prev) =>
@@ -1092,6 +1121,7 @@ export default function LeadsPage() {
       cancelEditingLead();
     } catch (error) {
       console.error('Error updating lead:', error);
+      setLeadEditError(error instanceof Error ? error.message : 'Something went wrong.');
     } finally {
       setSavingLeadId(null);
     }
@@ -2192,10 +2222,10 @@ export default function LeadsPage() {
                               setSelectedPreview('contact');
                               cancelEditingLead();
                             }}
-                            className={`${LEADS_TABLE_GRID} px-4 py-3 items-center cursor-pointer transition-all duration-150 border-b border-gray-50 last:border-0 ${
+                            className={`${LEADS_TABLE_GRID} relative px-4 py-3 items-center cursor-pointer transition-all duration-150 border-b border-gray-50 last:border-0 before:pointer-events-none before:absolute before:left-0 before:top-2 before:bottom-2 before:w-[3px] before:rounded-sm before:content-[''] before:transition-colors ${
                               isSelected
-                                ? 'border-l-2 border-arcova-teal'
-                                : 'border-l-2 border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30'
+                                ? 'bg-arcova-teal/10 before:bg-arcova-teal'
+                                : 'before:bg-transparent hover:bg-arcova-teal/5 hover:before:bg-arcova-teal/35'
                             }`}
                           >
                             <div className="min-w-0">
@@ -2250,10 +2280,10 @@ export default function LeadsPage() {
                             setSelectedPreview('contact');
                             cancelEditingLead();
                           }}
-                          className={`${LEADS_TABLE_GRID} px-4 py-3 items-center cursor-pointer transition-all duration-150 opacity-100 ${
+                          className={`${LEADS_TABLE_GRID} relative px-4 py-3 items-center cursor-pointer transition-all duration-150 opacity-100 before:pointer-events-none before:absolute before:left-0 before:top-2 before:bottom-2 before:w-[3px] before:rounded-sm before:content-[''] before:transition-colors ${
                             isSelected
-                              ? 'border-l-2 border-arcova-teal'
-                              : 'border-l-2 border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30'
+                              ? 'bg-arcova-teal/10 before:bg-arcova-teal'
+                              : 'before:bg-transparent hover:bg-arcova-teal/5 hover:before:bg-arcova-teal/35'
                           }`}
                         >
                           {/* Full name */}
@@ -2338,7 +2368,7 @@ export default function LeadsPage() {
 
                           {/* Contact fit */}
                           <div className="min-w-0 flex items-center justify-center">
-                            <TableFitGaugeButton
+                            <ContactFitRingButton
                               score={lead.contact_fit_score}
                               isRowSelected={isSelected}
                               isGaugeHighlighted={isSelected && selectedPreview === 'scoring'}
@@ -2371,7 +2401,7 @@ export default function LeadsPage() {
                                     'transition-colors duration-150 ease-out hover:shadow-sm active:scale-[0.97]',
                                     isSelected && selectedPreview === 'action'
                                       ? config.rowSelectedClassName
-                                      : cn(config.className, config.interactiveClassName),
+                                      : cn(config.className, config.interactiveClassName, 'shadow-sm'),
                                   )}
                                 >
                                   {config.label}
@@ -2445,48 +2475,24 @@ export default function LeadsPage() {
                       )}
                     >
                       {/* Panel header */}
-                      <div
-                        className={cn(
-                          'relative z-[1] flex items-start border-b border-[rgba(13,53,71,0.08)]',
-                          selectedPreview === 'contact'
-                            ? 'gap-3 px-4 pb-4 pt-5'
-                            : 'gap-4 px-6 pb-5 pt-6',
-                        )}
-                      >
-                        {/* Name / label */}
+                      <div className="relative z-[1] flex items-start gap-3 border-b border-[rgba(13,53,71,0.08)] px-4 pb-3 pt-5">
                         <div className="min-w-0 flex-1">
-                          <p
-                            className={cn(
-                              selectedPreview === 'contact'
-                                ? 'text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]'
-                                : selectedPreview === 'action'
-                                  ? 'text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]'
-                                  : 'text-xs font-medium uppercase tracking-wide text-arcova-teal',
-                            )}
-                          >
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">
                             {selectedPreview === 'contact'
-                              ? 'Contact details'
-                              : selectedPreview === 'action'
-                                ? 'Recommended action'
-                                : 'Fit score'}
+                              ? 'Contact'
+                              : selectedPreview === 'scoring'
+                                ? 'Fit'
+                                : 'Action'}
                           </p>
-                          {selectedPreview === 'contact' && (
-                            <h2 className="font-manrope mt-1.5 break-words text-xl font-bold leading-tight tracking-[-0.024em] text-[rgb(13,53,71)] sm:text-2xl">
-                              {[selectedLead.first_name, selectedLead.last_name]
-                                .filter(Boolean)
-                                .join(' ') ||
-                                selectedLead.full_name ||
-                                'Selected contact'}
-                            </h2>
-                          )}
+                          <h2 className="font-manrope mt-1.5 break-words text-xl font-bold leading-tight tracking-[-0.024em] text-[rgb(13,53,71)] sm:text-2xl">
+                            {[selectedLead.first_name, selectedLead.last_name].filter(Boolean).join(' ') ||
+                              selectedLead.full_name ||
+                              'Selected contact'}
+                          </h2>
                           {selectedPreview === 'action' &&
                             (() => {
                               const action = getLeadAction(selectedLead);
                               const config = LEAD_ACTION_PILL_CLASS[action];
-                              const contactName =
-                                [selectedLead.first_name, selectedLead.last_name].filter(Boolean).join(' ') ||
-                                selectedLead.full_name ||
-                                'Selected contact';
                               const updatedIso =
                                 selectedContactFit?.contact_fit_scored_at ??
                                 selectedLead.updated_at ??
@@ -2494,63 +2500,35 @@ export default function LeadsPage() {
                                 null;
                               const rel = actionDrawerRelativeTime(updatedIso);
                               return (
-                                <>
-                                  <h2 className="mt-1.5 font-manrope text-[22px] font-semibold leading-[1.1] tracking-[-0.02em] text-[#0d3547]">
-                                    {contactName}
-                                  </h2>
-                                  <div className="mt-1 flex flex-wrap items-center gap-2.5">
-                                    <span
-                                      className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-medium ${config.className}`}
-                                    >
-                                      {config.label}
-                                    </span>
-                                    {rel ? (
-                                      <span className="text-[11px] text-[#7d909a]">Updated {rel}</span>
-                                    ) : null}
-                                  </div>
-                                </>
+                                <div className="mt-1.5 flex flex-wrap items-center gap-2.5">
+                                  <span
+                                    className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-medium ${config.className}`}
+                                  >
+                                    {config.label}
+                                  </span>
+                                  {rel ? (
+                                    <span className="text-[11px] text-[#7d909a]">Updated {rel}</span>
+                                  ) : null}
+                                </div>
                               );
                             })()}
-                          {selectedPreview === 'scoring' && (
-                            <div className="mt-1 space-y-2">
-                              <h2 className="text-lg font-semibold text-gray-900 leading-tight">Lead prioritisation</h2>
-                              <div className="flex flex-wrap gap-1.5">
-                                {(selectedLead.matched_icp_index != null || selectedLead.matched_icp_name) && (
-                                  <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2.5 py-0.5 text-xs font-medium text-arcova-teal">
-                                    {selectedLead.matched_icp_index != null
-                                      ? `Best fit ICP-${selectedLead.matched_icp_index}`
-                                      : `Best fit: ${selectedLead.matched_icp_name}`}
-                                  </span>
-                                )}
-                                {selectedContactFit?.contact_fit_score != null && (
-                                  <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
-                                    Contact fit {formatPercentValue(selectedContactFit.contact_fit_score)}
-                                  </span>
-                                )}
-                              </div>
+                        </div>
+                        <div className="flex items-start gap-2 flex-shrink-0">
+                          {selectedLead.profile_photo_url ? (
+                            <img
+                              src={selectedLead.profile_photo_url}
+                              alt=""
+                              className="h-[3.375rem] w-[3.375rem] shrink-0 rounded-xl object-cover shadow-sm ring-1 ring-black/5"
+                            />
+                          ) : (
+                            <div className="flex h-[3.375rem] w-[3.375rem] shrink-0 items-center justify-center rounded-xl bg-gray-200 text-lg font-medium text-gray-500 shadow-sm ring-1 ring-black/5">
+                              {(
+                                selectedLead.first_name?.[0] ||
+                                selectedLead.full_name?.[0] ||
+                                '?'
+                              ).toUpperCase()}
                             </div>
                           )}
-                        </div>
-
-                        {/* Photo / logo + close (right side) */}
-                        <div className="flex items-start gap-2 flex-shrink-0">
-                          {selectedPreview === 'contact' ? (
-                            selectedLead.profile_photo_url ? (
-                              <img
-                                src={selectedLead.profile_photo_url}
-                                alt=""
-                                className="h-[3.375rem] w-[3.375rem] shrink-0 rounded-xl object-cover shadow-sm ring-1 ring-black/5"
-                              />
-                            ) : (
-                              <div className="flex h-[3.375rem] w-[3.375rem] shrink-0 items-center justify-center rounded-xl bg-gray-200 text-lg font-medium text-gray-500 shadow-sm ring-1 ring-black/5">
-                                {(
-                                  selectedLead.first_name?.[0] ||
-                                  selectedLead.full_name?.[0] ||
-                                  '?'
-                                ).toUpperCase()}
-                              </div>
-                            )
-                          ) : null}
                           <button
                             type="button"
                             onClick={() => {
@@ -2563,6 +2541,24 @@ export default function LeadsPage() {
                             <X className="h-3.5 w-3.5" strokeWidth={2} />
                           </button>
                         </div>
+                      </div>
+
+                      <div className="relative z-[1] flex border-b border-[rgba(13,53,71,0.08)] px-4">
+                        {(['contact', 'scoring', 'action'] as const).map((mode) => (
+                          <button
+                            key={mode}
+                            type="button"
+                            onClick={() => setSelectedPreview(mode)}
+                            className={cn(
+                              'py-2.5 pr-4 text-xs font-medium border-b-2 -mb-px transition-colors',
+                              selectedPreview === mode
+                                ? 'border-arcova-teal text-arcova-teal'
+                                : 'border-transparent text-[#7d909a] hover:text-[#0d3547]',
+                            )}
+                          >
+                            {mode === 'contact' ? 'Contact' : mode === 'scoring' ? 'Fit' : 'Action'}
+                          </button>
+                        ))}
                       </div>
 
                       {/* Panel body */}
@@ -2581,6 +2577,7 @@ export default function LeadsPage() {
                                 <input
                                   value={editingFields?.first_name || ''}
                                   onChange={(e) => updateEditingField('first_name', e.target.value)}
+                                  onKeyDown={blurInputOnEnter}
                                   className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-arcova-teal/30"
                                 />
                               </div>
@@ -2589,17 +2586,26 @@ export default function LeadsPage() {
                                 <input
                                   value={editingFields?.last_name || ''}
                                   onChange={(e) => updateEditingField('last_name', e.target.value)}
+                                  onKeyDown={blurInputOnEnter}
                                   className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-arcova-teal/30"
                                 />
                               </div>
                               <div className="space-y-1">
                                 <label className="text-xs text-gray-400">Email</label>
                                 <input
+                                  type="email"
+                                  autoComplete="off"
                                   value={editingFields?.email || ''}
                                   onChange={(e) => updateEditingField('email', e.target.value)}
+                                  onKeyDown={blurInputOnEnter}
                                   className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-arcova-teal/30"
                                 />
                               </div>
+                              {leadEditError ? (
+                                <p className="text-xs text-red-600" role="alert">
+                                  {leadEditError}
+                                </p>
+                              ) : null}
                             </div>
                           ) : (
                             /* ── View mode ── */
@@ -3059,9 +3065,26 @@ export default function LeadsPage() {
                         ) : (
                           /* ── Scoring view ── */
                           <div className="space-y-3">
-
+                            <div className="space-y-2">
+                              <h2 className="text-lg font-semibold text-gray-900 leading-tight">Lead prioritisation</h2>
+                              <div className="flex flex-wrap gap-1.5">
+                                {(selectedLead.matched_icp_index != null || selectedLead.matched_icp_name) && (
+                                  <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2.5 py-0.5 text-xs font-medium text-arcova-teal">
+                                    {selectedLead.matched_icp_index != null
+                                      ? `Best fit ICP-${selectedLead.matched_icp_index}`
+                                      : `Best fit: ${selectedLead.matched_icp_name}`}
+                                  </span>
+                                )}
+                                {selectedContactFit?.contact_fit_score != null && (
+                                  <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
+                                    Contact fit {formatPercentValue(selectedContactFit.contact_fit_score)}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            {renderOverallFitActionCard()}
+                            {renderCompanyIcpFitScoresCard()}
                             {renderContactFitScoresCard()}
-
                           </div>
                         )}
                       </div>
