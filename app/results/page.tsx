@@ -3,7 +3,7 @@
 import { useAuth } from '@/context/AuthContext';
 import { useEnrichmentGuard } from '@/context/EnrichmentGuardContext';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, type KeyboardEvent } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel, type AgentLeadsFilter } from '@/components/AgentPanel';
 import { ArcovaLoader } from '@/components/ArcovaLoader';
@@ -21,7 +21,13 @@ import {
 } from '@/lib/lead-action';
 import { formatProvenanceImportedAt } from '@/lib/data-provenance';
 import { ROUTES, withQuery } from '@/lib/routes';
+import { looksLikeEmail, type ContactEmailRow } from '@/lib/contact-emails';
+import {
+  buildContactEmailDisplayRows,
+  formatContactLocationDisplay,
+} from '@/lib/contact-profile-display';
 import { cn } from '@/lib/utils';
+import { TableFitGaugeButton } from '@/components/TableFitGaugeButton';
 import '@/app/leads/contacts-layout.css';
 import {
   Activity,
@@ -42,6 +48,7 @@ import {
   Upload,
   Download,
   Check,
+  Plus,
 } from 'lucide-react';
 
 interface EmploymentHistoryItem {
@@ -235,6 +242,8 @@ interface Lead {
   profile_photo_url: string | null;
   headline: string | null;
   location: string | null;
+  city?: string | null;
+  country?: string | null;
   resolved_current_company_name: string | null;
   resolved_current_company_domain: string | null;
   resolved_current_job_title: string | null;
@@ -268,6 +277,7 @@ interface Lead {
   /** CSV, HubSpot, Arcova label from API */
   data_provenance_type?: string | null;
   data_provenance_imported_at?: string | null;
+  contact_emails?: ContactEmailRow[] | null;
   companies: {
     company_name: string | null;
     domain: string | null;
@@ -313,6 +323,16 @@ type EditableLeadFields = {
   first_name: string;
   last_name: string;
   email: string;
+  job_title: string;
+  headline: string;
+  linkedin_url: string;
+  company_name: string;
+  company_domain: string;
+  company_linkedin_url: string;
+  location: string;
+  city: string;
+  country: string;
+  user_secondary_emails: string[];
 };
 
 type EnrichmentStageKey =
@@ -333,7 +353,13 @@ type EnrichmentVisualState = {
 
 const PAGE_SIZE = 50;
 const LEADS_TABLE_GRID =
-  'grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.3fr)_minmax(10rem,1.35fr)] gap-x-6';
+  'grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,5.25rem)_minmax(9.5rem,1.25fr)] gap-x-5';
+
+function blurInputOnEnter(e: KeyboardEvent<HTMLInputElement>) {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  e.currentTarget.blur();
+}
 const MAX_VISIBLE_WORK_HISTORY = 3;
 const COMPANY_FIT_COMPONENT_ORDER: CompanyFitComponentKey[] = [
   'company_type',
@@ -366,6 +392,23 @@ const percentDisplayNumber = (value: number | null | undefined): number | null =
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
   return Math.round(value <= 1 ? value * 100 : value);
 };
+
+const LEAD_EDIT_INPUT_CLASS =
+  'w-full rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-arcova-teal/30';
+
+function userSecondaryEmailsFromLead(lead: Lead): string[] {
+  const primary = (lead.email || '').trim().toLowerCase();
+  const rows = lead.contact_emails || [];
+  const out: string[] = [];
+  for (const row of rows) {
+    if (row.category !== 'user') continue;
+    const e = row.email.trim();
+    if (!e) continue;
+    if (primary && e.toLowerCase() === primary) continue;
+    out.push(row.email);
+  }
+  return out;
+}
 
 function actionDrawerRelativeTime(iso?: string | null): string | null {
   if (!iso) return null;
@@ -739,6 +782,7 @@ export default function LeadsPage() {
   const [loadingLeads, setLoadingLeads] = useState(true);
   const [editingLeadId, setEditingLeadId] = useState<string | null>(null);
   const [editingFields, setEditingFields] = useState<EditableLeadFields | null>(null);
+  const [leadEditError, setLeadEditError] = useState<string | null>(null);
   const [savingLeadId, setSavingLeadId] = useState<string | null>(null);
   const [deletingLeadId, setDeletingLeadId] = useState<string | null>(null);
   const [refreshingLeadId, setRefreshingLeadId] = useState<string | null>(null);
@@ -962,17 +1006,17 @@ export default function LeadsPage() {
 
     const taskMessages: Record<string, string> = {
       new_contacts:
-        'Filter the contacts table to the newest contacts from the latest import batch. Use filter_leads_table with filters.latestImportOnly=true, columns name/job_title/company/status/company_fit/contact_fit/source, sort by status_best_first. Keep your reply short and friendly.',
+        'Filter the contacts table to the newest contacts from the latest import batch. Use filter_leads_table with filters.latestImportOnly=true, columns name/job_title/company/status/contact_fit/source, sort by status_best_first. Keep your reply short and friendly.',
       best_leads:
-        'Filter the contacts table to the best leads to work now. Use filter_leads_table with filters.actions=["reach_out","monitor"], columns name/job_title/company/status/company_fit/contact_fit/source, sort by status_best_first. Keep your reply short and friendly.',
+        'Filter the contacts table to the best leads to work now. Use filter_leads_table with filters.actions=["reach_out","monitor"], columns name/job_title/company/status/contact_fit/source, sort by status_best_first. Keep your reply short and friendly.',
       arcova_contacts_today:
-        'Filter the contacts table to Arcova-sourced contacts imported today. Use filter_leads_table with filters.sources=["arcova"] and filters.importedToday=true, columns name/job_title/company/status/company_fit/contact_fit/source, sort by status_best_first. Keep your reply short and friendly, and mention these are the new Arcova contacts from today.',
+        'Filter the contacts table to Arcova-sourced contacts imported today. Use filter_leads_table with filters.sources=["arcova"] and filters.importedToday=true, columns name/job_title/company/status/contact_fit/source, sort by status_best_first. Keep your reply short and friendly, and mention these are the new Arcova contacts from today.',
     };
 
     const companyId = searchParams.get('companyId') ?? '';
     if (dashboardAgentTask === 'arcova_contacts_at_company' && companyId) {
       taskMessages.arcova_contacts_at_company =
-        `Filter the contacts table to Arcova-sourced contacts at company id ${companyId}. Use filter_leads_table with filters.companyIds=["${companyId}"] and filters.sources=["arcova"], columns name/job_title/company/status/company_fit/contact_fit/source, sort by status_best_first. Keep your reply short and friendly, and mention these are the new Arcova contacts for this company.`;
+        `Filter the contacts table to Arcova-sourced contacts at company id ${companyId}. Use filter_leads_table with filters.companyIds=["${companyId}"] and filters.sources=["arcova"], columns name/job_title/company/status/contact_fit/source, sort by status_best_first. Keep your reply short and friendly, and mention these are the new Arcova contacts for this company.`;
     }
 
     const message = taskMessages[dashboardAgentTask];
@@ -1000,17 +1044,37 @@ export default function LeadsPage() {
 
   const startEditingLead = (lead: Lead) => {
     setEditingLeadId(lead.id);
+    setLeadEditError(null);
     setEditingFields({
       first_name: lead.first_name || '',
       last_name: lead.last_name || '',
       email: lead.email || '',
+      job_title: lead.job_title || '',
+      headline: lead.headline || '',
+      linkedin_url: lead.linkedin_url || '',
+      company_name: lead.company_name || '',
+      company_domain: lead.company_domain || '',
+      company_linkedin_url: lead.company_linkedin_url || '',
+      location: lead.location || '',
+      city: lead.city || '',
+      country: lead.country || '',
+      user_secondary_emails: [...userSecondaryEmailsFromLead(lead)],
     });
   };
 
   const cancelEditingLead = () => {
     setEditingLeadId(null);
     setEditingFields(null);
+    setLeadEditError(null);
   };
+
+  useEffect(() => {
+    if (selectedPreview !== 'contact' && editingLeadId) {
+      setEditingLeadId(null);
+      setEditingFields(null);
+      setLeadEditError(null);
+    }
+  }, [selectedPreview, editingLeadId]);
 
   const handleLeadsFilter = (_filter: AgentLeadsFilter, leads: QueryLead[]) => {
     setAgentFilterIds(new Set(leads.map((l) => l.id)));
@@ -1033,39 +1097,115 @@ export default function LeadsPage() {
     }
   };
 
-  const updateEditingField = (field: keyof EditableLeadFields, value: string) => {
+  const updateEditingField = (
+    field: keyof Omit<EditableLeadFields, 'user_secondary_emails'>,
+    value: string,
+  ) => {
+    setLeadEditError(null);
     setEditingFields((prev) => (prev ? { ...prev, [field]: value } : prev));
+  };
+
+  const updateUserSecondaryEmailAt = (index: number, value: string) => {
+    setLeadEditError(null);
+    setEditingFields((prev) => {
+      if (!prev) return prev;
+      const next = [...prev.user_secondary_emails];
+      next[index] = value;
+      return { ...prev, user_secondary_emails: next };
+    });
+  };
+
+  const addUserSecondaryEmail = () => {
+    setLeadEditError(null);
+    setEditingFields((prev) =>
+      prev ? { ...prev, user_secondary_emails: [...prev.user_secondary_emails, ''] } : prev,
+    );
+  };
+
+  const removeUserSecondaryEmailAt = (index: number) => {
+    setLeadEditError(null);
+    setEditingFields((prev) => {
+      if (!prev) return prev;
+      const next = prev.user_secondary_emails.filter((_, i) => i !== index);
+      return { ...prev, user_secondary_emails: next };
+    });
   };
 
   const saveLead = async (leadId: string) => {
     if (!editingFields) return;
 
+    const primaryTrim = editingFields.email.trim();
+    if (primaryTrim && !looksLikeEmail(primaryTrim)) {
+      setLeadEditError('Enter a valid email address (for example name@company.com).');
+      return;
+    }
+
+    const secondaryTrimmed = editingFields.user_secondary_emails.map((s) => s.trim()).filter(Boolean);
+    for (const s of secondaryTrimmed) {
+      if (!looksLikeEmail(s)) {
+        setLeadEditError('Each additional email must look like a valid address.');
+        return;
+      }
+    }
+
+    setLeadEditError(null);
     setSavingLeadId(leadId);
     try {
       const response = await fetch(`/api/leads/${leadId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ...editingFields,
           full_name: `${editingFields.first_name} ${editingFields.last_name}`.trim(),
+          first_name: editingFields.first_name,
+          last_name: editingFields.last_name,
+          email: editingFields.email,
+          job_title: editingFields.job_title,
+          headline: editingFields.headline,
+          linkedin_url: editingFields.linkedin_url,
+          company_name: editingFields.company_name,
+          company_domain: editingFields.company_domain,
+          company_linkedin_url: editingFields.company_linkedin_url,
+          location: editingFields.location,
+          city: editingFields.city,
+          country: editingFields.country,
+          user_secondary_emails: secondaryTrimmed.filter(
+            (s) => s.toLowerCase() !== primaryTrim.toLowerCase(),
+          ),
         }),
       });
 
       const result = await response.json();
       if (!response.ok) {
-        throw new Error(result.error || 'Failed to update lead.');
+        setLeadEditError(
+          typeof result.error === 'string' && result.error ? result.error : 'Failed to update lead.',
+        );
+        return;
       }
+
+      const d = result.data as Lead & { contact_emails?: ContactEmailRow[] };
 
       setLeads((prev) =>
         prev.map((lead) =>
           lead.id === leadId
             ? {
                 ...lead,
-                full_name: result.data.full_name,
-                first_name: result.data.first_name,
-                last_name: result.data.last_name,
-                email: result.data.email,
-                updated_at: result.data.updated_at,
+                full_name: d.full_name ?? lead.full_name,
+                first_name: d.first_name ?? lead.first_name,
+                last_name: d.last_name ?? lead.last_name,
+                email: d.email ?? lead.email,
+                job_title: d.job_title ?? lead.job_title,
+                headline: d.headline ?? lead.headline,
+                linkedin_url: d.linkedin_url ?? lead.linkedin_url,
+                company_name: d.company_name ?? lead.company_name,
+                company_domain: d.company_domain ?? lead.company_domain,
+                company_linkedin_url: d.company_linkedin_url ?? lead.company_linkedin_url,
+                location: d.location ?? lead.location,
+                city: d.city ?? lead.city,
+                country: d.country ?? lead.country,
+                contact_emails: Array.isArray(d.contact_emails)
+                  ? d.contact_emails
+                  : lead.contact_emails,
+                updated_at: d.updated_at ?? lead.updated_at,
               }
             : lead
         )
@@ -1073,6 +1213,7 @@ export default function LeadsPage() {
       cancelEditingLead();
     } catch (error) {
       console.error('Error updating lead:', error);
+      setLeadEditError(error instanceof Error ? error.message : 'Something went wrong.');
     } finally {
       setSavingLeadId(null);
     }
@@ -2128,8 +2269,19 @@ export default function LeadsPage() {
                       </button>
                     ))}
                     <button
+                      type="button"
+                      onClick={() => handleSortCol('contact_fit')}
+                      className="flex w-full items-start justify-center gap-1 hover:text-gray-800 transition-colors"
+                    >
+                      <span className="flex items-center gap-1">
+                        Contact fit
+                        <SortArrow col="contact_fit" activeCol={tableSortCol} dir={tableSortDir} />
+                      </span>
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => handleSortCol('status')}
-                      className="flex items-start justify-center gap-1 w-full pl-12 hover:text-gray-800 transition-colors"
+                      className="flex w-full items-start justify-center gap-1 hover:text-gray-800 transition-colors"
                     >
                       Action
                       <SortArrow col="status" activeCol={tableSortCol} dir={tableSortDir} />
@@ -2152,10 +2304,10 @@ export default function LeadsPage() {
                               setSelectedPreview('contact');
                               cancelEditingLead();
                             }}
-                            className={`${LEADS_TABLE_GRID} px-4 py-3 items-center cursor-pointer transition-all duration-150 border-b border-gray-50 last:border-0 ${
+                            className={`${LEADS_TABLE_GRID} relative px-4 py-3 items-center cursor-pointer transition-all duration-150 border-b border-gray-50 last:border-0 before:pointer-events-none before:absolute before:left-0 before:top-2 before:bottom-2 before:w-[3px] before:rounded-sm before:content-[''] before:transition-colors ${
                               isSelected
-                                ? 'border-l-2 border-arcova-teal'
-                                : 'border-l-2 border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30'
+                                ? 'bg-arcova-teal/10 before:bg-arcova-teal'
+                                : 'before:bg-transparent hover:bg-arcova-teal/5 hover:before:bg-arcova-teal/35'
                             }`}
                           >
                             <div className="min-w-0">
@@ -2188,7 +2340,11 @@ export default function LeadsPage() {
                               </div>
                             </div>
 
-                            <div className="min-w-0 flex items-center justify-center pl-12">
+                            <div className="min-w-0 flex items-center justify-center">
+                              <span className="text-[11px] text-gray-300 tabular-nums">—</span>
+                            </div>
+
+                            <div className="min-w-0 flex items-center justify-center">
                               <ArcovaLoader size={28} />
                             </div>
                           </div>
@@ -2203,10 +2359,10 @@ export default function LeadsPage() {
                             setSelectedPreview('contact');
                             cancelEditingLead();
                           }}
-                          className={`${LEADS_TABLE_GRID} px-4 py-3 items-center cursor-pointer transition-all duration-150 opacity-100 ${
+                          className={`${LEADS_TABLE_GRID} relative px-4 py-3 items-center cursor-pointer transition-all duration-150 opacity-100 before:pointer-events-none before:absolute before:left-0 before:top-2 before:bottom-2 before:w-[3px] before:rounded-sm before:content-[''] before:transition-colors ${
                             isSelected
-                              ? 'border-l-2 border-arcova-teal'
-                              : 'border-l-2 border-transparent hover:bg-arcova-teal/5 hover:border-arcova-teal/30'
+                              ? 'bg-arcova-teal/10 before:bg-arcova-teal'
+                              : 'before:bg-transparent hover:bg-arcova-teal/5 hover:before:bg-arcova-teal/35'
                           }`}
                         >
                           {/* Full name */}
@@ -2271,8 +2427,22 @@ export default function LeadsPage() {
                             })()}
                           </div>
 
+                          {/* Contact fit */}
+                          <div className="min-w-0 flex items-center justify-center">
+                            <TableFitGaugeButton
+                              score={lead.contact_fit_score}
+                              title="View contact fit"
+                              onOpen={(e) => {
+                                e.stopPropagation();
+                                setSelectedLeadId(lead.id);
+                                setSelectedPreview('scoring');
+                                cancelEditingLead();
+                              }}
+                            />
+                          </div>
+
                           {/* Action */}
-                          <div className="min-w-0 flex items-center justify-center pl-12">
+                          <div className="min-w-0 flex items-center justify-center">
                             {(() => {
                               const action = getLeadAction(lead);
                               const config = LEAD_ACTION_PILL_CLASS[action];
@@ -2285,7 +2455,13 @@ export default function LeadsPage() {
                                     setSelectedPreview('action');
                                     cancelEditingLead();
                                   }}
-                                  className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium transition-opacity hover:opacity-80 ${config.className} ${isSelected && selectedPreview === 'action' ? 'ring-2 ring-offset-1' : ''}`}
+                                  className={cn(
+                                    'inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium cursor-pointer select-none',
+                                    'transition-colors duration-150 ease-out hover:shadow-sm active:scale-[0.97]',
+                                    isSelected && selectedPreview === 'action'
+                                      ? config.rowSelectedClassName
+                                      : cn(config.className, config.interactiveClassName, 'shadow-sm'),
+                                  )}
                                 >
                                   {config.label}
                                 </button>
@@ -2358,48 +2534,24 @@ export default function LeadsPage() {
                       )}
                     >
                       {/* Panel header */}
-                      <div
-                        className={cn(
-                          'relative z-[1] flex items-start border-b border-[rgba(13,53,71,0.08)]',
-                          selectedPreview === 'contact'
-                            ? 'gap-3 px-4 pb-4 pt-5'
-                            : 'gap-4 px-6 pb-5 pt-6',
-                        )}
-                      >
-                        {/* Name / label */}
+                      <div className="relative z-[1] flex items-start gap-3 border-b border-[rgba(13,53,71,0.08)] px-4 pb-3 pt-5">
                         <div className="min-w-0 flex-1">
-                          <p
-                            className={cn(
-                              selectedPreview === 'contact'
-                                ? 'text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]'
-                                : selectedPreview === 'action'
-                                  ? 'text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]'
-                                  : 'text-xs font-medium uppercase tracking-wide text-arcova-teal',
-                            )}
-                          >
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">
                             {selectedPreview === 'contact'
-                              ? 'Contact details'
-                              : selectedPreview === 'action'
-                                ? 'Recommended action'
-                                : 'Fit score'}
+                              ? 'Contact'
+                              : selectedPreview === 'scoring'
+                                ? 'Fit'
+                                : 'Action'}
                           </p>
-                          {selectedPreview === 'contact' && (
-                            <h2 className="font-manrope mt-1.5 break-words text-xl font-bold leading-tight tracking-[-0.024em] text-[rgb(13,53,71)] sm:text-2xl">
-                              {[selectedLead.first_name, selectedLead.last_name]
-                                .filter(Boolean)
-                                .join(' ') ||
-                                selectedLead.full_name ||
-                                'Selected contact'}
-                            </h2>
-                          )}
+                          <h2 className="font-manrope mt-1.5 break-words text-xl font-bold leading-tight tracking-[-0.024em] text-[rgb(13,53,71)] sm:text-2xl">
+                            {[selectedLead.first_name, selectedLead.last_name].filter(Boolean).join(' ') ||
+                              selectedLead.full_name ||
+                              'Selected contact'}
+                          </h2>
                           {selectedPreview === 'action' &&
                             (() => {
                               const action = getLeadAction(selectedLead);
                               const config = LEAD_ACTION_PILL_CLASS[action];
-                              const contactName =
-                                [selectedLead.first_name, selectedLead.last_name].filter(Boolean).join(' ') ||
-                                selectedLead.full_name ||
-                                'Selected contact';
                               const updatedIso =
                                 selectedContactFit?.contact_fit_scored_at ??
                                 selectedLead.updated_at ??
@@ -2407,63 +2559,35 @@ export default function LeadsPage() {
                                 null;
                               const rel = actionDrawerRelativeTime(updatedIso);
                               return (
-                                <>
-                                  <h2 className="mt-1.5 font-manrope text-[22px] font-semibold leading-[1.1] tracking-[-0.02em] text-[#0d3547]">
-                                    {contactName}
-                                  </h2>
-                                  <div className="mt-1 flex flex-wrap items-center gap-2.5">
-                                    <span
-                                      className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-medium ${config.className}`}
-                                    >
-                                      {config.label}
-                                    </span>
-                                    {rel ? (
-                                      <span className="text-[11px] text-[#7d909a]">Updated {rel}</span>
-                                    ) : null}
-                                  </div>
-                                </>
+                                <div className="mt-1.5 flex flex-wrap items-center gap-2.5">
+                                  <span
+                                    className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-medium ${config.className}`}
+                                  >
+                                    {config.label}
+                                  </span>
+                                  {rel ? (
+                                    <span className="text-[11px] text-[#7d909a]">Updated {rel}</span>
+                                  ) : null}
+                                </div>
                               );
                             })()}
-                          {selectedPreview === 'scoring' && (
-                            <div className="mt-1 space-y-2">
-                              <h2 className="text-lg font-semibold text-gray-900 leading-tight">Lead prioritisation</h2>
-                              <div className="flex flex-wrap gap-1.5">
-                                {(selectedLead.matched_icp_index != null || selectedLead.matched_icp_name) && (
-                                  <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2.5 py-0.5 text-xs font-medium text-arcova-teal">
-                                    {selectedLead.matched_icp_index != null
-                                      ? `Best fit ICP-${selectedLead.matched_icp_index}`
-                                      : `Best fit: ${selectedLead.matched_icp_name}`}
-                                  </span>
-                                )}
-                                {selectedContactFit?.contact_fit_score != null && (
-                                  <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
-                                    Contact fit {formatPercentValue(selectedContactFit.contact_fit_score)}
-                                  </span>
-                                )}
-                              </div>
+                        </div>
+                        <div className="flex items-start gap-2 flex-shrink-0">
+                          {selectedLead.profile_photo_url ? (
+                            <img
+                              src={selectedLead.profile_photo_url}
+                              alt=""
+                              className="h-[3.375rem] w-[3.375rem] shrink-0 rounded-xl object-cover shadow-sm ring-1 ring-black/5"
+                            />
+                          ) : (
+                            <div className="flex h-[3.375rem] w-[3.375rem] shrink-0 items-center justify-center rounded-xl bg-gray-200 text-lg font-medium text-gray-500 shadow-sm ring-1 ring-black/5">
+                              {(
+                                selectedLead.first_name?.[0] ||
+                                selectedLead.full_name?.[0] ||
+                                '?'
+                              ).toUpperCase()}
                             </div>
                           )}
-                        </div>
-
-                        {/* Photo / logo + close (right side) */}
-                        <div className="flex items-start gap-2 flex-shrink-0">
-                          {selectedPreview === 'contact' ? (
-                            selectedLead.profile_photo_url ? (
-                              <img
-                                src={selectedLead.profile_photo_url}
-                                alt=""
-                                className="h-[3.375rem] w-[3.375rem] shrink-0 rounded-xl object-cover shadow-sm ring-1 ring-black/5"
-                              />
-                            ) : (
-                              <div className="flex h-[3.375rem] w-[3.375rem] shrink-0 items-center justify-center rounded-xl bg-gray-200 text-lg font-medium text-gray-500 shadow-sm ring-1 ring-black/5">
-                                {(
-                                  selectedLead.first_name?.[0] ||
-                                  selectedLead.full_name?.[0] ||
-                                  '?'
-                                ).toUpperCase()}
-                              </div>
-                            )
-                          ) : null}
                           <button
                             type="button"
                             onClick={() => {
@@ -2478,6 +2602,24 @@ export default function LeadsPage() {
                         </div>
                       </div>
 
+                      <div className="relative z-[1] flex border-b border-[rgba(13,53,71,0.08)] px-4">
+                        {(['contact', 'scoring', 'action'] as const).map((mode) => (
+                          <button
+                            key={mode}
+                            type="button"
+                            onClick={() => setSelectedPreview(mode)}
+                            className={cn(
+                              'py-2.5 pr-4 text-xs font-medium border-b-2 -mb-px transition-colors',
+                              selectedPreview === mode
+                                ? 'border-arcova-teal text-arcova-teal'
+                                : 'border-transparent text-[#7d909a] hover:text-[#0d3547]',
+                            )}
+                          >
+                            {mode === 'contact' ? 'Contact' : mode === 'scoring' ? 'Fit' : 'Action'}
+                          </button>
+                        ))}
+                      </div>
+
                       {/* Panel body */}
                       <div
                         className={cn(
@@ -2489,12 +2631,37 @@ export default function LeadsPage() {
                           isEditingSelected ? (
                             /* ── Edit mode ── */
                             <div className="space-y-3">
+                              <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50/80 px-3 py-2">
+                                <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                                  Import and enrichment emails (read-only)
+                                </p>
+                                <div className="mt-2 space-y-2 text-xs text-gray-700">
+                                  {(() => {
+                                    const dirRows = buildContactEmailDisplayRows(
+                                      selectedLead.email,
+                                      selectedLead.contact_emails,
+                                      'enrichmentOnly',
+                                    );
+                                    if (dirRows.length === 0) {
+                                      return <p className="text-gray-500">None on file yet.</p>;
+                                    }
+                                    return dirRows.map((r, i) => (
+                                      <p key={`${r.label}-${r.email}-${i}`} className="break-all leading-snug">
+                                        <span className="font-medium text-gray-600">{r.label}: </span>
+                                        {r.email}
+                                      </p>
+                                    ));
+                                  })()}
+                                </div>
+                              </div>
+
                               <div className="space-y-1">
                                 <label className="text-xs text-gray-400">First name</label>
                                 <input
                                   value={editingFields?.first_name || ''}
                                   onChange={(e) => updateEditingField('first_name', e.target.value)}
-                                  className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-arcova-teal/30"
+                                  onKeyDown={blurInputOnEnter}
+                                  className={LEAD_EDIT_INPUT_CLASS}
                                 />
                               </div>
                               <div className="space-y-1">
@@ -2502,17 +2669,151 @@ export default function LeadsPage() {
                                 <input
                                   value={editingFields?.last_name || ''}
                                   onChange={(e) => updateEditingField('last_name', e.target.value)}
-                                  className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-arcova-teal/30"
+                                  onKeyDown={blurInputOnEnter}
+                                  className={LEAD_EDIT_INPUT_CLASS}
                                 />
                               </div>
                               <div className="space-y-1">
-                                <label className="text-xs text-gray-400">Email</label>
+                                <label className="text-xs text-gray-400">Primary email (Leads / sync)</label>
                                 <input
+                                  type="email"
+                                  autoComplete="off"
                                   value={editingFields?.email || ''}
                                   onChange={(e) => updateEditingField('email', e.target.value)}
-                                  className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-arcova-teal/30"
+                                  onKeyDown={blurInputOnEnter}
+                                  className={LEAD_EDIT_INPUT_CLASS}
                                 />
                               </div>
+                              <div className="space-y-1">
+                                <div className="flex items-center justify-between gap-2">
+                                  <label className="text-xs text-gray-400">Additional emails (you added)</label>
+                                  <button
+                                    type="button"
+                                    onClick={addUserSecondaryEmail}
+                                    className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-0.5 text-[11px] font-medium text-gray-600 hover:bg-white"
+                                  >
+                                    <Plus className="h-3 w-3" />
+                                    Add
+                                  </button>
+                                </div>
+                                <div className="space-y-2">
+                                  {(editingFields?.user_secondary_emails ?? []).length === 0 ? (
+                                    <p className="text-xs text-gray-500">
+                                      Optional extras saved under &quot;You added&quot;.
+                                    </p>
+                                  ) : (
+                                    (editingFields?.user_secondary_emails ?? []).map((addr, idx) => (
+                                      <div key={idx} className="flex items-center gap-2">
+                                        <input
+                                          type="email"
+                                          autoComplete="off"
+                                          value={addr}
+                                          onChange={(e) => updateUserSecondaryEmailAt(idx, e.target.value)}
+                                          onKeyDown={blurInputOnEnter}
+                                          className={LEAD_EDIT_INPUT_CLASS}
+                                          placeholder="name@company.com"
+                                        />
+                                        <button
+                                          type="button"
+                                          onClick={() => removeUserSecondaryEmailAt(idx)}
+                                          className="shrink-0 rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+                                          aria-label="Remove email"
+                                        >
+                                          <Trash2 className="h-4 w-4" />
+                                        </button>
+                                      </div>
+                                    ))
+                                  )}
+                                </div>
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-xs text-gray-400">Job title</label>
+                                <input
+                                  value={editingFields?.job_title || ''}
+                                  onChange={(e) => updateEditingField('job_title', e.target.value)}
+                                  onKeyDown={blurInputOnEnter}
+                                  className={LEAD_EDIT_INPUT_CLASS}
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-xs text-gray-400">Headline</label>
+                                <input
+                                  value={editingFields?.headline || ''}
+                                  onChange={(e) => updateEditingField('headline', e.target.value)}
+                                  onKeyDown={blurInputOnEnter}
+                                  className={LEAD_EDIT_INPUT_CLASS}
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-xs text-gray-400">LinkedIn URL</label>
+                                <input
+                                  value={editingFields?.linkedin_url || ''}
+                                  onChange={(e) => updateEditingField('linkedin_url', e.target.value)}
+                                  onKeyDown={blurInputOnEnter}
+                                  className={LEAD_EDIT_INPUT_CLASS}
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-xs text-gray-400">Company name</label>
+                                <input
+                                  value={editingFields?.company_name || ''}
+                                  onChange={(e) => updateEditingField('company_name', e.target.value)}
+                                  onKeyDown={blurInputOnEnter}
+                                  className={LEAD_EDIT_INPUT_CLASS}
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-xs text-gray-400">Company domain</label>
+                                <input
+                                  value={editingFields?.company_domain || ''}
+                                  onChange={(e) => updateEditingField('company_domain', e.target.value)}
+                                  onKeyDown={blurInputOnEnter}
+                                  className={LEAD_EDIT_INPUT_CLASS}
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-xs text-gray-400">Company LinkedIn URL</label>
+                                <input
+                                  value={editingFields?.company_linkedin_url || ''}
+                                  onChange={(e) => updateEditingField('company_linkedin_url', e.target.value)}
+                                  onKeyDown={blurInputOnEnter}
+                                  className={LEAD_EDIT_INPUT_CLASS}
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-xs text-gray-400">Location</label>
+                                <input
+                                  value={editingFields?.location || ''}
+                                  onChange={(e) => updateEditingField('location', e.target.value)}
+                                  onKeyDown={blurInputOnEnter}
+                                  className={LEAD_EDIT_INPUT_CLASS}
+                                />
+                              </div>
+                              <div className="grid grid-cols-2 gap-2">
+                                <div className="space-y-1">
+                                  <label className="text-xs text-gray-400">City</label>
+                                  <input
+                                    value={editingFields?.city || ''}
+                                    onChange={(e) => updateEditingField('city', e.target.value)}
+                                    onKeyDown={blurInputOnEnter}
+                                    className={LEAD_EDIT_INPUT_CLASS}
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="text-xs text-gray-400">Country</label>
+                                  <input
+                                    value={editingFields?.country || ''}
+                                    onChange={(e) => updateEditingField('country', e.target.value)}
+                                    onKeyDown={blurInputOnEnter}
+                                    className={LEAD_EDIT_INPUT_CLASS}
+                                  />
+                                </div>
+                              </div>
+                              {leadEditError ? (
+                                <p className="text-xs text-red-600" role="alert">
+                                  {leadEditError}
+                                </p>
+                              ) : null}
                             </div>
                           ) : (
                             /* ── View mode ── */
@@ -2586,17 +2887,46 @@ export default function LeadsPage() {
                                         <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
                                           Location
                                         </p>
-                                        <p className="mt-2 break-words text-sm leading-snug text-[#0d3547]">
-                                          {selectedLead.location || '—'}
-                                        </p>
+                                        {(() => {
+                                          const line = formatContactLocationDisplay(
+                                            selectedLead.location,
+                                            selectedLead.city,
+                                            selectedLead.country,
+                                          );
+                                          return (
+                                            <p className="mt-2 break-words text-sm leading-snug text-[#0d3547]">
+                                              {line ?? '—'}
+                                            </p>
+                                          );
+                                        })()}
                                       </div>
                                       <div className="min-w-0">
                                         <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
-                                          Email
+                                          Emails
                                         </p>
-                                        <p className="mt-2 break-all text-sm leading-snug text-[#0d3547]">
-                                          {selectedLead.email || '—'}
-                                        </p>
+                                        <div className="mt-2 space-y-2">
+                                          {(() => {
+                                            const emailRows = buildContactEmailDisplayRows(
+                                              selectedLead.email,
+                                              selectedLead.contact_emails,
+                                              'full',
+                                            );
+                                            if (emailRows.length === 0) {
+                                              return (
+                                                <p className="break-words text-sm leading-snug text-[#0d3547]">—</p>
+                                              );
+                                            }
+                                            return emailRows.map((r, i) => (
+                                              <p
+                                                key={`${r.label}-${r.email}-${i}`}
+                                                className="break-all text-sm leading-snug text-[#0d3547]"
+                                              >
+                                                <span className="font-medium text-[#7d909a]">{r.label}: </span>
+                                                {r.email}
+                                              </p>
+                                            ));
+                                          })()}
+                                        </div>
                                       </div>
                                       <div className="min-w-0">
                                         <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
@@ -2944,9 +3274,26 @@ export default function LeadsPage() {
                         ) : (
                           /* ── Scoring view ── */
                           <div className="space-y-3">
-
+                            <div className="space-y-2">
+                              <h2 className="text-lg font-semibold text-gray-900 leading-tight">Lead prioritisation</h2>
+                              <div className="flex flex-wrap gap-1.5">
+                                {(selectedLead.matched_icp_index != null || selectedLead.matched_icp_name) && (
+                                  <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2.5 py-0.5 text-xs font-medium text-arcova-teal">
+                                    {selectedLead.matched_icp_index != null
+                                      ? `Best fit ICP-${selectedLead.matched_icp_index}`
+                                      : `Best fit: ${selectedLead.matched_icp_name}`}
+                                  </span>
+                                )}
+                                {selectedContactFit?.contact_fit_score != null && (
+                                  <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
+                                    Contact fit {formatPercentValue(selectedContactFit.contact_fit_score)}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            {renderOverallFitActionCard()}
+                            {renderCompanyIcpFitScoresCard()}
                             {renderContactFitScoresCard()}
-
                           </div>
                         )}
                       </div>

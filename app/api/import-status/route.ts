@@ -1,47 +1,5 @@
 import { NextResponse } from 'next/server';
-import type { SupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase-server';
-import {
-  getLeadAction,
-  isMonitorOrReachOutAction,
-  type LeadLikeForAction,
-} from '@/lib/lead-action';
-
-const USER_LEADS_PAGE_SIZE = 750;
-
-async function countMonitorOrReachOutAcrossAllLeads(
-  supabase: SupabaseClient,
-  userId: string,
-): Promise<{ count: number; error: Error | null }> {
-  let from = 0;
-  let total = 0;
-
-  for (;;) {
-    const { data, error } = await supabase
-      .from('contacts')
-      .select('contact_fit_score, fit_score, intent_score, companies(company_fit_score)')
-      .eq('user_id', userId)
-      .order('id', { ascending: true })
-      .range(from, from + USER_LEADS_PAGE_SIZE - 1);
-
-    if (error) {
-      return { count: 0, error: new Error(error.message) };
-    }
-
-    const rows = data ?? [];
-    if (rows.length === 0) break;
-
-    for (const row of rows) {
-      const action = getLeadAction(row as LeadLikeForAction);
-      if (isMonitorOrReachOutAction(action)) total += 1;
-    }
-
-    if (rows.length < USER_LEADS_PAGE_SIZE) break;
-    from += USER_LEADS_PAGE_SIZE;
-  }
-
-  return { count: total, error: null };
-}
 
 export async function GET(request: Request) {
   try {
@@ -83,16 +41,6 @@ export async function GET(request: Request) {
 
     const batchStatus = (batchData?.status as string | undefined) || 'processing';
 
-    let monitorOrReachOutTotal = 0;
-    if (batchStatus === 'complete' || batchStatus === 'cancelled') {
-      const reachOutCountResult = await countMonitorOrReachOutAcrossAllLeads(supabase, user.id);
-      if (reachOutCountResult.error) {
-        console.error('Error counting leads by action:', reachOutCountResult.error);
-        return NextResponse.json({ error: 'Failed to load import status' }, { status: 500 });
-      }
-      monitorOrReachOutTotal = reachOutCountResult.count;
-    }
-
     const statuses = data || [];
     const summary = statuses.reduce(
       (acc, row) => {
@@ -105,7 +53,7 @@ export async function GET(request: Request) {
         if (status === 'failed') acc.not_enriched += 1;
         return acc;
       },
-      { total: 0, duplicates: 0, pending: 0, enriching: 0, enriched: 0, not_enriched: 0 }
+      { total: 0, duplicates: 0, pending: 0, enriching: 0, enriched: 0, not_enriched: 0 },
     );
 
     const processed = summary.duplicates + summary.enriched + summary.not_enriched;
@@ -115,8 +63,6 @@ export async function GET(request: Request) {
       ...summary,
       processed,
       remaining,
-      /** All of your Leads that are not Deprioritised (Monitor, Source, or Reach out; same rules as the Leads page). */
-      monitor_or_reach_out_total: monitorOrReachOutTotal,
       batch_status: batchStatus,
     });
   } catch (error) {

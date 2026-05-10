@@ -471,7 +471,7 @@ export default function BriefingPage() {
               ? `${healthIssues[0].label} needs attention.`
               : `${healthIssues.length} ICPs need review.`,
           href: withQuery(
-            ROUTES.leads.health,
+            ROUTES.health,
             new URLSearchParams({
               agentTask: 'health_review',
               from: 'today',

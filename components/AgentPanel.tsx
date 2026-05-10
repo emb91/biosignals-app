@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import { Send, Sparkles, X, ArrowRight, Mic } from 'lucide-react';
 import { useRouter } from 'next/navigation';
@@ -75,6 +75,8 @@ interface AgentPanelProps {
   briefingWelcome?: { greeting: string; body: string };
   /** Today bento: pill prompts under the static opener; defaults are used when welcome is set and this is omitted. */
   briefingIdleChips?: { label: string; prompt: string }[];
+  /** Override the subtitle line in the panel header (e.g. "Watching · Kumar Bala"). Supports ReactNode for bold/styled text. */
+  headerSubtitle?: React.ReactNode;
   className?: string;
 }
 
@@ -190,7 +192,7 @@ function stripMarkdown(text: string): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, onLeadsFilter, onTableClear, wide, onJobStarted, hideHeader, suppressPrompts, embedInBriefingBento, onBusyChange, briefingWelcome, briefingIdleChips, surfaceClassName, className }: AgentPanelProps) {
+export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, onLeadsFilter, onTableClear, wide, onJobStarted, hideHeader, suppressPrompts, embedInBriefingBento, onBusyChange, briefingWelcome, briefingIdleChips, surfaceClassName, headerSubtitle, className }: AgentPanelProps) {
   const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -364,10 +366,10 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
     <>
         {/* Handoff indicator */}
         {handoffFrom && messages.length > 0 && (
-          <div className={cn('flex items-center justify-center gap-1.5 text-[10px]', briefingChat ? 'text-slate-400' : 'text-gray-400')}>
-            <span className={cn('h-px flex-1', briefingChat ? 'bg-slate-200' : 'bg-gray-100')} />
+          <div className={cn('flex items-center justify-center gap-1.5 text-[10px]', briefingChat ? 'text-slate-400' : 'text-[#b6c2c8]')}>
+            <span className={cn('h-px flex-1', briefingChat ? 'bg-slate-200' : 'bg-[rgba(13,53,71,0.07)]')} />
             <span>continued from {handoffFrom}</span>
-            <span className={cn('h-px flex-1', briefingChat ? 'bg-slate-200' : 'bg-gray-100')} />
+            <span className={cn('h-px flex-1', briefingChat ? 'bg-slate-200' : 'bg-[rgba(13,53,71,0.07)]')} />
           </div>
         )}
 
@@ -411,23 +413,21 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                 lightSetupChat || briefingChat ? 'gap-3' : 'gap-2.5',
               )}
             >
-              {!embedGlass ? (
+              {!embedGlass && (lightSetupChat || briefingChat) ? (
                 <div className="shrink-0 mt-0.5">
                   {msg.isPending ? (
-                    <ArcovaLoader size={lightSetupChat ? 36 : briefingChat ? 32 : 24} />
+                    <ArcovaLoader size={lightSetupChat ? 36 : 32} />
                   ) : (
                     <Image
                       src="/images/network-og.png"
                       alt="Arcova"
-                      width={lightSetupChat ? 36 : briefingChat ? 32 : 24}
-                      height={lightSetupChat ? 36 : briefingChat ? 32 : 24}
+                      width={lightSetupChat ? 36 : 32}
+                      height={lightSetupChat ? 36 : 32}
                       className={cn(
                         'rounded-full object-cover',
                         lightSetupChat
                           ? 'h-9 w-9 ring-2 ring-white shadow-sm'
-                          : briefingChat
-                            ? 'h-8 w-8 ring-2 ring-slate-100 shadow-sm'
-                            : 'h-6 w-6 ring-1 ring-arcova-teal/20',
+                          : 'h-8 w-8 ring-2 ring-slate-100 shadow-sm',
                       )}
                     />
                   )}
@@ -438,7 +438,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                 className={cn(
                   'flex min-w-0 flex-col',
                   embedGlass ? 'w-full max-w-[min(100%,40rem)]' : '',
-                  lightSetupChat ? 'max-w-[min(100%,28rem)] gap-2' : briefingChat ? 'max-w-[min(100%,40rem)] gap-3' : 'max-w-[calc(100%-2.5rem)] gap-1.5',
+                  lightSetupChat ? 'max-w-[min(100%,28rem)] gap-2' : briefingChat ? 'max-w-[min(100%,40rem)] gap-3' : 'w-full gap-1.5',
                 )}
               >
                 {msg.isPending ? (
@@ -450,7 +450,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                           ? embedGlass
                             ? 'rounded-2xl rounded-tl-sm bg-gradient-to-br from-slate-50 to-slate-100/80 px-4 py-4 font-manrope text-[1.1875rem] leading-[1.45] tracking-[-0.018em] text-slate-700 ring-1 ring-slate-200/60'
                             : 'rounded-2xl rounded-tl-sm bg-gradient-to-br from-slate-50 to-slate-100/80 px-4 py-4 text-[15px] leading-relaxed text-slate-700 ring-1 ring-slate-200/60'
-                          : 'rounded-2xl rounded-tl-none border border-gray-100 bg-white px-3.5 py-2.5 text-sm leading-snug text-gray-800 shadow-sm',
+                          : 'rounded-2xl rounded-tl-none border border-[rgba(13,53,71,0.08)] bg-white/70 px-3.5 py-2.5 text-sm leading-snug text-[#0d3547] shadow-sm backdrop-blur-sm',
                     )}
                   >
                     <div className="flex h-5 items-center gap-1.5">
@@ -486,7 +486,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                         'rounded-2xl rounded-tl-none border shadow-sm',
                         lightSetupChat
                           ? 'border-slate-200 bg-white px-4 py-3 text-base leading-relaxed text-slate-800'
-                          : 'border-gray-100 bg-gray-50 px-3.5 py-2.5 text-sm leading-snug text-gray-800',
+                          : 'border-[rgba(13,53,71,0.08)] bg-white/70 px-3.5 py-2.5 text-sm leading-snug text-[#0d3547] backdrop-blur-sm',
                       )}
                     >
                       {bubble}
@@ -544,9 +544,9 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
               : briefingChat
                 ? 'relative border border-slate-200/90 bg-white shadow-[0_28px_80px_-44px_rgba(15,23,42,0.22)] ring-1 ring-slate-900/[0.04]'
                 : cn(
-                    'border border-gray-200 bg-white',
-                    'shadow-lg shadow-gray-900/5',
-                    'ring-1 ring-gray-950/[0.06]',
+                    'border border-white/80 bg-white/55',
+                    'shadow-[0_4px_24px_-8px_rgba(13,53,71,0.12)]',
+                    'backdrop-blur-xl',
                   ),
         )}
       >
@@ -563,35 +563,64 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
       {!hideHeader && (
       <div
         className={cn(
-          'flex shrink-0 items-center gap-2.5 border-b',
+          'flex shrink-0 items-center border-b',
           lightSetupChat
-            ? 'border-slate-200 bg-white px-5 py-4'
+            ? 'gap-3 border-slate-200 bg-white px-5 py-4'
             : briefingChat
-              ? 'border-slate-100 bg-white px-4 py-3'
-              : 'border-gray-100 bg-gray-50/60 px-4 py-3',
+              ? 'gap-3 border-slate-100 bg-white px-4 py-3'
+              : 'gap-3 border-[rgba(13,53,71,0.07)] bg-transparent px-[18px] pb-[14px] pt-[18px]',
         )}
       >
-        <Image
-          src="/images/network-og.png"
-          alt="Arcova"
-          width={lightSetupChat ? 36 : 28}
-          height={lightSetupChat ? 36 : 28}
-          className={cn(
-            'shrink-0 rounded-full object-cover',
-            lightSetupChat
-              ? 'h-9 w-9 ring-2 ring-slate-100 shadow-sm'
-              : briefingChat
-                ? 'h-8 w-8 ring-2 ring-slate-100/80 shadow-sm'
-                : 'h-7 w-7 ring-1 ring-arcova-teal/20',
-          )}
-        />
+        {(!lightSetupChat && !briefingChat) ? (
+          /* 44×44 breathing orb — glows + speeds up when thinking */
+          <div className="relative h-11 w-11 shrink-0" aria-hidden>
+            <span className="absolute rounded-full" style={{
+              inset: '-25%',
+              background: isLoading
+                ? 'radial-gradient(circle, rgba(0,164,180,0.55) 0%, transparent 65%)'
+                : 'radial-gradient(circle, rgba(0,164,180,0.32) 0%, transparent 65%)',
+              filter: isLoading ? 'blur(10px)' : 'blur(8px)',
+              animation: isLoading ? 'arcova-halo-pulse 2s ease-in-out infinite' : 'arcova-halo-pulse 6s ease-in-out infinite',
+            }} />
+            <span className="absolute inset-0 rounded-full" style={{
+              background: isLoading
+                ? 'radial-gradient(circle at 30% 28%, #ffffff 0%, #00c8dc 45%, #005f80 130%)'
+                : 'radial-gradient(circle at 30% 28%, #ffffff 0%, #00A4B4 56%, #003344 130%)',
+              boxShadow: isLoading
+                ? 'inset 0 -4px 8px rgba(13,53,71,0.18), inset 0 2px 6px rgba(255,255,255,0.5), 0 0 18px 4px rgba(0,164,180,0.45)'
+                : 'inset 0 -4px 8px rgba(13,53,71,0.18), inset 0 2px 6px rgba(255,255,255,0.5)',
+              animation: isLoading ? 'arcova-orb-breathe 2s ease-in-out infinite' : 'arcova-orb-breathe 5.4s ease-in-out infinite',
+            }} />
+            <span className="absolute inset-0 rounded-full" style={{ background: 'radial-gradient(ellipse 60% 30% at 36% 26%, rgba(255,255,255,0.7), transparent 60%)' }} />
+          </div>
+        ) : (
+          <Image
+            src="/images/network-og.png"
+            alt="Arcova"
+            width={lightSetupChat ? 36 : 28}
+            height={lightSetupChat ? 36 : 28}
+            className={cn(
+              'shrink-0 rounded-full object-cover',
+              lightSetupChat
+                ? 'h-9 w-9 ring-2 ring-slate-100 shadow-sm'
+                : 'h-8 w-8 ring-2 ring-slate-100/80 shadow-sm',
+            )}
+          />
+        )}
         <div className="flex-1 min-w-0">
-          <p className={cn('font-semibold leading-none', lightSetupChat ? 'text-sm text-gray-900' : briefingChat ? 'text-sm text-slate-900' : 'text-xs text-gray-900')}>Arcova Agent</p>
-          <p className={cn('mt-1 leading-tight', lightSetupChat ? 'text-xs text-gray-500' : briefingChat ? 'text-xs text-slate-500' : 'text-[11px] text-gray-500')}>
-            {page === 'data'
-              ? 'Run sourcing jobs and watch the queue on the right'
-              : 'Ask me anything about your accounts'}
-          </p>
+          <p className={cn('font-semibold leading-none', lightSetupChat ? 'text-sm text-gray-900' : briefingChat ? 'text-sm text-slate-900' : 'font-manrope text-[15px] text-[#0d3547]')}>Arcova Agent</p>
+          {(!lightSetupChat && !briefingChat) ? (
+            <div className="mt-[3px] flex items-center gap-1.5">
+              <span className="h-[6px] w-[6px] shrink-0 rounded-full bg-arcova-teal" style={{ animation: 'arcova-dot-pulse 2.6s ease-in-out infinite', boxShadow: '0 0 0 0 rgba(0,164,180,0.5)' }} />
+              <span className="text-[11px] leading-tight text-[#7d909a]">
+                {headerSubtitle ?? 'Ask me anything about your accounts'}
+              </span>
+            </div>
+          ) : (
+            <p className={cn('mt-1 leading-tight', lightSetupChat ? 'text-xs text-gray-500' : 'text-xs text-slate-500')}>
+              {headerSubtitle ? String(headerSubtitle) : page === 'data' ? 'Run sourcing jobs and watch the queue on the right' : 'Ask me anything about your accounts'}
+            </p>
+          )}
         </div>
         {messages.length > 0 && (
           <button
@@ -615,25 +644,29 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
 
       {/* ── Suggested prompts ── */}
       {showPrompts && (
-        <div className={cn('shrink-0', lightSetupChat ? 'px-5 pt-5 pb-3' : 'px-4 pt-4 pb-2', !wide && 'max-[1279px]:hidden')}>
-          <p className={cn('font-medium uppercase tracking-wide', lightSetupChat ? 'mb-3 text-[10px] text-slate-400' : briefingChat ? 'mb-2 text-[11px] text-slate-400' : 'mb-2 text-[11px] text-gray-400')}>
+        <div className={cn('shrink-0', lightSetupChat ? 'px-5 pt-5 pb-3' : briefingChat ? 'px-4 pt-4 pb-2' : 'px-[18px] pb-2 pt-1', !wide && 'max-[1279px]:hidden')}>
+          <p className={cn('font-semibold uppercase tracking-[0.16em]', lightSetupChat ? 'mb-3 text-[10px] text-slate-400' : briefingChat ? 'mb-2 text-[11px] text-slate-400' : 'mb-2 text-[10px] text-[#b6c2c8]')}>
             Try asking
           </p>
-          <div className={cn('flex flex-col', lightSetupChat ? 'gap-2' : 'gap-1.5')}>
+          <div className={cn('flex flex-col', lightSetupChat ? 'gap-2' : briefingChat ? 'gap-1.5' : 'gap-2')}>
             {PROMPTS[page].map((prompt) => (
               <button
                 key={prompt}
                 onClick={() => sendMessage(prompt)}
                 className={cn(
-                  'flex items-start gap-2 text-left transition-colors',
+                  'flex items-start gap-2 text-left transition-all',
                   lightSetupChat
                     ? 'rounded-xl border border-slate-200 bg-slate-50/80 px-3.5 py-2.5 text-sm text-slate-600 hover:border-arcova-teal/30 hover:bg-white hover:text-slate-900'
                     : briefingChat
                       ? 'rounded-xl border border-slate-200/80 bg-slate-50/90 px-3.5 py-2.5 text-sm text-slate-600 hover:border-arcova-teal/25 hover:bg-white hover:text-slate-900'
-                      : 'rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-600 hover:border-arcova-teal/30 hover:text-arcova-teal hover:bg-arcova-teal/5',
+                      : 'rounded-[12px] border border-[rgba(13,53,71,0.07)] bg-white/55 px-3 py-[9px] text-[12.5px] leading-snug text-[#0d3547] hover:-translate-y-px hover:border-arcova-teal hover:bg-white hover:shadow-[0_6px_16px_-10px_rgba(0,164,180,0.4)]',
                 )}
               >
-                <Sparkles className={cn('shrink-0 text-arcova-teal/50', lightSetupChat ? 'mt-0.5 h-3.5 w-3.5' : 'mt-0.5 h-3 w-3')} />
+                {(!lightSetupChat && !briefingChat) ? (
+                  <span className="shrink-0 text-arcova-teal text-[11px] leading-[1.6]">✦</span>
+                ) : (
+                  <Sparkles className={cn('shrink-0 text-arcova-teal/50', lightSetupChat ? 'mt-0.5 h-3.5 w-3.5' : 'mt-0.5 h-3 w-3')} />
+                )}
                 {prompt}
               </button>
             ))}
@@ -710,7 +743,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
               ? 'flex-1 space-y-5 bg-slate-50/70 px-5 py-5'
               : briefingChat
                 ? 'flex-1 space-y-5 px-5 py-5 sm:px-6'
-                : 'flex-1 space-y-4 px-4 py-3',
+                : 'flex-1 space-y-4 bg-transparent px-4 py-3',
           )}
         >
           {messageThread}
@@ -727,7 +760,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
               ? embedGlass
                 ? 'border-t border-[rgba(13,53,71,0.07)] bg-transparent px-0 pb-2 pt-2'
                 : 'border-t border-slate-100 bg-white px-4 py-4'
-              : 'border-t border-gray-100 px-3 pb-3 pt-2',
+              : 'border-t border-[rgba(13,53,71,0.07)] px-3 pb-3 pt-2',
         )}
       >
         <div className="flex items-center gap-2">
@@ -755,7 +788,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                   ? embedGlass
                     ? 'rounded-2xl border border-[rgba(13,53,71,0.12)] bg-white/90 px-3 py-2.5 shadow-[0_8px_32px_-20px_rgba(13,53,71,0.18)] backdrop-blur-md focus-within:border-arcova-teal/45 focus-within:shadow-[0_8px_28px_-18px_rgba(0,164,180,0.22)]'
                     : 'rounded-2xl bg-slate-100/85 px-3 py-2 ring-1 ring-slate-200/70 focus-within:ring-arcova-teal/25'
-                  : 'rounded-xl border border-gray-200 bg-white px-3 py-2 shadow-sm focus-within:border-arcova-teal/40',
+                  : 'rounded-[14px] border border-[rgba(13,53,71,0.07)] bg-white/70 px-3 py-[6px] focus-within:border-arcova-teal focus-within:bg-white focus-within:shadow-[0_0_0_4px_rgba(0,164,180,0.12)]',
             )}
           >
             {embedGlass ? (
@@ -769,7 +802,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                 <Mic className="h-4 w-4" />
               </button>
             ) : (
-              <Sparkles className={cn('shrink-0 text-arcova-teal/45', briefingChat || lightSetupChat ? 'h-4 w-4' : 'h-3.5 w-3.5')} />
+              <Sparkles className={cn('shrink-0', briefingChat || lightSetupChat ? 'h-4 w-4 text-arcova-teal/45' : 'h-3.5 w-3.5 text-arcova-teal')} />
             )}
             <input
               ref={inputRef}
@@ -790,7 +823,9 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                     : 'Ask anything, or press space to talk…'
                   : messages.length > 0
                     ? 'Ask a follow-up…'
-                    : 'Ask me anything…'
+                    : page === 'leads'
+                      ? 'Ask anything about your contacts…'
+                      : 'Ask anything about your accounts…'
               }
               className={cn(
                 'min-w-0 flex-1 bg-transparent focus:outline-none',
@@ -798,7 +833,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                   ? 'font-manrope text-[1.0625rem] text-slate-800 placeholder:text-slate-400'
                   : lightSetupChat || briefingChat
                     ? 'text-base text-slate-800 placeholder:text-slate-400'
-                    : 'text-sm text-gray-800 placeholder:text-gray-400',
+                    : 'text-sm text-[#0d3547] placeholder:text-[#b6c2c8]',
               )}
               disabled={isLoading}
             />
@@ -807,8 +842,12 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
               onClick={() => sendMessage(input)}
               disabled={!input.trim() || isLoading}
               className={cn(
-                'shrink-0 rounded-xl bg-arcova-teal text-white transition-colors hover:bg-arcova-teal/90 disabled:cursor-not-allowed disabled:opacity-30',
-                briefingChat ? 'px-4 py-2.5 text-sm font-semibold' : lightSetupChat ? 'p-2' : 'p-1.5',
+                'shrink-0 text-white transition-colors disabled:cursor-not-allowed',
+                briefingChat
+                  ? 'rounded-xl bg-arcova-teal px-4 py-2.5 text-sm font-semibold hover:bg-arcova-teal/90 disabled:opacity-30'
+                  : lightSetupChat
+                    ? 'rounded-xl bg-arcova-teal p-2 hover:bg-arcova-teal/90 disabled:opacity-30'
+                    : 'grid h-[30px] w-[30px] place-items-center rounded-[10px] bg-[#0d3547] hover:bg-arcova-teal disabled:bg-[rgba(13,53,71,0.18)]',
               )}
               aria-label={briefingChat ? 'Send message' : 'Send'}
             >

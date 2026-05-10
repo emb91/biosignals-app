@@ -1242,7 +1242,7 @@ export default function SignalsPage() {
                   variant="outline"
                   className="border-2 border-white/30 text-white hover:bg-arcova-mint hover:text-arcova-darkblue hover:border-arcova-mint px-8 py-3 text-base font-semibold rounded-xl transition-all duration-300 hover:shadow-lg group backdrop-blur-sm bg-white/10"
                 >
-                  <Link href="/contact?utm_source=arcova.app" className="flex items-center gap-2">
+                  <Link href="/contact-us?utm_source=arcova.app" className="flex items-center gap-2">
                     Send a note
                     <ArrowRight className="h-4 w-4 group-hover:translate-x-1 transition-transform" />
                   </Link>

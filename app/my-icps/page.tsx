@@ -172,11 +172,11 @@ function AddTagSelect({ options, selected, onAdd, placeholder = 'Add…' }: {
     <select
       value=""
       onChange={(e) => { if (e.target.value) onAdd(e.target.value); }}
-      className="mt-1 w-full rounded-lg bg-white border border-[rgba(13,53,71,0.12)] px-2 py-1 text-xs text-[#7d909a] focus:outline-none focus:border-arcova-teal/50 cursor-pointer"
+      className="mt-1 w-full rounded-lg bg-white/[0.06] border border-white/15 px-2 py-1 text-xs text-white/40 focus:outline-none focus:border-arcova-teal/50 cursor-pointer"
     >
       <option value="">{placeholder}</option>
       {remaining.map((o) => (
-        <option key={o} value={o}>{getSignalDisplayName(o, o)}</option>
+        <option key={o} value={o} className="bg-slate-900 text-white">{getSignalDisplayName(o, o)}</option>
       ))}
     </select>
   );
@@ -186,7 +186,7 @@ function FieldRow({ label, items }: { label: string; items: string[] }) {
   if (!items?.length) return null;
   return (
     <div className="space-y-1">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">{label}</p>
+      <p className="text-xs font-semibold text-white">{label}</p>
       <div className="flex flex-wrap gap-1.5">
         {items.map((t) => <Tag key={t} label={t} />)}
       </div>
@@ -198,7 +198,7 @@ function BulletList({ items }: { items: string[] }) {
   return (
     <ul className="space-y-1.5">
       {items.map((item, i) => (
-        <li key={i} className="flex items-start gap-1.5 text-xs text-[#4a6470] leading-snug">
+        <li key={i} className="flex items-start gap-1.5 text-xs text-white/70 leading-snug">
           <span className="mt-[5px] h-1 w-1 shrink-0 rounded-full bg-arcova-teal/60" />
           <span className="flex-1">{item}</span>
         </li>
@@ -210,9 +210,9 @@ function BulletList({ items }: { items: string[] }) {
 function Stat({ label, value, subValue }: { label: string; value: string; subValue?: string }) {
   return (
     <div>
-      <p className="text-xs text-[#7d909a]">{label}</p>
-      <p className="mt-0.5 text-sm text-[#0d3547] leading-tight">{value}</p>
-      {subValue && <p className="text-xs text-[#7d909a] leading-tight">{subValue}</p>}
+      <p className="text-xs text-white/85">{label}</p>
+      <p className="mt-0.5 text-sm text-white/80 leading-tight">{value}</p>
+      {subValue && <p className="text-xs text-white/50 leading-tight">{subValue}</p>}
     </div>
   );
 }
@@ -231,17 +231,17 @@ function Segment({
 }) {
   return (
     <div className={`rounded-xl overflow-hidden transition-colors ${
-      open ? 'border border-[rgba(13,53,71,0.07)] bg-white/50' : 'bg-[rgba(13,53,71,0.03)] hover:bg-[rgba(13,53,71,0.05)]'
+      open ? 'border border-white/10 bg-white/[0.06]' : 'bg-white/[0.18] hover:bg-white/[0.22]'
     }`}>
       <button
         type="button"
         onClick={onToggle}
         className="flex w-full items-center justify-between px-3 py-2 text-left transition-colors"
       >
-        <span className="text-xs font-semibold text-[#0d3547]">{label}</span>
+        <span className="text-xs font-semibold text-white">{label}</span>
         {open
-          ? <ChevronUp className="h-3 w-3 text-[#7d909a] shrink-0" />
-          : <ChevronDown className="h-3 w-3 text-[#7d909a] shrink-0" />}
+          ? <ChevronUp className="h-3 w-3 text-white/60 shrink-0" />
+          : <ChevronDown className="h-3 w-3 text-white/60 shrink-0" />}
       </button>
       {open && <div className="px-3 pb-3 space-y-2">{children}</div>}
     </div>
@@ -293,14 +293,14 @@ function reenrichmentStatusMeta(status: ReturnType<typeof normalizeReenrichmentS
   if (status === 'succeeded') {
     return {
       label: 'Done',
-      className: 'border-emerald-400/30 bg-emerald-50 text-emerald-700',
+      className: 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200',
     };
   }
 
   if (status === 'failed') {
     return {
       label: 'Failed',
-      className: 'border-red-300 bg-red-50 text-red-600',
+      className: 'border-red-400/30 bg-red-400/10 text-red-200',
     };
   }
 
@@ -415,7 +415,7 @@ function SignalCatalogByCategory({
         if (!inCat.length) return null;
         return (
           <div key={category}>
-            <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-[#7d909a]">
+            <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-white/45">
               {category}
             </p>
             <div className="flex flex-wrap gap-1.5">
@@ -431,14 +431,14 @@ function SignalCatalogByCategory({
                   'inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors';
                 const pillState = isOn
                   ? 'border-arcova-teal/50 bg-arcova-teal/20 text-arcova-teal'
-                  : 'border-[rgba(13,53,71,0.12)] bg-[rgba(13,53,71,0.04)] text-[#7d909a]';
+                  : 'border-white/25 bg-white/[0.10] text-white/70';
                 if (!readOnly && managed && onManagedServiceSignalClick) {
                   return (
                     <button
                       key={signal.id}
                       type="button"
                       onClick={() => onManagedServiceSignalClick(signal.id)}
-                      className={`${pillBase} ${pillState} hover:border-[rgba(13,53,71,0.2)] hover:bg-[rgba(13,53,71,0.08)] hover:text-[#4a6470]`}
+                      className={`${pillBase} ${pillState} hover:border-white/35 hover:bg-white/[0.14] hover:text-white/85`}
                     >
                       {label}
                     </button>
@@ -453,7 +453,7 @@ function SignalCatalogByCategory({
                       className={`${pillBase} ${pillState} ${
                         isOn
                           ? 'hover:bg-arcova-teal/28'
-                          : 'hover:border-[rgba(13,53,71,0.2)] hover:bg-[rgba(13,53,71,0.08)] hover:text-[#4a6470]'
+                          : 'hover:border-white/35 hover:bg-white/[0.14] hover:text-white/85'
                       }`}
                     >
                       {label}
@@ -499,7 +499,7 @@ function EditTagField({
   return (
     <div>
       {!hideLabel && (
-        <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">{label}</p>
+        <p className="mb-1.5 text-xs text-white/85">{label}</p>
       )}
       {selected.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mb-1.5">
@@ -545,7 +545,7 @@ function EditFreeformTagField({
   return (
     <div>
       {!hideLabel && (
-        <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">{label}</p>
+        <p className="mb-1.5 text-xs text-white/85">{label}</p>
       )}
       {selected.length > 0 && (
         <div className="mb-1.5 flex flex-wrap gap-1.5">
@@ -565,12 +565,12 @@ function EditFreeformTagField({
             addItem();
           }}
           placeholder={placeholder}
-          className="min-w-0 flex-1 rounded-lg border border-[rgba(13,53,71,0.07)] bg-white/70 px-2 py-1 text-xs text-[#0d3547] placeholder:text-[#b6c2c8] focus:border-arcova-teal/50 focus:outline-none"
+          className="min-w-0 flex-1 rounded-lg border border-white/15 bg-white/[0.06] px-2 py-1 text-xs text-white/80 placeholder:text-white/25 focus:border-arcova-teal/50 focus:outline-none"
         />
         <button
           type="button"
           onClick={addItem}
-          className="shrink-0 rounded-lg border border-[rgba(13,53,71,0.12)] px-2.5 py-1 text-xs font-medium text-[#4a6470] transition-colors hover:bg-black/[0.03] hover:text-[#0d3547]"
+          className="shrink-0 rounded-lg border border-white/15 px-2.5 py-1 text-xs font-medium text-white/60 transition-colors hover:bg-white/[0.06] hover:text-white/80"
         >
           Add
         </button>
@@ -579,10 +579,28 @@ function EditFreeformTagField({
   );
 }
 
-type IcpCardSegmentOpen = { criteria: boolean; buyingTeam: boolean; signals: boolean; };
+type IcpCardSegmentOpen = {
+  companySignals: boolean;
+  contactSignals: boolean;
+  criteria: boolean;
+  funding: boolean;
+  sellToCompanies: boolean;
+  competitors: boolean;
+  functions: boolean;
+  seniority: boolean;
+};
 
 function defaultIcpCardSegmentOpen(): IcpCardSegmentOpen {
-  return { criteria: true, buyingTeam: true, signals: false };
+  return {
+    companySignals: false,
+    contactSignals: false,
+    criteria: false,
+    funding: false,
+    sellToCompanies: false,
+    competitors: false,
+    functions: false,
+    seniority: false,
+  };
 }
 
 // ── Combined ICP + buying team card ───────────────────────────────────────
@@ -914,99 +932,63 @@ function ICPCard({
     setEditData((prev) => ({ ...prev, [field]: value }));
 
   return (
-    <div className={`rounded-[1.25rem] border border-white/80 bg-white/55 backdrop-blur-xl transition-shadow ${
-      collapsed
-        ? 'shadow-[0_18px_40px_-28px_rgba(13,53,71,0.15),0_1px_3px_rgba(13,53,71,0.04)]'
-        : 'shadow-[0_32px_80px_-36px_rgba(13,53,71,0.22),0_1px_3px_rgba(13,53,71,0.05)]'
-    }`}>
+    <div className="rounded-2xl border border-white/15 bg-white/[0.06]">
 
       {/* Card header */}
-      <div className={`flex items-center gap-3.5 px-5 py-4 cursor-pointer transition-colors hover:bg-white/35 ${!collapsed ? 'border-b border-[rgba(13,53,71,0.07)]' : ''}`}
-           onClick={editMode ? undefined : onToggle}>
-        {/* Numbered badge */}
-        <div className={`w-9 h-9 shrink-0 rounded-[10px] grid place-items-center font-manrope text-xs font-bold tracking-[0.04em] transition-all ${
-          !collapsed
-            ? 'bg-gradient-to-br from-arcova-teal to-[#007e8b] text-white shadow-[0_6px_18px_-8px_rgba(0,164,180,0.5)]'
-            : 'bg-gradient-to-br from-arcova-teal/18 to-arcova-teal/8 border border-arcova-teal/22 text-arcova-teal'
-        }`}>
-          #{index}
-        </div>
-
+      <div className={`flex items-center gap-2.5 px-4 py-3 ${!collapsed ? 'border-b border-white/10' : ''}`}>
         {editMode ? (
-          <div className="flex flex-1 min-w-0 items-center gap-2" onClick={e => e.stopPropagation()}>
-            <input
-              value={editData.name}
-              onChange={(e) => setEditData((prev) => ({ ...prev, name: e.target.value }))}
-              className="flex-1 min-w-0 rounded-lg bg-white border border-[rgba(13,53,71,0.12)] px-2.5 py-1 font-manrope text-[15px] font-semibold text-[#0d3547] placeholder:text-[#b6c2c8] focus:outline-none focus:border-arcova-teal/50 tracking-[-0.018em]"
-              placeholder="Profile name"
-            />
+          <>
+            <Briefcase className="h-4 w-4 shrink-0 text-arcova-teal" />
+            <div className="flex flex-1 min-w-0 items-center gap-2">
+              <input
+                value={editData.name}
+                onChange={(e) => setEditData((prev) => ({ ...prev, name: e.target.value }))}
+                className="flex-1 min-w-0 rounded-lg bg-white/[0.08] border border-white/20 px-2.5 py-1 text-sm font-semibold text-white placeholder-white/30 focus:outline-none focus:border-arcova-teal/60"
+                placeholder="Profile name"
+              />
+              <button
+                type="button"
+                onClick={() => void regenerateName()}
+                disabled={regeneratingName}
+                className="shrink-0 rounded-lg border border-white/15 px-2.5 py-1 text-xs font-medium text-white/70 transition-colors hover:bg-white/[0.06] hover:text-white disabled:opacity-50"
+              >
+                {regeneratingName ? 'Regenerating…' : 'Regenerate'}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
             <button
               type="button"
-              onClick={() => void regenerateName()}
-              disabled={regeneratingName}
-              className="shrink-0 rounded-lg border border-[rgba(13,53,71,0.12)] px-2.5 py-1 text-xs font-medium text-[#4a6470] transition-colors hover:bg-white/70 hover:text-[#0d3547] disabled:opacity-50"
+              onClick={onToggle}
+              className="flex flex-1 items-center gap-2.5 text-left min-w-0"
             >
-              {regeneratingName ? 'Regenerating…' : 'Regenerate'}
-            </button>
-          </div>
-        ) : (
-          <div className="flex flex-1 min-w-0 items-center gap-3">
-            {/* Title + modelled-on */}
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="block min-w-0 truncate font-manrope text-[15.5px] font-semibold text-[#0d3547] tracking-[-0.018em]">
-                  ICP {index}: {icp.name || 'ICP Profile'}
-                </span>
-                {currentReenrichmentMeta && (
-                  <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-[0.12em] ${currentReenrichmentMeta.className}`}>
-                    {currentReenrichmentMeta.label}
+              <Briefcase className="h-4 w-4 shrink-0 text-arcova-teal" />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="block min-w-0 truncate text-sm font-semibold text-white">
+                    ICP {index}: {icp.name || 'ICP Profile'}
+                  </span>
+                  {currentReenrichmentMeta && (
+                    <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${currentReenrichmentMeta.className}`}>
+                      {currentReenrichmentMeta.label}
+                    </span>
+                  )}
+                </div>
+                {collapsed && (
+                  <span className="block text-xs text-white/40 truncate">
+                    {[
+                      e?.company_name?.trim() ? `Modelled on ${e.company_name.trim()}` : null,
+                      relativeTime(icp.updated_at) ? `Updated ${relativeTime(icp.updated_at)}` : null,
+                    ].filter(Boolean).join(' · ')}
                   </span>
                 )}
               </div>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <Building2 className="h-[11px] w-[11px] shrink-0 text-[#7d909a]" />
-                <span className="text-[11.5px] text-[#7d909a]">
-                  Modelled on <span className="text-[#4a6470] font-medium">{e?.company_name || 'reference company'}</span>
-                  {relativeTime(icp.updated_at) && (
-                    <> <span className="text-[#b6c2c8]">·</span> Updated {relativeTime(icp.updated_at)}</>
-                  )}
-                </span>
-              </div>
-            </div>
-
-            {/* Summary pills (collapsed only) */}
-            {collapsed && icp.therapeutic_areas.length > 0 && (
-              <span className="hidden sm:inline-flex shrink-0 items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full bg-white/60 border border-[rgba(13,53,71,0.07)] text-[#4a6470]">
-                <span className="font-mono font-semibold text-[#0d3547]">{icp.therapeutic_areas.length}</span> therapeutic areas
-              </span>
-            )}
-            {collapsed && (functions.length + seniority.length) > 0 && (
-              <span className="hidden sm:inline-flex shrink-0 items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full bg-white/60 border border-[rgba(13,53,71,0.07)] text-[#4a6470]">
-                <span className="font-mono font-semibold text-[#0d3547]">{functions.length + seniority.length}</span> persona tags
-              </span>
-            )}
-
-            {/* Company logo */}
-            {e?.company_name && (
-              e.logo_url ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={e.logo_url} alt={e.company_name} className="w-8 h-8 shrink-0 rounded-[8px] object-contain bg-white/80 p-0.5 border border-[rgba(13,53,71,0.07)]" />
-              ) : (
-                <div className="w-8 h-8 shrink-0 rounded-[8px] grid place-items-center text-sm font-bold text-white bg-[#0d3547]">
-                  {e.company_name.charAt(0).toUpperCase()}
-                </div>
-              )
-            )}
-
-            {/* Caret */}
-            <span className={`w-7 h-7 shrink-0 grid place-items-center rounded-[8px] border transition-all ${
-              !collapsed
-                ? 'bg-[#0d3547] border-[#0d3547] text-white'
-                : 'bg-white/60 border-[rgba(13,53,71,0.07)] text-[#7d909a] hover:text-[#0d3547]'
-            }`}>
-              <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${!collapsed ? 'rotate-180' : ''}`} />
-            </span>
-          </div>
+              {collapsed
+                ? <ChevronDown className="h-4 w-4 text-white/40 shrink-0" />
+                : <ChevronUp className="h-4 w-4 text-white/40 shrink-0" />}
+            </button>
+          </>
         )}
       </div>
 
@@ -1018,11 +1000,11 @@ function ICPCard({
             <div className="min-w-0">
               {e.website ? (
                 <a href={e.website} target="_blank" rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-sm font-semibold text-[#0d3547] hover:underline leading-tight">
+                  className="inline-flex items-center gap-1 text-sm font-semibold text-white hover:underline leading-tight">
                   {e.company_name}<ExternalLink className="h-3 w-3 shrink-0 opacity-60" />
                 </a>
               ) : (
-                <p className="text-sm font-semibold text-[#0d3547] leading-tight">{e.company_name}</p>
+                <p className="text-sm font-semibold text-white leading-tight">{e.company_name}</p>
               )}
               <div className="flex flex-col gap-0.5 mt-0.5">
                 {linkedInDisplay && (
@@ -1035,10 +1017,10 @@ function ICPCard({
             </div>
             {e.logo_url ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={e.logo_url} alt={e.company_name ?? ''} className="h-20 w-20 shrink-0 rounded-xl object-contain bg-white/60 p-1" />
+              <img src={e.logo_url} alt={e.company_name ?? ''} className="h-20 w-20 shrink-0 rounded-xl object-contain bg-white/10 p-1" />
             ) : (
-              <div className="h-20 w-20 shrink-0 rounded-xl bg-white/50 flex items-center justify-center">
-                <Building2 className="h-9 w-9 text-[#b6c2c8]" />
+              <div className="h-20 w-20 shrink-0 rounded-xl bg-white/10 flex items-center justify-center">
+                <Building2 className="h-9 w-9 text-white/30" />
               </div>
             )}
           </div>
@@ -1047,18 +1029,18 @@ function ICPCard({
             <div className="space-y-5">
               {referenceSummary.length > 0 && (
                 <div>
-                  <p className="text-xs font-semibold text-[#0d3547] mb-2">About {referenceAccountLabel}</p>
-                  <p className="text-xs text-[#4a6470] leading-snug">{referenceSummary}</p>
+                  <p className="text-xs font-semibold text-white mb-2">About {referenceAccountLabel}</p>
+                  <p className="text-xs text-white/70 leading-snug">{referenceSummary}</p>
                 </div>
               )}
               {(e.employee_count != null || e.employee_range || e.hq_city || e.follower_count != null) && (
                 <div>
-                  <p className="text-xs font-semibold text-[#0d3547] mb-2">Firmographics</p>
+                  <p className="text-xs font-semibold text-white mb-2">Firmographics</p>
                   <div className="space-y-1">
                     {(e.employee_count != null || e.employee_range) && (
                       <div className="flex items-baseline gap-2">
-                        <span className="text-xs text-[#7d909a] w-28 shrink-0">Employees</span>
-                        <span className="text-xs text-[#0d3547]">
+                        <span className="text-xs text-white/50 w-28 shrink-0">Employees</span>
+                        <span className="text-xs text-white">
                           {e.employee_count != null ? e.employee_count.toLocaleString() : e.employee_range}
                           {e.employee_count != null && e.employee_range ? ` (${e.employee_range})` : ''}
                         </span>
@@ -1066,14 +1048,14 @@ function ICPCard({
                     )}
                     {e.hq_city && (
                       <div className="flex items-baseline gap-2">
-                        <span className="text-xs text-[#7d909a] w-28 shrink-0">HQ</span>
-                        <span className="text-xs text-[#0d3547]">{e.hq_city}{e.hq_country ? `, ${e.hq_country}` : ''}</span>
+                        <span className="text-xs text-white/50 w-28 shrink-0">HQ</span>
+                        <span className="text-xs text-white">{e.hq_city}{e.hq_country ? `, ${e.hq_country}` : ''}</span>
                       </div>
                     )}
                     {e.follower_count != null && (
                       <div className="flex items-baseline gap-2">
-                        <span className="text-xs text-[#7d909a] w-28 shrink-0">LinkedIn</span>
-                        <span className="text-xs text-[#0d3547]">{e.follower_count.toLocaleString()} followers</span>
+                        <span className="text-xs text-white/50 w-28 shrink-0">LinkedIn</span>
+                        <span className="text-xs text-white">{e.follower_count.toLocaleString()} followers</span>
                       </div>
                     )}
                   </div>
@@ -1081,37 +1063,37 @@ function ICPCard({
               )}
               {(modelledOnFundingStatus || modelledOnFundingSummary || e.funding_stage || e.total_funding_usd != null || e.arr_estimate) && (
                 <div>
-                  <p className="text-xs font-semibold text-[#0d3547] mb-2">Funding</p>
+                  <p className="text-xs font-semibold text-white mb-2">Funding</p>
                   <div className="space-y-1">
                     {modelledOnFundingStatus && (
                       <div className="flex items-baseline gap-2">
-                        <span className="text-xs text-[#7d909a] w-28 shrink-0">Status</span>
-                        <span className="text-xs text-[#0d3547]">{modelledOnFundingStatus}</span>
+                        <span className="text-xs text-white/50 w-28 shrink-0">Status</span>
+                        <span className="text-xs text-white">{modelledOnFundingStatus}</span>
                       </div>
                     )}
                     {e.funding_stage && (
                       <div className="flex items-baseline gap-2">
-                        <span className="text-xs text-[#7d909a] w-28 shrink-0">Stage</span>
-                        <span className="text-xs text-[#0d3547]">{e.funding_stage}</span>
+                        <span className="text-xs text-white/50 w-28 shrink-0">Stage</span>
+                        <span className="text-xs text-white">{e.funding_stage}</span>
                       </div>
                     )}
                     {e.total_funding_usd != null && (
                       <div className="flex items-baseline gap-2">
-                        <span className="text-xs text-[#7d909a] w-28 shrink-0">Total raised</span>
-                        <span className="text-xs text-[#0d3547]">{formatCurrencyShort(e.total_funding_usd)}</span>
+                        <span className="text-xs text-white/50 w-28 shrink-0">Total raised</span>
+                        <span className="text-xs text-white">{formatCurrencyShort(e.total_funding_usd)}</span>
                       </div>
                     )}
                     {e.arr_estimate && (
                       <div className="flex items-baseline gap-2">
-                        <span className="text-xs text-[#7d909a] w-28 shrink-0">ARR</span>
-                        <span className="text-xs text-[#0d3547]">{e.arr_estimate}</span>
+                        <span className="text-xs text-white/50 w-28 shrink-0">ARR</span>
+                        <span className="text-xs text-white">{e.arr_estimate}</span>
                       </div>
                     )}
                   </div>
                   {modelledOnFundingSummary && (
                     <div className="mt-2">
-                      <p className="text-xs text-[#b6c2c8] mb-1">Funding summary</p>
-                      <p className="text-xs leading-snug text-[#4a6470]">{modelledOnFundingSummary}</p>
+                      <p className="text-xs text-white/40 mb-1">Funding summary</p>
+                      <p className="text-xs leading-snug text-white/55">{modelledOnFundingSummary}</p>
                     </div>
                   )}
                 </div>
@@ -1120,7 +1102,7 @@ function ICPCard({
               <FieldRow label="Sells to people like" items={referenceCustomerSegments.buyerTypes} />
               {(e.competitors_enriched?.length ?? 0) > 0 && (
                 <div className="space-y-1">
-                  <p className="text-xs font-semibold text-[#0d3547]">Competitors</p>
+                  <p className="text-xs font-semibold text-white">Competitors</p>
                   <div className="flex flex-wrap gap-1.5">
                     {e.competitors_enriched!.map((c, i) => {
                       const href = c.url?.trim() || `https://www.google.com/search?q=${encodeURIComponent(c.name)}`;
@@ -1140,30 +1122,30 @@ function ICPCard({
             <div className="space-y-5">
               {(e.products?.length ?? 0) > 0 && (
                 <div>
-                  <p className="mb-1 text-xs font-semibold text-[#0d3547]">Products</p>
+                  <p className="mb-1 text-xs font-semibold text-white">Products</p>
                   <div className="flex flex-wrap gap-1.5">
                     {e.products!.map((p, i) => (
-                      <span key={i} className="rounded-full bg-white/60 px-2.5 py-0.5 text-xs text-[#0d3547]">{p}</span>
+                      <span key={i} className="rounded-full bg-white/10 px-2.5 py-0.5 text-xs text-white/80">{p}</span>
                     ))}
                   </div>
                 </div>
               )}
               {(e.services?.length ?? 0) > 0 && (
                 <div>
-                  <p className="mb-1 text-xs font-semibold text-[#0d3547]">Services</p>
+                  <p className="mb-1 text-xs font-semibold text-white">Services</p>
                   <div className="flex flex-wrap gap-1.5">
                     {e.services!.map((s, i) => (
-                      <span key={i} className="rounded-full bg-white/60 px-2.5 py-0.5 text-xs text-[#0d3547]">{s}</span>
+                      <span key={i} className="rounded-full bg-white/10 px-2.5 py-0.5 text-xs text-white/80">{s}</span>
                     ))}
                   </div>
                 </div>
               )}
               {(e.technologies?.length ?? 0) > 0 && (
                 <div>
-                  <p className="mb-1 text-xs font-semibold text-[#0d3547]">Technology</p>
+                  <p className="mb-1 text-xs font-semibold text-white">Technology</p>
                   <div className="flex flex-wrap gap-1.5">
                     {e.technologies!.map((t, i) => (
-                      <span key={i} className="rounded-full bg-white/60 px-2.5 py-0.5 text-xs text-[#0d3547]">{t}</span>
+                      <span key={i} className="rounded-full bg-white/10 px-2.5 py-0.5 text-xs text-white/80">{t}</span>
                     ))}
                   </div>
                 </div>
@@ -1173,52 +1155,47 @@ function ICPCard({
         </div>
       )}
 
-      {/* Two-column body: Company criteria (left) · Buying team + Signals (right) */}
+      {/* Two-column body + full-width signals (above footer) */}
       {!collapsed && !modelledOnMode && (
-        <>
-          {/* Status banners — full width */}
+        <div className="flex min-w-0 flex-col">
+          <div className="flex min-w-0 divide-x divide-white/10">
+
+        {/* Left column — firmographics */}
+        <div className="flex-1 min-w-0 px-4 py-4 space-y-2">
+
           {!editMode && currentReenrichmentStatus === 'running' && (
-            <div className="mx-5 mt-4 rounded-xl border border-arcova-teal/30 bg-arcova-teal/10 px-3 py-2.5 text-xs text-arcova-teal">
+            <div className="rounded-xl border border-arcova-teal/30 bg-arcova-teal/10 px-3 py-3 text-xs text-arcova-teal">
               Re-enrichment is running in the background. You can leave this page and come back later.
             </div>
           )}
+
           {!editMode && currentReenrichmentStatus === 'failed' && icp.reenrichment_last_error?.trim() && (
-            <div className="mx-5 mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-600">
+            <div className="rounded-xl border border-red-400/30 bg-red-400/10 px-3 py-3 text-xs text-red-200">
               <div className="flex items-start gap-2">
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <div className="min-w-0">
-                  <p className="font-semibold text-red-700">Latest re-enrichment failed</p>
-                  <p className="mt-1 leading-snug text-red-600/85">{icp.reenrichment_last_error.trim()}</p>
+                  <p className="font-semibold text-red-100">Latest re-enrichment failed</p>
+                  <p className="mt-1 leading-snug text-red-200/85">{icp.reenrichment_last_error.trim()}</p>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Summary — full width, above the column heads */}
-          {icpProfileSummaryDisplay.length > 0 && !editMode && (
-            <p className="mx-5 mt-4 text-xs text-[#4a6470] leading-relaxed">
-              {icpProfileSummaryDisplay}
-            </p>
-          )}
+          <div className="flex items-center gap-1.5 pb-2">
+            <Building2 className="h-3.5 w-3.5 shrink-0 text-arcova-teal" />
+            <p className="flex-1 text-sm font-semibold text-white">Company criteria</p>
+          </div>
 
-        <div className="grid grid-cols-[1.4fr_1fr] divide-x divide-[rgba(13,53,71,0.07)] min-w-0">
-
-          {/* ── Left column — Company criteria ── */}
-          <div className="px-5 py-4 space-y-3.5 min-w-0">
-
-            {/* Col head */}
-            <div className="flex items-center gap-2 pb-1 border-b border-dashed border-[rgba(13,53,71,0.08)]">
-              <span className="w-[22px] h-[22px] grid place-items-center rounded-[6px] bg-arcova-teal/10 text-arcova-teal flex-shrink-0">
-                <Building2 className="h-3 w-3" />
-              </span>
-              <span className="font-manrope text-[13px] font-semibold text-[#0d3547] tracking-[-0.01em]">Company criteria</span>
-            </div>
-
-            {/* Edit mode — all criteria fields flat */}
-            {editMode && (
+          <Segment label="Summary" open={open.criteria} onToggle={() => toggle('criteria')}>
+            {icpProfileSummaryDisplay.length > 0 && (
+              <div className="pb-3 mb-3 border-b border-white/10">
+                <p className="text-xs text-white/70 leading-snug">{icpProfileSummaryDisplay}</p>
+              </div>
+            )}
+            {editMode ? (
               <div className="space-y-3">
                 <div>
-                  <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">Company type</p>
+                  <p className="mb-1.5 text-xs font-semibold text-white">Company type</p>
                   {editData.company_type ? (
                     <div className="flex flex-wrap gap-1.5">
                       <Tag label={editData.company_type} onRemove={() => setSingle('company_type', '')} />
@@ -1227,280 +1204,392 @@ function ICPCard({
                     <select
                       value=""
                       onChange={(e) => { if (e.target.value) setSingle('company_type', e.target.value); }}
-                      className="w-full rounded-lg bg-white border border-[rgba(13,53,71,0.12)] px-2 py-1 text-xs text-[#7d909a] focus:outline-none focus:border-arcova-teal/50 cursor-pointer"
+                      className="w-full rounded-lg bg-white/[0.06] border border-white/15 px-2 py-1 text-xs text-white/40 focus:outline-none focus:border-arcova-teal/50 cursor-pointer"
                     >
                       <option value="">Set type…</option>
                       {COMPANY_TYPE_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>{opt.value}</option>
+                        <option key={opt.value} value={opt.value} className="bg-slate-900 text-white">{opt.value}</option>
                       ))}
                     </select>
                   )}
                 </div>
                 {isSaasCompanyType(editData.company_type) && (
                   <div>
-                    <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">Platform category</p>
+                    <p className="mb-1.5 text-xs font-semibold text-white">Platform category</p>
                     <input
                       type="text"
                       value={editData.platform_category}
                       onChange={(e) => setSingle('platform_category', e.target.value)}
                       placeholder="e.g. Scientific Content Platform"
                       maxLength={48}
-                      className="w-full rounded-lg bg-white border border-[rgba(13,53,71,0.12)] px-2 py-1 text-xs text-[#0d3547] focus:outline-none focus:border-arcova-teal/50 placeholder:text-[#b6c2c8]"
+                      className="w-full rounded-lg bg-white/[0.06] border border-white/15 px-2 py-1 text-xs text-white/80 focus:outline-none focus:border-arcova-teal/50 placeholder:text-white/25"
                     />
                   </div>
                 )}
                 <EditTagField label="Therapeutic areas" options={THERAPEUTIC_AREA_OPTIONS} selected={editData.therapeutic_areas} onRemove={(v) => toggleMulti('therapeutic_areas', v)} onAdd={(v) => toggleMulti('therapeutic_areas', v)} />
                 <EditTagField label="Modalities" options={MODALITY_OPTIONS} selected={editData.modalities} onRemove={(v) => toggleMulti('modalities', v)} onAdd={(v) => toggleMulti('modalities', v)} />
                 <EditTagField label="Development stage" options={DEVELOPMENT_STAGE_OPTIONS} selected={editData.development_stages} onRemove={(v) => toggleMulti('development_stages', v)} onAdd={(v) => toggleMulti('development_stages', v)} />
-                <div className="grid grid-cols-2 gap-3">
-                  <EditTagField label="Company size" options={COMPANY_SIZE_OPTIONS} selected={editData.company_sizes} onRemove={(v) => toggleMulti('company_sizes', v)} onAdd={(v) => toggleMulti('company_sizes', v)} />
-                  <EditTagField label="LinkedIn followers" options={LI_FOLLOWER_OPTIONS} selected={editData.li_follower_sizes} onRemove={(v) => toggleMulti('li_follower_sizes', v)} onAdd={(v) => toggleMulti('li_follower_sizes', v)} />
-                </div>
+                <EditTagField label="Company size" options={COMPANY_SIZE_OPTIONS} selected={editData.company_sizes} onRemove={(v) => toggleMulti('company_sizes', v)} onAdd={(v) => toggleMulti('company_sizes', v)} />
+                <EditTagField label="LinkedIn follower base" options={LI_FOLLOWER_OPTIONS} selected={editData.li_follower_sizes} onRemove={(v) => toggleMulti('li_follower_sizes', v)} onAdd={(v) => toggleMulti('li_follower_sizes', v)} />
                 <EditTagField label="Funding stage" options={FUNDING_STAGE_OPTIONS} selected={editData.funding_stages} onRemove={(v) => toggleMulti('funding_stages', v)} onAdd={(v) => toggleMulti('funding_stages', v)} />
-                <EditFreeformTagField
-                  label="Sells to companies like"
-                  selected={editTargetCustomers}
-                  onRemove={(value) => setEditTargetCustomers((prev) => prev.filter((item) => item !== value))}
-                  onAdd={(value) => setEditTargetCustomers((prev) => [...prev, value])}
-                  placeholder="Add company segment…"
-                />
-                {/* Competitors edit */}
-                <div>
-                  <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">Competitors</p>
-                  {editCompetitors.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 mb-1.5">
-                      {editCompetitors.map((c, i) => {
-                        const trimmedUrl = c.url?.trim();
-                        const href = trimmedUrl || `https://www.google.com/search?q=${encodeURIComponent(c.name)}`;
-                        return (
-                          <span key={`${c.name}-${i}`} className="inline-flex max-w-full items-center gap-0.5 rounded-full bg-arcova-teal/15 pl-2.5 pr-1 py-0.5 text-xs font-medium text-arcova-teal">
-                            <a href={href} target="_blank" rel="noopener noreferrer"
-                              className="inline-flex min-w-0 max-w-[14rem] items-center gap-0.5 truncate hover:underline" title={c.name}>
-                              <span className="truncate">{c.name}</span>
-                              <ExternalLink className="h-2.5 w-2.5 shrink-0 opacity-70" />
-                            </a>
-                            <button type="button" onClick={() => setEditCompetitors((prev) => prev.filter((_, j) => j !== i))}
-                              className="shrink-0 rounded-full p-0.5 text-arcova-teal/50 transition-colors hover:bg-arcova-teal/20 hover:text-arcova-teal" aria-label={`Remove ${c.name}`}>
-                              <X className="h-2.5 w-2.5" />
-                            </button>
-                          </span>
-                        );
-                      })}
-                    </div>
-                  )}
-                  <input
-                    type="text"
-                    value={newCompetitorUrl}
-                    onChange={(ev) => setNewCompetitorUrl(ev.target.value)}
-                    onKeyDown={(ev) => {
-                      if (ev.key !== 'Enter' || !newCompetitorUrl.trim()) return;
-                      ev.preventDefault();
-                      const raw = newCompetitorUrl.trim();
-                      let url = raw;
-                      if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
-                      let name = raw;
-                      try { name = new URL(url).hostname.replace(/^www\./, ''); } catch { /* keep raw */ }
-                      setEditCompetitors((prev) => [...prev, { name, url }]);
-                      setNewCompetitorUrl('');
-                    }}
-                    placeholder="Paste competitor URL… (Enter)"
-                    className="w-full rounded-lg border border-[rgba(13,53,71,0.07)] bg-white/70 px-2 py-1 text-xs text-[#0d3547] placeholder:text-[#b6c2c8] focus:outline-none focus:border-arcova-teal/50"
-                  />
-                </div>
               </div>
-            )}
-
-            {/* Read mode — flat criteria fields */}
-            {!editMode && (() => {
+            ) : (() => {
               const hasTaxonomy = icp.company_type || visiblePlatformCategory(icp.company_type, icp.platform_category) || icp.therapeutic_areas.length > 0 || icp.modalities.length > 0 || icp.development_stages.length > 0;
               const hasSizing = icp.company_sizes.length > 0 || (icp.li_follower_sizes?.length ?? 0) > 0;
-              const derivedStage = canonicalizeFundingStage(e?.funding_stage, e?.total_funding_usd, e?.company_status ?? e?.funding_status_label ?? null);
-              const fundingStages = icp.funding_stages.length > 0 ? icp.funding_stages : derivedStage ? [derivedStage] : [];
-              const fundingBucket = fundingAmountDisplayBucket(e?.total_funding_usd);
-              const fundingStatus = fundingStages.length === 0 ? icpFundingStatus : null;
-              const arrBucket = arrEstimateToBucket(e?.arr_estimate);
-              const hasFunding = fundingStages.length > 0 || fundingBucket || fundingStatus || arrBucket;
-              if (!hasTaxonomy && !hasSizing && !hasFunding && icpCustomerSegments.customerOrganizations.length === 0 && displayCompetitors.length === 0) {
+              if (!hasTaxonomy && !hasSizing) {
                 return (
-                  <p className="text-xs text-[#7d909a] italic">
-                    No criteria set — this ICP will match any company. Click Edit to add filters.
+                  <p className="text-xs text-white/40 italic">
+                    No criteria set — this ICP will match any company type, size, or stage. Click Edit to add filters.
                   </p>
                 );
               }
               return (
-                <div className="space-y-3.5">
-                  {icp.company_type && (
-                    <div className="space-y-1.5">
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">Company type</p>
-                      <div className="flex flex-wrap gap-1.5"><Tag label={icp.company_type} /></div>
+                <>
+                  {hasTaxonomy && (
+                    <div className="space-y-2.5">
+                      {icp.company_type && (
+                        <div>
+                          <p className="mb-1 text-xs font-semibold text-white">Company type</p>
+                          <Tag label={icp.company_type} />
+                        </div>
+                      )}
+                      {visiblePlatformCategory(icp.company_type, icp.platform_category) && (
+                        <div>
+                          <p className="mb-1 text-xs font-semibold text-white">Platform category</p>
+                          <Tag label={visiblePlatformCategory(icp.company_type, icp.platform_category)} />
+                        </div>
+                      )}
+                      <FieldRow label="Therapeutic areas" items={icp.therapeutic_areas} />
+                      <FieldRow label="Modalities" items={icp.modalities} />
+                      <FieldRow label="Development stage" items={icp.development_stages} />
                     </div>
                   )}
-                  {visiblePlatformCategory(icp.company_type, icp.platform_category) && (
-                    <div className="space-y-1.5">
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">Platform category</p>
-                      <div className="flex flex-wrap gap-1.5"><Tag label={visiblePlatformCategory(icp.company_type, icp.platform_category)} /></div>
-                    </div>
-                  )}
-                  <FieldRow label="Therapeutic areas" items={icp.therapeutic_areas} />
-                  <FieldRow label="Modalities" items={icp.modalities} />
-                  <FieldRow label="Development stage" items={icp.development_stages} />
-                  {(icp.company_sizes.length > 0 || (icp.li_follower_sizes?.length ?? 0) > 0) && (
-                    <div className="grid grid-cols-2 gap-3">
+                  {hasSizing && (
+                    <div className="space-y-2.5">
                       {icp.company_sizes.length > 0 && <FieldRow label="Company size" items={icp.company_sizes} />}
-                      {(icp.li_follower_sizes?.length ?? 0) > 0 && <FieldRow label="LinkedIn followers" items={icp.li_follower_sizes ?? []} />}
+                      {(icp.li_follower_sizes?.length ?? 0) > 0 && (
+                        <FieldRow label="LinkedIn follower base" items={icp.li_follower_sizes ?? []} />
+                      )}
                     </div>
                   )}
-                  {hasFunding && (
-                    <div className="space-y-1.5">
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">Funding</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {fundingStages.map((s) => <Tag key={s} label={s} />)}
-                        {fundingBucket && <Tag label={fundingBucket} />}
-                        {fundingStatus && <Tag label={fundingStatus} />}
-                        {arrBucket && <Tag label={arrBucket} />}
-                      </div>
-                    </div>
-                  )}
-                  {icpCustomerSegments.customerOrganizations.length > 0 && (
-                    <FieldRow label="Sells to companies like" items={icpCustomerSegments.customerOrganizations} />
-                  )}
-                  {displayCompetitors.length > 0 && (
-                    <div className="space-y-1.5">
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">Competitors</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {displayCompetitors.map((c, i) => {
-                          const href = c.url?.trim() || `https://www.google.com/search?q=${encodeURIComponent(c.name)}`;
-                          return (
-                            <a key={`${c.name}-${i}`} href={href} target="_blank" rel="noopener noreferrer"
-                              className="inline-flex items-center gap-0.5 rounded-full bg-arcova-teal/15 px-2.5 py-0.5 text-xs font-medium text-arcova-teal hover:underline">
-                              <span className="truncate max-w-[14rem]">{c.name}</span>
-                              <ExternalLink className="h-2.5 w-2.5 shrink-0 opacity-70" />
-                            </a>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
+                </>
               );
             })()}
+          </Segment>
+
+          {!editMode && (() => {
+            const derivedStage = canonicalizeFundingStage(
+              e?.funding_stage,
+              e?.total_funding_usd,
+              e?.company_status ?? e?.funding_status_label ?? null,
+            );
+            const fundingStages = icp.funding_stages.length > 0
+              ? icp.funding_stages
+              : derivedStage ? [derivedStage] : [];
+            // Dollar bucket from the reference account's total funding amount
+            const fundingBucket = fundingAmountDisplayBucket(e?.total_funding_usd);
+            // Only show generic ownership status (e.g. "Public", "Grant-funded") when
+            // there's no named stage already — avoids the redundant "Private" tag
+            // appearing alongside "Series C" + a dollar bucket.
+            const fundingStatus = fundingStages.length === 0 ? icpFundingStatus : null;
+            const arrBucket = arrEstimateToBucket(e?.arr_estimate);
+            const hasFunding = fundingStages.length > 0 || fundingBucket || fundingStatus || arrBucket;
+            if (!hasFunding) return null;
+            return (
+              <Segment label="Funding" open={open.funding} onToggle={() => toggle('funding')}>
+                <div className="flex flex-wrap gap-1.5">
+                  {fundingStages.map((s) => <Tag key={s} label={s} />)}
+                  {fundingBucket && <Tag label={fundingBucket} />}
+                  {fundingStatus && <Tag label={fundingStatus} />}
+                  {arrBucket && <Tag label={arrBucket} />}
+                </div>
+              </Segment>
+            );
+          })()}
+
+          {!editMode && icpCustomerSegments.customerOrganizations.length > 0 && (
+            <Segment
+              label="Sells to companies like"
+              open={open.sellToCompanies}
+              onToggle={() => toggle('sellToCompanies')}
+            >
+              <div className="flex flex-wrap gap-1.5">
+                {icpCustomerSegments.customerOrganizations.map((item) => (
+                  <Tag key={item} label={item} />
+                ))}
+              </div>
+            </Segment>
+          )}
+
+          {editMode && (
+            <Segment
+              label="Sells to companies like"
+              open={open.sellToCompanies}
+              onToggle={() => toggle('sellToCompanies')}
+            >
+              <EditFreeformTagField
+                hideLabel
+                label="Sells to companies like"
+                selected={editTargetCustomers}
+                onRemove={(value) => setEditTargetCustomers((prev) => prev.filter((item) => item !== value))}
+                onAdd={(value) => setEditTargetCustomers((prev) => [...prev, value])}
+                placeholder="Add company segment…"
+              />
+            </Segment>
+          )}
+
+          {!editMode && displayCompetitors.length > 0 && (
+            <Segment label="Competitors" open={open.competitors} onToggle={() => toggle('competitors')}>
+              <div className="flex flex-wrap gap-1.5">
+                {displayCompetitors.map((c, i) => {
+                  const href = c.url?.trim() || `https://www.google.com/search?q=${encodeURIComponent(c.name)}`;
+                  return (
+                    <a
+                      key={`${c.name}-${i}`}
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-0.5 rounded-full bg-arcova-teal/15 px-2.5 py-0.5 text-xs font-medium text-arcova-teal hover:underline"
+                    >
+                      <span className="truncate max-w-[14rem]">{c.name}</span>
+                      <ExternalLink className="h-2.5 w-2.5 shrink-0 opacity-70" />
+                    </a>
+                  );
+                })}
+              </div>
+            </Segment>
+          )}
+
+          {editMode && (
+            <Segment label="Competitors" open={open.competitors} onToggle={() => toggle('competitors')}>
+              <div className="flex flex-wrap gap-1.5">
+                {editCompetitors.map((c, i) => {
+                  const trimmedUrl = c.url?.trim();
+                  const href = trimmedUrl || `https://www.google.com/search?q=${encodeURIComponent(c.name)}`;
+                  return (
+                    <span
+                      key={`${c.name}-${i}`}
+                      className="inline-flex max-w-full items-center gap-0.5 rounded-full bg-arcova-teal/15 pl-2.5 pr-1 py-0.5 text-xs font-medium text-arcova-teal"
+                    >
+                      <a
+                        href={href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex min-w-0 max-w-[14rem] items-center gap-0.5 truncate hover:underline"
+                        title={c.name}
+                      >
+                        <span className="truncate">{c.name}</span>
+                        <ExternalLink className="h-2.5 w-2.5 shrink-0 opacity-70" />
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => setEditCompetitors((prev) => prev.filter((_, j) => j !== i))}
+                        className="shrink-0 rounded-full p-0.5 text-arcova-teal/50 transition-colors hover:bg-arcova-teal/20 hover:text-arcova-teal"
+                        aria-label={`Remove ${c.name}`}
+                      >
+                        <X className="h-2.5 w-2.5" />
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  value={newCompetitorUrl}
+                  onChange={(ev) => setNewCompetitorUrl(ev.target.value)}
+                  onKeyDown={(ev) => {
+                    if (ev.key !== 'Enter' || !newCompetitorUrl.trim()) return;
+                    ev.preventDefault();
+                    const raw = newCompetitorUrl.trim();
+                    let url = raw;
+                    if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+                    let name = raw;
+                    try {
+                      name = new URL(url).hostname.replace(/^www\./, '');
+                    } catch { /* keep raw as label */ }
+                    setEditCompetitors((prev) => [...prev, { name, url }]);
+                    setNewCompetitorUrl('');
+                  }}
+                  placeholder="Paste competitor URL… (Enter)"
+                  className="min-w-0 flex-1 rounded-lg border border-white/15 bg-white/[0.06] px-2 py-1 text-xs text-white/80 placeholder:text-white/25 focus:outline-none focus:border-arcova-teal/50"
+                />
+              </div>
+            </Segment>
+          )}
+
+        </div>
+
+        {/* Right column — buying team */}
+        <div className="w-80 shrink-0 px-4 py-4 space-y-2">
+          <div className="flex items-center gap-1.5 pb-2">
+            <Users className="h-3.5 w-3.5 text-arcova-teal shrink-0" />
+            <p className="text-sm font-semibold text-white flex-1">Buying team</p>
           </div>
 
-          {/* ── Right column — Buying team + Signals ── */}
-          <div className="px-5 py-4 space-y-3.5 min-w-0">
-
-            {/* Buying team col head */}
-            <div className="flex items-center gap-2 pb-1 border-b border-dashed border-[rgba(13,53,71,0.08)]">
-              <span className="w-[22px] h-[22px] grid place-items-center rounded-[6px] bg-arcova-teal/10 text-arcova-teal flex-shrink-0">
-                <Users className="h-3 w-3" />
-              </span>
-              <span className="font-manrope text-[13px] font-semibold text-[#0d3547] tracking-[-0.01em]">Buying team</span>
-            </div>
-
-            {editMode ? (
-              persona ? (
-                <div className="space-y-3">
-                  <EditTagField hideLabel label="Functions" options={BUSINESS_AREA_OPTIONS} selected={editFunctions}
+          {editMode ? (
+            persona ? (
+              <div className="space-y-2">
+                <Segment label="Functions" open={open.functions} onToggle={() => toggle('functions')}>
+                  <EditTagField
+                    hideLabel
+                    label="Functions"
+                    options={BUSINESS_AREA_OPTIONS}
+                    selected={editFunctions}
                     onRemove={(v) => setEditFunctions((prev) => prev.filter((f) => f !== v))}
-                    onAdd={(v) => setEditFunctions((prev) => [...prev, v])} />
-                  <EditTagField hideLabel label="Seniority" options={SENIORITY_LEVEL_OPTIONS} selected={editSeniority}
+                    onAdd={(v) => setEditFunctions((prev) => [...prev, v])}
+                  />
+                </Segment>
+                <Segment label="Seniority" open={open.seniority} onToggle={() => toggle('seniority')}>
+                  <EditTagField
+                    hideLabel
+                    label="Seniority"
+                    options={SENIORITY_LEVEL_OPTIONS}
+                    selected={editSeniority}
                     onRemove={(v) => setEditSeniority((prev) => prev.filter((s) => s !== v))}
-                    onAdd={(v) => setEditSeniority((prev) => [...prev, v])} />
-                </div>
-              ) : (
-                <p className="text-xs text-[#7d909a] leading-snug pt-1">No buying team defined yet.</p>
-              )
-            ) : persona ? (
-              <div className="space-y-3.5">
-                <FieldRow label="Functions" items={functions} />
-                <FieldRow label="Seniority" items={seniority} />
+                    onAdd={(v) => setEditSeniority((prev) => [...prev, v])}
+                  />
+                </Segment>
               </div>
             ) : (
-              <div className="space-y-3 pt-1">
-                <p className="text-xs text-[#7d909a] leading-snug">No buying team defined yet.</p>
-                <button type="button" onClick={onAddBuyingTeam}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-arcova-teal/40 px-3 py-2 text-xs font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/10">
-                  <Plus className="h-3.5 w-3.5" />
-                  Add buying team
-                </button>
-              </div>
-            )}
-
-            {/* Signals col head */}
-            <div className="flex items-center gap-2 pb-1 border-b border-dashed border-[rgba(13,53,71,0.08)] pt-3">
-              <span className="w-[22px] h-[22px] grid place-items-center rounded-[6px] bg-arcova-teal/10 text-arcova-teal flex-shrink-0">
-                <Activity className="h-3 w-3" />
-              </span>
-              <span className="font-manrope text-[13px] font-semibold text-[#0d3547] tracking-[-0.01em]">Signals</span>
+              <p className="text-xs text-white/30 leading-snug pt-1">No buying team defined yet.</p>
+            )
+          ) : persona ? (
+            <>
+              <Segment label="Functions" open={open.functions} onToggle={() => toggle('functions')}>
+                <div className="flex flex-wrap gap-1.5">
+                  {functions.map((f) => <Tag key={f} label={f} />)}
+                </div>
+              </Segment>
+              <Segment label="Seniority" open={open.seniority} onToggle={() => toggle('seniority')}>
+                <div className="flex flex-wrap gap-1.5">
+                  {seniority.map((s) => <Tag key={s} label={s} />)}
+                </div>
+              </Segment>
+            </>
+          ) : (
+            <div className="space-y-3 pt-1">
+              <p className="text-xs text-white/30 leading-snug">No buying team defined yet.</p>
+              <button
+                type="button"
+                onClick={onAddBuyingTeam}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-arcova-teal/40 px-3 py-2 text-xs font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/10"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Add buying team
+              </button>
             </div>
+          )}
 
-            {/* Company signals */}
-            <div className="space-y-1.5">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">Company signals</p>
+        </div>
+
+          </div>
+
+          <div className="w-full min-w-0 border-t border-white/10 px-4 py-4 space-y-2">
+            <div className="flex items-center gap-1.5 pb-2">
+              <Activity className="h-3.5 w-3.5 shrink-0 text-arcova-teal" />
+              <p className="flex-1 text-sm font-semibold text-white">Signals</p>
+            </div>
+            <Segment
+              label="Company signals"
+              open={open.companySignals}
+              onToggle={() => toggle('companySignals')}
+            >
               {editMode ? (
-                <SignalCatalogByCategory variant="all" definitions={COMPANY_SIGNALS} categoryOrder={COMPANY_SIGNAL_CATEGORY_ORDER}
-                  selectedIds={editData.signals} readOnly={false} onToggle={(id) => toggleMulti('signals', id)} />
+                <SignalCatalogByCategory
+                  variant="all"
+                  definitions={COMPANY_SIGNALS}
+                  categoryOrder={COMPANY_SIGNAL_CATEGORY_ORDER}
+                  selectedIds={editData.signals}
+                  readOnly={false}
+                  onToggle={(id) => toggleMulti('signals', id)}
+                />
               ) : (
-                <SignalCatalogByCategory variant="selectedOnly" definitions={COMPANY_SIGNALS} categoryOrder={COMPANY_SIGNAL_CATEGORY_ORDER}
-                  selectedIds={icpSignalIds} readOnly />
+                <SignalCatalogByCategory
+                  variant="selectedOnly"
+                  definitions={COMPANY_SIGNALS}
+                  categoryOrder={COMPANY_SIGNAL_CATEGORY_ORDER}
+                  selectedIds={icpSignalIds}
+                  readOnly
+                />
               )}
-            </div>
-
-            {/* Contact signals */}
-            <div className="space-y-1.5">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">Contact signals</p>
+            </Segment>
+            <Segment
+              label="Contact signals"
+              open={open.contactSignals}
+              onToggle={() => toggle('contactSignals')}
+            >
               {editMode ? (
                 persona ? (
-                  <SignalCatalogByCategory variant="all" definitions={CONTACT_SIGNALS} categoryOrder={CONTACT_SIGNAL_CATEGORY_ORDER}
-                    selectedIds={editPersonaSignals} readOnly={false}
+                  <SignalCatalogByCategory
+                    variant="all"
+                    definitions={CONTACT_SIGNALS}
+                    categoryOrder={CONTACT_SIGNAL_CATEGORY_ORDER}
+                    selectedIds={editPersonaSignals}
+                    readOnly={false}
                     isManagedServiceSignal={isContactSignalComingSoon}
                     onManagedServiceSignalClick={(signalId) => {
-                      toast.info('This signal is available with our managed data service. Get in touch and we can enable it for you.');
+                      toast.info(
+                        'This signal is available with our managed data service. Get in touch and we can enable it for you.',
+                      );
                       void fetch('/api/contact-premium-signal-interest', {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ signalId, personaId: persona.id }),
                       }).catch(() => {});
                     }}
-                    onToggle={(id) => setEditPersonaSignals((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])}
+                    onToggle={(id) =>
+                      setEditPersonaSignals((prev) =>
+                        prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+                      )
+                    }
                   />
                 ) : (
-                  <p className="text-xs text-[#7d909a] italic">Add a buying team on this ICP to set contact signals.</p>
+                  <p className="text-xs text-white/40 italic">
+                    Add a buying team on this ICP to set contact signals.
+                  </p>
                 )
               ) : persona ? (
-                <SignalCatalogByCategory variant="selectedOnly" definitions={CONTACT_SIGNALS} categoryOrder={CONTACT_SIGNAL_CATEGORY_ORDER}
-                  selectedIds={personaSignalIds} readOnly />
+                <SignalCatalogByCategory
+                  variant="selectedOnly"
+                  definitions={CONTACT_SIGNALS}
+                  categoryOrder={CONTACT_SIGNAL_CATEGORY_ORDER}
+                  selectedIds={personaSignalIds}
+                  readOnly
+                />
               ) : (
-                <p className="text-xs text-[#7d909a] italic">No buying team on this ICP. Add a buying team to set contact signals.</p>
+                <p className="text-xs text-white/40 italic">
+                  No buying team on this ICP. Add a buying team to set contact signals.
+                </p>
               )}
-            </div>
+            </Segment>
           </div>
         </div>
-        </>
       )}
 
       {!collapsed && (
-        <div className="flex items-center justify-between gap-2 border-t border-[rgba(13,53,71,0.07)] bg-[rgba(255,255,255,0.35)] px-5 py-3.5">
+        <div className="flex items-center justify-between gap-2 border-t border-white/10 px-4 py-3">
           {/* Bottom-left: subtle modelled-on toggle */}
           <div className="flex items-center gap-3">
             {!editMode && e?.company_name && (
               modelledOnMode ? (
                 <button
                   onClick={() => setModelledOnMode(false)}
-                  className="flex items-center gap-1 text-xs text-[#7d909a] underline underline-offset-2 transition-colors hover:text-[#0d3547]"
+                  className="flex items-center gap-1 text-xs text-white/50 underline underline-offset-2 transition-colors hover:text-white/80"
                 >
                   <ChevronDown className="h-3 w-3 rotate-90" /> Back to summary
                 </button>
               ) : (
                 <button
                   onClick={() => setModelledOnMode(true)}
-                  className="flex items-center gap-1 text-xs text-[#7d909a] underline underline-offset-2 transition-colors hover:text-[#0d3547]"
+                  className="flex items-center gap-1 text-xs text-white/50 underline underline-offset-2 transition-colors hover:text-white/80"
                 >
                   Modelled on {e.company_name} <ExternalLink className="h-3 w-3" />
                 </button>
               )
             )}
             {!editMode && relativeTime(icp.updated_at) && (
-              <span className="text-xs text-[#b6c2c8]">Updated {relativeTime(icp.updated_at)}</span>
+              <span className="text-xs text-white/30">Updated {relativeTime(icp.updated_at)}</span>
             )}
           </div>
 
@@ -1518,7 +1607,7 @@ function ICPCard({
               <button
                 onClick={cancelEdit}
                 disabled={saving}
-                className="flex items-center gap-1 rounded-lg border border-[rgba(13,53,71,0.12)] px-3 py-1.5 text-xs font-medium text-[#4a6470] transition-colors hover:bg-black/[0.03] hover:text-[#0d3547] disabled:opacity-50"
+                className="flex items-center gap-1 rounded-lg border border-white/15 px-3 py-1.5 text-xs font-medium text-white/60 transition-colors hover:bg-white/[0.06] hover:text-white disabled:opacity-50"
               >
                 <X className="h-3 w-3" /> Cancel
               </button>
@@ -1535,14 +1624,14 @@ function ICPCard({
               <button
                 onClick={onReenrich}
                 disabled={reenriching}
-                className="flex items-center gap-1 rounded-lg border border-[rgba(13,53,71,0.12)] px-3 py-1.5 text-xs font-medium text-[#4a6470] transition-colors hover:bg-black/[0.03] hover:text-[#0d3547] disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex items-center gap-1 rounded-lg border border-white/15 px-3 py-1.5 text-xs font-medium text-white/60 transition-colors hover:bg-white/[0.06] hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <RefreshCw className={`h-3 w-3 ${reenriching ? 'animate-spin' : ''}`} /> {reenriching ? 'Re-enriching…' : 'Re-enrich'}
               </button>
               <button
                 onClick={onDelete}
                 disabled={deleting || reenriching}
-                className="flex items-center gap-1 rounded-lg border border-red-300 px-3 py-1.5 text-xs font-medium text-red-500 transition-colors hover:border-red-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+                className="flex items-center gap-1 rounded-lg border border-red-400/30 px-3 py-1.5 text-xs font-medium text-red-400/70 transition-colors hover:border-red-400/50 hover:bg-red-400/10 hover:text-red-400 disabled:opacity-40"
               >
                 <Trash2 className="h-3 w-3" /> Delete
               </button>
@@ -1780,7 +1869,7 @@ export default function ICPManagerPage() {
 
   if (loading || loadingData) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-transparent">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-slate-950 to-arcova-darkblue">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-arcova-teal" />
       </div>
     );
@@ -1789,7 +1878,7 @@ export default function ICPManagerPage() {
   if (!user) return null;
 
   return (
-    <div className="flex h-screen bg-transparent">
+    <div className="flex h-screen bg-gradient-to-b from-slate-950 to-arcova-darkblue">
       <AppSidebar />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -1799,8 +1888,8 @@ export default function ICPManagerPage() {
             {/* Page header — same flow as my-profile, no border */}
             <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
               <div>
-                <h1 className="font-manrope text-2xl font-bold text-[#0d3547] tracking-[-0.022em]">My ICPs</h1>
-                <p className="mt-1 text-sm text-[#7d909a]">
+                <h1 className="text-2xl font-bold text-white">My ICPs</h1>
+                <p className="mt-1 text-sm text-white/40">
                   The types of accounts you sell to, and who buys within them.
                 </p>
               </div>
@@ -1816,11 +1905,11 @@ export default function ICPManagerPage() {
             {icps.length === 0 ? (
               /* Empty state */
               <div className="flex flex-col items-center justify-center py-24 text-center">
-                <div className="w-16 h-16 rounded-full bg-[rgba(13,53,71,0.05)] flex items-center justify-center mb-4">
-                  <Building2 className="w-8 h-8 text-[#b6c2c8]" />
+                <div className="w-16 h-16 rounded-full bg-white/[0.06] flex items-center justify-center mb-4">
+                  <Building2 className="w-8 h-8 text-white/30" />
                 </div>
-                <h3 className="font-manrope text-lg font-semibold text-[#0d3547] mb-2">No target companies yet</h3>
-                <p className="text-[#7d909a] mb-6 text-sm max-w-xs">
+                <h3 className="text-lg font-semibold text-white mb-2">No target companies yet</h3>
+                <p className="text-white/40 mb-6 text-sm max-w-xs">
                   Add your first target company to define who you sell to and who buys.
                 </p>
                 <button
@@ -1879,14 +1968,14 @@ export default function ICPManagerPage() {
             className="absolute inset-0 bg-black/60 backdrop-blur-sm"
             onClick={() => setConfirmDeleteId(null)}
           />
-          <div className="relative w-full max-w-md rounded-2xl border border-white/80 bg-white/80 p-6 shadow-2xl backdrop-blur-xl">
-            <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-50">
-              <AlertTriangle className="h-6 w-6 text-red-500" />
+          <div className="relative w-full max-w-md rounded-2xl border border-white/10 bg-slate-900 p-6 shadow-2xl">
+            <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-500/15">
+              <AlertTriangle className="h-6 w-6 text-red-400" />
             </div>
-            <h2 id="delete-icp-modal-title" className="mb-2 font-manrope text-lg font-semibold text-[#0d3547]">
+            <h2 id="delete-icp-modal-title" className="mb-2 text-lg font-semibold text-white">
               Delete this ICP profile?
             </h2>
-            <p className="mb-6 text-sm leading-relaxed text-[#4a6470]">
+            <p className="mb-6 text-sm leading-relaxed text-white/55">
               This will permanently remove the target company profile along with its criteria and buying team. Any contacts already found using this profile won&apos;t be affected, but you won&apos;t be able to find new ones with it.
             </p>
             <div className="flex gap-3">
@@ -1901,7 +1990,7 @@ export default function ICPManagerPage() {
               <button
                 type="button"
                 onClick={() => setConfirmDeleteId(null)}
-                className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg border border-[rgba(13,53,71,0.12)] px-4 py-2.5 text-sm font-medium text-[#4a6470] transition-colors hover:bg-black/[0.03] hover:text-[#0d3547]"
+                className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg border border-white/15 px-4 py-2.5 text-sm font-medium text-white/70 transition-colors hover:bg-white/[0.06] hover:text-white"
               >
                 Keep it
               </button>

@@ -4,6 +4,7 @@
 // profile enrichment  = Apify LinkedIn profile scrape + company scrape + Apollo company enrich + LLM bio summary
 import Anthropic from '@anthropic-ai/sdk';
 import { enrichOrganizationWithApollo } from '@/lib/apollo';
+import { trimEmail as trimContactEmail, ensureEnrichedEmailEntry } from '@/lib/contact-emails';
 import { syncContactFitForContact } from '@/lib/contact-fit';
 import { syncCompanyFitForCompany } from '@/lib/company-fit';
 import { resolveLinkedinUrl, type LinkedinResolutionResult } from '@/lib/linkedin-url-resolver';
@@ -1137,6 +1138,19 @@ export async function runContactResolutionPipelineForContact(
     const resolvedDomainFromCompany =
       normalizeDomain(apifyCompanyFirmographics.domain as string | null) ||
       resolved.resolvedCompanyDomainForEmailCheck;
+
+    // Apollo mailbox is added via contact_emails only (work / personal). We do not replace contacts.email.
+    const apolloMailbox = trimContactEmail(getFirstString(apolloPerson, ['email']));
+    if (apolloMailbox) {
+      const apolloEmailStatusValue = getFirstString(apolloPerson, ['email_status']);
+      await ensureEnrichedEmailEntry(supabase, {
+        contactId,
+        userId,
+        email: apolloMailbox,
+        companyDomain: resolvedDomainFromCompany || typedContact.company_domain,
+        apolloEmailStatus: apolloEmailStatusValue || null,
+      });
+    }
 
     const emailAssessment = assessEmailStatus({
       email: typedContact.email,

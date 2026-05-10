@@ -104,6 +104,7 @@ const config = {
         inter: ["var(--font-inter)", "sans-serif"],
         manrope: ["var(--font-manrope)", "sans-serif"],
         jakarta: ["var(--font-plus-jakarta)", "sans-serif"],
+        mono: ["var(--font-jetbrains-mono)", "ui-monospace", "monospace"],
       },
       borderRadius: {
         lg: "var(--radius)",

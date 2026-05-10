@@ -77,12 +77,20 @@
   gap: 6px;
 }
 
+/* Match criterion row labels and values to pills: text-[11px] font-medium (see CompanyIcpFitDetailPanel pills). */
 .contacts-fit-criterion {
   display: grid;
   grid-template-columns: 14px 1fr auto;
   gap: 8px;
   align-items: center;
-  font-size: 0.6875rem;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+button.contacts-fit-criterion {
+  font-family: inherit;
+  font-size: 11px;
 }
 
 .contacts-fit-criterion-icon {
@@ -111,12 +119,13 @@
 }
 
 .contacts-fit-criterion-text {
+  font-weight: 500;
   color: #4a6470;
 }
 
 .contacts-fit-criterion-val {
   font-variant-numeric: tabular-nums;
-  font-size: 10px;
+  font-weight: 500;
   color: #7d909a;
 }
 
