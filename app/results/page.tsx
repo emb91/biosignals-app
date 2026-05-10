@@ -21,7 +21,9 @@ import {
 } from '@/lib/lead-action';
 import { formatProvenanceImportedAt } from '@/lib/data-provenance';
 import { ROUTES, withQuery } from '@/lib/routes';
+import type { ContactEmailCategory, ContactEmailRow } from '@/lib/contact-emails';
 import { cn } from '@/lib/utils';
+import { TableFitGaugeButton } from '@/components/TableFitGaugeButton';
 import '@/app/leads/contacts-layout.css';
 import {
   Activity,
@@ -268,6 +270,7 @@ interface Lead {
   /** CSV, HubSpot, Arcova label from API */
   data_provenance_type?: string | null;
   data_provenance_imported_at?: string | null;
+  contact_emails?: ContactEmailRow[] | null;
   companies: {
     company_name: string | null;
     domain: string | null;
@@ -333,7 +336,7 @@ type EnrichmentVisualState = {
 
 const PAGE_SIZE = 50;
 const LEADS_TABLE_GRID =
-  'grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.3fr)_minmax(10rem,1.35fr)] gap-x-6';
+  'grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,5.25rem)_minmax(0,5.25rem)_minmax(9.5rem,1.25fr)] gap-x-5';
 const MAX_VISIBLE_WORK_HISTORY = 3;
 const COMPANY_FIT_COMPONENT_ORDER: CompanyFitComponentKey[] = [
   'company_type',
@@ -366,6 +369,19 @@ const percentDisplayNumber = (value: number | null | undefined): number | null =
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
   return Math.round(value <= 1 ? value * 100 : value);
 };
+
+function contactEmailCategoryLabel(category: ContactEmailCategory): string {
+  switch (category) {
+    case 'import':
+      return 'Import';
+    case 'user':
+      return 'Added by you';
+    case 'enriched_work':
+      return 'Work';
+    case 'enriched_personal':
+      return 'Personal';
+  }
+}
 
 function actionDrawerRelativeTime(iso?: string | null): string | null {
   if (!iso) return null;
@@ -1066,6 +1082,9 @@ export default function LeadsPage() {
                 last_name: result.data.last_name,
                 email: result.data.email,
                 updated_at: result.data.updated_at,
+                contact_emails: Array.isArray(result.data.contact_emails)
+                  ? (result.data.contact_emails as ContactEmailRow[])
+                  : lead.contact_emails,
               }
             : lead
         )
@@ -2128,8 +2147,29 @@ export default function LeadsPage() {
                       </button>
                     ))}
                     <button
+                      type="button"
+                      onClick={() => handleSortCol('company_fit')}
+                      className="flex w-full items-start justify-center gap-1 hover:text-gray-800 transition-colors"
+                    >
+                      <span className="flex items-center gap-1">
+                        Company fit
+                        <SortArrow col="company_fit" activeCol={tableSortCol} dir={tableSortDir} />
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSortCol('contact_fit')}
+                      className="flex w-full items-start justify-center gap-1 hover:text-gray-800 transition-colors"
+                    >
+                      <span className="flex items-center gap-1">
+                        Contact fit
+                        <SortArrow col="contact_fit" activeCol={tableSortCol} dir={tableSortDir} />
+                      </span>
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => handleSortCol('status')}
-                      className="flex items-start justify-center gap-1 w-full pl-12 hover:text-gray-800 transition-colors"
+                      className="flex w-full items-start justify-center gap-1 hover:text-gray-800 transition-colors"
                     >
                       Action
                       <SortArrow col="status" activeCol={tableSortCol} dir={tableSortDir} />
@@ -2188,7 +2228,14 @@ export default function LeadsPage() {
                               </div>
                             </div>
 
-                            <div className="min-w-0 flex items-center justify-center pl-12">
+                            <div className="min-w-0 flex items-center justify-center">
+                              <span className="text-[11px] text-gray-300 tabular-nums">—</span>
+                            </div>
+                            <div className="min-w-0 flex items-center justify-center">
+                              <span className="text-[11px] text-gray-300 tabular-nums">—</span>
+                            </div>
+
+                            <div className="min-w-0 flex items-center justify-center">
                               <ArcovaLoader size={28} />
                             </div>
                           </div>
@@ -2271,8 +2318,42 @@ export default function LeadsPage() {
                             })()}
                           </div>
 
+                          {/* Company fit */}
+                          <div className="min-w-0 flex items-center justify-center">
+                            <TableFitGaugeButton
+                              score={
+                                lead.company_fit_score ?? lead.companies?.company_fit_score ?? null
+                              }
+                              isRowSelected={isSelected}
+                              isGaugeHighlighted={isSelected && selectedPreview === 'scoring'}
+                              title="View company fit"
+                              onOpen={(e) => {
+                                e.stopPropagation();
+                                setSelectedLeadId(lead.id);
+                                setSelectedPreview('scoring');
+                                cancelEditingLead();
+                              }}
+                            />
+                          </div>
+
+                          {/* Contact fit */}
+                          <div className="min-w-0 flex items-center justify-center">
+                            <TableFitGaugeButton
+                              score={lead.contact_fit_score}
+                              isRowSelected={isSelected}
+                              isGaugeHighlighted={isSelected && selectedPreview === 'scoring'}
+                              title="View contact fit"
+                              onOpen={(e) => {
+                                e.stopPropagation();
+                                setSelectedLeadId(lead.id);
+                                setSelectedPreview('scoring');
+                                cancelEditingLead();
+                              }}
+                            />
+                          </div>
+
                           {/* Action */}
-                          <div className="min-w-0 flex items-center justify-center pl-12">
+                          <div className="min-w-0 flex items-center justify-center">
                             {(() => {
                               const action = getLeadAction(lead);
                               const config = LEAD_ACTION_PILL_CLASS[action];
@@ -2285,7 +2366,13 @@ export default function LeadsPage() {
                                     setSelectedPreview('action');
                                     cancelEditingLead();
                                   }}
-                                  className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium transition-opacity hover:opacity-80 ${config.className} ${isSelected && selectedPreview === 'action' ? 'ring-2 ring-offset-1' : ''}`}
+                                  className={cn(
+                                    'inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium cursor-pointer select-none',
+                                    'transition-colors duration-150 ease-out hover:shadow-sm active:scale-[0.97]',
+                                    isSelected && selectedPreview === 'action'
+                                      ? config.rowSelectedClassName
+                                      : cn(config.className, config.interactiveClassName),
+                                  )}
                                 >
                                   {config.label}
                                 </button>
@@ -2597,6 +2684,34 @@ export default function LeadsPage() {
                                         <p className="mt-2 break-all text-sm leading-snug text-[#0d3547]">
                                           {selectedLead.email || '—'}
                                         </p>
+                                        {selectedLead.contact_emails &&
+                                          selectedLead.contact_emails.filter(
+                                            (row) =>
+                                              !selectedLead.email ||
+                                              row.email.trim().toLowerCase() !==
+                                                selectedLead.email!.trim().toLowerCase(),
+                                          ).length > 0 && (
+                                            <ul className="mt-3 space-y-2 border-t border-[rgba(13,53,71,0.06)] pt-3">
+                                              {selectedLead.contact_emails
+                                                .filter(
+                                                  (row) =>
+                                                    !selectedLead.email ||
+                                                    row.email.trim().toLowerCase() !==
+                                                      selectedLead.email!.trim().toLowerCase(),
+                                                )
+                                                .map((row) => (
+                                                  <li
+                                                    key={row.id}
+                                                    className="break-all text-sm leading-snug text-[#0d3547]"
+                                                  >
+                                                    <span>{row.email}</span>
+                                                    <span className="ml-2 text-[11px] font-medium text-[#7d909a]">
+                                                      ({contactEmailCategoryLabel(row.category)})
+                                                    </span>
+                                                  </li>
+                                                ))}
+                                            </ul>
+                                          )}
                                       </div>
                                       <div className="min-w-0">
                                         <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">

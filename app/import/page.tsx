@@ -40,7 +40,6 @@ type ImportProgress = {
   enriching: number;
   enriched: number;
   notEnriched: number;
-  monitorOrReachOutLeads: number;
   batchStatus: 'processing' | 'complete' | 'failed' | 'cancelled';
 };
 
@@ -109,8 +108,6 @@ const formatActivityTime = (iso: string) => {
 /** Grid: Source | Details | Date | Time | Status | Actions */
 const IMPORT_HISTORY_TABLE_GRID =
   'grid grid-cols-[4.75rem_minmax(0,1fr)_6.75rem_4.75rem_5.5rem_4.75rem] gap-x-3 items-center';
-
-const HIGH_FIT_TARGET = 200;
 
 const IMPORT_FIELD_OPTIONS: { value: ImportField; label: string }[] = [
   { value: 'first_name', label: 'First name' },
@@ -321,6 +318,30 @@ export default function ImportPage() {
     }
   }, []);
 
+  const fetchBatchDetails = useCallback(async () => {
+    if (!currentBatchId) return;
+    setIsLoadingBatchDetails(true);
+    setBatchDetailsError(null);
+    try {
+      const response = await fetch(`/api/import-history/${encodeURIComponent(currentBatchId)}`);
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to load import details.');
+      }
+      setBatchDetails({
+        failedRows: result.failedRows || [],
+        duplicateRows: result.duplicateRows || [],
+        enrichedRows: result.enrichedRows || [],
+        allRows: result.allRows || [],
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to load import details.';
+      setBatchDetailsError(message);
+    } finally {
+      setIsLoadingBatchDetails(false);
+    }
+  }, [currentBatchId]);
+
   useEffect(() => {
     if (!loading && !user) {
       router.push('/login');
@@ -387,7 +408,6 @@ export default function ImportPage() {
         enriching: (result.enriching || 0) + (result.pending || 0),
         enriched: result.enriched || 0,
         notEnriched: result.not_enriched || 0,
-        monitorOrReachOutLeads: result.monitor_or_reach_out_total ?? 0,
         batchStatus,
       });
       if (batchStatus === 'complete') {
@@ -409,35 +429,13 @@ export default function ImportPage() {
       setExpandedBatchSection(null);
       return;
     }
-
-    const fetchBatchDetails = async () => {
-      setIsLoadingBatchDetails(true);
-      setBatchDetailsError(null);
-
-      try {
-        const response = await fetch(`/api/import-history/${encodeURIComponent(currentBatchId)}`);
-        const result = await response.json();
-
-        if (!response.ok) {
-          throw new Error(result.error || 'Failed to load import details.');
-        }
-
-        setBatchDetails({
-          failedRows: result.failedRows || [],
-          duplicateRows: result.duplicateRows || [],
-          enrichedRows: result.enrichedRows || [],
-          allRows: result.allRows || [],
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to load import details.';
-        setBatchDetailsError(message);
-      } finally {
-        setIsLoadingBatchDetails(false);
-      }
-    };
-
     void fetchBatchDetails();
-  }, [currentBatchId]);
+  }, [currentBatchId, fetchBatchDetails]);
+
+  useEffect(() => {
+    if (!currentBatchId || progress?.batchStatus !== 'complete') return;
+    void fetchBatchDetails();
+  }, [currentBatchId, progress?.batchStatus, fetchBatchDetails]);
 
   const fetchHubspotStatus = useCallback(async () => {
     const res = await fetch('/api/hubspot/status');
@@ -495,7 +493,6 @@ export default function ImportPage() {
         enriching: result.total,
         enriched: 0,
         notEnriched: 0,
-        monitorOrReachOutLeads: 0,
         batchStatus: 'processing',
       });
     } finally {
@@ -645,7 +642,6 @@ export default function ImportPage() {
         enriching: result.beingEnriched || 0,
         enriched: result.complete || 0,
         notEnriched: result.failed || 0,
-        monitorOrReachOutLeads: 0,
         batchStatus: 'processing',
       });
     } catch (error) {
@@ -688,7 +684,6 @@ export default function ImportPage() {
           enriching: 0,
           enriched,
           notEnriched,
-          monitorOrReachOutLeads: prev?.monitorOrReachOutLeads || 0,
           batchStatus: 'cancelled',
         };
       });
@@ -733,7 +728,6 @@ export default function ImportPage() {
   const importComplete = progress?.batchStatus === 'complete';
   const importCancelled = progress?.batchStatus === 'cancelled';
   const importFinished = importComplete || importCancelled;
-  const enoughMonitorOrReachOutLeads = (progress?.monitorOrReachOutLeads || 0) >= HIGH_FIT_TARGET;
   const processedCount = progress?.processed || 0;
   const totalCount = progress?.total || 0;
   const progressPercent = totalCount > 0 ? Math.min((processedCount / totalCount) * 100, 100) : 0;
@@ -1341,21 +1335,9 @@ export default function ImportPage() {
 
                   {/* CTA */}
                   <div className="rounded-xl border border-gray-200 bg-white p-5">
-                    <p className="text-sm font-semibold text-gray-900">
-                      <span className="tabular-nums">{(progress?.monitorOrReachOutLeads || 0).toLocaleString()}</span>
-                      {' '}
-                      high fit lead{(progress?.monitorOrReachOutLeads || 0) !== 1 ? 's' : ''} ready to view
-                    </p>
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <Link href={ROUTES.leads.contacts} className="px-4 py-2 rounded-lg bg-arcova-teal text-white text-sm font-medium hover:bg-arcova-teal/90 transition-colors">
-                        View Leads
-                      </Link>
-                      {!enoughMonitorOrReachOutLeads && (
-                        <Link href="/find-more-leads" className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:border-gray-300 hover:text-gray-900 transition-colors">
-                          Find more leads →
-                        </Link>
-                      )}
-                    </div>
+                    <Link href={ROUTES.leads.contacts} className="inline-flex px-4 py-2 rounded-lg bg-arcova-teal text-white text-sm font-medium hover:bg-arcova-teal/90 transition-colors">
+                      View Leads
+                    </Link>
                   </div>
                 </>
               ) : (

@@ -579,10 +579,28 @@ function EditFreeformTagField({
   );
 }
 
-type IcpCardSegmentOpen = { criteria: boolean; buyingTeam: boolean; signals: boolean; };
+type IcpCardSegmentOpen = {
+  companySignals: boolean;
+  contactSignals: boolean;
+  criteria: boolean;
+  funding: boolean;
+  sellToCompanies: boolean;
+  competitors: boolean;
+  functions: boolean;
+  seniority: boolean;
+};
 
 function defaultIcpCardSegmentOpen(): IcpCardSegmentOpen {
-  return { criteria: true, buyingTeam: true, signals: false };
+  return {
+    companySignals: false,
+    contactSignals: false,
+    criteria: false,
+    funding: false,
+    sellToCompanies: false,
+    competitors: false,
+    functions: false,
+    seniority: false,
+  };
 }
 
 // ── Combined ICP + buying team card ───────────────────────────────────────
@@ -914,10 +932,10 @@ function ICPCard({
     setEditData((prev) => ({ ...prev, [field]: value }));
 
   return (
-    <div className="rounded-[1.3125rem] border border-white/80 bg-white/55 shadow-[0_4px_24px_-8px_rgba(13,53,71,0.1)] backdrop-blur-xl">
+    <div className="rounded-2xl border border-white/15 bg-white/[0.06]">
 
       {/* Card header */}
-      <div className={`flex items-center gap-2.5 px-4 py-3 ${!collapsed ? 'border-b border-[rgba(13,53,71,0.07)]' : ''}`}>
+      <div className={`flex items-center gap-2.5 px-4 py-3 ${!collapsed ? 'border-b border-white/10' : ''}`}>
         {editMode ? (
           <>
             <Briefcase className="h-4 w-4 shrink-0 text-arcova-teal" />
@@ -925,14 +943,14 @@ function ICPCard({
               <input
                 value={editData.name}
                 onChange={(e) => setEditData((prev) => ({ ...prev, name: e.target.value }))}
-                className="flex-1 min-w-0 rounded-lg bg-white border border-[rgba(13,53,71,0.12)] px-2.5 py-1 text-sm font-semibold text-[#0d3547] placeholder:text-[#b6c2c8] focus:outline-none focus:border-arcova-teal/50"
+                className="flex-1 min-w-0 rounded-lg bg-white/[0.08] border border-white/20 px-2.5 py-1 text-sm font-semibold text-white placeholder-white/30 focus:outline-none focus:border-arcova-teal/60"
                 placeholder="Profile name"
               />
               <button
                 type="button"
                 onClick={() => void regenerateName()}
                 disabled={regeneratingName}
-                className="shrink-0 rounded-lg border border-[rgba(13,53,71,0.12)] px-2.5 py-1 text-xs font-medium text-[#4a6470] transition-colors hover:bg-white/70 hover:text-[#0d3547] disabled:opacity-50"
+                className="shrink-0 rounded-lg border border-white/15 px-2.5 py-1 text-xs font-medium text-white/70 transition-colors hover:bg-white/[0.06] hover:text-white disabled:opacity-50"
               >
                 {regeneratingName ? 'Regenerating…' : 'Regenerate'}
               </button>
@@ -948,7 +966,7 @@ function ICPCard({
               <Briefcase className="h-4 w-4 shrink-0 text-arcova-teal" />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="block min-w-0 truncate text-sm font-semibold text-[#0d3547]">
+                  <span className="block min-w-0 truncate text-sm font-semibold text-white">
                     ICP {index}: {icp.name || 'ICP Profile'}
                   </span>
                   {currentReenrichmentMeta && (
@@ -958,7 +976,7 @@ function ICPCard({
                   )}
                 </div>
                 {collapsed && (
-                  <span className="block text-xs text-[#7d909a] truncate">
+                  <span className="block text-xs text-white/40 truncate">
                     {[
                       e?.company_name?.trim() ? `Modelled on ${e.company_name.trim()}` : null,
                       relativeTime(icp.updated_at) ? `Updated ${relativeTime(icp.updated_at)}` : null,
@@ -967,18 +985,8 @@ function ICPCard({
                 )}
               </div>
               {collapsed
-                ? <ChevronDown className="h-4 w-4 text-[#7d909a] shrink-0" />
-                : <ChevronUp className="h-4 w-4 text-[#7d909a] shrink-0" />}
-              {e?.company_name && (
-                e.logo_url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={e.logo_url} alt={e.company_name} className="w-8 h-8 rounded-lg object-contain bg-white/80 p-0.5 shrink-0 border border-[rgba(13,53,71,0.07)]" />
-                ) : (
-                  <div className="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold text-white shrink-0 bg-[#0d3547]">
-                    {e.company_name.charAt(0).toUpperCase()}
-                  </div>
-                )
-              )}
+                ? <ChevronDown className="h-4 w-4 text-white/40 shrink-0" />
+                : <ChevronUp className="h-4 w-4 text-white/40 shrink-0" />}
             </button>
           </>
         )}
@@ -992,11 +1000,11 @@ function ICPCard({
             <div className="min-w-0">
               {e.website ? (
                 <a href={e.website} target="_blank" rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-sm font-semibold text-[#0d3547] hover:underline leading-tight">
+                  className="inline-flex items-center gap-1 text-sm font-semibold text-white hover:underline leading-tight">
                   {e.company_name}<ExternalLink className="h-3 w-3 shrink-0 opacity-60" />
                 </a>
               ) : (
-                <p className="text-sm font-semibold text-[#0d3547] leading-tight">{e.company_name}</p>
+                <p className="text-sm font-semibold text-white leading-tight">{e.company_name}</p>
               )}
               <div className="flex flex-col gap-0.5 mt-0.5">
                 {linkedInDisplay && (
@@ -1009,10 +1017,10 @@ function ICPCard({
             </div>
             {e.logo_url ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={e.logo_url} alt={e.company_name ?? ''} className="h-20 w-20 shrink-0 rounded-xl object-contain bg-white/60 p-1" />
+              <img src={e.logo_url} alt={e.company_name ?? ''} className="h-20 w-20 shrink-0 rounded-xl object-contain bg-white/10 p-1" />
             ) : (
-              <div className="h-20 w-20 shrink-0 rounded-xl bg-white/50 flex items-center justify-center">
-                <Building2 className="h-9 w-9 text-[#b6c2c8]" />
+              <div className="h-20 w-20 shrink-0 rounded-xl bg-white/10 flex items-center justify-center">
+                <Building2 className="h-9 w-9 text-white/30" />
               </div>
             )}
           </div>
@@ -1021,18 +1029,18 @@ function ICPCard({
             <div className="space-y-5">
               {referenceSummary.length > 0 && (
                 <div>
-                  <p className="text-xs font-semibold text-[#0d3547] mb-2">About {referenceAccountLabel}</p>
-                  <p className="text-xs text-[#4a6470] leading-snug">{referenceSummary}</p>
+                  <p className="text-xs font-semibold text-white mb-2">About {referenceAccountLabel}</p>
+                  <p className="text-xs text-white/70 leading-snug">{referenceSummary}</p>
                 </div>
               )}
               {(e.employee_count != null || e.employee_range || e.hq_city || e.follower_count != null) && (
                 <div>
-                  <p className="text-xs font-semibold text-[#0d3547] mb-2">Firmographics</p>
+                  <p className="text-xs font-semibold text-white mb-2">Firmographics</p>
                   <div className="space-y-1">
                     {(e.employee_count != null || e.employee_range) && (
                       <div className="flex items-baseline gap-2">
-                        <span className="text-xs text-[#7d909a] w-28 shrink-0">Employees</span>
-                        <span className="text-xs text-[#0d3547]">
+                        <span className="text-xs text-white/50 w-28 shrink-0">Employees</span>
+                        <span className="text-xs text-white">
                           {e.employee_count != null ? e.employee_count.toLocaleString() : e.employee_range}
                           {e.employee_count != null && e.employee_range ? ` (${e.employee_range})` : ''}
                         </span>
@@ -1040,14 +1048,14 @@ function ICPCard({
                     )}
                     {e.hq_city && (
                       <div className="flex items-baseline gap-2">
-                        <span className="text-xs text-[#7d909a] w-28 shrink-0">HQ</span>
-                        <span className="text-xs text-[#0d3547]">{e.hq_city}{e.hq_country ? `, ${e.hq_country}` : ''}</span>
+                        <span className="text-xs text-white/50 w-28 shrink-0">HQ</span>
+                        <span className="text-xs text-white">{e.hq_city}{e.hq_country ? `, ${e.hq_country}` : ''}</span>
                       </div>
                     )}
                     {e.follower_count != null && (
                       <div className="flex items-baseline gap-2">
-                        <span className="text-xs text-[#7d909a] w-28 shrink-0">LinkedIn</span>
-                        <span className="text-xs text-[#0d3547]">{e.follower_count.toLocaleString()} followers</span>
+                        <span className="text-xs text-white/50 w-28 shrink-0">LinkedIn</span>
+                        <span className="text-xs text-white">{e.follower_count.toLocaleString()} followers</span>
                       </div>
                     )}
                   </div>
@@ -1055,37 +1063,37 @@ function ICPCard({
               )}
               {(modelledOnFundingStatus || modelledOnFundingSummary || e.funding_stage || e.total_funding_usd != null || e.arr_estimate) && (
                 <div>
-                  <p className="text-xs font-semibold text-[#0d3547] mb-2">Funding</p>
+                  <p className="text-xs font-semibold text-white mb-2">Funding</p>
                   <div className="space-y-1">
                     {modelledOnFundingStatus && (
                       <div className="flex items-baseline gap-2">
-                        <span className="text-xs text-[#7d909a] w-28 shrink-0">Status</span>
-                        <span className="text-xs text-[#0d3547]">{modelledOnFundingStatus}</span>
+                        <span className="text-xs text-white/50 w-28 shrink-0">Status</span>
+                        <span className="text-xs text-white">{modelledOnFundingStatus}</span>
                       </div>
                     )}
                     {e.funding_stage && (
                       <div className="flex items-baseline gap-2">
-                        <span className="text-xs text-[#7d909a] w-28 shrink-0">Stage</span>
-                        <span className="text-xs text-[#0d3547]">{e.funding_stage}</span>
+                        <span className="text-xs text-white/50 w-28 shrink-0">Stage</span>
+                        <span className="text-xs text-white">{e.funding_stage}</span>
                       </div>
                     )}
                     {e.total_funding_usd != null && (
                       <div className="flex items-baseline gap-2">
-                        <span className="text-xs text-[#7d909a] w-28 shrink-0">Total raised</span>
-                        <span className="text-xs text-[#0d3547]">{formatCurrencyShort(e.total_funding_usd)}</span>
+                        <span className="text-xs text-white/50 w-28 shrink-0">Total raised</span>
+                        <span className="text-xs text-white">{formatCurrencyShort(e.total_funding_usd)}</span>
                       </div>
                     )}
                     {e.arr_estimate && (
                       <div className="flex items-baseline gap-2">
-                        <span className="text-xs text-[#7d909a] w-28 shrink-0">ARR</span>
-                        <span className="text-xs text-[#0d3547]">{e.arr_estimate}</span>
+                        <span className="text-xs text-white/50 w-28 shrink-0">ARR</span>
+                        <span className="text-xs text-white">{e.arr_estimate}</span>
                       </div>
                     )}
                   </div>
                   {modelledOnFundingSummary && (
                     <div className="mt-2">
-                      <p className="text-xs text-[#b6c2c8] mb-1">Funding summary</p>
-                      <p className="text-xs leading-snug text-[#4a6470]">{modelledOnFundingSummary}</p>
+                      <p className="text-xs text-white/40 mb-1">Funding summary</p>
+                      <p className="text-xs leading-snug text-white/55">{modelledOnFundingSummary}</p>
                     </div>
                   )}
                 </div>
@@ -1094,7 +1102,7 @@ function ICPCard({
               <FieldRow label="Sells to people like" items={referenceCustomerSegments.buyerTypes} />
               {(e.competitors_enriched?.length ?? 0) > 0 && (
                 <div className="space-y-1">
-                  <p className="text-xs font-semibold text-[#0d3547]">Competitors</p>
+                  <p className="text-xs font-semibold text-white">Competitors</p>
                   <div className="flex flex-wrap gap-1.5">
                     {e.competitors_enriched!.map((c, i) => {
                       const href = c.url?.trim() || `https://www.google.com/search?q=${encodeURIComponent(c.name)}`;
@@ -1114,30 +1122,30 @@ function ICPCard({
             <div className="space-y-5">
               {(e.products?.length ?? 0) > 0 && (
                 <div>
-                  <p className="mb-1 text-xs font-semibold text-[#0d3547]">Products</p>
+                  <p className="mb-1 text-xs font-semibold text-white">Products</p>
                   <div className="flex flex-wrap gap-1.5">
                     {e.products!.map((p, i) => (
-                      <span key={i} className="rounded-full bg-white/60 px-2.5 py-0.5 text-xs text-[#0d3547]">{p}</span>
+                      <span key={i} className="rounded-full bg-white/10 px-2.5 py-0.5 text-xs text-white/80">{p}</span>
                     ))}
                   </div>
                 </div>
               )}
               {(e.services?.length ?? 0) > 0 && (
                 <div>
-                  <p className="mb-1 text-xs font-semibold text-[#0d3547]">Services</p>
+                  <p className="mb-1 text-xs font-semibold text-white">Services</p>
                   <div className="flex flex-wrap gap-1.5">
                     {e.services!.map((s, i) => (
-                      <span key={i} className="rounded-full bg-white/60 px-2.5 py-0.5 text-xs text-[#0d3547]">{s}</span>
+                      <span key={i} className="rounded-full bg-white/10 px-2.5 py-0.5 text-xs text-white/80">{s}</span>
                     ))}
                   </div>
                 </div>
               )}
               {(e.technologies?.length ?? 0) > 0 && (
                 <div>
-                  <p className="mb-1 text-xs font-semibold text-[#0d3547]">Technology</p>
+                  <p className="mb-1 text-xs font-semibold text-white">Technology</p>
                   <div className="flex flex-wrap gap-1.5">
                     {e.technologies!.map((t, i) => (
-                      <span key={i} className="rounded-full bg-white/60 px-2.5 py-0.5 text-xs text-[#0d3547]">{t}</span>
+                      <span key={i} className="rounded-full bg-white/10 px-2.5 py-0.5 text-xs text-white/80">{t}</span>
                     ))}
                   </div>
                 </div>
@@ -1861,7 +1869,7 @@ export default function ICPManagerPage() {
 
   if (loading || loadingData) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-transparent">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-slate-950 to-arcova-darkblue">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-arcova-teal" />
       </div>
     );
@@ -1870,7 +1878,7 @@ export default function ICPManagerPage() {
   if (!user) return null;
 
   return (
-    <div className="flex h-screen bg-transparent">
+    <div className="flex h-screen bg-gradient-to-b from-slate-950 to-arcova-darkblue">
       <AppSidebar />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">

@@ -26,7 +26,7 @@ export function SiteFooter() {
             Terms of Service
           </Link>
           <Link
-            href="/contact"
+            href="/contact-us"
             className="text-sm text-gray-600 hover:text-arcova-teal transition-colors duration-200"
           >
             Contact

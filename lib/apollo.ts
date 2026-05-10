@@ -140,6 +140,10 @@ export type ApolloEnrichmentResult = {
     employment_history_count?: number;
     email_status?: string | null;
     request_id?: string | number | null;
+    /** Second people/match with reveal_personal_emails ran after a matched person had no email. */
+    personal_email_reveal_followup?: boolean;
+    /** True when reveal follow-up returned a non-empty email on the merged person record. */
+    personal_email_obtained_via_reveal?: boolean;
   };
 };
 
@@ -198,6 +202,12 @@ function getApolloApiKey(): string {
     throw new Error('Missing APOLLO_API_KEY');
   }
   return apiKey;
+}
+
+/** When unset or not `false`, run a second people/match with reveal_personal_emails if Apollo matched someone but returned no email. */
+function revealPersonalEmailsWhenMissing(): boolean {
+  const v = process.env.APOLLO_REVEAL_PERSONAL_EMAILS_WHEN_MISSING;
+  return v !== 'false';
 }
 
 function normalizeDomain(value?: string | null): string | undefined {
@@ -335,7 +345,11 @@ function getLookupRoute(input: ApolloLookupInput): ApolloLookupRoute {
   return 'unknown';
 }
 
-async function matchPerson(input: ApolloLookupInput) {
+type MatchPersonOptions = {
+  revealPersonalEmails?: boolean;
+};
+
+async function matchPerson(input: ApolloLookupInput, options: MatchPersonOptions = {}) {
   const { params, submittedFields } = buildMatchParams(input);
   if (submittedFields.length === 0) {
     return {
@@ -343,6 +357,10 @@ async function matchPerson(input: ApolloLookupInput) {
       person: null,
       submittedFields,
     };
+  }
+
+  if (options.revealPersonalEmails) {
+    params.set('reveal_personal_emails', 'true');
   }
 
   const url = `https://api.apollo.io/api/v1/people/match?${params.toString()}`;
@@ -515,8 +533,29 @@ export async function searchPeopleWithApollo(input: ApolloPeopleSearchParams): P
 }
 
 export async function enrichContactWithApollo(input: ApolloLookupInput): Promise<ApolloEnrichmentResult> {
-  const match = await matchPerson(input);
-  const person = match.person;
+  const match = await matchPerson(input, { revealPersonalEmails: false });
+  let person = match.person;
+
+  let finalPayload = match.payload;
+  let personalEmailRevealFollowup = false;
+  let personalEmailObtainedViaReveal = false;
+
+  const resolvedEmailEarly = Boolean((person?.email?.trim() || input.email?.trim())?.length);
+
+  if (revealPersonalEmailsWhenMissing() && person && !resolvedEmailEarly) {
+    personalEmailRevealFollowup = true;
+    const revealMatch = await matchPerson(input, { revealPersonalEmails: true });
+    finalPayload = revealMatch.payload ?? finalPayload;
+
+    if (revealMatch.person) {
+      const merged: ApolloPerson = { ...person, ...revealMatch.person };
+      if (merged.email?.trim()) {
+        personalEmailObtainedViaReveal = true;
+      }
+      person = merged;
+    }
+  }
+
   const organization = person?.organization || null;
   const employmentHistory = person?.employment_history || [];
   const inputName = resolveInputName(input);
@@ -548,10 +587,10 @@ export async function enrichContactWithApollo(input: ApolloLookupInput): Promise
     company_funding_stage: undefined,
     company_total_funding_usd: undefined,
     company_latest_funding_date: undefined,
-    raw_person_response: match.payload,
+    raw_person_response: finalPayload,
     raw_person: person,
     raw_company: organization,
-    apollo_person_response_raw: match.payload,
+    apollo_person_response_raw: finalPayload,
     apollo_person_raw: person,
     apollo_organization_raw: organization,
     apollo_lookup_metadata: {
@@ -562,7 +601,11 @@ export async function enrichContactWithApollo(input: ApolloLookupInput): Promise
       role_resolution_status: 'pending',
       employment_history_count: employmentHistory.length,
       email_status: person?.email_status ?? null,
-      request_id: match.payload?.request_id ?? null,
+      request_id:
+        ((finalPayload as ApolloMatchResponse | null)?.request_id ?? match.payload?.request_id) ??
+        null,
+      personal_email_reveal_followup: personalEmailRevealFollowup,
+      personal_email_obtained_via_reveal: personalEmailObtainedViaReveal,
     },
   };
 }

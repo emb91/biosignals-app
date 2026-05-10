@@ -90,7 +90,7 @@ export async function GET(
       batch,
       failedRows: mappedRows.filter((row) => row.status === 'failed'),
       duplicateRows: mappedRows.filter((row) => row.status === 'duplicate'),
-      enrichedRows: mappedRows.filter((row) => row.status === 'complete'),
+      enrichedRows: mappedRows.filter((row) => row.status === 'enriched' || row.status === 'complete'),
       allRows: mappedRows,
     });
   } catch (error) {

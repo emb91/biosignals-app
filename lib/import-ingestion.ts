@@ -1,4 +1,5 @@
 import { employeeCountToSizeBucket, SENIORITY_LEVEL_OPTIONS, BUSINESS_AREA_OPTIONS } from '@/lib/arcova-taxonomy';
+import { ensureImportEmailEntry } from '@/lib/contact-emails';
 import { syncContactFitForContacts } from '@/lib/contact-fit';
 import { syncCompanyFitForCompanies } from '@/lib/company-fit';
 
@@ -404,6 +405,11 @@ export async function ingestEnrichedRecords(
       for (const row of (upsertResult.data || []) as Array<{ id?: string }>) {
         if (typeof row.id === 'string') {
           touchedContactIds.add(row.id);
+          await ensureImportEmailEntry(supabase, {
+            contactId: row.id,
+            userId,
+            email: record.email,
+          });
         }
       }
 

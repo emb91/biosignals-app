@@ -8,6 +8,10 @@ import {
 import { normalizePlatformTaxonomyFields } from '@/lib/platform-category';
 import { createClient } from '@/lib/supabase-server';
 import {
+  fetchContactEmailsForContacts,
+  type ContactEmailRow,
+} from '@/lib/contact-emails';
+import {
   formatDataProvenanceTypeOnly,
   resolveContactDataProvenance,
 } from '@/lib/data-provenance';
@@ -110,6 +114,30 @@ function withTopLevelCompanyFitScore<T extends Record<string, unknown>>(row: T):
 
 function withTopLevelCompanyFitScores(rows: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
   return rows.map((row) => withTopLevelCompanyFitScore(row));
+}
+
+async function attachContactEmailsBestEffort(
+  supabase: SupabaseClientLike,
+  rows: LeadRow[],
+): Promise<LeadRow[]> {
+  const ids = rows.map((row) => row.id).filter((id): id is string => typeof id === 'string');
+  if (ids.length === 0) return rows;
+
+  try {
+    const grouped = await fetchContactEmailsForContacts(supabase, ids);
+    return rows.map((row) =>
+      typeof row.id === 'string'
+        ? { ...row, contact_emails: (grouped.get(row.id) ?? []) as ContactEmailRow[] }
+        : row,
+    );
+  } catch (e: unknown) {
+    const msg = e && typeof e === 'object' && 'message' in e ? String((e as { message: unknown }).message) : '';
+    if (msg.includes('contact_emails') || msg.includes('does not exist')) {
+      return rows.map((row) => ({ ...row, contact_emails: [] }));
+    }
+    console.warn('[leads GET] attachContactEmailsBestEffort failed:', e);
+    return rows.map((row) => ({ ...row, contact_emails: [] }));
+  }
 }
 
 async function attachCompaniesBestEffort(
@@ -373,7 +401,7 @@ export async function GET(request: Request) {
     };
 
     const baseLeadSelect =
-      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, email_status, email_status_reasoning, linkedin_url, profile_photo_url, headline, location, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, intent_score, overall_fit_score, contact_fit_score, source, created_at, updated_at, company_id, upload_batches(filename, created_at)';
+      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, email_status, email_status_reasoning, linkedin_url, profile_photo_url, headline, location, city, country, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, intent_score, overall_fit_score, contact_fit_score, source, created_at, updated_at, company_id, upload_batches(filename, created_at)';
     const companySelectCore =
       'companies(company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_state, headquarters_country, specialties, products_services, services, technologies, company_type, company_type_display, platform_category, funding_stage, funding_status_label, total_funding_usd, latest_funding_date, funding_data_source, therapeutic_areas, modalities, development_stages, clinical_stage, matched_icp_id, company_fit_score, last_enriched_at)';
     const companySelectStable =
@@ -394,7 +422,7 @@ export async function GET(request: Request) {
     const tertiarySelect =
       `${baseLeadSelect}, ${companySelectStable}`;
     const fallbackSelect =
-      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, linkedin_url, profile_photo_url, headline, location, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, intent_score, overall_fit_score, contact_fit_score, source, created_at, updated_at, company_id, upload_batches(filename, created_at)';
+      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, linkedin_url, profile_photo_url, headline, location, city, country, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, intent_score, overall_fit_score, contact_fit_score, source, created_at, updated_at, company_id, upload_batches(filename, created_at)';
 
     let { data, error, count } = await runQuery(primarySelect);
 
@@ -544,8 +572,10 @@ export async function GET(request: Request) {
       (await attachMatchedIcpNames(supabase, rowsWithEnrichmentMetadata)) as LeadRow[],
     );
 
+    const withEmails = await attachContactEmailsBestEffort(supabase, enrichedRows);
+
     return NextResponse.json({
-      data: enrichedRows,
+      data: withEmails,
       total: count ?? 0,
       page,
       pageSize,

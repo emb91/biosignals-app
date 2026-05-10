@@ -113,7 +113,7 @@ export const Navigation = () => {
                   </li>
                   <li>
                     <Link
-                      href="/contact"
+                      href="/contact-us"
                       onClick={() => setMobileOpen(false)}
                       className="block text-base font-semibold px-4 py-2 rounded-lg text-arcova-darkblue bg-arcova-white hover:bg-arcova-teal/50 transition-all text-left"
                     >

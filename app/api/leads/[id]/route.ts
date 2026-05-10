@@ -1,4 +1,10 @@
 import { NextResponse } from 'next/server';
+import {
+  fetchContactEmailsForContacts,
+  looksLikeEmail,
+  syncUserAddedContactEmails,
+  syncPrimaryEmailAsUserRowIfNeeded,
+} from '@/lib/contact-emails';
 import { createClient } from '@/lib/supabase-server';
 
 type LeadUpdateBody = {
@@ -15,6 +21,8 @@ type LeadUpdateBody = {
   location?: string;
   city?: string;
   country?: string;
+  /** Secondary addresses with category `user` (primary `email` is separate). */
+  user_secondary_emails?: unknown;
 };
 
 const normalizeString = (value: unknown): string | null => {
@@ -22,6 +30,17 @@ const normalizeString = (value: unknown): string | null => {
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
 };
+
+function messageFromUnknown(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === 'object') {
+    const o = error as Record<string, unknown>;
+    if (typeof o.message === 'string' && o.message) return o.message;
+    if (typeof o.details === 'string' && o.details) return o.details;
+    if (typeof o.hint === 'string' && o.hint) return o.hint;
+  }
+  return 'Internal server error';
+}
 
 const splitFullName = (fullName: string | null): { first: string | null; last: string | null } => {
   if (!fullName) return { first: null, last: null };
@@ -69,7 +88,16 @@ export async function GET(
       return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
     }
 
-    return NextResponse.json({ data });
+    try {
+      const grouped = await fetchContactEmailsForContacts(supabase, [id]);
+      return NextResponse.json({
+        data: { ...data, contact_emails: grouped.get(id) ?? [] },
+      });
+    } catch {
+      return NextResponse.json({
+        data: { ...data, contact_emails: [] },
+      });
+    }
   } catch (error) {
     console.error('Error in leads/[id] GET:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
@@ -96,6 +124,30 @@ export async function PUT(
     const fullName = normalizeString(body.full_name);
     const firstName = normalizeString(body.first_name);
     const lastName = normalizeString(body.last_name);
+    const primaryEmailNorm = normalizeString(body.email)?.toLowerCase() ?? '';
+
+    const userSecondaryEmails = Array.isArray(body.user_secondary_emails)
+      ? (body.user_secondary_emails.filter((item) => typeof item === 'string') as string[])
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0 && s.toLowerCase() !== primaryEmailNorm)
+      : [];
+
+    const primaryEmailRaw = normalizeString(body.email);
+    if (primaryEmailRaw && !looksLikeEmail(primaryEmailRaw)) {
+      return NextResponse.json(
+        { error: 'Enter a valid email address (for example name@company.com).' },
+        { status: 400 },
+      );
+    }
+
+    for (const s of userSecondaryEmails) {
+      if (!looksLikeEmail(s)) {
+        return NextResponse.json(
+          { error: 'Each additional email must look like a valid address.' },
+          { status: 400 },
+        );
+      }
+    }
 
     const derivedNames = !firstName && !lastName ? splitFullName(fullName) : { first: firstName, last: lastName };
 
@@ -134,10 +186,47 @@ export async function PUT(
       return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
     }
 
-    return NextResponse.json({ data });
+    try {
+      await syncUserAddedContactEmails(supabase, {
+        contactId: id,
+        userId: user.id,
+        additionalEmails: userSecondaryEmails,
+      });
+    } catch (emailErr) {
+      console.error('syncUserAddedContactEmails failed:', emailErr);
+      return NextResponse.json(
+        { error: `Could not save additional emails: ${messageFromUnknown(emailErr)}` },
+        { status: 500 },
+      );
+    }
+
+    try {
+      await syncPrimaryEmailAsUserRowIfNeeded(supabase, {
+        contactId: id,
+        userId: user.id,
+        primaryEmail: normalizeString(body.email),
+      });
+    } catch (syncErr) {
+      console.error('syncPrimaryEmailAsUserRowIfNeeded failed:', syncErr);
+      return NextResponse.json(
+        { error: `Could not sync primary email: ${messageFromUnknown(syncErr)}` },
+        { status: 500 },
+      );
+    }
+
+    try {
+      const grouped = await fetchContactEmailsForContacts(supabase, [id]);
+      return NextResponse.json({
+        data: { ...data, contact_emails: grouped.get(id) ?? [] },
+      });
+    } catch {
+      return NextResponse.json({
+        data: { ...data, contact_emails: [] },
+      });
+    }
   } catch (error) {
     console.error('Error in leads/[id] PUT:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return NextResponse.json({ error: messageFromUnknown(error) }, { status: 500 });
   }
 }
 

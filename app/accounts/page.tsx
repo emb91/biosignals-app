@@ -28,8 +28,8 @@ import { formatCurrencyShort } from '@/lib/funding-display';
 import {
   CompanyIcpFitDetailPanel,
   type CompanyFitDetails,
-  formatCompanyFitPercent,
 } from '@/components/company-icp-fit-detail-panel';
+import { TableFitGaugeButton } from '@/components/TableFitGaugeButton';
 import { formatProvenanceImportedAt } from '@/lib/data-provenance';
 import {
   getAccountRowAction,
@@ -726,23 +726,18 @@ export default function AccountsPage() {
         );
       case 'fit':
         return (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              openCompanyFitTab(account.id);
-            }}
-            className={cn(
-              'inline-flex min-w-[3rem] justify-center rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums transition-colors',
-              isSelected && panelMode === 'fit'
-                ? 'bg-arcova-teal text-white'
-                : formatCompanyFitPercent(account.company_fit_score)
-                  ? 'bg-slate-100 text-slate-700 hover:bg-arcova-teal/15 hover:text-arcova-teal'
-                  : 'bg-gray-50 text-gray-400 hover:bg-gray-100',
-            )}
-          >
-            {formatCompanyFitPercent(account.company_fit_score) ?? '—'}
-          </button>
+          <div className="flex items-center justify-center">
+            <TableFitGaugeButton
+              score={account.company_fit_score}
+              isRowSelected={isSelected}
+              isGaugeHighlighted={isSelected && panelMode === 'fit'}
+              title="View company fit"
+              onOpen={(e) => {
+                e.stopPropagation();
+                openCompanyFitTab(account.id);
+              }}
+            />
+          </div>
         );
       case 'contacts':
         return (
@@ -787,6 +782,12 @@ export default function AccountsPage() {
       case 'action': {
         const action = getAccountRowAction(account);
         const config = LEAD_ACTION_PILL_CLASS[action];
+        /** Solid pill when the open panel matches the journey from this action (avoid generic teal ring or mute). */
+        const actionPillEmphasized =
+          isSelected &&
+          ((action === 'source_contact' && panelMode === 'contacts') ||
+            (action === 'deprioritize' && panelMode === 'fit') ||
+            ((action === 'monitor' || action === 'reach_out') && panelMode === 'details'));
         return (
           <div className="flex items-center justify-center">
             <button
@@ -799,8 +800,11 @@ export default function AccountsPage() {
                 else setPanelMode('details');
               }}
               className={cn(
-                'inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium transition-opacity hover:opacity-80',
-                config.className,
+                'inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium cursor-pointer select-none',
+                'transition-colors duration-150 ease-out hover:shadow-sm active:scale-[0.97]',
+                actionPillEmphasized
+                  ? config.rowSelectedClassName
+                  : cn(config.className, config.interactiveClassName, 'shadow-sm'),
               )}
             >
               {config.label}
