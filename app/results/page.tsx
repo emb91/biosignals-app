@@ -45,6 +45,7 @@ import {
   Upload,
   Download,
   Check,
+  Plus,
 } from 'lucide-react';
 
 interface EmploymentHistoryItem {
@@ -238,6 +239,8 @@ interface Lead {
   profile_photo_url: string | null;
   headline: string | null;
   location: string | null;
+  city?: string | null;
+  country?: string | null;
   resolved_current_company_name: string | null;
   resolved_current_company_domain: string | null;
   resolved_current_job_title: string | null;
@@ -317,6 +320,16 @@ type EditableLeadFields = {
   first_name: string;
   last_name: string;
   email: string;
+  job_title: string;
+  headline: string;
+  linkedin_url: string;
+  company_name: string;
+  company_domain: string;
+  company_linkedin_url: string;
+  location: string;
+  city: string;
+  country: string;
+  user_secondary_emails: string[];
 };
 
 type EnrichmentStageKey =
@@ -377,17 +390,28 @@ const percentDisplayNumber = (value: number | null | undefined): number | null =
   return Math.round(value <= 1 ? value * 100 : value);
 };
 
-function contactEmailCategoryLabel(category: ContactEmailCategory): string {
-  switch (category) {
-    case 'import':
-      return 'Import';
-    case 'user':
-      return 'Added by you';
-    case 'enriched_work':
-      return 'Work';
-    case 'enriched_personal':
-      return 'Personal';
+const CONTACT_EMAIL_CATEGORY_LABEL: Record<ContactEmailCategory, string> = {
+  import: 'Import',
+  user: 'You added',
+  enriched_work: 'Enriched (work)',
+  enriched_personal: 'Enriched (personal)',
+};
+
+const LEAD_EDIT_INPUT_CLASS =
+  'w-full rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-arcova-teal/30';
+
+function userSecondaryEmailsFromLead(lead: Lead): string[] {
+  const primary = (lead.email || '').trim().toLowerCase();
+  const rows = lead.contact_emails || [];
+  const out: string[] = [];
+  for (const row of rows) {
+    if (row.category !== 'user') continue;
+    const e = row.email.trim();
+    if (!e) continue;
+    if (primary && e.toLowerCase() === primary) continue;
+    out.push(row.email);
   }
+  return out;
 }
 
 function actionDrawerRelativeTime(iso?: string | null): string | null {
@@ -1029,6 +1053,16 @@ export default function LeadsPage() {
       first_name: lead.first_name || '',
       last_name: lead.last_name || '',
       email: lead.email || '',
+      job_title: lead.job_title || '',
+      headline: lead.headline || '',
+      linkedin_url: lead.linkedin_url || '',
+      company_name: lead.company_name || '',
+      company_domain: lead.company_domain || '',
+      company_linkedin_url: lead.company_linkedin_url || '',
+      location: lead.location || '',
+      city: lead.city || '',
+      country: lead.country || '',
+      user_secondary_emails: [...userSecondaryEmailsFromLead(lead)],
     });
   };
 
@@ -1067,9 +1101,38 @@ export default function LeadsPage() {
     }
   };
 
-  const updateEditingField = (field: keyof EditableLeadFields, value: string) => {
+  const updateEditingField = (
+    field: keyof Omit<EditableLeadFields, 'user_secondary_emails'>,
+    value: string,
+  ) => {
     setLeadEditError(null);
     setEditingFields((prev) => (prev ? { ...prev, [field]: value } : prev));
+  };
+
+  const updateUserSecondaryEmailAt = (index: number, value: string) => {
+    setLeadEditError(null);
+    setEditingFields((prev) => {
+      if (!prev) return prev;
+      const next = [...prev.user_secondary_emails];
+      next[index] = value;
+      return { ...prev, user_secondary_emails: next };
+    });
+  };
+
+  const addUserSecondaryEmail = () => {
+    setLeadEditError(null);
+    setEditingFields((prev) =>
+      prev ? { ...prev, user_secondary_emails: [...prev.user_secondary_emails, ''] } : prev,
+    );
+  };
+
+  const removeUserSecondaryEmailAt = (index: number) => {
+    setLeadEditError(null);
+    setEditingFields((prev) => {
+      if (!prev) return prev;
+      const next = prev.user_secondary_emails.filter((_, i) => i !== index);
+      return { ...prev, user_secondary_emails: next };
+    });
   };
 
   const saveLead = async (leadId: string) => {
@@ -1081,6 +1144,14 @@ export default function LeadsPage() {
       return;
     }
 
+    const secondaryTrimmed = editingFields.user_secondary_emails.map((s) => s.trim()).filter(Boolean);
+    for (const s of secondaryTrimmed) {
+      if (!looksLikeEmail(s)) {
+        setLeadEditError('Each additional email must look like a valid address.');
+        return;
+      }
+    }
+
     setLeadEditError(null);
     setSavingLeadId(leadId);
     try {
@@ -1088,8 +1159,22 @@ export default function LeadsPage() {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ...editingFields,
           full_name: `${editingFields.first_name} ${editingFields.last_name}`.trim(),
+          first_name: editingFields.first_name,
+          last_name: editingFields.last_name,
+          email: editingFields.email,
+          job_title: editingFields.job_title,
+          headline: editingFields.headline,
+          linkedin_url: editingFields.linkedin_url,
+          company_name: editingFields.company_name,
+          company_domain: editingFields.company_domain,
+          company_linkedin_url: editingFields.company_linkedin_url,
+          location: editingFields.location,
+          city: editingFields.city,
+          country: editingFields.country,
+          user_secondary_emails: secondaryTrimmed.filter(
+            (s) => s.toLowerCase() !== primaryTrim.toLowerCase(),
+          ),
         }),
       });
 
@@ -1101,19 +1186,30 @@ export default function LeadsPage() {
         return;
       }
 
+      const d = result.data as Lead & { contact_emails?: ContactEmailRow[] };
+
       setLeads((prev) =>
         prev.map((lead) =>
           lead.id === leadId
             ? {
                 ...lead,
-                full_name: result.data.full_name,
-                first_name: result.data.first_name,
-                last_name: result.data.last_name,
-                email: result.data.email,
-                updated_at: result.data.updated_at,
-                contact_emails: Array.isArray(result.data.contact_emails)
-                  ? (result.data.contact_emails as ContactEmailRow[])
+                full_name: d.full_name ?? lead.full_name,
+                first_name: d.first_name ?? lead.first_name,
+                last_name: d.last_name ?? lead.last_name,
+                email: d.email ?? lead.email,
+                job_title: d.job_title ?? lead.job_title,
+                headline: d.headline ?? lead.headline,
+                linkedin_url: d.linkedin_url ?? lead.linkedin_url,
+                company_name: d.company_name ?? lead.company_name,
+                company_domain: d.company_domain ?? lead.company_domain,
+                company_linkedin_url: d.company_linkedin_url ?? lead.company_linkedin_url,
+                location: d.location ?? lead.location,
+                city: d.city ?? lead.city,
+                country: d.country ?? lead.country,
+                contact_emails: Array.isArray(d.contact_emails)
+                  ? d.contact_emails
                   : lead.contact_emails,
+                updated_at: d.updated_at ?? lead.updated_at,
               }
             : lead
         )
@@ -2572,13 +2668,44 @@ export default function LeadsPage() {
                           isEditingSelected ? (
                             /* ── Edit mode ── */
                             <div className="space-y-3">
+                              <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50/80 px-3 py-2">
+                                <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                                  Import and enrichment emails (read-only)
+                                </p>
+                                <div className="mt-2 space-y-3 text-xs">
+                                  {(['import', 'enriched_work', 'enriched_personal'] as const).map((cat) => {
+                                    const list = (selectedLead.contact_emails ?? []).filter((r) => r.category === cat);
+                                    if (list.length === 0) return null;
+                                    return (
+                                      <div key={cat}>
+                                        <p className="font-medium text-gray-600">
+                                          {CONTACT_EMAIL_CATEGORY_LABEL[cat]}
+                                        </p>
+                                        <ul className="mt-1 list-inside list-disc text-gray-700">
+                                          {list.map((row) => (
+                                            <li key={row.id} className="break-all">
+                                              {row.email}
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    );
+                                  })}
+                                  {(selectedLead.contact_emails ?? []).filter((r) =>
+                                    ['import', 'enriched_work', 'enriched_personal'].includes(r.category),
+                                  ).length === 0 ? (
+                                    <p className="text-gray-500">None on file yet.</p>
+                                  ) : null}
+                                </div>
+                              </div>
+
                               <div className="space-y-1">
                                 <label className="text-xs text-gray-400">First name</label>
                                 <input
                                   value={editingFields?.first_name || ''}
                                   onChange={(e) => updateEditingField('first_name', e.target.value)}
                                   onKeyDown={blurInputOnEnter}
-                                  className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-arcova-teal/30"
+                                  className={LEAD_EDIT_INPUT_CLASS}
                                 />
                               </div>
                               <div className="space-y-1">
@@ -2587,19 +2714,144 @@ export default function LeadsPage() {
                                   value={editingFields?.last_name || ''}
                                   onChange={(e) => updateEditingField('last_name', e.target.value)}
                                   onKeyDown={blurInputOnEnter}
-                                  className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-arcova-teal/30"
+                                  className={LEAD_EDIT_INPUT_CLASS}
                                 />
                               </div>
                               <div className="space-y-1">
-                                <label className="text-xs text-gray-400">Email</label>
+                                <label className="text-xs text-gray-400">Primary email (Leads / sync)</label>
                                 <input
                                   type="email"
                                   autoComplete="off"
                                   value={editingFields?.email || ''}
                                   onChange={(e) => updateEditingField('email', e.target.value)}
                                   onKeyDown={blurInputOnEnter}
-                                  className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-arcova-teal/30"
+                                  className={LEAD_EDIT_INPUT_CLASS}
                                 />
+                              </div>
+                              <div className="space-y-1">
+                                <div className="flex items-center justify-between gap-2">
+                                  <label className="text-xs text-gray-400">Additional emails (you added)</label>
+                                  <button
+                                    type="button"
+                                    onClick={addUserSecondaryEmail}
+                                    className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-0.5 text-[11px] font-medium text-gray-600 hover:bg-white"
+                                  >
+                                    <Plus className="h-3 w-3" />
+                                    Add
+                                  </button>
+                                </div>
+                                <div className="space-y-2">
+                                  {(editingFields?.user_secondary_emails ?? []).length === 0 ? (
+                                    <p className="text-xs text-gray-500">
+                                      Optional extras saved under &quot;You added&quot;.
+                                    </p>
+                                  ) : (
+                                    (editingFields?.user_secondary_emails ?? []).map((addr, idx) => (
+                                      <div key={idx} className="flex items-center gap-2">
+                                        <input
+                                          type="email"
+                                          autoComplete="off"
+                                          value={addr}
+                                          onChange={(e) => updateUserSecondaryEmailAt(idx, e.target.value)}
+                                          onKeyDown={blurInputOnEnter}
+                                          className={LEAD_EDIT_INPUT_CLASS}
+                                          placeholder="name@company.com"
+                                        />
+                                        <button
+                                          type="button"
+                                          onClick={() => removeUserSecondaryEmailAt(idx)}
+                                          className="shrink-0 rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+                                          aria-label="Remove email"
+                                        >
+                                          <Trash2 className="h-4 w-4" />
+                                        </button>
+                                      </div>
+                                    ))
+                                  )}
+                                </div>
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-xs text-gray-400">Job title</label>
+                                <input
+                                  value={editingFields?.job_title || ''}
+                                  onChange={(e) => updateEditingField('job_title', e.target.value)}
+                                  onKeyDown={blurInputOnEnter}
+                                  className={LEAD_EDIT_INPUT_CLASS}
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-xs text-gray-400">Headline</label>
+                                <input
+                                  value={editingFields?.headline || ''}
+                                  onChange={(e) => updateEditingField('headline', e.target.value)}
+                                  onKeyDown={blurInputOnEnter}
+                                  className={LEAD_EDIT_INPUT_CLASS}
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-xs text-gray-400">LinkedIn URL</label>
+                                <input
+                                  value={editingFields?.linkedin_url || ''}
+                                  onChange={(e) => updateEditingField('linkedin_url', e.target.value)}
+                                  onKeyDown={blurInputOnEnter}
+                                  className={LEAD_EDIT_INPUT_CLASS}
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-xs text-gray-400">Company name</label>
+                                <input
+                                  value={editingFields?.company_name || ''}
+                                  onChange={(e) => updateEditingField('company_name', e.target.value)}
+                                  onKeyDown={blurInputOnEnter}
+                                  className={LEAD_EDIT_INPUT_CLASS}
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-xs text-gray-400">Company domain</label>
+                                <input
+                                  value={editingFields?.company_domain || ''}
+                                  onChange={(e) => updateEditingField('company_domain', e.target.value)}
+                                  onKeyDown={blurInputOnEnter}
+                                  className={LEAD_EDIT_INPUT_CLASS}
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-xs text-gray-400">Company LinkedIn URL</label>
+                                <input
+                                  value={editingFields?.company_linkedin_url || ''}
+                                  onChange={(e) => updateEditingField('company_linkedin_url', e.target.value)}
+                                  onKeyDown={blurInputOnEnter}
+                                  className={LEAD_EDIT_INPUT_CLASS}
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-xs text-gray-400">Location</label>
+                                <input
+                                  value={editingFields?.location || ''}
+                                  onChange={(e) => updateEditingField('location', e.target.value)}
+                                  onKeyDown={blurInputOnEnter}
+                                  className={LEAD_EDIT_INPUT_CLASS}
+                                />
+                              </div>
+                              <div className="grid grid-cols-2 gap-2">
+                                <div className="space-y-1">
+                                  <label className="text-xs text-gray-400">City</label>
+                                  <input
+                                    value={editingFields?.city || ''}
+                                    onChange={(e) => updateEditingField('city', e.target.value)}
+                                    onKeyDown={blurInputOnEnter}
+                                    className={LEAD_EDIT_INPUT_CLASS}
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="text-xs text-gray-400">Country</label>
+                                  <input
+                                    value={editingFields?.country || ''}
+                                    onChange={(e) => updateEditingField('country', e.target.value)}
+                                    onKeyDown={blurInputOnEnter}
+                                    className={LEAD_EDIT_INPUT_CLASS}
+                                  />
+                                </div>
                               </div>
                               {leadEditError ? (
                                 <p className="text-xs text-red-600" role="alert">
@@ -2679,45 +2931,60 @@ export default function LeadsPage() {
                                         <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
                                           Location
                                         </p>
-                                        <p className="mt-2 break-words text-sm leading-snug text-[#0d3547]">
-                                          {selectedLead.location || '—'}
-                                        </p>
+                                        {(() => {
+                                          const loc = (selectedLead.location || '').trim();
+                                          const city = (selectedLead.city || '').trim();
+                                          const country = (selectedLead.country || '').trim();
+                                          const cityCountry = [city, country].filter(Boolean).join(', ');
+                                          if (!loc && !cityCountry) {
+                                            return (
+                                              <p className="mt-2 break-words text-sm leading-snug text-[#0d3547]">—</p>
+                                            );
+                                          }
+                                          return (
+                                            <div className="mt-2 space-y-1 break-words text-sm leading-snug text-[#0d3547]">
+                                              {loc ? <p>{loc}</p> : null}
+                                              {cityCountry ? (
+                                                <p className={loc ? 'text-xs text-[#7d909a]' : ''}>{cityCountry}</p>
+                                              ) : null}
+                                            </div>
+                                          );
+                                        })()}
                                       </div>
                                       <div className="min-w-0">
                                         <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
-                                          Email
+                                          Emails
                                         </p>
-                                        <p className="mt-2 break-all text-sm leading-snug text-[#0d3547]">
-                                          {selectedLead.email || '—'}
-                                        </p>
-                                        {selectedLead.contact_emails &&
-                                          selectedLead.contact_emails.filter(
-                                            (row) =>
-                                              !selectedLead.email ||
-                                              row.email.trim().toLowerCase() !==
-                                                selectedLead.email!.trim().toLowerCase(),
-                                          ).length > 0 && (
-                                            <ul className="mt-3 space-y-2 border-t border-[rgba(13,53,71,0.06)] pt-3">
-                                              {selectedLead.contact_emails
-                                                .filter(
-                                                  (row) =>
-                                                    !selectedLead.email ||
-                                                    row.email.trim().toLowerCase() !==
-                                                      selectedLead.email!.trim().toLowerCase(),
-                                                )
-                                                .map((row) => (
-                                                  <li
-                                                    key={row.id}
-                                                    className="break-all text-sm leading-snug text-[#0d3547]"
-                                                  >
-                                                    <span>{row.email}</span>
-                                                    <span className="ml-2 text-[11px] font-medium text-[#7d909a]">
-                                                      ({contactEmailCategoryLabel(row.category)})
-                                                    </span>
-                                                  </li>
-                                                ))}
-                                            </ul>
+                                        <div className="mt-2 space-y-4">
+                                          <div className="min-w-0">
+                                            <p className="text-xs font-medium leading-snug text-[#7d909a]">
+                                              Primary (Leads / sync)
+                                            </p>
+                                            <p className="mt-1 break-all text-sm leading-snug text-[#0d3547]">
+                                              {selectedLead.email || '—'}
+                                            </p>
+                                          </div>
+                                          {(['import', 'user', 'enriched_work', 'enriched_personal'] as const).map(
+                                            (cat) => {
+                                              const list = (selectedLead.contact_emails ?? []).filter(
+                                                (r) => r.category === cat,
+                                              );
+                                              if (list.length === 0) return null;
+                                              return (
+                                                <div key={cat} className="min-w-0">
+                                                  <p className="text-xs font-medium leading-snug text-[#7d909a]">
+                                                    {CONTACT_EMAIL_CATEGORY_LABEL[cat]}
+                                                  </p>
+                                                  <ul className="mt-1 list-inside list-disc space-y-0.5 break-all text-sm leading-snug text-[#0d3547]">
+                                                    {list.map((row) => (
+                                                      <li key={row.id}>{row.email}</li>
+                                                    ))}
+                                                  </ul>
+                                                </div>
+                                              );
+                                            },
                                           )}
+                                        </div>
                                       </div>
                                       <div className="min-w-0">
                                         <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
