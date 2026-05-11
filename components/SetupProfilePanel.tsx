@@ -13,6 +13,8 @@ import {
   BUSINESS_AREA_OPTIONS,
   SENIORITY_LEVEL_OPTIONS,
   INDUSTRY_OPTIONS,
+  normalizeIndustrySelectValue,
+  selectOptionsWithCurrentValue,
 } from '@/lib/arcova-taxonomy';
 import {
   formatCurrencyShort,
@@ -647,17 +649,14 @@ export function ProfileCard({
   } = myCompany;
 
   const industrySelectOptions = React.useMemo(() => {
-    const c = (industry ?? '').trim();
-    const base = [...INDUSTRY_OPTIONS] as string[];
-    if (c && !base.includes(c)) base.unshift(c);
-    return base;
+    const raw = (industry ?? '').trim();
+    const key = normalizeIndustrySelectValue(raw) || raw;
+    return selectOptionsWithCurrentValue([...INDUSTRY_OPTIONS] as string[], key);
   }, [industry]);
 
   const platformSelectOptions = React.useMemo(() => {
     const c = (platformCategory ?? '').trim();
-    const base = [...PLATFORM_CATEGORY_OPTIONS];
-    if (c && !base.includes(c)) base.unshift(c);
-    return base;
+    return selectOptionsWithCurrentValue([...PLATFORM_CATEGORY_OPTIONS], c);
   }, [platformCategory]);
 
   const displayDomain = website?.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
@@ -932,7 +931,7 @@ export function ProfileCard({
                     <div className="col-span-2">
                       <p className={fieldLabelClass(isLight)}>Industry</p>
                       <select
-                        value={industry ?? ''}
+                        value={normalizeIndustrySelectValue(industry ?? '') || industry || ''}
                         onChange={(e) =>
                           onMyCompanyChange?.('industry', e.target.value || undefined)
                         }
@@ -989,7 +988,9 @@ export function ProfileCard({
                   </div>
                 ) : (
                   <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
-                    {industry && <Stat label="Industry" value={industry} />}
+                    {industry && (
+                      <Stat label="Industry" value={normalizeIndustrySelectValue(industry) || industry} />
+                    )}
                     {(employeeCount || employeeRange) && (
                       <Stat label="Employees" value={employeeCount ? employeeCount.toLocaleString() : employeeRange!} />
                     )}

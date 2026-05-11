@@ -639,7 +639,10 @@ function SetupMyCompanyCard({
     setNewCompetitorUrl('');
   };
   return (
-    <article className="overflow-hidden rounded-[20px] border border-arcova-navy/10 bg-white/65 shadow-[0_18px_40px_-28px_rgba(13,53,71,0.15)] backdrop-blur-xl">
+    <article
+      data-my-company-card
+      className="overflow-hidden rounded-[20px] border border-arcova-navy/10 bg-white/65 shadow-[0_18px_40px_-28px_rgba(13,53,71,0.15)] backdrop-blur-xl"
+    >
       {/* Card header */}
       <header className="grid grid-cols-[28px_1fr_22px_22px] items-center gap-2.5 border-b border-arcova-navy/8 px-4 py-3.5">
         <span className="grid h-7 w-7 place-items-center rounded-lg bg-arcova-teal/12 text-arcova-teal">
@@ -1795,6 +1798,11 @@ export default function SetupFlow({
   const [enrichedTargetCompany, setEnrichedTargetCompany] = useState<import('@/lib/target-company-enrichment').TargetCompanyEnrichmentResult | null>(null);
   const [editingFindings, setEditingFindings] = useState(false);
   const [editingFindingsData, setEditingFindingsData] = useState<Record<string, unknown> | null>(null);
+  const editingFindingsDataRef = useRef<Record<string, unknown> | null>(null);
+
+  useEffect(() => {
+    editingFindingsDataRef.current = editingFindingsData;
+  }, [editingFindingsData]);
   const [savingFindings, setSavingFindings] = useState(false);
   const [saveChangesClickAnim, setSaveChangesClickAnim] = useState(false);
   const [icpEditMode, setIcpEditMode] = useState(false);
@@ -3400,17 +3408,25 @@ export default function SetupFlow({
   }, []);
 
   const handleSaveFindingsEdit = useCallback(async () => {
-    if (!editingFindingsData) return;
+    if (typeof document !== 'undefined') {
+      const ae = document.activeElement;
+      if (ae instanceof HTMLElement && ae.closest('[data-my-company-card]')) ae.blur();
+    }
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+    const snapshot = editingFindingsDataRef.current;
+    if (!snapshot) return;
     setSavingFindings(true);
     try {
-      const id = typeof editingFindingsData.id === 'string' ? editingFindingsData.id : null;
-      let nextData = editingFindingsData;
+      const id = typeof snapshot.id === 'string' ? snapshot.id : null;
+      let nextData = snapshot;
 
       if (id) {
         const response = await fetch('/api/user-company', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(editingFindingsData),
+          body: JSON.stringify(snapshot),
         });
         if (!response.ok) throw new Error('Failed to save analysis edits');
         nextData = await response.json();
@@ -3428,7 +3444,7 @@ export default function SetupFlow({
     } finally {
       setSavingFindings(false);
     }
-  }, [editingFindingsData]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [say]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── ICP card inline edit handlers ────────────────────────────────────────
 
@@ -4186,9 +4202,9 @@ export default function SetupFlow({
                 type="button"
                 onClick={() => void handleGoToStep(0)}
                 disabled={thinking}
-                className="inline-flex items-center gap-1.5 rounded-full border border-arcova-navy/10 bg-white/65 px-3 py-1.5 text-[12px] font-medium text-arcova-navy/65 backdrop-blur transition-all hover:-translate-x-0.5 hover:bg-white hover:text-arcova-navy disabled:opacity-50".
+                className="inline-flex items-center gap-1.5 rounded-full border border-arcova-navy/10 bg-white/65 px-3 py-1.5 text-[12px] font-medium text-arcova-navy/65 backdrop-blur transition-all hover:-translate-x-0.5 hover:bg-white hover:text-arcova-navy disabled:opacity-50"
               >
-                <span aria-hidden>←</span> Back to your company
+                <span aria-hidden>←</span> Back to edit your company
               </button>
             )}
             <StepEyebrow step={0} />
@@ -4580,7 +4596,7 @@ export default function SetupFlow({
         <AppAmbientBackground />
         <div className="relative z-10 flex flex-col px-6 py-9 lg:px-10">
             {entryPoint === 'full' && !editingFindings && (
-              <div className="mb-4 max-w-[820px]">
+              <div className="max-w-[820px]">
                 <button
                   type="button"
                   onClick={() => void handleAnalyseDifferentWebsite()}
@@ -4704,7 +4720,7 @@ export default function SetupFlow({
         title="We found some companies that look like strong model accounts."
         subtitle="Each represents a different buyer type. Pick one to build your ICP on, or enter your own."
         onBack={() => void handleGoToStep(0)}
-        backLabel="your company"
+        backLabel="edit your company"
       >
         <div className="space-y-3">
           {icpSuggestions.map((s) => (
@@ -4750,7 +4766,7 @@ export default function SetupFlow({
             disabled={thinking}
             className="inline-flex items-center gap-1.5 rounded-full border border-arcova-navy/10 bg-white/65 px-3 py-1.5 text-[12px] font-medium text-arcova-navy/65 backdrop-blur transition-all hover:-translate-x-0.5 hover:bg-white hover:text-arcova-navy disabled:opacity-50"
           >
-            <span aria-hidden>←</span> Back to your company
+            <span aria-hidden>←</span> Back to edit your company
           </button>
           <StepEyebrow step={1} />
         </div>
@@ -4774,7 +4790,7 @@ export default function SetupFlow({
         title={`Here's what I found on ${targetName}.`}
         subtitle="Check the fit and confirm — you can tweak before saving."
         onBack={() => void handleGoToStep(0)}
-        backLabel="your company"
+        backLabel="edit your company"
       >
         <div className="arcova-glass-panel p-6">
           <SetupProfilePanel
@@ -4814,7 +4830,7 @@ export default function SetupFlow({
         title={`Here's who typically buys from companies like ${icpName}.`}
         subtitle="Review the roles and seniority — you can adjust before saving."
         onBack={() => void handleGoToStep(1)}
-        backLabel="target companies"
+        backLabel="edit target ICP"
       >
         <div className="arcova-glass-panel p-6">
           <SetupProfilePanel
