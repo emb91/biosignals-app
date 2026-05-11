@@ -875,13 +875,13 @@ function SetupMyCompanyCard({
                 <SetupSubLabel>Industry</SetupSubLabel>
                 <div className="mt-1.5">
                   <select
-                    value={data.industry ?? ''}
+                    value={industrySelectValue}
                     onChange={(e) => set('industry', e.target.value || undefined)}
                     className={SETUP_SELECT}
                   >
                     <option value="">Select industry…</option>
                     {industryOptions.map((o) => (
-                      <option key={o} value={o}>
+                      <option key={`ind-opt-${o}`} value={o}>
                         {o}
                       </option>
                     ))}
@@ -903,18 +903,20 @@ function SetupMyCompanyCard({
               <div>
                 <SetupSubLabel>Founded</SetupSubLabel>
                 <div className="mt-1.5">
-                  <SetupEditableText
-                    value={data.foundedYear != null ? String(data.foundedYear) : ''}
-                    onChange={(v) => set('foundedYear', v.trim() ? Number(v) : undefined)}
+                  <SetupPositiveIntDraftField
+                    value={data.foundedYear}
+                    onCommit={(v) => set('foundedYear', v)}
+                    placeholder="Year"
                   />
                 </div>
               </div>
               <div>
                 <SetupSubLabel>Headcount</SetupSubLabel>
                 <div className="mt-1.5">
-                  <SetupEditableText
-                    value={data.employeeCount != null ? String(data.employeeCount) : ''}
-                    onChange={(v) => set('employeeCount', v.trim() ? Number(v) : undefined)}
+                  <SetupPositiveIntDraftField
+                    value={data.employeeCount}
+                    onCommit={(v) => set('employeeCount', v)}
+                    placeholder="Approx. employees"
                   />
                 </div>
               </div>
@@ -928,7 +930,7 @@ function SetupMyCompanyCard({
           ) : (
             <SetupKV
               rows={[
-                data.industry ? (['Industry', data.industry] as [string, ReactNode]) : null,
+                industryDisplay ? (['Industry', industryDisplay] as [string, ReactNode]) : null,
                 data.hqCity || data.hqCountry
                   ? ([
                       'Headquarters',
@@ -951,6 +953,50 @@ function SetupMyCompanyCard({
             />
           )}
         </SetupSection>
+
+        {/* Customers */}
+        {(editMode ||
+          (data.customersWeServe && data.customersWeServe.length > 0) ||
+          (data.goodFit && data.goodFit.length > 0) ||
+          (data.badFit && data.badFit.length > 0)) && (
+          <SetupSection label="Customers">
+            <div>
+              <SetupSubLabel>Customer segments</SetupSubLabel>
+              <div className="mt-1.5">
+                {editMode ? (
+                  <SetupEditableList
+                    items={data.customersWeServe ?? []}
+                    onChange={(v) => set('customersWeServe', v)}
+                  />
+                ) : (
+                  data.customersWeServe && data.customersWeServe.length > 0 && (
+                    <SetupTagRow items={data.customersWeServe} />
+                  )
+                )}
+              </div>
+            </div>
+            <div>
+              <SetupSubLabel>Good fit</SetupSubLabel>
+              <div className="mt-1.5">
+                {editMode ? (
+                  <SetupEditableList items={data.goodFit ?? []} onChange={(v) => set('goodFit', v)} />
+                ) : (
+                  data.goodFit && data.goodFit.length > 0 && <SetupBullets items={data.goodFit} />
+                )}
+              </div>
+            </div>
+            <div>
+              <SetupSubLabel>Not a fit</SetupSubLabel>
+              <div className="mt-1.5">
+                {editMode ? (
+                  <SetupEditableList items={data.badFit ?? []} onChange={(v) => set('badFit', v)} />
+                ) : (
+                  data.badFit && data.badFit.length > 0 && <SetupBullets items={data.badFit} />
+                )}
+              </div>
+            </div>
+          </SetupSection>
+        )}
 
         {/* What you sell */}
         {(editMode ||
@@ -996,6 +1042,74 @@ function SetupMyCompanyCard({
           </SetupSection>
         )}
 
+        {/* Competitors */}
+        {(editMode || (data.competitorsEnriched && data.competitorsEnriched.length > 0)) && (
+          <SetupSection label="Competitors">
+            <div className="space-y-2">
+              {(data.competitorsEnriched ?? []).map((c, i) => (
+                <div key={`${c.url ?? 'n'}-${c.name}-${i}`} className="flex items-center gap-2">
+                  {c.url ? (
+                    <a
+                      href={c.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex min-w-0 flex-1 items-center gap-1.5 text-[12.5px] font-medium text-arcova-teal hover:underline"
+                    >
+                      <span className="truncate">{c.name}</span>
+                      <ExternalLink className="h-3 w-3 shrink-0" />
+                    </a>
+                  ) : (
+                    <p className="flex-1 truncate text-[12.5px] font-medium text-arcova-navy/85">{c.name}</p>
+                  )}
+                  {editMode && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        set(
+                          'competitorsEnriched',
+                          (data.competitorsEnriched ?? []).filter((_, j) => j !== i),
+                        )
+                      }
+                      className="shrink-0 rounded-md p-1 text-arcova-navy/45 transition-colors hover:bg-red-50 hover:text-red-600"
+                      aria-label={`Remove ${c.name}`}
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              ))}
+              {editMode && (
+                <div className={`space-y-1.5 ${(data.competitorsEnriched?.length ?? 0) > 0 ? 'border-t border-arcova-navy/10 pt-2.5' : ''}`}>
+                  <SetupSubLabel>Add competitor (website)</SetupSubLabel>
+                  <div className="flex flex-wrap items-stretch gap-2">
+                    <input
+                      type="text"
+                      value={newCompetitorUrl}
+                      onChange={(e) => setNewCompetitorUrl(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          commitNewCompetitor();
+                        }
+                      }}
+                      placeholder="https://…"
+                      className="min-w-[12rem] flex-1 rounded-lg border border-arcova-navy/15 bg-white/85 px-3 py-2 text-[12.5px] text-arcova-navy outline-none transition-colors placeholder:text-arcova-navy/35 focus:border-arcova-teal/45 focus:bg-white focus:ring-2 focus:ring-arcova-teal/15"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => commitNewCompetitor()}
+                      disabled={!newCompetitorUrl.trim()}
+                      className="shrink-0 rounded-lg border border-arcova-navy/12 bg-white/90 px-3 py-2 text-[13px] font-medium text-arcova-navy shadow-sm transition-colors hover:border-arcova-teal/35 hover:bg-arcova-teal/[0.06] disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Add
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </SetupSection>
+        )}
+
         {/* Value proposition */}
         {(editMode || (data.valuePropositions && data.valuePropositions.length > 0)) && (
           <SetupSection label="Value proposition">
@@ -1006,62 +1120,6 @@ function SetupMyCompanyCard({
               />
             ) : (
               data.valuePropositions && <SetupBullets items={data.valuePropositions} />
-            )}
-          </SetupSection>
-        )}
-
-        {/* Customers & competitors */}
-        {(editMode ||
-          (data.customersWeServe && data.customersWeServe.length > 0) ||
-          (data.goodFit && data.goodFit.length > 0) ||
-          (data.badFit && data.badFit.length > 0) ||
-          (data.competitorsEnriched && data.competitorsEnriched.length > 0)) && (
-          <SetupSection label="Customers & competitors">
-            <div>
-              <SetupSubLabel>Customer segments</SetupSubLabel>
-              <div className="mt-1.5">
-                {editMode ? (
-                  <SetupEditableList
-                    items={data.customersWeServe ?? []}
-                    onChange={(v) => set('customersWeServe', v)}
-                  />
-                ) : (
-                  data.customersWeServe && data.customersWeServe.length > 0 && (
-                    <SetupTagRow items={data.customersWeServe} />
-                  )
-                )}
-              </div>
-            </div>
-            <div>
-              <SetupSubLabel>Good fit</SetupSubLabel>
-              <div className="mt-1.5">
-                {editMode ? (
-                  <SetupEditableList items={data.goodFit ?? []} onChange={(v) => set('goodFit', v)} />
-                ) : (
-                  data.goodFit && data.goodFit.length > 0 && <SetupBullets items={data.goodFit} />
-                )}
-              </div>
-            </div>
-            <div>
-              <SetupSubLabel>Not a fit</SetupSubLabel>
-              <div className="mt-1.5">
-                {editMode ? (
-                  <SetupEditableList items={data.badFit ?? []} onChange={(v) => set('badFit', v)} />
-                ) : (
-                  data.badFit && data.badFit.length > 0 && <SetupBullets items={data.badFit} />
-                )}
-              </div>
-            </div>
-            {!editMode && data.competitorsEnriched && data.competitorsEnriched.length > 0 && (
-              <div>
-                <SetupSubLabel>Competitors</SetupSubLabel>
-                <div className="mt-1.5">
-                  <SetupTagRow
-                    link
-                    items={data.competitorsEnriched.map((c) => c.name).filter(Boolean) as string[]}
-                  />
-                </div>
-              </div>
             )}
           </SetupSection>
         )}
@@ -1738,6 +1796,7 @@ export default function SetupFlow({
   const [editingFindings, setEditingFindings] = useState(false);
   const [editingFindingsData, setEditingFindingsData] = useState<Record<string, unknown> | null>(null);
   const [savingFindings, setSavingFindings] = useState(false);
+  const [saveChangesClickAnim, setSaveChangesClickAnim] = useState(false);
   const [icpEditMode, setIcpEditMode] = useState(false);
   const icpEditSnapshotRef = useRef<typeof reviewDraft | null>(null);
   /** Snapshot of enrichment (e.g. competitors) when opening ICP edit from the panel. */
@@ -4608,9 +4667,16 @@ export default function SetupFlow({
                 <div className="mt-5 flex flex-wrap items-center gap-3 px-1">
                   <button
                     type="button"
-                    onClick={() => void handleSaveFindingsEdit()}
+                    onClick={() => {
+                      setSaveChangesClickAnim(true);
+                      window.setTimeout(() => setSaveChangesClickAnim(false), 420);
+                      void handleSaveFindingsEdit();
+                    }}
                     disabled={thinking}
-                    className="inline-flex items-center gap-2 rounded-[14px] bg-gradient-to-br from-arcova-teal to-[#007e8b] px-[22px] py-[13px] text-sm font-semibold text-white shadow-[0_12px_28px_-12px_rgba(0,164,180,0.5)] transition-all hover:-translate-y-px hover:bg-arcova-navy disabled:opacity-50"
+                    className={cn(
+                      'inline-flex items-center gap-2 rounded-[14px] bg-gradient-to-br from-arcova-teal to-[#007e8b] px-[22px] py-[13px] text-sm font-semibold text-white shadow-[0_12px_28px_-12px_rgba(0,164,180,0.5)] transition-all duration-200 ease-out hover:-translate-y-px hover:bg-arcova-navy disabled:opacity-50',
+                      saveChangesClickAnim && 'origin-center scale-[0.96] brightness-105 ring-2 ring-arcova-teal/40 ring-offset-2 ring-offset-white/70',
+                    )}
                   >
                     <Check className="h-3.5 w-3.5" strokeWidth={2.4} />
                     Save changes
