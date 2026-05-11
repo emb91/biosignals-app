@@ -56,7 +56,11 @@ export default function ArcovaSetupPage() {
       hideSetupProgress={true}
     >
       <div className="flex min-h-0 flex-1 flex-col">
-        <SetupFlow firstName={firstName || undefined} />
+        <SetupFlow
+          firstName={firstName || undefined}
+          email={user.email || undefined}
+          emailDomain={user.email?.split('@')[1] || undefined}
+        />
       </div>
     </SetupShell>
   );

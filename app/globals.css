@@ -331,3 +331,331 @@ html {
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+
+/* ── Setup welcome orb (matches setup prototype: halo, expanding rings, core + enrich layer) ── */
+.setup-welcome-orb {
+  position: relative;
+  width: 110px;
+  height: 110px;
+  flex-shrink: 0;
+  z-index: 1;
+}
+
+.setup-welcome-orb .swo-halo {
+  position: absolute;
+  inset: -50%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(0, 164, 180, 0.35) 0%, transparent 60%);
+  filter: blur(18px);
+  animation: arcova-halo-pulse 5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.setup-welcome-orb .swo-corona {
+  position: absolute;
+  inset: -90%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 50%, rgba(0, 164, 180, 0.35) 0%, transparent 55%);
+  filter: blur(18px);
+  opacity: 0;
+  mix-blend-mode: screen;
+  pointer-events: none;
+}
+
+.setup-welcome-orb .swo-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 164, 180, 0.25);
+  animation: setup-welcome-ring-expand 3.4s ease-out infinite;
+  opacity: 0;
+  pointer-events: none;
+}
+.setup-welcome-orb .swo-ring.swo-r2 {
+  animation-delay: 1.1s;
+}
+.setup-welcome-orb .swo-ring.swo-r3 {
+  animation-delay: 2.2s;
+}
+
+@keyframes setup-welcome-ring-expand {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+.setup-welcome-orb .swo-core {
+  position: absolute;
+  inset: 12px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: radial-gradient(circle at 30% 28%, #ffffff 0%, #00a4b4 56%, #003344 130%);
+  box-shadow:
+    0 16px 36px -12px rgba(0, 164, 180, 0.4),
+    inset 0 -6px 16px rgba(13, 53, 71, 0.18),
+    inset 0 3px 10px rgba(255, 255, 255, 0.5);
+  animation: arcova-orb-breathe 5.4s ease-in-out infinite;
+  z-index: 1;
+}
+
+.setup-welcome-orb .swo-shine {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(ellipse 60% 30% at 36% 26%, rgba(255, 255, 255, 0.7), transparent 60%);
+  pointer-events: none;
+}
+
+.setup-welcome-orb .swo-cycle {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    rgba(0, 164, 180, 0) 0deg,
+    rgba(120, 180, 200, 0.55) 70deg,
+    rgba(140, 150, 220, 0.55) 160deg,
+    rgba(100, 180, 150, 0.55) 250deg,
+    rgba(0, 164, 180, 0) 360deg
+  );
+  mix-blend-mode: screen;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Calm idle: slower rings + core, hide corona / petals / colour cycle */
+.setup-welcome-orb.setup-welcome-orb--idle .swo-ring,
+.setup-welcome-orb.setup-welcome-orb--idle .swo-ring.swo-r2,
+.setup-welcome-orb.setup-welcome-orb--idle .swo-ring.swo-r3 {
+  animation-duration: 5.4s;
+  opacity: 0.7;
+}
+
+.setup-welcome-orb.setup-welcome-orb--idle .swo-core {
+  animation-duration: 6.5s;
+}
+
+.setup-welcome-orb.setup-welcome-orb--idle .swo-corona,
+.setup-welcome-orb.setup-welcome-orb--idle .swo-petal,
+.setup-welcome-orb.setup-welcome-orb--idle .swo-cycle {
+  display: none;
+}
+
+.setup-welcome-orb .swo-petal {
+  position: absolute;
+  width: 86%;
+  height: 86%;
+  top: 7%;
+  left: 7%;
+  border-radius: 50%;
+  filter: blur(14px);
+  mix-blend-mode: screen;
+  opacity: 0;
+  transform-origin: 50% 50%;
+  pointer-events: none;
+}
+
+.setup-welcome-orb .swo-petal.swo-p1 {
+  background: radial-gradient(circle at 50% 50%, #7fd5d8 0%, transparent 60%);
+  animation: setup-welcome-petal-a 7.5s ease-in-out infinite;
+}
+.setup-welcome-orb .swo-petal.swo-p2 {
+  background: radial-gradient(circle at 50% 50%, #8a9be0 0%, transparent 60%);
+  animation: setup-welcome-petal-b 9.2s ease-in-out infinite;
+  animation-delay: -2.4s;
+}
+.setup-welcome-orb .swo-petal.swo-p3 {
+  background: radial-gradient(circle at 50% 50%, #6fc095 0%, transparent 60%);
+  animation: setup-welcome-petal-c 8.4s ease-in-out infinite;
+  animation-delay: -5s;
+}
+
+@keyframes setup-welcome-petal-a {
+  0%,
+  100% {
+    transform: translate(-14%, -10%) scale(1);
+  }
+  50% {
+    transform: translate(18%, 12%) scale(1.18);
+  }
+}
+@keyframes setup-welcome-petal-b {
+  0%,
+  100% {
+    transform: translate(16%, -14%) scale(1.05);
+  }
+  50% {
+    transform: translate(-12%, 16%) scale(0.88);
+  }
+}
+@keyframes setup-welcome-petal-c {
+  0%,
+  100% {
+    transform: translate(-10%, 16%) scale(0.92);
+  }
+  50% {
+    transform: translate(14%, -14%) scale(1.22);
+  }
+}
+
+@keyframes setup-welcome-corona-breathe {
+  0%,
+  100% {
+    transform: scale(0.78);
+    opacity: 0.45;
+    filter: blur(22px);
+  }
+  50% {
+    transform: scale(1.28);
+    opacity: 1;
+    filter: blur(34px);
+  }
+}
+
+@keyframes setup-welcome-cycle-spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes setup-welcome-cycle-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.95;
+  }
+}
+
+@keyframes setup-welcome-orb-hue {
+  0%,
+  100% {
+    filter: hue-rotate(-25deg);
+  }
+  50% {
+    filter: hue-rotate(55deg);
+  }
+}
+
+@keyframes setup-welcome-core-breathe-big {
+  0%,
+  100% {
+    transform: scale(0.92);
+    box-shadow:
+      inset 0 -6px 16px rgba(13, 53, 71, 0.18),
+      inset 0 3px 10px rgba(255, 255, 255, 0.6),
+      0 0 24px rgba(0, 164, 180, 0.45),
+      0 0 70px rgba(0, 164, 180, 0.25);
+  }
+  50% {
+    transform: scale(1.14);
+    box-shadow:
+      inset 0 -6px 16px rgba(13, 53, 71, 0.18),
+      inset 0 3px 10px rgba(255, 255, 255, 0.6),
+      0 0 60px rgba(0, 164, 180, 0.8),
+      0 0 160px rgba(0, 164, 180, 0.55);
+  }
+}
+
+/* Enriched / busy: corona, petals, spinning cycle, stronger core + faster rings */
+.setup-welcome-orb:not(.setup-welcome-orb--idle) {
+  animation: setup-welcome-orb-hue 11s ease-in-out infinite;
+}
+
+.setup-welcome-orb:not(.setup-welcome-orb--idle) .swo-corona {
+  animation: setup-welcome-corona-breathe 5.5s ease-in-out infinite;
+  opacity: 1;
+}
+
+.setup-welcome-orb:not(.setup-welcome-orb--idle) .swo-petal {
+  opacity: 0.85;
+}
+
+.setup-welcome-orb:not(.setup-welcome-orb--idle) .swo-cycle {
+  display: block;
+  opacity: 0.85;
+  animation:
+    setup-welcome-cycle-spin 6s linear infinite,
+    setup-welcome-cycle-pulse 3.4s ease-in-out infinite;
+}
+
+.setup-welcome-orb:not(.setup-welcome-orb--idle) .swo-core {
+  animation: setup-welcome-core-breathe-big 4.2s ease-in-out infinite;
+  -webkit-mask-image: radial-gradient(
+    circle at 50% 50%,
+    #000 38%,
+    rgba(0, 0, 0, 0.85) 56%,
+    rgba(0, 0, 0, 0.35) 78%,
+    transparent 100%
+  );
+  mask-image: radial-gradient(
+    circle at 50% 50%,
+    #000 38%,
+    rgba(0, 0, 0, 0.85) 56%,
+    rgba(0, 0, 0, 0.35) 78%,
+    transparent 100%
+  );
+  filter: blur(0.6px);
+  box-shadow:
+    inset 0 -6px 16px rgba(13, 53, 71, 0.18),
+    inset 0 3px 10px rgba(255, 255, 255, 0.6),
+    0 0 38px rgba(0, 164, 180, 0.6),
+    0 0 110px rgba(0, 164, 180, 0.4);
+}
+
+.setup-welcome-orb:not(.setup-welcome-orb--idle) .swo-ring,
+.setup-welcome-orb:not(.setup-welcome-orb--idle) .swo-ring.swo-r2,
+.setup-welcome-orb:not(.setup-welcome-orb--idle) .swo-ring.swo-r3 {
+  animation-duration: 3.6s;
+  border-color: rgba(0, 164, 180, 0.55);
+}
+
+.setup-welcome-orb:not(.setup-welcome-orb--idle) .swo-halo {
+  animation: arcova-halo-pulse 3.2s ease-in-out infinite;
+}
+
+.setup-welcome-orb.setup-welcome-orb--lg {
+  width: 7.5rem;
+  height: 7.5rem;
+}
+
+.setup-welcome-orb.setup-welcome-orb--lg .swo-core {
+  inset: 0.82rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .setup-welcome-orb *,
+  .setup-welcome-orb *::before,
+  .setup-welcome-orb *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  .setup-welcome-orb:not(.setup-welcome-orb--idle) {
+    animation: none !important;
+    filter: none !important;
+  }
+
+  .setup-welcome-orb .swo-ring,
+  .setup-welcome-orb .swo-ring.swo-r2,
+  .setup-welcome-orb .swo-ring.swo-r3 {
+    opacity: 0 !important;
+    transform: none !important;
+  }
+
+  .setup-welcome-orb .swo-core {
+    transform: none !important;
+  }
+}

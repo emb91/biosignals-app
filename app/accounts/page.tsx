@@ -4,7 +4,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
-import { AgentPanel, type AgentTableFilter } from '@/components/AgentPanel';
+import { AgentPanel, type AgentPendingMessage, type AgentTableFilter } from '@/components/AgentPanel';
 import type {
   AccountQueryColumn,
   QueryAccount,
@@ -374,9 +374,13 @@ export default function AccountsPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loadingAccounts, setLoadingAccounts] = useState(true);
-  const [agentTrigger, setAgentTrigger] = useState<{ text: string; nonce: number; isHidden?: boolean } | undefined>();
-  const fireAgent = (text: string) =>
-    setAgentTrigger((prev) => ({ text, nonce: (prev?.nonce ?? 0) + 1 }));
+  const [agentTrigger, setAgentTrigger] = useState<AgentPendingMessage | undefined>();
+  const fireAgent = (text: string, threadPreview?: string) =>
+    setAgentTrigger((prev) => ({
+      text,
+      nonce: (prev?.nonce ?? 0) + 1,
+      ...(threadPreview ? { threadPreview } : {}),
+    }));
   const agentTaskFiredRef = useRef<string | null>(null);
 
   const [agentFilterIds, setAgentFilterIds] = useState<Set<string> | null>(null);
@@ -518,7 +522,7 @@ export default function AccountsPage() {
     setAgentTrigger((prev) => ({
       text: `Filter the accounts table to Arcova-sourced companies for ICP id ${icpId}. Use filter_accounts_table with filters.icpSearch="${icpId}" and filters.sources=["arcova"], columns company/company_type/fit/contacts/action/source/icp_match, sort by company_fit_desc. Keep your reply short and friendly, and mention these are the new Arcova companies for this ICP.`,
       nonce: (prev?.nonce ?? 0) + 1,
-      isHidden: true,
+      threadPreview: 'Show Arcova companies for this ICP',
     }));
   }, [accountAgentTask, searchParams, user]);
 
@@ -948,6 +952,7 @@ export default function AccountsPage() {
                       onClick={() =>
                         fireAgent(
                           `${opportunityAccounts.length === 1 ? 'One account is' : `${opportunityAccounts.length} accounts are`} missing strong contact coverage: ${names}${more}. Explain what is going on and what I should do next.`,
+                          'What should I do about contact coverage gaps?',
                         )
                       }
                       className="w-full flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-left transition-colors hover:bg-amber-100"

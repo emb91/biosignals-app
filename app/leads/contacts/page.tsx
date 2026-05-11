@@ -5,7 +5,7 @@ import { useEnrichmentGuard } from '@/context/EnrichmentGuardContext';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState, useCallback, type KeyboardEvent } from 'react';
 import AppSidebar from '@/components/AppSidebar';
-import { AgentPanel, type AgentLeadsFilter } from '@/components/AgentPanel';
+import { AgentPanel, type AgentLeadsFilter, type AgentPendingMessage } from '@/components/AgentPanel';
 import { ArcovaLoader } from '@/components/ArcovaLoader';
 import type { QueryLead } from '@/lib/leads-data';
 import {
@@ -769,9 +769,13 @@ export default function LeadsPage() {
   const { guardedNavigate } = useEnrichmentGuard();
   const searchParams = useSearchParams();
 
-  const [agentTrigger, setAgentTrigger] = useState<{ text: string; nonce: number; isHidden?: boolean } | undefined>();
-  const fireAgent = (text: string) =>
-    setAgentTrigger((prev) => ({ text, nonce: (prev?.nonce ?? 0) + 1 }));
+  const [agentTrigger, setAgentTrigger] = useState<AgentPendingMessage | undefined>();
+  const fireAgent = (text: string, threadPreview?: string) =>
+    setAgentTrigger((prev) => ({
+      text,
+      nonce: (prev?.nonce ?? 0) + 1,
+      ...(threadPreview ? { threadPreview } : {}),
+    }));
   const dashboardAgentTaskFiredRef = useRef<string | null>(null);
 
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -1004,29 +1008,40 @@ export default function LeadsPage() {
   useEffect(() => {
     if (!user || dashboardAgentTaskFiredRef.current === dashboardAgentTask) return;
 
-    const taskMessages: Record<string, string> = {
-      new_contacts:
-        'Filter the contacts table to the newest contacts from the latest import batch. Use filter_leads_table with filters.latestImportOnly=true, columns name/job_title/company/status/contact_fit/source, sort by status_best_first. Keep your reply short and friendly.',
-      best_leads:
-        'Filter the contacts table to the best leads to work now. Use filter_leads_table with filters.actions=["reach_out","monitor"], columns name/job_title/company/status/contact_fit/source, sort by status_best_first. Keep your reply short and friendly.',
-      arcova_contacts_today:
-        'Filter the contacts table to Arcova-sourced contacts imported today. Use filter_leads_table with filters.sources=["arcova"] and filters.importedToday=true, columns name/job_title/company/status/contact_fit/source, sort by status_best_first. Keep your reply short and friendly, and mention these are the new Arcova contacts from today.',
+    const taskDefs: Record<string, { prompt: string; threadPreview: string }> = {
+      new_contacts: {
+        prompt:
+          'Filter the contacts table to the newest contacts from the latest import batch. Use filter_leads_table with filters.latestImportOnly=true, columns name/job_title/company/status/contact_fit/source, sort by status_best_first. Keep your reply short and friendly.',
+        threadPreview: 'Show newest contacts from my latest import',
+      },
+      best_leads: {
+        prompt:
+          'Filter the contacts table to the best leads to work now. Use filter_leads_table with filters.actions=["reach_out","monitor"], columns name/job_title/company/status/contact_fit/source, sort by status_best_first. Keep your reply short and friendly.',
+        threadPreview: 'Show my best leads to work now',
+      },
+      arcova_contacts_today: {
+        prompt:
+          'Filter the contacts table to Arcova-sourced contacts imported today. Use filter_leads_table with filters.sources=["arcova"] and filters.importedToday=true, columns name/job_title/company/status/contact_fit/source, sort by status_best_first. Keep your reply short and friendly, and mention these are the new Arcova contacts from today.',
+        threadPreview: 'Show Arcova contacts from today',
+      },
     };
 
     const companyId = searchParams.get('companyId') ?? '';
+    let entry = taskDefs[dashboardAgentTask];
     if (dashboardAgentTask === 'arcova_contacts_at_company' && companyId) {
-      taskMessages.arcova_contacts_at_company =
-        `Filter the contacts table to Arcova-sourced contacts at company id ${companyId}. Use filter_leads_table with filters.companyIds=["${companyId}"] and filters.sources=["arcova"], columns name/job_title/company/status/contact_fit/source, sort by status_best_first. Keep your reply short and friendly, and mention these are the new Arcova contacts for this company.`;
+      entry = {
+        prompt: `Filter the contacts table to Arcova-sourced contacts at company id ${companyId}. Use filter_leads_table with filters.companyIds=["${companyId}"] and filters.sources=["arcova"], columns name/job_title/company/status/contact_fit/source, sort by status_best_first. Keep your reply short and friendly, and mention these are the new Arcova contacts for this company.`,
+        threadPreview: 'Show Arcova contacts for this company',
+      };
     }
 
-    const message = taskMessages[dashboardAgentTask];
-    if (!message) return;
+    if (!entry) return;
 
     dashboardAgentTaskFiredRef.current = dashboardAgentTask;
     setAgentTrigger((prev) => ({
-      text: message,
+      text: entry.prompt,
       nonce: (prev?.nonce ?? 0) + 1,
-      isHidden: true,
+      threadPreview: entry.threadPreview,
     }));
   }, [dashboardAgentTask, user]);
 
@@ -2231,6 +2246,7 @@ export default function LeadsPage() {
                       onClick={() =>
                         fireAgent(
                           `${gapCompanies.length === 1 ? 'One company in my leads is' : `${gapCompanies.length} companies in my leads are`} missing strong contact coverage: ${names}${more}. Explain what is going on and what I should do next.`,
+                          'What should I do about contact coverage gaps?',
                         )
                       }
                       className="w-full flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-left transition-colors hover:bg-amber-100"

@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import AppSidebar from '@/components/AppSidebar';
-import { AgentPanel } from '@/components/AgentPanel';
+import { AgentPanel, type AgentPendingMessage } from '@/components/AgentPanel';
 import Nango from '@nangohq/frontend';
 import { ROUTES } from '@/lib/routes';
 import { getDisplayName } from '@/lib/auth-helpers';
@@ -261,7 +261,7 @@ export default function ImportPage() {
   const [hubspotDisconnecting, setHubspotDisconnecting] = useState(false);
   const [pastImportsExpanded, setPastImportsExpanded] = useState(false);
   const [expandedHistoryBatchId, setExpandedHistoryBatchId] = useState<string | null>(null);
-  const [agentOpener, setAgentOpener] = useState<{ text: string; nonce: number; isHidden: true } | undefined>();
+  const [agentOpener, setAgentOpener] = useState<AgentPendingMessage | undefined>();
   const [hubspotHistoryRowHidden, setHubspotHistoryRowHidden] = useState(() => {
     if (typeof window === 'undefined') return false;
     return localStorage.getItem(HIDE_HUBSPOT_SYNC_ROW_STORAGE_KEY) === '1';
@@ -388,7 +388,7 @@ export default function ImportPage() {
     setAgentOpener({
       text: `The Import page just loaded. The user's first name is ${firstName}. ${stateContext} Keep it conversational, helpful, and under 90 words. Do not say "try asking" or list generic sample questions.`,
       nonce: Date.now(),
-      isHidden: true,
+      threadPreview: 'Help me with imports',
     });
   }, [agentOpener, currentBatchId, importHistory.length, importHistoryLoaded, parsedCsv, progress, user]);
 

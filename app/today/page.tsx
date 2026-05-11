@@ -544,14 +544,17 @@ export default function BriefingPage() {
   const briefingAgentIdleChips = [
     {
       label: '+ Suggest where to start',
+      threadPreview: 'Suggest where to start today',
       prompt: `Here is silent workspace context only (do not recite): ${briefing}. Suggest one concrete place for me to start today and why. Keep it under 55 words.`,
     },
     {
       label: '+ Summarise overnight',
+      threadPreview: 'Summarise what changed overnight',
       prompt: `Here is silent workspace context only (do not recite): ${briefing}. Summarise what changed overnight that matters for today. Keep it under 55 words.`,
     },
     {
       label: '+ Just the top lead',
+      threadPreview: 'Walk me through my best lead',
       prompt: `Here is silent workspace context only (do not recite): ${briefing}. Focus only on my best lead to work today: name them and the next step. Keep it under 55 words.`,
     },
   ];
