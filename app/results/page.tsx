@@ -1450,6 +1450,26 @@ export default function LeadsPage() {
     tableSortDir,
   );
   const selectedLead = leads.find((lead) => lead.id === selectedLeadId) ?? null;
+
+  const openContactAcquisitionFromLead = useCallback(() => {
+    if (!selectedLead?.company_id) return;
+    const companyName =
+      selectedLead.companies?.company_name ||
+      selectedLead.company_name ||
+      selectedLead.companies?.domain ||
+      selectedLead.company_domain ||
+      'Selected company';
+    const params = new URLSearchParams({
+      mode: 'contacts_at_company',
+      companyId: selectedLead.company_id,
+      companyName,
+      source: 'contacts',
+    });
+    const icpId = selectedLead.companies?.matched_icp_id ?? null;
+    if (icpId) params.set('icpId', icpId);
+    router.push(withQuery(ROUTES.leads.data, params));
+  }, [router, selectedLead]);
+
   const selectedContactFitState = selectedLeadId ? contactFitByContactId[selectedLeadId] ?? null : null;
   const selectedContactFit = selectedContactFitState?.data ?? null;
   const selectedCompanyId = selectedLead?.company_id ?? null;
@@ -3220,25 +3240,26 @@ export default function LeadsPage() {
                                       this account. Source a better-matched contact before you reach out.
                                     </p>
                                     <p className="text-[13.5px] leading-[1.55] text-[#4a6470]">
-                                      Try searching LinkedIn for the right title at this company, or use enrichment to
-                                      surface additional contacts.
+                                      Open the Data page to request more contacts for this account. This company and ICP
+                                      context are passed through so the agent can help you queue the right acquisition
+                                      job.
                                     </p>
-                                    {(selectedLead.companies?.linkedin_url || selectedLead.companies?.company_name) && (
+                                    {selectedLead.company_id ? (
                                       <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
-                                        <a
-                                          href={
-                                            selectedLead.companies?.linkedin_url
-                                              ? `${selectedLead.companies.linkedin_url}/people/`
-                                              : `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(selectedLead.companies?.company_name ?? '')}`
-                                          }
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className="inline-flex items-center gap-1.5 text-sm font-semibold text-arcova-teal hover:text-arcova-teal/85 transition-colors"
+                                        <button
+                                          type="button"
+                                          onClick={openContactAcquisitionFromLead}
+                                          className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-white px-4 py-2.5 text-sm font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/5"
                                         >
-                                          Search contacts on LinkedIn
-                                          <ExternalLink className="w-3.5 h-3.5" aria-hidden />
-                                        </a>
+                                          <Users className="h-4 w-4 shrink-0" aria-hidden />
+                                          Find buyer-persona contacts
+                                        </button>
                                       </div>
+                                    ) : (
+                                      <p className="text-[13px] leading-snug text-amber-800">
+                                        This contact is not linked to a company record yet, so we cannot start a data
+                                        request. Link or enrich the company first, then return here.
+                                      </p>
                                     )}
                                   </div>
                                 )}

@@ -1,4 +1,4 @@
-type ApolloLookupInput = {
+export type ApolloLookupInput = {
   full_name?: string;
   first_name?: string;
   last_name?: string;
@@ -532,29 +532,83 @@ export async function searchPeopleWithApollo(input: ApolloPeopleSearchParams): P
   };
 }
 
-export async function enrichContactWithApollo(input: ApolloLookupInput): Promise<ApolloEnrichmentResult> {
+type MatchPersonResult = Awaited<ReturnType<typeof matchPerson>>;
+
+async function runApolloPeopleMatchTwoStep(
+  input: ApolloLookupInput,
+): Promise<{
+  person: ApolloPerson | null;
+  finalPayload: ApolloMatchResponse | null;
+  firstMatch: MatchPersonResult;
+  personalEmailRevealFollowup: boolean;
+  personalEmailObtainedViaReveal: boolean;
+}> {
   const match = await matchPerson(input, { revealPersonalEmails: false });
   let person = match.person;
-
   let finalPayload = match.payload;
   let personalEmailRevealFollowup = false;
   let personalEmailObtainedViaReveal = false;
 
-  const resolvedEmailEarly = Boolean((person?.email?.trim() || input.email?.trim())?.length);
+  const apolloReturnedEmail = Boolean(person?.email?.trim());
 
-  if (revealPersonalEmailsWhenMissing() && person && !resolvedEmailEarly) {
+  if (revealPersonalEmailsWhenMissing() && person && !apolloReturnedEmail) {
     personalEmailRevealFollowup = true;
     const revealMatch = await matchPerson(input, { revealPersonalEmails: true });
     finalPayload = revealMatch.payload ?? finalPayload;
 
     if (revealMatch.person) {
       const merged: ApolloPerson = { ...person, ...revealMatch.person };
-      if (merged.email?.trim()) {
+      if (merged.email?.trim() && !person.email?.trim()) {
         personalEmailObtainedViaReveal = true;
       }
       person = merged;
     }
   }
+
+  return {
+    person,
+    finalPayload,
+    firstMatch: match,
+    personalEmailRevealFollowup,
+    personalEmailObtainedViaReveal,
+  };
+}
+
+/**
+ * Runs people/match and, when Apollo returns a person with no email (even if `input.email` was
+ * supplied for matching), optionally a second match with reveal_personal_emails. Returns only
+ * addresses on Apollo’s merged person record (never echoes `input.email` alone).
+ */
+export async function tryApolloPersonalEmailRevealForLookup(input: ApolloLookupInput): Promise<{
+  apolloEmail: string | null;
+  emailStatus: string | null;
+  personalEmailRevealFollowup: boolean;
+  personalEmailObtainedViaReveal: boolean;
+}> {
+  if (!revealPersonalEmailsWhenMissing()) {
+    return {
+      apolloEmail: null,
+      emailStatus: null,
+      personalEmailRevealFollowup: false,
+      personalEmailObtainedViaReveal: false,
+    };
+  }
+
+  const { person, personalEmailRevealFollowup, personalEmailObtainedViaReveal } =
+    await runApolloPeopleMatchTwoStep(input);
+
+  const apolloEmail = person?.email?.trim() || null;
+  return {
+    apolloEmail,
+    emailStatus: person?.email_status ?? null,
+    personalEmailRevealFollowup,
+    personalEmailObtainedViaReveal,
+  };
+}
+
+export async function enrichContactWithApollo(input: ApolloLookupInput): Promise<ApolloEnrichmentResult> {
+  const { person, finalPayload, firstMatch, personalEmailRevealFollowup, personalEmailObtainedViaReveal } =
+    await runApolloPeopleMatchTwoStep(input);
 
   const organization = person?.organization || null;
   const employmentHistory = person?.employment_history || [];
@@ -596,13 +650,13 @@ export async function enrichContactWithApollo(input: ApolloLookupInput): Promise
     apollo_lookup_metadata: {
       provider: 'apollo',
       lookup_route: getLookupRoute(input),
-      submitted_fields: match.submittedFields,
+      submitted_fields: firstMatch.submittedFields,
       matched_role_source: null,
       role_resolution_status: 'pending',
       employment_history_count: employmentHistory.length,
       email_status: person?.email_status ?? null,
       request_id:
-        ((finalPayload as ApolloMatchResponse | null)?.request_id ?? match.payload?.request_id) ??
+        ((finalPayload as ApolloMatchResponse | null)?.request_id ?? firstMatch.payload?.request_id) ??
         null,
       personal_email_reveal_followup: personalEmailRevealFollowup,
       personal_email_obtained_via_reveal: personalEmailObtainedViaReveal,

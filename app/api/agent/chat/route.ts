@@ -308,14 +308,14 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'suggest_navigation',
     description:
-      `Suggest that the user navigate to another page in the app. Call this whenever the next action for the user requires them to go somewhere else — always pair it with a short explanation of what to do there. Only call this once per response. When sending multiple accounts for batch contact sourcing, set href to ${withQuery(ROUTES.data, 'mode=contacts_at_companies')} and populate batchCompanies with the full list.`,
+      `Suggest that the user navigate to another page in the app. Call this whenever the next action for the user requires them to go somewhere else — always pair it with a short explanation of what to do there. Only call this once per response. When sending multiple accounts for batch contact sourcing, set href to ${withQuery(ROUTES.leads.data, 'mode=contacts_at_companies')} and populate batchCompanies with the full list.`,
     input_schema: {
       type: 'object' as const,
       properties: {
         href: {
           type: 'string',
           description:
-            `The destination page path. Use ${ROUTES.data} for generic acquisition, ${ROUTES.data}?mode=contacts_at_company&companyId=...&companyName=...&icpId=... for a single company, or ${withQuery(ROUTES.data, 'mode=contacts_at_companies')} when sending a batch of accounts.`,
+            `The destination page path. Use ${ROUTES.leads.data} for generic acquisition, ${ROUTES.leads.data}?mode=contacts_at_company&companyId=...&companyName=...&icpId=... for a single company, or ${withQuery(ROUTES.leads.data, 'mode=contacts_at_companies')} when sending a batch of accounts.`,
         },
         label: {
           type: 'string',
@@ -447,7 +447,7 @@ function buildSystemPrompt(page: Page, context?: PageContext): string {
 The selected account is ${context.selectedAccount.name || 'the selected company'}.
 Company id: ${context.selectedAccount.id}.
 Matched ICP id: ${context.selectedAccount.matchedIcpId || 'unknown'}.
-If the user asks to find contacts, buyer personas, or more coverage for this selected account, call suggest_navigation with ${withQuery(ROUTES.data, `mode=contacts_at_company&companyId=${encodeURIComponent(context.selectedAccount.id)}&companyName=${encodeURIComponent(context.selectedAccount.name || 'Selected company')}${context.selectedAccount.matchedIcpId ? `&icpId=${encodeURIComponent(context.selectedAccount.matchedIcpId)}` : ''}`)}.`
+If the user asks to find contacts, buyer personas, or more coverage for this selected account, call suggest_navigation with ${withQuery(ROUTES.leads.data, `mode=contacts_at_company&companyId=${encodeURIComponent(context.selectedAccount.id)}&companyName=${encodeURIComponent(context.selectedAccount.name || 'Selected company')}${context.selectedAccount.matchedIcpId ? `&icpId=${encodeURIComponent(context.selectedAccount.matchedIcpId)}` : ''}`)}.`
     : '';
 
   const dataPageContext = page === 'data' && context?.acquisitionMode
@@ -583,7 +583,7 @@ Use your tools proactively to give accurate, data-driven answers. Don't guess at
 When the user wants to source contacts for multiple accounts at once (e.g. "source contacts for all opportunity accounts", "find contacts for all these companies"), do this in one response:
 1. Call query_companies with coverageStatuses: ["opportunity"] (and limit: 50) to get the full list.
 2. Explain the situation in 1–2 sentences: how many accounts need contacts and what that means.
-3. Call suggest_navigation with href: "${withQuery(ROUTES.data, 'mode=contacts_at_companies')}", a label like "Source contacts for all N accounts", and batchCompanies set to the full list of {id, name, icpId} objects from the query results. The id field must be the company's database id (use the raw id from the query result — if unavailable fall back to domain or name as a key).
+3. Call suggest_navigation with href: "${withQuery(ROUTES.leads.data, 'mode=contacts_at_companies')}", a label like "Source contacts for all N accounts", and batchCompanies set to the full list of {id, name, icpId} objects from the query results. The id field must be the company's database id (use the raw id from the query result — if unavailable fall back to domain or name as a key).
 Never ask the user to confirm each account one-by-one. Batch them all in a single suggest_navigation call.
 
 ## Response style — strict rules
@@ -615,7 +615,7 @@ Never ask the user to confirm each account one-by-one. Batch them all in a singl
 
 **When no results are found**
 - State it plainly in one sentence. Example: "You don't have any VP-level contacts at high-fit companies right now."
-- Follow with one short sentence pointing to the next step, then call suggest_navigation to show the button. Use Data (${ROUTES.data}) when better contacts or more companies are needed. Use Import (${ROUTES.import}) when the user should upload data themselves. Pick one — never list both.
+- Follow with one short sentence pointing to the next step, then call suggest_navigation to show the button. Use Data (${ROUTES.leads.data}) when better contacts or more companies are needed. Use Import (${ROUTES.import}) when the user should upload data themselves. Pick one — never list both.
 - Never speculate about why the data is missing or list hypotheses.
 
 **When updating the table**
@@ -880,7 +880,7 @@ async function toolGetIcpDefinitions(
       .from('icps')
       .select('id, name, created_at, company_type, platform_category, therapeutic_areas, modalities, development_stages, funding_stages, company_sizes')
       .eq('user_id', userId)
-      .order('created_at', { ascending: false }),
+      .order('created_at', { ascending: true }),
     supabase
       .from('personas')
       .select('id, icp_id, name, functions, seniority_levels')

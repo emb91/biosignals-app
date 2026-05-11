@@ -1208,34 +1208,20 @@ export default function AccountsPage() {
                                   out.
                                 </p>
                                 <p className="text-[13.5px] leading-[1.55] text-[#4a6470]">
-                                  Try searching LinkedIn for the right title at this company, or use enrichment to
-                                  surface additional contacts.
+                                  Open the Data page to request more contacts for this account. This company and ICP
+                                  context are passed through so the agent can help you queue the right acquisition
+                                  job.
                                 </p>
-                                {(selectedAccount.linkedin_url || selectedAccount.company_name) && (
-                                  <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
-                                    <a
-                                      href={
-                                        selectedAccount.linkedin_url
-                                          ? `${selectedAccount.linkedin_url.replace(/\/$/, '')}/people/`
-                                          : `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(selectedAccount.company_name ?? '')}`
-                                      }
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="inline-flex items-center gap-1.5 text-sm font-semibold text-arcova-teal hover:text-arcova-teal/85 transition-colors"
-                                    >
-                                      Search contacts on LinkedIn
-                                      <ExternalLink className="w-3.5 h-3.5" aria-hidden />
-                                    </a>
-                                  </div>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={() => openContactAcquisition(selectedAccount)}
-                                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-arcova-teal/30 bg-white px-4 py-2.5 text-sm font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/5"
-                                >
-                                  <Users className="h-4 w-4" />
-                                  Find buyer-persona contacts
-                                </button>
+                                <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
+                                  <button
+                                    type="button"
+                                    onClick={() => openContactAcquisition(selectedAccount)}
+                                    className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-white px-4 py-2.5 text-sm font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/5"
+                                  >
+                                    <Users className="h-4 w-4" />
+                                    Find buyer-persona contacts
+                                  </button>
+                                </div>
                               </div>
                             )}
 
@@ -1286,6 +1272,21 @@ export default function AccountsPage() {
                         const hasFunding = !!(selectedAccount.funding_stage || selectedAccount.funding_status_label || selectedAccount.total_funding_usd != null || selectedAccount.latest_funding_date);
                         return (
                           <div className="space-y-3">
+                            {getAccountRowAction(selectedAccount) === 'monitor' && (
+                              <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4 space-y-2">
+                                <p className="text-[13px] leading-snug text-[#0d3547]">
+                                  This account is on Monitor. Review signals to see activity before you reach out.
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => router.push('/customer-signals')}
+                                  className="inline-flex items-center gap-1.5 text-sm font-semibold text-arcova-teal hover:text-arcova-teal/85 transition-colors"
+                                >
+                                  Review signals
+                                  <ChevronRight className="w-4 h-4" aria-hidden />
+                                </button>
+                              </div>
+                            )}
                             <div className="rounded-xl border border-gray-100 bg-gray-50/70 px-3 py-3">
                               <p className="text-xs font-semibold text-gray-700 mb-2">Data source</p>
                               <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">

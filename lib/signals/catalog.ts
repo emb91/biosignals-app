@@ -150,14 +150,6 @@ export const SIGNAL_CATALOG: SignalDefinition[] = [
     description: 'A hiring surge often suggests investment, growth, and new infrastructure needs.',
   },
   {
-    id: 'company_founded',
-    scope: 'company',
-    displayName: 'Company founded or incorporated',
-    category: 'Corporate & Strategic',
-    baseWeight: 0.55,
-    description: 'A newly formed company can signal an early buying window and new setup needs.',
-  },
-  {
     id: 'new_facility',
     scope: 'company',
     displayName: 'New office or facility',
@@ -441,6 +433,22 @@ export const SIGNAL_CATALOG: SignalDefinition[] = [
 
 export const COMPANY_SIGNALS = SIGNAL_CATALOG.filter((signal) => signal.scope === 'company');
 export const CONTACT_SIGNALS = SIGNAL_CATALOG.filter((signal) => signal.scope === 'contact');
+
+/** First-party and CRM-linked company signals — require CRM/MAP integration; not available out of the box. */
+const COMPANY_SIGNAL_MANAGED_IDS = new Set([
+  'demo_requested',
+  'inbound_enquiry',
+  'visited_your_website',
+  'attended_your_webinar_or_event',
+  'downloaded_your_content',
+  'open_opportunity_in_crm',
+  'lapsed_customer',
+  'renewal_coming_up',
+]);
+
+export function isCompanySignalManaged(signalId: string): boolean {
+  return COMPANY_SIGNAL_MANAGED_IDS.has(signalId);
+}
 
 /** First-party and CRM-linked contact signals — not backed by live ingestion yet; UI may collect interest. */
 const CONTACT_SIGNAL_COMING_SOON_IDS = new Set([

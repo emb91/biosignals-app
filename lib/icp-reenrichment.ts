@@ -8,7 +8,7 @@ import {
   totalFundingToBracket,
 } from '@/lib/arcova-taxonomy';
 import { rescoreAllContactsForUser } from '@/lib/rescore';
-import { COMPANY_SIGNALS } from '@/lib/signals/catalog';
+import { COMPANY_SIGNALS, getDefaultContactSignalSelectionIds } from '@/lib/signals/catalog';
 import {
   hydrateIcpsWithSignals,
   replaceIcpSignalSelections,
@@ -708,9 +708,24 @@ async function persistBuyingTeam(params: {
   };
 
   if (params.existingPersona) {
+    // Fetch existing signals so we don't clobber a user's saved selection
+    const { data: existing } = await params.supabase
+      .from('personas')
+      .select('signals')
+      .eq('id', params.existingPersona.id)
+      .single();
+
+    const existingSignals: string[] = (existing as { signals?: string[] } | null)?.signals ?? [];
+    const signals =
+      existingSignals.length > 0
+        ? existingSignals
+        : getDefaultContactSignalSelectionIds().map((id) =>
+            JSON.stringify({ id, weight: 1 }),
+          );
+
     const { error } = await params.supabase
       .from('personas')
-      .update(personaData)
+      .update({ ...personaData, signals })
       .eq('id', params.existingPersona.id)
       .eq('user_id', params.userId);
 
@@ -718,11 +733,16 @@ async function persistBuyingTeam(params: {
     return;
   }
 
+  const defaultSignals = getDefaultContactSignalSelectionIds().map((id) =>
+    JSON.stringify({ id, weight: 1 }),
+  );
+
   const { error } = await params.supabase.from('personas').insert({
     user_id: params.userId,
     icp_id: params.icpId,
     created_at: now,
     ...personaData,
+    signals: defaultSignals,
   });
 
   if (error) throw error;
