@@ -3,8 +3,12 @@
 // linkedin resolution = Claude web search for LinkedIn URL
 // profile enrichment  = Apify LinkedIn profile scrape + company scrape + Apollo company enrich + LLM bio summary
 import Anthropic from '@anthropic-ai/sdk';
-import { enrichOrganizationWithApollo } from '@/lib/apollo';
-import { trimEmail as trimContactEmail, ensureEnrichedEmailEntry } from '@/lib/contact-emails';
+import {
+  enrichOrganizationWithApollo,
+  tryApolloPersonalEmailRevealForLookup,
+  type ApolloLookupInput,
+} from '@/lib/apollo';
+import { trimEmail as trimContactEmail, ensureEnrichedEmailEntry, emailsEqual } from '@/lib/contact-emails';
 import { syncContactFitForContact } from '@/lib/contact-fit';
 import { syncCompanyFitForCompany } from '@/lib/company-fit';
 import { resolveLinkedinUrl, type LinkedinResolutionResult } from '@/lib/linkedin-url-resolver';
@@ -1140,15 +1144,45 @@ export async function runContactResolutionPipelineForContact(
       resolved.resolvedCompanyDomainForEmailCheck;
 
     // Apollo mailbox is added via contact_emails only (work / personal). We do not replace contacts.email.
-    const apolloMailbox = trimContactEmail(getFirstString(apolloPerson, ['email']));
-    if (apolloMailbox) {
-      const apolloEmailStatusValue = getFirstString(apolloPerson, ['email_status']);
+    let apolloMailbox = trimContactEmail(getFirstString(apolloPerson, ['email']));
+    let apolloEmailStatusForDirectory = getFirstString(apolloPerson, ['email_status']) || null;
+
+    const manualPrimaryEmail = trimContactEmail(typedContact.email);
+    if (manualPrimaryEmail && !apolloMailbox) {
+      try {
+        const apolloRevealInput: ApolloLookupInput = {
+          full_name: typedContact.full_name ?? undefined,
+          first_name: typedContact.first_name ?? undefined,
+          last_name: typedContact.last_name ?? undefined,
+          company_name: resolved.currentCompanyName ?? typedContact.company_name ?? undefined,
+          company_domain: resolvedDomainFromCompany || typedContact.company_domain || undefined,
+          email: manualPrimaryEmail,
+          linkedin_url: resolvedLinkedin.linkedin_url ?? undefined,
+          location: resolved.location || typedContact.location || undefined,
+        };
+        const reveal = await tryApolloPersonalEmailRevealForLookup(apolloRevealInput);
+        if (reveal.apolloEmail) {
+          apolloMailbox = trimContactEmail(reveal.apolloEmail);
+          apolloEmailStatusForDirectory = reveal.emailStatus;
+        }
+      } catch (apolloRevealErr) {
+        console.warn(
+          '[enrichment-pipeline] Apollo personal email reveal (manual primary, no stored Apollo email) failed (non-fatal):',
+          apolloRevealErr instanceof Error ? apolloRevealErr.message : apolloRevealErr,
+        );
+      }
+    }
+
+    if (
+      apolloMailbox &&
+      !(manualPrimaryEmail && emailsEqual(apolloMailbox, manualPrimaryEmail))
+    ) {
       await ensureEnrichedEmailEntry(supabase, {
         contactId,
         userId,
         email: apolloMailbox,
         companyDomain: resolvedDomainFromCompany || typedContact.company_domain,
-        apolloEmailStatus: apolloEmailStatusValue || null,
+        apolloEmailStatus: apolloEmailStatusForDirectory,
       });
     }
 

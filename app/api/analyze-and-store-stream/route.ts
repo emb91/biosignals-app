@@ -23,6 +23,11 @@ import {
   condenseBulletArrays,
 } from '@/lib/my-company-enrichment';
 import { resolveCompanyTaxonomy } from '@/lib/company-monitor/taxonomy';
+import { formatSupabaseWriteError, logApiOperationError } from '@/lib/supabase-column-compat';
+import {
+  buildUserCompanyMergePayload,
+  upsertUserCompanyFromAnalysis,
+} from '@/lib/user-company-analyze-merge';
 import { encodeSSEEvent, SSE_HEADERS } from '@/lib/sse';
 
 function normalizeDomain(value?: string | null): string | null {
@@ -59,7 +64,21 @@ export async function POST(request: NextRequest) {
   const stream = new ReadableStream({
     async start(controller) {
       const emit = (event: Parameters<typeof encodeSSEEvent>[0], data: Record<string, unknown>) => {
-        try { controller.enqueue(encodeSSEEvent(event, data)); } catch { /* stream closed */ }
+        let bytes: Uint8Array;
+        try {
+          bytes = encodeSSEEvent(event, data);
+        } catch (err: unknown) {
+          logApiOperationError('[analyze-and-store-stream] SSE encode failed', err, {
+            userId: user.id,
+            sseEvent: event,
+          });
+          throw err;
+        }
+        try {
+          controller.enqueue(bytes);
+        } catch {
+          /* stream closed by client */
+        }
       };
       const safeClose = () => { try { controller.close(); } catch { /* already closed */ } };
 
@@ -74,7 +93,11 @@ export async function POST(request: NextRequest) {
             emit('step_claude', result);
           })
           .catch((err: unknown) => {
-            console.error('[analyze-and-store-stream] Claude failed:', err);
+            logApiOperationError('[analyze-and-store-stream] Claude failed', err, {
+              userId: user.id,
+              website,
+              domain,
+            });
           });
 
         const apolloPromise = enrichOrganizationWithApollo({ company_domain: domain })
@@ -83,7 +106,11 @@ export async function POST(request: NextRequest) {
             emit('step_apollo', result as Record<string, unknown>);
           })
           .catch((err: unknown) => {
-            console.error('[analyze-and-store-stream] Apollo failed:', err);
+            logApiOperationError('[analyze-and-store-stream] Apollo failed', err, {
+              userId: user.id,
+              website,
+              domain,
+            });
           });
 
         await Promise.all([claudePromise, apolloPromise]);
@@ -102,7 +129,12 @@ export async function POST(request: NextRequest) {
         if (linkedinUrl) {
           console.log('[analyze-and-store-stream] Scraping LinkedIn:', linkedinUrl);
           apifyRaw = await scrapeLinkedInCompany(linkedinUrl).catch((err: unknown) => {
-            console.error('[analyze-and-store-stream] Apify failed:', err);
+            logApiOperationError('[analyze-and-store-stream] Apify failed', err, {
+              userId: user.id,
+              website,
+              domain,
+              linkedinUrl,
+            });
             return null;
           });
         } else {
@@ -155,10 +187,20 @@ export async function POST(request: NextRequest) {
         const taxonomy = taxonomyResult.status === 'fulfilled' ? taxonomyResult.value : null;
         const condensed = condensedResult.status === 'fulfilled' ? condensedResult.value : null;
 
-        if (taxonomyResult.status === 'rejected')
-          console.error('[analyze-and-store-stream] Taxonomy failed:', taxonomyResult.reason);
-        if (condensedResult.status === 'rejected')
-          console.error('[analyze-and-store-stream] Bullet condensing failed:', condensedResult.reason);
+        if (taxonomyResult.status === 'rejected') {
+          logApiOperationError('[analyze-and-store-stream] taxonomy failed', taxonomyResult.reason, {
+            userId: user.id,
+            website,
+            domain,
+          });
+        }
+        if (condensedResult.status === 'rejected') {
+          logApiOperationError('[analyze-and-store-stream] bullet condense failed', condensedResult.reason, {
+            userId: user.id,
+            website,
+            domain,
+          });
+        }
 
         if (taxonomy) {
           emit('step_taxonomy', {
@@ -174,86 +216,24 @@ export async function POST(request: NextRequest) {
           });
         }
 
-        // ── Step 5: Merge ─────────────────────────────────────────────────────
-        const { linkedin_url: _claudeLinkedin, products: _products, services: _services, ...narrativeRest } = narrative;
-        void _products; void _services; void _claudeLinkedin;
-
-        const mergedData = {
-          ...narrativeRest,
+        // ── Step 5–6: Merge (allowlisted columns only) + upsert user_company ─
+        const mergedData = buildUserCompanyMergePayload({
+          narrative,
           website,
           domain,
-          analyzed_at: new Date().toISOString(),
-          status: 'completed',
-          linkedin_url: linkedinUrl ?? null,
-          employee_count: apollo.company_employee_count ?? apify.employee_count ?? null,
-          employee_range: apify.employee_range ?? null,
-          follower_count: apify.follower_count ?? null,
-          founded_year: apollo.company_founded_year ?? apify.founded_year ?? null,
-          funding_stage: apollo.company_funding_stage ?? null,
-          total_funding_usd: apollo.company_total_funding_usd ?? null,
-          latest_funding_date: apollo.company_latest_funding_date ?? null,
-          hq_city: apollo.company_hq_city ?? apify.hq_city ?? null,
-          hq_country: apollo.company_hq_country ?? apify.hq_country ?? null,
-          industry: apollo.company_industry ?? apify.industry ?? null,
-          logo_url: apify.logo_url ?? null,
-          tagline: apify.tagline ?? null,
-          specialties: apify.specialties ?? null,
-          company_type: taxonomy?.company_type ?? null,
-          company_type_display: taxonomy?.company_type_display ?? null,
-          platform_category: taxonomy?.platform_category ?? null,
-          therapeutic_areas: taxonomy?.therapeutic_areas ?? null,
-          modalities: taxonomy?.modalities ?? null,
-          development_stages: taxonomy?.development_stages ?? null,
-          customer_therapeutic_areas: taxonomy?.customer_therapeutic_areas ?? null,
-          customer_modalities: taxonomy?.customer_modalities ?? null,
-          customer_development_stages: taxonomy?.customer_development_stages ?? null,
-          company_status: typeof narrative.company_status === 'string' ? narrative.company_status : null,
-          products_services: condensed?.products?.length
-            ? condensed.products
-            : (Array.isArray(narrative.products) ? narrative.products : null),
-          services: condensed?.services?.length
-            ? condensed.services
-            : (Array.isArray(narrative.services) ? narrative.services : null),
-          technologies: condensed?.technologies?.length
-            ? condensed.technologies
-            : (Array.isArray(narrative.technologies) ? narrative.technologies : null),
-          good_fit: condensed?.good_fit ?? (Array.isArray(narrative.good_fit) ? narrative.good_fit : null),
-          bad_fit: condensed?.bad_fit ?? (Array.isArray(narrative.bad_fit) ? narrative.bad_fit : null),
-          value_propositions: condensed?.value_propositions ?? (Array.isArray(narrative.value_propositions) ? narrative.value_propositions : null),
-          competitors_enriched: Array.isArray(narrative.competitors_enriched)
-            ? narrative.competitors_enriched
-            : null,
-          apollo_firmographics: Object.keys(apollo).length > 0 ? apollo : null,
-          apify_firmographics: apifyRaw,
-        };
+          linkedinUrl: linkedinUrl ?? null,
+          apollo,
+          apify,
+          apifyRaw,
+          taxonomy,
+          condensed,
+        });
 
-        // ── Step 6: Upsert into user_company ──────────────────────────────
-        const { data: existing } = await supabase
-          .from('user_company')
-          .select('id')
-          .eq('user_id', user.id)
-          .limit(1)
-          .maybeSingle();
-
-        let result;
-        if (existing) {
-          const { data, error } = await supabase
-            .from('user_company')
-            .update(mergedData)
-            .eq('id', existing.id)
-            .select()
-            .single();
-          if (error) throw error;
-          result = data;
-        } else {
-          const { data, error } = await supabase
-            .from('user_company')
-            .insert({ user_id: user.id, user_email: user.email, ...mergedData })
-            .select()
-            .single();
-          if (error) throw error;
-          result = data;
+        const upserted = await upsertUserCompanyFromAnalysis(supabase, user, mergedData);
+        if (upserted.error != null || !upserted.data) {
+          throw upserted.error ?? new Error('user_company upsert failed');
         }
+        const result = upserted.data;
 
         console.log('[analyze-and-store-stream] Done. employee_count:', result.employee_count,
           'follower_count:', result.follower_count, 'funding_stage:', result.funding_stage);
@@ -261,9 +241,14 @@ export async function POST(request: NextRequest) {
         emit('done', result as Record<string, unknown>);
         safeClose();
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : 'Internal server error';
+        const message = formatSupabaseWriteError(err);
         if (!message.includes('Controller is already closed')) {
-          console.error('[analyze-and-store-stream] Fatal error:', message);
+          logApiOperationError('[analyze-and-store-stream] fatal', err, {
+            userId: user.id,
+            website,
+            domain,
+            clientMessage: message,
+          });
         }
         emit('error', { message });
         safeClose();

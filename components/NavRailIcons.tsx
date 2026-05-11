@@ -179,24 +179,6 @@ export function NavIconSignals({ className }: IconProps) {
   );
 }
 
-export function NavIconAgentLab({ className }: IconProps) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={stroke.width}
-      strokeLinecap={stroke.cap}
-      strokeLinejoin={stroke.join}
-      className={cn('shrink-0', className)}
-      aria-hidden
-    >
-      <rect x="4" y="6" width="16" height="12" rx="3" />
-      <path d="M9 6V3M15 6V3M9 12h.01M15 12h.01M9 16h6" />
-    </svg>
-  );
-}
-
 export function NavIconSetup({ className }: IconProps) {
   return (
     <svg

@@ -104,26 +104,33 @@ export default function MyProfilePage() {
     if (!loading && !user) router.push('/login');
   }, [loading, user, router]);
 
+  const reloadUserCompanyFromDb = useCallback(async (): Promise<Record<string, unknown> | null> => {
+    if (!user?.id) return null;
+    const { data, error } = await supabase
+      .from('user_company')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('analyzed_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    return normalizePlatformTaxonomyFields(data as Record<string, unknown>);
+  }, [user?.id]);
+
   useEffect(() => {
     if (!user) return;
     (async () => {
       try {
-        const { data } = await supabase
-          .from('user_company')
-          .select('*')
-          .eq('user_id', user.id)
-          .limit(1)
-          .maybeSingle();
-        if (data) {
-          const normalized = normalizePlatformTaxonomyFields(data as Record<string, unknown>);
-          setAnalysisData(normalized);
-          setEditedData(normalized);
+        const row = await reloadUserCompanyFromDb();
+        if (row) {
+          setAnalysisData(row);
+          setEditedData(row);
         }
       } finally {
         setLoadingData(false);
       }
     })();
-  }, [user]);
+  }, [user, reloadUserCompanyFromDb]);
 
   const handleChange = useCallback((field: keyof PanelMyCompanyData, value: MyCompanyChangeValue) => {
     const rawKey = FIELD_MAP[field as string] ?? field;
@@ -169,14 +176,16 @@ export default function MyProfilePage() {
     setIsReenriching(true);
     setReenrichMsg('Researching your company…');
     setReenrichPct(0);
+    let finalData: Record<string, unknown> | null = null;
     try {
       const res = await fetch('/api/analyze-and-store-stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ website: normalized }),
       });
-      if (!res.ok) return;
-      let finalData: Record<string, unknown> | null = null;
+      if (!res.ok) {
+        return;
+      }
       for await (const { event, data } of parseSSEStream(res)) {
         if (event === 'step_claude') {
           setReenrichMsg('Website analysed ✓  Checking company database…');
@@ -192,14 +201,23 @@ export default function MyProfilePage() {
           setReenrichPct(92);
         } else if (event === 'done') {
           finalData = data;
+        } else if (event === 'error') {
+          return;
         }
       }
       if (finalData) {
-        const normalized = normalizePlatformTaxonomyFields(finalData);
-        setAnalysisData(normalized);
-        setEditedData(normalized);
+        const normalizedRow = normalizePlatformTaxonomyFields(finalData);
+        setAnalysisData(normalizedRow);
+        setEditedData(normalizedRow);
       }
     } finally {
+      if (!finalData) {
+        const restored = await reloadUserCompanyFromDb();
+        if (restored) {
+          setAnalysisData(restored);
+          setEditedData(restored);
+        }
+      }
       setIsReenriching(false);
       setReenrichMsg('');
       setReenrichPct(0);

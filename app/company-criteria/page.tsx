@@ -4,6 +4,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
+import { AgentPanel } from '@/components/AgentPanel';
 import { toast } from 'sonner';
 import {
   Briefcase,
@@ -30,6 +31,7 @@ import { resolveCustomerSegments } from '@/lib/split-customer-segments';
 import {
   COMPANY_SIGNALS,
   CONTACT_SIGNALS,
+  isCompanySignalManaged,
   isContactSignalComingSoon,
   type SignalCategory,
   type SignalDefinition,
@@ -374,12 +376,6 @@ const CONTACT_SIGNAL_CATEGORY_ORDER: SignalCategory[] = [
   'CRM & Relationship',
 ];
 
-/** In read-only summary, these categories always list every signal (muted) so integration-style signals stay visible. */
-const SUMMARY_CATEGORIES_ALWAYS_SHOW_UNSELECTED = new Set<SignalCategory>([
-  'First-Party Engagement',
-  'CRM & Relationship',
-]);
-
 function SignalCatalogByCategory({
   definitions,
   categoryOrder,
@@ -395,22 +391,21 @@ function SignalCatalogByCategory({
   selectedIds: readonly string[];
   readOnly: boolean;
   onToggle?: (id: string) => void;
-  /** `all`: every catalog signal (edit). `selectedOnly`: only chosen signals (read-only summary). */
+  /** `all`: every catalog signal (edit). `selectedOnly`: only chosen signals (read-only summary). Falls back to showing all muted if nothing is selected. */
   variant?: 'all' | 'selectedOnly';
   /** When set, these signals never show as selected; clicks call `onManagedServiceSignalClick` instead of `onToggle`. */
   isManagedServiceSignal?: (signalId: string) => boolean;
   onManagedServiceSignalClick?: (signalId: string) => void;
 }) {
   const selected = new Set(selectedIds);
+  // If nothing is selected at all, show every signal muted so the section isn't blank
+  const hasAnySelected = definitions.some((s) => selected.has(s.id));
   return (
     <div className="space-y-3">
       {categoryOrder.map((category) => {
         let inCat = definitions.filter((s) => s.category === category);
-        if (variant === 'selectedOnly') {
-          const alwaysMuted = readOnly && SUMMARY_CATEGORIES_ALWAYS_SHOW_UNSELECTED.has(category);
-          if (!alwaysMuted) {
-            inCat = inCat.filter((s) => selected.has(s.id));
-          }
+        if (variant === 'selectedOnly' && hasAnySelected) {
+          inCat = inCat.filter((s) => selected.has(s.id));
         }
         if (!inCat.length) return null;
         return (
@@ -420,25 +415,21 @@ function SignalCatalogByCategory({
             </p>
             <div className="flex flex-wrap gap-1.5">
               {inCat.map((signal) => {
-                const forceUnselected =
-                  variant === 'selectedOnly' &&
-                  readOnly &&
-                  SUMMARY_CATEGORIES_ALWAYS_SHOW_UNSELECTED.has(category);
                 const managed = Boolean(isManagedServiceSignal?.(signal.id));
-                const isOn = !forceUnselected && !managed && selected.has(signal.id);
+                const isOn = !managed && selected.has(signal.id);
                 const label = getSignalDisplayName(signal.id, signal.displayName);
                 const pillBase =
-                  'inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors';
+                  'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors';
                 const pillState = isOn
-                  ? 'border-arcova-teal/50 bg-arcova-teal/20 text-arcova-teal'
-                  : 'border-[rgba(13,53,71,0.12)] bg-[rgba(13,53,71,0.04)] text-[#7d909a]';
+                  ? 'bg-arcova-teal/15 text-arcova-teal'
+                  : 'bg-[rgba(13,53,71,0.06)] text-[#7d909a]';
                 if (!readOnly && managed && onManagedServiceSignalClick) {
                   return (
                     <button
                       key={signal.id}
                       type="button"
                       onClick={() => onManagedServiceSignalClick(signal.id)}
-                      className={`${pillBase} ${pillState} hover:border-[rgba(13,53,71,0.2)] hover:bg-[rgba(13,53,71,0.08)] hover:text-[#4a6470]`}
+                      className={`${pillBase} ${pillState} hover:bg-[rgba(13,53,71,0.1)] hover:text-[#4a6470]`}
                     >
                       {label}
                     </button>
@@ -453,7 +444,7 @@ function SignalCatalogByCategory({
                       className={`${pillBase} ${pillState} ${
                         isOn
                           ? 'hover:bg-arcova-teal/28'
-                          : 'hover:border-[rgba(13,53,71,0.2)] hover:bg-[rgba(13,53,71,0.08)] hover:text-[#4a6470]'
+                          : 'hover:bg-[rgba(13,53,71,0.1)] hover:text-[#4a6470]'
                       }`}
                     >
                       {label}
@@ -579,10 +570,10 @@ function EditFreeformTagField({
   );
 }
 
-type IcpCardSegmentOpen = { criteria: boolean; buyingTeam: boolean; signals: boolean; };
+type IcpCardSegmentOpen = { criteria: boolean; companySignals: boolean; buyingTeam: boolean; contactSignals: boolean; };
 
 function defaultIcpCardSegmentOpen(): IcpCardSegmentOpen {
-  return { criteria: true, buyingTeam: true, signals: false };
+  return { criteria: true, companySignals: false, buyingTeam: true, contactSignals: false };
 }
 
 // ── Combined ICP + buying team card ───────────────────────────────────────
@@ -955,7 +946,7 @@ function ICPCard({
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 min-w-0">
                 <span className="block min-w-0 truncate font-manrope text-[15.5px] font-semibold text-[#0d3547] tracking-[-0.018em]">
-                  ICP {index}: {icp.name || 'ICP Profile'}
+                  {icp.name || 'ICP Profile'}
                 </span>
                 {currentReenrichmentMeta && (
                   <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-[0.12em] ${currentReenrichmentMeta.className}`}>
@@ -1206,16 +1197,20 @@ function ICPCard({
           {/* ── Left column — Company criteria ── */}
           <div className="px-5 py-4 space-y-3.5 min-w-0">
 
-            {/* Col head */}
-            <div className="flex items-center gap-2 pb-1 border-b border-dashed border-[rgba(13,53,71,0.08)]">
+            {/* Col head — Company criteria */}
+            <button type="button" onClick={() => toggle('criteria')}
+              className="flex items-center gap-2 pb-1 border-b border-dashed border-[rgba(13,53,71,0.08)] w-full text-left group">
               <span className="w-[22px] h-[22px] grid place-items-center rounded-[6px] bg-arcova-teal/10 text-arcova-teal flex-shrink-0">
                 <Building2 className="h-3 w-3" />
               </span>
-              <span className="font-manrope text-[13px] font-semibold text-[#0d3547] tracking-[-0.01em]">Company criteria</span>
-            </div>
+              <span className="font-manrope text-[13px] font-semibold text-[#0d3547] tracking-[-0.01em] flex-1">Company criteria</span>
+              <span className={`w-5 h-5 shrink-0 grid place-items-center rounded-[6px] border transition-all ${open.criteria ? 'bg-[rgba(13,53,71,0.07)] border-[rgba(13,53,71,0.1)] text-[#7d909a]' : 'bg-[rgba(13,53,71,0.07)] border-[rgba(13,53,71,0.1)] text-[#7d909a]'}`}>
+                <ChevronDown className={`h-3 w-3 transition-transform duration-150 ${open.criteria ? '' : '-rotate-90'}`} />
+              </span>
+            </button>
 
-            {/* Edit mode — all criteria fields flat */}
-            {editMode && (
+            {/* Criteria content */}
+            {open.criteria && editMode && (
               <div className="space-y-3">
                 <div>
                   <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">Company type</p>
@@ -1311,7 +1306,7 @@ function ICPCard({
             )}
 
             {/* Read mode — flat criteria fields */}
-            {!editMode && (() => {
+            {open.criteria && !editMode && (() => {
               const hasTaxonomy = icp.company_type || visiblePlatformCategory(icp.company_type, icp.platform_category) || icp.therapeutic_areas.length > 0 || icp.modalities.length > 0 || icp.development_stages.length > 0;
               const hasSizing = icp.company_sizes.length > 0 || (icp.li_follower_sizes?.length ?? 0) > 0;
               const derivedStage = canonicalizeFundingStage(e?.funding_stage, e?.total_funding_usd, e?.company_status ?? e?.funding_status_label ?? null);
@@ -1384,20 +1379,47 @@ function ICPCard({
                 </div>
               );
             })()}
+
+            {/* Company signals — below Company criteria */}
+            <button type="button" onClick={() => toggle('companySignals')}
+              className="flex items-center gap-2 pb-1 border-b border-dashed border-[rgba(13,53,71,0.08)] pt-1 w-full text-left group">
+              <span className="w-[22px] h-[22px] grid place-items-center rounded-[6px] bg-arcova-teal/10 text-arcova-teal flex-shrink-0">
+                <Activity className="h-3 w-3" />
+              </span>
+              <span className="font-manrope text-[13px] font-semibold text-[#0d3547] tracking-[-0.01em] flex-1">Company signals</span>
+              <span className={`w-5 h-5 shrink-0 grid place-items-center rounded-[6px] border transition-all ${open.companySignals ? 'bg-[rgba(13,53,71,0.07)] border-[rgba(13,53,71,0.1)] text-[#7d909a]' : 'bg-[rgba(13,53,71,0.07)] border-[rgba(13,53,71,0.1)] text-[#7d909a]'}`}>
+                <ChevronDown className={`h-3 w-3 transition-transform duration-150 ${open.companySignals ? '' : '-rotate-90'}`} />
+              </span>
+            </button>
+            {open.companySignals && (
+              <div>
+                {editMode ? (
+                  <SignalCatalogByCategory variant="all" definitions={COMPANY_SIGNALS} categoryOrder={COMPANY_SIGNAL_CATEGORY_ORDER}
+                    selectedIds={editData.signals} readOnly={false} onToggle={(id) => toggleMulti('signals', id)} />
+                ) : (
+                  <SignalCatalogByCategory variant="selectedOnly" definitions={COMPANY_SIGNALS.filter(s => !isCompanySignalManaged(s.id))} categoryOrder={COMPANY_SIGNAL_CATEGORY_ORDER}
+                    selectedIds={icpSignalIds} readOnly />
+                )}
+              </div>
+            )}
           </div>
 
-          {/* ── Right column — Buying team + Signals ── */}
+          {/* ── Right column — Buying team + Contact signals ── */}
           <div className="px-5 py-4 space-y-3.5 min-w-0">
 
             {/* Buying team col head */}
-            <div className="flex items-center gap-2 pb-1 border-b border-dashed border-[rgba(13,53,71,0.08)]">
+            <button type="button" onClick={() => toggle('buyingTeam')}
+              className="flex items-center gap-2 pb-1 border-b border-dashed border-[rgba(13,53,71,0.08)] w-full text-left group">
               <span className="w-[22px] h-[22px] grid place-items-center rounded-[6px] bg-arcova-teal/10 text-arcova-teal flex-shrink-0">
                 <Users className="h-3 w-3" />
               </span>
-              <span className="font-manrope text-[13px] font-semibold text-[#0d3547] tracking-[-0.01em]">Buying team</span>
-            </div>
+              <span className="font-manrope text-[13px] font-semibold text-[#0d3547] tracking-[-0.01em] flex-1">Buying team</span>
+              <span className={`w-5 h-5 shrink-0 grid place-items-center rounded-[6px] border transition-all ${open.buyingTeam ? 'bg-[rgba(13,53,71,0.07)] border-[rgba(13,53,71,0.1)] text-[#7d909a]' : 'bg-[rgba(13,53,71,0.07)] border-[rgba(13,53,71,0.1)] text-[#7d909a]'}`}>
+                <ChevronDown className={`h-3 w-3 transition-transform duration-150 ${open.buyingTeam ? '' : '-rotate-90'}`} />
+              </span>
+            </button>
 
-            {editMode ? (
+            {open.buyingTeam && (editMode ? (
               persona ? (
                 <div className="space-y-3">
                   <EditTagField hideLabel label="Functions" options={BUSINESS_AREA_OPTIONS} selected={editFunctions}
@@ -1424,55 +1446,46 @@ function ICPCard({
                   Add buying team
                 </button>
               </div>
-            )}
+            ))}
 
-            {/* Signals col head */}
-            <div className="flex items-center gap-2 pb-1 border-b border-dashed border-[rgba(13,53,71,0.08)] pt-3">
+            {/* Contact signals — below Buying team */}
+            <button type="button" onClick={() => toggle('contactSignals')}
+              className="flex items-center gap-2 pb-1 border-b border-dashed border-[rgba(13,53,71,0.08)] pt-1 w-full text-left group">
               <span className="w-[22px] h-[22px] grid place-items-center rounded-[6px] bg-arcova-teal/10 text-arcova-teal flex-shrink-0">
                 <Activity className="h-3 w-3" />
               </span>
-              <span className="font-manrope text-[13px] font-semibold text-[#0d3547] tracking-[-0.01em]">Signals</span>
-            </div>
-
-            {/* Company signals */}
-            <div className="space-y-1.5">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">Company signals</p>
-              {editMode ? (
-                <SignalCatalogByCategory variant="all" definitions={COMPANY_SIGNALS} categoryOrder={COMPANY_SIGNAL_CATEGORY_ORDER}
-                  selectedIds={editData.signals} readOnly={false} onToggle={(id) => toggleMulti('signals', id)} />
-              ) : (
-                <SignalCatalogByCategory variant="selectedOnly" definitions={COMPANY_SIGNALS} categoryOrder={COMPANY_SIGNAL_CATEGORY_ORDER}
-                  selectedIds={icpSignalIds} readOnly />
-              )}
-            </div>
-
-            {/* Contact signals */}
-            <div className="space-y-1.5">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">Contact signals</p>
-              {editMode ? (
-                persona ? (
-                  <SignalCatalogByCategory variant="all" definitions={CONTACT_SIGNALS} categoryOrder={CONTACT_SIGNAL_CATEGORY_ORDER}
-                    selectedIds={editPersonaSignals} readOnly={false}
-                    isManagedServiceSignal={isContactSignalComingSoon}
-                    onManagedServiceSignalClick={(signalId) => {
-                      toast.info('This signal is available with our managed data service. Get in touch and we can enable it for you.');
-                      void fetch('/api/contact-premium-signal-interest', {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ signalId, personaId: persona.id }),
-                      }).catch(() => {});
-                    }}
-                    onToggle={(id) => setEditPersonaSignals((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])}
-                  />
+              <span className="font-manrope text-[13px] font-semibold text-[#0d3547] tracking-[-0.01em] flex-1">Contact signals</span>
+              <span className={`w-5 h-5 shrink-0 grid place-items-center rounded-[6px] border transition-all ${open.contactSignals ? 'bg-[rgba(13,53,71,0.07)] border-[rgba(13,53,71,0.1)] text-[#7d909a]' : 'bg-[rgba(13,53,71,0.07)] border-[rgba(13,53,71,0.1)] text-[#7d909a]'}`}>
+                <ChevronDown className={`h-3 w-3 transition-transform duration-150 ${open.contactSignals ? '' : '-rotate-90'}`} />
+              </span>
+            </button>
+            {open.contactSignals && (
+              <div>
+                {editMode ? (
+                  persona ? (
+                    <SignalCatalogByCategory variant="all" definitions={CONTACT_SIGNALS} categoryOrder={CONTACT_SIGNAL_CATEGORY_ORDER}
+                      selectedIds={editPersonaSignals} readOnly={false}
+                      isManagedServiceSignal={isContactSignalComingSoon}
+                      onManagedServiceSignalClick={(signalId) => {
+                        toast.info('This signal is available with our managed data service. Get in touch and we can enable it for you.');
+                        void fetch('/api/contact-premium-signal-interest', {
+                          method: 'POST', headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ signalId, personaId: persona.id }),
+                        }).catch(() => {});
+                      }}
+                      onToggle={(id) => setEditPersonaSignals((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])}
+                    />
+                  ) : (
+                    <p className="text-xs text-[#7d909a] italic">Add a buying team on this ICP to set contact signals.</p>
+                  )
+                ) : persona ? (
+                  <SignalCatalogByCategory variant="selectedOnly" definitions={CONTACT_SIGNALS.filter(s => !isContactSignalComingSoon(s.id))} categoryOrder={CONTACT_SIGNAL_CATEGORY_ORDER}
+                    selectedIds={personaSignalIds} readOnly />
                 ) : (
-                  <p className="text-xs text-[#7d909a] italic">Add a buying team on this ICP to set contact signals.</p>
-                )
-              ) : persona ? (
-                <SignalCatalogByCategory variant="selectedOnly" definitions={CONTACT_SIGNALS} categoryOrder={CONTACT_SIGNAL_CATEGORY_ORDER}
-                  selectedIds={personaSignalIds} readOnly />
-              ) : (
-                <p className="text-xs text-[#7d909a] italic">No buying team on this ICP. Add a buying team to set contact signals.</p>
-              )}
-            </div>
+                  <p className="text-xs text-[#7d909a] italic">No buying team on this ICP. Add a buying team to set contact signals.</p>
+                )}
+              </div>
+            )}
           </div>
         </div>
         </>
@@ -1792,25 +1805,29 @@ export default function ICPManagerPage() {
     <div className="flex h-screen bg-transparent">
       <AppSidebar />
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div className="flex-1 overflow-y-auto px-6 py-8 lg:px-10">
-            <div className="mx-auto max-w-5xl">
+      <div className="flex min-h-0 flex-1 overflow-hidden min-[1280px]:flex-row flex-col">
+        <div className="arcova-scroll-surface flex-1 overflow-auto px-6 py-8 lg:px-10">
+          <div className="w-full">
 
-            {/* Page header — same flow as my-profile, no border */}
-            <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <h1 className="font-manrope text-2xl font-bold text-[#0d3547] tracking-[-0.022em]">My ICPs</h1>
-                <p className="mt-1 text-sm text-[#7d909a]">
-                  The types of accounts you sell to, and who buys within them.
-                </p>
+            {/* Page header */}
+            <div className="mb-6">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-[#7d909a] mb-1">Setup · My ICPs</p>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h1 className="font-manrope text-2xl font-bold text-[#0d3547] tracking-[-0.022em]">My ICPs</h1>
+                  <p className="mt-0.5 text-sm text-[#7d909a]">
+                    The types of accounts you sell to, and who buys within them.
+                    {icps.length > 0 && <> <span className="font-medium text-[#4a6470]">{icps.length} {icps.length === 1 ? 'ICP' : 'ICPs'} defined</span> — click any to inspect or edit.</>}
+                  </p>
+                </div>
+                <button
+                  onClick={() => router.push('/company-criteria/new')}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-teal px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/85 shrink-0"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add new ICP
+                </button>
               </div>
-              <button
-                onClick={() => router.push('/company-criteria/new')}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-teal px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/85 shrink-0"
-              >
-                <Plus className="h-4 w-4" />
-                Add new ICP
-              </button>
             </div>
 
             {icps.length === 0 ? (
@@ -1865,6 +1882,11 @@ export default function ICPManagerPage() {
 
           </div>
         </div>
+
+        <AgentPanel
+          page="icps"
+          pageContext={{}}
+        />
       </div>
 
       {/* ── Delete confirmation modal ── */}

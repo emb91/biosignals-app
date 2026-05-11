@@ -19,7 +19,6 @@ const APP_ROUTES = [
   LEGACY_ROUTES.data,
   LEGACY_ROUTES.health,
   LEGACY_ROUTES.pipeline,
-  ROUTES.agentLab,
   ROUTES.briefing,
   ROUTES.dashboard,
   ROUTES.import,

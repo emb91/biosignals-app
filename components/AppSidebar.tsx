@@ -6,7 +6,6 @@ import { usePathname } from 'next/navigation';
 import { ChevronDown, ChevronLeft } from 'lucide-react';
 import {
   NavIconAccount,
-  NavIconAgentLab,
   NavIconContact,
   NavIconData,
   NavIconGtmBase,
@@ -47,7 +46,6 @@ const topNavigation: NavItem[] = [
   { name: 'Health', href: ROUTES.leads.health, icon: NavIconHealth },
   { name: 'Data', href: ROUTES.leads.data, icon: NavIconData },
   { name: 'Signals', href: '/customer-signals', icon: NavIconSignals },
-  { name: 'Agent lab', href: ROUTES.agentLab, icon: NavIconAgentLab },
 ];
 
 const bottomNavigation: NavItem[] = [
@@ -525,7 +523,6 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
                   {renderNavItem({ name: 'Health', href: ROUTES.leads.health, icon: NavIconHealth })}
                   {renderNavItem({ name: 'Data', href: ROUTES.leads.data, icon: NavIconData })}
                   {renderNavItem({ name: 'Signals', href: '/customer-signals', icon: NavIconSignals })}
-                  {renderNavItem({ name: 'Agent lab', href: ROUTES.agentLab, icon: NavIconAgentLab })}
                   {renderAccordion({
                     label: 'Setup',
                     icon: NavIconSetup,

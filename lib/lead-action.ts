@@ -116,51 +116,51 @@ export function formatLeadActionLabel(action: LeadAction): string {
 
 export type LeadActionPillConfig = {
   label: string;
-  /** Default (resting) surface, text, and ring */
+  /** Default (resting) surface and text — also used when the row opens the action drawer (selection does not darken the pill). */
   className: string;
-  /** Hover and active (pressed) feedback for interactive pills in Leads tables */
+  /** Optional hover/active feedback — keeps the same lightness family as the resting pill. */
   interactiveClassName: string;
-  /** Solid emphasis when the row is selected with the action detail open (matches semantic color, not generic teal) */
+  /** Kept identical to resting pill visuals; callers may treat selection separately with layout only. */
   rowSelectedClassName: string;
 };
 
-/** Pill styles: soft traffic-light semantics tuned to Arcova's pastel teal palette. */
+/** Soft traffic-light semantics: pastel fills and rims; selection does not switch to inverted/solid fills. */
 export const LEAD_ACTION_PILL_CLASS: Record<LeadAction, LeadActionPillConfig> = {
   reach_out: {
     label: 'Reach out',
     className:
-      'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/80 font-semibold shadow-sm shadow-arcova-teal/10',
+      'bg-[#dcf5ec] text-[#0d5c54] ring-1 ring-[#aedbcc] font-medium',
     interactiveClassName:
-      'hover:bg-emerald-100 hover:ring-emerald-300/90 active:bg-emerald-800 active:text-white active:ring-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-700',
+      'hover:bg-[#caece0] hover:ring-[#9dd0bf] active:brightness-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-teal-500/40',
     rowSelectedClassName:
-      'bg-emerald-800 text-white ring-2 ring-emerald-700/55 ring-offset-1 shadow-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-emerald-600',
+      'bg-[#dcf5ec] text-[#0d5c54] ring-1 ring-[#aedbcc] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-teal-500/40',
   },
   monitor: {
     label: 'Monitor',
     className:
-      'bg-amber-50 text-amber-800 ring-1 ring-amber-200/80 font-medium',
+      'bg-[#fbf0d8] text-[#784a12] ring-1 ring-[#ebd199] font-medium',
     interactiveClassName:
-      'hover:bg-amber-100 hover:text-amber-900 hover:ring-amber-300/90 active:bg-amber-800 active:text-white active:ring-amber-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-700',
+      'hover:bg-[#f7e8c9] hover:ring-[#e3c682] active:brightness-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-500/40',
     rowSelectedClassName:
-      'bg-amber-800 text-white ring-2 ring-amber-700/55 ring-offset-1 shadow-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-600',
+      'bg-[#fbf0d8] text-[#784a12] ring-1 ring-[#ebd199] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-amber-500/40',
   },
   source_contact: {
     label: 'Source',
     className:
-      'bg-rose-50 text-rose-800 ring-1 ring-rose-200/80 font-medium',
+      'bg-[#fce8ee] text-[#7f3f4f] ring-1 ring-[#eab3c5] font-medium',
     interactiveClassName:
-      'hover:bg-rose-100 hover:text-rose-950 hover:ring-rose-300/90 active:bg-rose-900 active:text-white active:ring-rose-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-rose-800',
+      'hover:bg-[#fadce6] hover:ring-[#e4a6b9] active:brightness-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-rose-500/40',
     rowSelectedClassName:
-      'bg-rose-900 text-white ring-2 ring-rose-800/55 ring-offset-1 shadow-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-rose-700',
+      'bg-[#fce8ee] text-[#7f3f4f] ring-1 ring-[#eab3c5] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-rose-500/40',
   },
   deprioritize: {
     label: 'Deprioritise',
     className:
-      'bg-slate-50 text-slate-600 ring-1 ring-slate-200/80 font-medium',
+      'bg-[#dfeaf1] text-[#3f5562] ring-1 ring-[#c9d9e6] font-medium',
     interactiveClassName:
-      'hover:bg-slate-100 hover:text-slate-800 hover:ring-slate-300/80 active:bg-slate-700 active:text-white active:ring-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-slate-600',
+      'hover:bg-[#d3e4ed] hover:ring-[#b8cede] active:brightness-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-slate-500/38',
     rowSelectedClassName:
-      'bg-slate-700 text-white ring-2 ring-slate-600/55 ring-offset-1 shadow-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-slate-500',
+      'bg-[#dfeaf1] text-[#3f5562] ring-1 ring-[#c9d9e6] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-slate-500/38',
   },
 };
 

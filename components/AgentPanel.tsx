@@ -14,7 +14,7 @@ import { BATCH_CONTACTS_KEY } from '@/lib/batch-contacts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type AgentPage = 'accounts' | 'leads' | 'dashboard' | 'health' | 'signals' | 'imports' | 'data';
+export type AgentPage = 'accounts' | 'leads' | 'dashboard' | 'health' | 'signals' | 'imports' | 'data' | 'icps';
 
 export interface AgentTableFilter {
   columns: AccountQueryColumn[];
@@ -49,7 +49,7 @@ interface AgentHandoff {
   timestamp: number;
 }
 
-interface AgentPanelProps {
+export interface AgentPanelProps {
   page: AgentPage;
   pageContext?: Record<string, unknown>;
   /** Programmatically fire a message into the agent. Increment nonce to re-fire the same text.
@@ -78,6 +78,11 @@ interface AgentPanelProps {
   /** Override the subtitle line in the panel header (e.g. "Watching · Kumar Bala"). Supports ReactNode for bold/styled text. */
   headerSubtitle?: React.ReactNode;
   className?: string;
+  /**
+   * 'side-rail' (default) — glass panel fixed to the right edge of the layout.
+   * 'central'             — full-width briefing-style chat (used by AgentCentral wrapper).
+   */
+  variant?: 'side-rail' | 'central';
 }
 
 // ─── Suggested prompts per page ───────────────────────────────────────────────
@@ -120,6 +125,12 @@ const PROMPTS: Record<AgentPage, string[]> = {
     'What did my last import add?',
     'How many contacts came from HubSpot?',
     'Were there any duplicate contacts?',
+  ],
+  icps: [
+    'Help me refine ICP 1',
+    'Which ICP has the broadest criteria?',
+    'Suggest signals for a Series A biotech ICP',
+    'Draft a new ICP for oncology VP buyers',
   ],
 };
 
@@ -192,7 +203,7 @@ function stripMarkdown(text: string): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, onLeadsFilter, onTableClear, wide, onJobStarted, hideHeader, suppressPrompts, embedInBriefingBento, onBusyChange, briefingWelcome, briefingIdleChips, surfaceClassName, headerSubtitle, className }: AgentPanelProps) {
+export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, onLeadsFilter, onTableClear, wide, onJobStarted, hideHeader, suppressPrompts, embedInBriefingBento, onBusyChange, briefingWelcome, briefingIdleChips, surfaceClassName, headerSubtitle, className, variant = 'side-rail' }: AgentPanelProps) {
   const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -352,9 +363,9 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
   }
 
   const showPrompts = !suppressPrompts && messages.length === 0 && !isLoading;
-  const lightSetupChat = page === 'data';
-  /** Briefing-only: light surface aligned with /briefing, not the old dark nested panels */
-  const briefingChat = page === 'dashboard';
+  const lightSetupChat = page === 'data' && variant !== 'central';
+  /** Briefing/central mode: wide white chat surface. Triggered by dashboard page OR the 'central' variant. */
+  const briefingChat = page === 'dashboard' || variant === 'central';
   const embedGlass = Boolean(embedInBriefingBento && briefingChat);
   const showBriefingOrb = embedGlass && briefingWelcome && !briefingSurfaceEngaged && !isLoading;
   const showBriefingIdleWelcome = embedGlass && briefingWelcome && messages.length === 0;
@@ -379,15 +390,16 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
               <div key={i} className="flex justify-end">
                 <div
                   className={cn(
-                    'bg-arcova-teal text-white shadow-sm',
+                    'text-white shadow-sm',
                     lightSetupChat
-                      ? 'max-w-[min(100%,28rem)] rounded-2xl rounded-tr-none px-4 py-3 text-base leading-relaxed'
+                      ? 'bg-arcova-teal max-w-[min(100%,28rem)] rounded-2xl rounded-tr-none px-4 py-3 text-base leading-relaxed'
                       : briefingChat
                         ? embedGlass
-                          ? 'max-w-[min(100%,36rem)] rounded-2xl rounded-br-md rounded-tl-2xl rounded-tr-2xl px-4 py-3.5 font-manrope text-[1.125rem] leading-[1.45] tracking-[-0.016em] shadow-[0_10px_40px_-18px_rgba(0,164,180,0.45)]'
-                          : 'max-w-[min(100%,34rem)] rounded-2xl rounded-br-md rounded-tl-2xl rounded-tr-2xl px-4 py-3 text-[15px] leading-relaxed shadow-[0_10px_40px_-18px_rgba(0,164,180,0.45)]'
-                        : 'max-w-[calc(100%-2.5rem)] rounded-2xl rounded-tr-none px-3.5 py-2.5 text-sm leading-snug',
+                          ? 'bg-arcova-teal max-w-[min(100%,36rem)] rounded-2xl rounded-br-md rounded-tl-2xl rounded-tr-2xl px-4 py-3.5 font-manrope text-[1.125rem] leading-[1.45] tracking-[-0.016em] shadow-[0_10px_40px_-18px_rgba(0,164,180,0.45)]'
+                          : 'bg-arcova-teal max-w-[min(100%,34rem)] rounded-2xl rounded-br-md rounded-tl-2xl rounded-tr-2xl px-4 py-3 text-[15px] leading-relaxed shadow-[0_10px_40px_-18px_rgba(0,164,180,0.45)]'
+                        : 'bg-[#0d3547] max-w-[calc(100%-2.5rem)] rounded-2xl rounded-br-none px-3.5 py-2.5 text-[13px] leading-[1.55]',
                   )}
+                  style={!lightSetupChat && !briefingChat ? { animation: 'arcova-msg-in 0.18s ease-out' } : undefined}
                 >
                   {msg.content}
                 </div>
@@ -412,6 +424,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                 embedGlass ? 'w-full' : '',
                 lightSetupChat || briefingChat ? 'gap-3' : 'gap-2.5',
               )}
+              style={!lightSetupChat && !briefingChat ? { animation: 'arcova-msg-in 0.18s ease-out' } : undefined}
             >
               {!embedGlass && (lightSetupChat || briefingChat) ? (
                 <div className="shrink-0 mt-0.5">
@@ -450,7 +463,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                           ? embedGlass
                             ? 'rounded-2xl rounded-tl-sm bg-gradient-to-br from-slate-50 to-slate-100/80 px-4 py-4 font-manrope text-[1.1875rem] leading-[1.45] tracking-[-0.018em] text-slate-700 ring-1 ring-slate-200/60'
                             : 'rounded-2xl rounded-tl-sm bg-gradient-to-br from-slate-50 to-slate-100/80 px-4 py-4 text-[15px] leading-relaxed text-slate-700 ring-1 ring-slate-200/60'
-                          : 'rounded-2xl rounded-tl-none border border-[rgba(13,53,71,0.08)] bg-white/70 px-3.5 py-2.5 text-sm leading-snug text-[#0d3547] shadow-sm backdrop-blur-sm',
+                          : 'rounded-2xl rounded-tl-none border border-[rgba(13,53,71,0.08)] bg-white/70 px-3.5 py-2.5 text-[13px] leading-[1.55] text-[#0d3547] shadow-sm backdrop-blur-sm',
                     )}
                   >
                     <div className="flex h-5 items-center gap-1.5">
@@ -486,8 +499,9 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                         'rounded-2xl rounded-tl-none border shadow-sm',
                         lightSetupChat
                           ? 'border-slate-200 bg-white px-4 py-3 text-base leading-relaxed text-slate-800'
-                          : 'border-[rgba(13,53,71,0.08)] bg-white/70 px-3.5 py-2.5 text-sm leading-snug text-[#0d3547] backdrop-blur-sm',
+                          : 'border-[rgba(13,53,71,0.08)] bg-white/70 px-3.5 py-2.5 text-[13px] leading-[1.55] text-[#0d3547] backdrop-blur-sm',
                       )}
+                      style={{ animation: 'arcova-msg-in 0.18s ease-out' }}
                     >
                       {bubble}
                     </div>
@@ -534,7 +548,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
         className={cn(
           'flex min-h-0 flex-1 flex-col overflow-hidden rounded-[inherit]',
           embedGlass && 'h-full min-h-0',
-          wide ? 'w-full' : 'w-80 max-[1279px]:w-full',
+          wide ? 'w-full' : 'w-[360px] max-[1279px]:w-full',
           embedGlass
             ? 'relative border-0 bg-transparent shadow-none ring-0'
             : surfaceClassName
@@ -833,7 +847,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                   ? 'font-manrope text-[1.0625rem] text-slate-800 placeholder:text-slate-400'
                   : lightSetupChat || briefingChat
                     ? 'text-base text-slate-800 placeholder:text-slate-400'
-                    : 'text-sm text-[#0d3547] placeholder:text-[#b6c2c8]',
+                    : 'text-[13px] text-[#0d3547] placeholder:text-[#7d909a]',
               )}
               disabled={isLoading}
             />
