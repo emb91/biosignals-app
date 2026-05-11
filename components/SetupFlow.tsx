@@ -47,7 +47,6 @@ import { resolveCustomerSegments } from '@/lib/split-customer-segments';
 import { fetchLatestUserCompanyRow } from '@/lib/fetch-latest-user-company';
 import { ArcovaWelcomeOrb } from '@/components/ArcovaWelcomeOrb';
 import { ROUTES } from '@/lib/routes';
-import { useSetupGuidedNav } from '@/context/SetupGuidedNavContext';
 import { PLATFORM_CATEGORY_OPTIONS } from '@/lib/platform-category';
 import { Send, Sparkles, ChevronDown, ExternalLink, Check, Building2, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -275,19 +274,34 @@ interface TargetCompanyProfile {
 
 const TYPING_MS = 18;
 
-/** Shown while Apify LinkedIn scrape runs (long-running; server has no finer-grained events). */
-const OWN_COMPANY_LINKEDIN_SCRAPE_LINES = [
-  'LinkedIn located ✓ Pulling logo, tagline, and followers from the public page…',
-  'Still working ✓ LinkedIn can take 20 to 40 seconds, hang tight…',
-  'Almost there ✓ Parsing location, specialties, and follower reach…',
+/** Shared enrichment UI: mid-pass (firm details landed, widening context before next SSE). */
+const ENRICH_GENERIC_LOOKUP_LINES = [
+  'Key signals in ✓ Widening search for a fuller company picture…',
+  'Still gathering ✓ Matching names and domains to public firm data…',
+  'Almost there ✓ This stretch is usually quick, sometimes needs a beat…',
+  'Working the match ✓ Trade names and legal names often differ…',
+  'Still collecting ✓ Layering another pass of context…',
+  'Narrowing it down ✓ Sticking to broadly visible information…',
 ] as const;
 
-/** Shown while bullets are condensed and taxonomy runs after LinkedIn data lands. */
-const OWN_COMPANY_SYNTHESIS_LINES = [
-  'Merging web, registry, and LinkedIn signals…',
-  'Condensing lists so your profile is easy to scan…',
-  'Mapping company type and therapy areas to our taxonomy…',
+/** Shared: slower deep-gather phase (generic, no vendor or channel detail). */
+const ENRICH_GENERIC_DEEP_GATHER_LINES = [
+  'Solid lead ✓ Pulling richer firm context (can take half a minute)…',
+  'Still collecting ✓ Heavier lookups sometimes need patience…',
+  'Almost there ✓ Sorting location, footprint, and positioning clues…',
+  'Hang tight ✓ Bigger footprints usually mean more to reconcile…',
 ] as const;
+
+/** Shared: condensed profile after sources land. */
+const ENRICH_GENERIC_SYNTHESIS_LINES = [
+  'Merging findings into one clear snapshot…',
+  'Tightening lists so this profile stays easy to scan…',
+  'Fitting details into your setup structure…',
+] as const;
+
+const TARGET_ICP_LINKEDIN_LOOKUP_LINES = ENRICH_GENERIC_LOOKUP_LINES;
+const TARGET_ICP_LINKEDIN_SCRAPE_LINES = ENRICH_GENERIC_DEEP_GATHER_LINES;
+const TARGET_ICP_SYNTHESIS_LINES = ENRICH_GENERIC_SYNTHESIS_LINES;
 
 /** Full-area backdrop behind the chat column (setup flows only). Dark navy base, teal as accent. */
 const SETUP_CHAT_SURROUND =
@@ -296,6 +310,10 @@ const SETUP_CHAT_SURROUND =
 /** Card panel floating over the dark surround. */
 const SETUP_CHAT_CARD =
   'flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.06] shadow-[0_28px_70px_-20px_rgba(0,0,0,0.8)] ring-1 ring-white/10 backdrop-blur-[2px]';
+
+/** Back control on glass / light shells, placed above the rounded chat card (early setup phases). */
+const SETUP_GLASS_BACK_ABOVE_CARD_CLASS =
+  'inline-flex items-center gap-1.5 rounded-full border border-arcova-navy/10 bg-white/65 px-3 py-1.5 text-[12px] font-medium text-arcova-navy/65 backdrop-blur transition-all hover:-translate-x-0.5 hover:bg-white hover:text-arcova-navy disabled:opacity-50';
 
 function isSaasCompanyType(value?: string | null): boolean {
   return (value ?? '').trim() === 'SaaS';
@@ -520,6 +538,49 @@ function SetupEditableText({
   );
 }
 
+/** About text: paragraphs separated by a blank line. Preserves spaces and single newlines inside a paragraph. */
+function paragraphsToAboutDraft(paragraphs: string[] | undefined): string {
+  return (paragraphs ?? []).join('\n\n');
+}
+
+function aboutDraftToParagraphs(raw: string): string[] {
+  return raw.split(/\n\s*\n/).filter((chunk) => chunk.length > 0);
+}
+
+function SetupAboutDescriptionEditor({
+  paragraphs,
+  onCommit,
+}: {
+  paragraphs: string[] | undefined;
+  onCommit: (next: string[]) => void;
+}) {
+  const serialized = JSON.stringify(paragraphs ?? []);
+  const [draft, setDraft] = useState(() => paragraphsToAboutDraft(paragraphs));
+  const prevSerialized = useRef(serialized);
+
+  useEffect(() => {
+    if (serialized !== prevSerialized.current) {
+      prevSerialized.current = serialized;
+      setDraft(paragraphsToAboutDraft(paragraphs));
+    }
+  }, [serialized, paragraphs]);
+
+  const cls =
+    'w-full resize-y rounded-lg border border-arcova-navy/15 bg-white/85 px-3 py-2 text-[12.5px] leading-[1.5] text-arcova-navy outline-none transition-colors placeholder:text-arcova-navy/35 focus:border-arcova-teal/45 focus:bg-white focus:ring-2 focus:ring-arcova-teal/15';
+
+  return (
+    <textarea
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={(e) => onCommit(aboutDraftToParagraphs(e.currentTarget.value))}
+      placeholder="Describe what the company does. Use a blank line between paragraphs."
+      rows={6}
+      spellCheck
+      className={cls}
+    />
+  );
+}
+
 /** Lets users type digits and spaces freely; commits parsed integer on blur. */
 function SetupPositiveIntDraftField({
   value,
@@ -695,16 +756,14 @@ function SetupMyCompanyCard({
         {/* About */}
         <SetupSection label="About" defaultOpen>
           {editMode ? (
-            <SetupEditableText
-              multiline
-              value={(data.description ?? []).join('\n\n')}
-              onChange={(v) => set('description', v.split(/\n{2,}/).map((s) => s.trim()).filter(Boolean))}
-              placeholder="Describe what the company does"
+            <SetupAboutDescriptionEditor
+              paragraphs={data.description}
+              onCommit={(next) => set('description', next)}
             />
           ) : (
             data.description && data.description.length > 0 && (
-              <p className="m-0 text-[12.5px] leading-[1.5] text-arcova-navy">
-                {data.description.join(' ')}
+              <p className="m-0 whitespace-pre-line text-[12.5px] leading-[1.5] text-arcova-navy">
+                {(data.description ?? []).join('\n\n')}
               </p>
             )
           )}
@@ -1614,16 +1673,537 @@ function SetupWelcomeCard({
   );
 }
 
+type InlineEnrichmentSnapshot = {
+  title: string;
+  logoUrl: string | null;
+  tagline: string | null;
+  blurb: string | null;
+  metaLine: string | null;
+  locationLine: string | null;
+};
+
+type EnrichmentSnapshotStage = {
+  tier: string;
+  label: string;
+  snapshot: InlineEnrichmentSnapshot;
+};
+
+function prettyCompanyUrlHint(raw: string | null | undefined): string | null {
+  if (!raw?.trim()) return null;
+  try {
+    const u = /^https?:\/\//i.test(raw.trim()) ? raw.trim() : `https://${raw.trim()}`;
+    const host = new URL(u).hostname.replace(/^www\./i, '').trim();
+    return host.length > 0 ? host : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildInlineSnapshotFromTarget(
+  p: Partial<TargetCompanyEnrichmentResult> | null | undefined,
+  urlHint: string | null,
+): InlineEnrichmentSnapshot | null {
+  const rawName =
+    typeof p?.company_name === 'string' && p.company_name.trim() ? p.company_name.trim() : '';
+  const descArr = Array.isArray(p?.description) ? p.description : [];
+  const blurb =
+    typeof descArr[0] === 'string' && descArr[0].trim()
+      ? (descArr[0] as string).trim().slice(0, 380)
+      : null;
+  const logoUrl =
+    typeof p?.logo_url === 'string' && p.logo_url.trim() ? p.logo_url.trim() : null;
+  const tagline =
+    typeof p?.tagline === 'string' && p.tagline.trim() ? p.tagline.trim().slice(0, 280) : null;
+  const industry =
+    typeof p?.industry === 'string' && p.industry.trim() ? p.industry.trim() : null;
+  const empPart =
+    typeof p?.employee_count === 'number' ? `${p.employee_count.toLocaleString()} employees` : null;
+  const metaLine = [industry, empPart].filter(Boolean).join(' · ') || null;
+  const city = typeof p?.hq_city === 'string' && p.hq_city.trim() ? p.hq_city.trim() : null;
+  const country =
+    typeof p?.hq_country === 'string' && p.hq_country.trim() ? p.hq_country.trim() : null;
+  const locationLine = [city, country].filter(Boolean).join(', ') || null;
+
+  const hasDetail =
+    Boolean(rawName) ||
+    Boolean(logoUrl) ||
+    Boolean(tagline) ||
+    Boolean(blurb) ||
+    Boolean(metaLine) ||
+    Boolean(locationLine);
+
+  if (!hasDetail && urlHint) {
+    return {
+      title: urlHint,
+      logoUrl: null,
+      tagline: null,
+      blurb: null,
+      metaLine: null,
+      locationLine: null,
+    };
+  }
+  if (!hasDetail) return null;
+
+  return {
+    title: rawName || urlHint || 'Company',
+    logoUrl,
+    tagline,
+    blurb,
+    metaLine,
+    locationLine,
+  };
+}
+
+function buildInlineSnapshotFromOwn(
+  p: Partial<Record<string, unknown>> | null,
+  urlHint: string | null,
+): InlineEnrichmentSnapshot | null {
+  const rawName =
+    typeof p?.company_name === 'string' && p.company_name.trim() ? p.company_name.trim() : '';
+  const descArr = Array.isArray(p?.description) ? p.description : [];
+  const blurb =
+    typeof descArr[0] === 'string' && descArr[0].trim()
+      ? (descArr[0] as string).trim().slice(0, 380)
+      : null;
+  const logoUrl =
+    typeof p?.logo_url === 'string' && p.logo_url.trim() ? (p.logo_url as string).trim() : null;
+  const tagline =
+    typeof p?.tagline === 'string' && p.tagline.trim() ? (p.tagline as string).trim().slice(0, 280) : null;
+  const industry =
+    typeof p?.industry === 'string' && p.industry.trim() ? (p.industry as string).trim() : null;
+  const empPart =
+    typeof p?.employee_count === 'number'
+      ? `${(p.employee_count as number).toLocaleString()} employees`
+      : null;
+  const metaLine = [industry, empPart].filter(Boolean).join(' · ') || null;
+  const city =
+    typeof p?.hq_city === 'string' && p.hq_city.trim() ? (p.hq_city as string).trim() : null;
+  const country =
+    typeof p?.hq_country === 'string' && p.hq_country.trim() ? (p.hq_country as string).trim() : null;
+  const locationLine = [city, country].filter(Boolean).join(', ') || null;
+
+  const hasDetail =
+    Boolean(rawName) ||
+    Boolean(logoUrl) ||
+    Boolean(tagline) ||
+    Boolean(blurb) ||
+    Boolean(metaLine) ||
+    Boolean(locationLine);
+
+  if (!hasDetail && urlHint) {
+    return {
+      title: urlHint,
+      logoUrl: null,
+      tagline: null,
+      blurb: null,
+      metaLine: null,
+      locationLine: null,
+    };
+  }
+  if (!hasDetail) return null;
+
+  return {
+    title: rawName || urlHint || 'Company',
+    logoUrl,
+    tagline,
+    blurb,
+    metaLine,
+    locationLine,
+  };
+}
+
+/** Buying-team step; prefer full example enrichment snapshot, else saved ICP / URL labels. */
+function buildBuyingTeamSnapshot(
+  enrichment: TargetCompanyEnrichmentResult | null | undefined,
+  fallbackName: string | null | undefined,
+  urlHint: string | null,
+): InlineEnrichmentSnapshot | null {
+  const fromData = buildInlineSnapshotFromTarget(enrichment ?? null, urlHint);
+  if (fromData) return fromData;
+  const nm =
+    typeof fallbackName === 'string' && fallbackName.trim()
+      ? fallbackName.trim().slice(0, 200)
+      : '';
+  if (nm) {
+    return {
+      title: nm,
+      logoUrl: null,
+      tagline: null,
+      blurb: null,
+      metaLine: null,
+      locationLine: null,
+    };
+  }
+  if (urlHint) {
+    return {
+      title: urlHint,
+      logoUrl: null,
+      tagline: null,
+      blurb: null,
+      metaLine: null,
+      locationLine: null,
+    };
+  }
+  return null;
+}
+
+/** Separate cards per SSE milestone so each new tier visibly stacks in the loader. */
+function buildTieredSnapshotsFromTarget(
+  p: Partial<TargetCompanyEnrichmentResult> | null | undefined,
+  urlHint: string | null,
+  enrichStep: number,
+): EnrichmentSnapshotStage[] {
+  const stages: EnrichmentSnapshotStage[] = [];
+  const rawName =
+    typeof p?.company_name === 'string' && p.company_name.trim() ? p.company_name.trim() : '';
+  const descArr = Array.isArray(p?.description) ? p.description : [];
+  const blurbWebsite =
+    typeof descArr[0] === 'string' && descArr[0].trim()
+      ? (descArr[0] as string).trim().slice(0, 380)
+      : null;
+  const titleBase = rawName || urlHint || 'Company';
+
+  if (enrichStep === 0 && urlHint) {
+    stages.push({
+      tier: 'starting-point',
+      label: 'Starting point',
+      snapshot: {
+        title: urlHint,
+        logoUrl: null,
+        tagline: null,
+        blurb: null,
+        metaLine: null,
+        locationLine: null,
+      },
+    });
+  }
+
+  if (enrichStep >= 1 && (rawName || blurbWebsite || urlHint)) {
+    stages.push({
+      tier: 'from-website',
+      label: 'From the website',
+      snapshot: {
+        title: titleBase,
+        logoUrl: null,
+        tagline: null,
+        blurb: blurbWebsite,
+        metaLine: null,
+        locationLine: null,
+      },
+    });
+  }
+
+  if (enrichStep >= 2) {
+    const industry =
+      typeof p?.industry === 'string' && p.industry.trim() ? p.industry.trim() : null;
+    const empPart =
+      typeof p?.employee_count === 'number' ? `${p.employee_count.toLocaleString()} employees` : null;
+    const metaLine = [industry, empPart].filter(Boolean).join(' · ') || null;
+    const city = typeof p?.hq_city === 'string' && p.hq_city.trim() ? p.hq_city.trim() : null;
+    const country =
+      typeof p?.hq_country === 'string' && p.hq_country.trim() ? p.hq_country.trim() : null;
+    const locationLine = [city, country].filter(Boolean).join(', ') || null;
+    const founded =
+      typeof p?.founded_year === 'number' ? `Founded ${p.founded_year}` : null;
+    const fundingRaw =
+      typeof p?.funding_stage === 'string' && p.funding_stage.trim() ? p.funding_stage.trim() : null;
+    const timelineLine = [founded, fundingRaw].filter(Boolean).join(' · ') || null;
+    if (metaLine || locationLine || timelineLine) {
+      stages.push({
+        tier: 'firm-context',
+        label: 'Firm context',
+        snapshot: {
+          title: titleBase,
+          logoUrl: null,
+          tagline: null,
+          blurb: timelineLine,
+          metaLine,
+          locationLine,
+        },
+      });
+    }
+  }
+
+  if (enrichStep >= 3) {
+    const logoUrl =
+      typeof p?.logo_url === 'string' && p.logo_url.trim() ? p.logo_url.trim() : null;
+    const tagline =
+      typeof p?.tagline === 'string' && p.tagline.trim()
+        ? p.tagline.trim().slice(0, 280)
+        : null;
+    const followers =
+      typeof p?.follower_count === 'number'
+        ? `${p.follower_count.toLocaleString()} followers`
+        : null;
+    if (logoUrl || tagline || followers) {
+      stages.push({
+        tier: 'public-presence',
+        label: 'Public presence',
+        snapshot: {
+          title: titleBase,
+          logoUrl,
+          tagline,
+          blurb: null,
+          metaLine: followers,
+          locationLine: null,
+        },
+      });
+    }
+  }
+
+  return stages;
+}
+
+function buildTieredSnapshotsFromOwn(
+  p: Partial<Record<string, unknown>> | null,
+  urlHint: string | null,
+  enrichStep: number,
+): EnrichmentSnapshotStage[] {
+  const stages: EnrichmentSnapshotStage[] = [];
+  const rawName =
+    typeof p?.company_name === 'string' && p.company_name.trim() ? p.company_name.trim() : '';
+  const descArr = Array.isArray(p?.description) ? p.description : [];
+  const blurbWebsite =
+    typeof descArr[0] === 'string' && descArr[0].trim()
+      ? (descArr[0] as string).trim().slice(0, 380)
+      : null;
+  const titleBase = rawName || urlHint || 'Company';
+
+  if (enrichStep === 0 && urlHint) {
+    stages.push({
+      tier: 'starting-point',
+      label: 'Starting point',
+      snapshot: {
+        title: urlHint,
+        logoUrl: null,
+        tagline: null,
+        blurb: null,
+        metaLine: null,
+        locationLine: null,
+      },
+    });
+  }
+
+  if (enrichStep >= 1 && (rawName || blurbWebsite || urlHint)) {
+    stages.push({
+      tier: 'from-website',
+      label: 'From the website',
+      snapshot: {
+        title: titleBase,
+        logoUrl: null,
+        tagline: null,
+        blurb: blurbWebsite,
+        metaLine: null,
+        locationLine: null,
+      },
+    });
+  }
+
+  if (enrichStep >= 2) {
+    const industry =
+      typeof p?.industry === 'string' && p.industry.trim() ? (p.industry as string).trim() : null;
+    const empPart =
+      typeof p?.employee_count === 'number'
+        ? `${(p.employee_count as number).toLocaleString()} employees`
+        : null;
+    const metaLine = [industry, empPart].filter(Boolean).join(' · ') || null;
+    const city =
+      typeof p?.hq_city === 'string' && p.hq_city.trim() ? (p.hq_city as string).trim() : null;
+    const country =
+      typeof p?.hq_country === 'string' && p.hq_country.trim() ? (p.hq_country as string).trim() : null;
+    const locationLine = [city, country].filter(Boolean).join(', ') || null;
+    const fundingRaw =
+      typeof p?.funding_stage === 'string' && p.funding_stage.trim()
+        ? (p.funding_stage as string).trim()
+        : null;
+    if (metaLine || locationLine || fundingRaw) {
+      stages.push({
+        tier: 'firm-context',
+        label: 'Firm context',
+        snapshot: {
+          title: titleBase,
+          logoUrl: null,
+          tagline: null,
+          blurb: fundingRaw || null,
+          metaLine,
+          locationLine,
+        },
+      });
+    }
+  }
+
+  if (enrichStep >= 3) {
+    const logoUrl =
+      typeof p?.logo_url === 'string' && p.logo_url.trim() ? (p.logo_url as string).trim() : null;
+    const tagline =
+      typeof p?.tagline === 'string' && p.tagline.trim()
+        ? (p.tagline as string).trim().slice(0, 280)
+        : null;
+    const followers =
+      typeof p?.follower_count === 'number'
+        ? `${(p.follower_count as number).toLocaleString()} followers`
+        : null;
+    if (logoUrl || tagline || followers) {
+      stages.push({
+        tier: 'public-presence',
+        label: 'Public presence',
+        snapshot: {
+          title: titleBase,
+          logoUrl,
+          tagline,
+          blurb: null,
+          metaLine: followers,
+          locationLine: null,
+        },
+      });
+    }
+  }
+
+  return stages;
+}
+
+function EnrichmentSnapshotBody({
+  snapshot,
+  variant = 'glass',
+}: {
+  snapshot: InlineEnrichmentSnapshot;
+  variant?: 'glass' | 'chat';
+}) {
+  const isGlass = variant === 'glass';
+  return (
+    <div className="flex gap-3">
+      <div
+        className={cn(
+          'relative h-11 w-11 shrink-0 overflow-hidden rounded-xl ring-1 ring-inset',
+          isGlass ? 'bg-slate-100 ring-slate-200/80' : 'bg-gray-100 ring-gray-200/90',
+        )}
+      >
+        {snapshot.logoUrl ? (
+          <Image
+            src={snapshot.logoUrl}
+            alt=""
+            width={44}
+            height={44}
+            className="h-full w-full object-cover"
+            unoptimized
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center">
+            <Building2 className={cn('h-5 w-5', isGlass ? 'text-slate-500' : 'text-gray-500')} />
+          </div>
+        )}
+      </div>
+      <div className="min-w-0 flex-1 space-y-1">
+        <p
+          className={cn(
+            'font-semibold leading-tight tracking-[-0.02em]',
+            isGlass ? 'text-[14px] text-slate-800' : 'text-sm text-gray-800',
+          )}
+        >
+          {snapshot.title}
+        </p>
+        {snapshot.tagline ? (
+          <p
+            className={cn(
+              'line-clamp-2 leading-snug',
+              isGlass ? 'text-xs text-slate-600' : 'text-xs text-gray-500',
+            )}
+          >
+            {snapshot.tagline}
+          </p>
+        ) : null}
+        {snapshot.metaLine ? (
+          <p className={cn('text-xs', isGlass ? 'text-slate-500' : 'text-gray-400')}>{snapshot.metaLine}</p>
+        ) : null}
+        {snapshot.locationLine ? (
+          <p className={cn('text-xs', isGlass ? 'text-slate-500' : 'text-gray-400')}>
+            {snapshot.locationLine}
+          </p>
+        ) : null}
+        {snapshot.blurb ? (
+          <p
+            className={cn(
+              'line-clamp-2 leading-snug',
+              isGlass ? 'text-xs text-slate-600' : 'text-xs text-gray-500',
+            )}
+          >
+            {snapshot.blurb}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function SnapshotStageCard({
+  label,
+  snapshot,
+  variant,
+}: {
+  label: string;
+  snapshot: InlineEnrichmentSnapshot;
+  variant: 'glass' | 'chat';
+}) {
+  const isGlass = variant === 'glass';
+  return (
+    <div
+      className={cn(
+        'rounded-xl px-3 py-2.5 ring-1',
+        isGlass
+          ? 'bg-white/40 ring-slate-200/60 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.65)]'
+          : 'bg-gray-50/90 ring-gray-100',
+      )}
+      style={{ animation: 'arcova-msg-in 0.42s cubic-bezier(0.22, 1, 0.36, 1) both' }}
+    >
+      {label.trim().length > 0 ? (
+        <p
+          className={cn(
+            'text-[10px] font-semibold uppercase tracking-[0.14em]',
+            isGlass ? 'text-slate-500' : 'text-gray-400',
+          )}
+        >
+          {label}
+        </p>
+      ) : null}
+      <div className={label.trim().length > 0 ? 'mt-2' : undefined}>
+        <EnrichmentSnapshotBody snapshot={snapshot} variant={variant} />
+      </div>
+    </div>
+  );
+}
+
+function SetupEnrichmentSnapshotStrip({
+  stages,
+  variant,
+}: {
+  stages: EnrichmentSnapshotStage[];
+  variant: 'glass' | 'chat';
+}) {
+  if (stages.length === 0) return null;
+  return (
+    <div className="mt-3 max-h-[min(340px,45vh)] space-y-2 overflow-y-auto pr-0.5 [scrollbar-width:thin]">
+      {stages.map((s) => (
+        <SnapshotStageCard
+          key={s.tier}
+          label={s.label}
+          snapshot={s.snapshot}
+          variant={variant}
+        />
+      ))}
+    </div>
+  );
+}
+
 function SetupInlineEnrichmentPanel({
   statusLine,
   displayPct,
-  partialName,
+  snapshotStages,
   showStop,
   onCancel,
 }: {
   statusLine: string;
   displayPct: number;
-  partialName?: string | null;
+  snapshotStages?: EnrichmentSnapshotStage[] | null;
   showStop: boolean;
   onCancel?: () => void;
 }) {
@@ -1633,8 +2213,8 @@ function SetupInlineEnrichmentPanel({
       style={{ animation: 'arcova-msg-in 0.2s ease' }}
     >
       <p className="text-sm leading-snug text-slate-600">{statusLine}</p>
-      {partialName ? (
-        <p className="mt-1 text-xs font-medium text-slate-500">{partialName}</p>
+      {snapshotStages && snapshotStages.length > 0 ? (
+        <SetupEnrichmentSnapshotStrip stages={snapshotStages} variant="glass" />
       ) : null}
       <div className="mt-3 space-y-1.5">
         <div className="relative h-2 overflow-hidden rounded-full bg-slate-200/80">
@@ -1747,8 +2327,6 @@ export default function SetupFlow({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const guidedNav = useSetupGuidedNav();
-
   // ── UI state ─────────────────────────────────────────────────────────────
   const [phase, setPhase] = useState<Phase>('greeting');
   const [bootstrapFinished, setBootstrapFinished] = useState(false);
@@ -1772,9 +2350,19 @@ export default function SetupFlow({
   const [targetEnrichStep, setTargetEnrichStep] = useState(0); // 0 = not started, 1–4 = step completed
   const [ownEnrichStep, setOwnEnrichStep] = useState(0);
   const [ownEnrichLinkedinWait, setOwnEnrichLinkedinWait] = useState(false);
+  /** True from `step_apollo` until `step_linkedin` during my-company enrichment. */
+  const [ownEnrichAwaitingLinkedinEvent, setOwnEnrichAwaitingLinkedinEvent] = useState(false);
   const [ownEnrichSynthesisWait, setOwnEnrichSynthesisWait] = useState(false);
+  /** True during own-company SSE (initial load or re-enrich on the results screen). */
+  const [ownCompanyAnalysisInFlight, setOwnCompanyAnalysisInFlight] = useState(false);
   const [customerUrlLinkedinWait, setCustomerUrlLinkedinWait] = useState(false);
+  /** True from `step_apollo` until `step_linkedin` (lookup can feel silent without rotating copy). */
+  const [customerUrlAwaitingLinkedinEvent, setCustomerUrlAwaitingLinkedinEvent] = useState(false);
   const [customerUrlSynthesisWait, setCustomerUrlSynthesisWait] = useState(false);
+  /** Anchor for soft progress creep while stuck on enrich step 2 (before `step_apify`). */
+  const customerUrlStep2AnchorRef = useRef<number | null>(null);
+  /** Anchor for soft progress creep during my-company enrich step 2 (before `step_apify`). */
+  const ownCompanyStep2AnchorRef = useRef<number | null>(null);
   const [buyingLoadPct, setBuyingLoadPct] = useState(18);
   const [analysisError, setAnalysisError] = useState('');
   const [pendingTransition, setPendingTransition] = useState<{
@@ -1848,7 +2436,10 @@ export default function SetupFlow({
   // ── Enrichment navigation guard ────────────────────────────────────────────
   const { setIsEnriching } = useEnrichmentGuard();
   const isEnrichingPhase =
-    phase === 'customer_url_loading' || phase === 'analysis_loading' || phase === 'buying_team_loading';
+    phase === 'customer_url_loading' ||
+    phase === 'analysis_loading' ||
+    phase === 'buying_team_loading' ||
+    (phase === 'analysis_results' && ownCompanyAnalysisInFlight);
 
   useEffect(() => {
     setIsEnriching(isEnrichingPhase);
@@ -1942,35 +2533,57 @@ export default function SetupFlow({
     return () => clearInterval(id);
   }, [phase]);
 
-  /** Rotate status text during long Apify LinkedIn scrape (my company). */
+  /** Rotate generic status during my-company deep-gather phase. */
   useEffect(() => {
     if (phase !== 'analysis_loading' || !ownEnrichLinkedinWait) return;
     let i = 0;
     const id = setInterval(() => {
-      i = (i + 1) % OWN_COMPANY_LINKEDIN_SCRAPE_LINES.length;
-      setLoadMsg(OWN_COMPANY_LINKEDIN_SCRAPE_LINES[i]);
+      i = (i + 1) % ENRICH_GENERIC_DEEP_GATHER_LINES.length;
+      setLoadMsg(ENRICH_GENERIC_DEEP_GATHER_LINES[i]);
     }, 5200);
     return () => clearInterval(id);
   }, [phase, ownEnrichLinkedinWait]);
 
-  /** Rotate status during bullet condense + taxonomy (my company). */
+  /** Rotate status during my-company profile condense phase. */
   useEffect(() => {
     if (phase !== 'analysis_loading' || !ownEnrichSynthesisWait) return;
     let i = 0;
     const id = setInterval(() => {
-      i = (i + 1) % OWN_COMPANY_SYNTHESIS_LINES.length;
-      setLoadMsg(OWN_COMPANY_SYNTHESIS_LINES[i]);
+      i = (i + 1) % ENRICH_GENERIC_SYNTHESIS_LINES.length;
+      setLoadMsg(ENRICH_GENERIC_SYNTHESIS_LINES[i]);
     }, 3800);
     return () => clearInterval(id);
   }, [phase, ownEnrichSynthesisWait]);
 
-  /** Same rotation for target-company enrichment glass UI. */
+  /** Rotate during my-company mid-pass wait (before deep-gather SSE lands). */
+  useEffect(() => {
+    if (phase !== 'analysis_loading' || !ownEnrichAwaitingLinkedinEvent) return;
+    let i = 0;
+    const id = setInterval(() => {
+      i = (i + 1) % ENRICH_GENERIC_LOOKUP_LINES.length;
+      setLoadMsg(ENRICH_GENERIC_LOOKUP_LINES[i]);
+    }, 3400);
+    return () => clearInterval(id);
+  }, [phase, ownEnrichAwaitingLinkedinEvent]);
+
+  /** Rotate while waiting mid-pass during target ICP enrichment. */
+  useEffect(() => {
+    if (phase !== 'customer_url_loading' || !customerUrlAwaitingLinkedinEvent) return;
+    let i = 0;
+    const id = setInterval(() => {
+      i = (i + 1) % TARGET_ICP_LINKEDIN_LOOKUP_LINES.length;
+      setCustomerUrlLoadMsg(TARGET_ICP_LINKEDIN_LOOKUP_LINES[i]);
+    }, 3400);
+    return () => clearInterval(id);
+  }, [phase, customerUrlAwaitingLinkedinEvent]);
+
+  /** Target ICP deep-gather phase rotation. */
   useEffect(() => {
     if (phase !== 'customer_url_loading' || !customerUrlLinkedinWait) return;
     let i = 0;
     const id = setInterval(() => {
-      i = (i + 1) % OWN_COMPANY_LINKEDIN_SCRAPE_LINES.length;
-      setCustomerUrlLoadMsg(OWN_COMPANY_LINKEDIN_SCRAPE_LINES[i]);
+      i = (i + 1) % TARGET_ICP_LINKEDIN_SCRAPE_LINES.length;
+      setCustomerUrlLoadMsg(TARGET_ICP_LINKEDIN_SCRAPE_LINES[i]);
     }, 5200);
     return () => clearInterval(id);
   }, [phase, customerUrlLinkedinWait]);
@@ -1979,8 +2592,8 @@ export default function SetupFlow({
     if (phase !== 'customer_url_loading' || !customerUrlSynthesisWait) return;
     let i = 0;
     const id = setInterval(() => {
-      i = (i + 1) % OWN_COMPANY_SYNTHESIS_LINES.length;
-      setCustomerUrlLoadMsg(OWN_COMPANY_SYNTHESIS_LINES[i]);
+      i = (i + 1) % TARGET_ICP_SYNTHESIS_LINES.length;
+      setCustomerUrlLoadMsg(TARGET_ICP_SYNTHESIS_LINES[i]);
     }, 3800);
     return () => clearInterval(id);
   }, [phase, customerUrlSynthesisWait]);
@@ -2008,7 +2621,9 @@ export default function SetupFlow({
 
   // Tick the own-company analysis progress bar
   useEffect(() => {
-    if (phase !== 'analysis_loading') {
+    const ownEnrichActive =
+      phase === 'analysis_loading' || (phase === 'analysis_results' && ownCompanyAnalysisInFlight);
+    if (!ownEnrichActive) {
       ownCompanyStartedAtRef.current = null;
       return;
     }
@@ -2018,7 +2633,7 @@ export default function SetupFlow({
     setOwnCompanyProgressNow(Date.now());
     const interval = setInterval(() => setOwnCompanyProgressNow(Date.now()), 900);
     return () => clearInterval(interval);
-  }, [phase]);
+  }, [phase, ownCompanyAnalysisInFlight]);
 
   // Tick the saving progress bar (ICP + persona saves)
   useEffect(() => {
@@ -2920,7 +3535,9 @@ export default function SetupFlow({
     setCustomerUrlLoadMsg('Researching the company…');
     setPartialTargetEnrichment(null);
     setTargetEnrichStep(0);
+    customerUrlStep2AnchorRef.current = null;
     setCustomerUrlLinkedinWait(false);
+    setCustomerUrlAwaitingLinkedinEvent(false);
     setCustomerUrlSynthesisWait(false);
 
     try {
@@ -2934,14 +3551,16 @@ export default function SetupFlow({
       let data: import('@/lib/target-company-enrichment').TargetCompanyEnrichmentResult | null = null;
       for await (const { event, data: eventData } of parseSSEStream(res)) {
         if (event === 'step_claude') {
-          setCustomerUrlLoadMsg('Website analysed ✓  Checking company database…');
+          setCustomerUrlLoadMsg('Website analysed ✓ Verifying firm details…');
           setTargetEnrichStep(1);
           setPartialTargetEnrichment({
             company_name: (eventData.company_name as string) || null,
             description: Array.isArray(eventData.description) ? (eventData.description as string[]) : null,
           });
         } else if (event === 'step_apollo') {
-          setCustomerUrlLoadMsg('Company and web data in ✓ Resolving LinkedIn…');
+          customerUrlStep2AnchorRef.current = Date.now();
+          setCustomerUrlAwaitingLinkedinEvent(true);
+          setCustomerUrlLoadMsg(TARGET_ICP_LINKEDIN_LOOKUP_LINES[0]);
           setTargetEnrichStep(2);
           setPartialTargetEnrichment((prev) => ({
             ...prev,
@@ -2953,17 +3572,19 @@ export default function SetupFlow({
             funding_stage: (eventData.company_funding_stage as string) || null,
           }));
         } else if (event === 'step_linkedin') {
+          setCustomerUrlAwaitingLinkedinEvent(false);
           const found = Boolean(eventData.linkedin_found);
           setCustomerUrlLinkedinWait(found);
           setCustomerUrlSynthesisWait(false);
           if (found) {
-            setCustomerUrlLoadMsg(OWN_COMPANY_LINKEDIN_SCRAPE_LINES[0]);
+            setCustomerUrlLoadMsg(TARGET_ICP_LINKEDIN_SCRAPE_LINES[0]);
           } else {
-            setCustomerUrlLoadMsg('No public LinkedIn company URL found ✓ Enriching from site and registry only…');
+            setCustomerUrlLoadMsg('No strong public profile signal ✓ Continuing with web and available records…');
           }
         } else if (event === 'step_apify') {
+          customerUrlStep2AnchorRef.current = null;
           setCustomerUrlLinkedinWait(false);
-          setCustomerUrlLoadMsg('Sources merged ✓ Organizing profile…');
+          setCustomerUrlLoadMsg('Sources merged ✓ Shaping the profile…');
           setTargetEnrichStep(3);
           setPartialTargetEnrichment((prev) => ({
             ...prev,
@@ -2973,10 +3594,10 @@ export default function SetupFlow({
           }));
         } else if (event === 'step_synthesis') {
           setCustomerUrlSynthesisWait(true);
-          setCustomerUrlLoadMsg(OWN_COMPANY_SYNTHESIS_LINES[0]);
+          setCustomerUrlLoadMsg(TARGET_ICP_SYNTHESIS_LINES[0]);
         } else if (event === 'step_taxonomy') {
           setCustomerUrlSynthesisWait(false);
-          setCustomerUrlLoadMsg('Classified ✓  Finishing up…');
+          setCustomerUrlLoadMsg('Profile shaped ✓ Finishing up…');
           setTargetEnrichStep(4);
         } else if (event === 'done') {
           data = eventData as unknown as import('@/lib/target-company-enrichment').TargetCompanyEnrichmentResult;
@@ -3061,11 +3682,27 @@ export default function SetupFlow({
     setOwnEnrichStep(0);
     setTargetEnrichStep(0);
     setOwnEnrichLinkedinWait(false);
+    setOwnEnrichAwaitingLinkedinEvent(false);
+    ownCompanyStep2AnchorRef.current = null;
     setOwnEnrichSynthesisWait(false);
     setCustomerUrlLinkedinWait(false);
+    setCustomerUrlAwaitingLinkedinEvent(false);
+    customerUrlStep2AnchorRef.current = null;
     setCustomerUrlSynthesisWait(false);
     if (phase === 'customer_url_loading') {
       setPhase('customer_url_conversation');
+      return;
+    }
+    if (phase === 'analysis_results') {
+      setOwnCompanyAnalysisInFlight(false);
+      setLoadMsg('');
+      setPartialOwnEnrichment(null);
+      setOwnEnrichStep(0);
+      ownCompanyStep2AnchorRef.current = null;
+      setOwnEnrichLinkedinWait(false);
+      setOwnEnrichAwaitingLinkedinEvent(false);
+      setOwnEnrichSynthesisWait(false);
+      setInput(true);
       return;
     }
     // Clear thread so welcome card is shown again (hasUserMsg → false)
@@ -3092,9 +3729,12 @@ export default function SetupFlow({
     setLoadMsg('Researching your company…');
     setPartialOwnEnrichment(null);
     setOwnEnrichStep(0);
+    ownCompanyStep2AnchorRef.current = null;
     setOwnEnrichLinkedinWait(false);
+    setOwnEnrichAwaitingLinkedinEvent(false);
     setOwnEnrichSynthesisWait(false);
 
+    setOwnCompanyAnalysisInFlight(true);
     try {
       const res = await fetch('/api/analyze-and-store-stream', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -3109,14 +3749,16 @@ export default function SetupFlow({
       for await (const { event, data: eventData } of parseSSEStream(res)) {
         if (controller.signal.aborted) return;
         if (event === 'step_claude') {
-          setLoadMsg('Website analysed ✓  Checking company database…');
+          setLoadMsg('Website analysed ✓ Verifying firm details…');
           setOwnEnrichStep(1);
           setPartialOwnEnrichment({
             company_name: (eventData.company_name as string) || null,
             description: Array.isArray(eventData.description) ? eventData.description : null,
           });
         } else if (event === 'step_apollo') {
-          setLoadMsg('Company and web data in ✓ Resolving LinkedIn…');
+          ownCompanyStep2AnchorRef.current = Date.now();
+          setOwnEnrichAwaitingLinkedinEvent(true);
+          setLoadMsg(ENRICH_GENERIC_LOOKUP_LINES[0]);
           setOwnEnrichStep(2);
           setPartialOwnEnrichment((prev) => ({
             ...prev,
@@ -3127,17 +3769,19 @@ export default function SetupFlow({
             funding_stage: (eventData.company_funding_stage as string) || null,
           }));
         } else if (event === 'step_linkedin') {
+          setOwnEnrichAwaitingLinkedinEvent(false);
           const found = Boolean(eventData.linkedin_found);
           setOwnEnrichLinkedinWait(found);
           setOwnEnrichSynthesisWait(false);
           if (found) {
-            setLoadMsg(OWN_COMPANY_LINKEDIN_SCRAPE_LINES[0]);
+            setLoadMsg(ENRICH_GENERIC_DEEP_GATHER_LINES[0]);
           } else {
-            setLoadMsg('No public LinkedIn company URL found ✓ Enriching from site and registry only…');
+            setLoadMsg('No strong public profile signal ✓ Continuing with web and available records…');
           }
         } else if (event === 'step_apify') {
+          ownCompanyStep2AnchorRef.current = null;
           setOwnEnrichLinkedinWait(false);
-          setLoadMsg('Sources merged ✓ Organizing profile…');
+          setLoadMsg('Sources merged ✓ Shaping the profile…');
           setOwnEnrichStep(3);
           setPartialOwnEnrichment((prev) => ({
             ...prev,
@@ -3147,10 +3791,10 @@ export default function SetupFlow({
           }));
         } else if (event === 'step_synthesis') {
           setOwnEnrichSynthesisWait(true);
-          setLoadMsg(OWN_COMPANY_SYNTHESIS_LINES[0]);
+          setLoadMsg(ENRICH_GENERIC_SYNTHESIS_LINES[0]);
         } else if (event === 'step_taxonomy') {
           setOwnEnrichSynthesisWait(false);
-          setLoadMsg('Classified ✓  Finishing up…');
+          setLoadMsg('Profile shaped ✓ Finishing up…');
           setOwnEnrichStep(4);
         } else if (event === 'done') {
           data = eventData;
@@ -3199,7 +3843,8 @@ export default function SetupFlow({
       analysisAbortRef.current = null;
       // Aborted (user cancel or timeout) — reset silently, don't show an error
       if (err instanceof Error && err.name === 'AbortError') {
-        if (!isReenrich) { setPhase('greeting'); setInput(true); }
+        if (!isReenrich) setPhase('greeting');
+        setInput(true);
         return;
       }
 
@@ -3227,6 +3872,8 @@ export default function SetupFlow({
           : "Couldn't analyse that website, maybe it's blocking us. Try another URL.",
       );
       if (!isReenrich) { setPhase('greeting'); setInput(true); }
+    } finally {
+      setOwnCompanyAnalysisInFlight(false);
     }
   }, [askClaude, formatFindingsSummary, generateIcpSuggestions, say, sayBeats]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -3914,7 +4561,9 @@ export default function SetupFlow({
   })();
 
   const ownCompanyPercent = (() => {
-    if (phase !== 'analysis_loading' || ownCompanyStartedAtRef.current === null) return 0;
+    const ownEnrichTicker =
+      phase === 'analysis_loading' || (phase === 'analysis_results' && ownCompanyAnalysisInFlight);
+    if (!ownEnrichTicker || ownCompanyStartedAtRef.current === null) return 0;
     const elapsed = Math.max(ownCompanyProgressNow - ownCompanyStartedAtRef.current, 0);
     const progress = 1 - Math.exp(-elapsed / 11000);
     return Math.round(5 + (85 - 5) * progress);
@@ -3923,12 +4572,38 @@ export default function SetupFlow({
   // Once SSE steps arrive, switch from fake timer curve to real step-based progress.
   // Cap the fake curve at 20% so the first real event (step 1 → 30%) always feels like forward movement.
   const ENRICH_STEP_PCT = [30, 55, 75, 92] as const;
-  const targetEnrichDisplayPct = targetEnrichStep > 0
-    ? ENRICH_STEP_PCT[targetEnrichStep - 1] ?? 92
-    : Math.min(customerUrlPercent, 20);
-  const ownEnrichDisplayPct = ownEnrichStep > 0
-    ? ENRICH_STEP_PCT[ownEnrichStep - 1] ?? 92
-    : Math.min(ownCompanyPercent, 20);
+  const targetEnrichDisplayPct = (() => {
+    if (targetEnrichStep <= 0) return Math.min(customerUrlPercent, 20);
+    const stepBase = ENRICH_STEP_PCT[targetEnrichStep - 1] ?? 92;
+    if (
+      phase === 'customer_url_loading' &&
+      targetEnrichStep === 2 &&
+      customerUrlStep2AnchorRef.current !== null
+    ) {
+      const elapsed = Math.max(0, customerUrlProgressNow - customerUrlStep2AnchorRef.current);
+      const maxCreep = 17;
+      const creep = Math.min(maxCreep, (elapsed / 20000) * maxCreep);
+      return Math.round(stepBase + creep);
+    }
+    return stepBase;
+  })();
+  const ownEnrichDisplayPct = (() => {
+    if (ownEnrichStep <= 0) return Math.min(ownCompanyPercent, 20);
+    const stepBase = ENRICH_STEP_PCT[ownEnrichStep - 1] ?? 92;
+    const creepPhase =
+      phase === 'analysis_loading' || (phase === 'analysis_results' && ownCompanyAnalysisInFlight);
+    if (
+      creepPhase &&
+      ownEnrichStep === 2 &&
+      ownCompanyStep2AnchorRef.current !== null
+    ) {
+      const elapsed = Math.max(0, ownCompanyProgressNow - ownCompanyStep2AnchorRef.current);
+      const maxCreep = 17;
+      const creep = Math.min(maxCreep, (elapsed / 20000) * maxCreep);
+      return Math.round(stepBase + creep);
+    }
+    return stepBase;
+  })();
 
   const savingPercent = (() => {
     if (!isSaving || savingStartedAtRef.current === null) return 0;
@@ -3946,12 +4621,6 @@ export default function SetupFlow({
     },
   ];
   const currentStepIndex = SETUP_STEPS.findIndex((s) => s.phases.includes(phase));
-
-  useEffect(() => {
-    if (!guidedNav || entryPoint !== 'full') return;
-    if (currentStepIndex < 0) return;
-    guidedNav.reportStep(currentStepIndex);
-  }, [guidedNav, entryPoint, currentStepIndex]);
 
   useEffect(() => {
     if (entryPoint !== 'full' || !bootstrapFinished) return;
@@ -4050,6 +4719,8 @@ export default function SetupFlow({
     ownEnrichDisplayPct,
     targetEnrichDisplayPct,
     buyingLoadPct,
+    partialOwnEnrichment,
+    partialTargetEnrichment,
   ]);
 
   // ── Data helpers (available to all phase renders below) ─────────────────
@@ -4197,27 +4868,28 @@ export default function SetupFlow({
         <AppAmbientBackground />
         <div className="absolute left-0 right-0 top-0 z-20 flex justify-center px-6 pt-6 sm:px-10">
           <div className="flex w-full max-w-[1080px] flex-wrap items-center gap-3">
-            {phase === 'customer_url_conversation' && entryPoint === 'full' && (
-              <button
-                type="button"
-                onClick={() => void handleGoToStep(0)}
-                disabled={thinking}
-                className="inline-flex items-center gap-1.5 rounded-full border border-arcova-navy/10 bg-white/65 px-3 py-1.5 text-[12px] font-medium text-arcova-navy/65 backdrop-blur transition-all hover:-translate-x-0.5 hover:bg-white hover:text-arcova-navy disabled:opacity-50"
-              >
-                <span aria-hidden>←</span> Back to edit your company
-              </button>
-            )}
-            <StepEyebrow step={0} />
+            <StepEyebrow step={phase === 'customer_url_conversation' ? 1 : 0} />
           </div>
         </div>
-        <div
-          className={cn(
-            'relative z-10 flex w-[460px] flex-col rounded-3xl border border-white/55 bg-white/65 px-10 pb-10 pt-0 shadow-arcova backdrop-blur-xl',
-            hasUserMsg
-              ? 'h-[min(85vh,52rem)] min-h-[580px] max-h-[85vh] overflow-hidden'
-              : 'min-h-[580px] overflow-visible',
+        <div className="relative z-10 flex w-[460px] flex-col">
+          {phase === 'customer_url_conversation' && entryPoint === 'full' && (
+            <button
+              type="button"
+              onClick={() => void handleGoToStep(0)}
+              disabled={thinking}
+              className={cn(SETUP_GLASS_BACK_ABOVE_CARD_CLASS, 'mb-3 self-start')}
+            >
+              <span aria-hidden>←</span> Back
+            </button>
           )}
-        >
+          <div
+            className={cn(
+              'relative flex w-full flex-col rounded-3xl border border-white/55 bg-white/65 px-10 pb-10 pt-0 shadow-arcova backdrop-blur-xl',
+              hasUserMsg
+                ? 'h-[min(85vh,52rem)] min-h-[580px] max-h-[85vh] overflow-hidden'
+                : 'min-h-[580px] overflow-visible',
+            )}
+          >
           {!hasUserMsg ? (
             <>
               <SetupGlassAgentMetaStrip
@@ -4406,6 +5078,7 @@ export default function SetupFlow({
               )}
             </>
           )}
+          </div>
         </div>
       </div>
     );
@@ -4418,10 +5091,24 @@ export default function SetupFlow({
     phase === 'buying_team_loading'
   ) {
     const enrichMessages = visibleGreetingStyleMessages(thread, welcomeChatPart1, welcomeChatPart2);
-    const partialOwnLabel =
-      typeof partialOwnEnrichment?.company_name === 'string' && partialOwnEnrichment.company_name.trim()
-        ? partialOwnEnrichment.company_name
-        : null;
+    const glassOwnStages = buildTieredSnapshotsFromOwn(
+      partialOwnEnrichment,
+      prettyCompanyUrlHint(lastAnalyzedUrlRef.current),
+      ownEnrichStep,
+    );
+    const glassTargetStages = buildTieredSnapshotsFromTarget(
+      partialTargetEnrichment,
+      prettyCompanyUrlHint(lastTargetUrlRef.current),
+      targetEnrichStep,
+    );
+    const glassBuyingSnapshot = buildBuyingTeamSnapshot(
+      enrichedTargetCompany,
+      reviewedCompanyName || savedIcpName || null,
+      prettyCompanyUrlHint(lastTargetUrlRef.current),
+    );
+    const glassBuyingStages: EnrichmentSnapshotStage[] | null = glassBuyingSnapshot
+      ? [{ tier: 'buying-summary', label: '', snapshot: glassBuyingSnapshot }]
+      : null;
 
     return (
       <div className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-4 py-16">
@@ -4431,7 +5118,28 @@ export default function SetupFlow({
             <StepEyebrow step={Math.max(0, currentStepIndex) as 0 | 1 | 2} />
           </div>
         </div>
-        <div className="relative z-10 flex h-[min(85vh,52rem)] w-[460px] min-h-[580px] max-h-[85vh] flex-col overflow-hidden rounded-3xl border border-white/55 bg-white/65 px-10 pb-0 pt-0 shadow-arcova backdrop-blur-xl">
+        <div className="relative z-10 flex w-[460px] flex-col">
+          {entryPoint === 'full' && phase === 'customer_url_loading' && (
+            <button
+              type="button"
+              onClick={() => void handleGoToStep(0)}
+              disabled={thinking}
+              className={cn(SETUP_GLASS_BACK_ABOVE_CARD_CLASS, 'mb-3 self-start')}
+            >
+              <span aria-hidden>←</span> Back
+            </button>
+          )}
+          {entryPoint === 'full' && phase === 'buying_team_loading' && (
+            <button
+              type="button"
+              onClick={() => void handleGoToStep(1)}
+              disabled={thinking}
+              className={cn(SETUP_GLASS_BACK_ABOVE_CARD_CLASS, 'mb-3 self-start')}
+            >
+              <span aria-hidden>←</span> Back
+            </button>
+          )}
+          <div className="relative flex h-[min(85vh,52rem)] w-full min-h-[580px] max-h-[85vh] flex-col overflow-hidden rounded-3xl border border-white/55 bg-white/65 px-10 pb-0 pt-0 shadow-arcova backdrop-blur-xl">
           <SetupGlassAgentMetaStrip clock={setupGreetingChatClock} statusKey="thinking" />
           <div
             ref={setupGreetingThreadRef}
@@ -4474,7 +5182,7 @@ export default function SetupFlow({
               <SetupInlineEnrichmentPanel
                 statusLine={loadMsg}
                 displayPct={ownEnrichDisplayPct}
-                partialName={partialOwnLabel}
+                snapshotStages={glassOwnStages}
                 showStop
                 onCancel={cancelAnalysis}
               />
@@ -4482,7 +5190,7 @@ export default function SetupFlow({
               <SetupInlineEnrichmentPanel
                 statusLine={customerUrlLoadMsg}
                 displayPct={targetEnrichDisplayPct}
-                partialName={partialTargetEnrichment?.company_name ?? null}
+                snapshotStages={glassTargetStages}
                 showStop
                 onCancel={cancelAnalysis}
               />
@@ -4490,10 +5198,11 @@ export default function SetupFlow({
               <SetupInlineEnrichmentPanel
                 statusLine="Mapping buying teams for your target accounts…"
                 displayPct={buyingLoadPct}
-                partialName={reviewedCompanyName || savedIcpName || null}
+                snapshotStages={glassBuyingStages}
                 showStop={false}
               />
             )}
+          </div>
           </div>
         </div>
       </div>
@@ -4555,14 +5264,12 @@ export default function SetupFlow({
     subtitle,
     children,
     onBack,
-    backLabel,
   }: {
     eyebrow?: ReactNode;
     title: string;
     subtitle?: string;
     children: ReactNode;
     onBack?: () => void;
-    backLabel?: string;
   }) => (
     <div className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col overflow-y-auto">
       <AppAmbientBackground />
@@ -4575,7 +5282,7 @@ export default function SetupFlow({
               disabled={thinking}
               className={setupReviewBackButtonClass}
             >
-              <span aria-hidden>←</span> Back{backLabel ? ` to ${backLabel}` : ''}
+              <span aria-hidden>←</span> Back
             </button>
           )}
           {eyebrow && <div className="mb-3">{eyebrow}</div>}
@@ -4591,6 +5298,11 @@ export default function SetupFlow({
   // Phase: analysis_results → light glass review of own company (matches Setup.html design)
   if (phase === 'analysis_results') {
     const domain = analysedUrlForPanel.replace(/^https?:\/\//, '').replace(/\/$/, '') || 'your company';
+    const ownResultsSnapshots = buildTieredSnapshotsFromOwn(
+      partialOwnEnrichment,
+      prettyCompanyUrlHint(lastAnalyzedUrlRef.current),
+      ownEnrichStep,
+    );
     return (
       <div className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col overflow-y-auto">
         <AppAmbientBackground />
@@ -4600,10 +5312,10 @@ export default function SetupFlow({
                 <button
                   type="button"
                   onClick={() => void handleAnalyseDifferentWebsite()}
-                  disabled={thinking}
+                  disabled={thinking || ownCompanyAnalysisInFlight}
                   className={setupReviewBackButtonClass}
                 >
-                  <span aria-hidden>←</span> Back to enter website
+                  <span aria-hidden>←</span> Back
                 </button>
               </div>
             )}
@@ -4632,8 +5344,40 @@ export default function SetupFlow({
               </p>
             </div>
 
+            {ownCompanyAnalysisInFlight ? (
+              <div className="mx-auto mb-8 w-full max-w-[760px] rounded-2xl border border-arcova-navy/10 bg-white/80 p-5 shadow-[0_14px_44px_-26px_rgba(13,53,71,0.22)] backdrop-blur-sm">
+                <p className="text-sm leading-snug text-arcova-navy/70">{loadMsg}</p>
+                <SetupEnrichmentSnapshotStrip stages={ownResultsSnapshots} variant="glass" />
+                <div className="mt-3 space-y-1.5">
+                  <div className="relative h-2 overflow-hidden rounded-full bg-arcova-navy/[0.09]">
+                    <div
+                      className="arcova-enrichment-progress absolute inset-y-0 left-0 rounded-full transition-[width] duration-700 ease-out"
+                      style={{ width: `${Math.min(100, ownEnrichDisplayPct)}%` }}
+                    >
+                      <div className="arcova-enrichment-glow absolute inset-y-0 right-0 w-10 rounded-full" />
+                    </div>
+                  </div>
+                  <p className="text-right text-xs tabular-nums text-arcova-navy/40">
+                    {Math.min(100, Math.round(ownEnrichDisplayPct))}%
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => cancelAnalysis()}
+                  className="mt-4 text-left text-xs text-arcova-navy/45 underline underline-offset-2 transition-colors hover:text-arcova-navy"
+                >
+                  Stop
+                </button>
+              </div>
+            ) : null}
+
             {/* Centred company card */}
-            <div className="mx-auto w-full max-w-[760px]">
+            <div
+              className={cn(
+                'mx-auto w-full max-w-[760px]',
+                ownCompanyAnalysisInFlight && 'pointer-events-none opacity-[0.42]',
+              )}
+            >
               <SetupMyCompanyCard
                 data={myCompany}
                 editMode={editingFindings}
@@ -4647,7 +5391,7 @@ export default function SetupFlow({
                   <button
                     type="button"
                     onClick={() => void handleResultsConfirmed()}
-                    disabled={thinking}
+                    disabled={thinking || ownCompanyAnalysisInFlight}
                     className="inline-flex items-center gap-2 rounded-[14px] bg-gradient-to-br from-arcova-teal to-[#007e8b] px-[22px] py-[13px] text-sm font-semibold text-white shadow-[0_12px_28px_-12px_rgba(0,164,180,0.5)] transition-all hover:-translate-y-px hover:bg-arcova-navy disabled:opacity-50"
                   >
                     <Check className="h-3.5 w-3.5" strokeWidth={2.4} />
@@ -4656,7 +5400,7 @@ export default function SetupFlow({
                   <button
                     type="button"
                     onClick={() => void handleAnalysisNotRight()}
-                    disabled={thinking}
+                    disabled={thinking || ownCompanyAnalysisInFlight}
                     className="bg-transparent px-3.5 py-3 text-[13px] font-medium text-arcova-navy/50 transition-colors hover:text-arcova-navy disabled:opacity-50"
                   >
                     Something&apos;s off
@@ -4670,7 +5414,7 @@ export default function SetupFlow({
                   Need to enter a different website from scratch?{' '}
                   <button
                     type="button"
-                    disabled={thinking}
+                    disabled={thinking || ownCompanyAnalysisInFlight}
                     onClick={() => void handleResumeRestart()}
                     className="font-medium text-arcova-teal underline decoration-arcova-teal/35 underline-offset-2 hover:text-arcova-navy disabled:opacity-50"
                   >
@@ -4688,14 +5432,14 @@ export default function SetupFlow({
                       window.setTimeout(() => setSaveChangesClickAnim(false), 420);
                       void handleSaveFindingsEdit();
                     }}
-                    disabled={thinking}
+                    disabled={thinking || savingFindings || ownCompanyAnalysisInFlight}
                     className={cn(
                       'inline-flex items-center gap-2 rounded-[14px] bg-gradient-to-br from-arcova-teal to-[#007e8b] px-[22px] py-[13px] text-sm font-semibold text-white shadow-[0_12px_28px_-12px_rgba(0,164,180,0.5)] transition-all duration-200 ease-out hover:-translate-y-px hover:bg-arcova-navy disabled:opacity-50',
                       saveChangesClickAnim && 'origin-center scale-[0.96] brightness-105 ring-2 ring-arcova-teal/40 ring-offset-2 ring-offset-white/70',
                     )}
                   >
                     <Check className="h-3.5 w-3.5" strokeWidth={2.4} />
-                    Save changes
+                    {savingFindings ? 'Saving…' : 'Save changes'}
                   </button>
                   <button
                     type="button"
@@ -4720,7 +5464,6 @@ export default function SetupFlow({
         title="We found some companies that look like strong model accounts."
         subtitle="Each represents a different buyer type. Pick one to build your ICP on, or enter your own."
         onBack={() => void handleGoToStep(0)}
-        backLabel="edit your company"
       >
         <div className="space-y-3">
           {icpSuggestions.map((s) => (
@@ -4759,24 +5502,26 @@ export default function SetupFlow({
     return (
       <div className="relative flex min-h-dvh flex-col overflow-hidden">
         <AppAmbientBackground />
-        <div className="relative z-10 flex flex-wrap items-center gap-3 px-4 pt-6 sm:px-6">
+        <div className="relative z-10 flex flex-col px-4 pt-6 sm:px-6">
           <button
             type="button"
             onClick={() => void handleGoToStep(0)}
             disabled={thinking}
-            className="inline-flex items-center gap-1.5 rounded-full border border-arcova-navy/10 bg-white/65 px-3 py-1.5 text-[12px] font-medium text-arcova-navy/65 backdrop-blur transition-all hover:-translate-x-0.5 hover:bg-white hover:text-arcova-navy disabled:opacity-50"
+            className={cn(SETUP_GLASS_BACK_ABOVE_CARD_CLASS, 'mb-3 self-start')}
           >
-            <span aria-hidden>←</span> Back to edit your company
+            <span aria-hidden>←</span> Back
           </button>
-          <StepEyebrow step={1} />
+          <div className="mb-4">
+            <StepEyebrow step={1} />
+          </div>
+          <SetupWelcomeCard
+            firstName={firstName}
+            onSubmit={(url) => void handleCustomerUrlAnalyse(url)}
+            analysisError={analysisError}
+            isLoading={thinking}
+            mode="target"
+          />
         </div>
-        <SetupWelcomeCard
-          firstName={firstName}
-          onSubmit={(url) => void handleCustomerUrlAnalyse(url)}
-          analysisError={analysisError}
-          isLoading={thinking}
-          mode="target"
-        />
       </div>
     );
   }
@@ -4790,7 +5535,6 @@ export default function SetupFlow({
         title={`Here's what I found on ${targetName}.`}
         subtitle="Check the fit and confirm — you can tweak before saving."
         onBack={() => void handleGoToStep(0)}
-        backLabel="edit your company"
       >
         <div className="arcova-glass-panel p-6">
           <SetupProfilePanel
@@ -4830,7 +5574,6 @@ export default function SetupFlow({
         title={`Here's who typically buys from companies like ${icpName}.`}
         subtitle="Review the roles and seniority — you can adjust before saving."
         onBack={() => void handleGoToStep(1)}
-        backLabel="edit target ICP"
       >
         <div className="arcova-glass-panel p-6">
           <SetupProfilePanel
@@ -4893,6 +5636,12 @@ export default function SetupFlow({
 
   // ── Main render ───────────────────────────────────────────────────────────
 
+  const customerUrlChatStages = buildTieredSnapshotsFromTarget(
+    partialTargetEnrichment,
+    prettyCompanyUrlHint(lastTargetUrlRef.current),
+    targetEnrichStep,
+  );
+
   const chatColumn = (
     <div className={`flex min-h-0 flex-1 flex-col ${SETUP_CHAT_CARD}`}>
       <div ref={mainChatScrollRef} className="min-h-0 flex-1 overflow-y-auto bg-arcova-darkblue px-4 py-4">
@@ -4934,33 +5683,15 @@ export default function SetupFlow({
             <div className="flex items-start gap-3">
               <ArcovaLoader size={36} />
               <div className="rounded-2xl rounded-tl-none border border-gray-200 bg-white px-4 py-3 shadow-sm min-w-52 max-w-sm">
-                <p className="mb-2.5 text-sm text-gray-500">{customerUrlLoadMsg}</p>
-                {/* Partial data preview — populates as SSE steps arrive */}
-                {partialTargetEnrichment && (partialTargetEnrichment.company_name || partialTargetEnrichment.description) && (
-                  <div className="mb-3 space-y-1 border-t border-gray-100 pt-2.5">
-                    {partialTargetEnrichment.company_name && (
-                      <p className="font-semibold text-sm text-gray-800">{partialTargetEnrichment.company_name}</p>
-                    )}
-                    {partialTargetEnrichment.description?.[0] && (
-                      <p className="text-xs text-gray-500 line-clamp-2">{partialTargetEnrichment.description[0]}</p>
-                    )}
-                    {(partialTargetEnrichment.industry || partialTargetEnrichment.employee_count) && (
-                      <p className="text-xs text-gray-400">
-                        {[
-                          partialTargetEnrichment.industry,
-                          partialTargetEnrichment.employee_count
-                            ? `${partialTargetEnrichment.employee_count.toLocaleString()} employees`
-                            : null,
-                        ].filter(Boolean).join(' · ')}
-                      </p>
-                    )}
-                    {(partialTargetEnrichment.hq_city || partialTargetEnrichment.hq_country) && (
-                      <p className="text-xs text-gray-400">
-                        {[partialTargetEnrichment.hq_city, partialTargetEnrichment.hq_country].filter(Boolean).join(', ')}
-                      </p>
-                    )}
-                  </div>
-                )}
+                <p
+                  className={cn(
+                    'text-sm text-gray-500',
+                    customerUrlChatStages.length > 0 ? '' : 'mb-2.5',
+                  )}
+                >
+                  {customerUrlLoadMsg}
+                </p>
+                <SetupEnrichmentSnapshotStrip stages={customerUrlChatStages} variant="chat" />
                 <div className="space-y-1.5">
                   <div className="relative h-2 overflow-hidden rounded-full bg-slate-200/80">
                     <div
@@ -5185,19 +5916,7 @@ export default function SetupFlow({
       {showProgress && (
         <div className="shrink-0 border-b border-white/10 px-6 py-4">
           <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3">
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              {entryPoint === 'full' && !isSaving && currentStepIndex > 0 && (
-                <button
-                  type="button"
-                  onClick={() => void handleGoToStep(currentStepIndex - 1)}
-                  disabled={thinking}
-                  className={setupProgressBackButtonClass}
-                >
-                  <span aria-hidden>←</span>
-                  {currentStepIndex === 2 ? 'Back to edit target ICP' : 'Back to edit your company'}
-                </button>
-              )}
-              <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
                 {SETUP_STEPS.map((step, i) => {
                 const isComplete = i < currentStepIndex;
                 const isCurrent = i === currentStepIndex;
@@ -5240,6 +5959,18 @@ export default function SetupFlow({
         {/* Chat column */}
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex h-[min(56rem,calc(100dvh-12rem))] min-h-[20rem] w-full flex-col">
+            {entryPoint === 'full' && !isSaving && currentStepIndex > 0 && (
+              <div className="mb-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => void handleGoToStep(currentStepIndex - 1)}
+                  disabled={thinking}
+                  className={setupProgressBackButtonClass}
+                >
+                  <span aria-hidden>←</span> Back
+                </button>
+              </div>
+            )}
             {chatColumn}
           </div>
         </div>

@@ -7,8 +7,6 @@ import SetupFlow from '@/components/SetupFlow';
 import { useAuth } from '@/context/AuthContext';
 import { useSetupState, getNextSetupPath } from '@/lib/use-setup-state';
 import { ROUTES } from '@/lib/routes';
-import { SetupGuidedNavProvider } from '@/context/SetupGuidedNavContext';
-
 export default function ArcovaSetupPage() {
   const { user, loading } = useAuth();
   const {
@@ -63,29 +61,27 @@ export default function ArcovaSetupPage() {
   })();
 
   return (
-    <SetupGuidedNavProvider>
-      <SetupShell
-        inSetup={true}
-        step={1}
-        setupUserGreeting={firstName || undefined}
-        hideSetupProgress={true}
-      >
-        <div className="flex min-h-0 flex-1 flex-col">
-          <Suspense
-            fallback={
-              <div className="flex flex-1 items-center justify-center py-20">
-                <div className="h-12 w-12 animate-spin rounded-full border-2 border-arcova-teal border-t-transparent" />
-              </div>
-            }
-          >
-            <SetupFlow
-              firstName={firstName || undefined}
-              email={user.email || undefined}
-              emailDomain={user.email?.split('@')[1] || undefined}
-            />
-          </Suspense>
-        </div>
-      </SetupShell>
-    </SetupGuidedNavProvider>
+    <SetupShell
+      inSetup={true}
+      step={1}
+      setupUserGreeting={firstName || undefined}
+      hideSetupProgress={true}
+    >
+      <div className="flex min-h-0 flex-1 flex-col">
+        <Suspense
+          fallback={
+            <div className="flex flex-1 items-center justify-center py-20">
+              <div className="h-12 w-12 animate-spin rounded-full border-2 border-arcova-teal border-t-transparent" />
+            </div>
+          }
+        >
+          <SetupFlow
+            firstName={firstName || undefined}
+            email={user.email || undefined}
+            emailDomain={user.email?.split('@')[1] || undefined}
+          />
+        </Suspense>
+      </div>
+    </SetupShell>
   );
 }

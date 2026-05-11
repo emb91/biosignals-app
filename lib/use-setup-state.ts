@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { supabase } from './supabase';
 import { useAuth } from '@/context/AuthContext';
 import { ROUTES } from '@/lib/routes';
@@ -28,6 +28,7 @@ export function getNextSetupPath(state: Pick<SetupState, 'step1Complete' | 'step
 export function useSetupState(): SetupState {
   const { user } = useAuth();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [state, setState] = useState<SetupState>({
     step1Complete: false,
     step2Complete: false,
@@ -83,7 +84,7 @@ export function useSetupState(): SetupState {
     return () => {
       cancelled = true;
     };
-  }, [user, pathname]);
+  }, [user, pathname, searchParams.toString()]);
 
   return state;
 }
