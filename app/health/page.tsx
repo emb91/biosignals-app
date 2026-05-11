@@ -4,7 +4,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
-import { AgentPanel } from '@/components/AgentPanel';
+import { AgentPanel, type AgentPendingMessage } from '@/components/AgentPanel';
 import { Activity, AlertTriangle, Kanban, Loader2, Plus } from 'lucide-react';
 import {
   healthLabel,
@@ -204,7 +204,7 @@ export default function HealthPage() {
   const agentTaskFiredRef = useRef<string | null>(null);
 
   // Agent trigger: nonce increments to re-fire even with the same message text
-  const [agentTrigger, setAgentTrigger] = useState<{ text: string; nonce: number; isHidden?: boolean } | undefined>();
+  const [agentTrigger, setAgentTrigger] = useState<AgentPendingMessage | undefined>();
 
   const loadCards = useCallback(async () => {
     setLoadError(null);
@@ -234,12 +234,18 @@ export default function HealthPage() {
     if (agentTaskFiredRef.current === taskKey) return;
 
     let prompt: string | null = null;
+    let threadPreview = '';
     if (healthAgentTask === 'health_review') {
       prompt = buildAllHealthHandoffPrompt(cards);
+      threadPreview = 'Review my pipeline health';
     } else if (healthAgentIcpId) {
       const card = cards.find((candidate) => candidate.icp_id === healthAgentIcpId);
       if (!card) return;
       prompt = buildHealthHandoffPrompt(card, healthAgentTask);
+      threadPreview =
+        healthAgentTask === 'coverage_gap'
+          ? `Improve coverage for ${card.label}`
+          : `Explain health for ${card.label}`;
     }
 
     if (!prompt) return;
@@ -248,7 +254,7 @@ export default function HealthPage() {
     setAgentTrigger((prev) => ({
       text: prompt,
       nonce: (prev?.nonce ?? 0) + 1,
-      isHidden: true,
+      threadPreview,
     }));
   }, [cards, healthAgentIcpId, healthAgentTask, user]);
 
@@ -263,8 +269,12 @@ export default function HealthPage() {
     router.push(withQuery(ROUTES.data, params));
   };
 
-  const fireAgent = (text: string) => {
-    setAgentTrigger((prev) => ({ text, nonce: (prev?.nonce ?? 0) + 1 }));
+  const fireAgent = (text: string, threadPreview?: string) => {
+    setAgentTrigger((prev) => ({
+      text,
+      nonce: (prev?.nonce ?? 0) + 1,
+      ...(threadPreview ? { threadPreview } : {}),
+    }));
   };
 
   const gapIcps = cards ? getCoverageGapIcps(cards) : [];
@@ -305,6 +315,9 @@ export default function HealthPage() {
                   const names = gapIcps.map((c) => `${c.label} (${c.company_count} companies)`).join(', ');
                   fireAgent(
                     `${gapIcps.length === 1 ? 'One ICP is' : `${gapIcps.length} ICPs are`} missing strong contact coverage: ${names}. Explain what is going on and what I should do next.`,
+                    gapIcps.length === 1
+                      ? 'Why is my contact coverage weak for this ICP?'
+                      : 'Why is my contact coverage weak across these ICPs?',
                   );
                 }}
                 className="w-full mb-5 flex items-center gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-left transition-colors hover:bg-red-100"
@@ -387,6 +400,7 @@ export default function HealthPage() {
                               onClick={() =>
                                 fireAgent(
                                   `Explain the health status for "${card.label}": it has ${card.company_count} companies, ${card.contact_count} contacts, avg company fit ${formatFitValue(card.avg_company_fit)}, avg contact fit ${formatFitValue(card.avg_contact_fit)}. Coverage is ${healthLabel(card.coverage)}, contact fit is ${healthLabel(card.contact_fit)}, depth is ${healthLabel(card.depth)}, overall ${healthLabel(card.overall)}. What's the issue and what should I do?`,
+                                  `Explain health for ${card.label}`,
                                 )
                               }
                             />

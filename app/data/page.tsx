@@ -132,7 +132,7 @@ function DataPageContent() {
   const [batchCompanies, setBatchCompanies] = useState<BatchCompany[]>([]);
 
   // Auto-open trigger for the agent
-  const [agentOpener, setAgentOpener] = useState<{ text: string; nonce: number } | null>(null);
+  const [agentOpener, setAgentOpener] = useState<{ text: string; nonce: number; threadPreview: string } | null>(null);
   const openerFired = useRef(false);
 
   // ── Load ICP cards + jobs ──────────────────────────────────────────────────
@@ -231,17 +231,24 @@ function DataPageContent() {
 
     // Build opener — agent will respond as if it started the conversation
     let opener = '';
+    let threadPreview = '';
     if (rawMode === 'contacts_at_companies' && batch.length > 0) {
       opener = '__OPEN__';
+      threadPreview = 'Help me find contacts at these companies';
     } else if (rawMode === 'contacts_at_company' && companyId) {
       opener = '__OPEN__';
+      const trimmedName = companyName.trim();
+      threadPreview = trimmedName
+        ? `Help me find contacts at ${trimmedName}`
+        : 'Help me find contacts at this company';
     } else if (rawMode === 'companies' && icpId) {
       opener = '__OPEN__';
+      threadPreview = 'Help me find more companies for this ICP';
     }
 
     if (opener) {
       openerFired.current = true;
-      setAgentOpener({ text: opener, nonce: Date.now() });
+      setAgentOpener({ text: opener, nonce: Date.now(), threadPreview });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
@@ -376,7 +383,11 @@ function DataPageContent() {
               page="data"
               pageContext={pageContext}
               wide
-              pendingMessage={agentOpener ? { text: agentOpener.text, nonce: agentOpener.nonce, isHidden: true } : undefined}
+              pendingMessage={
+                agentOpener
+                  ? { text: agentOpener.text, nonce: agentOpener.nonce, threadPreview: agentOpener.threadPreview }
+                  : undefined
+              }
               onJobStarted={handleJobStarted}
             />
           </div>

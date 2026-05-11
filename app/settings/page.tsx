@@ -7,7 +7,7 @@ import { Loader2 } from 'lucide-react';
 import AppSidebar from '@/components/AppSidebar';
 
 export default function SettingsPage() {
-  const { user, loading } = useAuth();
+  const { user, loading, logout } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
@@ -31,6 +31,21 @@ export default function SettingsPage() {
         <div className="mx-auto max-w-2xl">
           <h1 className="text-2xl font-semibold text-slate-950">Settings</h1>
           <p className="mt-2 text-sm text-slate-500">More options will be available here soon.</p>
+          <div className="mt-6">
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await logout();
+                  router.push('/login');
+                } catch (e) {
+                  console.error('Logout failed:', e);
+                }
+              }}
+            >
+              Log out
+            </button>
+          </div>
         </div>
       </main>
     </div>

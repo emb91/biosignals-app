@@ -777,31 +777,7 @@
   color: var(--bt-ink-mute);
 }
 
-/* ── Today agent orb (centerpiece) ── */
-@keyframes bt-orb-ring-pulse {
-  0% {
-    transform: scale(0.72);
-    opacity: 0;
-  }
-  18% {
-    opacity: 0.48;
-  }
-  100% {
-    transform: scale(2.12);
-    opacity: 0;
-  }
-}
-
-@keyframes bt-orb-breathe {
-  0%,
-  100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.035);
-  }
-}
-
+/* ── Today briefing: bottom bars under shared Arcova welcome orb ── */
 @keyframes bt-orb-bar {
   0%,
   100% {
@@ -812,29 +788,11 @@
   }
 }
 
-.briefing-today .bt-orb-ring {
-  animation: bt-orb-ring-pulse 5s ease-out infinite;
-  opacity: 0;
-}
-
-.briefing-today .bt-orb-core {
-  animation: bt-orb-breathe 5.2s ease-in-out infinite;
-}
-
 .briefing-today .bt-orb-vbar {
   animation: bt-orb-bar 2.6s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .briefing-today .bt-orb-ring {
-    animation: none;
-    opacity: 0;
-  }
-
-  .briefing-today .bt-orb-core {
-    animation: none;
-  }
-
   .briefing-today .bt-orb-vbar {
     animation: none;
   }

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Image from 'next/image';
-import { Send, Sparkles, X, ArrowRight, Mic } from 'lucide-react';
+import { Send, Sparkles, X, ArrowRight } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { ArcovaLoader } from '@/components/ArcovaLoader';
@@ -34,6 +34,8 @@ export interface AgentLeadsFilter {
 interface Message {
   role: 'user' | 'assistant';
   content: string;
+  /** User bubble text when it should differ from `content` (still sent to the API as `content`). */
+  displayContent?: string;
   toolsUsed?: string[];
   /** True on the "thinking" placeholder before the real response arrives */
   isPending?: boolean;
@@ -53,8 +55,9 @@ export interface AgentPanelProps {
   page: AgentPage;
   pageContext?: Record<string, unknown>;
   /** Programmatically fire a message into the agent. Increment nonce to re-fire the same text.
-   *  Set isHidden to suppress the user bubble — the agent appears to open the conversation. */
-  pendingMessage?: { text: string; nonce: number; isHidden?: boolean };
+   *  Set isHidden to suppress the user bubble so the agent appears to open the conversation.
+   *  Optional threadPreview: short label shown in the user bubble instead of `text`. */
+  pendingMessage?: { text: string; nonce: number; isHidden?: boolean; threadPreview?: string };
   onTableFilter?: (filter: AgentTableFilter, accounts: QueryAccount[]) => void;
   onLeadsFilter?: (filter: AgentLeadsFilter, leads: QueryLead[]) => void;
   onTableClear?: () => void;
@@ -74,7 +77,7 @@ export interface AgentPanelProps {
   /** Today bento: static opener shown before the user sends anything (no automatic agent round-trip). */
   briefingWelcome?: { greeting: string; body: string };
   /** Today bento: pill prompts under the static opener; defaults are used when welcome is set and this is omitted. */
-  briefingIdleChips?: { label: string; prompt: string }[];
+  briefingIdleChips?: { label: string; prompt: string; threadPreview?: string }[];
   /** Override the subtitle line in the panel header (e.g. "Watching · Kumar Bala"). Supports ReactNode for bold/styled text. */
   headerSubtitle?: React.ReactNode;
   className?: string;
@@ -84,6 +87,9 @@ export interface AgentPanelProps {
    */
   variant?: 'side-rail' | 'central';
 }
+
+/** Payload for firing the agent from parent state (`pendingMessage`). */
+export type AgentPendingMessage = NonNullable<AgentPanelProps['pendingMessage']>;
 
 // ─── Suggested prompts per page ───────────────────────────────────────────────
 
@@ -134,7 +140,7 @@ const PROMPTS: Record<AgentPage, string[]> = {
   ],
 };
 
-const DEFAULT_BRIEFING_IDLE_CHIPS: { label: string; prompt: string }[] = [
+const DEFAULT_BRIEFING_IDLE_CHIPS: { label: string; prompt: string; threadPreview?: string }[] = [
   { label: 'Suggest where to start', prompt: 'Suggest a good place for me to start today based on my briefing.' },
   { label: 'Summarise overnight', prompt: 'Summarise what changed overnight that I should care about today.' },
   { label: 'Just the top lead', prompt: 'Walk me through my single best lead to work right now.' },
@@ -252,17 +258,23 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
     if (pendingMessage?.text) {
       if (lastPendingNonceRef.current === pendingMessage.nonce) return;
       lastPendingNonceRef.current = pendingMessage.nonce;
-      void sendMessage(pendingMessage.text, pendingMessage.isHidden);
+      void sendMessage(pendingMessage.text, pendingMessage.isHidden, pendingMessage.threadPreview);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingMessage?.nonce]);
 
-  async function sendMessage(content: string, hidden?: boolean) {
+  async function sendMessage(content: string, hidden?: boolean, threadPreview?: string) {
     if (!content.trim() || isLoading) return;
     if (embedGlass) setBriefingSurfaceEngaged(true);
     setInput('');
 
-    const userMessage: Message = { role: 'user', content: content.trim() };
+    const trimmed = content.trim();
+    const preview = threadPreview?.trim();
+    const userMessage: Message = {
+      role: 'user',
+      content: trimmed,
+      ...(preview && preview !== trimmed ? { displayContent: preview } : {}),
+    };
     const pendingPlaceholder: Message = { role: 'assistant', content: '', isPending: true };
 
     // Hidden messages don't show a user bubble — agent appears to open the conversation
@@ -273,7 +285,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
       // Build history for the API (exclude the pending placeholder)
       const history: { role: 'user' | 'assistant'; content: string }[] = [
         ...messages.filter((m) => !m.isPending).map((m) => ({ role: m.role, content: m.content })),
-        { role: 'user', content: content.trim() },
+        { role: 'user', content: trimmed },
       ];
 
       const res = await fetch('/api/agent/chat', {
@@ -403,7 +415,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                   )}
                   style={!lightSetupChat && !todayChat ? { animation: 'arcova-msg-in 0.18s ease-out' } : undefined}
                 >
-                  {msg.content}
+                  {msg.displayContent ?? msg.content}
                 </div>
               </div>
             );
@@ -694,10 +706,8 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
         <div className="flex min-h-0 flex-1 flex-col justify-start px-1 pt-5 pb-2 sm:px-3 sm:pt-6 sm:pb-3">
           <div
             className={cn(
-              'flex shrink-0 flex-col items-center justify-center overflow-hidden transition-[max-height,opacity,margin] duration-300 ease-out',
-              showBriefingOrb
-                ? 'max-h-[min(17.5rem,42vh)] opacity-100'
-                : 'pointer-events-none max-h-0 opacity-0',
+              'flex shrink-0 flex-col items-center justify-center transition-[max-height,opacity,margin] duration-300 ease-out',
+              showBriefingOrb ? 'max-h-[min(17.5rem,42vh)] overflow-visible opacity-100' : 'pointer-events-none max-h-0 overflow-hidden opacity-0',
             )}
             aria-hidden={!showBriefingOrb}
           >
@@ -715,7 +725,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                     <button
                       key={chip.label}
                       type="button"
-                      onClick={() => sendMessage(chip.prompt)}
+                      onClick={() => sendMessage(chip.prompt, undefined, chip.threadPreview)}
                       disabled={isLoading}
                       className="inline-flex items-center gap-1.5 rounded-full border border-slate-200/90 bg-white/95 px-3.5 py-2 font-manrope text-sm font-semibold text-arcova-teal shadow-sm transition-colors hover:border-arcova-teal/35 hover:bg-slate-50/90 disabled:pointer-events-none disabled:opacity-40"
                     >
@@ -807,19 +817,12 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                   : 'rounded-[14px] border border-[rgba(13,53,71,0.07)] bg-white/70 px-3 py-[6px] focus-within:border-arcova-teal focus-within:bg-white focus-within:shadow-[0_0_0_4px_rgba(0,164,180,0.12)]',
             )}
           >
-            {embedGlass ? (
-              <button
-                type="button"
-                className="shrink-0 rounded-lg p-1 text-slate-400 transition-colors hover:bg-slate-100/90 hover:text-slate-600"
-                aria-label="Voice input"
-                title="Voice input coming soon"
-                onClick={() => inputRef.current?.focus()}
-              >
-                <Mic className="h-4 w-4" />
-              </button>
-            ) : (
-              <Sparkles className={cn('shrink-0', todayChat || lightSetupChat ? 'h-4 w-4 text-arcova-teal/45' : 'h-3.5 w-3.5 text-arcova-teal')} />
-            )}
+            <Sparkles
+              className={cn(
+                'shrink-0',
+                todayChat || lightSetupChat ? 'h-4 w-4 text-arcova-teal/45' : 'h-3.5 w-3.5 text-arcova-teal',
+              )}
+            />
             <input
               ref={inputRef}
               type="text"
@@ -835,8 +838,8 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
               placeholder={
                 embedGlass
                   ? messages.length > 0
-                    ? 'Ask a follow-up, or press space to talk…'
-                    : 'Ask anything, or press space to talk…'
+                    ? 'Ask a follow-up…'
+                    : 'Ask anything…'
                   : messages.length > 0
                     ? 'Ask a follow-up…'
                     : page === 'leads'
