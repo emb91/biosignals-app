@@ -13,6 +13,18 @@ import Image from 'next/image';
 import { supabase } from '@/lib/supabase';
 import { ROUTES } from '@/lib/routes';
 
+const REENRICH_LINKEDIN_LINES = [
+  'LinkedIn located ✓ Pulling logo, tagline, and followers from the public page…',
+  'Still working ✓ LinkedIn can take 20 to 40 seconds, hang tight…',
+  'Almost there ✓ Parsing location, specialties, and follower reach…',
+] as const;
+
+const REENRICH_SYNTHESIS_LINES = [
+  'Merging web, registry, and LinkedIn signals…',
+  'Condensing lists so your profile is easy to scan…',
+  'Mapping company type and therapy areas to our taxonomy…',
+] as const;
+
 const FIELD_MAP: Record<string, string> = {
   companyName: 'company_name',
   website: 'website',
@@ -309,11 +321,20 @@ export default function MyProfilePage() {
           setReenrichMsg('Website analysed ✓  Checking company database…');
           setReenrichPct(30);
         } else if (event === 'step_apollo') {
-          setReenrichMsg('Company data retrieved ✓  Scanning LinkedIn…');
+          setReenrichMsg('Company and web data in ✓ Resolving LinkedIn…');
           setReenrichPct(55);
+        } else if (event === 'step_linkedin') {
+          const found = Boolean(data.linkedin_found);
+          if (found) {
+            setReenrichMsg(REENRICH_LINKEDIN_LINES[0]);
+          } else {
+            setReenrichMsg('No public LinkedIn company URL found ✓ Enriching from site and registry only…');
+          }
         } else if (event === 'step_apify') {
-          setReenrichMsg('LinkedIn scanned ✓  Classifying company…');
+          setReenrichMsg('Sources merged ✓ Organizing profile…');
           setReenrichPct(75);
+        } else if (event === 'step_synthesis') {
+          setReenrichMsg(REENRICH_SYNTHESIS_LINES[0]);
         } else if (event === 'step_taxonomy') {
           setReenrichMsg('Classified ✓  Finishing up…');
           setReenrichPct(92);

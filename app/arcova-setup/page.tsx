@@ -1,11 +1,13 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, Suspense } from 'react';
 import { useRouter } from 'next/navigation';
 import SetupShell from '@/components/SetupShell';
 import SetupFlow from '@/components/SetupFlow';
 import { useAuth } from '@/context/AuthContext';
 import { useSetupState, getNextSetupPath } from '@/lib/use-setup-state';
+import { ROUTES } from '@/lib/routes';
+import { SetupGuidedNavProvider } from '@/context/SetupGuidedNavContext';
 
 export default function ArcovaSetupPage() {
   const { user, loading } = useAuth();
@@ -26,7 +28,7 @@ export default function ArcovaSetupPage() {
   useEffect(() => {
     if (setupLoading) return;
     const next = getNextSetupPath({ step1Complete, step2Complete });
-    if (next !== '/arcova-setup') {
+    if (next !== ROUTES.setup.arcova) {
       router.replace(next);
     }
   }, [setupLoading, step1Complete, step2Complete, router]);
@@ -61,19 +63,29 @@ export default function ArcovaSetupPage() {
   })();
 
   return (
-    <SetupShell
-      inSetup={true}
-      step={1}
-      setupUserGreeting={firstName || undefined}
-      hideSetupProgress={true}
-    >
-      <div className="flex min-h-0 flex-1 flex-col">
-        <SetupFlow
-          firstName={firstName || undefined}
-          email={user.email || undefined}
-          emailDomain={user.email?.split('@')[1] || undefined}
-        />
-      </div>
-    </SetupShell>
+    <SetupGuidedNavProvider>
+      <SetupShell
+        inSetup={true}
+        step={1}
+        setupUserGreeting={firstName || undefined}
+        hideSetupProgress={true}
+      >
+        <div className="flex min-h-0 flex-1 flex-col">
+          <Suspense
+            fallback={
+              <div className="flex flex-1 items-center justify-center py-20">
+                <div className="h-12 w-12 animate-spin rounded-full border-2 border-arcova-teal border-t-transparent" />
+              </div>
+            }
+          >
+            <SetupFlow
+              firstName={firstName || undefined}
+              email={user.email || undefined}
+              emailDomain={user.email?.split('@')[1] || undefined}
+            />
+          </Suspense>
+        </div>
+      </SetupShell>
+    </SetupGuidedNavProvider>
   );
 }

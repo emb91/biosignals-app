@@ -11,10 +11,7 @@ export type SetupState = {
   step1Complete: boolean;
   /** Step 2: at least one target company (ICP) defined */
   step2Complete: boolean;
-  /**
-   * Company profile + at least one ICP. Buying teams (persona rows) are scoped to an ICP
-   * (e.g. `/personas/new?icpId=…`), not a separate global onboarding gate.
-   */
+  /** Company profile + at least one ICP. Buying teams are edited on each ICP card. */
   setupComplete: boolean;
   loading: boolean;
 };
@@ -24,7 +21,7 @@ export type SetupState = {
  * Missing company or ICP: `/arcova-setup`. Otherwise the core funnel is done → import.
  */
 export function getNextSetupPath(state: Pick<SetupState, 'step1Complete' | 'step2Complete'>): string {
-  if (!state.step1Complete || !state.step2Complete) return '/arcova-setup';
+  if (!state.step1Complete || !state.step2Complete) return ROUTES.setup.arcova;
   return ROUTES.import;
 }
 

@@ -12,6 +12,7 @@ import {
   FUNDING_STAGE_OPTIONS,
   BUSINESS_AREA_OPTIONS,
   SENIORITY_LEVEL_OPTIONS,
+  INDUSTRY_OPTIONS,
 } from '@/lib/arcova-taxonomy';
 import {
   formatCurrencyShort,
@@ -19,6 +20,7 @@ import {
 } from '@/lib/funding-display';
 import { getSignalDisplayName } from '@/lib/signal-display-names';
 import { resolveCustomerSegments } from '@/lib/split-customer-segments';
+import { PLATFORM_CATEGORY_OPTIONS } from '@/lib/platform-category';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -503,7 +505,7 @@ function shortLabel(s: string): string {
 }
 
 
-function AddTagSelect({
+export function AddTagSelect({
   options,
   selected,
   onAdd,
@@ -641,20 +643,46 @@ export function ProfileCard({
     productsServices, services, technologies,
     employeeCount, employeeRange, followerCount, foundedYear,
     fundingStage, totalFundingUsd, hqCity, hqCountry,
+    industry,
   } = myCompany;
+
+  const industrySelectOptions = React.useMemo(() => {
+    const c = (industry ?? '').trim();
+    const base = [...INDUSTRY_OPTIONS] as string[];
+    if (c && !base.includes(c)) base.unshift(c);
+    return base;
+  }, [industry]);
+
+  const platformSelectOptions = React.useMemo(() => {
+    const c = (platformCategory ?? '').trim();
+    const base = [...PLATFORM_CATEGORY_OPTIONS];
+    if (c && !base.includes(c)) base.unshift(c);
+    return base;
+  }, [platformCategory]);
 
   const displayDomain = website?.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
   const visiblePlatformCategory = isSaasCompanyType(companyType) ? (platformCategory ?? '').trim() : '';
 
   const hasAbout =
     !!description?.[0] ||
-    !!companyType ||
+    !!(companyType || companyTypeDisplay) ||
     !!visiblePlatformCategory ||
     (therapeuticAreas?.length ?? 0) > 0 ||
-    (modalities?.length ?? 0) > 0;
+    (modalities?.length ?? 0) > 0 ||
+    (developmentStages?.length ?? 0) > 0;
   const hasCustomers = (customersWeServe?.length ?? 0) > 0 || (goodFit?.length ?? 0) > 0 || (badFit?.length ?? 0) > 0;
   const hasValueProps = (valuePropositions?.length ?? 0) > 0;
-  const hasFirmographics = !!(employeeCount || employeeRange || foundedYear || hqCity || fundingStage || totalFundingUsd != null || companyStatus);
+  const hasFirmographics = !!(
+    employeeCount ||
+    employeeRange ||
+    foundedYear ||
+    hqCity ||
+    hqCountry ||
+    fundingStage ||
+    totalFundingUsd != null ||
+    companyStatus ||
+    industry
+  );
   const hasSocial = !!(followerCount != null || linkedinUrl);
 
   const isLight = appearance === 'light';
@@ -780,13 +808,18 @@ export function ProfileCard({
                     <p className={bodyTextClass(isLight)}>{description![0]}</p>
                   )
                 )}
-                {(companyType || editMode) && (
+                {(companyType || companyTypeDisplay || editMode) && (
                   <div>
                     <p className={fieldLabelClass(isLight)}>Company type</p>
                     {editMode ? (
                       <select
                         value={companyType ?? ''}
-                        onChange={(e) => onMyCompanyChange?.('companyType', e.target.value || undefined)}
+                        onChange={(e) => {
+                          const v = e.target.value || undefined;
+                          onMyCompanyChange?.('companyType', v);
+                          onMyCompanyChange?.('companyTypeDisplay', undefined);
+                          if (!isSaasCompanyType(v)) onMyCompanyChange?.('platformCategory', undefined);
+                        }}
                         className={selectCls}
                       >
                         <option value="" className={optionMutedCls}>Select type…</option>
@@ -794,8 +827,8 @@ export function ProfileCard({
                           <option key={o.value} value={o.value} className={optionCls}>{o.value}</option>
                         ))}
                       </select>
-                    ) : companyType ? (
-                      <Tag label={companyType} />
+                    ) : (companyTypeDisplay || companyType) ? (
+                      <Tag label={String(companyTypeDisplay ?? companyType)} />
                     ) : null}
                   </div>
                 )}
@@ -803,14 +836,18 @@ export function ProfileCard({
                   <div>
                     <p className={fieldLabelClass(isLight)}>Platform category</p>
                     {editMode ? (
-                      <input
-                        type="text"
+                      <select
                         value={platformCategory ?? ''}
-                        onChange={(e) => onMyCompanyChange?.('platformCategory', e.target.value || undefined)}
-                        placeholder="e.g. Scientific Content Platform"
-                        maxLength={48}
-                        className={inputCls}
-                      />
+                        onChange={(e) =>
+                          onMyCompanyChange?.('platformCategory', e.target.value || undefined)
+                        }
+                        className={selectCls}
+                      >
+                        <option value="" className={optionMutedCls}>Select platform…</option>
+                        {platformSelectOptions.map((o) => (
+                          <option key={o} value={o} className={optionCls}>{o}</option>
+                        ))}
+                      </select>
                     ) : visiblePlatformCategory ? (
                       <Tag label={visiblePlatformCategory} />
                     ) : null}
@@ -892,6 +929,21 @@ export function ProfileCard({
               <SubSection key="firmographics" label="Firmographics" open={openSections.firmographics} onToggle={() => toggleSection('firmographics')} light={isLight}>
                 {editMode ? (
                   <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
+                    <div className="col-span-2">
+                      <p className={fieldLabelClass(isLight)}>Industry</p>
+                      <select
+                        value={industry ?? ''}
+                        onChange={(e) =>
+                          onMyCompanyChange?.('industry', e.target.value || undefined)
+                        }
+                        className={selectCls}
+                      >
+                        <option value="" className={optionMutedCls}>Select industry…</option>
+                        {industrySelectOptions.map((o) => (
+                          <option key={o} value={o} className={optionCls}>{o}</option>
+                        ))}
+                      </select>
+                    </div>
                     <div>
                       <p className={fieldLabelClass(isLight)}>Employees</p>
                       <input type="number" min={0} value={employeeCount ?? ''} placeholder={employeeRange ?? '—'}
@@ -937,6 +989,7 @@ export function ProfileCard({
                   </div>
                 ) : (
                   <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
+                    {industry && <Stat label="Industry" value={industry} />}
                     {(employeeCount || employeeRange) && (
                       <Stat label="Employees" value={employeeCount ? employeeCount.toLocaleString() : employeeRange!} />
                     )}

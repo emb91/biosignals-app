@@ -5,8 +5,10 @@
  * Events arrive in this order as each enrichment step completes:
  *   step_claude   (~5–10 s) — narrative fields from Claude web search
  *   step_apollo   (~5–10 s) — firmographics from Apollo (may arrive before claude)
- *   step_apify    (~15–25 s) — LinkedIn logo/tagline/followers (skipped if no LinkedIn URL)
- *   step_taxonomy (~25–30 s) — canonical taxonomy classification
+ *   step_linkedin  (instant) — LinkedIn URL found or skipped; Apify scrape follows if found
+ *   step_apify     (~15–25 s) — LinkedIn logo/tagline/followers (skipped if no LinkedIn URL)
+ *   step_synthesis (instant) — taxonomy + funding resolution in progress
+ *   step_taxonomy  (~25–30 s) — canonical taxonomy classification
  *   done          — full merged result (same shape as the non-streaming route)
  *
  * The non-streaming route (/api/analyze-example-company) is preserved and still works.
@@ -85,6 +87,8 @@ export async function POST(request: Request) {
             typeof narrative.linkedin_url === 'string' ? narrative.linkedin_url : null,
           );
 
+        emit('step_linkedin', { linkedin_found: Boolean(linkedinUrl) });
+
         // ── Step 3: Apify LinkedIn scrape ─────────────────────────────────────
         let apifyRaw: Record<string, unknown> | null = null;
         if (linkedinUrl) {
@@ -107,6 +111,8 @@ export async function POST(request: Request) {
           hq_city: apify.hq_city ?? null,
           hq_country: apify.hq_country ?? null,
         });
+
+        emit('step_synthesis', {});
 
         // ── Step 4: Taxonomy classification ──────────────────────────────────
         const companyName =

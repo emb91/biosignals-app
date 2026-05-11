@@ -1,15 +1,16 @@
 'use client';
-import { useEffect } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
 
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { ROUTES } from '@/lib/routes';
+
+/** Legacy URL: buying teams are edited on each ICP card (`/company-criteria`). */
 export default function ContactNewRedirect() {
   const router = useRouter();
-  const searchParams = useSearchParams();
 
   useEffect(() => {
-    const query = searchParams.toString();
-    router.replace(query ? `/personas/new?${query}` : '/personas/new');
-  }, [router, searchParams]);
+    router.replace(ROUTES.setup.icps);
+  }, [router]);
 
   return null;
 }

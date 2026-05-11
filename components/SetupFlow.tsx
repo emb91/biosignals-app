@@ -11,14 +11,18 @@
  * instant scripted narration + chip-select widgets.
  */
 
-import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
 import { parseSSEStream } from '@/lib/sse';
 import Image from 'next/image';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { ArcovaLoader } from '@/components/ArcovaLoader';
 import { AppAmbientBackground } from '@/components/AppAmbientBackground';
-import SetupProfilePanel, { type PanelCompanyData, type PanelPersonaData } from '@/components/SetupProfilePanel';
+import SetupProfilePanel, {
+  AddTagSelect,
+  type PanelCompanyData,
+  type PanelPersonaData,
+} from '@/components/SetupProfilePanel';
 import { useEnrichmentGuard } from '@/context/EnrichmentGuardContext';
 import {
   BUSINESS_AREA_OPTIONS,
@@ -29,9 +33,12 @@ import {
   MODALITY_OPTIONS,
   SENIORITY_LEVEL_OPTIONS,
   THERAPEUTIC_AREA_OPTIONS,
+  INDUSTRY_OPTIONS,
   employeeCountToSizeBucket,
   followerCountToFollowerBucket,
   canonicalizeFundingStage,
+  normalizeIndustrySelectValue,
+  selectOptionsWithCurrentValue,
 } from '@/lib/arcova-taxonomy';
 import type { TargetCompanyEnrichmentResult } from '@/lib/target-company-enrichment';
 import type { IcpSuggestion } from '@/app/api/suggest-icp-companies/route';
@@ -40,7 +47,9 @@ import { resolveCustomerSegments } from '@/lib/split-customer-segments';
 import { fetchLatestUserCompanyRow } from '@/lib/fetch-latest-user-company';
 import { ArcovaWelcomeOrb } from '@/components/ArcovaWelcomeOrb';
 import { ROUTES } from '@/lib/routes';
-import { Send, Sparkles, ChevronDown, ExternalLink, Check, Building2 } from 'lucide-react';
+import { useSetupGuidedNav } from '@/context/SetupGuidedNavContext';
+import { PLATFORM_CATEGORY_OPTIONS } from '@/lib/platform-category';
+import { Send, Sparkles, ChevronDown, ExternalLink, Check, Building2, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /** Funding, headcount + customer-segment context for buying-team inference */
@@ -145,6 +154,8 @@ type Phase =
   | 'analysis_loading'
   | 'analysis_results'
   | 'icp_suggestion'
+  /** Same onboarding prompt as customer_url_input, but glass chat + composer instead of the URL splash form. */
+  | 'customer_url_conversation'
   | 'customer_url_input'
   | 'customer_url_loading'
   | 'customer_url_review'
@@ -162,6 +173,12 @@ type Phase =
   | 'persona_seniority'
   | 'persona_saving'
   | 'done';
+
+/** UI-only phases that reuse another step's onboarding system prompt / tools. */
+function mapPhaseForOnboardingApi(phase: Phase): string {
+  if (phase === 'customer_url_conversation') return 'customer_url_input';
+  return phase;
+}
 
 // ── Scripted narration per field ───────────────────────────────────────────
 
@@ -234,7 +251,7 @@ const FINDINGS_SECTION_CONFIG = [
   { key: 'bad_fit', label: 'Companies that are not a good fit are' },
 ] as const;
 
-type EntryPoint = 'full' | 'target-company' | 'buying-group' | 'company-only';
+type EntryPoint = 'full' | 'target-company' | 'company-only';
 
 interface TargetCompanyProfile {
   id: string;
@@ -258,6 +275,20 @@ interface TargetCompanyProfile {
 
 const TYPING_MS = 18;
 
+/** Shown while Apify LinkedIn scrape runs (long-running; server has no finer-grained events). */
+const OWN_COMPANY_LINKEDIN_SCRAPE_LINES = [
+  'LinkedIn located ✓ Pulling logo, tagline, and followers from the public page…',
+  'Still working ✓ LinkedIn can take 20 to 40 seconds, hang tight…',
+  'Almost there ✓ Parsing location, specialties, and follower reach…',
+] as const;
+
+/** Shown while bullets are condensed and taxonomy runs after LinkedIn data lands. */
+const OWN_COMPANY_SYNTHESIS_LINES = [
+  'Merging web, registry, and LinkedIn signals…',
+  'Condensing lists so your profile is easy to scan…',
+  'Mapping company type and therapy areas to our taxonomy…',
+] as const;
+
 /** Full-area backdrop behind the chat column (setup flows only). Dark navy base, teal as accent. */
 const SETUP_CHAT_SURROUND =
   'bg-gradient-to-b from-slate-950 to-arcova-darkblue';
@@ -277,6 +308,33 @@ function visiblePlatformCategory(companyType?: string | null, platformCategory?:
 // ═══════════════════════════════════════════════════════════════════════════
 // Sub-components
 // ═══════════════════════════════════════════════════════════════════════════
+
+// ── Persistent "Step X of 3" eyebrow shown across every setup phase ─────────
+function StepEyebrow({ step }: { step: 0 | 1 | 2 }) {
+  const labels = ['Your company', 'Target companies', 'Buying teams'] as const;
+  return (
+    <div className="inline-flex items-center gap-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/50">
+      <span className="inline-flex items-center gap-[3px]">
+        {[0, 1, 2].map((i) => (
+          <span
+            key={i}
+            className={`h-[3px] rounded-full transition-all ${
+              i < step
+                ? 'w-3.5 bg-arcova-teal/55'
+                : i === step
+                  ? 'w-5 bg-arcova-teal'
+                  : 'w-3.5 bg-arcova-teal/15'
+            }`}
+          />
+        ))}
+      </span>
+      <span>
+        Step {step + 1} of 3
+        <span className="ml-2 normal-case tracking-normal text-arcova-navy/45">· {labels[step]}</span>
+      </span>
+    </div>
+  );
+}
 
 // ── Setup "My company" card (light glass, matches Setup.html design) ────────
 function SetupSection({
@@ -377,6 +435,43 @@ function SetupBullets({ items }: { items: string[] }) {
   );
 }
 
+const SETUP_SELECT =
+  'w-full cursor-pointer rounded-lg border border-arcova-navy/15 bg-white/85 px-3 py-2 text-[12.5px] text-arcova-navy outline-none transition-colors focus:border-arcova-teal/45 focus:bg-white focus:ring-2 focus:ring-arcova-teal/15';
+
+function multilineDraftToList(raw: string): string[] {
+  const lines = raw.split('\n').map((line) => line.trim());
+  while (lines.length > 0 && lines[lines.length - 1] === '') {
+    lines.pop();
+  }
+  return lines.filter(Boolean);
+}
+
+function SetupTaxonomyTag({
+  label,
+  editMode,
+  onRemove,
+}: {
+  label: string;
+  editMode: boolean;
+  onRemove?: () => void;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-arcova-teal/20 bg-arcova-teal/10 px-2.5 py-1 text-[11.5px] font-medium text-arcova-teal">
+      {label}
+      {editMode && onRemove && (
+        <button
+          type="button"
+          onClick={onRemove}
+          className="text-arcova-teal/50 transition-colors hover:text-arcova-teal"
+          aria-label={`Remove ${label}`}
+        >
+          <X className="h-2.5 w-2.5" />
+        </button>
+      )}
+    </span>
+  );
+}
+
 function formatSetupFunding(stage?: string, total?: number): string | undefined {
   if (!stage && total == null) return undefined;
   const fmtUsd = (usd: number) => {
@@ -390,9 +485,159 @@ function formatSetupFunding(stage?: string, total?: number): string | undefined 
   return total != null ? fmtUsd(total) : undefined;
 }
 
-function SetupMyCompanyCard({ data }: { data: import('@/components/SetupProfilePanel').PanelMyCompanyData }) {
+function SetupEditableText({
+  value,
+  multiline,
+  onChange,
+  placeholder,
+}: {
+  value: string;
+  multiline?: boolean;
+  onChange: (v: string) => void;
+  placeholder?: string;
+}) {
+  const common =
+    'w-full rounded-lg border border-arcova-navy/15 bg-white/85 px-3 py-2 text-[12.5px] text-arcova-navy outline-none transition-colors placeholder:text-arcova-navy/35 focus:border-arcova-teal/45 focus:bg-white focus:ring-2 focus:ring-arcova-teal/15';
+  if (multiline) {
+    return (
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        rows={3}
+        className={`${common} resize-y leading-[1.5]`}
+      />
+    );
+  }
+  return (
+    <input
+      type="text"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      className={common}
+    />
+  );
+}
+
+/** Lets users type digits and spaces freely; commits parsed integer on blur. */
+function SetupPositiveIntDraftField({
+  value,
+  onCommit,
+  placeholder,
+}: {
+  value?: number;
+  onCommit: (next: number | undefined) => void;
+  placeholder?: string;
+}) {
+  const common =
+    'w-full rounded-lg border border-arcova-navy/15 bg-white/85 px-3 py-2 text-[12.5px] text-arcova-navy outline-none transition-colors placeholder:text-arcova-navy/35 focus:border-arcova-teal/45 focus:bg-white focus:ring-2 focus:ring-arcova-teal/15';
+  const [draft, setDraft] = useState(() => (value != null ? String(value) : ''));
+  useEffect(() => {
+    setDraft(value != null ? String(value) : '');
+  }, [value]);
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        const t = draft.trim();
+        if (!t) {
+          onCommit(undefined);
+          return;
+        }
+        const digits = t.replace(/[^\d]/g, '');
+        if (!digits) {
+          onCommit(undefined);
+          return;
+        }
+        const n = Number(digits);
+        onCommit(Number.isFinite(n) && n > 0 ? n : undefined);
+      }}
+      placeholder={placeholder}
+      className={common}
+    />
+  );
+}
+
+function SetupEditableList({
+  items,
+  onChange,
+  placeholder,
+}: {
+  items: string[];
+  onChange: (next: string[]) => void;
+  placeholder?: string;
+}) {
+  const serialized = JSON.stringify(items);
+  const [draft, setDraft] = useState(() => items.join('\n'));
+  const prevSerialized = useRef(serialized);
+
+  useEffect(() => {
+    if (serialized !== prevSerialized.current) {
+      prevSerialized.current = serialized;
+      setDraft(items.join('\n'));
+    }
+  }, [serialized, items]);
+
+  return (
+    <textarea
+      value={draft}
+      onChange={(e) => {
+        const raw = e.target.value;
+        setDraft(raw);
+        onChange(multilineDraftToList(raw));
+      }}
+      placeholder={placeholder ?? 'One per line'}
+      rows={Math.max(3, Math.min(16, items.length + 2))}
+      spellCheck={false}
+      className="w-full resize-y rounded-lg border border-arcova-navy/15 bg-white/85 px-3 py-2 text-[12.5px] leading-[1.5] text-arcova-navy outline-none transition-colors placeholder:text-arcova-navy/35 focus:border-arcova-teal/45 focus:bg-white focus:ring-2 focus:ring-arcova-teal/15"
+    />
+  );
+}
+
+function SetupMyCompanyCard({
+  data,
+  editMode = false,
+  onChange,
+}: {
+  data: import('@/components/SetupProfilePanel').PanelMyCompanyData;
+  editMode?: boolean;
+  onChange?: (
+    field: keyof import('@/components/SetupProfilePanel').PanelMyCompanyData,
+    value: import('@/components/SetupProfilePanel').MyCompanyChangeValue,
+  ) => void;
+}) {
+  const set = <K extends keyof import('@/components/SetupProfilePanel').PanelMyCompanyData>(
+    field: K,
+    value: import('@/components/SetupProfilePanel').MyCompanyChangeValue,
+  ) => onChange?.(field, value);
+  const [newCompetitorUrl, setNewCompetitorUrl] = useState('');
   const domain = (data.website ?? '').replace(/^https?:\/\//, '').replace(/\/$/, '');
   const fundingLine = formatSetupFunding(data.fundingStage, data.totalFundingUsd);
+  const platformCategoryDisplay = visiblePlatformCategory(data.companyType, data.platformCategory);
+  const rawIndustry = (data.industry ?? '').trim();
+  const industrySelectValue = normalizeIndustrySelectValue(rawIndustry) || rawIndustry;
+  const industryOptions = selectOptionsWithCurrentValue(INDUSTRY_OPTIONS, industrySelectValue);
+  const platformOptions = selectOptionsWithCurrentValue(PLATFORM_CATEGORY_OPTIONS, data.platformCategory);
+  const industryDisplay = normalizeIndustrySelectValue(data.industry ?? '') || data.industry;
+
+  const commitNewCompetitor = () => {
+    const raw = newCompetitorUrl.trim();
+    if (!raw) return;
+    let url = raw;
+    if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+    let name = raw;
+    try {
+      name = new URL(url).hostname.replace(/^www\./, '');
+    } catch {
+      /* keep typed text as display name */
+    }
+    set('competitorsEnriched', [...(data.competitorsEnriched ?? []), { name, url }]);
+    setNewCompetitorUrl('');
+  };
   return (
     <article className="overflow-hidden rounded-[20px] border border-arcova-navy/10 bg-white/65 shadow-[0_18px_40px_-28px_rgba(13,53,71,0.15)] backdrop-blur-xl">
       {/* Card header */}
@@ -446,135 +691,368 @@ function SetupMyCompanyCard({ data }: { data: import('@/components/SetupProfileP
 
         {/* About */}
         <SetupSection label="About" defaultOpen>
-          {data.description && data.description.length > 0 && (
-            <p className="m-0 text-[12.5px] leading-[1.5] text-arcova-navy">
-              {data.description.join(' ')}
-            </p>
+          {editMode ? (
+            <SetupEditableText
+              multiline
+              value={(data.description ?? []).join('\n\n')}
+              onChange={(v) => set('description', v.split(/\n{2,}/).map((s) => s.trim()).filter(Boolean))}
+              placeholder="Describe what the company does"
+            />
+          ) : (
+            data.description && data.description.length > 0 && (
+              <p className="m-0 text-[12.5px] leading-[1.5] text-arcova-navy">
+                {data.description.join(' ')}
+              </p>
+            )
           )}
-          {(data.companyTypeDisplay || data.companyType) && (
-            <div>
-              <SetupSubLabel>Company type</SetupSubLabel>
-              <div className="mt-1.5">
-                <SetupTagRow items={[(data.companyTypeDisplay ?? data.companyType) as string]} />
-              </div>
+          <div>
+            <SetupSubLabel>Company type</SetupSubLabel>
+            <div className="mt-1.5">
+              {editMode ? (
+                <select
+                  value={data.companyType ?? ''}
+                  onChange={(e) => {
+                    const v = e.target.value || undefined;
+                    set('companyType', v);
+                    set('companyTypeDisplay', undefined);
+                    if (!isSaasCompanyType(v)) set('platformCategory', undefined);
+                  }}
+                  className={SETUP_SELECT}
+                >
+                  <option value="">Select type…</option>
+                  {COMPANY_TYPE_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.value}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                (data.companyTypeDisplay || data.companyType) && (
+                  <SetupTagRow items={[String(data.companyTypeDisplay ?? data.companyType)]} />
+                )
+              )}
             </div>
-          )}
-          {data.platformCategory && (
+          </div>
+          {isSaasCompanyType(data.companyType) && (editMode || !!platformCategoryDisplay) && (
             <div>
               <SetupSubLabel>Platform category</SetupSubLabel>
               <div className="mt-1.5">
-                <SetupTagRow items={[data.platformCategory]} />
+                {editMode ? (
+                  <select
+                    value={data.platformCategory ?? ''}
+                    onChange={(e) => set('platformCategory', e.target.value || undefined)}
+                    className={SETUP_SELECT}
+                  >
+                    <option value="">Select platform…</option>
+                    {platformOptions.map((o) => (
+                      <option key={o} value={o}>
+                        {o}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  platformCategoryDisplay && <SetupTagRow items={[platformCategoryDisplay]} />
+                )}
               </div>
+            </div>
+          )}
+          {((data.therapeuticAreas?.length ?? 0) > 0 || editMode) && (
+            <div>
+              <SetupSubLabel>Therapeutic areas</SetupSubLabel>
+              {(data.therapeuticAreas?.length ?? 0) > 0 && (
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {(data.therapeuticAreas ?? []).map((t) => (
+                    <SetupTaxonomyTag
+                      key={t}
+                      label={t}
+                      editMode={editMode}
+                      onRemove={
+                        editMode
+                          ? () =>
+                              set(
+                                'therapeuticAreas',
+                                (data.therapeuticAreas ?? []).filter((x) => x !== t),
+                              )
+                          : undefined
+                      }
+                    />
+                  ))}
+                </div>
+              )}
+              {editMode && (
+                <div className="mt-1.5">
+                  <AddTagSelect
+                    light
+                    options={TA_OPTIONS}
+                    selected={data.therapeuticAreas ?? []}
+                    onAdd={(v) =>
+                      set('therapeuticAreas', [...(data.therapeuticAreas ?? []), v])
+                    }
+                    placeholder="Add therapeutic area…"
+                  />
+                </div>
+              )}
+            </div>
+          )}
+          {((data.modalities?.length ?? 0) > 0 || editMode) && (
+            <div>
+              <SetupSubLabel>Modalities</SetupSubLabel>
+              {(data.modalities?.length ?? 0) > 0 && (
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {(data.modalities ?? []).map((m) => (
+                    <SetupTaxonomyTag
+                      key={m}
+                      label={m}
+                      editMode={editMode}
+                      onRemove={
+                        editMode
+                          ? () =>
+                              set('modalities', (data.modalities ?? []).filter((x) => x !== m))
+                          : undefined
+                      }
+                    />
+                  ))}
+                </div>
+              )}
+              {editMode && (
+                <div className="mt-1.5">
+                  <AddTagSelect
+                    light
+                    options={MODALITY_SELECTION_OPTIONS}
+                    selected={data.modalities ?? []}
+                    onAdd={(v) => set('modalities', [...(data.modalities ?? []), v])}
+                    placeholder="Add modality…"
+                  />
+                </div>
+              )}
+            </div>
+          )}
+          {((data.developmentStages?.length ?? 0) > 0 || editMode) && (
+            <div>
+              <SetupSubLabel>Development stages</SetupSubLabel>
+              {(data.developmentStages?.length ?? 0) > 0 && (
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {(data.developmentStages ?? []).map((s) => (
+                    <SetupTaxonomyTag
+                      key={s}
+                      label={s}
+                      editMode={editMode}
+                      onRemove={
+                        editMode
+                          ? () =>
+                              set(
+                                'developmentStages',
+                                (data.developmentStages ?? []).filter((x) => x !== s),
+                              )
+                          : undefined
+                      }
+                    />
+                  ))}
+                </div>
+              )}
+              {editMode && (
+                <div className="mt-1.5">
+                  <AddTagSelect
+                    light
+                    options={[...DEVELOPMENT_STAGE_OPTIONS] as string[]}
+                    selected={data.developmentStages ?? []}
+                    onAdd={(v) =>
+                      set('developmentStages', [...(data.developmentStages ?? []), v])
+                    }
+                    placeholder="Add development stage…"
+                  />
+                </div>
+              )}
             </div>
           )}
         </SetupSection>
 
         {/* Firmographics */}
         <SetupSection label="Firmographics">
-          <SetupKV
-            rows={[
-              data.industry ? (['Industry', data.industry] as [string, ReactNode]) : null,
-              data.hqCity || data.hqCountry
-                ? ([
-                    'Headquarters',
-                    [data.hqCity, data.hqCountry].filter(Boolean).join(', '),
-                  ] as [string, ReactNode])
-                : null,
-              data.foundedYear != null
-                ? (['Founded', String(data.foundedYear)] as [string, ReactNode])
-                : null,
-              data.employeeCount != null
-                ? (['Headcount', String(data.employeeCount)] as [string, ReactNode])
-                : data.employeeRange
-                  ? (['Headcount', data.employeeRange] as [string, ReactNode])
+          {editMode ? (
+            <div className="grid grid-cols-2 gap-x-5 gap-y-3">
+              <div>
+                <SetupSubLabel>Industry</SetupSubLabel>
+                <div className="mt-1.5">
+                  <select
+                    value={data.industry ?? ''}
+                    onChange={(e) => set('industry', e.target.value || undefined)}
+                    className={SETUP_SELECT}
+                  >
+                    <option value="">Select industry…</option>
+                    {industryOptions.map((o) => (
+                      <option key={o} value={o}>
+                        {o}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <SetupSubLabel>City</SetupSubLabel>
+                <div className="mt-1.5">
+                  <SetupEditableText value={data.hqCity ?? ''} onChange={(v) => set('hqCity', v)} />
+                </div>
+              </div>
+              <div>
+                <SetupSubLabel>Country</SetupSubLabel>
+                <div className="mt-1.5">
+                  <SetupEditableText value={data.hqCountry ?? ''} onChange={(v) => set('hqCountry', v)} />
+                </div>
+              </div>
+              <div>
+                <SetupSubLabel>Founded</SetupSubLabel>
+                <div className="mt-1.5">
+                  <SetupEditableText
+                    value={data.foundedYear != null ? String(data.foundedYear) : ''}
+                    onChange={(v) => set('foundedYear', v.trim() ? Number(v) : undefined)}
+                  />
+                </div>
+              </div>
+              <div>
+                <SetupSubLabel>Headcount</SetupSubLabel>
+                <div className="mt-1.5">
+                  <SetupEditableText
+                    value={data.employeeCount != null ? String(data.employeeCount) : ''}
+                    onChange={(v) => set('employeeCount', v.trim() ? Number(v) : undefined)}
+                  />
+                </div>
+              </div>
+              <div>
+                <SetupSubLabel>Funding stage</SetupSubLabel>
+                <div className="mt-1.5">
+                  <SetupEditableText value={data.fundingStage ?? ''} onChange={(v) => set('fundingStage', v)} />
+                </div>
+              </div>
+            </div>
+          ) : (
+            <SetupKV
+              rows={[
+                data.industry ? (['Industry', data.industry] as [string, ReactNode]) : null,
+                data.hqCity || data.hqCountry
+                  ? ([
+                      'Headquarters',
+                      [data.hqCity, data.hqCountry].filter(Boolean).join(', '),
+                    ] as [string, ReactNode])
                   : null,
-              fundingLine ? (['Funding', fundingLine] as [string, ReactNode]) : null,
-              data.companyStatus
-                ? (['Stage', data.companyStatus] as [string, ReactNode])
-                : null,
-            ].filter(Boolean) as Array<[string, ReactNode]>}
-          />
+                data.foundedYear != null
+                  ? (['Founded', String(data.foundedYear)] as [string, ReactNode])
+                  : null,
+                data.employeeCount != null
+                  ? (['Headcount', String(data.employeeCount)] as [string, ReactNode])
+                  : data.employeeRange
+                    ? (['Headcount', data.employeeRange] as [string, ReactNode])
+                    : null,
+                fundingLine ? (['Funding', fundingLine] as [string, ReactNode]) : null,
+                data.companyStatus
+                  ? (['Stage', data.companyStatus] as [string, ReactNode])
+                  : null,
+              ].filter(Boolean) as Array<[string, ReactNode]>}
+            />
+          )}
         </SetupSection>
 
         {/* What you sell */}
-        {((data.productsServices && data.productsServices.length > 0) ||
+        {(editMode ||
+          (data.productsServices && data.productsServices.length > 0) ||
           (data.services && data.services.length > 0) ||
-          (data.modalities && data.modalities.length > 0) ||
           (data.technologies && data.technologies.length > 0)) && (
           <SetupSection label="What you sell">
-            {data.productsServices && data.productsServices.length > 0 && (
-              <div>
-                <SetupSubLabel>Products</SetupSubLabel>
-                <div className="mt-1.5">
-                  <SetupTagRow items={data.productsServices} />
-                </div>
+            <div>
+              <SetupSubLabel>Products</SetupSubLabel>
+              <div className="mt-1.5">
+                {editMode ? (
+                  <SetupEditableList
+                    items={data.productsServices ?? []}
+                    onChange={(v) => set('productsServices', v)}
+                  />
+                ) : (
+                  data.productsServices && data.productsServices.length > 0 && (
+                    <SetupTagRow items={data.productsServices} />
+                  )
+                )}
               </div>
-            )}
-            {data.services && data.services.length > 0 && (
-              <div>
-                <SetupSubLabel>Services</SetupSubLabel>
-                <div className="mt-1.5">
-                  <SetupTagRow items={data.services} />
-                </div>
+            </div>
+            <div>
+              <SetupSubLabel>Services</SetupSubLabel>
+              <div className="mt-1.5">
+                {editMode ? (
+                  <SetupEditableList items={data.services ?? []} onChange={(v) => set('services', v)} />
+                ) : (
+                  data.services && data.services.length > 0 && <SetupTagRow items={data.services} />
+                )}
               </div>
-            )}
-            {data.modalities && data.modalities.length > 0 && (
-              <div>
-                <SetupSubLabel>Modalities</SetupSubLabel>
-                <div className="mt-1.5">
-                  <SetupTagRow items={data.modalities} />
-                </div>
+            </div>
+            <div>
+              <SetupSubLabel>Technologies</SetupSubLabel>
+              <div className="mt-1.5">
+                {editMode ? (
+                  <SetupEditableList items={data.technologies ?? []} onChange={(v) => set('technologies', v)} />
+                ) : (
+                  data.technologies && data.technologies.length > 0 && <SetupTagRow items={data.technologies} />
+                )}
               </div>
-            )}
-            {data.technologies && data.technologies.length > 0 && (
-              <div>
-                <SetupSubLabel>Technologies</SetupSubLabel>
-                <div className="mt-1.5">
-                  <SetupTagRow items={data.technologies} />
-                </div>
-              </div>
-            )}
+            </div>
           </SetupSection>
         )}
 
         {/* Value proposition */}
-        {data.valuePropositions && data.valuePropositions.length > 0 && (
+        {(editMode || (data.valuePropositions && data.valuePropositions.length > 0)) && (
           <SetupSection label="Value proposition">
-            <SetupBullets items={data.valuePropositions} />
+            {editMode ? (
+              <SetupEditableList
+                items={data.valuePropositions ?? []}
+                onChange={(v) => set('valuePropositions', v)}
+              />
+            ) : (
+              data.valuePropositions && <SetupBullets items={data.valuePropositions} />
+            )}
           </SetupSection>
         )}
 
         {/* Customers & competitors */}
-        {((data.customersWeServe && data.customersWeServe.length > 0) ||
+        {(editMode ||
+          (data.customersWeServe && data.customersWeServe.length > 0) ||
           (data.goodFit && data.goodFit.length > 0) ||
           (data.badFit && data.badFit.length > 0) ||
           (data.competitorsEnriched && data.competitorsEnriched.length > 0)) && (
           <SetupSection label="Customers & competitors">
-            {data.customersWeServe && data.customersWeServe.length > 0 && (
-              <div>
-                <SetupSubLabel>Customer segments</SetupSubLabel>
-                <div className="mt-1.5">
-                  <SetupTagRow items={data.customersWeServe} />
-                </div>
+            <div>
+              <SetupSubLabel>Customer segments</SetupSubLabel>
+              <div className="mt-1.5">
+                {editMode ? (
+                  <SetupEditableList
+                    items={data.customersWeServe ?? []}
+                    onChange={(v) => set('customersWeServe', v)}
+                  />
+                ) : (
+                  data.customersWeServe && data.customersWeServe.length > 0 && (
+                    <SetupTagRow items={data.customersWeServe} />
+                  )
+                )}
               </div>
-            )}
-            {data.goodFit && data.goodFit.length > 0 && (
-              <div>
-                <SetupSubLabel>Good fit</SetupSubLabel>
-                <div className="mt-1.5">
-                  <SetupBullets items={data.goodFit} />
-                </div>
+            </div>
+            <div>
+              <SetupSubLabel>Good fit</SetupSubLabel>
+              <div className="mt-1.5">
+                {editMode ? (
+                  <SetupEditableList items={data.goodFit ?? []} onChange={(v) => set('goodFit', v)} />
+                ) : (
+                  data.goodFit && data.goodFit.length > 0 && <SetupBullets items={data.goodFit} />
+                )}
               </div>
-            )}
-            {data.badFit && data.badFit.length > 0 && (
-              <div>
-                <SetupSubLabel>Not a fit</SetupSubLabel>
-                <div className="mt-1.5">
-                  <SetupBullets items={data.badFit} />
-                </div>
+            </div>
+            <div>
+              <SetupSubLabel>Not a fit</SetupSubLabel>
+              <div className="mt-1.5">
+                {editMode ? (
+                  <SetupEditableList items={data.badFit ?? []} onChange={(v) => set('badFit', v)} />
+                ) : (
+                  data.badFit && data.badFit.length > 0 && <SetupBullets items={data.badFit} />
+                )}
               </div>
-            )}
-            {data.competitorsEnriched && data.competitorsEnriched.length > 0 && (
+            </div>
+            {!editMode && data.competitorsEnriched && data.competitorsEnriched.length > 0 && (
               <div>
                 <SetupSubLabel>Competitors</SetupSubLabel>
                 <div className="mt-1.5">
@@ -644,10 +1122,13 @@ function TypingAssistantParagraphs({
   target,
   speed = TYPING_MS,
   paragraphClassName,
+  onTypingLayout,
 }: {
   target: string;
   speed?: number;
   paragraphClassName?: string;
+  /** Called after each typed character is laid out so the parent scroll region can follow. */
+  onTypingLayout?: () => void;
 }) {
   const ranges = useMemo(() => paragraphRangesForAssistant(target), [target]);
   const [shownLen, setShownLen] = useState(0);
@@ -663,6 +1144,10 @@ function TypingAssistantParagraphs({
     }, speed);
     return () => clearInterval(id);
   }, [target, speed]);
+
+  useLayoutEffect(() => {
+    onTypingLayout?.();
+  }, [shownLen, onTypingLayout]);
 
   if (!target) return null;
 
@@ -694,10 +1179,12 @@ function SetupAssistantMessageParagraphs({
   text,
   typing,
   paragraphClassName,
+  onTypingLayout,
 }: {
   text: string;
   typing?: boolean;
   paragraphClassName?: string;
+  onTypingLayout?: () => void;
 }) {
   const bubbles = setupAssistantBubbles(text);
 
@@ -713,7 +1200,14 @@ function SetupAssistantMessageParagraphs({
     );
   }
 
-  return <TypingAssistantParagraphs target={text} speed={TYPING_MS} paragraphClassName={paragraphClassName} />;
+  return (
+    <TypingAssistantParagraphs
+      target={text}
+      speed={TYPING_MS}
+      paragraphClassName={paragraphClassName}
+      onTypingLayout={onTypingLayout}
+    />
+  );
 }
 
 function normalizeForWelcomeDuplicate(s: string): string {
@@ -1190,9 +1684,13 @@ export default function SetupFlow({
   companyContactsMap = {},
 }: SetupFlowProps) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const guidedNav = useSetupGuidedNav();
 
   // ── UI state ─────────────────────────────────────────────────────────────
   const [phase, setPhase] = useState<Phase>('greeting');
+  const [bootstrapFinished, setBootstrapFinished] = useState(false);
   const [thread, setThread] = useState<DisplayMsg[]>([]);
   const [thinking, setThinking] = useState(true);
   const [inputEnabled, setInput] = useState(false);
@@ -1212,6 +1710,10 @@ export default function SetupFlow({
   const [partialOwnEnrichment, setPartialOwnEnrichment] = useState<Partial<Record<string, unknown>> | null>(null);
   const [targetEnrichStep, setTargetEnrichStep] = useState(0); // 0 = not started, 1–4 = step completed
   const [ownEnrichStep, setOwnEnrichStep] = useState(0);
+  const [ownEnrichLinkedinWait, setOwnEnrichLinkedinWait] = useState(false);
+  const [ownEnrichSynthesisWait, setOwnEnrichSynthesisWait] = useState(false);
+  const [customerUrlLinkedinWait, setCustomerUrlLinkedinWait] = useState(false);
+  const [customerUrlSynthesisWait, setCustomerUrlSynthesisWait] = useState(false);
   const [buyingLoadPct, setBuyingLoadPct] = useState(18);
   const [analysisError, setAnalysisError] = useState('');
   const [pendingTransition, setPendingTransition] = useState<{
@@ -1273,6 +1775,8 @@ export default function SetupFlow({
   const lastAnalyzedUrlRef = useRef<string | null>(null);
   const analysisAbortRef = useRef<AbortController | null>(null);
   const preEditDataRef = useRef<Record<string, unknown> | null>(null);
+  /** Dedupes applying the same `?step=` hop from the sidebar while staying on /arcova-setup. */
+  const urlStepAppliedRef = useRef<string | null>(null);
 
   // ── Enrichment navigation guard ────────────────────────────────────────────
   const { setIsEnriching } = useEnrichmentGuard();
@@ -1301,12 +1805,25 @@ export default function SetupFlow({
   }, [firstName]);
 
   const bottomRef = useRef<HTMLDivElement>(null);
+  const mainChatScrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const welcomeInputRef = useRef<HTMLInputElement>(null);
   const setupGreetingThreadRef = useRef<HTMLDivElement>(null);
+
+  const scrollSetupGreetingThreadToBottom = useCallback(() => {
+    const el = setupGreetingThreadRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, []);
+
+  const scrollMainChatToBottom = useCallback(() => {
+    const el = mainChatScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, []);
   const availableCompanyProfiles = companyProfiles.filter((company) => !companyContactsMap[company.id]);
   const resolvedCompletePath =
-    onCompletePath ?? (entryPoint === 'full' ? '/import' : entryPoint === 'target-company' ? '/company-criteria' : entryPoint === 'company-only' ? '/my-profile' : '/personas');
+    onCompletePath ?? (entryPoint === 'full' ? '/import' : entryPoint === 'target-company' ? '/company-criteria' : entryPoint === 'company-only' ? '/my-profile' : ROUTES.setup.icps);
 
   const parseSectionItems = useCallback((value: unknown): string[] => {
     if (Array.isArray(value)) {
@@ -1348,6 +1865,7 @@ export default function SetupFlow({
   useEffect(() => {
     const tickClock =
       phase === 'greeting' ||
+      phase === 'customer_url_conversation' ||
       phase === 'analysis_loading' ||
       phase === 'customer_url_loading' ||
       phase === 'buying_team_loading';
@@ -1356,6 +1874,49 @@ export default function SetupFlow({
     const id = setInterval(() => setSetupGreetingChatClock(new Date()), 30_000);
     return () => clearInterval(id);
   }, [phase]);
+
+  /** Rotate status text during long Apify LinkedIn scrape (my company). */
+  useEffect(() => {
+    if (phase !== 'analysis_loading' || !ownEnrichLinkedinWait) return;
+    let i = 0;
+    const id = setInterval(() => {
+      i = (i + 1) % OWN_COMPANY_LINKEDIN_SCRAPE_LINES.length;
+      setLoadMsg(OWN_COMPANY_LINKEDIN_SCRAPE_LINES[i]);
+    }, 5200);
+    return () => clearInterval(id);
+  }, [phase, ownEnrichLinkedinWait]);
+
+  /** Rotate status during bullet condense + taxonomy (my company). */
+  useEffect(() => {
+    if (phase !== 'analysis_loading' || !ownEnrichSynthesisWait) return;
+    let i = 0;
+    const id = setInterval(() => {
+      i = (i + 1) % OWN_COMPANY_SYNTHESIS_LINES.length;
+      setLoadMsg(OWN_COMPANY_SYNTHESIS_LINES[i]);
+    }, 3800);
+    return () => clearInterval(id);
+  }, [phase, ownEnrichSynthesisWait]);
+
+  /** Same rotation for target-company enrichment glass UI. */
+  useEffect(() => {
+    if (phase !== 'customer_url_loading' || !customerUrlLinkedinWait) return;
+    let i = 0;
+    const id = setInterval(() => {
+      i = (i + 1) % OWN_COMPANY_LINKEDIN_SCRAPE_LINES.length;
+      setCustomerUrlLoadMsg(OWN_COMPANY_LINKEDIN_SCRAPE_LINES[i]);
+    }, 5200);
+    return () => clearInterval(id);
+  }, [phase, customerUrlLinkedinWait]);
+
+  useEffect(() => {
+    if (phase !== 'customer_url_loading' || !customerUrlSynthesisWait) return;
+    let i = 0;
+    const id = setInterval(() => {
+      i = (i + 1) % OWN_COMPANY_SYNTHESIS_LINES.length;
+      setCustomerUrlLoadMsg(OWN_COMPANY_SYNTHESIS_LINES[i]);
+    }, 3800);
+    return () => clearInterval(id);
+  }, [phase, customerUrlSynthesisWait]);
 
   useEffect(() => {
     if (phase !== 'buying_team_loading') return;
@@ -1483,7 +2044,7 @@ export default function SetupFlow({
           messages: historyRef.current,
           firstName: firstNameRef.current,
           mode,
-          phase,
+          phase: mapPhaseForOnboardingApi(phase),
           context: {
             entryPoint,
             selectedCompanyName: selectedCompanyName ?? selectedCompanyRef.current?.name ?? null,
@@ -1998,7 +2559,7 @@ export default function SetupFlow({
   // ── Handle analysis results confirmed ────────────────────────────────────
 
   const handleResultsConfirmed = useCallback(async () => {
-    pushText('user', 'Looks right');
+    pushText('user', 'Looks good');
     setThread((p) => p.filter((m) => m.kind !== 'results'));
 
     if (entryPoint === 'company-only') {
@@ -2048,16 +2609,14 @@ export default function SetupFlow({
       return;
     }
 
+    historyRef.current = [...historyRef.current, { role: 'user', content: 'Looks good' }];
+    setPhase('customer_url_conversation');
+    setInput(false);
     const { displayParts } = await askClaude({
-      mode: 'narration',
-      extra: {
-        role: 'user',
-        content:
-          "[System: the user confirmed their own company profile looks right. Transition to step 2 in one short sentence — something like: \"Great, now let's build your target company list. Drop in a URL — a dream account or a company that looks like your best customer — and I'll profile it.\" Conversational, no bullet points, max 2 sentences.]",
-      },
+      mode: 'conversation',
+      phase: 'customer_url_conversation',
     });
     if (displayParts.length) await sayBeats(displayParts);
-    setPhase('customer_url_input');
     setInput(true);
   }, [askClaude, editingFindingsData, entryPoint, icpSuggestions, resolvedCompletePath, router]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -2093,11 +2652,47 @@ export default function SetupFlow({
     }
   }, []);
 
+  const getLatestResultsData = useCallback((): Record<string, unknown> | null => {
+    for (let i = thread.length - 1; i >= 0; i -= 1) {
+      const message = thread[i];
+      if (message.kind === 'results') return message.data;
+    }
+    return null;
+  }, [thread]);
+
   // ── Progress step navigation ──────────────────────────────────────────────
 
   const handleGoToStep = useCallback(async (stepIndex: number) => {
     if (stepIndex === 0) {
-      // Back to profile — restart own company URL
+      const latestProfile = editingFindingsData ?? getLatestResultsData();
+      const rec = latestProfile && typeof latestProfile === 'object'
+        ? (latestProfile as Record<string, unknown>)
+        : null;
+      const hasCompanyProfile = Boolean(
+        rec
+        && (typeof rec.id === 'string'
+          || typeof rec.company_name === 'string'
+          || typeof rec.website === 'string'
+          || lastAnalyzedUrlRef.current),
+      );
+
+      if (hasCompanyProfile && rec) {
+        setEditingFindingsData({ ...rec });
+        setEditingFindings(false);
+        const { displayParts } = await askClaude({
+          mode: 'narration',
+          extra: {
+            role: 'user',
+            content: '[System: the user went back to step 1 to review their own company. One sentence: acknowledge that their company profile is below so they can confirm it, tweak anything that is off, or start over if they want a clean run.]',
+          },
+        });
+        if (displayParts.length) await sayBeats(displayParts);
+        setPhase('analysis_results');
+        setInput(false);
+        return;
+      }
+
+      // No saved profile yet: restart URL capture
       icpIdRef.current = null;
       const { displayParts } = await askClaude({
         mode: 'narration',
@@ -2110,7 +2705,25 @@ export default function SetupFlow({
       setPhase('greeting');
       setInput(true);
     } else if (stepIndex === 1) {
-      if (icpSuggestions.length > 0) {
+      const hasTargetReview =
+        enrichedTargetCompany != null
+        || icpIdRef.current != null
+        || (Boolean(lastTargetUrlRef.current)
+          && (Boolean(reviewedCompanyName?.trim()) || Boolean(companyRef.current.companyType)));
+
+      if (hasTargetReview) {
+        const { displayParts } = await askClaude({
+          mode: 'narration',
+          extra: {
+            role: 'user',
+            content: '[System: the user is revisiting their target company and ICP criteria. One sentence: acknowledge that the target profile is below so they can confirm, tweak, or try a different company.]',
+          },
+        });
+        if (displayParts.length) await sayBeats(displayParts);
+        setIcpEditMode(false);
+        setPhase('customer_url_review');
+        setInput(false);
+      } else if (icpSuggestions.length > 0) {
         const { displayParts } = await askClaude({
           mode: 'narration',
           extra: {
@@ -2129,7 +2742,7 @@ export default function SetupFlow({
           },
         });
         if (displayParts.length) await sayBeats(displayParts);
-        setPhase('customer_url_input');
+        setPhase('customer_url_conversation');
         setInput(true);
       }
     } else if (stepIndex === 2) {
@@ -2144,12 +2757,10 @@ export default function SetupFlow({
       setPhase('buying_team_review');
       setInput(false);
     }
-  }, [askClaude, icpSuggestions]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [askClaude, editingFindingsData, enrichedTargetCompany, getLatestResultsData, icpSuggestions, reviewedCompanyName, sayBeats]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
   const handleResumeRestart = useCallback(async () => {
-    pushText('user', 'Start again');
-
     // Delete ICP from DB
     const icpId = icpIdRef.current;
     if (icpId) {
@@ -2187,6 +2798,16 @@ export default function SetupFlow({
     setEditingFindings(false);
     setEditingFindingsData(null);
     setThread([]);
+    historyRef.current = [];
+    setOwnEnrichLinkedinWait(false);
+    setOwnEnrichSynthesisWait(false);
+    setCustomerUrlLinkedinWait(false);
+    setCustomerUrlSynthesisWait(false);
+
+    // Jump to greeting before the onboarding API toggles thinking — avoids the dark interim shell
+    // (`thinking && thread.length === 0`) while phase was still analysis_results.
+    setPhase('greeting');
+    setInput(false);
 
     const { displayParts } = await askClaude({
       mode: 'narration',
@@ -2196,7 +2817,6 @@ export default function SetupFlow({
       },
     });
     if (displayParts.length) await sayBeats(displayParts);
-    setPhase('greeting');
     setInput(true);
   }, [askClaude, editingFindingsData]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -2212,7 +2832,7 @@ export default function SetupFlow({
         await handleResumeRestart();
         break;
       case 'proceed_to_customer_url':
-        setPhase('customer_url_input');
+        setPhase('customer_url_conversation');
         setInput(true);
         break;
       case 'confirm_own_company':
@@ -2233,6 +2853,8 @@ export default function SetupFlow({
     setCustomerUrlLoadMsg('Researching the company…');
     setPartialTargetEnrichment(null);
     setTargetEnrichStep(0);
+    setCustomerUrlLinkedinWait(false);
+    setCustomerUrlSynthesisWait(false);
 
     try {
       const res = await fetch('/api/analyze-example-company-stream', {
@@ -2252,7 +2874,7 @@ export default function SetupFlow({
             description: Array.isArray(eventData.description) ? (eventData.description as string[]) : null,
           });
         } else if (event === 'step_apollo') {
-          setCustomerUrlLoadMsg('Company data retrieved ✓  Scanning LinkedIn…');
+          setCustomerUrlLoadMsg('Company and web data in ✓ Resolving LinkedIn…');
           setTargetEnrichStep(2);
           setPartialTargetEnrichment((prev) => ({
             ...prev,
@@ -2263,8 +2885,18 @@ export default function SetupFlow({
             founded_year: typeof eventData.company_founded_year === 'number' ? eventData.company_founded_year : null,
             funding_stage: (eventData.company_funding_stage as string) || null,
           }));
+        } else if (event === 'step_linkedin') {
+          const found = Boolean(eventData.linkedin_found);
+          setCustomerUrlLinkedinWait(found);
+          setCustomerUrlSynthesisWait(false);
+          if (found) {
+            setCustomerUrlLoadMsg(OWN_COMPANY_LINKEDIN_SCRAPE_LINES[0]);
+          } else {
+            setCustomerUrlLoadMsg('No public LinkedIn company URL found ✓ Enriching from site and registry only…');
+          }
         } else if (event === 'step_apify') {
-          setCustomerUrlLoadMsg('LinkedIn scanned ✓  Classifying company…');
+          setCustomerUrlLinkedinWait(false);
+          setCustomerUrlLoadMsg('Sources merged ✓ Organizing profile…');
           setTargetEnrichStep(3);
           setPartialTargetEnrichment((prev) => ({
             ...prev,
@@ -2272,7 +2904,11 @@ export default function SetupFlow({
             tagline: (eventData.tagline as string) || null,
             follower_count: typeof eventData.follower_count === 'number' ? eventData.follower_count : null,
           }));
+        } else if (event === 'step_synthesis') {
+          setCustomerUrlSynthesisWait(true);
+          setCustomerUrlLoadMsg(OWN_COMPANY_SYNTHESIS_LINES[0]);
         } else if (event === 'step_taxonomy') {
+          setCustomerUrlSynthesisWait(false);
           setCustomerUrlLoadMsg('Classified ✓  Finishing up…');
           setTargetEnrichStep(4);
         } else if (event === 'done') {
@@ -2337,7 +2973,7 @@ export default function SetupFlow({
       setInput(true);
     } catch {
       await say("Couldn't analyse that URL — check it's correct and try again.");
-      setPhase('customer_url_input');
+      setPhase('customer_url_conversation');
       setInput(true);
     }
   }, [askClaude]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -2357,8 +2993,12 @@ export default function SetupFlow({
     setPartialTargetEnrichment(null);
     setOwnEnrichStep(0);
     setTargetEnrichStep(0);
+    setOwnEnrichLinkedinWait(false);
+    setOwnEnrichSynthesisWait(false);
+    setCustomerUrlLinkedinWait(false);
+    setCustomerUrlSynthesisWait(false);
     if (phase === 'customer_url_loading') {
-      setPhase('customer_url_input');
+      setPhase('customer_url_conversation');
       return;
     }
     // Clear thread so welcome card is shown again (hasUserMsg → false)
@@ -2385,6 +3025,8 @@ export default function SetupFlow({
     setLoadMsg('Researching your company…');
     setPartialOwnEnrichment(null);
     setOwnEnrichStep(0);
+    setOwnEnrichLinkedinWait(false);
+    setOwnEnrichSynthesisWait(false);
 
     try {
       const res = await fetch('/api/analyze-and-store-stream', {
@@ -2407,7 +3049,7 @@ export default function SetupFlow({
             description: Array.isArray(eventData.description) ? eventData.description : null,
           });
         } else if (event === 'step_apollo') {
-          setLoadMsg('Company data retrieved ✓  Scanning LinkedIn…');
+          setLoadMsg('Company and web data in ✓ Resolving LinkedIn…');
           setOwnEnrichStep(2);
           setPartialOwnEnrichment((prev) => ({
             ...prev,
@@ -2417,8 +3059,18 @@ export default function SetupFlow({
             hq_country: (eventData.company_hq_country as string) || null,
             funding_stage: (eventData.company_funding_stage as string) || null,
           }));
+        } else if (event === 'step_linkedin') {
+          const found = Boolean(eventData.linkedin_found);
+          setOwnEnrichLinkedinWait(found);
+          setOwnEnrichSynthesisWait(false);
+          if (found) {
+            setLoadMsg(OWN_COMPANY_LINKEDIN_SCRAPE_LINES[0]);
+          } else {
+            setLoadMsg('No public LinkedIn company URL found ✓ Enriching from site and registry only…');
+          }
         } else if (event === 'step_apify') {
-          setLoadMsg('LinkedIn scanned ✓  Classifying company…');
+          setOwnEnrichLinkedinWait(false);
+          setLoadMsg('Sources merged ✓ Organizing profile…');
           setOwnEnrichStep(3);
           setPartialOwnEnrichment((prev) => ({
             ...prev,
@@ -2426,7 +3078,11 @@ export default function SetupFlow({
             tagline: (eventData.tagline as string) || null,
             follower_count: typeof eventData.follower_count === 'number' ? eventData.follower_count : null,
           }));
+        } else if (event === 'step_synthesis') {
+          setOwnEnrichSynthesisWait(true);
+          setLoadMsg(OWN_COMPANY_SYNTHESIS_LINES[0]);
         } else if (event === 'step_taxonomy') {
+          setOwnEnrichSynthesisWait(false);
           setLoadMsg('Classified ✓  Finishing up…');
           setOwnEnrichStep(4);
         } else if (event === 'done') {
@@ -2512,14 +3168,6 @@ export default function SetupFlow({
     if (u) void runAnalysis(u, true);
   }, [runAnalysis]);
 
-  const getLatestResultsData = useCallback((): Record<string, unknown> | null => {
-    for (let i = thread.length - 1; i >= 0; i -= 1) {
-      const message = thread[i];
-      if (message.kind === 'results') return message.data;
-    }
-    return null;
-  }, [thread]);
-
   const handleMyCompanyChange = useCallback((
     field: keyof import('@/components/SetupProfilePanel').PanelMyCompanyData,
     value: import('@/components/SetupProfilePanel').MyCompanyChangeValue,
@@ -2549,6 +3197,7 @@ export default function SetupFlow({
       hqCity: 'hq_city',
       hqCountry: 'hq_country',
       companyStatus: 'company_status',
+      industry: 'industry',
       companyName: 'company_name',
       website: 'website',
       tagline: 'tagline',
@@ -2617,7 +3266,7 @@ export default function SetupFlow({
     setSavedIcpName('');
     companyRef.current.signals = [];
     lastTargetUrlRef.current = null;
-    setPhase('customer_url_input');
+    setPhase('customer_url_conversation');
     setInput(true);
     await say('Profile deleted. Drop in a URL or company name and I\'ll build a fresh one.');
   }, [say]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -2795,7 +3444,12 @@ export default function SetupFlow({
     pushText('user', text);
 
     const response = await askClaude({
-      mode: phase === 'greeting' || phase === 'customer_url_input' ? 'conversation' : 'phase_help',
+      mode:
+        phase === 'greeting' ||
+        phase === 'customer_url_input' ||
+        phase === 'customer_url_conversation'
+          ? 'conversation'
+          : 'phase_help',
       phase,
       extra: { role: 'user', content: text },
     });
@@ -2806,9 +3460,10 @@ export default function SetupFlow({
     );
 
     if (beginAnalysis?.website_url) {
-      // Skip the chat window — go straight to analysis loading
+      // Skip dedicated URL splash when user is already in the glass chat for target ICP
       const isCustomer =
         phase === 'customer_url_input' ||
+        phase === 'customer_url_conversation' ||
         beginAnalysis.analysis_type === 'target_customer';
       if (isCustomer) {
         await handleCustomerUrlAnalyse(beginAnalysis.website_url);
@@ -2839,6 +3494,7 @@ export default function SetupFlow({
     startedRef.current = true;
 
     (async () => {
+      try {
       if (entryPoint === 'full') {
         let bootstrapExampleEnrichment: TargetCompanyEnrichmentResult | null = null;
         // Decision tree: check what the user has already completed and resume from the right step.
@@ -2940,7 +3596,7 @@ export default function SetupFlow({
             },
           });
           if (displayParts.length) await sayBeats(displayParts);
-          setPhase('customer_url_input');
+          setPhase('customer_url_conversation');
           setInput(true);
           return;
         }
@@ -3098,7 +3754,7 @@ export default function SetupFlow({
             },
           });
           if (dp3.length) await sayBeats(dp3);
-          setPhase('customer_url_input');
+          setPhase('customer_url_conversation');
           setInput(true);
           return;
         }
@@ -3128,44 +3784,13 @@ export default function SetupFlow({
           },
         });
         if (displayParts.length) await sayBeats(displayParts);
-        setPhase('customer_url_input');
+        setPhase('customer_url_conversation');
         setInput(true);
         return;
       }
-
-      // buying-group: needs an ICP row to attach the persona to
-      if (availableCompanyProfiles.length === 0) {
-        const { displayParts } = await askClaude({
-          mode: 'narration',
-          extra: {
-            role: 'user',
-            content:
-              '[System: There is no target company profile available yet for a buying group. Two short sentences: explain they need a target company profile first, and that you will send them to create one.]',
-          },
-        });
-        if (displayParts.length) await sayBeats(displayParts);
-        setPhase('done');
-        setTimeout(() => router.push(ROUTES.setup.newIcp), 2200);
-        return;
+    } finally {
+        setBootstrapFinished(true);
       }
-
-      if (availableCompanyProfiles.length === 1) {
-        const co = availableCompanyProfiles[0];
-        await startBuyingGroupForCompany(co);
-        return;
-      }
-
-      const { displayParts } = await askClaude({
-        mode: 'narration',
-        extra: {
-          role: 'user',
-          content:
-            '[System: The user has more than one target company profile that still needs a buying group. Two short sentences: ask them to pick which profile below, then they will define the full buying group for it.]',
-        },
-      });
-      if (displayParts.length) await sayBeats(displayParts);
-      setPhase('company_select');
-      setInput(true);
     })();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -3193,6 +3818,7 @@ export default function SetupFlow({
   const showChatBar =
     phase === 'greeting' ||
     phase === 'customer_url_input' ||
+    phase === 'customer_url_conversation' ||
     phase === 'company_select' ||
     phase === 'company_type' ||
     phase === 'company_size' ||
@@ -3238,13 +3864,49 @@ export default function SetupFlow({
 
   const SETUP_STEPS = [
     { label: 'Your company', phases: ['greeting', 'analysis_loading', 'analysis_results'] as Phase[] },
-    { label: 'Target companies', phases: ['icp_suggestion', 'customer_url_input', 'customer_url_loading', 'customer_url_review', 'company_type', 'company_size', 'company_ta', 'company_modality', 'company_stage', 'company_funding', 'company_saving'] as Phase[] },
+    { label: 'Target companies', phases: ['icp_suggestion', 'customer_url_input', 'customer_url_conversation', 'customer_url_loading', 'customer_url_review', 'company_type', 'company_size', 'company_ta', 'company_modality', 'company_stage', 'company_funding', 'company_saving'] as Phase[] },
     {
       label: 'Buying teams',
       phases: ['buying_team_loading', 'buying_team_review', 'persona_functions', 'persona_seniority', 'persona_saving', 'done'] as Phase[],
     },
   ];
   const currentStepIndex = SETUP_STEPS.findIndex((s) => s.phases.includes(phase));
+
+  useEffect(() => {
+    if (!guidedNav || entryPoint !== 'full') return;
+    if (currentStepIndex < 0) return;
+    guidedNav.reportStep(currentStepIndex);
+  }, [guidedNav, entryPoint, currentStepIndex]);
+
+  useEffect(() => {
+    if (entryPoint !== 'full' || !bootstrapFinished) return;
+    if (pathname !== ROUTES.setup.arcova) return;
+    if (currentStepIndex < 0) return;
+    const key = currentStepIndex === 0 ? 'company' : currentStepIndex === 1 ? 'target' : 'buying';
+    if (searchParams.get('step') === key) return;
+    router.replace(`${pathname}?step=${key}`, { scroll: false });
+  }, [entryPoint, bootstrapFinished, currentStepIndex, pathname, router, searchParams]);
+
+  /** Sidebar / deep link: `/arcova-setup?step=company|target|buying` jumps after bootstrap hydrates local state. */
+  useEffect(() => {
+    if (!bootstrapFinished || entryPoint !== 'full') return;
+    const raw = searchParams.get('step');
+    if (!raw) {
+      urlStepAppliedRef.current = null;
+      return;
+    }
+    const idx = raw === 'company' ? 0 : raw === 'target' ? 1 : raw === 'buying' ? 2 : null;
+    if (idx == null) return;
+    const key = `${raw}:${idx}`;
+    if (currentStepIndex === idx) {
+      urlStepAppliedRef.current = key;
+      return;
+    }
+    if (urlStepAppliedRef.current === key) return;
+    urlStepAppliedRef.current = key;
+    void handleGoToStep(idx);
+  }, [bootstrapFinished, entryPoint, searchParams, handleGoToStep, currentStepIndex]);
+
   const showProgress = (entryPoint === 'full') && currentStepIndex >= 0;
   const isCustomerUrlReview = phase === 'customer_url_review';
   const isReviewValid =
@@ -3294,7 +3956,7 @@ export default function SetupFlow({
       phase === 'analysis_loading' || phase === 'customer_url_loading' || phase === 'buying_team_loading';
     if (phase === 'greeting') {
       if (!visibleMessages.some((m) => m.role === 'user')) return;
-    } else if (!enrichGlass) {
+    } else if (!enrichGlass && phase !== 'customer_url_conversation') {
       return;
     }
     const el = setupGreetingThreadRef.current;
@@ -3436,11 +4098,12 @@ export default function SetupFlow({
   const welcomeChatPart1 = `Hi ${firstName || 'there'}, let's get you set up. `;
   const welcomeChatPart2 = `First, what's your company's website?`;
 
-  // Phase: greeting
+  // Phase: greeting, or step-2 target ICP as a continuation of the same glass agent window
   // • Before the user sends anything: welcome card (orb + headline + URL input).
   // • After the first user message: same 460px shell, in-place thread + Today-style composer (no separate header chrome).
-  if (phase === 'greeting') {
-    const hasUserMsg = visibleMessages.some((m) => m.role === 'user');
+  if (phase === 'greeting' || phase === 'customer_url_conversation') {
+    const hasUserMsg =
+      visibleMessages.some((m) => m.role === 'user') || phase === 'customer_url_conversation';
     // Opening beats are appended to `thread` on mount while the welcome card shows static headline copy.
     // In chat mode, list only messages from the first user turn so the UI matches what the user experienced.
     const firstGreetingUserIdx = visibleMessages.findIndex((m) => m.role === 'user');
@@ -3457,6 +4120,21 @@ export default function SetupFlow({
     return (
       <div className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-4 py-16">
         <AppAmbientBackground />
+        <div className="absolute left-0 right-0 top-0 z-20 flex justify-center px-6 pt-6 sm:px-10">
+          <div className="flex w-full max-w-[1080px] flex-wrap items-center gap-3">
+            {phase === 'customer_url_conversation' && entryPoint === 'full' && (
+              <button
+                type="button"
+                onClick={() => void handleGoToStep(0)}
+                disabled={thinking}
+                className="inline-flex items-center gap-1.5 rounded-full border border-arcova-navy/10 bg-white/65 px-3 py-1.5 text-[12px] font-medium text-arcova-navy/65 backdrop-blur transition-all hover:-translate-x-0.5 hover:bg-white hover:text-arcova-navy disabled:opacity-50".
+              >
+                <span aria-hidden>←</span> Back to your company
+              </button>
+            )}
+            <StepEyebrow step={0} />
+          </div>
+        </div>
         <div
           className={cn(
             'relative z-10 flex w-[460px] flex-col rounded-3xl border border-white/55 bg-white/65 px-10 pb-10 pt-0 shadow-arcova backdrop-blur-xl',
@@ -3572,6 +4250,16 @@ export default function SetupFlow({
                 clock={setupGreetingChatClock}
                 statusKey={thinking ? 'thinking' : inputEnabled ? 'ready' : 'waiting'}
               />
+              {phase === 'customer_url_conversation' && (
+                <div className="px-1 pb-2 pt-1 text-center">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/45">
+                    Step 2 · Target ICP
+                  </p>
+                  <p className="mt-1.5 text-xs leading-snug text-arcova-navy/50">
+                    Share a dream-account URL in chat, or type a company name and we will take it from there.
+                  </p>
+                </div>
+              )}
               <div
                 ref={setupGreetingThreadRef}
                 className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-1 py-2 [touch-action:pan-y] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
@@ -3599,7 +4287,11 @@ export default function SetupFlow({
                           !isLast ? 'opacity-55' : 'opacity-100',
                         )}
                       >
-                        <SetupAssistantMessageParagraphs text={msg.text} typing={!!msg.typing} />
+                        <SetupAssistantMessageParagraphs
+                          text={msg.text}
+                          typing={!!msg.typing}
+                          onTypingLayout={msg.typing ? scrollSetupGreetingThreadToBottom : undefined}
+                        />
                       </div>
                     </div>
                   );
@@ -3629,7 +4321,11 @@ export default function SetupFlow({
                   onChange={(v) => setInputVal(v)}
                   onSubmit={(e) => void handleSend(e)}
                   disabled={!inputEnabled}
-                  placeholder="Reply…"
+                  placeholder={
+                    phase === 'customer_url_conversation'
+                      ? 'URL or company name…'
+                      : 'Reply…'
+                  }
                   autoFocusInput
                 />
               )}
@@ -3655,6 +4351,11 @@ export default function SetupFlow({
     return (
       <div className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-4 py-16">
         <AppAmbientBackground />
+        <div className="absolute left-0 right-0 top-0 z-20 flex justify-center px-6 pt-6 sm:px-10">
+          <div className="w-full max-w-[1080px]">
+            <StepEyebrow step={Math.max(0, currentStepIndex) as 0 | 1 | 2} />
+          </div>
+        </div>
         <div className="relative z-10 flex h-[min(85vh,52rem)] w-[460px] min-h-[580px] max-h-[85vh] flex-col overflow-hidden rounded-3xl border border-white/55 bg-white/65 px-10 pb-0 pt-0 shadow-arcova backdrop-blur-xl">
           <SetupGlassAgentMetaStrip clock={setupGreetingChatClock} statusKey="thinking" />
           <div
@@ -3684,7 +4385,11 @@ export default function SetupFlow({
                       !isLast ? 'opacity-55' : 'opacity-100',
                     )}
                   >
-                    <SetupAssistantMessageParagraphs text={msg.text} typing={!!msg.typing} />
+                    <SetupAssistantMessageParagraphs
+                      text={msg.text}
+                      typing={!!msg.typing}
+                      onTypingLayout={msg.typing ? scrollSetupGreetingThreadToBottom : undefined}
+                    />
                   </div>
                 </div>
               );
@@ -3721,28 +4426,31 @@ export default function SetupFlow({
   }
 
   // ── Welcome splash (dark, fallback for chip-select phases during boot) ────
-
-  if (thinking && thread.length === 0) {
+  // Do not steal the canvas from light review / URL phases if they are still mounted.
+  if (
+    thinking &&
+    thread.length === 0 &&
+    phase !== 'analysis_results' &&
+    phase !== 'icp_suggestion' &&
+    phase !== 'customer_url_input' &&
+    phase !== 'customer_url_review' &&
+    phase !== 'buying_team_review'
+  ) {
     return (
       <div className={`flex min-h-0 flex-1 flex-col ${SETUP_CHAT_SURROUND}`}>
-        <div className="flex min-h-0 flex-1 items-center justify-center p-4 sm:p-6">
-          <div
-            className={`flex min-h-[18rem] max-h-[min(32rem,calc(100dvh-12rem))] w-full max-w-3xl ${SETUP_CHAT_CARD}`}
-          >
-            <div className="flex flex-1 flex-col items-center justify-center gap-6 bg-arcova-darkblue px-6 py-10 text-center">
-              <ArcovaLoader size={64} />
-              <div>
-                <h1 className="text-2xl font-bold text-white">
-                  {entryPoint === 'target-company' ? 'Add a target company'
-                    : entryPoint === 'buying-group' ? 'Add a buying team'
-                    : entryPoint === 'company-only' ? 'Update your company'
-                    : 'Welcome to Arcova'}
-                </h1>
-                <p className="mt-2 text-sm text-slate-300">
-                  {entryPoint === 'full' ? 'Getting your workspace ready.' : 'One moment…'}
-                </p>
-              </div>
-            </div>
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-8 p-6 sm:p-10">
+          <div className="flex h-[min(36vh,220px)] w-full shrink-0 items-center justify-center">
+            <ArcovaWelcomeOrb energised size="lg" />
+          </div>
+          <div className="max-w-md text-center">
+            <h1 className="text-2xl font-bold text-white">
+              {entryPoint === 'target-company' ? 'Add a target company'
+                : entryPoint === 'company-only' ? 'Update your company'
+                : 'Welcome to Arcova'}
+            </h1>
+            <p className="mt-2 text-sm text-slate-300">
+              {entryPoint === 'full' ? 'Getting your workspace ready.' : 'One moment…'}
+            </p>
           </div>
         </div>
       </div>
@@ -3760,21 +4468,41 @@ export default function SetupFlow({
   const greetName = firstName ? `, ${firstName}` : '';
 
   // Shared hero wrapper for all light-layout phases
+  const setupReviewBackButtonClass =
+    'mb-4 inline-flex items-center gap-1.5 rounded-full border border-arcova-navy/10 bg-white/65 px-3 py-1.5 text-[12px] font-medium text-arcova-navy/65 backdrop-blur transition-all hover:-translate-x-0.5 hover:bg-white hover:text-arcova-navy disabled:opacity-50';
+
+  const setupProgressBackButtonClass =
+    'shrink-0 inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-medium text-white/75 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-40';
+
   const LightLayout = ({
     eyebrow,
     title,
     subtitle,
     children,
+    onBack,
+    backLabel,
   }: {
     eyebrow?: ReactNode;
     title: string;
     subtitle?: string;
     children: ReactNode;
+    onBack?: () => void;
+    backLabel?: string;
   }) => (
     <div className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col overflow-y-auto">
       <AppAmbientBackground />
       <div className="relative z-10 flex min-h-full flex-col px-4 pb-16 pt-10 sm:px-6">
         <div className="mx-auto w-full max-w-2xl">
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              disabled={thinking}
+              className={setupReviewBackButtonClass}
+            >
+              <span aria-hidden>←</span> Back{backLabel ? ` to ${backLabel}` : ''}
+            </button>
+          )}
           {eyebrow && <div className="mb-3">{eyebrow}</div>}
           <h1 className="text-2xl font-semibold text-arcova-navy sm:text-3xl">{title}</h1>
           {subtitle && <p className="mt-1.5 text-sm text-arcova-ink-soft">{subtitle}</p>}
@@ -3784,26 +4512,6 @@ export default function SetupFlow({
     </div>
   );
 
-  // Step dots eyebrow (matches design: small dots showing which of 3 steps)
-  const StepDots = ({ current }: { current: 0 | 1 | 2 }) => (
-    <div className="flex items-center gap-1.5">
-      {(['My company', 'Target ICP', 'Buying team'] as const).map((label, i) => (
-        <div
-          key={label}
-          className={`h-1.5 rounded-full transition-all ${
-            i < current
-              ? 'w-4 bg-arcova-teal/50'
-              : i === current
-              ? 'w-6 bg-arcova-teal'
-              : 'w-1.5 bg-arcova-navy/15'
-          }`}
-        />
-      ))}
-      <span className="ml-2 text-xs font-medium tracking-wide text-arcova-ink-mute uppercase">
-        {['My company', 'Target ICP', 'Buying team'][current]}
-      </span>
-    </div>
-  );
 
   // Phase: analysis_results → light glass review of own company (matches Setup.html design)
   if (phase === 'analysis_results') {
@@ -3812,15 +4520,22 @@ export default function SetupFlow({
       <div className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col overflow-y-auto">
         <AppAmbientBackground />
         <div className="relative z-10 flex flex-col px-6 py-9 lg:px-10">
+            {entryPoint === 'full' && !editingFindings && (
+              <div className="mb-4 max-w-[820px]">
+                <button
+                  type="button"
+                  onClick={() => void handleAnalyseDifferentWebsite()}
+                  disabled={thinking}
+                  className={setupReviewBackButtonClass}
+                >
+                  <span aria-hidden>←</span> Back to enter website
+                </button>
+              </div>
+            )}
             {/* Hero */}
             <div className="mb-6 max-w-[820px]">
-              <div className="mb-5 inline-flex items-center gap-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/50">
-                <span className="inline-flex items-center gap-[3px]">
-                  <span className="h-[3px] w-3.5 rounded-full bg-arcova-teal" />
-                  <span className="h-[3px] w-3.5 rounded-full bg-arcova-teal/20" />
-                  <span className="h-[3px] w-3.5 rounded-full bg-arcova-teal/20" />
-                </span>
-                Step 1 of 3
+              <div className="mb-5">
+                <StepEyebrow step={0} />
               </div>
               <h1 className="mb-3 font-manrope text-[44px] font-medium leading-[1.06] tracking-[-0.032em] text-arcova-navy">
                 {timeGreeting}{greetName}.<br />
@@ -3844,10 +4559,15 @@ export default function SetupFlow({
 
             {/* Centred company card */}
             <div className="mx-auto w-full max-w-[760px]">
-              <SetupMyCompanyCard data={myCompany} />
+              <SetupMyCompanyCard
+                data={myCompany}
+                editMode={editingFindings}
+                onChange={handleMyCompanyChange}
+              />
 
               {/* CTA row */}
               {!editingFindings && (
+                <>
                 <div className="mt-5 flex flex-wrap items-center gap-3 px-1">
                   <button
                     type="button"
@@ -3871,6 +4591,18 @@ export default function SetupFlow({
                     Next: <strong className="font-semibold text-arcova-navy/70">Target companies</strong>
                   </div>
                 </div>
+                <p className="mt-4 px-1 text-center text-[12px] text-arcova-navy/50">
+                  Need to enter a different website from scratch?{' '}
+                  <button
+                    type="button"
+                    disabled={thinking}
+                    onClick={() => void handleResumeRestart()}
+                    className="font-medium text-arcova-teal underline decoration-arcova-teal/35 underline-offset-2 hover:text-arcova-navy disabled:opacity-50"
+                  >
+                    Start setup over
+                  </button>
+                </p>
+                </>
               )}
               {editingFindings && (
                 <div className="mt-5 flex flex-wrap items-center gap-3 px-1">
@@ -3902,9 +4634,11 @@ export default function SetupFlow({
   if (phase === 'icp_suggestion') {
     return (
       <LightLayout
-        eyebrow={<StepDots current={1} />}
+        eyebrow={<StepEyebrow step={1} />}
         title="We found some companies that look like strong model accounts."
         subtitle="Each represents a different buyer type. Pick one to build your ICP on, or enter your own."
+        onBack={() => void handleGoToStep(0)}
+        backLabel="your company"
       >
         <div className="space-y-3">
           {icpSuggestions.map((s) => (
@@ -3926,7 +4660,7 @@ export default function SetupFlow({
             type="button"
             onClick={() => {
               pushText('user', 'Enter my own');
-              setPhase('customer_url_input');
+              setPhase('customer_url_conversation');
               setInput(true);
             }}
             className="w-full rounded-2xl border border-dashed border-arcova-navy/20 bg-transparent px-5 py-4 text-sm font-medium text-arcova-ink-soft transition-all hover:border-arcova-navy/40 hover:text-arcova-navy"
@@ -3943,6 +4677,17 @@ export default function SetupFlow({
     return (
       <div className="relative flex min-h-dvh flex-col overflow-hidden">
         <AppAmbientBackground />
+        <div className="relative z-10 flex flex-wrap items-center gap-3 px-4 pt-6 sm:px-6">
+          <button
+            type="button"
+            onClick={() => void handleGoToStep(0)}
+            disabled={thinking}
+            className="inline-flex items-center gap-1.5 rounded-full border border-arcova-navy/10 bg-white/65 px-3 py-1.5 text-[12px] font-medium text-arcova-navy/65 backdrop-blur transition-all hover:-translate-x-0.5 hover:bg-white hover:text-arcova-navy disabled:opacity-50"
+          >
+            <span aria-hidden>←</span> Back to your company
+          </button>
+          <StepEyebrow step={1} />
+        </div>
         <SetupWelcomeCard
           firstName={firstName}
           onSubmit={(url) => void handleCustomerUrlAnalyse(url)}
@@ -3959,9 +4704,11 @@ export default function SetupFlow({
     const targetName = reviewedCompanyName || (lastTargetUrlRef.current?.replace(/^https?:\/\//, '').replace(/\/$/, '') ?? 'the target company');
     return (
       <LightLayout
-        eyebrow={<StepDots current={1} />}
+        eyebrow={<StepEyebrow step={1} />}
         title={`Here's what I found on ${targetName}.`}
         subtitle="Check the fit and confirm — you can tweak before saving."
+        onBack={() => void handleGoToStep(0)}
+        backLabel="your company"
       >
         <div className="arcova-glass-panel p-6">
           <SetupProfilePanel
@@ -3981,7 +4728,7 @@ export default function SetupFlow({
           </button>
           <button
             type="button"
-            onClick={() => { setIcpEditMode(false); setPhase('customer_url_input'); setInput(true); }}
+            onClick={() => { setIcpEditMode(false); setPhase('customer_url_conversation'); setInput(true); }}
             disabled={thinking}
             className={ctaSecondary}
           >
@@ -3997,9 +4744,11 @@ export default function SetupFlow({
     const icpName = savedIcpName || reviewedCompanyName || 'this ICP';
     return (
       <LightLayout
-        eyebrow={<StepDots current={2} />}
+        eyebrow={<StepEyebrow step={2} />}
         title={`Here's who typically buys from companies like ${icpName}.`}
         subtitle="Review the roles and seniority — you can adjust before saving."
+        onBack={() => void handleGoToStep(1)}
+        backLabel="target companies"
       >
         <div className="arcova-glass-panel p-6">
           <SetupProfilePanel
@@ -4047,6 +4796,11 @@ export default function SetupFlow({
     return (
       <div className="relative flex min-h-dvh flex-col overflow-hidden">
         <AppAmbientBackground />
+        <div className="absolute left-0 right-0 top-0 z-20 flex justify-center px-6 pt-6 sm:px-10">
+          <div className="w-full max-w-[1080px]">
+            <StepEyebrow step={Math.max(0, currentStepIndex) as 0 | 1 | 2} />
+          </div>
+        </div>
         <div className="relative z-10 flex min-h-dvh flex-col items-center justify-center gap-5 px-4">
           <ArcovaLoader size={56} />
           <p className="text-sm font-medium text-arcova-ink-soft">{savingLabel}</p>
@@ -4059,7 +4813,7 @@ export default function SetupFlow({
 
   const chatColumn = (
     <div className={`flex min-h-0 flex-1 flex-col ${SETUP_CHAT_CARD}`}>
-      <div className="min-h-0 flex-1 overflow-y-auto bg-arcova-darkblue px-4 py-4">
+      <div ref={mainChatScrollRef} className="min-h-0 flex-1 overflow-y-auto bg-arcova-darkblue px-4 py-4">
         <div className="space-y-4">
           {visibleMessages.map((msg, i) => {
             if (msg.role === 'user') {
@@ -4085,6 +4839,7 @@ export default function SetupFlow({
                     text={msg.text}
                     typing={!!msg.typing}
                     paragraphClassName="text-base leading-relaxed text-gray-800"
+                    onTypingLayout={msg.typing ? scrollMainChatToBottom : undefined}
                   />
                 </div>
               </div>
@@ -4347,9 +5102,21 @@ export default function SetupFlow({
     <div className={`flex min-h-0 flex-1 flex-col ${SETUP_CHAT_SURROUND}`}>
       {showProgress && (
         <div className="shrink-0 border-b border-white/10 px-6 py-4">
-          <div className="mx-auto flex max-w-6xl items-center justify-between">
-            <div className="flex items-center gap-2">
-              {SETUP_STEPS.map((step, i) => {
+          <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              {entryPoint === 'full' && !isSaving && currentStepIndex > 0 && (
+                <button
+                  type="button"
+                  onClick={() => void handleGoToStep(currentStepIndex - 1)}
+                  disabled={thinking}
+                  className={setupProgressBackButtonClass}
+                >
+                  <span aria-hidden>←</span>
+                  {currentStepIndex === 2 ? 'Back to edit target ICP' : 'Back to edit your company'}
+                </button>
+              )}
+              <div className="flex flex-wrap items-center gap-2">
+                {SETUP_STEPS.map((step, i) => {
                 const isComplete = i < currentStepIndex;
                 const isCurrent = i === currentStepIndex;
                 const canGoBack = isComplete && !isSaving;

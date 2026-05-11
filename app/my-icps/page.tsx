@@ -617,7 +617,6 @@ function ICPCard({
   reenriching,
   onPersonaUpdate,
   onPersonaDelete,
-  onAddBuyingTeam,
   onReenrich,
 }: {
   icp: ICP;
@@ -631,7 +630,6 @@ function ICPCard({
   reenriching: boolean;
   onPersonaUpdate: (p: Persona) => void;
   onPersonaDelete: (id: string) => void;
-  onAddBuyingTeam: () => void;
   onReenrich: () => void;
 }) {
   const e = icp.example_company_enrichment;
@@ -796,6 +794,11 @@ function ICPCard({
     setEditMode(false);
   };
 
+  const beginAddBuyingTeam = () => {
+    startEdit();
+    setOpen((prev) => ({ ...prev, functions: true, seniority: true, contactSignals: true }));
+  };
+
   const saveEdit = async () => {
     setSaving(true);
     try {
@@ -874,6 +877,28 @@ function ICPCard({
           const { data } = await teamRes.json();
           onPersonaUpdate(data);
         }
+      } else if (editFunctions.length > 0 || editSeniority.length > 0 || editPersonaSignals.length > 0) {
+        const personaName =
+          editFunctions.length > 0 ? `Buying group: ${editFunctions[0]}` : 'Buying group';
+        const teamRes = await fetch('/api/contacts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            icpId: icp.id,
+            name: personaName,
+            functions: editFunctions,
+            seniorityLevels: editSeniority,
+            jobTitles: [],
+            signals: editPersonaSignals,
+          }),
+        });
+        if (!teamRes.ok) {
+          const errorPayload = await teamRes.json().catch(() => null) as { error?: string } | null;
+          toast.error(errorPayload?.error ?? 'Failed to create buying team');
+          return;
+        }
+        const { data } = await teamRes.json();
+        onPersonaUpdate(data);
       }
 
       setEditMode(false);
@@ -1428,32 +1453,28 @@ function ICPCard({
           </div>
 
           {editMode ? (
-            persona ? (
-              <div className="space-y-2">
-                <Segment label="Functions" open={open.functions} onToggle={() => toggle('functions')}>
-                  <EditTagField
-                    hideLabel
-                    label="Functions"
-                    options={BUSINESS_AREA_OPTIONS}
-                    selected={editFunctions}
-                    onRemove={(v) => setEditFunctions((prev) => prev.filter((f) => f !== v))}
-                    onAdd={(v) => setEditFunctions((prev) => [...prev, v])}
-                  />
-                </Segment>
-                <Segment label="Seniority" open={open.seniority} onToggle={() => toggle('seniority')}>
-                  <EditTagField
-                    hideLabel
-                    label="Seniority"
-                    options={SENIORITY_LEVEL_OPTIONS}
-                    selected={editSeniority}
-                    onRemove={(v) => setEditSeniority((prev) => prev.filter((s) => s !== v))}
-                    onAdd={(v) => setEditSeniority((prev) => [...prev, v])}
-                  />
-                </Segment>
-              </div>
-            ) : (
-              <p className="text-xs text-arcova-navy/35 leading-snug pt-1">No buying team defined yet.</p>
-            )
+            <div className="space-y-2">
+              <Segment label="Functions" open={open.functions} onToggle={() => toggle('functions')}>
+                <EditTagField
+                  hideLabel
+                  label="Functions"
+                  options={BUSINESS_AREA_OPTIONS}
+                  selected={editFunctions}
+                  onRemove={(v) => setEditFunctions((prev) => prev.filter((f) => f !== v))}
+                  onAdd={(v) => setEditFunctions((prev) => [...prev, v])}
+                />
+              </Segment>
+              <Segment label="Seniority" open={open.seniority} onToggle={() => toggle('seniority')}>
+                <EditTagField
+                  hideLabel
+                  label="Seniority"
+                  options={SENIORITY_LEVEL_OPTIONS}
+                  selected={editSeniority}
+                  onRemove={(v) => setEditSeniority((prev) => prev.filter((s) => s !== v))}
+                  onAdd={(v) => setEditSeniority((prev) => [...prev, v])}
+                />
+              </Segment>
+            </div>
           ) : persona ? (
             <>
               <Segment label="Functions" open={open.functions} onToggle={() => toggle('functions')}>
@@ -1472,7 +1493,7 @@ function ICPCard({
               <p className="text-xs text-arcova-navy/35 leading-snug">No buying team defined yet.</p>
               <button
                 type="button"
-                onClick={onAddBuyingTeam}
+                onClick={beginAddBuyingTeam}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-arcova-teal/40 px-3 py-2 text-xs font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/10"
               >
                 <Plus className="h-3.5 w-3.5" />
@@ -1520,35 +1541,31 @@ function ICPCard({
               onToggle={() => toggle('contactSignals')}
             >
               {editMode ? (
-                persona ? (
-                  <SignalCatalogByCategory
-                    variant="all"
-                    definitions={CONTACT_SIGNALS}
-                    categoryOrder={CONTACT_SIGNAL_CATEGORY_ORDER}
-                    selectedIds={editPersonaSignals}
-                    readOnly={false}
-                    isManagedServiceSignal={isContactSignalComingSoon}
-                    onManagedServiceSignalClick={(signalId) => {
-                      toast.info(
-                        'This signal is available with our managed data service. Get in touch and we can enable it for you.',
-                      );
+                <SignalCatalogByCategory
+                  variant="all"
+                  definitions={CONTACT_SIGNALS}
+                  categoryOrder={CONTACT_SIGNAL_CATEGORY_ORDER}
+                  selectedIds={editPersonaSignals}
+                  readOnly={false}
+                  isManagedServiceSignal={isContactSignalComingSoon}
+                  onManagedServiceSignalClick={(signalId) => {
+                    toast.info(
+                      'This signal is available with our managed data service. Get in touch and we can enable it for you.',
+                    );
+                    if (persona?.id) {
                       void fetch('/api/contact-premium-signal-interest', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ signalId, personaId: persona.id }),
                       }).catch(() => {});
-                    }}
-                    onToggle={(id) =>
-                      setEditPersonaSignals((prev) =>
-                        prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-                      )
                     }
-                  />
-                ) : (
-                  <p className="text-xs text-arcova-navy/40 italic">
-                    Add a buying team on this ICP to set contact signals.
-                  </p>
-                )
+                  }}
+                  onToggle={(id) =>
+                    setEditPersonaSignals((prev) =>
+                      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+                    )
+                  }
+                />
               ) : persona ? (
                 <SignalCatalogByCategory
                   variant="selectedOnly"
@@ -1943,7 +1960,6 @@ export default function ICPManagerPage() {
                     reenriching={normalizeReenrichmentStatus(icp.reenrichment_status) === 'running'}
                     onPersonaUpdate={handlePersonaUpdate}
                     onPersonaDelete={handlePersonaDelete}
-                    onAddBuyingTeam={() => router.push(`/personas/new?icpId=${icp.id}`)}
                     onReenrich={() => void handleReenrich(icp)}
                   />
                 );

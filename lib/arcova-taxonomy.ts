@@ -185,6 +185,35 @@ export const FUNDING_STAGE_OPTIONS = [
   'Non-profit',
 ] as const;
 
+/** LinkedIn-style industry buckets for firmographics (user company profile editing). */
+export const INDUSTRY_OPTIONS = [
+  'Biotechnology',
+  'Pharmaceuticals',
+  'Medical Devices',
+  'Medical Practice',
+  'Hospital & Health Care',
+  'Life Science Research',
+  'Higher Education',
+  'Computer Software',
+  'Information Technology & Services',
+  'Internet',
+  'Market Research',
+  'Marketing & Advertising',
+  'Management Consulting',
+  'Computer & Network Security',
+  'Health, Wellness & Fitness',
+  'Venture Capital & Private Equity',
+  'Law Practice',
+  'Financial Services',
+  'Chemicals',
+  'Machinery',
+  'Electrical/Electronic Manufacturing',
+  'Insurance',
+  'Non-profit Organization Management',
+  'Government Administration',
+  'Other',
+] as const;
+
 export const BUSINESS_AREA_OPTIONS = [
   'Executive Leadership',
   'Business Development',
@@ -223,8 +252,47 @@ export type DevelopmentStage = (typeof DEVELOPMENT_STAGE_OPTIONS)[number];
 export type CompanySize = (typeof COMPANY_SIZE_OPTIONS)[number];
 export type LiFollowerSize = (typeof LI_FOLLOWER_OPTIONS)[number];
 export type FundingStage = (typeof FUNDING_STAGE_OPTIONS)[number];
+export type IndustryOption = (typeof INDUSTRY_OPTIONS)[number];
 export type BusinessArea = (typeof BUSINESS_AREA_OPTIONS)[number];
 export type SeniorityLevel = (typeof SENIORITY_LEVEL_OPTIONS)[number];
+
+/** Drop case-insensitive duplicates; keep first occurrence (canonical list order). */
+export function dedupeStringsCaseInsensitiveKeepOrder(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of values) {
+    const s = raw.trim();
+    if (!s) continue;
+    const k = s.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(s);
+  }
+  return out;
+}
+
+/**
+ * Build `<select>` option values: taxonomy list plus a custom stored value when missing.
+ * Dedupes so API values that match case-insensitively (or repeat) do not appear twice.
+ */
+export function selectOptionsWithCurrentValue(
+  options: readonly string[],
+  current?: string | null,
+): string[] {
+  const c = (current ?? '').trim();
+  const base = dedupeStringsCaseInsensitiveKeepOrder([...options]);
+  if (!c) return base;
+  if (base.some((o) => o.toLowerCase() === c.toLowerCase())) return base;
+  return dedupeStringsCaseInsensitiveKeepOrder([c, ...base]);
+}
+
+/** Canonical industry label when legacy enrichment stored `"Research"` (ambiguous vs Market Research). */
+export function normalizeIndustrySelectValue(raw: string | null | undefined): string {
+  const t = (raw ?? '').trim();
+  if (!t) return '';
+  if (t.toLowerCase() === 'research') return 'Life Science Research';
+  return t;
+}
 
 function normalizeTaxonomyText(value: string): string {
   return value
