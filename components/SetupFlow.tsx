@@ -40,6 +40,8 @@ import { resolveCustomerSegments } from '@/lib/split-customer-segments';
 import { fetchLatestUserCompanyRow } from '@/lib/fetch-latest-user-company';
 import { ArcovaWelcomeOrb } from '@/components/ArcovaWelcomeOrb';
 import { ROUTES } from '@/lib/routes';
+import { Send, Sparkles } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 /** Funding, headcount + customer-segment context for buying-team inference */
 function icContextForBuyingTeam(
@@ -329,6 +331,109 @@ function TypingText({ target, delay = 0, speed = TYPING_MS }: { target: string; 
         <span className="inline-block w-[2px] h-[14px] bg-arcova-teal ml-0.5 align-middle animate-pulse" />
       )}
     </>
+  );
+}
+
+/** Assistant paragraphs for setup chat (matches Today / AgentPanel paragraph split on blank lines). */
+function setupAssistantBubbles(text: string, typing?: boolean): string[] {
+  if (typing) return [text];
+  const parts = text.split(/\n\n+/).map((s) => s.trim()).filter(Boolean);
+  return parts.length > 0 ? parts : [text];
+}
+
+function normalizeForWelcomeDuplicate(s: string): string {
+  return s
+    .trim()
+    .toLowerCase()
+    .replace(/\u2026/g, '...')
+    .replace(/\u2019|\u2018/g, "'")
+    .replace(/\s+/g, ' ')
+    .replace(/[`´]/g, "'");
+}
+
+/** Model often echoes the static welcome headline already shown on the card. */
+function assistantRepeatsWelcomeHeadline(assistantText: string, welcomePart1: string, welcomePart2: string): boolean {
+  const headline = normalizeForWelcomeDuplicate(`${welcomePart1}${welcomePart2}`);
+  const body = normalizeForWelcomeDuplicate(assistantText);
+  if (!headline || !body) return false;
+  if (body === headline) return true;
+  const compact = (t: string) => t.replace(/\s/g, '');
+  if (compact(body) === compact(headline)) return true;
+  if (body.startsWith(headline)) {
+    const rest = body.slice(headline.length).trim();
+    return rest.length === 0 || /^[.!…?]+$/.test(rest);
+  }
+  return false;
+}
+
+/** Drop the first assistant bubble after the user if it only repeats welcome copy. */
+function filterFirstAssistantIfWelcomeHeadlineDuplicate(messages: TextMsg[], welcomePart1: string, welcomePart2: string): TextMsg[] {
+  let seenUser = false;
+  let handledFirstAssistantAfterUser = false;
+  const out: TextMsg[] = [];
+  for (const msg of messages) {
+    if (msg.role === 'user') {
+      seenUser = true;
+      out.push(msg);
+      continue;
+    }
+    if (msg.role === 'assistant' && seenUser && !handledFirstAssistantAfterUser) {
+      handledFirstAssistantAfterUser = true;
+      if (!msg.typing && assistantRepeatsWelcomeHeadline(msg.text, welcomePart1, welcomePart2)) {
+        continue;
+      }
+    }
+    out.push(msg);
+  }
+  return out;
+}
+
+function SetupEmbedChatInput({
+  value,
+  onChange,
+  onSubmit,
+  disabled,
+  placeholder = 'Reply…',
+  autoFocusInput,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onSubmit: (e: React.FormEvent) => void;
+  disabled?: boolean;
+  placeholder?: string;
+  autoFocusInput?: boolean;
+}) {
+  return (
+    <form
+      onSubmit={onSubmit}
+      className="shrink-0 border-t border-[rgba(13,53,71,0.07)] bg-transparent px-0 pb-1 pt-2"
+    >
+      <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2 rounded-2xl border border-[rgba(13,53,71,0.12)] bg-white/90 px-3 py-2.5 shadow-[0_8px_32px_-20px_rgba(13,53,71,0.18)] backdrop-blur-md transition-all focus-within:border-arcova-teal/45 focus-within:shadow-[0_8px_28px_-18px_rgba(0,164,180,0.22)]">
+          <Sparkles className="h-4 w-4 shrink-0 text-arcova-teal/45" />
+          <input
+            type="text"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={placeholder}
+            spellCheck={false}
+            autoComplete="off"
+            autoFocus={autoFocusInput}
+            disabled={disabled}
+            className="min-w-0 flex-1 bg-transparent font-manrope text-[1.0625rem] text-slate-800 outline-none placeholder:text-slate-400"
+          />
+          <button
+            type="submit"
+            disabled={disabled || !value.trim()}
+            className="flex shrink-0 items-center gap-1.5 rounded-xl bg-arcova-teal px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/90 disabled:cursor-not-allowed disabled:opacity-30"
+            aria-label="Send message"
+          >
+            <Send className="h-4 w-4" />
+            Send
+          </button>
+        </div>
+      </div>
+    </form>
   );
 }
 
@@ -632,7 +737,7 @@ function SetupEnrichingCard({
 
   return (
     <div className="relative z-10 flex min-h-dvh flex-col items-center justify-center px-4 py-12">
-      <div className="w-full max-w-[480px] rounded-3xl border border-white/55 bg-white/65 p-10 shadow-arcova backdrop-blur-xl">
+      <div className="flex min-h-[510px] w-[460px] flex-col overflow-hidden rounded-3xl border border-white/55 bg-white/65 px-10 pb-10 pt-8 shadow-arcova backdrop-blur-xl">
         <div className="mb-8 flex justify-center">
           <SetupOrb variant="welcome" welcomeEnergised />
         </div>
@@ -702,163 +807,6 @@ function SetupEnrichingCard({
           </button>
         )}
       </div>
-    </div>
-  );
-}
-
-// ── Floating agent dock ───────────────────────────────────────────────────
-
-function SetupAgentDock({
-  messages,
-  thinking,
-  inputEnabled,
-  inputValue,
-  onInputChange,
-  onSend,
-}: {
-  messages: TextMsg[];
-  thinking: boolean;
-  inputEnabled?: boolean;
-  inputValue?: string;
-  onInputChange?: (v: string) => void;
-  onSend?: (e: React.FormEvent) => void;
-}) {
-  const [collapsed, setCollapsed] = useState(false);
-  const threadRef = useRef<HTMLDivElement>(null);
-  const recentMessages = messages.slice(-4);
-
-  useEffect(() => {
-    if (!collapsed && threadRef.current) {
-      threadRef.current.scrollTop = threadRef.current.scrollHeight;
-    }
-  }, [messages, thinking, collapsed]);
-
-  return (
-    <div
-      className={`fixed bottom-6 right-6 z-40 flex flex-col overflow-hidden rounded-2xl border border-white/55 bg-white/80 shadow-[0_28px_60px_-28px_rgba(13,53,71,0.25),0_2px_6px_rgba(13,53,71,0.06)] backdrop-blur-xl transition-all duration-300 ${
-        collapsed ? 'w-[220px]' : 'w-[340px]'
-      }`}
-    >
-      <div
-        className="flex cursor-pointer items-center gap-2.5 border-b border-arcova-navy/8 px-3.5 py-2.5"
-        onClick={() => setCollapsed((c) => !c)}
-      >
-        <div className="relative h-7 w-7 shrink-0">
-          <div
-            className="absolute inset-0 rounded-full"
-            style={{
-              background: 'radial-gradient(circle at 30% 28%, #ffffff 0%, #00A4B4 56%, #003344 130%)',
-              animation: 'arcova-orb-breathe 5.4s ease-in-out infinite',
-            }}
-          />
-          <div
-            className="absolute inset-0 rounded-full"
-            style={{
-              background:
-                'radial-gradient(ellipse 60% 30% at 36% 26%, rgba(255,255,255,0.65), transparent 60%)',
-            }}
-          />
-        </div>
-        <div className="flex flex-1 flex-col overflow-hidden">
-          <span className="text-xs font-semibold text-arcova-navy">Setup agent</span>
-          <span className="flex items-center gap-1.5 text-[10px] text-arcova-navy/50">
-            <span
-              className="h-1.5 w-1.5 rounded-full bg-arcova-teal"
-              style={{ animation: 'arcova-dot-pulse 2.6s ease-in-out infinite' }}
-            />
-            {thinking ? 'Thinking…' : 'Ready'}
-          </span>
-        </div>
-        <svg
-          viewBox="0 0 24 24"
-          width="12"
-          height="12"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="shrink-0 text-arcova-navy/35 transition-transform"
-          style={{ transform: collapsed ? 'rotate(180deg)' : 'none' }}
-        >
-          <path d="m6 9 6 6 6-6" />
-        </svg>
-      </div>
-
-      {!collapsed && (
-        <>
-          <div
-            ref={threadRef}
-            className="max-h-[260px] min-h-[60px] overflow-y-auto px-3.5 py-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-          >
-            <div className="space-y-2.5">
-              {recentMessages.length === 0 && !thinking && (
-                <p className="text-xs text-arcova-navy/35">Agent messages will appear here.</p>
-              )}
-              {recentMessages.map((msg, i) => {
-                if (msg.role === 'user') {
-                  return (
-                    <div key={msg.id} className="flex justify-end">
-                      <div className="max-w-[85%] rounded-xl rounded-tr-sm bg-arcova-teal px-3 py-2 text-xs leading-relaxed text-white">
-                        {msg.text}
-                      </div>
-                    </div>
-                  );
-                }
-                const isLast = i === recentMessages.length - 1;
-                return (
-                  <div key={msg.id} className="flex">
-                    <div
-                      className={`max-w-[88%] rounded-xl rounded-tl-sm border border-arcova-navy/8 bg-white/85 px-3 py-2 text-xs leading-relaxed text-arcova-navy transition-opacity ${
-                        !isLast ? 'opacity-55' : ''
-                      }`}
-                    >
-                      {msg.typing ? <TypingText target={msg.text} /> : msg.text}
-                    </div>
-                  </div>
-                );
-              })}
-              {thinking && (
-                <div className="flex">
-                  <div className="rounded-xl rounded-tl-sm border border-arcova-navy/8 bg-white/85 px-3 py-2.5">
-                    <div className="flex gap-1">
-                      {[0, 150, 300].map((d) => (
-                        <div
-                          key={d}
-                          className="h-1 w-1 animate-bounce rounded-full bg-arcova-teal/60"
-                          style={{ animationDelay: `${d}ms` }}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {inputEnabled && onSend && (
-            <form
-              onSubmit={onSend}
-              className="flex gap-2 border-t border-arcova-navy/8 px-3 py-2.5"
-            >
-              <input
-                type="text"
-                value={inputValue ?? ''}
-                onChange={(e) => onInputChange?.(e.target.value)}
-                placeholder="Reply to the agent…"
-                className="min-w-0 flex-1 rounded-lg bg-arcova-navy/5 px-2.5 py-1.5 text-xs text-arcova-navy outline-none placeholder:text-arcova-navy/35 focus:ring-1 focus:ring-arcova-teal/40"
-              />
-              <button
-                type="submit"
-                disabled={!inputValue?.trim()}
-                className="rounded-lg bg-arcova-navy px-2.5 py-1.5 text-xs font-medium text-white disabled:opacity-30"
-              >
-                →
-              </button>
-            </form>
-          )}
-        </>
-      )}
     </div>
   );
 }
@@ -956,6 +904,7 @@ export default function SetupFlow({
   const [inputEnabled, setInput] = useState(false);
   const [inputValue, setInputVal] = useState('');
   const [chipSel, setChipSel] = useState<string[]>([]);
+  const [setupGreetingChatClock, setSetupGreetingChatClock] = useState(() => new Date());
   const [loadMsg, setLoadMsg] = useState('Visiting your website…');
   const [customerUrlLoadMsg, setCustomerUrlLoadMsg] = useState('Visiting the website…');
   const [customerUrlProgressNow, setCustomerUrlProgressNow] = useState(0);
@@ -1057,6 +1006,8 @@ export default function SetupFlow({
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const welcomeInputRef = useRef<HTMLInputElement>(null);
+  const setupGreetingThreadRef = useRef<HTMLDivElement>(null);
   const availableCompanyProfiles = companyProfiles.filter((company) => !companyContactsMap[company.id]);
   const resolvedCompletePath =
     onCompletePath ?? (entryPoint === 'full' ? '/import' : entryPoint === 'target-company' ? '/company-criteria' : entryPoint === 'company-only' ? '/my-profile' : '/personas');
@@ -1090,8 +1041,20 @@ export default function SetupFlow({
   }, [thread, thinking, phase]);
 
   useEffect(() => {
-    if (inputEnabled) inputRef.current?.focus();
-  }, [inputEnabled]);
+    if (!inputEnabled) return;
+    const greetingWelcome =
+      phase === 'greeting' &&
+      !thread.some((m) => m.kind === 'text' && m.role === 'user');
+    if (greetingWelcome) welcomeInputRef.current?.focus();
+    else inputRef.current?.focus();
+  }, [inputEnabled, phase, thread]);
+
+  useEffect(() => {
+    if (phase !== 'greeting') return;
+    setSetupGreetingChatClock(new Date());
+    const id = setInterval(() => setSetupGreetingChatClock(new Date()), 30_000);
+    return () => clearInterval(id);
+  }, [phase]);
 
   // Tick the customer-URL progress bar while enrichment is in flight
   useEffect(() => {
@@ -2654,8 +2617,8 @@ export default function SetupFlow({
         // Leg 1: nothing stored — greet and ask for company URL
         if (!existingAnalysis) {
           const { displayParts } = await askClaude();
-          if (displayParts.length) await sayBeats(displayParts);
           setInput(true);
+          if (displayParts.length) void sayBeats(displayParts);
           return;
         }
 
@@ -2770,8 +2733,8 @@ export default function SetupFlow({
             content: `[System: The user wants to change their company. One short sentence: greet them warmly and ask them to share the website URL of their new company so you can analyse it.]`,
           },
         });
-        if (displayParts.length) await sayBeats(displayParts);
         setInput(true);
+        if (displayParts.length) void sayBeats(displayParts);
         return;
       }
 
@@ -3018,6 +2981,14 @@ export default function SetupFlow({
   const visibleMessages = thread.filter((m) => m.kind !== 'results');
   const analysedUrlForPanel = lastAnalyzedUrlRef.current ?? '';
 
+  useEffect(() => {
+    if (phase !== 'greeting') return;
+    if (!visibleMessages.some((m) => m.role === 'user')) return;
+    const el = setupGreetingThreadRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+  }, [phase, visibleMessages, thinking]);
+
   // ── Data helpers (available to all phase renders below) ─────────────────
 
   function getNum(v: unknown): number | undefined {
@@ -3137,192 +3108,240 @@ export default function SetupFlow({
   // ── Redesigned phase screens ──────────────────────────────────────────────
 
   // Phase: greeting
-  // • Before the user sends anything: show the welcome card (orb + headline + URL input).
-  //   The input is wired directly to inputValue/handleSend so the agent handles it normally.
-  // • After the user sends their first message: card morphs into a glass chat window.
+  // • Before the user sends anything: welcome card (orb + headline + URL input).
+  // • After the first user message: same 460px shell, in-place thread + Today-style composer (no separate header chrome).
   if (phase === 'greeting') {
     const hasUserMsg = visibleMessages.some((m) => m.role === 'user');
+    const part1 = `Hi ${firstName || 'there'}, let's get you set up. `;
+    const part2 = `First, what's your company's website?`;
+    // Opening beats are appended to `thread` on mount while the welcome card shows static headline copy.
+    // In chat mode, list only messages from the first user turn so the UI matches what the user experienced.
+    const firstGreetingUserIdx = visibleMessages.findIndex((m) => m.role === 'user');
+    const greetingChatMessages =
+      firstGreetingUserIdx >= 0 ? visibleMessages.slice(firstGreetingUserIdx) : visibleMessages;
+    const greetingChatMessagesDisplay = filterFirstAssistantIfWelcomeHeadlineDuplicate(
+      greetingChatMessages,
+      part1,
+      part2,
+    );
+    const WELCOME_SPEED = 44;
+    const isWorkDomain = !!emailDomain && !FREE_EMAIL_DOMAINS.has(emailDomain.toLowerCase());
 
-    if (!hasUserMsg) {
-      // ── Welcome card ─────────────────────────────────────────────────────
-      const part1 = `Hi ${firstName || 'there'}, let's get you set up. `;
-      const part2 = `First, what's your company's website?`;
-      const WELCOME_SPEED = 44;
-      const isWorkDomain = !!emailDomain && !FREE_EMAIL_DOMAINS.has(emailDomain.toLowerCase());
-      return (
-        <div className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-4 py-16">
-          <AppAmbientBackground />
-          <div className="relative z-10 flex min-h-[510px] w-[460px] flex-col overflow-visible rounded-3xl border border-white/55 bg-white/65 px-10 pb-10 pt-8 shadow-arcova backdrop-blur-xl">
-            {/*
-              Orb center must sit halfway between the inner top of the card and the eyebrow line.
-              A plain grid row of 1fr does not get height when the grid is auto-sized, so it collapsed
-              and the eyebrow hugged the orb. This block uses a fixed-height band: flex-1 fills all
-              space above the eyebrow, and the orb is centered in that region (geometry: center at
-              half the distance from band top to eyebrow top).
-            */}
-            <div className="flex h-[15.5rem] w-full shrink-0 flex-col items-center">
-              <div className="flex min-h-0 w-full flex-1 flex-col items-center justify-center">
-                <SetupOrb variant="welcome" welcomeEnergised={false} />
-              </div>
-              <div className="shrink-0 text-center text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/45">
-                Welcome to Arcova
-              </div>
-            </div>
-            <div className="flex min-h-0 flex-1 flex-col justify-start">
-              <h1 className="mb-7 mt-[0.75cm] min-h-[5rem] text-center font-manrope text-3xl font-medium leading-snug tracking-tight text-arcova-navy">
-                <TypingHeadline part1={part1} part2={part2} speed={WELCOME_SPEED} />
-              </h1>
+    const greetingAgentMetaStrip = (
+      <div
+        className="mb-[1cm] flex min-h-[3.5rem] shrink-0 items-center justify-between text-[11px] tracking-[0.04em] text-slate-500"
+        aria-live="polite"
+      >
+        <span className="inline-flex items-center gap-2">
+          <span
+            className="h-1.5 w-1.5 shrink-0 rounded-full bg-arcova-teal"
+            style={{
+              animation: 'arcova-dot-pulse 2.6s ease-in-out infinite',
+              boxShadow: '0 0 0 4px rgba(0, 164, 180, 0.18)',
+            }}
+            aria-hidden
+          />
+          <span className="font-medium text-slate-500">
+            Arcova ·{' '}
+            {thinking ? 'thinking' : inputEnabled ? 'ready' : 'waiting'}
+          </span>
+        </span>
+        <time
+          className="tabular-nums text-[10px] text-slate-400"
+          dateTime={setupGreetingChatClock.toISOString()}
+        >
+          {setupGreetingChatClock.toLocaleTimeString('en-GB', {
+            hour: '2-digit',
+            minute: '2-digit',
+          })}{' '}
+          · local
+        </time>
+      </div>
+    );
 
-              <div className="space-y-3">
-                <form onSubmit={(e) => void handleSend(e)}>
-                  <div className="flex overflow-hidden rounded-xl border border-arcova-navy/12 bg-white/75 shadow-sm transition-all focus-within:border-arcova-teal focus-within:ring-2 focus-within:ring-arcova-teal/15">
-                    <input
-                      value={inputValue.replace(/^https?:\/\//i, '')}
-                      onChange={(e) => setInputVal(e.target.value.replace(/^https?:\/\//i, ''))}
-                      placeholder="Your company name or website"
-                      spellCheck={false}
-                      autoComplete="off"
-                      autoFocus={inputEnabled}
-                      disabled={!inputEnabled}
-                      className="min-w-0 flex-1 bg-transparent py-3.5 pl-4 pr-2 text-sm text-arcova-navy outline-none placeholder:text-arcova-navy/35 disabled:opacity-50"
-                    />
-                    <button
-                      type="submit"
-                      disabled={!inputValue.trim() || !inputEnabled}
-                      className="m-1 rounded-lg bg-arcova-teal px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-arcova-navy disabled:opacity-30"
-                    >
-                      Continue
-                    </button>
-                  </div>
-                </form>
-                {isWorkDomain && !inputValue.trim() && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      pushText('user', emailDomain);
-                      void runAnalysis(emailDomain);
-                    }}
-                    className="flex items-center gap-1.5 rounded-full border border-arcova-teal/30 bg-arcova-teal/8 px-3.5 py-1.5 text-xs font-medium text-arcova-teal transition-all hover:bg-arcova-teal/15"
-                  >
-                    Use {emailDomain} from my email
-                  </button>
-                )}
-                {analysisError && (
-                  <p className="text-xs text-red-600">{analysisError}</p>
-                )}
-              </div>
-            </div>
-            <div className="mt-8 flex items-center justify-center gap-2 text-xs text-arcova-navy/40">
-              <span className="flex -space-x-1.5">
-                {['#a3e3df', '#f6d6c1', '#b5d6f0'].map((bg, i) => (
-                  <span
-                    key={i}
-                    className="h-5 w-5 rounded-full border border-white/60"
-                    style={{ background: bg }}
-                  />
-                ))}
-              </span>
-              <span>
-                Joining as{' '}
-                <strong className="font-semibold text-arcova-navy/70">{firstName || 'you'}</strong>
-                {email && (
-                  <span className="ml-1 text-arcova-navy/35">• {email}</span>
-                )}
-              </span>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    // ── Chat window (after first user message) ─────────────────────────────
     return (
-      <div className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-4 py-12">
+      <div className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-4 py-16">
         <AppAmbientBackground />
-        <div className="relative z-10 flex w-full max-w-[480px] flex-col overflow-hidden rounded-3xl border border-white/55 bg-white/65 shadow-arcova backdrop-blur-xl">
-          {/* Mini orb header */}
-          <div className="flex items-center gap-2.5 border-b border-arcova-navy/8 px-5 py-3">
-            <SetupOrb size="sm" />
-            <div>
-              <p className="text-xs font-semibold text-arcova-navy">Setup agent</p>
-              <p className="flex items-center gap-1 text-[10px] text-arcova-navy/45">
-                <span
-                  className="h-1.5 w-1.5 rounded-full bg-arcova-teal"
-                  style={{ animation: 'arcova-dot-pulse 2.6s ease-in-out infinite' }}
-                />
-                {thinking ? 'Thinking…' : 'Ready'}
-              </p>
-            </div>
-          </div>
+        <div
+          className={cn(
+            'relative z-10 flex w-[460px] flex-col rounded-3xl border border-white/55 bg-white/65 px-10 pb-10 pt-0 shadow-arcova backdrop-blur-xl',
+            hasUserMsg
+              ? 'max-h-[85vh] min-h-[580px] overflow-hidden'
+              : 'min-h-[580px] overflow-visible',
+          )}
+        >
+          {!hasUserMsg ? (
+            <>
+              {greetingAgentMetaStrip}
+              {/*
+                Fixed-height orb band keeps the orb centered in the same window as before; larger
+                margin-top on the eyebrow moves “Welcome to Arcova” down toward the headline.
+              */}
+              <div className="flex w-full shrink-0 flex-col items-center">
+                <div className="flex h-[13.4375rem] w-full flex-col items-center justify-center">
+                  <SetupOrb variant="welcome" welcomeEnergised={false} />
+                </div>
+                <div className="mt-[1.15cm] shrink-0 text-center text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/45">
+                  Welcome to Arcova
+                </div>
+              </div>
+              <div className="flex min-h-0 flex-1 flex-col justify-start">
+                <h1 className="mb-7 mt-[0.75cm] min-h-[5rem] text-center font-manrope text-3xl font-medium leading-snug tracking-tight text-arcova-navy">
+                  {inputEnabled ? (
+                    <TypingHeadline part1={part1} part2={part2} speed={WELCOME_SPEED} />
+                  ) : (
+                    <span className="block text-arcova-navy/40">Getting ready.</span>
+                  )}
+                </h1>
 
-          {/* Messages */}
-          <div className="max-h-[360px] min-h-[80px] space-y-3 overflow-y-auto px-5 py-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {visibleMessages.map((msg, i) => {
-              if (msg.role === 'user') {
-                return (
-                  <div key={msg.id} className="flex justify-end">
-                    <div className="max-w-[85%] rounded-2xl rounded-tr-sm bg-arcova-teal px-4 py-2.5 text-sm leading-relaxed text-white">
-                      {msg.text}
+                <div className="space-y-3">
+                  <form onSubmit={(e) => void handleSend(e)}>
+                    <div
+                      className={cn(
+                        'flex min-w-0 items-center gap-2 rounded-2xl border bg-white/90 px-3 py-2.5 shadow-[0_8px_32px_-20px_rgba(13,53,71,0.18)] backdrop-blur-md transition-all',
+                        inputEnabled
+                          ? 'border-[rgba(13,53,71,0.12)] focus-within:border-arcova-teal/45 focus-within:shadow-[0_8px_28px_-18px_rgba(0,164,180,0.22)]'
+                          : 'pointer-events-none border-arcova-navy/10 opacity-55',
+                      )}
+                    >
+                      <Sparkles
+                        className={cn(
+                          'h-4 w-4 shrink-0',
+                          inputEnabled ? 'text-arcova-teal/45' : 'text-arcova-navy/25',
+                        )}
+                      />
+                      <input
+                        ref={welcomeInputRef}
+                        value={inputValue.replace(/^https?:\/\//i, '')}
+                        onChange={(e) => setInputVal(e.target.value.replace(/^https?:\/\//i, ''))}
+                        placeholder="Your company name or website"
+                        spellCheck={false}
+                        autoComplete="off"
+                        disabled={!inputEnabled}
+                        aria-disabled={!inputEnabled}
+                        className="min-w-0 flex-1 bg-transparent font-manrope text-[1.0625rem] text-slate-800 outline-none placeholder:text-slate-400 disabled:cursor-not-allowed"
+                      />
+                      <button
+                        type="submit"
+                        disabled={!inputValue.trim() || !inputEnabled}
+                        className="flex shrink-0 items-center gap-1.5 rounded-xl bg-arcova-teal px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/90 disabled:cursor-not-allowed disabled:opacity-30"
+                        aria-label={inputEnabled ? 'Send' : 'Getting ready'}
+                      >
+                        <Send className="h-4 w-4" />
+                        Send
+                      </button>
+                    </div>
+                  </form>
+                  {inputEnabled && isWorkDomain && !inputValue.trim() && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        pushText('user', emailDomain);
+                        void runAnalysis(emailDomain);
+                      }}
+                      className="flex items-center gap-1.5 rounded-full border border-arcova-teal/30 bg-arcova-teal/8 px-3.5 py-1.5 text-xs font-medium text-arcova-teal transition-all hover:bg-arcova-teal/15"
+                    >
+                      Use {emailDomain} from my email
+                    </button>
+                  )}
+                  {analysisError && (
+                    <p className="text-xs text-red-600">{analysisError}</p>
+                  )}
+                </div>
+              </div>
+              <div className="mt-8 flex items-center justify-center gap-2 text-xs text-arcova-navy/40">
+                <span className="flex -space-x-1.5">
+                  {['#a3e3df', '#f6d6c1', '#b5d6f0'].map((bg, i) => (
+                    <span
+                      key={i}
+                      className="h-5 w-5 rounded-full border border-white/60"
+                      style={{ background: bg }}
+                    />
+                  ))}
+                </span>
+                <span>
+                  Joining as{' '}
+                  <strong className="font-semibold text-arcova-navy/70">{firstName || 'you'}</strong>
+                  {email && (
+                    <span className="ml-1 text-arcova-navy/35">• {email}</span>
+                  )}
+                </span>
+              </div>
+            </>
+          ) : (
+            <>
+              {greetingAgentMetaStrip}
+              <div
+                ref={setupGreetingThreadRef}
+                className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-1 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              >
+                {greetingChatMessagesDisplay.map((msg, i) => {
+                  if (msg.role === 'user') {
+                    return (
+                      <div
+                        key={msg.id}
+                        className="flex justify-end"
+                        style={{ animation: 'arcova-msg-in 0.2s ease' }}
+                      >
+                        <div className="max-w-[min(100%,36rem)] rounded-2xl rounded-br-md rounded-tl-2xl rounded-tr-2xl bg-arcova-teal px-4 py-3.5 font-manrope text-[1.125rem] leading-[1.45] tracking-[-0.016em] text-white shadow-[0_10px_40px_-18px_rgba(0,164,180,0.45)]">
+                          {msg.text}
+                        </div>
+                      </div>
+                    );
+                  }
+                  const isLast = i === greetingChatMessagesDisplay.length - 1;
+                  const bubbles = setupAssistantBubbles(msg.text, msg.typing);
+                  return (
+                    <div key={msg.id} className="flex w-full" style={{ animation: 'arcova-msg-in 0.2s ease' }}>
+                      <div
+                        className={cn(
+                          'max-w-[min(100%,40rem)] rounded-2xl rounded-tl-sm bg-gradient-to-br from-slate-50 to-white px-4 py-4 font-manrope text-[1.1875rem] leading-[1.45] tracking-[-0.018em] text-slate-700 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.9)] ring-1 ring-slate-200/55 transition-opacity',
+                          !isLast ? 'opacity-55' : 'opacity-100',
+                        )}
+                      >
+                        {msg.typing ? (
+                          <TypingText target={msg.text} />
+                        ) : (
+                          bubbles.map((bubble, bi) => (
+                            <p key={bi} className={cn(bi > 0 && 'mt-3')}>
+                              {bubble}
+                            </p>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+                {thinking && (
+                  <div className="flex w-full">
+                    <div className="max-w-[min(100%,40rem)] rounded-2xl rounded-tl-sm bg-gradient-to-br from-slate-50 to-slate-100/80 px-4 py-4 font-manrope text-[1.1875rem] leading-[1.45] tracking-[-0.018em] text-slate-700 ring-1 ring-slate-200/60">
+                      <div className="flex h-5 items-center gap-1.5">
+                        {[0, 120, 240].map((d) => (
+                          <span
+                            key={d}
+                            className="h-1.5 w-1.5 animate-bounce rounded-full bg-arcova-teal/60"
+                            style={{ animationDelay: `${d}ms` }}
+                          />
+                        ))}
+                      </div>
                     </div>
                   </div>
-                );
-              }
-              const isLast = i === visibleMessages.length - 1;
-              return (
-                <div key={msg.id} className="flex" style={{ animation: 'arcova-msg-in 0.2s ease' }}>
-                  <div
-                    className={`max-w-[88%] rounded-2xl rounded-tl-sm border border-arcova-navy/8 bg-white/85 px-4 py-2.5 text-sm leading-relaxed text-arcova-navy transition-opacity ${
-                      !isLast ? 'opacity-60' : ''
-                    }`}
-                  >
-                    {msg.typing ? <TypingText target={msg.text} /> : msg.text}
-                  </div>
-                </div>
-              );
-            })}
-            {thinking && (
-              <div className="flex">
-                <div className="rounded-2xl rounded-tl-sm border border-arcova-navy/8 bg-white/85 px-4 py-3">
-                  <div className="flex gap-1">
-                    {[0, 150, 300].map((d) => (
-                      <div
-                        key={d}
-                        className="h-1.5 w-1.5 animate-bounce rounded-full bg-arcova-teal/50"
-                        style={{ animationDelay: `${d}ms` }}
-                      />
-                    ))}
-                  </div>
-                </div>
+                )}
+                {analysisError && (
+                  <p className="text-center text-xs text-red-500">{analysisError}</p>
+                )}
               </div>
-            )}
-            {analysisError && (
-              <p className="text-center text-xs text-red-500">{analysisError}</p>
-            )}
-          </div>
-
-          {/* Input bar */}
-          {inputEnabled && (
-            <form
-              onSubmit={(e) => void handleSend(e)}
-              className="flex gap-2 border-t border-arcova-navy/8 px-4 py-3"
-            >
-              <input
-                value={inputValue}
-                onChange={(e) => setInputVal(e.target.value)}
-                placeholder="Reply…"
-                spellCheck={false}
-                autoComplete="off"
-                autoFocus
-                className="min-w-0 flex-1 rounded-xl border border-arcova-navy/12 bg-white/75 px-3.5 py-2.5 text-sm text-arcova-navy outline-none placeholder:text-arcova-navy/35 focus:border-arcova-teal focus:ring-2 focus:ring-arcova-teal/15"
-              />
-              <button
-                type="submit"
-                disabled={!inputValue.trim()}
-                className="rounded-xl bg-arcova-teal px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-arcova-navy disabled:opacity-30"
-              >
-                →
-              </button>
-            </form>
+              {inputEnabled && (
+                <SetupEmbedChatInput
+                  value={inputValue}
+                  onChange={(v) => setInputVal(v)}
+                  onSubmit={(e) => void handleSend(e)}
+                  disabled={!inputEnabled}
+                  placeholder="Reply…"
+                  autoFocusInput
+                />
+              )}
+            </>
           )}
         </div>
       </div>
@@ -3414,17 +3433,15 @@ export default function SetupFlow({
     title,
     subtitle,
     children,
-    dock,
   }: {
     eyebrow?: ReactNode;
     title: string;
     subtitle?: string;
     children: ReactNode;
-    dock?: ReactNode;
   }) => (
     <div className="relative flex min-h-dvh flex-col overflow-hidden">
       <AppAmbientBackground />
-      <div className="relative z-10 flex min-h-dvh flex-col px-4 pb-24 pt-10 sm:px-6">
+      <div className="relative z-10 flex min-h-dvh flex-col px-4 pb-16 pt-10 sm:px-6">
         <div className="mx-auto w-full max-w-2xl">
           {eyebrow && <div className="mb-3">{eyebrow}</div>}
           <h1 className="text-2xl font-semibold text-arcova-navy sm:text-3xl">{title}</h1>
@@ -3432,7 +3449,6 @@ export default function SetupFlow({
         </div>
         <div className="mx-auto mt-6 w-full max-w-2xl flex-1">{children}</div>
       </div>
-      {dock}
     </div>
   );
 
@@ -3465,16 +3481,6 @@ export default function SetupFlow({
         eyebrow={<StepDots current={0} />}
         title={`${timeGreeting}${greetName}. Here's what I found on ${domain}.`}
         subtitle={editingFindings ? 'Edit any fields below, then save when you\'re done.' : 'Take a look — edit anything that doesn\'t look right.'}
-        dock={
-          <SetupAgentDock
-            messages={visibleMessages}
-            thinking={thinking}
-            inputEnabled={false}
-            inputValue=""
-            onInputChange={() => undefined}
-            onSend={() => undefined}
-          />
-        }
       >
         <div className="arcova-glass-panel p-6">
           <SetupProfilePanel
@@ -3549,16 +3555,6 @@ export default function SetupFlow({
         eyebrow={<StepDots current={1} />}
         title="We found some companies that look like strong model accounts."
         subtitle="Each represents a different buyer type. Pick one to build your ICP on, or enter your own."
-        dock={
-          <SetupAgentDock
-            messages={visibleMessages}
-            thinking={thinking}
-            inputEnabled={false}
-            inputValue=""
-            onInputChange={() => undefined}
-            onSend={() => undefined}
-          />
-        }
       >
         <div className="space-y-3">
           {icpSuggestions.map((s) => (
@@ -3616,16 +3612,6 @@ export default function SetupFlow({
         eyebrow={<StepDots current={1} />}
         title={`Here's what I found on ${targetName}.`}
         subtitle="Check the fit and confirm — you can tweak before saving."
-        dock={
-          <SetupAgentDock
-            messages={visibleMessages}
-            thinking={thinking}
-            inputEnabled={false}
-            inputValue=""
-            onInputChange={() => undefined}
-            onSend={() => undefined}
-          />
-        }
       >
         <div className="arcova-glass-panel p-6">
           <SetupProfilePanel
@@ -3664,16 +3650,6 @@ export default function SetupFlow({
         eyebrow={<StepDots current={2} />}
         title={`Here's who typically buys from companies like ${icpName}.`}
         subtitle="Review the roles and seniority — you can adjust before saving."
-        dock={
-          <SetupAgentDock
-            messages={visibleMessages}
-            thinking={thinking}
-            inputEnabled
-            inputValue={inputValue}
-            onInputChange={(v) => setInputVal(v)}
-            onSend={(e) => void handleSend(e)}
-          />
-        }
       >
         <div className="arcova-glass-panel p-6">
           <SetupProfilePanel
@@ -3701,6 +3677,15 @@ export default function SetupFlow({
             {buyingTeamEditMode ? 'Cancel edits' : "Something's off"}
           </button>
         </div>
+        {inputEnabled && (
+          <SetupEmbedChatInput
+            value={inputValue}
+            onChange={(v) => setInputVal(v)}
+            onSubmit={(e) => void handleSend(e)}
+            disabled={thinking}
+            placeholder="Reply to the agent…"
+          />
+        )}
       </LightLayout>
     );
   }

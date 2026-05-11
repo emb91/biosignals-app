@@ -1,4 +1,21 @@
 import { ROUTES, withQuery } from './routes';
+import {
+  WORKSPACE_JOURNEY_NARRATIVE_INSTRUCTION,
+  workspaceJourneyEnrichmentPending,
+  workspaceJourneyFindCompaniesForIcpLabel,
+  workspaceJourneyHealthyCoverage,
+  workspaceJourneyHighFitPoorContacts,
+  workspaceJourneyImportNoContacts,
+  workspaceJourneyLowCompanyCoverageReason,
+  workspaceJourneyOpportunityAccountsRemain,
+  workspaceJourneySetup,
+  workspaceJourneySourceAtGoodCompanies,
+  workspaceJourneySourceContactsForIcpLabel,
+  workspaceJourneySourceContactsForNAccountsLabel,
+  workspaceJourneyWeakAvgContactQualityReason,
+} from './prompts/agent-voice';
+
+/** Computes journey stage and hrefs. User-facing reasons, labels, narrative_instruction: lib/prompts/agent-voice.ts */
 
 export type JourneyStage =
   | 'setup'
@@ -125,33 +142,34 @@ export function buildWorkspaceJourneyState(input: WorkspaceJourneyStateInput): W
 
   if (!setup.setup_complete) {
     journeyStage = 'setup';
+    const next = !setup.company_profile_complete
+      ? workspaceJourneySetup.needCompanyProfile
+      : workspaceJourneySetup.needIcp;
     recommendedNextAction = {
-      reason: !setup.company_profile_complete
-        ? 'The product needs the user company profile before scoring and enrichment are useful.'
-        : 'The product needs at least one ICP before it can score companies and contacts.',
-      label: !setup.company_profile_complete ? 'Complete company profile' : 'Define ICPs',
+      reason: next.reason,
+      label: next.label,
       href: !setup.company_profile_complete ? ROUTES.setup.company : ROUTES.setup.icps,
     };
   } else if (!importState.has_imported_contacts) {
     journeyStage = 'import';
     recommendedNextAction = {
-      reason: 'Setup is done, but there are no imported contacts yet.',
-      label: 'Import contacts',
+      reason: workspaceJourneyImportNoContacts.reason,
+      label: workspaceJourneyImportNoContacts.label,
       href: ROUTES.import,
     };
   } else if (leads.total === 0 && accounts.total === 0) {
     journeyStage = 'enrichment_pending';
     recommendedNextAction = {
-      reason: 'Contacts have been imported, but scored leads and accounts are not available yet.',
-      label: 'Check imports',
+      reason: workspaceJourneyEnrichmentPending.reason,
+      label: workspaceJourneyEnrichmentPending.label,
       href: ROUTES.import,
     };
   } else if (lowCompanyCoverageIcps.length > 0) {
     const icp = lowCompanyCoverageIcps[0];
     journeyStage = 'health_icp_gap';
     recommendedNextAction = {
-      reason: `${icp.label} has very low company coverage.`,
-      label: `Find companies for ${icp.label}`,
+      reason: workspaceJourneyLowCompanyCoverageReason(icp.label),
+      label: workspaceJourneyFindCompaniesForIcpLabel(icp.label),
       href: withQuery(ROUTES.data, `mode=companies&icpId=${encodeURIComponent(icp.id)}`),
       mode: 'companies',
       icpId: icp.id,
@@ -164,8 +182,8 @@ export function buildWorkspaceJourneyState(input: WorkspaceJourneyStateInput): W
       icpId: account.icpId,
     }));
     recommendedNextAction = {
-      reason: 'Some high-fit accounts have no strong buyer-persona contact.',
-      label: `Source contacts for ${batchCompanies.length} accounts`,
+      reason: workspaceJourneyHighFitPoorContacts.reason,
+      label: workspaceJourneySourceContactsForNAccountsLabel(batchCompanies.length),
       href: withQuery(ROUTES.data, 'mode=contacts_at_companies'),
       mode: 'contacts_at_companies',
       batchCompanies,
@@ -173,8 +191,8 @@ export function buildWorkspaceJourneyState(input: WorkspaceJourneyStateInput): W
   } else if (leads.status_counts.source > 0) {
     journeyStage = 'leads_contact_quality';
     recommendedNextAction = {
-      reason: 'Some contacts are at good companies but are not the right people to target.',
-      label: 'Source better contacts',
+      reason: workspaceJourneySourceAtGoodCompanies.reason,
+      label: workspaceJourneySourceAtGoodCompanies.label,
       href: ROUTES.data,
     };
   } else if (poorContactFitIcps.length > 0) {
@@ -182,8 +200,8 @@ export function buildWorkspaceJourneyState(input: WorkspaceJourneyStateInput): W
     const batchCompanies = icpContactBatch(icp.id, accounts.high_fit_poor_coverage_examples);
     journeyStage = 'health_icp_gap';
     recommendedNextAction = {
-      reason: `${icp.label} has enough companies, but weak average contact quality.`,
-      label: `Source contacts for ${icp.label}`,
+      reason: workspaceJourneyWeakAvgContactQualityReason(icp.label),
+      label: workspaceJourneySourceContactsForIcpLabel(icp.label),
       href: withQuery(ROUTES.data, 'mode=contacts_at_companies'),
       mode: 'contacts_at_companies',
       icpId: icp.id,
@@ -192,16 +210,16 @@ export function buildWorkspaceJourneyState(input: WorkspaceJourneyStateInput): W
   } else if (accounts.coverage.opportunity > 0) {
     journeyStage = 'data_ready';
     recommendedNextAction = {
-      reason: 'There are still accounts that would benefit from better contacts.',
-      label: 'Open Data',
+      reason: workspaceJourneyOpportunityAccountsRemain.reason,
+      label: workspaceJourneyOpportunityAccountsRemain.label,
       href: ROUTES.data,
     };
   } else {
     journeyStage = 'signals_ready';
     recommendedNextAction = {
-      reason: 'Setup, import, and coverage look healthy enough that timing and intent become the next layer.',
-      label: 'Review signals',
-      href: ROUTES.signals,
+      reason: workspaceJourneyHealthyCoverage.reason,
+      label: workspaceJourneyHealthyCoverage.label,
+      href: ROUTES.data,
     };
   }
 
@@ -209,7 +227,6 @@ export function buildWorkspaceJourneyState(input: WorkspaceJourneyStateInput): W
     ...input,
     journey_stage: journeyStage,
     recommended_next_action: recommendedNextAction,
-    narrative_instruction:
-      'Explain the current stage in plain language, name the main gap, and only then suggest the next action. If recommended_next_action has an href, use suggest_navigation after the explanation.',
+    narrative_instruction: WORKSPACE_JOURNEY_NARRATIVE_INSTRUCTION,
   };
 }
