@@ -11,7 +11,7 @@
  * instant scripted narration + chip-select widgets.
  */
 
-import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
 import { parseSSEStream } from '@/lib/sse';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
@@ -40,8 +40,9 @@ import { resolveCustomerSegments } from '@/lib/split-customer-segments';
 import { fetchLatestUserCompanyRow } from '@/lib/fetch-latest-user-company';
 import { ArcovaWelcomeOrb } from '@/components/ArcovaWelcomeOrb';
 import { ROUTES } from '@/lib/routes';
-import { Send, Sparkles } from 'lucide-react';
+import { Send, Sparkles, ChevronDown, ExternalLink, Check, Building2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import AppSidebar from '@/components/AppSidebar';
 
 /** Funding, headcount + customer-segment context for buying-team inference */
 function icContextForBuyingTeam(
@@ -278,6 +279,320 @@ function visiblePlatformCategory(companyType?: string | null, platformCategory?:
 // Sub-components
 // ═══════════════════════════════════════════════════════════════════════════
 
+// ── Setup "My company" card (light glass, matches Setup.html design) ────────
+function SetupSection({
+  label,
+  defaultOpen = false,
+  children,
+}: {
+  label: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className="overflow-hidden rounded-xl border border-arcova-navy/8 bg-white/40 transition-colors hover:bg-white/55">
+      <header
+        className="flex cursor-pointer items-center justify-between px-3.5 py-2.5"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <h3 className="m-0 font-manrope text-[12.5px] font-semibold tracking-[-0.01em] text-arcova-navy">
+          {label}
+        </h3>
+        <ChevronDown
+          className={`h-3 w-3 text-arcova-navy/50 transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+      </header>
+      {open && (
+        <div className="flex flex-col gap-2.5 border-t border-arcova-navy/8 px-3.5 pb-3 pt-3">
+          {children}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SetupTag({ children, link }: { children: ReactNode; link?: boolean }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border border-arcova-teal/20 bg-arcova-teal/10 px-2.5 py-1 text-[11.5px] font-medium text-arcova-teal ${
+        link ? 'cursor-pointer hover:bg-arcova-teal/18' : ''
+      }`}
+    >
+      {children}
+      {link && <ExternalLink className="h-2.5 w-2.5 opacity-70" />}
+    </span>
+  );
+}
+
+function SetupTagRow({ items, link }: { items: string[]; link?: boolean }) {
+  if (!items || items.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {items.map((t, i) => (
+        <SetupTag key={`${t}-${i}`} link={link}>
+          {t}
+        </SetupTag>
+      ))}
+    </div>
+  );
+}
+
+function SetupSubLabel({ children }: { children: ReactNode }) {
+  return (
+    <p className="m-0 text-[9.5px] font-semibold uppercase tracking-[0.12em] text-arcova-navy/40">
+      {children}
+    </p>
+  );
+}
+
+function SetupKV({ rows }: { rows: Array<[string, ReactNode]> }) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="grid grid-cols-2 gap-x-5 gap-y-2.5">
+      {rows.map(([k, v], i) => (
+        <div key={i} className="min-w-0">
+          <div className="mb-0.5 text-[9.5px] font-semibold uppercase tracking-[0.12em] text-arcova-navy/40">
+            {k}
+          </div>
+          <div className="text-[13px] font-medium text-arcova-navy">{v}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SetupBullets({ items }: { items: string[] }) {
+  if (!items || items.length === 0) return null;
+  return (
+    <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
+      {items.map((t, i) => (
+        <li
+          key={i}
+          className="relative pl-3.5 text-[12.5px] leading-[1.5] text-arcova-navy/75 before:absolute before:left-1 before:top-2 before:h-1 before:w-1 before:rounded-full before:bg-arcova-teal/70 before:content-['']"
+        >
+          {t}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function formatSetupFunding(stage?: string, total?: number): string | undefined {
+  if (!stage && total == null) return undefined;
+  const fmtUsd = (usd: number) => {
+    if (usd >= 1e9) return `$${(usd / 1e9).toFixed(1)}B`;
+    if (usd >= 1e6) return `$${(usd / 1e6).toFixed(0)}M`;
+    if (usd >= 1e3) return `$${(usd / 1e3).toFixed(0)}K`;
+    return `$${usd}`;
+  };
+  if (stage && total != null) return `${stage} · ${fmtUsd(total)}`;
+  if (stage) return stage;
+  return total != null ? fmtUsd(total) : undefined;
+}
+
+function SetupMyCompanyCard({ data }: { data: import('@/components/SetupProfilePanel').PanelMyCompanyData }) {
+  const domain = (data.website ?? '').replace(/^https?:\/\//, '').replace(/\/$/, '');
+  const fundingLine = formatSetupFunding(data.fundingStage, data.totalFundingUsd);
+  return (
+    <article className="overflow-hidden rounded-[20px] border border-arcova-navy/10 bg-white/65 shadow-[0_18px_40px_-28px_rgba(13,53,71,0.15)] backdrop-blur-xl">
+      {/* Card header */}
+      <header className="grid grid-cols-[28px_1fr_22px_22px] items-center gap-2.5 border-b border-arcova-navy/8 px-4 py-3.5">
+        <span className="grid h-7 w-7 place-items-center rounded-lg bg-arcova-teal/12 text-arcova-teal">
+          <Building2 className="h-3.5 w-3.5" />
+        </span>
+        <span className="font-manrope text-[14.5px] font-semibold tracking-[-0.014em] text-arcova-navy">
+          My company
+        </span>
+        <span className="grid h-[22px] w-[22px] place-items-center rounded-full bg-arcova-teal text-white">
+          <Check className="h-2.5 w-2.5" strokeWidth={3} />
+        </span>
+        <ChevronDown className="h-3.5 w-3.5 rotate-180 text-arcova-navy/65" />
+      </header>
+
+      <div className="flex flex-col gap-3.5 p-4">
+        {/* Identity strip */}
+        <div className="grid grid-cols-[40px_1fr] items-center gap-3 rounded-xl border border-arcova-navy/8 bg-white/55 px-3 py-2.5">
+          <div className="grid h-10 w-10 place-items-center overflow-hidden rounded-[10px] bg-gradient-to-br from-arcova-teal to-[#007e8b] font-bold text-white">
+            {data.logoUrl ? (
+              <Image
+                src={data.logoUrl}
+                alt={data.companyName ?? 'Company'}
+                width={40}
+                height={40}
+                className="h-10 w-10 object-cover"
+              />
+            ) : (
+              <span className="text-base">{(data.companyName?.[0] ?? 'A').toUpperCase()}</span>
+            )}
+          </div>
+          <div className="min-w-0">
+            <div className="text-[14px] font-semibold text-arcova-navy">{data.companyName ?? '—'}</div>
+            {domain && (
+              <a
+                href={data.website && /^https?:\/\//i.test(data.website) ? data.website : `https://${domain}`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-[11.5px] text-arcova-teal hover:underline"
+              >
+                {domain}
+                <ExternalLink className="h-2.5 w-2.5" />
+              </a>
+            )}
+            {data.tagline && (
+              <div className="mt-0.5 text-[11.5px] italic text-arcova-navy/50">{data.tagline}</div>
+            )}
+          </div>
+        </div>
+
+        {/* About */}
+        <SetupSection label="About" defaultOpen>
+          {data.description && data.description.length > 0 && (
+            <p className="m-0 text-[12.5px] leading-[1.5] text-arcova-navy">
+              {data.description.join(' ')}
+            </p>
+          )}
+          {(data.companyTypeDisplay || data.companyType) && (
+            <div>
+              <SetupSubLabel>Company type</SetupSubLabel>
+              <div className="mt-1.5">
+                <SetupTagRow items={[(data.companyTypeDisplay ?? data.companyType) as string]} />
+              </div>
+            </div>
+          )}
+          {data.platformCategory && (
+            <div>
+              <SetupSubLabel>Platform category</SetupSubLabel>
+              <div className="mt-1.5">
+                <SetupTagRow items={[data.platformCategory]} />
+              </div>
+            </div>
+          )}
+        </SetupSection>
+
+        {/* Firmographics */}
+        <SetupSection label="Firmographics">
+          <SetupKV
+            rows={[
+              data.industry ? (['Industry', data.industry] as [string, ReactNode]) : null,
+              data.hqCity || data.hqCountry
+                ? ([
+                    'Headquarters',
+                    [data.hqCity, data.hqCountry].filter(Boolean).join(', '),
+                  ] as [string, ReactNode])
+                : null,
+              data.foundedYear != null
+                ? (['Founded', String(data.foundedYear)] as [string, ReactNode])
+                : null,
+              data.employeeCount != null
+                ? (['Headcount', String(data.employeeCount)] as [string, ReactNode])
+                : data.employeeRange
+                  ? (['Headcount', data.employeeRange] as [string, ReactNode])
+                  : null,
+              fundingLine ? (['Funding', fundingLine] as [string, ReactNode]) : null,
+              data.companyStatus
+                ? (['Stage', data.companyStatus] as [string, ReactNode])
+                : null,
+            ].filter(Boolean) as Array<[string, ReactNode]>}
+          />
+        </SetupSection>
+
+        {/* What you sell */}
+        {((data.productsServices && data.productsServices.length > 0) ||
+          (data.services && data.services.length > 0) ||
+          (data.modalities && data.modalities.length > 0) ||
+          (data.technologies && data.technologies.length > 0)) && (
+          <SetupSection label="What you sell">
+            {data.productsServices && data.productsServices.length > 0 && (
+              <div>
+                <SetupSubLabel>Products</SetupSubLabel>
+                <div className="mt-1.5">
+                  <SetupTagRow items={data.productsServices} />
+                </div>
+              </div>
+            )}
+            {data.services && data.services.length > 0 && (
+              <div>
+                <SetupSubLabel>Services</SetupSubLabel>
+                <div className="mt-1.5">
+                  <SetupTagRow items={data.services} />
+                </div>
+              </div>
+            )}
+            {data.modalities && data.modalities.length > 0 && (
+              <div>
+                <SetupSubLabel>Modalities</SetupSubLabel>
+                <div className="mt-1.5">
+                  <SetupTagRow items={data.modalities} />
+                </div>
+              </div>
+            )}
+            {data.technologies && data.technologies.length > 0 && (
+              <div>
+                <SetupSubLabel>Technologies</SetupSubLabel>
+                <div className="mt-1.5">
+                  <SetupTagRow items={data.technologies} />
+                </div>
+              </div>
+            )}
+          </SetupSection>
+        )}
+
+        {/* Value proposition */}
+        {data.valuePropositions && data.valuePropositions.length > 0 && (
+          <SetupSection label="Value proposition">
+            <SetupBullets items={data.valuePropositions} />
+          </SetupSection>
+        )}
+
+        {/* Customers & competitors */}
+        {((data.customersWeServe && data.customersWeServe.length > 0) ||
+          (data.goodFit && data.goodFit.length > 0) ||
+          (data.badFit && data.badFit.length > 0) ||
+          (data.competitorsEnriched && data.competitorsEnriched.length > 0)) && (
+          <SetupSection label="Customers & competitors">
+            {data.customersWeServe && data.customersWeServe.length > 0 && (
+              <div>
+                <SetupSubLabel>Customer segments</SetupSubLabel>
+                <div className="mt-1.5">
+                  <SetupTagRow items={data.customersWeServe} />
+                </div>
+              </div>
+            )}
+            {data.goodFit && data.goodFit.length > 0 && (
+              <div>
+                <SetupSubLabel>Good fit</SetupSubLabel>
+                <div className="mt-1.5">
+                  <SetupBullets items={data.goodFit} />
+                </div>
+              </div>
+            )}
+            {data.badFit && data.badFit.length > 0 && (
+              <div>
+                <SetupSubLabel>Not a fit</SetupSubLabel>
+                <div className="mt-1.5">
+                  <SetupBullets items={data.badFit} />
+                </div>
+              </div>
+            )}
+            {data.competitorsEnriched && data.competitorsEnriched.length > 0 && (
+              <div>
+                <SetupSubLabel>Competitors</SetupSubLabel>
+                <div className="mt-1.5">
+                  <SetupTagRow
+                    link
+                    items={data.competitorsEnriched.map((c) => c.name).filter(Boolean) as string[]}
+                  />
+                </div>
+              </div>
+            )}
+          </SetupSection>
+        )}
+      </div>
+    </article>
+  );
+}
+
 function AgentAvatar() {
   return (
     <Image src="/images/network-og.png" alt="Arcova" width={36} height={36} className="h-9 w-9 shrink-0 rounded-full ring-2 ring-white/15 object-cover" />
@@ -299,46 +614,107 @@ function ThinkingDots() {
   );
 }
 
-function TypingText({ target, delay = 0, speed = TYPING_MS }: { target: string; delay?: number; speed?: number }) {
-  const [started, setStarted] = useState(delay === 0);
-  const [shown, setShown] = useState('');
-  const i = useRef(0);
+/** Assistant paragraphs for setup chat (matches Today / AgentPanel paragraph split on blank lines). */
+function setupAssistantBubbles(text: string): string[] {
+  const parts = text.split(/\n\n+/).map((s) => s.trim()).filter(Boolean);
+  return parts.length > 0 ? parts : [text];
+}
+
+/** Character ranges per paragraph (same split as `setupAssistantBubbles` when not typing). */
+function paragraphRangesForAssistant(full: string): { start: number; end: number }[] {
+  if (!full) return [];
+  const ranges: { start: number; end: number }[] = [];
+  const re = /\n\n+/g;
+  let lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(full)) !== null) {
+    if (m.index > lastIndex) {
+      ranges.push({ start: lastIndex, end: m.index });
+    }
+    lastIndex = m.index + m[0].length;
+  }
+  if (lastIndex < full.length || ranges.length === 0) {
+    ranges.push({ start: lastIndex, end: full.length });
+  }
+  const filtered = ranges.filter((r) => full.slice(r.start, r.end).trim().length > 0);
+  return filtered.length > 0 ? filtered : [{ start: 0, end: full.length }];
+}
+
+/** Types full message while keeping the same paragraph breaks as the finished bubbles (no layout jump). */
+function TypingAssistantParagraphs({
+  target,
+  speed = TYPING_MS,
+  paragraphClassName,
+}: {
+  target: string;
+  speed?: number;
+  paragraphClassName?: string;
+}) {
+  const ranges = useMemo(() => paragraphRangesForAssistant(target), [target]);
+  const [shownLen, setShownLen] = useState(0);
 
   useEffect(() => {
-    if (delay === 0) return;
-    const t = setTimeout(() => setStarted(true), delay);
-    return () => clearTimeout(t);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (!started) return;
-    i.current = 0;
-    setShown('');
-    const t = setInterval(() => {
-      i.current += 1;
-      setShown(target.slice(0, i.current));
-      if (i.current >= target.length) clearInterval(t);
+    setShownLen(0);
+    if (!target.length) return;
+    let n = 0;
+    const id = setInterval(() => {
+      n += 1;
+      setShownLen(n);
+      if (n >= target.length) clearInterval(id);
     }, speed);
-    return () => clearInterval(t);
-  }, [target, started, speed]);
+    return () => clearInterval(id);
+  }, [target, speed]);
 
-  if (!started) return null;
+  if (!target) return null;
 
   return (
     <>
-      {shown}
-      {shown.length < target.length && (
-        <span className="inline-block w-[2px] h-[14px] bg-arcova-teal ml-0.5 align-middle animate-pulse" />
-      )}
+      {ranges.map((r, bi) => {
+        if (shownLen < r.start) return null;
+        const slice = target.slice(r.start, Math.min(r.end, shownLen));
+        const caret =
+          shownLen < target.length &&
+          ((shownLen < r.end) ||
+            (bi < ranges.length - 1 &&
+              shownLen >= r.end &&
+              shownLen < ranges[bi + 1].start));
+        return (
+          <p key={`${r.start}-${r.end}`} className={cn(bi > 0 && 'mt-3', paragraphClassName)}>
+            {slice}
+            {caret ? (
+              <span className="inline-block h-[14px] w-[2px] animate-pulse bg-arcova-teal ml-0.5 align-middle" />
+            ) : null}
+          </p>
+        );
+      })}
     </>
   );
 }
 
-/** Assistant paragraphs for setup chat (matches Today / AgentPanel paragraph split on blank lines). */
-function setupAssistantBubbles(text: string, typing?: boolean): string[] {
-  if (typing) return [text];
-  const parts = text.split(/\n\n+/).map((s) => s.trim()).filter(Boolean);
-  return parts.length > 0 ? parts : [text];
+function SetupAssistantMessageParagraphs({
+  text,
+  typing,
+  paragraphClassName,
+}: {
+  text: string;
+  typing?: boolean;
+  paragraphClassName?: string;
+}) {
+  const bubbles = setupAssistantBubbles(text);
+
+  if (!typing) {
+    return (
+      <>
+        {bubbles.map((bubble, bi) => (
+          <p key={bi} className={cn(bi > 0 && 'mt-3', paragraphClassName)}>
+            {bubble}
+          </p>
+        ))}
+      </>
+    );
+  }
+
+  return <TypingAssistantParagraphs target={text} speed={TYPING_MS} paragraphClassName={paragraphClassName} />;
 }
 
 function normalizeForWelcomeDuplicate(s: string): string {
@@ -386,6 +762,47 @@ function filterFirstAssistantIfWelcomeHeadlineDuplicate(messages: TextMsg[], wel
     out.push(msg);
   }
   return out;
+}
+
+function visibleGreetingStyleMessages(thread: DisplayMsg[], welcomePart1: string, welcomePart2: string): TextMsg[] {
+  const visible = thread.filter((m): m is TextMsg => m.kind === 'text');
+  const firstUserIdx = visible.findIndex((m) => m.role === 'user');
+  const sliced = firstUserIdx >= 0 ? visible.slice(firstUserIdx) : visible;
+  return filterFirstAssistantIfWelcomeHeadlineDuplicate(sliced, welcomePart1, welcomePart2);
+}
+
+function SetupGlassAgentMetaStrip({
+  clock,
+  statusKey,
+}: {
+  clock: Date;
+  statusKey: 'waiting' | 'thinking' | 'ready';
+}) {
+  return (
+    <div
+      className="mb-[1cm] flex min-h-[3.5rem] shrink-0 items-center justify-between text-[11px] tracking-[0.04em] text-slate-500"
+      aria-live="polite"
+    >
+      <span className="inline-flex items-center gap-2">
+        <span
+          className="h-1.5 w-1.5 shrink-0 rounded-full bg-arcova-teal"
+          style={{
+            animation: 'arcova-dot-pulse 2.6s ease-in-out infinite',
+            boxShadow: '0 0 0 4px rgba(0, 164, 180, 0.18)',
+          }}
+          aria-hidden
+        />
+        <span className="font-medium text-slate-500">Arcova · {statusKey}</span>
+      </span>
+      <time className="tabular-nums text-[10px] text-slate-400" dateTime={clock.toISOString()}>
+        {clock.toLocaleTimeString('en-GB', {
+          hour: '2-digit',
+          minute: '2-digit',
+        })}{' '}
+        · local
+      </time>
+    </div>
+  );
 }
 
 function SetupEmbedChatInput({
@@ -643,170 +1060,48 @@ function SetupWelcomeCard({
   );
 }
 
-// ── Enriching card (loading screen) ──────────────────────────────────────
-
-const ENRICHING_CONFIGS = {
-  company: {
-    eyebrow: (url: string) => `Reading ${url || 'your site'}`,
-    title: (url: string) => (
-      <>
-        Hang tight — getting to know{' '}
-        <span className="bg-gradient-to-br from-arcova-teal to-[#007e8b] bg-clip-text text-transparent">
-          {url ? normalizeDomain(url) : 'your company'}
-        </span>
-        .
-      </>
-    ),
-    sub: (url: string) =>
-      `I'm reading ${normalizeDomain(url) || 'your site'}, your LinkedIn page and a couple of recent press mentions. In a moment you'll review the draft together.`,
-    lines: [
-      'Reading the homepage and product pages',
-      'Cross-checking LinkedIn & Crunchbase',
-      'Sketching your value prop & differentiators',
-      'Drafting your company profile',
-    ],
-  },
-  targets: {
-    eyebrow: (url: string) => `Modelling target companies · ${normalizeDomain(url) || '…'}`,
-    title: (_url: string) => (
-      <>
-        Looking at the world through{' '}
-        <span className="bg-gradient-to-br from-arcova-teal to-[#007e8b] bg-clip-text text-transparent">
-          their lens
-        </span>
-        .
-      </>
-    ),
-    sub: (url: string) =>
-      `I'm reading ${normalizeDomain(url) || 'that company'}, mapping their pipeline, modality and therapeutic areas — then finding companies that look like it on the dimensions that matter.`,
-    lines: [
-      'Reading the site & SEC filings',
-      'Mapping pipeline stage, modality & therapeutic areas',
-      'Searching for companies that match the profile',
-      'Scoring candidates against your fit',
-    ],
-  },
-  buying: {
-    eyebrow: () => `Mapping buying teams inside your targets`,
-    title: () => (
-      <>
-        Working out{' '}
-        <span className="bg-gradient-to-br from-arcova-teal to-[#007e8b] bg-clip-text text-transparent">
-          who signs the deal
-        </span>
-        .
-      </>
-    ),
-    sub: () =>
-      `Inside each target account I'm mapping the buying committee — the scientists who'll use your platform, the heads who'll champion it, and the teams who'll sign.`,
-    lines: [
-      'Reading scientific publications & conference rosters',
-      'Mapping reporting structures on LinkedIn',
-      'Identifying champions, users & economic buyers',
-      'Tagging contacts by function & seniority',
-    ],
-  },
-} as const;
-
-function SetupEnrichingCard({
-  mode,
-  url = '',
-  step = 0,
+function SetupInlineEnrichmentPanel({
+  statusLine,
+  displayPct,
+  partialName,
+  showStop,
   onCancel,
 }: {
-  mode: 'company' | 'targets' | 'buying';
-  url?: string;
-  step?: number;
+  statusLine: string;
+  displayPct: number;
+  partialName?: string | null;
+  showStop: boolean;
   onCancel?: () => void;
 }) {
-  const cfg = ENRICHING_CONFIGS[mode];
-  const lines = cfg.lines;
-  const [active, setActive] = useState(0);
-
-  useEffect(() => {
-    if (step > 0) {
-      setActive(step);
-      return;
-    }
-    setActive(0);
-    const t = setInterval(() => {
-      setActive((a) => Math.min(a + 1, lines.length));
-    }, 1100);
-    return () => clearInterval(t);
-  }, [step, lines.length]);
-
   return (
-    <div className="relative z-10 flex min-h-dvh flex-col items-center justify-center px-4 py-12">
-      <div className="flex min-h-[510px] w-[460px] flex-col overflow-hidden rounded-3xl border border-white/55 bg-white/65 px-10 pb-10 pt-8 shadow-arcova backdrop-blur-xl">
-        <div className="mb-8 flex justify-center">
-          <SetupOrb variant="welcome" welcomeEnergised />
-        </div>
-        <div className="mb-2 text-center text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/45">
-          {cfg.eyebrow(url)}
-        </div>
-        <h2 className="mb-3 text-center font-manrope text-2xl font-medium leading-snug tracking-tight text-arcova-navy">
-          {cfg.title(url)}
-        </h2>
-        <p className="mb-8 text-center text-sm leading-relaxed text-arcova-navy/55">
-          {cfg.sub(url)}
-        </p>
-        <div className="space-y-2.5">
-          {lines.map((line, i) => (
-            <div
-              key={i}
-              className={`flex items-center gap-3 text-sm transition-opacity duration-500 ${
-                i <= active ? 'opacity-100' : 'opacity-30'
-              }`}
-            >
-              <span
-                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] transition-all ${
-                  i < active
-                    ? 'bg-arcova-teal text-white'
-                    : i === active
-                    ? 'border border-arcova-teal/50 text-arcova-teal'
-                    : 'border border-arcova-navy/15 text-arcova-navy/30'
-                }`}
-              >
-                {i < active ? (
-                  <svg
-                    viewBox="0 0 24 24"
-                    width="9"
-                    height="9"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="3"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="m5 12 5 5 9-10" />
-                  </svg>
-                ) : i === active ? (
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-arcova-teal" />
-                ) : null}
-              </span>
-              <span
-                className={
-                  i < active
-                    ? 'text-arcova-navy/70'
-                    : i === active
-                    ? 'font-medium text-arcova-navy'
-                    : 'text-arcova-navy/35'
-                }
-              >
-                {line}
-              </span>
-            </div>
-          ))}
-        </div>
-        {onCancel && (
-          <button
-            onClick={onCancel}
-            className="mt-8 w-full text-center text-xs text-arcova-navy/35 underline underline-offset-2 transition-colors hover:text-arcova-navy/60"
+    <div
+      className="w-full rounded-2xl rounded-tl-sm bg-gradient-to-br from-slate-50 to-white px-4 py-4 font-manrope text-slate-700 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.9)] ring-1 ring-slate-200/55"
+      style={{ animation: 'arcova-msg-in 0.2s ease' }}
+    >
+      <p className="text-sm leading-snug text-slate-600">{statusLine}</p>
+      {partialName ? (
+        <p className="mt-1 text-xs font-medium text-slate-500">{partialName}</p>
+      ) : null}
+      <div className="mt-3 space-y-1.5">
+        <div className="relative h-2 overflow-hidden rounded-full bg-slate-200/80">
+          <div
+            className="arcova-enrichment-progress absolute inset-y-0 left-0 rounded-full transition-[width] duration-700 ease-out"
+            style={{ width: `${Math.min(100, displayPct)}%` }}
           >
-            Stop
-          </button>
-        )}
+            <div className="arcova-enrichment-glow absolute inset-y-0 right-0 w-10 rounded-full" />
+          </div>
+        </div>
+        <p className="text-right text-xs tabular-nums text-slate-400">{Math.min(100, Math.round(displayPct))}%</p>
       </div>
+      {showStop && onCancel ? (
+        <button
+          type="button"
+          onClick={onCancel}
+          className="mt-4 text-left text-xs text-slate-400 underline underline-offset-2 transition-colors hover:text-slate-600"
+        >
+          Stop
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -918,6 +1213,7 @@ export default function SetupFlow({
   const [partialOwnEnrichment, setPartialOwnEnrichment] = useState<Partial<Record<string, unknown>> | null>(null);
   const [targetEnrichStep, setTargetEnrichStep] = useState(0); // 0 = not started, 1–4 = step completed
   const [ownEnrichStep, setOwnEnrichStep] = useState(0);
+  const [buyingLoadPct, setBuyingLoadPct] = useState(18);
   const [analysisError, setAnalysisError] = useState('');
   const [pendingTransition, setPendingTransition] = useState<{
     target: 'proceed_to_customer_url' | 'confirm_own_company' | 'restart';
@@ -981,7 +1277,8 @@ export default function SetupFlow({
 
   // ── Enrichment navigation guard ────────────────────────────────────────────
   const { setIsEnriching } = useEnrichmentGuard();
-  const isEnrichingPhase = phase === 'customer_url_loading' || phase === 'analysis_loading';
+  const isEnrichingPhase =
+    phase === 'customer_url_loading' || phase === 'analysis_loading' || phase === 'buying_team_loading';
 
   useEffect(() => {
     setIsEnriching(isEnrichingPhase);
@@ -1050,9 +1347,21 @@ export default function SetupFlow({
   }, [inputEnabled, phase, thread]);
 
   useEffect(() => {
-    if (phase !== 'greeting') return;
+    const tickClock =
+      phase === 'greeting' ||
+      phase === 'analysis_loading' ||
+      phase === 'customer_url_loading' ||
+      phase === 'buying_team_loading';
+    if (!tickClock) return;
     setSetupGreetingChatClock(new Date());
     const id = setInterval(() => setSetupGreetingChatClock(new Date()), 30_000);
+    return () => clearInterval(id);
+  }, [phase]);
+
+  useEffect(() => {
+    if (phase !== 'buying_team_loading') return;
+    setBuyingLoadPct(18);
+    const id = setInterval(() => setBuyingLoadPct((p) => Math.min(p + 7, 88)), 880);
     return () => clearInterval(id);
   }, [phase]);
 
@@ -2483,6 +2792,8 @@ export default function SetupFlow({
     setInputVal('');
     setInput(false);
     setPendingTransition(null);
+    // Show the user bubble immediately; don't wait on the onboarding API (or analysis kick-off).
+    pushText('user', text);
 
     const response = await askClaude({
       mode: phase === 'greeting' || phase === 'customer_url_input' ? 'conversation' : 'phase_help',
@@ -2508,8 +2819,6 @@ export default function SetupFlow({
       return;
     }
 
-    // Conversational reply — now show the chat window with user message + agent response
-    pushText('user', text);
     if (response.displayParts.length) {
       await sayBeats(response.displayParts);
     }
@@ -2982,12 +3291,30 @@ export default function SetupFlow({
   const analysedUrlForPanel = lastAnalyzedUrlRef.current ?? '';
 
   useEffect(() => {
-    if (phase !== 'greeting') return;
-    if (!visibleMessages.some((m) => m.role === 'user')) return;
+    const enrichGlass =
+      phase === 'analysis_loading' || phase === 'customer_url_loading' || phase === 'buying_team_loading';
+    if (phase === 'greeting') {
+      if (!visibleMessages.some((m) => m.role === 'user')) return;
+    } else if (!enrichGlass) {
+      return;
+    }
     const el = setupGreetingThreadRef.current;
     if (!el) return;
     el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-  }, [phase, visibleMessages, thinking]);
+  }, [
+    phase,
+    visibleMessages,
+    thinking,
+    loadMsg,
+    customerUrlLoadMsg,
+    customerUrlPercent,
+    ownCompanyPercent,
+    ownEnrichStep,
+    targetEnrichStep,
+    ownEnrichDisplayPct,
+    targetEnrichDisplayPct,
+    buyingLoadPct,
+  ]);
 
   // ── Data helpers (available to all phase renders below) ─────────────────
 
@@ -3107,13 +3434,14 @@ export default function SetupFlow({
 
   // ── Redesigned phase screens ──────────────────────────────────────────────
 
+  const welcomeChatPart1 = `Hi ${firstName || 'there'}, let's get you set up. `;
+  const welcomeChatPart2 = `First, what's your company's website?`;
+
   // Phase: greeting
   // • Before the user sends anything: welcome card (orb + headline + URL input).
   // • After the first user message: same 460px shell, in-place thread + Today-style composer (no separate header chrome).
   if (phase === 'greeting') {
     const hasUserMsg = visibleMessages.some((m) => m.role === 'user');
-    const part1 = `Hi ${firstName || 'there'}, let's get you set up. `;
-    const part2 = `First, what's your company's website?`;
     // Opening beats are appended to `thread` on mount while the welcome card shows static headline copy.
     // In chat mode, list only messages from the first user turn so the UI matches what the user experienced.
     const firstGreetingUserIdx = visibleMessages.findIndex((m) => m.role === 'user');
@@ -3121,58 +3449,31 @@ export default function SetupFlow({
       firstGreetingUserIdx >= 0 ? visibleMessages.slice(firstGreetingUserIdx) : visibleMessages;
     const greetingChatMessagesDisplay = filterFirstAssistantIfWelcomeHeadlineDuplicate(
       greetingChatMessages,
-      part1,
-      part2,
+      welcomeChatPart1,
+      welcomeChatPart2,
     );
     const WELCOME_SPEED = 44;
     const isWorkDomain = !!emailDomain && !FREE_EMAIL_DOMAINS.has(emailDomain.toLowerCase());
 
-    const greetingAgentMetaStrip = (
-      <div
-        className="mb-[1cm] flex min-h-[3.5rem] shrink-0 items-center justify-between text-[11px] tracking-[0.04em] text-slate-500"
-        aria-live="polite"
-      >
-        <span className="inline-flex items-center gap-2">
-          <span
-            className="h-1.5 w-1.5 shrink-0 rounded-full bg-arcova-teal"
-            style={{
-              animation: 'arcova-dot-pulse 2.6s ease-in-out infinite',
-              boxShadow: '0 0 0 4px rgba(0, 164, 180, 0.18)',
-            }}
-            aria-hidden
-          />
-          <span className="font-medium text-slate-500">
-            Arcova ·{' '}
-            {thinking ? 'thinking' : inputEnabled ? 'ready' : 'waiting'}
-          </span>
-        </span>
-        <time
-          className="tabular-nums text-[10px] text-slate-400"
-          dateTime={setupGreetingChatClock.toISOString()}
-        >
-          {setupGreetingChatClock.toLocaleTimeString('en-GB', {
-            hour: '2-digit',
-            minute: '2-digit',
-          })}{' '}
-          · local
-        </time>
-      </div>
-    );
-
     return (
-      <div className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-4 py-16">
+      <div className="flex h-screen min-h-0 bg-transparent font-jakarta">
+        <AppSidebar setupFlowOnly />
+        <main className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col items-center justify-center overflow-hidden px-4 py-16">
         <AppAmbientBackground />
         <div
           className={cn(
             'relative z-10 flex w-[460px] flex-col rounded-3xl border border-white/55 bg-white/65 px-10 pb-10 pt-0 shadow-arcova backdrop-blur-xl',
             hasUserMsg
-              ? 'max-h-[85vh] min-h-[580px] overflow-hidden'
+              ? 'h-[min(85vh,52rem)] min-h-[580px] max-h-[85vh] overflow-hidden'
               : 'min-h-[580px] overflow-visible',
           )}
         >
           {!hasUserMsg ? (
             <>
-              {greetingAgentMetaStrip}
+              <SetupGlassAgentMetaStrip
+                clock={setupGreetingChatClock}
+                statusKey={thinking ? 'thinking' : inputEnabled ? 'ready' : 'waiting'}
+              />
               {/*
                 Fixed-height orb band keeps the orb centered in the same window as before; larger
                 margin-top on the eyebrow moves “Welcome to Arcova” down toward the headline.
@@ -3188,7 +3489,7 @@ export default function SetupFlow({
               <div className="flex min-h-0 flex-1 flex-col justify-start">
                 <h1 className="mb-7 mt-[0.75cm] min-h-[5rem] text-center font-manrope text-3xl font-medium leading-snug tracking-tight text-arcova-navy">
                   {inputEnabled ? (
-                    <TypingHeadline part1={part1} part2={part2} speed={WELCOME_SPEED} />
+                    <TypingHeadline part1={welcomeChatPart1} part2={welcomeChatPart2} speed={WELCOME_SPEED} />
                   ) : (
                     <span className="block text-arcova-navy/40">Getting ready.</span>
                   )}
@@ -3270,10 +3571,13 @@ export default function SetupFlow({
             </>
           ) : (
             <>
-              {greetingAgentMetaStrip}
+              <SetupGlassAgentMetaStrip
+                clock={setupGreetingChatClock}
+                statusKey={thinking ? 'thinking' : inputEnabled ? 'ready' : 'waiting'}
+              />
               <div
                 ref={setupGreetingThreadRef}
-                className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-1 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-1 py-2 [touch-action:pan-y] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
               >
                 {greetingChatMessagesDisplay.map((msg, i) => {
                   if (msg.role === 'user') {
@@ -3290,7 +3594,6 @@ export default function SetupFlow({
                     );
                   }
                   const isLast = i === greetingChatMessagesDisplay.length - 1;
-                  const bubbles = setupAssistantBubbles(msg.text, msg.typing);
                   return (
                     <div key={msg.id} className="flex w-full" style={{ animation: 'arcova-msg-in 0.2s ease' }}>
                       <div
@@ -3299,15 +3602,7 @@ export default function SetupFlow({
                           !isLast ? 'opacity-55' : 'opacity-100',
                         )}
                       >
-                        {msg.typing ? (
-                          <TypingText target={msg.text} />
-                        ) : (
-                          bubbles.map((bubble, bi) => (
-                            <p key={bi} className={cn(bi > 0 && 'mt-3')}>
-                              {bubble}
-                            </p>
-                          ))
-                        )}
+                        <SetupAssistantMessageParagraphs text={msg.text} typing={!!msg.typing} />
                       </div>
                     </div>
                   );
@@ -3344,46 +3639,92 @@ export default function SetupFlow({
             </>
           )}
         </div>
+        </main>
       </div>
     );
   }
 
-  // Phase: analysis_loading → Enriching card (own company)
-  if (phase === 'analysis_loading') {
-    return (
-      <div className="relative flex min-h-dvh flex-col overflow-hidden">
-        <AppAmbientBackground />
-        <SetupEnrichingCard
-          mode="company"
-          url={lastAnalyzedUrlRef.current ?? ''}
-          step={ownEnrichStep}
-          onCancel={cancelAnalysis}
-        />
-      </div>
-    );
-  }
+  // Phases: inline enrichment (own company, target URL, buying team) inside the same glass chat shell
+  if (
+    phase === 'analysis_loading' ||
+    phase === 'customer_url_loading' ||
+    phase === 'buying_team_loading'
+  ) {
+    const enrichMessages = visibleGreetingStyleMessages(thread, welcomeChatPart1, welcomeChatPart2);
+    const partialOwnLabel =
+      typeof partialOwnEnrichment?.company_name === 'string' && partialOwnEnrichment.company_name.trim()
+        ? partialOwnEnrichment.company_name
+        : null;
 
-  // Phase: customer_url_loading → Enriching card (targets)
-  if (phase === 'customer_url_loading') {
     return (
-      <div className="relative flex min-h-dvh flex-col overflow-hidden">
+      <div className="flex h-screen min-h-0 bg-transparent font-jakarta">
+        <AppSidebar setupFlowOnly />
+        <main className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col items-center justify-center overflow-hidden px-4 py-16">
         <AppAmbientBackground />
-        <SetupEnrichingCard
-          mode="targets"
-          url={lastTargetUrlRef.current ?? ''}
-          step={targetEnrichStep}
-          onCancel={cancelAnalysis}
-        />
-      </div>
-    );
-  }
-
-  // Phase: buying_team_loading → Enriching card (buying)
-  if (phase === 'buying_team_loading') {
-    return (
-      <div className="relative flex min-h-dvh flex-col overflow-hidden">
-        <AppAmbientBackground />
-        <SetupEnrichingCard mode="buying" />
+        <div className="relative z-10 flex h-[min(85vh,52rem)] w-[460px] min-h-[580px] max-h-[85vh] flex-col overflow-hidden rounded-3xl border border-white/55 bg-white/65 px-10 pb-4 pt-0 shadow-arcova backdrop-blur-xl">
+          <SetupGlassAgentMetaStrip clock={setupGreetingChatClock} statusKey="thinking" />
+          <div
+            ref={setupGreetingThreadRef}
+            className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-1 py-2 [touch-action:pan-y] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          >
+            {enrichMessages.map((msg, i) => {
+              if (msg.role === 'user') {
+                return (
+                  <div
+                    key={msg.id}
+                    className="flex justify-end"
+                    style={{ animation: 'arcova-msg-in 0.2s ease' }}
+                  >
+                    <div className="max-w-[min(100%,36rem)] rounded-2xl rounded-br-md rounded-tl-2xl rounded-tr-2xl bg-arcova-teal px-4 py-3.5 font-manrope text-[1.125rem] leading-[1.45] tracking-[-0.016em] text-white shadow-[0_10px_40px_-18px_rgba(0,164,180,0.45)]">
+                      {msg.text}
+                    </div>
+                  </div>
+                );
+              }
+              const isLast = i === enrichMessages.length - 1;
+              return (
+                <div key={msg.id} className="flex w-full" style={{ animation: 'arcova-msg-in 0.2s ease' }}>
+                  <div
+                    className={cn(
+                      'max-w-[min(100%,40rem)] rounded-2xl rounded-tl-sm bg-gradient-to-br from-slate-50 to-white px-4 py-4 font-manrope text-[1.1875rem] leading-[1.45] tracking-[-0.018em] text-slate-700 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.9)] ring-1 ring-slate-200/55 transition-opacity',
+                      !isLast ? 'opacity-55' : 'opacity-100',
+                    )}
+                  >
+                    <SetupAssistantMessageParagraphs text={msg.text} typing={!!msg.typing} />
+                  </div>
+                </div>
+              );
+            })}
+            {analysisError ? <p className="text-center text-xs text-red-500">{analysisError}</p> : null}
+          </div>
+          <div className="shrink-0 pt-1">
+            {phase === 'analysis_loading' ? (
+              <SetupInlineEnrichmentPanel
+                statusLine={loadMsg}
+                displayPct={ownEnrichDisplayPct}
+                partialName={partialOwnLabel}
+                showStop
+                onCancel={cancelAnalysis}
+              />
+            ) : phase === 'customer_url_loading' ? (
+              <SetupInlineEnrichmentPanel
+                statusLine={customerUrlLoadMsg}
+                displayPct={targetEnrichDisplayPct}
+                partialName={partialTargetEnrichment?.company_name ?? null}
+                showStop
+                onCancel={cancelAnalysis}
+              />
+            ) : (
+              <SetupInlineEnrichmentPanel
+                statusLine="Mapping buying teams for your target accounts…"
+                displayPct={buyingLoadPct}
+                partialName={reviewedCompanyName || savedIcpName || null}
+                showStop={false}
+              />
+            )}
+          </div>
+        </div>
+        </main>
       </div>
     );
   }
@@ -3392,7 +3733,9 @@ export default function SetupFlow({
 
   if (thinking && thread.length === 0) {
     return (
-      <div className={`flex min-h-0 flex-1 flex-col ${SETUP_CHAT_SURROUND}`}>
+      <div className="flex h-screen min-h-0 bg-transparent font-jakarta">
+        <AppSidebar setupFlowOnly />
+        <main className={`flex min-h-0 flex-1 flex-col ${SETUP_CHAT_SURROUND}`}>
         <div className="flex min-h-0 flex-1 items-center justify-center p-4 sm:p-6">
           <div
             className={`flex min-h-[18rem] max-h-[min(32rem,calc(100dvh-12rem))] w-full max-w-3xl ${SETUP_CHAT_CARD}`}
@@ -3413,6 +3756,7 @@ export default function SetupFlow({
             </div>
           </div>
         </div>
+        </main>
       </div>
     );
   }
@@ -3439,16 +3783,19 @@ export default function SetupFlow({
     subtitle?: string;
     children: ReactNode;
   }) => (
-    <div className="relative flex min-h-dvh flex-col overflow-hidden">
-      <AppAmbientBackground />
-      <div className="relative z-10 flex min-h-dvh flex-col px-4 pb-16 pt-10 sm:px-6">
-        <div className="mx-auto w-full max-w-2xl">
-          {eyebrow && <div className="mb-3">{eyebrow}</div>}
-          <h1 className="text-2xl font-semibold text-arcova-navy sm:text-3xl">{title}</h1>
-          {subtitle && <p className="mt-1.5 text-sm text-arcova-ink-soft">{subtitle}</p>}
+    <div className="flex h-screen min-h-0 bg-transparent font-jakarta">
+      <AppSidebar setupFlowOnly />
+      <main className="arcova-scroll-surface relative min-h-0 flex-1 overflow-y-auto">
+        <AppAmbientBackground />
+        <div className="relative z-10 flex min-h-full flex-col px-4 pb-16 pt-10 sm:px-6">
+          <div className="mx-auto w-full max-w-2xl">
+            {eyebrow && <div className="mb-3">{eyebrow}</div>}
+            <h1 className="text-2xl font-semibold text-arcova-navy sm:text-3xl">{title}</h1>
+            {subtitle && <p className="mt-1.5 text-sm text-arcova-ink-soft">{subtitle}</p>}
+          </div>
+          <div className="mx-auto mt-6 w-full max-w-2xl flex-1">{children}</div>
         </div>
-        <div className="mx-auto mt-6 w-full max-w-2xl flex-1">{children}</div>
-      </div>
+      </main>
     </div>
   );
 
@@ -3473,78 +3820,99 @@ export default function SetupFlow({
     </div>
   );
 
-  // Phase: analysis_results → light glass review of own company
+  // Phase: analysis_results → light glass review of own company (matches Setup.html design)
   if (phase === 'analysis_results') {
     const domain = analysedUrlForPanel.replace(/^https?:\/\//, '').replace(/\/$/, '') || 'your company';
     return (
-      <LightLayout
-        eyebrow={<StepDots current={0} />}
-        title={`${timeGreeting}${greetName}. Here's what I found on ${domain}.`}
-        subtitle={editingFindings ? 'Edit any fields below, then save when you\'re done.' : 'Take a look — edit anything that doesn\'t look right.'}
-      >
-        <div className="arcova-glass-panel p-6">
-          <SetupProfilePanel
-            {...sharedPanelProps}
-            phase={phase}
-            analysisLoading={false}
-          />
-        </div>
-        {!editingFindings && (
-          <div className="mt-5 flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              onClick={() => void handleResultsConfirmed()}
-              disabled={thinking}
-              className={ctaPrimary}
-            >
-              Looks good →
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleAnalysisNotRight()}
-              disabled={thinking}
-              className={ctaSecondary}
-            >
-              Something's off
-            </button>
-            <button
-              type="button"
-              onClick={handleReanalyseFromPanel}
-              disabled={thinking}
-              className={ctaSecondary}
-            >
-              Re-analyse
-            </button>
-            <button
-              type="button"
-              onClick={() => { setPhase('greeting'); }}
-              disabled={thinking}
-              className={ctaGhost}
-            >
-              Use a different site
-            </button>
+      <div className="flex h-screen min-h-0 bg-transparent font-jakarta">
+        <AppSidebar setupFlowOnly />
+        <main className="arcova-scroll-surface relative min-h-0 flex-1 overflow-y-auto">
+          <AppAmbientBackground />
+          <div className="relative z-10 mx-auto flex max-w-[1080px] flex-col px-6 py-9 lg:px-10">
+            {/* Hero */}
+            <div className="mb-6 max-w-[820px]">
+              <div className="mb-5 inline-flex items-center gap-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/50">
+                <span className="inline-flex items-center gap-[3px]">
+                  <span className="h-[3px] w-3.5 rounded-full bg-arcova-teal" />
+                  <span className="h-[3px] w-3.5 rounded-full bg-arcova-teal/20" />
+                  <span className="h-[3px] w-3.5 rounded-full bg-arcova-teal/20" />
+                </span>
+                Step 1 of 3
+              </div>
+              <h1 className="mb-3 font-manrope text-[44px] font-medium leading-[1.06] tracking-[-0.032em] text-arcova-navy">
+                {timeGreeting}{greetName}.<br />
+                Here&apos;s what I found on{' '}
+                <span className="bg-gradient-to-br from-arcova-teal to-[#007e8b] bg-clip-text text-transparent">
+                  {domain}
+                </span>
+                .
+              </h1>
+              <p className="m-0 max-w-[640px] text-[15px] leading-[1.6] text-arcova-navy/65">
+                {editingFindings ? (
+                  'Edit any fields below, then save when you\'re done.'
+                ) : (
+                  <>
+                    Have a read with your coffee. If something&apos;s off, just tell me below — I&apos;ll fix it.
+                    When it looks right, hit <strong className="font-semibold text-arcova-navy">Looks good</strong> and we&apos;ll move on together.
+                  </>
+                )}
+              </p>
+            </div>
+
+            {/* Centred company card */}
+            <div className="mx-auto w-full max-w-[760px]">
+              <SetupMyCompanyCard data={myCompany} />
+
+              {/* CTA row */}
+              {!editingFindings && (
+                <div className="mt-5 flex flex-wrap items-center gap-3 px-1">
+                  <button
+                    type="button"
+                    onClick={() => void handleResultsConfirmed()}
+                    disabled={thinking}
+                    className="inline-flex items-center gap-2 rounded-[14px] bg-gradient-to-br from-arcova-teal to-[#007e8b] px-[22px] py-[13px] text-sm font-semibold text-white shadow-[0_12px_28px_-12px_rgba(0,164,180,0.5)] transition-all hover:-translate-y-px hover:bg-arcova-navy disabled:opacity-50"
+                  >
+                    <Check className="h-3.5 w-3.5" strokeWidth={2.4} />
+                    Looks good — continue
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleAnalysisNotRight()}
+                    disabled={thinking}
+                    className="bg-transparent px-3.5 py-3 text-[13px] font-medium text-arcova-navy/50 transition-colors hover:text-arcova-navy disabled:opacity-50"
+                  >
+                    Something&apos;s off
+                  </button>
+                  <div className="ml-auto inline-flex items-center gap-1.5 text-[12px] text-arcova-navy/50">
+                    <span>→</span>
+                    Next: <strong className="font-semibold text-arcova-navy/70">Target companies</strong>
+                  </div>
+                </div>
+              )}
+              {editingFindings && (
+                <div className="mt-5 flex flex-wrap items-center gap-3 px-1">
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveFindingsEdit()}
+                    disabled={thinking}
+                    className="inline-flex items-center gap-2 rounded-[14px] bg-gradient-to-br from-arcova-teal to-[#007e8b] px-[22px] py-[13px] text-sm font-semibold text-white shadow-[0_12px_28px_-12px_rgba(0,164,180,0.5)] transition-all hover:-translate-y-px hover:bg-arcova-navy disabled:opacity-50"
+                  >
+                    <Check className="h-3.5 w-3.5" strokeWidth={2.4} />
+                    Save changes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCancelFindingsEdit}
+                    className="rounded-[14px] border border-arcova-navy/10 bg-white/70 px-5 py-3 text-sm font-medium text-arcova-navy transition-colors hover:bg-white"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
-        )}
-        {editingFindings && (
-          <div className="mt-5 flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              onClick={() => void handleSaveFindingsEdit()}
-              disabled={thinking}
-              className={ctaPrimary}
-            >
-              Save changes
-            </button>
-            <button
-              type="button"
-              onClick={handleCancelFindingsEdit}
-              className={ctaSecondary}
-            >
-              Cancel
-            </button>
-          </div>
-        )}
-      </LightLayout>
+        </main>
+      </div>
     );
   }
 
@@ -3591,15 +3959,18 @@ export default function SetupFlow({
   // Phase: customer_url_input → URL entry for target company
   if (phase === 'customer_url_input') {
     return (
-      <div className="relative flex min-h-dvh flex-col overflow-hidden">
-        <AppAmbientBackground />
-        <SetupWelcomeCard
-          firstName={firstName}
-          onSubmit={(url) => void handleCustomerUrlAnalyse(url)}
-          analysisError={analysisError}
-          isLoading={thinking}
-          mode="target"
-        />
+      <div className="flex h-screen min-h-0 bg-transparent font-jakarta">
+        <AppSidebar setupFlowOnly />
+        <main className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col overflow-hidden">
+          <AppAmbientBackground />
+          <SetupWelcomeCard
+            firstName={firstName}
+            onSubmit={(url) => void handleCustomerUrlAnalyse(url)}
+            analysisError={analysisError}
+            isLoading={thinking}
+            mode="target"
+          />
+        </main>
       </div>
     );
   }
@@ -3695,12 +4066,15 @@ export default function SetupFlow({
     const savingLabel =
       phase === 'done' ? 'Redirecting…' : phase === 'persona_saving' ? 'Saving buying team…' : 'Saving profile…';
     return (
-      <div className="relative flex min-h-dvh flex-col overflow-hidden">
-        <AppAmbientBackground />
-        <div className="relative z-10 flex min-h-dvh flex-col items-center justify-center gap-5 px-4">
-          <ArcovaLoader size={56} />
-          <p className="text-sm font-medium text-arcova-ink-soft">{savingLabel}</p>
-        </div>
+      <div className="flex h-screen min-h-0 bg-transparent font-jakarta">
+        <AppSidebar setupFlowOnly />
+        <main className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col overflow-hidden">
+          <AppAmbientBackground />
+          <div className="relative z-10 flex flex-1 flex-col items-center justify-center gap-5 px-4">
+            <ArcovaLoader size={56} />
+            <p className="text-sm font-medium text-arcova-ink-soft">{savingLabel}</p>
+          </div>
+        </main>
       </div>
     );
   }
@@ -3731,9 +4105,11 @@ export default function SetupFlow({
                     !isLastAssistant && i < visibleMessages.length - 2 ? 'opacity-55' : thinking && isLastAssistant ? 'opacity-100 animate-pulse' : 'opacity-100'
                   }`}
                 >
-                  <p className="whitespace-pre-wrap text-base leading-relaxed text-gray-800">
-                    {msg.typing ? <TypingText target={msg.text} /> : msg.text}
-                  </p>
+                  <SetupAssistantMessageParagraphs
+                    text={msg.text}
+                    typing={!!msg.typing}
+                    paragraphClassName="text-base leading-relaxed text-gray-800"
+                  />
                 </div>
               </div>
             );
@@ -3992,7 +4368,9 @@ export default function SetupFlow({
   );
 
   return (
-    <div className={`flex min-h-0 flex-1 flex-col ${SETUP_CHAT_SURROUND}`}>
+    <div className="flex h-screen min-h-0 bg-transparent font-jakarta">
+      <AppSidebar setupFlowOnly />
+      <main className={`flex min-h-0 flex-1 flex-col ${SETUP_CHAT_SURROUND}`}>
       {showProgress && (
         <div className="shrink-0 border-b border-white/10 px-6 py-4">
           <div className="mx-auto flex max-w-6xl items-center justify-between">
@@ -4096,6 +4474,7 @@ export default function SetupFlow({
           </div>
         </div>
       </div>
+      </main>
     </div>
   );
 }
