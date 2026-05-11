@@ -413,6 +413,11 @@ export default function ImportPage() {
       if (batchStatus === 'complete') {
         void fetchImportHistory();
         void fetchHubspotSyncLog();
+        // Clear from localStorage so future page loads show the main import screen.
+        // The in-session state still holds so "Import complete" renders for the current visit.
+        localStorage.removeItem(BATCH_ID_STORAGE_KEY);
+      } else if (batchStatus === 'failed' || batchStatus === 'cancelled') {
+        localStorage.removeItem(BATCH_ID_STORAGE_KEY);
       }
     };
 
@@ -1405,7 +1410,7 @@ export default function ImportPage() {
                     >
                       Start new import
                     </button>
-                    <Link href="/briefing" onClick={() => persistBatchId(null)} className="text-xs text-gray-400 hover:text-gray-600">
+                    <Link href={ROUTES.today} onClick={() => persistBatchId(null)} className="text-xs text-gray-400 hover:text-gray-600">
                       I&apos;ll check back later
                     </Link>
                   </div>

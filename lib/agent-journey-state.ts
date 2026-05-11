@@ -152,7 +152,7 @@ export function buildWorkspaceJourneyState(input: WorkspaceJourneyStateInput): W
     recommendedNextAction = {
       reason: `${icp.label} has very low company coverage.`,
       label: `Find companies for ${icp.label}`,
-      href: withQuery(ROUTES.leads.data, `mode=companies&icpId=${encodeURIComponent(icp.id)}`),
+      href: withQuery(ROUTES.data, `mode=companies&icpId=${encodeURIComponent(icp.id)}`),
       mode: 'companies',
       icpId: icp.id,
     };
@@ -166,7 +166,7 @@ export function buildWorkspaceJourneyState(input: WorkspaceJourneyStateInput): W
     recommendedNextAction = {
       reason: 'Some high-fit accounts have no strong buyer-persona contact.',
       label: `Source contacts for ${batchCompanies.length} accounts`,
-      href: withQuery(ROUTES.leads.data, 'mode=contacts_at_companies'),
+      href: withQuery(ROUTES.data, 'mode=contacts_at_companies'),
       mode: 'contacts_at_companies',
       batchCompanies,
     };
@@ -175,7 +175,7 @@ export function buildWorkspaceJourneyState(input: WorkspaceJourneyStateInput): W
     recommendedNextAction = {
       reason: 'Some contacts are at good companies but are not the right people to target.',
       label: 'Source better contacts',
-      href: ROUTES.leads.data,
+      href: ROUTES.data,
     };
   } else if (poorContactFitIcps.length > 0) {
     const icp = poorContactFitIcps[0];
@@ -184,7 +184,7 @@ export function buildWorkspaceJourneyState(input: WorkspaceJourneyStateInput): W
     recommendedNextAction = {
       reason: `${icp.label} has enough companies, but weak average contact quality.`,
       label: `Source contacts for ${icp.label}`,
-      href: withQuery(ROUTES.leads.data, 'mode=contacts_at_companies'),
+      href: withQuery(ROUTES.data, 'mode=contacts_at_companies'),
       mode: 'contacts_at_companies',
       icpId: icp.id,
       ...(batchCompanies.length > 0 ? { batchCompanies } : {}),
@@ -194,7 +194,7 @@ export function buildWorkspaceJourneyState(input: WorkspaceJourneyStateInput): W
     recommendedNextAction = {
       reason: 'There are still accounts that would benefit from better contacts.',
       label: 'Open Data',
-      href: ROUTES.leads.data,
+      href: ROUTES.data,
     };
   } else {
     journeyStage = 'signals_ready';

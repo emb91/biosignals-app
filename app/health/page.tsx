@@ -134,7 +134,7 @@ function buildHealthHandoffPrompt(card: IcpPipelineCard, task: string): string {
     `avg contact fit ${formatFitValue(card.avg_contact_fit)}, and avg contacts per company ${formatDepthValue(card.avg_contacts_per_company)}. ` +
     `Health details: ${weakDims || 'all visible health dimensions are healthy'}, overall ${healthLabel(card.overall)}.`;
   const companiesHref = withQuery(
-    ROUTES.leads.data,
+    ROUTES.data,
     new URLSearchParams({
       mode: 'companies',
       icpId: card.icp_id,
@@ -178,7 +178,7 @@ function buildAllHealthHandoffPrompt(cards: IcpPipelineCard[]): string {
   );
   const suggestedHref = firstCoverageGap
     ? withQuery(
-        ROUTES.leads.data,
+        ROUTES.data,
         new URLSearchParams({
           mode: 'companies',
           icpId: firstCoverageGap.icp_id,
@@ -260,7 +260,7 @@ export default function HealthPage() {
       requestType,
       source: 'health',
     });
-    router.push(withQuery(ROUTES.leads.data, params));
+    router.push(withQuery(ROUTES.data, params));
   };
 
   const fireAgent = (text: string) => {

@@ -692,7 +692,7 @@ export default function AccountsPage() {
       source: 'accounts',
     });
     if (account.matched_icp_id) params.set('icpId', account.matched_icp_id);
-    router.push(withQuery(ROUTES.leads.data, params));
+    router.push(withQuery(ROUTES.data, params));
   };
 
   const closePanel = () => {
@@ -1177,7 +1177,7 @@ export default function AccountsPage() {
                                   <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
                                     <button
                                       type="button"
-                                      onClick={() => router.push('/customer-signals')}
+                                      onClick={() => router.push(ROUTES.signals)}
                                       className="inline-flex items-center gap-1.5 text-sm font-semibold text-arcova-teal hover:text-arcova-teal/85 transition-colors"
                                     >
                                       View Signals
@@ -1279,7 +1279,7 @@ export default function AccountsPage() {
                                 </p>
                                 <button
                                   type="button"
-                                  onClick={() => router.push('/customer-signals')}
+                                  onClick={() => router.push(ROUTES.signals)}
                                   className="inline-flex items-center gap-1.5 text-sm font-semibold text-arcova-teal hover:text-arcova-teal/85 transition-colors"
                                 >
                                   Review signals

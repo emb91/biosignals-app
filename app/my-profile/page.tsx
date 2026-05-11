@@ -6,9 +6,11 @@ import { useEffect, useState, useCallback } from 'react';
 import { normalizePlatformTaxonomyFields } from '@/lib/platform-category';
 import { parseSSEStream } from '@/lib/sse';
 import AppSidebar from '@/components/AppSidebar';
+import { AppWarningBanner } from '@/components/AppWarningBanner';
 import { ProfileCard, type PanelMyCompanyData, type MyCompanyChangeValue, type CompetitorItem } from '@/components/SetupProfilePanel';
 import { Pencil, RefreshCw, Trash2, Save, X, AlertTriangle, Building2, ArrowRight } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { ROUTES } from '@/lib/routes';
 
 const FIELD_MAP: Record<string, string> = {
   companyName: 'company_name',
@@ -168,7 +170,7 @@ export default function MyProfilePage() {
     if (id) {
       await fetch(`/api/user-company?id=${id}`, { method: 'DELETE' }).catch(() => {});
     }
-    router.replace('/briefing');
+    router.replace(ROUTES.today);
   };
 
   const runEnrichment = async (website: string) => {
@@ -424,8 +426,14 @@ export default function MyProfilePage() {
             <h2 id="delete-modal-title" className="mb-2 text-lg font-semibold text-white">
               Delete company profile?
             </h2>
+            <AppWarningBanner
+              layout="compact"
+              tone="danger"
+              className="mb-4"
+              title="This cannot be undone. Your profile is deleted from the database."
+            />
             <p className="mb-6 text-sm leading-relaxed text-white/55">
-              This will permanently remove your company analysis, including all enriched data, narrative fields, and firmographics. You'll need to run the analysis again to rebuild it.
+              This will remove your company analysis, including enriched data, narrative fields, and firmographics. You will need to run setup and analysis again.
             </p>
             <div className="flex gap-3">
               <button

@@ -39,7 +39,16 @@ export function useSetupState(): SetupState {
   });
 
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      setState({
+        step1Complete: false,
+        step2Complete: false,
+        step3Complete: false,
+        setupComplete: false,
+        loading: false,
+      });
+      return;
+    }
 
     let cancelled = false;
 

@@ -40,16 +40,16 @@ const leadsItems: NavItem[] = [
 ];
 
 const topNavigation: NavItem[] = [
-  { name: 'Today', href: ROUTES.briefing, icon: NavIconToday },
-  { name: 'GTM base', href: ROUTES.dashboard, icon: NavIconGtmBase },
+  { name: 'Today', href: ROUTES.today, icon: NavIconToday },
+  { name: 'GTM base', href: ROUTES.gtmBase, icon: NavIconGtmBase },
   { name: 'Import', href: ROUTES.import, icon: NavIconImport },
-  { name: 'Health', href: ROUTES.leads.health, icon: NavIconHealth },
-  { name: 'Data', href: ROUTES.leads.data, icon: NavIconData },
-  { name: 'Signals', href: '/customer-signals', icon: NavIconSignals },
+  { name: 'Health', href: ROUTES.health, icon: NavIconHealth },
+  { name: 'Data', href: ROUTES.data, icon: NavIconData },
+  { name: 'Signals', href: ROUTES.signals, icon: NavIconSignals },
 ];
 
 const bottomNavigation: NavItem[] = [
-  { name: 'Settings', href: '/settings', icon: NavIconSettings },
+  { name: 'Settings', href: ROUTES.settings, icon: NavIconSettings },
 ];
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'arcova_sidebar_collapsed';
@@ -97,7 +97,7 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
 
   const isActive = (href: string) => {
     if (pathname === href) return true;
-    if (href === ROUTES.dashboard || href === ROUTES.briefing) return false;
+    if (href === ROUTES.gtmBase || href === ROUTES.today) return false;
     return pathname.startsWith(`${href}/`);
   };
 
@@ -209,7 +209,7 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
                 .map((job: Record<string, unknown>) => `${String(job.id)}:${String(job.status)}`)
                 .join('|')
             : null;
-          dataNeedsAttention = dismissibleDotVisible('data', dataSignature, pathname === ROUTES.leads.data);
+          dataNeedsAttention = dismissibleDotVisible('data', dataSignature, pathname === ROUTES.data);
           setShowDataDot(dataNeedsAttention);
         }
 
@@ -234,7 +234,7 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
           signalsNeedAttention = dismissibleDotVisible(
             'signals',
             signalSignature,
-            pathname === '/customer-signals' || pathname === ROUTES.signals,
+            pathname === ROUTES.signals,
           );
           setShowSignalsDot(signalsNeedAttention);
         }
@@ -508,8 +508,8 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
                 </div>
               ) : (
                 <>
-                  {renderNavItem({ name: 'Today', href: ROUTES.briefing, icon: NavIconToday })}
-                  {renderNavItem({ name: 'GTM base', href: ROUTES.dashboard, icon: NavIconGtmBase })}
+                  {renderNavItem({ name: 'Today', href: ROUTES.today, icon: NavIconToday })}
+                  {renderNavItem({ name: 'GTM base', href: ROUTES.gtmBase, icon: NavIconGtmBase })}
                   {renderNavItem({ name: 'Import', href: ROUTES.import, icon: NavIconImport })}
                   {renderAccordion({
                     label: 'Leads',
@@ -520,9 +520,9 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
                     active: leadsActive && !leadsOpen,
                     dotVisible: showContactsDot || showAccountsDot,
                   })}
-                  {renderNavItem({ name: 'Health', href: ROUTES.leads.health, icon: NavIconHealth })}
-                  {renderNavItem({ name: 'Data', href: ROUTES.leads.data, icon: NavIconData })}
-                  {renderNavItem({ name: 'Signals', href: '/customer-signals', icon: NavIconSignals })}
+                  {renderNavItem({ name: 'Health', href: ROUTES.health, icon: NavIconHealth })}
+                  {renderNavItem({ name: 'Data', href: ROUTES.data, icon: NavIconData })}
+                  {renderNavItem({ name: 'Signals', href: ROUTES.signals, icon: NavIconSignals })}
                   {renderAccordion({
                     label: 'Setup',
                     icon: NavIconSetup,

@@ -14,7 +14,7 @@ import { BATCH_CONTACTS_KEY } from '@/lib/batch-contacts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type AgentPage = 'accounts' | 'leads' | 'dashboard' | 'health' | 'signals' | 'imports' | 'data' | 'icps';
+export type AgentPage = 'accounts' | 'leads' | 'today' | 'health' | 'signals' | 'imports' | 'data' | 'icps';
 
 export interface AgentTableFilter {
   columns: AccountQueryColumn[];
@@ -101,7 +101,7 @@ const PROMPTS: Record<AgentPage, string[]> = {
     'Which contacts have a 100% fit score?',
     'Show me recently imported contacts',
   ],
-  dashboard: [
+  today: [
     'Let’s work on item 1 first',
     'What should I do after that?',
     'Show me the highest-leverage option',
@@ -221,11 +221,13 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
       const raw = sessionStorage.getItem(HANDOFF_KEY);
       if (!raw) return;
       sessionStorage.removeItem(HANDOFF_KEY);
-      const handoff: AgentHandoff = JSON.parse(raw);
+      const handoff = JSON.parse(raw) as AgentHandoff & { fromPage?: string };
       if (Date.now() - handoff.timestamp < 5 * 60 * 1000) {
         setMessages(handoff.messages);
-        setHandoffFrom(handoff.fromPage);
-        if (embedInBriefingBento && page === 'dashboard') {
+        const normalizedFromPage: AgentPage =
+          handoff.fromPage === 'dashboard' ? 'today' : handoff.fromPage;
+        setHandoffFrom(normalizedFromPage);
+        if (embedInBriefingBento && page === 'today') {
           setBriefingSurfaceEngaged(true);
         }
       }
@@ -364,9 +366,9 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
 
   const showPrompts = !suppressPrompts && messages.length === 0 && !isLoading;
   const lightSetupChat = page === 'data' && variant !== 'central';
-  /** Briefing/central mode: wide white chat surface. Triggered by dashboard page OR the 'central' variant. */
-  const briefingChat = page === 'dashboard' || variant === 'central';
-  const embedGlass = Boolean(embedInBriefingBento && briefingChat);
+  /** Briefing-style / central layout: wide light chat surface. Triggered by Today (`page=today`) or the 'central' variant. */
+  const todayChat = page === 'today' || variant === 'central';
+  const embedGlass = Boolean(embedInBriefingBento && todayChat);
   const showBriefingOrb = embedGlass && briefingWelcome && !briefingSurfaceEngaged && !isLoading;
   const showBriefingIdleWelcome = embedGlass && briefingWelcome && messages.length === 0;
   const briefingChips = briefingIdleChips ?? (briefingWelcome ? DEFAULT_BRIEFING_IDLE_CHIPS : []);
@@ -377,10 +379,10 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
     <>
         {/* Handoff indicator */}
         {handoffFrom && messages.length > 0 && (
-          <div className={cn('flex items-center justify-center gap-1.5 text-[10px]', briefingChat ? 'text-slate-400' : 'text-[#b6c2c8]')}>
-            <span className={cn('h-px flex-1', briefingChat ? 'bg-slate-200' : 'bg-[rgba(13,53,71,0.07)]')} />
+          <div className={cn('flex items-center justify-center gap-1.5 text-[10px]', todayChat ? 'text-slate-400' : 'text-[#b6c2c8]')}>
+            <span className={cn('h-px flex-1', todayChat ? 'bg-slate-200' : 'bg-[rgba(13,53,71,0.07)]')} />
             <span>continued from {handoffFrom}</span>
-            <span className={cn('h-px flex-1', briefingChat ? 'bg-slate-200' : 'bg-[rgba(13,53,71,0.07)]')} />
+            <span className={cn('h-px flex-1', todayChat ? 'bg-slate-200' : 'bg-[rgba(13,53,71,0.07)]')} />
           </div>
         )}
 
@@ -393,13 +395,13 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                     'text-white shadow-sm',
                     lightSetupChat
                       ? 'bg-arcova-teal max-w-[min(100%,28rem)] rounded-2xl rounded-tr-none px-4 py-3 text-base leading-relaxed'
-                      : briefingChat
+                      : todayChat
                         ? embedGlass
                           ? 'bg-arcova-teal max-w-[min(100%,36rem)] rounded-2xl rounded-br-md rounded-tl-2xl rounded-tr-2xl px-4 py-3.5 font-manrope text-[1.125rem] leading-[1.45] tracking-[-0.016em] shadow-[0_10px_40px_-18px_rgba(0,164,180,0.45)]'
                           : 'bg-arcova-teal max-w-[min(100%,34rem)] rounded-2xl rounded-br-md rounded-tl-2xl rounded-tr-2xl px-4 py-3 text-[15px] leading-relaxed shadow-[0_10px_40px_-18px_rgba(0,164,180,0.45)]'
                         : 'bg-[#0d3547] max-w-[calc(100%-2.5rem)] rounded-2xl rounded-br-none px-3.5 py-2.5 text-[13px] leading-[1.55]',
                   )}
-                  style={!lightSetupChat && !briefingChat ? { animation: 'arcova-msg-in 0.18s ease-out' } : undefined}
+                  style={!lightSetupChat && !todayChat ? { animation: 'arcova-msg-in 0.18s ease-out' } : undefined}
                 >
                   {msg.content}
                 </div>
@@ -422,11 +424,11 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
               className={cn(
                 'flex items-start',
                 embedGlass ? 'w-full' : '',
-                lightSetupChat || briefingChat ? 'gap-3' : 'gap-2.5',
+                lightSetupChat || todayChat ? 'gap-3' : 'gap-2.5',
               )}
-              style={!lightSetupChat && !briefingChat ? { animation: 'arcova-msg-in 0.18s ease-out' } : undefined}
+              style={!lightSetupChat && !todayChat ? { animation: 'arcova-msg-in 0.18s ease-out' } : undefined}
             >
-              {!embedGlass && (lightSetupChat || briefingChat) ? (
+              {!embedGlass && (lightSetupChat || todayChat) ? (
                 <div className="shrink-0 mt-0.5">
                   {msg.isPending ? (
                     <ArcovaLoader size={lightSetupChat ? 36 : 32} />
@@ -451,7 +453,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                 className={cn(
                   'flex min-w-0 flex-col',
                   embedGlass ? 'w-full max-w-[min(100%,40rem)]' : '',
-                  lightSetupChat ? 'max-w-[min(100%,28rem)] gap-2' : briefingChat ? 'max-w-[min(100%,40rem)] gap-3' : 'w-full gap-1.5',
+                  lightSetupChat ? 'max-w-[min(100%,28rem)] gap-2' : todayChat ? 'max-w-[min(100%,40rem)] gap-3' : 'w-full gap-1.5',
                 )}
               >
                 {msg.isPending ? (
@@ -459,7 +461,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                     className={cn(
                       lightSetupChat
                         ? 'rounded-2xl rounded-tl-none border border-slate-200 bg-white px-4 py-3 text-base leading-relaxed text-slate-800 shadow-sm'
-                        : briefingChat
+                        : todayChat
                           ? embedGlass
                             ? 'rounded-2xl rounded-tl-sm bg-gradient-to-br from-slate-50 to-slate-100/80 px-4 py-4 font-manrope text-[1.1875rem] leading-[1.45] tracking-[-0.018em] text-slate-700 ring-1 ring-slate-200/60'
                             : 'rounded-2xl rounded-tl-sm bg-gradient-to-br from-slate-50 to-slate-100/80 px-4 py-4 text-[15px] leading-relaxed text-slate-700 ring-1 ring-slate-200/60'
@@ -476,7 +478,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                       ))}
                     </div>
                   </div>
-                ) : briefingChat ? (
+                ) : todayChat ? (
                   <div
                     className={cn(
                       'rounded-2xl rounded-tl-sm bg-gradient-to-br from-slate-50 to-white px-4 py-4 text-slate-700 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.9)] ring-1 ring-slate-200/55',
@@ -514,7 +516,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                     onClick={() => handleNavigate(msg.navigation!.href, msg.navigation!.batchCompanies)}
                     className={cn(
                       'self-start rounded-full border px-3.5 py-2 text-xs font-semibold transition-colors',
-                      briefingChat
+                      todayChat
                         ? 'flex items-center gap-1.5 border-slate-200 bg-white text-arcova-teal shadow-sm hover:border-arcova-teal/35 hover:bg-slate-50'
                         : 'flex items-center gap-1.5 border border-arcova-teal/30 bg-white text-arcova-teal hover:border-arcova-teal hover:bg-arcova-teal/5',
                     )}
@@ -555,7 +557,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
               ? surfaceClassName
               : lightSetupChat
               ? 'border border-slate-200/80 bg-white shadow-[0_24px_70px_-34px_rgba(15,23,42,0.45)] ring-1 ring-white'
-              : briefingChat
+              : todayChat
                 ? 'relative border border-slate-200/90 bg-white shadow-[0_28px_80px_-44px_rgba(15,23,42,0.22)] ring-1 ring-slate-900/[0.04]'
                 : cn(
                     'border border-white/80 bg-white/55',
@@ -564,7 +566,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                   ),
         )}
       >
-      {briefingChat && !embedGlass ? (
+      {todayChat && !embedGlass ? (
         <BorderBeam
           size={100}
           duration={9}
@@ -580,12 +582,12 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
           'flex shrink-0 items-center border-b',
           lightSetupChat
             ? 'gap-3 border-slate-200 bg-white px-5 py-4'
-            : briefingChat
+            : todayChat
               ? 'gap-3 border-slate-100 bg-white px-4 py-3'
               : 'gap-3 border-[rgba(13,53,71,0.07)] bg-transparent px-[18px] pb-[14px] pt-[18px]',
         )}
       >
-        {(!lightSetupChat && !briefingChat) ? (
+        {(!lightSetupChat && !todayChat) ? (
           /* 44×44 breathing orb — glows + speeds up when thinking */
           <div className="relative h-11 w-11 shrink-0" aria-hidden>
             <span className="absolute rounded-full" style={{
@@ -622,8 +624,8 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
           />
         )}
         <div className="flex-1 min-w-0">
-          <p className={cn('font-semibold leading-none', lightSetupChat ? 'text-sm text-gray-900' : briefingChat ? 'text-sm text-slate-900' : 'font-manrope text-[15px] text-[#0d3547]')}>Arcova Agent</p>
-          {(!lightSetupChat && !briefingChat) ? (
+          <p className={cn('font-semibold leading-none', lightSetupChat ? 'text-sm text-gray-900' : todayChat ? 'text-sm text-slate-900' : 'font-manrope text-[15px] text-[#0d3547]')}>Arcova Agent</p>
+          {(!lightSetupChat && !todayChat) ? (
             <div className="mt-[3px] flex items-center gap-1.5">
               <span className="h-[6px] w-[6px] shrink-0 rounded-full bg-arcova-teal" style={{ animation: 'arcova-dot-pulse 2.6s ease-in-out infinite', boxShadow: '0 0 0 0 rgba(0,164,180,0.5)' }} />
               <span className="text-[11px] leading-tight text-[#7d909a]">
@@ -643,7 +645,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
               'shrink-0 transition-colors',
               lightSetupChat
                 ? 'text-gray-400 hover:text-gray-600 rounded-lg p-2 hover:bg-slate-50'
-                : briefingChat
+                : todayChat
                   ? 'text-slate-400 hover:text-slate-700 rounded-lg p-2 hover:bg-slate-100'
                   : 'text-gray-400 hover:text-gray-600',
             )}
@@ -658,11 +660,11 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
 
       {/* ── Suggested prompts ── */}
       {showPrompts && (
-        <div className={cn('shrink-0', lightSetupChat ? 'px-5 pt-5 pb-3' : briefingChat ? 'px-4 pt-4 pb-2' : 'px-[18px] pb-2 pt-1', !wide && 'max-[1279px]:hidden')}>
-          <p className={cn('font-semibold uppercase tracking-[0.16em]', lightSetupChat ? 'mb-3 text-[10px] text-slate-400' : briefingChat ? 'mb-2 text-[11px] text-slate-400' : 'mb-2 text-[10px] text-[#b6c2c8]')}>
+        <div className={cn('shrink-0', lightSetupChat ? 'px-5 pt-5 pb-3' : todayChat ? 'px-4 pt-4 pb-2' : 'px-[18px] pb-2 pt-1', !wide && 'max-[1279px]:hidden')}>
+          <p className={cn('font-semibold uppercase tracking-[0.16em]', lightSetupChat ? 'mb-3 text-[10px] text-slate-400' : todayChat ? 'mb-2 text-[11px] text-slate-400' : 'mb-2 text-[10px] text-[#b6c2c8]')}>
             Try asking
           </p>
-          <div className={cn('flex flex-col', lightSetupChat ? 'gap-2' : briefingChat ? 'gap-1.5' : 'gap-2')}>
+          <div className={cn('flex flex-col', lightSetupChat ? 'gap-2' : todayChat ? 'gap-1.5' : 'gap-2')}>
             {PROMPTS[page].map((prompt) => (
               <button
                 key={prompt}
@@ -671,12 +673,12 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                   'flex items-start gap-2 text-left transition-all',
                   lightSetupChat
                     ? 'rounded-xl border border-slate-200 bg-slate-50/80 px-3.5 py-2.5 text-sm text-slate-600 hover:border-arcova-teal/30 hover:bg-white hover:text-slate-900'
-                    : briefingChat
+                    : todayChat
                       ? 'rounded-xl border border-slate-200/80 bg-slate-50/90 px-3.5 py-2.5 text-sm text-slate-600 hover:border-arcova-teal/25 hover:bg-white hover:text-slate-900'
                       : 'rounded-[12px] border border-[rgba(13,53,71,0.07)] bg-white/55 px-3 py-[9px] text-[12.5px] leading-snug text-[#0d3547] hover:-translate-y-px hover:border-arcova-teal hover:bg-white hover:shadow-[0_6px_16px_-10px_rgba(0,164,180,0.4)]',
                 )}
               >
-                {(!lightSetupChat && !briefingChat) ? (
+                {(!lightSetupChat && !todayChat) ? (
                   <span className="shrink-0 text-arcova-teal text-[11px] leading-[1.6]">✦</span>
                 ) : (
                   <Sparkles className={cn('shrink-0 text-arcova-teal/50', lightSetupChat ? 'mt-0.5 h-3.5 w-3.5' : 'mt-0.5 h-3 w-3')} />
@@ -755,7 +757,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
             'min-h-0 overflow-y-auto overscroll-y-contain',
             lightSetupChat
               ? 'flex-1 space-y-5 bg-slate-50/70 px-5 py-5'
-              : briefingChat
+              : todayChat
                 ? 'flex-1 space-y-5 px-5 py-5 sm:px-6'
                 : 'flex-1 space-y-4 bg-transparent px-4 py-3',
           )}
@@ -770,7 +772,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
           'shrink-0',
           lightSetupChat
             ? 'border-t border-slate-200 bg-white px-4 py-3'
-            : briefingChat
+            : todayChat
               ? embedGlass
                 ? 'border-t border-[rgba(13,53,71,0.07)] bg-transparent px-0 pb-2 pt-2'
                 : 'border-t border-slate-100 bg-white px-4 py-4'
@@ -784,7 +786,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
               onClick={handleClearConversation}
               className={cn(
                 'shrink-0 rounded-lg p-2 transition-colors',
-                briefingChat ? 'text-slate-400 hover:bg-slate-100 hover:text-slate-700' : 'text-gray-400 hover:bg-gray-50 hover:text-gray-600',
+                todayChat ? 'text-slate-400 hover:bg-slate-100 hover:text-slate-700' : 'text-gray-400 hover:bg-gray-50 hover:text-gray-600',
               )}
               aria-label="Clear conversation"
               title="Clear conversation"
@@ -795,10 +797,10 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
           <div
             className={cn(
               'flex min-w-0 flex-1 items-center gap-2 transition-all',
-              !(briefingChat && embedGlass) && 'focus-within:ring-2 focus-within:ring-arcova-teal/20',
+              !(todayChat && embedGlass) && 'focus-within:ring-2 focus-within:ring-arcova-teal/20',
               lightSetupChat
                 ? 'rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm focus-within:border-arcova-teal/40'
-                : briefingChat
+                : todayChat
                   ? embedGlass
                     ? 'rounded-2xl border border-[rgba(13,53,71,0.12)] bg-white/90 px-3 py-2.5 shadow-[0_8px_32px_-20px_rgba(13,53,71,0.18)] backdrop-blur-md focus-within:border-arcova-teal/45 focus-within:shadow-[0_8px_28px_-18px_rgba(0,164,180,0.22)]'
                     : 'rounded-2xl bg-slate-100/85 px-3 py-2 ring-1 ring-slate-200/70 focus-within:ring-arcova-teal/25'
@@ -816,7 +818,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                 <Mic className="h-4 w-4" />
               </button>
             ) : (
-              <Sparkles className={cn('shrink-0', briefingChat || lightSetupChat ? 'h-4 w-4 text-arcova-teal/45' : 'h-3.5 w-3.5 text-arcova-teal')} />
+              <Sparkles className={cn('shrink-0', todayChat || lightSetupChat ? 'h-4 w-4 text-arcova-teal/45' : 'h-3.5 w-3.5 text-arcova-teal')} />
             )}
             <input
               ref={inputRef}
@@ -845,7 +847,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                 'min-w-0 flex-1 bg-transparent focus:outline-none',
                 embedGlass
                   ? 'font-manrope text-[1.0625rem] text-slate-800 placeholder:text-slate-400'
-                  : lightSetupChat || briefingChat
+                  : lightSetupChat || todayChat
                     ? 'text-base text-slate-800 placeholder:text-slate-400'
                     : 'text-[13px] text-[#0d3547] placeholder:text-[#7d909a]',
               )}
@@ -857,22 +859,22 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
               disabled={!input.trim() || isLoading}
               className={cn(
                 'shrink-0 text-white transition-colors disabled:cursor-not-allowed',
-                briefingChat
+                todayChat
                   ? 'rounded-xl bg-arcova-teal px-4 py-2.5 text-sm font-semibold hover:bg-arcova-teal/90 disabled:opacity-30'
                   : lightSetupChat
                     ? 'rounded-xl bg-arcova-teal p-2 hover:bg-arcova-teal/90 disabled:opacity-30'
                     : 'grid h-[30px] w-[30px] place-items-center rounded-[10px] bg-[#0d3547] hover:bg-arcova-teal disabled:bg-[rgba(13,53,71,0.18)]',
               )}
-              aria-label={briefingChat ? 'Send message' : 'Send'}
+              aria-label={todayChat ? 'Send message' : 'Send'}
             >
               {isLoading ? (
                 <div
                   className={cn(
                     'rounded-full border-2 border-white/30 border-t-white animate-spin',
-                    briefingChat ? 'h-4 w-4' : 'h-3.5 w-3.5',
+                    todayChat ? 'h-4 w-4' : 'h-3.5 w-3.5',
                   )}
                 />
-              ) : briefingChat ? (
+              ) : todayChat ? (
                 <span className="flex items-center gap-1.5">
                   <Send className="h-4 w-4" />
                   Send

@@ -25,7 +25,28 @@ import { ROUTES, withQuery } from '@/lib/routes';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Page = 'accounts' | 'leads' | 'dashboard' | 'health' | 'signals' | 'imports' | 'data';
+type Page = 'accounts' | 'leads' | 'today' | 'health' | 'signals' | 'imports' | 'data';
+
+const AGENT_PAGES: readonly Page[] = ['accounts', 'leads', 'today', 'health', 'signals', 'imports', 'data'];
+
+function normalizeAgentPage(raw: unknown): Page {
+  if (raw === 'dashboard') return 'today';
+  const s = typeof raw === 'string' ? raw : '';
+  if ((AGENT_PAGES as readonly string[]).includes(s)) return s as Page;
+  return 'accounts';
+}
+
+function normalizePageContext(raw: Record<string, unknown> | undefined): PageContext | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const migrated: PageContext = { ...(raw as unknown as PageContext) };
+  if (migrated.todayBrief === undefined && typeof raw.dashboardBrief === 'string') {
+    migrated.todayBrief = raw.dashboardBrief;
+  }
+  if (migrated.todayAgenda === undefined && Array.isArray(raw.dashboardAgenda)) {
+    migrated.todayAgenda = raw.dashboardAgenda as NonNullable<PageContext['todayAgenda']>;
+  }
+  return migrated;
+}
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -52,8 +73,8 @@ interface PageContext {
   acquisitionCompanyId?: string;
   acquisitionCompanyName?: string;
   acquisitionBatchCompanies?: { id: string; name: string; icpId?: string | null }[];
-  dashboardBrief?: string;
-  dashboardAgenda?: { title?: string; detail?: string; href?: string }[];
+  todayBrief?: string;
+  todayAgenda?: { title?: string; detail?: string; href?: string }[];
 }
 
 interface TableFilter {
@@ -308,14 +329,14 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'suggest_navigation',
     description:
-      `Suggest that the user navigate to another page in the app. Call this whenever the next action for the user requires them to go somewhere else — always pair it with a short explanation of what to do there. Only call this once per response. When sending multiple accounts for batch contact sourcing, set href to ${withQuery(ROUTES.leads.data, 'mode=contacts_at_companies')} and populate batchCompanies with the full list.`,
+      `Suggest that the user navigate to another page in the app. Call this whenever the next action for the user requires them to go somewhere else — always pair it with a short explanation of what to do there. Only call this once per response. When sending multiple accounts for batch contact sourcing, set href to ${withQuery(ROUTES.data, 'mode=contacts_at_companies')} and populate batchCompanies with the full list.`,
     input_schema: {
       type: 'object' as const,
       properties: {
         href: {
           type: 'string',
           description:
-            `The destination page path. Use ${ROUTES.leads.data} for generic acquisition, ${ROUTES.leads.data}?mode=contacts_at_company&companyId=...&companyName=...&icpId=... for a single company, or ${withQuery(ROUTES.leads.data, 'mode=contacts_at_companies')} when sending a batch of accounts.`,
+            `The destination page path. Use ${ROUTES.data} for generic acquisition, ${ROUTES.data}?mode=contacts_at_company&companyId=...&companyName=...&icpId=... for a single company, or ${withQuery(ROUTES.data, 'mode=contacts_at_companies')} when sending a batch of accounts.`,
         },
         label: {
           type: 'string',
@@ -434,7 +455,7 @@ function buildSystemPrompt(page: Page, context?: PageContext): string {
   const pageContext: Record<Page, string> = {
     accounts: `You are on the Accounts page. This shows a table of all target companies (accounts) the user has in their workspace — enriched with fit scores, contact counts, therapeutic areas, funding info, and more. The user can filter, sort, and explore these accounts. You can update the table by calling filter_accounts_table.`,
     leads: `You are on the Leads page. This shows individual contacts (leads) across all companies, with their fit scores and job details. The user can filter and prioritise contacts to reach out to.`,
-    dashboard: `You are on the Dashboard page. This is not a reporting page. It is the user's daily briefing room: you act like a calm, highly capable operating partner, help them ease into the day, ask what they want to tackle, and route them into the right workflow only after they choose.`,
+    today: `You are on the Today page. This is not a KPI reporting screen. It is the user's daily briefing room: act like a calm, highly capable operating partner, help them ease into the day, ask what they want to tackle, and route them into the right workflow only after they choose.`,
     health: `You are on the Health page. This shows ICP coverage health: where the workspace has enough companies, where contact fit is weak, and where account depth is thin.`,
     signals: `You are on the Signals page. This shows recent signal events for companies and contacts — things like job changes, funding rounds, new hires, or other triggers that indicate buying intent.`,
     imports: `You are on the Imports page. This shows upload batch history (CSV uploads and any HubSpot pull batches) plus a HubSpot sync summary. HubSpot sync logs two directions: contacts pulled FROM HubSpot into Arcova as new import rows, and enriched contacts pushed FROM Arcova TO HubSpot. When the user asks how many contacts came from HubSpot, use inbound pull counts and HubSpot-named batches, not the push count.`,
@@ -447,7 +468,7 @@ function buildSystemPrompt(page: Page, context?: PageContext): string {
 The selected account is ${context.selectedAccount.name || 'the selected company'}.
 Company id: ${context.selectedAccount.id}.
 Matched ICP id: ${context.selectedAccount.matchedIcpId || 'unknown'}.
-If the user asks to find contacts, buyer personas, or more coverage for this selected account, call suggest_navigation with ${withQuery(ROUTES.leads.data, `mode=contacts_at_company&companyId=${encodeURIComponent(context.selectedAccount.id)}&companyName=${encodeURIComponent(context.selectedAccount.name || 'Selected company')}${context.selectedAccount.matchedIcpId ? `&icpId=${encodeURIComponent(context.selectedAccount.matchedIcpId)}` : ''}`)}.`
+If the user asks to find contacts, buyer personas, or more coverage for this selected account, call suggest_navigation with ${withQuery(ROUTES.data, `mode=contacts_at_company&companyId=${encodeURIComponent(context.selectedAccount.id)}&companyName=${encodeURIComponent(context.selectedAccount.name || 'Selected company')}${context.selectedAccount.matchedIcpId ? `&icpId=${encodeURIComponent(context.selectedAccount.matchedIcpId)}` : ''}`)}.`
     : '';
 
   const dataPageContext = page === 'data' && context?.acquisitionMode
@@ -478,21 +499,21 @@ Open the conversation by confirming the ICP, then ask how many companies they wa
       })()
     : '';
 
-  const dashboardContext = page === 'dashboard'
+  const todayContext = page === 'today'
     ? `
-## Dashboard briefing context
-Current dashboard brief: ${context?.dashboardBrief || 'No dashboard brief was supplied.'}
-Agenda options shown beside the chat: ${JSON.stringify(context?.dashboardAgenda ?? [])}
+## Today briefing context
+Current workspace brief shown to the user: ${context?.todayBrief || 'No briefing summary was supplied.'}
+Agenda options shown beside the chat: ${JSON.stringify(context?.todayAgenda ?? [])}
 
-On Dashboard, behave like an executive assistant starting the user's work session.
+On Today, behave like an executive assistant starting the user's work session.
 - When the page opens, start warmly and lightly. A little morning personality is good.
 - Do not immediately unload the whole agenda. Ask whether the user already knows what they want to tackle, or whether they would like a suggestion.
 - Never invent operational colour in the opener. Avoid phrases like "everything looks clean", "import landed", "HubSpot is tidy", "all quiet", or "looking good" unless the user asked for a status read and the tools prove it.
 - If they ask for a suggestion, recommend one low-friction starting task first. Make it feel like a warm-up, not a demand.
 - Do not explain the whole product. Do not turn this into analytics commentary.
 - If the user says they want to work on an item, acknowledge the sequence and call suggest_navigation for the matching agenda href when available.
-- After routing them, remind them briefly that Dashboard is where they can come back to decide what to do next.
-- Keep dashboard messages short, practical, and work-session oriented.`
+- After routing them, remind them briefly that Today is where they can come back to decide what to do next.
+- Keep messages short, practical, and work-session oriented.`
     : '';
 
   const leadsViewContext = context?.leadsView
@@ -509,7 +530,7 @@ ${context.leadsView === 'accounts'
 ${pageContext[page]}
 ${selectedAccountContext}
 ${dataPageContext}
-${dashboardContext}
+${todayContext}
 ${leadsViewContext}
 
 ## Journey model
@@ -523,7 +544,7 @@ You help users understand their data, prioritise accounts and contacts, diagnose
 Think of a brilliant operating partner with a bit of Dr Watson energy: observant, reassuring, humane, and quietly sharp. You notice what matters, make the user feel less alone in the work, and keep things moving without making the product feel heavy.
 
 Voice rules:
-- Be casual but not sloppy. Prefer plain English over dashboard jargon.
+- Be casual but not sloppy. Prefer plain English over internal product jargon.
 - Use short paragraphs. Avoid dense lists unless the user asks for a list or the page truly needs one.
 - Do not sound like a report, a consultant deck, or a compliance memo.
 - Do not over-greet on every page. Warmth should show through phrasing, not repeated hellos.
@@ -583,7 +604,7 @@ Use your tools proactively to give accurate, data-driven answers. Don't guess at
 When the user wants to source contacts for multiple accounts at once (e.g. "source contacts for all opportunity accounts", "find contacts for all these companies"), do this in one response:
 1. Call query_companies with coverageStatuses: ["opportunity"] (and limit: 50) to get the full list.
 2. Explain the situation in 1–2 sentences: how many accounts need contacts and what that means.
-3. Call suggest_navigation with href: "${withQuery(ROUTES.leads.data, 'mode=contacts_at_companies')}", a label like "Source contacts for all N accounts", and batchCompanies set to the full list of {id, name, icpId} objects from the query results. The id field must be the company's database id (use the raw id from the query result — if unavailable fall back to domain or name as a key).
+3. Call suggest_navigation with href: "${withQuery(ROUTES.data, 'mode=contacts_at_companies')}", a label like "Source contacts for all N accounts", and batchCompanies set to the full list of {id, name, icpId} objects from the query results. The id field must be the company's database id (use the raw id from the query result — if unavailable fall back to domain or name as a key).
 Never ask the user to confirm each account one-by-one. Batch them all in a single suggest_navigation call.
 
 ## Response style — strict rules
@@ -615,7 +636,7 @@ Never ask the user to confirm each account one-by-one. Batch them all in a singl
 
 **When no results are found**
 - State it plainly in one sentence. Example: "You don't have any VP-level contacts at high-fit companies right now."
-- Follow with one short sentence pointing to the next step, then call suggest_navigation to show the button. Use Data (${ROUTES.leads.data}) when better contacts or more companies are needed. Use Import (${ROUTES.import}) when the user should upload data themselves. Pick one — never list both.
+- Follow with one short sentence pointing to the next step, then call suggest_navigation to show the button. Use Data (${ROUTES.data}) when better contacts or more companies are needed. Use Import (${ROUTES.import}) when the user should upload data themselves. Pick one — never list both.
 - Never speculate about why the data is missing or list hypotheses.
 
 **When updating the table**
@@ -1496,9 +1517,12 @@ export async function POST(request: Request) {
 
     const body = await request.json();
     const messages: ChatMessage[] = Array.isArray(body.messages) ? body.messages : [];
-    const page: Page = body.page ?? 'accounts';
-    const pageContext: PageContext | undefined =
-      body.pageContext && typeof body.pageContext === 'object' ? body.pageContext : undefined;
+    const page: Page = normalizeAgentPage(body.page);
+    const rawCtx =
+      body.pageContext && typeof body.pageContext === 'object'
+        ? (body.pageContext as Record<string, unknown>)
+        : undefined;
+    const pageContext = normalizePageContext(rawCtx);
 
     if (messages.length === 0) {
       return NextResponse.json({ error: 'messages array is required' }, { status: 400 });
