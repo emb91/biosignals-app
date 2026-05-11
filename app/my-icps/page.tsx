@@ -145,14 +145,14 @@ interface Persona {
   signals?: string[];
 }
 
-// ── Primitive helpers (same visual language as SetupProfilePanel) ──────────
+// ── Primitive helpers ──────────────────────────────────────────────────────
 
 function Tag({ label, onRemove }: { label: string; onRemove?: () => void }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-arcova-teal/15 px-2.5 py-0.5 text-xs font-medium text-arcova-teal">
+    <span className="inline-flex items-center gap-1 rounded-full bg-arcova-teal/10 border border-arcova-teal/20 px-2.5 py-0.5 text-xs font-medium text-arcova-teal/80">
       {label}
       {onRemove && (
-        <button type="button" onClick={onRemove} className="text-arcova-teal/50 hover:text-arcova-teal transition-colors">
+        <button type="button" onClick={onRemove} className="text-arcova-teal/40 hover:text-arcova-teal transition-colors">
           <X className="h-2.5 w-2.5" />
         </button>
       )}
@@ -172,11 +172,11 @@ function AddTagSelect({ options, selected, onAdd, placeholder = 'Add…' }: {
     <select
       value=""
       onChange={(e) => { if (e.target.value) onAdd(e.target.value); }}
-      className="mt-1 w-full rounded-lg bg-white/[0.06] border border-white/15 px-2 py-1 text-xs text-white/40 focus:outline-none focus:border-arcova-teal/50 cursor-pointer"
+      className="mt-1 w-full rounded-lg bg-white/70 border border-arcova-navy/10 px-2 py-1 text-xs text-arcova-navy/50 focus:outline-none focus:border-arcova-teal/50 cursor-pointer"
     >
       <option value="">{placeholder}</option>
       {remaining.map((o) => (
-        <option key={o} value={o} className="bg-slate-900 text-white">{getSignalDisplayName(o, o)}</option>
+        <option key={o} value={o} className="bg-white text-arcova-navy">{getSignalDisplayName(o, o)}</option>
       ))}
     </select>
   );
@@ -186,7 +186,7 @@ function FieldRow({ label, items }: { label: string; items: string[] }) {
   if (!items?.length) return null;
   return (
     <div className="space-y-1">
-      <p className="text-xs font-semibold text-white">{label}</p>
+      <p className="text-xs font-semibold text-arcova-navy/80">{label}</p>
       <div className="flex flex-wrap gap-1.5">
         {items.map((t) => <Tag key={t} label={t} />)}
       </div>
@@ -198,7 +198,7 @@ function BulletList({ items }: { items: string[] }) {
   return (
     <ul className="space-y-1.5">
       {items.map((item, i) => (
-        <li key={i} className="flex items-start gap-1.5 text-xs text-white/70 leading-snug">
+        <li key={i} className="flex items-start gap-1.5 text-xs text-arcova-navy/65 leading-snug">
           <span className="mt-[5px] h-1 w-1 shrink-0 rounded-full bg-arcova-teal/60" />
           <span className="flex-1">{item}</span>
         </li>
@@ -210,14 +210,14 @@ function BulletList({ items }: { items: string[] }) {
 function Stat({ label, value, subValue }: { label: string; value: string; subValue?: string }) {
   return (
     <div>
-      <p className="text-xs text-white/85">{label}</p>
-      <p className="mt-0.5 text-sm text-white/80 leading-tight">{value}</p>
-      {subValue && <p className="text-xs text-white/50 leading-tight">{subValue}</p>}
+      <p className="text-xs text-arcova-navy/75">{label}</p>
+      <p className="mt-0.5 text-sm text-arcova-navy/70 leading-tight">{value}</p>
+      {subValue && <p className="text-xs text-arcova-navy/45 leading-tight">{subValue}</p>}
     </div>
   );
 }
 
-/** Collapsible segment — matches SubSection in SetupProfilePanel exactly */
+/** Collapsible segment — light glass style */
 function Segment({
   label,
   open,
@@ -231,17 +231,17 @@ function Segment({
 }) {
   return (
     <div className={`rounded-xl overflow-hidden transition-colors ${
-      open ? 'border border-white/10 bg-white/[0.06]' : 'bg-white/[0.18] hover:bg-white/[0.22]'
+      open ? 'border border-arcova-navy/8 bg-white/50' : 'bg-white/60 hover:bg-white/80 border border-arcova-navy/8'
     }`}>
       <button
         type="button"
         onClick={onToggle}
         className="flex w-full items-center justify-between px-3 py-2 text-left transition-colors"
       >
-        <span className="text-xs font-semibold text-white">{label}</span>
+        <span className="text-xs font-semibold text-arcova-navy/80">{label}</span>
         {open
-          ? <ChevronUp className="h-3 w-3 text-white/60 shrink-0" />
-          : <ChevronDown className="h-3 w-3 text-white/60 shrink-0" />}
+          ? <ChevronUp className="h-3 w-3 text-arcova-navy/45 shrink-0" />
+          : <ChevronDown className="h-3 w-3 text-arcova-navy/45 shrink-0" />}
       </button>
       {open && <div className="px-3 pb-3 space-y-2">{children}</div>}
     </div>
@@ -293,14 +293,14 @@ function reenrichmentStatusMeta(status: ReturnType<typeof normalizeReenrichmentS
   if (status === 'succeeded') {
     return {
       label: 'Done',
-      className: 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200',
+      className: 'border-emerald-500/30 bg-emerald-50 text-emerald-700',
     };
   }
 
   if (status === 'failed') {
     return {
       label: 'Failed',
-      className: 'border-red-400/30 bg-red-400/10 text-red-200',
+      className: 'border-red-400/30 bg-red-50 text-red-600',
     };
   }
 
@@ -415,7 +415,7 @@ function SignalCatalogByCategory({
         if (!inCat.length) return null;
         return (
           <div key={category}>
-            <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-white/45">
+            <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-arcova-navy/40">
               {category}
             </p>
             <div className="flex flex-wrap gap-1.5">
@@ -430,15 +430,15 @@ function SignalCatalogByCategory({
                 const pillBase =
                   'inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors';
                 const pillState = isOn
-                  ? 'border-arcova-teal/50 bg-arcova-teal/20 text-arcova-teal'
-                  : 'border-white/25 bg-white/[0.10] text-white/70';
+                  ? 'border-arcova-teal/50 bg-arcova-teal/15 text-arcova-teal'
+                  : 'border-arcova-navy/15 bg-arcova-navy/5 text-arcova-navy/55';
                 if (!readOnly && managed && onManagedServiceSignalClick) {
                   return (
                     <button
                       key={signal.id}
                       type="button"
                       onClick={() => onManagedServiceSignalClick(signal.id)}
-                      className={`${pillBase} ${pillState} hover:border-white/35 hover:bg-white/[0.14] hover:text-white/85`}
+                      className={`${pillBase} ${pillState} hover:border-arcova-navy/25 hover:bg-arcova-navy/8 hover:text-arcova-navy/75`}
                     >
                       {label}
                     </button>
@@ -452,8 +452,8 @@ function SignalCatalogByCategory({
                       onClick={() => onToggle(signal.id)}
                       className={`${pillBase} ${pillState} ${
                         isOn
-                          ? 'hover:bg-arcova-teal/28'
-                          : 'hover:border-white/35 hover:bg-white/[0.14] hover:text-white/85'
+                          ? 'hover:bg-arcova-teal/20'
+                          : 'hover:border-arcova-navy/25 hover:bg-arcova-navy/8 hover:text-arcova-navy/75'
                       }`}
                     >
                       {label}
@@ -499,7 +499,7 @@ function EditTagField({
   return (
     <div>
       {!hideLabel && (
-        <p className="mb-1.5 text-xs text-white/85">{label}</p>
+        <p className="mb-1.5 text-xs text-arcova-navy/75">{label}</p>
       )}
       {selected.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mb-1.5">
@@ -545,7 +545,7 @@ function EditFreeformTagField({
   return (
     <div>
       {!hideLabel && (
-        <p className="mb-1.5 text-xs text-white/85">{label}</p>
+        <p className="mb-1.5 text-xs text-arcova-navy/75">{label}</p>
       )}
       {selected.length > 0 && (
         <div className="mb-1.5 flex flex-wrap gap-1.5">
@@ -565,12 +565,12 @@ function EditFreeformTagField({
             addItem();
           }}
           placeholder={placeholder}
-          className="min-w-0 flex-1 rounded-lg border border-white/15 bg-white/[0.06] px-2 py-1 text-xs text-white/80 placeholder:text-white/25 focus:border-arcova-teal/50 focus:outline-none"
+          className="min-w-0 flex-1 rounded-lg border border-arcova-navy/10 bg-white/60 px-2 py-1 text-xs text-arcova-navy/80 placeholder:text-arcova-navy/30 focus:border-arcova-teal/50 focus:outline-none"
         />
         <button
           type="button"
           onClick={addItem}
-          className="shrink-0 rounded-lg border border-white/15 px-2.5 py-1 text-xs font-medium text-white/60 transition-colors hover:bg-white/[0.06] hover:text-white/80"
+          className="shrink-0 rounded-lg border border-arcova-navy/10 px-2.5 py-1 text-xs font-medium text-arcova-navy/55 transition-colors hover:bg-arcova-navy/5 hover:text-arcova-navy"
         >
           Add
         </button>
@@ -617,7 +617,6 @@ function ICPCard({
   reenriching,
   onPersonaUpdate,
   onPersonaDelete,
-  onAddBuyingTeam,
   onReenrich,
 }: {
   icp: ICP;
@@ -631,7 +630,6 @@ function ICPCard({
   reenriching: boolean;
   onPersonaUpdate: (p: Persona) => void;
   onPersonaDelete: (id: string) => void;
-  onAddBuyingTeam: () => void;
   onReenrich: () => void;
 }) {
   const e = icp.example_company_enrichment;
@@ -796,6 +794,11 @@ function ICPCard({
     setEditMode(false);
   };
 
+  const beginAddBuyingTeam = () => {
+    startEdit();
+    setOpen((prev) => ({ ...prev, functions: true, seniority: true, contactSignals: true }));
+  };
+
   const saveEdit = async () => {
     setSaving(true);
     try {
@@ -874,6 +877,28 @@ function ICPCard({
           const { data } = await teamRes.json();
           onPersonaUpdate(data);
         }
+      } else if (editFunctions.length > 0 || editSeniority.length > 0 || editPersonaSignals.length > 0) {
+        const personaName =
+          editFunctions.length > 0 ? `Buying group: ${editFunctions[0]}` : 'Buying group';
+        const teamRes = await fetch('/api/contacts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            icpId: icp.id,
+            name: personaName,
+            functions: editFunctions,
+            seniorityLevels: editSeniority,
+            jobTitles: [],
+            signals: editPersonaSignals,
+          }),
+        });
+        if (!teamRes.ok) {
+          const errorPayload = await teamRes.json().catch(() => null) as { error?: string } | null;
+          toast.error(errorPayload?.error ?? 'Failed to create buying team');
+          return;
+        }
+        const { data } = await teamRes.json();
+        onPersonaUpdate(data);
       }
 
       setEditMode(false);
@@ -932,10 +957,10 @@ function ICPCard({
     setEditData((prev) => ({ ...prev, [field]: value }));
 
   return (
-    <div className="rounded-2xl border border-white/15 bg-white/[0.06]">
+    <div className="rounded-2xl border border-arcova-navy/10 bg-white/75 backdrop-blur-xl shadow-arcova">
 
       {/* Card header */}
-      <div className={`flex items-center gap-2.5 px-4 py-3 ${!collapsed ? 'border-b border-white/10' : ''}`}>
+      <div className={`flex items-center gap-2.5 px-4 py-3 ${!collapsed ? 'border-b border-arcova-navy/8' : ''}`}>
         {editMode ? (
           <>
             <Briefcase className="h-4 w-4 shrink-0 text-arcova-teal" />
@@ -943,14 +968,14 @@ function ICPCard({
               <input
                 value={editData.name}
                 onChange={(e) => setEditData((prev) => ({ ...prev, name: e.target.value }))}
-                className="flex-1 min-w-0 rounded-lg bg-white/[0.08] border border-white/20 px-2.5 py-1 text-sm font-semibold text-white placeholder-white/30 focus:outline-none focus:border-arcova-teal/60"
+                className="flex-1 min-w-0 rounded-lg bg-white/80 border border-arcova-navy/15 px-2.5 py-1 text-sm font-semibold text-arcova-navy placeholder-arcova-navy/30 focus:outline-none focus:border-arcova-teal/60"
                 placeholder="Profile name"
               />
               <button
                 type="button"
                 onClick={() => void regenerateName()}
                 disabled={regeneratingName}
-                className="shrink-0 rounded-lg border border-white/15 px-2.5 py-1 text-xs font-medium text-white/70 transition-colors hover:bg-white/[0.06] hover:text-white disabled:opacity-50"
+                className="shrink-0 rounded-lg border border-arcova-navy/10 px-2.5 py-1 text-xs font-medium text-arcova-navy/60 transition-colors hover:bg-arcova-navy/5 hover:text-arcova-navy disabled:opacity-50"
               >
                 {regeneratingName ? 'Regenerating…' : 'Regenerate'}
               </button>
@@ -966,7 +991,7 @@ function ICPCard({
               <Briefcase className="h-4 w-4 shrink-0 text-arcova-teal" />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="block min-w-0 truncate text-sm font-semibold text-white">
+                  <span className="block min-w-0 truncate text-sm font-semibold text-arcova-navy">
                     ICP {index}: {icp.name || 'ICP Profile'}
                   </span>
                   {currentReenrichmentMeta && (
@@ -976,7 +1001,7 @@ function ICPCard({
                   )}
                 </div>
                 {collapsed && (
-                  <span className="block text-xs text-white/40 truncate">
+                  <span className="block text-xs text-arcova-navy/40 truncate">
                     {[
                       e?.company_name?.trim() ? `Modelled on ${e.company_name.trim()}` : null,
                       relativeTime(icp.updated_at) ? `Updated ${relativeTime(icp.updated_at)}` : null,
@@ -985,8 +1010,8 @@ function ICPCard({
                 )}
               </div>
               {collapsed
-                ? <ChevronDown className="h-4 w-4 text-white/40 shrink-0" />
-                : <ChevronUp className="h-4 w-4 text-white/40 shrink-0" />}
+                ? <ChevronDown className="h-4 w-4 text-arcova-navy/35 shrink-0" />
+                : <ChevronUp className="h-4 w-4 text-arcova-navy/35 shrink-0" />}
             </button>
           </>
         )}
@@ -1000,11 +1025,11 @@ function ICPCard({
             <div className="min-w-0">
               {e.website ? (
                 <a href={e.website} target="_blank" rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-sm font-semibold text-white hover:underline leading-tight">
+                  className="inline-flex items-center gap-1 text-sm font-semibold text-arcova-navy hover:underline leading-tight">
                   {e.company_name}<ExternalLink className="h-3 w-3 shrink-0 opacity-60" />
                 </a>
               ) : (
-                <p className="text-sm font-semibold text-white leading-tight">{e.company_name}</p>
+                <p className="text-sm font-semibold text-arcova-navy leading-tight">{e.company_name}</p>
               )}
               <div className="flex flex-col gap-0.5 mt-0.5">
                 {linkedInDisplay && (
@@ -1017,10 +1042,10 @@ function ICPCard({
             </div>
             {e.logo_url ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={e.logo_url} alt={e.company_name ?? ''} className="h-20 w-20 shrink-0 rounded-xl object-contain bg-white/10 p-1" />
+              <img src={e.logo_url} alt={e.company_name ?? ''} className="h-20 w-20 shrink-0 rounded-xl object-contain bg-arcova-navy/5 p-1 border border-arcova-navy/8" />
             ) : (
-              <div className="h-20 w-20 shrink-0 rounded-xl bg-white/10 flex items-center justify-center">
-                <Building2 className="h-9 w-9 text-white/30" />
+              <div className="h-20 w-20 shrink-0 rounded-xl bg-arcova-navy/5 border border-arcova-navy/8 flex items-center justify-center">
+                <Building2 className="h-9 w-9 text-arcova-navy/25" />
               </div>
             )}
           </div>
@@ -1029,18 +1054,18 @@ function ICPCard({
             <div className="space-y-5">
               {referenceSummary.length > 0 && (
                 <div>
-                  <p className="text-xs font-semibold text-white mb-2">About {referenceAccountLabel}</p>
-                  <p className="text-xs text-white/70 leading-snug">{referenceSummary}</p>
+                  <p className="text-xs font-semibold text-arcova-navy/80 mb-2">About {referenceAccountLabel}</p>
+                  <p className="text-xs text-arcova-navy/65 leading-snug">{referenceSummary}</p>
                 </div>
               )}
               {(e.employee_count != null || e.employee_range || e.hq_city || e.follower_count != null) && (
                 <div>
-                  <p className="text-xs font-semibold text-white mb-2">Firmographics</p>
+                  <p className="text-xs font-semibold text-arcova-navy/80 mb-2">Firmographics</p>
                   <div className="space-y-1">
                     {(e.employee_count != null || e.employee_range) && (
                       <div className="flex items-baseline gap-2">
-                        <span className="text-xs text-white/50 w-28 shrink-0">Employees</span>
-                        <span className="text-xs text-white">
+                        <span className="text-xs text-arcova-navy/45 w-28 shrink-0">Employees</span>
+                        <span className="text-xs text-arcova-navy">
                           {e.employee_count != null ? e.employee_count.toLocaleString() : e.employee_range}
                           {e.employee_count != null && e.employee_range ? ` (${e.employee_range})` : ''}
                         </span>
@@ -1048,14 +1073,14 @@ function ICPCard({
                     )}
                     {e.hq_city && (
                       <div className="flex items-baseline gap-2">
-                        <span className="text-xs text-white/50 w-28 shrink-0">HQ</span>
-                        <span className="text-xs text-white">{e.hq_city}{e.hq_country ? `, ${e.hq_country}` : ''}</span>
+                        <span className="text-xs text-arcova-navy/45 w-28 shrink-0">HQ</span>
+                        <span className="text-xs text-arcova-navy">{e.hq_city}{e.hq_country ? `, ${e.hq_country}` : ''}</span>
                       </div>
                     )}
                     {e.follower_count != null && (
                       <div className="flex items-baseline gap-2">
-                        <span className="text-xs text-white/50 w-28 shrink-0">LinkedIn</span>
-                        <span className="text-xs text-white">{e.follower_count.toLocaleString()} followers</span>
+                        <span className="text-xs text-arcova-navy/45 w-28 shrink-0">LinkedIn</span>
+                        <span className="text-xs text-arcova-navy">{e.follower_count.toLocaleString()} followers</span>
                       </div>
                     )}
                   </div>
@@ -1063,37 +1088,37 @@ function ICPCard({
               )}
               {(modelledOnFundingStatus || modelledOnFundingSummary || e.funding_stage || e.total_funding_usd != null || e.arr_estimate) && (
                 <div>
-                  <p className="text-xs font-semibold text-white mb-2">Funding</p>
+                  <p className="text-xs font-semibold text-arcova-navy/80 mb-2">Funding</p>
                   <div className="space-y-1">
                     {modelledOnFundingStatus && (
                       <div className="flex items-baseline gap-2">
-                        <span className="text-xs text-white/50 w-28 shrink-0">Status</span>
-                        <span className="text-xs text-white">{modelledOnFundingStatus}</span>
+                        <span className="text-xs text-arcova-navy/45 w-28 shrink-0">Status</span>
+                        <span className="text-xs text-arcova-navy">{modelledOnFundingStatus}</span>
                       </div>
                     )}
                     {e.funding_stage && (
                       <div className="flex items-baseline gap-2">
-                        <span className="text-xs text-white/50 w-28 shrink-0">Stage</span>
-                        <span className="text-xs text-white">{e.funding_stage}</span>
+                        <span className="text-xs text-arcova-navy/45 w-28 shrink-0">Stage</span>
+                        <span className="text-xs text-arcova-navy">{e.funding_stage}</span>
                       </div>
                     )}
                     {e.total_funding_usd != null && (
                       <div className="flex items-baseline gap-2">
-                        <span className="text-xs text-white/50 w-28 shrink-0">Total raised</span>
-                        <span className="text-xs text-white">{formatCurrencyShort(e.total_funding_usd)}</span>
+                        <span className="text-xs text-arcova-navy/45 w-28 shrink-0">Total raised</span>
+                        <span className="text-xs text-arcova-navy">{formatCurrencyShort(e.total_funding_usd)}</span>
                       </div>
                     )}
                     {e.arr_estimate && (
                       <div className="flex items-baseline gap-2">
-                        <span className="text-xs text-white/50 w-28 shrink-0">ARR</span>
-                        <span className="text-xs text-white">{e.arr_estimate}</span>
+                        <span className="text-xs text-arcova-navy/45 w-28 shrink-0">ARR</span>
+                        <span className="text-xs text-arcova-navy">{e.arr_estimate}</span>
                       </div>
                     )}
                   </div>
                   {modelledOnFundingSummary && (
                     <div className="mt-2">
-                      <p className="text-xs text-white/40 mb-1">Funding summary</p>
-                      <p className="text-xs leading-snug text-white/55">{modelledOnFundingSummary}</p>
+                      <p className="text-xs text-arcova-navy/35 mb-1">Funding summary</p>
+                      <p className="text-xs leading-snug text-arcova-navy/50">{modelledOnFundingSummary}</p>
                     </div>
                   )}
                 </div>
@@ -1102,13 +1127,13 @@ function ICPCard({
               <FieldRow label="Sells to people like" items={referenceCustomerSegments.buyerTypes} />
               {(e.competitors_enriched?.length ?? 0) > 0 && (
                 <div className="space-y-1">
-                  <p className="text-xs font-semibold text-white">Competitors</p>
+                  <p className="text-xs font-semibold text-arcova-navy/80">Competitors</p>
                   <div className="flex flex-wrap gap-1.5">
                     {e.competitors_enriched!.map((c, i) => {
                       const href = c.url?.trim() || `https://www.google.com/search?q=${encodeURIComponent(c.name)}`;
                       return (
                         <a key={`${c.name}-${i}`} href={href} target="_blank" rel="noopener noreferrer"
-                          className="inline-flex items-center gap-0.5 rounded-full bg-arcova-teal/15 px-2.5 py-0.5 text-xs font-medium text-arcova-teal hover:underline">
+                          className="inline-flex items-center gap-0.5 rounded-full bg-arcova-teal/10 border border-arcova-teal/20 px-2.5 py-0.5 text-xs font-medium text-arcova-teal hover:underline">
                           <span className="truncate max-w-[14rem]">{c.name}</span>
                           <ExternalLink className="h-2.5 w-2.5 shrink-0 opacity-70" />
                         </a>
@@ -1122,30 +1147,30 @@ function ICPCard({
             <div className="space-y-5">
               {(e.products?.length ?? 0) > 0 && (
                 <div>
-                  <p className="mb-1 text-xs font-semibold text-white">Products</p>
+                  <p className="mb-1 text-xs font-semibold text-arcova-navy/80">Products</p>
                   <div className="flex flex-wrap gap-1.5">
                     {e.products!.map((p, i) => (
-                      <span key={i} className="rounded-full bg-white/10 px-2.5 py-0.5 text-xs text-white/80">{p}</span>
+                      <span key={i} className="rounded-full bg-arcova-navy/5 border border-arcova-navy/10 px-2.5 py-0.5 text-xs text-arcova-navy/70">{p}</span>
                     ))}
                   </div>
                 </div>
               )}
               {(e.services?.length ?? 0) > 0 && (
                 <div>
-                  <p className="mb-1 text-xs font-semibold text-white">Services</p>
+                  <p className="mb-1 text-xs font-semibold text-arcova-navy/80">Services</p>
                   <div className="flex flex-wrap gap-1.5">
                     {e.services!.map((s, i) => (
-                      <span key={i} className="rounded-full bg-white/10 px-2.5 py-0.5 text-xs text-white/80">{s}</span>
+                      <span key={i} className="rounded-full bg-arcova-navy/5 border border-arcova-navy/10 px-2.5 py-0.5 text-xs text-arcova-navy/70">{s}</span>
                     ))}
                   </div>
                 </div>
               )}
               {(e.technologies?.length ?? 0) > 0 && (
                 <div>
-                  <p className="mb-1 text-xs font-semibold text-white">Technology</p>
+                  <p className="mb-1 text-xs font-semibold text-arcova-navy/80">Technology</p>
                   <div className="flex flex-wrap gap-1.5">
                     {e.technologies!.map((t, i) => (
-                      <span key={i} className="rounded-full bg-white/10 px-2.5 py-0.5 text-xs text-white/80">{t}</span>
+                      <span key={i} className="rounded-full bg-arcova-navy/5 border border-arcova-navy/10 px-2.5 py-0.5 text-xs text-arcova-navy/70">{t}</span>
                     ))}
                   </div>
                 </div>
@@ -1158,7 +1183,7 @@ function ICPCard({
       {/* Two-column body + full-width signals (above footer) */}
       {!collapsed && !modelledOnMode && (
         <div className="flex min-w-0 flex-col">
-          <div className="flex min-w-0 divide-x divide-white/10">
+          <div className="flex min-w-0 divide-x divide-arcova-navy/8">
 
         {/* Left column — firmographics */}
         <div className="flex-1 min-w-0 px-4 py-4 space-y-2">
@@ -1170,12 +1195,12 @@ function ICPCard({
           )}
 
           {!editMode && currentReenrichmentStatus === 'failed' && icp.reenrichment_last_error?.trim() && (
-            <div className="rounded-xl border border-red-400/30 bg-red-400/10 px-3 py-3 text-xs text-red-200">
+            <div className="rounded-xl border border-red-400/30 bg-red-50 px-3 py-3 text-xs text-red-700">
               <div className="flex items-start gap-2">
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <div className="min-w-0">
-                  <p className="font-semibold text-red-100">Latest re-enrichment failed</p>
-                  <p className="mt-1 leading-snug text-red-200/85">{icp.reenrichment_last_error.trim()}</p>
+                  <p className="font-semibold text-red-800">Latest re-enrichment failed</p>
+                  <p className="mt-1 leading-snug text-red-700/80">{icp.reenrichment_last_error.trim()}</p>
                 </div>
               </div>
             </div>
@@ -1183,19 +1208,19 @@ function ICPCard({
 
           <div className="flex items-center gap-1.5 pb-2">
             <Building2 className="h-3.5 w-3.5 shrink-0 text-arcova-teal" />
-            <p className="flex-1 text-sm font-semibold text-white">Company criteria</p>
+            <p className="flex-1 text-sm font-semibold text-arcova-navy">Company criteria</p>
           </div>
 
           <Segment label="Summary" open={open.criteria} onToggle={() => toggle('criteria')}>
             {icpProfileSummaryDisplay.length > 0 && (
-              <div className="pb-3 mb-3 border-b border-white/10">
-                <p className="text-xs text-white/70 leading-snug">{icpProfileSummaryDisplay}</p>
+              <div className="pb-3 mb-3 border-b border-arcova-navy/8">
+                <p className="text-xs text-arcova-navy/65 leading-snug">{icpProfileSummaryDisplay}</p>
               </div>
             )}
             {editMode ? (
               <div className="space-y-3">
                 <div>
-                  <p className="mb-1.5 text-xs font-semibold text-white">Company type</p>
+                  <p className="mb-1.5 text-xs font-semibold text-arcova-navy/80">Company type</p>
                   {editData.company_type ? (
                     <div className="flex flex-wrap gap-1.5">
                       <Tag label={editData.company_type} onRemove={() => setSingle('company_type', '')} />
@@ -1204,25 +1229,25 @@ function ICPCard({
                     <select
                       value=""
                       onChange={(e) => { if (e.target.value) setSingle('company_type', e.target.value); }}
-                      className="w-full rounded-lg bg-white/[0.06] border border-white/15 px-2 py-1 text-xs text-white/40 focus:outline-none focus:border-arcova-teal/50 cursor-pointer"
+                      className="w-full rounded-lg bg-white/70 border border-arcova-navy/10 px-2 py-1 text-xs text-arcova-navy/50 focus:outline-none focus:border-arcova-teal/50 cursor-pointer"
                     >
                       <option value="">Set type…</option>
                       {COMPANY_TYPE_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value} className="bg-slate-900 text-white">{opt.value}</option>
+                        <option key={opt.value} value={opt.value} className="bg-white text-arcova-navy">{opt.value}</option>
                       ))}
                     </select>
                   )}
                 </div>
                 {isSaasCompanyType(editData.company_type) && (
                   <div>
-                    <p className="mb-1.5 text-xs font-semibold text-white">Platform category</p>
+                    <p className="mb-1.5 text-xs font-semibold text-arcova-navy/80">Platform category</p>
                     <input
                       type="text"
                       value={editData.platform_category}
                       onChange={(e) => setSingle('platform_category', e.target.value)}
                       placeholder="e.g. Scientific Content Platform"
                       maxLength={48}
-                      className="w-full rounded-lg bg-white/[0.06] border border-white/15 px-2 py-1 text-xs text-white/80 focus:outline-none focus:border-arcova-teal/50 placeholder:text-white/25"
+                      className="w-full rounded-lg bg-white/70 border border-arcova-navy/10 px-2 py-1 text-xs text-arcova-navy/80 focus:outline-none focus:border-arcova-teal/50 placeholder:text-arcova-navy/30"
                     />
                   </div>
                 )}
@@ -1238,7 +1263,7 @@ function ICPCard({
               const hasSizing = icp.company_sizes.length > 0 || (icp.li_follower_sizes?.length ?? 0) > 0;
               if (!hasTaxonomy && !hasSizing) {
                 return (
-                  <p className="text-xs text-white/40 italic">
+                  <p className="text-xs text-arcova-navy/40 italic">
                     No criteria set — this ICP will match any company type, size, or stage. Click Edit to add filters.
                   </p>
                 );
@@ -1249,13 +1274,13 @@ function ICPCard({
                     <div className="space-y-2.5">
                       {icp.company_type && (
                         <div>
-                          <p className="mb-1 text-xs font-semibold text-white">Company type</p>
+                          <p className="mb-1 text-xs font-semibold text-arcova-navy/80">Company type</p>
                           <Tag label={icp.company_type} />
                         </div>
                       )}
                       {visiblePlatformCategory(icp.company_type, icp.platform_category) && (
                         <div>
-                          <p className="mb-1 text-xs font-semibold text-white">Platform category</p>
+                          <p className="mb-1 text-xs font-semibold text-arcova-navy/80">Platform category</p>
                           <Tag label={visiblePlatformCategory(icp.company_type, icp.platform_category)} />
                         </div>
                       )}
@@ -1349,7 +1374,7 @@ function ICPCard({
                       href={href}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-0.5 rounded-full bg-arcova-teal/15 px-2.5 py-0.5 text-xs font-medium text-arcova-teal hover:underline"
+                      className="inline-flex items-center gap-0.5 rounded-full bg-arcova-teal/10 border border-arcova-teal/20 px-2.5 py-0.5 text-xs font-medium text-arcova-teal hover:underline"
                     >
                       <span className="truncate max-w-[14rem]">{c.name}</span>
                       <ExternalLink className="h-2.5 w-2.5 shrink-0 opacity-70" />
@@ -1369,7 +1394,7 @@ function ICPCard({
                   return (
                     <span
                       key={`${c.name}-${i}`}
-                      className="inline-flex max-w-full items-center gap-0.5 rounded-full bg-arcova-teal/15 pl-2.5 pr-1 py-0.5 text-xs font-medium text-arcova-teal"
+                      className="inline-flex max-w-full items-center gap-0.5 rounded-full bg-arcova-teal/10 border border-arcova-teal/20 pl-2.5 pr-1 py-0.5 text-xs font-medium text-arcova-teal"
                     >
                       <a
                         href={href}
@@ -1412,7 +1437,7 @@ function ICPCard({
                     setNewCompetitorUrl('');
                   }}
                   placeholder="Paste competitor URL… (Enter)"
-                  className="min-w-0 flex-1 rounded-lg border border-white/15 bg-white/[0.06] px-2 py-1 text-xs text-white/80 placeholder:text-white/25 focus:outline-none focus:border-arcova-teal/50"
+                  className="min-w-0 flex-1 rounded-lg border border-arcova-navy/10 bg-white/60 px-2 py-1 text-xs text-arcova-navy/80 placeholder:text-arcova-navy/30 focus:outline-none focus:border-arcova-teal/50"
                 />
               </div>
             </Segment>
@@ -1424,36 +1449,32 @@ function ICPCard({
         <div className="w-80 shrink-0 px-4 py-4 space-y-2">
           <div className="flex items-center gap-1.5 pb-2">
             <Users className="h-3.5 w-3.5 text-arcova-teal shrink-0" />
-            <p className="text-sm font-semibold text-white flex-1">Buying team</p>
+            <p className="text-sm font-semibold text-arcova-navy flex-1">Buying team</p>
           </div>
 
           {editMode ? (
-            persona ? (
-              <div className="space-y-2">
-                <Segment label="Functions" open={open.functions} onToggle={() => toggle('functions')}>
-                  <EditTagField
-                    hideLabel
-                    label="Functions"
-                    options={BUSINESS_AREA_OPTIONS}
-                    selected={editFunctions}
-                    onRemove={(v) => setEditFunctions((prev) => prev.filter((f) => f !== v))}
-                    onAdd={(v) => setEditFunctions((prev) => [...prev, v])}
-                  />
-                </Segment>
-                <Segment label="Seniority" open={open.seniority} onToggle={() => toggle('seniority')}>
-                  <EditTagField
-                    hideLabel
-                    label="Seniority"
-                    options={SENIORITY_LEVEL_OPTIONS}
-                    selected={editSeniority}
-                    onRemove={(v) => setEditSeniority((prev) => prev.filter((s) => s !== v))}
-                    onAdd={(v) => setEditSeniority((prev) => [...prev, v])}
-                  />
-                </Segment>
-              </div>
-            ) : (
-              <p className="text-xs text-white/30 leading-snug pt-1">No buying team defined yet.</p>
-            )
+            <div className="space-y-2">
+              <Segment label="Functions" open={open.functions} onToggle={() => toggle('functions')}>
+                <EditTagField
+                  hideLabel
+                  label="Functions"
+                  options={BUSINESS_AREA_OPTIONS}
+                  selected={editFunctions}
+                  onRemove={(v) => setEditFunctions((prev) => prev.filter((f) => f !== v))}
+                  onAdd={(v) => setEditFunctions((prev) => [...prev, v])}
+                />
+              </Segment>
+              <Segment label="Seniority" open={open.seniority} onToggle={() => toggle('seniority')}>
+                <EditTagField
+                  hideLabel
+                  label="Seniority"
+                  options={SENIORITY_LEVEL_OPTIONS}
+                  selected={editSeniority}
+                  onRemove={(v) => setEditSeniority((prev) => prev.filter((s) => s !== v))}
+                  onAdd={(v) => setEditSeniority((prev) => [...prev, v])}
+                />
+              </Segment>
+            </div>
           ) : persona ? (
             <>
               <Segment label="Functions" open={open.functions} onToggle={() => toggle('functions')}>
@@ -1469,10 +1490,10 @@ function ICPCard({
             </>
           ) : (
             <div className="space-y-3 pt-1">
-              <p className="text-xs text-white/30 leading-snug">No buying team defined yet.</p>
+              <p className="text-xs text-arcova-navy/35 leading-snug">No buying team defined yet.</p>
               <button
                 type="button"
-                onClick={onAddBuyingTeam}
+                onClick={beginAddBuyingTeam}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-arcova-teal/40 px-3 py-2 text-xs font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/10"
               >
                 <Plus className="h-3.5 w-3.5" />
@@ -1485,10 +1506,10 @@ function ICPCard({
 
           </div>
 
-          <div className="w-full min-w-0 border-t border-white/10 px-4 py-4 space-y-2">
+          <div className="w-full min-w-0 border-t border-arcova-navy/8 px-4 py-4 space-y-2">
             <div className="flex items-center gap-1.5 pb-2">
               <Activity className="h-3.5 w-3.5 shrink-0 text-arcova-teal" />
-              <p className="flex-1 text-sm font-semibold text-white">Signals</p>
+              <p className="flex-1 text-sm font-semibold text-arcova-navy">Signals</p>
             </div>
             <Segment
               label="Company signals"
@@ -1520,35 +1541,31 @@ function ICPCard({
               onToggle={() => toggle('contactSignals')}
             >
               {editMode ? (
-                persona ? (
-                  <SignalCatalogByCategory
-                    variant="all"
-                    definitions={CONTACT_SIGNALS}
-                    categoryOrder={CONTACT_SIGNAL_CATEGORY_ORDER}
-                    selectedIds={editPersonaSignals}
-                    readOnly={false}
-                    isManagedServiceSignal={isContactSignalComingSoon}
-                    onManagedServiceSignalClick={(signalId) => {
-                      toast.info(
-                        'This signal is available with our managed data service. Get in touch and we can enable it for you.',
-                      );
+                <SignalCatalogByCategory
+                  variant="all"
+                  definitions={CONTACT_SIGNALS}
+                  categoryOrder={CONTACT_SIGNAL_CATEGORY_ORDER}
+                  selectedIds={editPersonaSignals}
+                  readOnly={false}
+                  isManagedServiceSignal={isContactSignalComingSoon}
+                  onManagedServiceSignalClick={(signalId) => {
+                    toast.info(
+                      'This signal is available with our managed data service. Get in touch and we can enable it for you.',
+                    );
+                    if (persona?.id) {
                       void fetch('/api/contact-premium-signal-interest', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ signalId, personaId: persona.id }),
                       }).catch(() => {});
-                    }}
-                    onToggle={(id) =>
-                      setEditPersonaSignals((prev) =>
-                        prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-                      )
                     }
-                  />
-                ) : (
-                  <p className="text-xs text-white/40 italic">
-                    Add a buying team on this ICP to set contact signals.
-                  </p>
-                )
+                  }}
+                  onToggle={(id) =>
+                    setEditPersonaSignals((prev) =>
+                      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+                    )
+                  }
+                />
               ) : persona ? (
                 <SignalCatalogByCategory
                   variant="selectedOnly"
@@ -1558,7 +1575,7 @@ function ICPCard({
                   readOnly
                 />
               ) : (
-                <p className="text-xs text-white/40 italic">
+                <p className="text-xs text-arcova-navy/40 italic">
                   No buying team on this ICP. Add a buying team to set contact signals.
                 </p>
               )}
@@ -1568,28 +1585,28 @@ function ICPCard({
       )}
 
       {!collapsed && (
-        <div className="flex items-center justify-between gap-2 border-t border-white/10 px-4 py-3">
+        <div className="flex items-center justify-between gap-2 border-t border-arcova-navy/8 px-4 py-3">
           {/* Bottom-left: subtle modelled-on toggle */}
           <div className="flex items-center gap-3">
             {!editMode && e?.company_name && (
               modelledOnMode ? (
                 <button
                   onClick={() => setModelledOnMode(false)}
-                  className="flex items-center gap-1 text-xs text-white/50 underline underline-offset-2 transition-colors hover:text-white/80"
+                  className="flex items-center gap-1 text-xs text-arcova-navy/45 underline underline-offset-2 transition-colors hover:text-arcova-navy/70"
                 >
                   <ChevronDown className="h-3 w-3 rotate-90" /> Back to summary
                 </button>
               ) : (
                 <button
                   onClick={() => setModelledOnMode(true)}
-                  className="flex items-center gap-1 text-xs text-white/50 underline underline-offset-2 transition-colors hover:text-white/80"
+                  className="flex items-center gap-1 text-xs text-arcova-navy/45 underline underline-offset-2 transition-colors hover:text-arcova-navy/70"
                 >
                   Modelled on {e.company_name} <ExternalLink className="h-3 w-3" />
                 </button>
               )
             )}
             {!editMode && relativeTime(icp.updated_at) && (
-              <span className="text-xs text-white/30">Updated {relativeTime(icp.updated_at)}</span>
+              <span className="text-xs text-arcova-navy/30">Updated {relativeTime(icp.updated_at)}</span>
             )}
           </div>
 
@@ -1607,7 +1624,7 @@ function ICPCard({
               <button
                 onClick={cancelEdit}
                 disabled={saving}
-                className="flex items-center gap-1 rounded-lg border border-white/15 px-3 py-1.5 text-xs font-medium text-white/60 transition-colors hover:bg-white/[0.06] hover:text-white disabled:opacity-50"
+                className="flex items-center gap-1 rounded-lg border border-arcova-navy/10 px-3 py-1.5 text-xs font-medium text-arcova-navy/55 transition-colors hover:bg-arcova-navy/5 hover:text-arcova-navy disabled:opacity-50"
               >
                 <X className="h-3 w-3" /> Cancel
               </button>
@@ -1624,14 +1641,14 @@ function ICPCard({
               <button
                 onClick={onReenrich}
                 disabled={reenriching}
-                className="flex items-center gap-1 rounded-lg border border-white/15 px-3 py-1.5 text-xs font-medium text-white/60 transition-colors hover:bg-white/[0.06] hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex items-center gap-1 rounded-lg border border-arcova-navy/10 px-3 py-1.5 text-xs font-medium text-arcova-navy/55 transition-colors hover:bg-arcova-navy/5 hover:text-arcova-navy disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <RefreshCw className={`h-3 w-3 ${reenriching ? 'animate-spin' : ''}`} /> {reenriching ? 'Re-enriching…' : 'Re-enrich'}
               </button>
               <button
                 onClick={onDelete}
                 disabled={deleting || reenriching}
-                className="flex items-center gap-1 rounded-lg border border-red-400/30 px-3 py-1.5 text-xs font-medium text-red-400/70 transition-colors hover:border-red-400/50 hover:bg-red-400/10 hover:text-red-400 disabled:opacity-40"
+                className="flex items-center gap-1 rounded-lg border border-red-400/30 px-3 py-1.5 text-xs font-medium text-red-500/70 transition-colors hover:border-red-400/50 hover:bg-red-50 hover:text-red-500 disabled:opacity-40"
               >
                 <Trash2 className="h-3 w-3" /> Delete
               </button>
@@ -1869,7 +1886,7 @@ export default function ICPManagerPage() {
 
   if (loading || loadingData) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-slate-950 to-arcova-darkblue">
+      <div className="min-h-screen flex items-center justify-center arcova-scroll-surface">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-arcova-teal" />
       </div>
     );
@@ -1878,83 +1895,80 @@ export default function ICPManagerPage() {
   if (!user) return null;
 
   return (
-    <div className="flex h-screen bg-gradient-to-b from-slate-950 to-arcova-darkblue">
+    <div className="flex h-screen min-h-0 bg-transparent font-jakarta">
       <AppSidebar />
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div className="flex-1 overflow-y-auto px-6 py-8 lg:px-10">
-            <div className="mx-auto max-w-5xl">
+      <main className="arcova-scroll-surface min-h-0 flex-1 overflow-y-auto px-6 py-8 lg:px-10">
+        <div className="mx-auto max-w-5xl">
 
-            {/* Page header — same flow as my-profile, no border */}
-            <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <h1 className="text-2xl font-bold text-white">My ICPs</h1>
-                <p className="mt-1 text-sm text-white/40">
-                  The types of accounts you sell to, and who buys within them.
-                </p>
+          {/* Page header */}
+          <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h1 className="text-2xl font-bold text-arcova-navy">My ICPs</h1>
+              <p className="mt-1 text-sm text-arcova-navy/45">
+                The types of accounts you sell to, and who buys within them.
+              </p>
+            </div>
+            <button
+              onClick={() => router.push('/company-criteria/new')}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-teal px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/85 shrink-0"
+            >
+              <Plus className="h-4 w-4" />
+              Add new ICP
+            </button>
+          </div>
+
+          {icps.length === 0 ? (
+            /* Empty state */
+            <div className="flex flex-col items-center justify-center py-24 text-center">
+              <div className="w-16 h-16 rounded-full bg-white/60 border border-arcova-navy/10 flex items-center justify-center mb-4 shadow-arcova">
+                <Building2 className="w-8 h-8 text-arcova-navy/25" />
               </div>
+              <h3 className="text-lg font-semibold text-arcova-navy mb-2">No target companies yet</h3>
+              <p className="text-arcova-navy/45 mb-6 text-sm max-w-xs">
+                Add your first target company to define who you sell to and who buys.
+              </p>
               <button
                 onClick={() => router.push('/company-criteria/new')}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-teal px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/85 shrink-0"
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-arcova-teal text-white text-sm font-semibold rounded-lg hover:bg-arcova-teal/85 transition-colors"
               >
-                <Plus className="h-4 w-4" />
-                Add new ICP
+                <Plus className="w-4 h-4" />
+                Add your first company
               </button>
             </div>
+          ) : (
+            <div className={'space-y-4 [&_.text-xs]:text-[0.9375rem] [&_.text-xs]:leading-normal [&_.text-sm]:text-base [&_.text-sm]:leading-relaxed'}>
+              {icps.map((icp, i) => {
+                const persona = personas.find((p) => p.icp_id === icp.id) ?? null;
+                const collapsed = !expandedIds.has(icp.id);
+                return (
+                  <ICPCard
+                    key={icp.id}
+                    icp={icp}
+                    index={icps.length - i}
+                    persona={persona}
+                    collapsed={collapsed}
+                    onToggle={() => setExpandedIds((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(icp.id)) next.delete(icp.id);
+                      else next.add(icp.id);
+                      return next;
+                    })}
+                    onSaved={handleIcpSaved}
+                    onDelete={() => setConfirmDeleteId(icp.id)}
+                    deleting={deletingId === icp.id}
+                    reenriching={normalizeReenrichmentStatus(icp.reenrichment_status) === 'running'}
+                    onPersonaUpdate={handlePersonaUpdate}
+                    onPersonaDelete={handlePersonaDelete}
+                    onReenrich={() => void handleReenrich(icp)}
+                  />
+                );
+              })}
+            </div>
+          )}
 
-            {icps.length === 0 ? (
-              /* Empty state */
-              <div className="flex flex-col items-center justify-center py-24 text-center">
-                <div className="w-16 h-16 rounded-full bg-white/[0.06] flex items-center justify-center mb-4">
-                  <Building2 className="w-8 h-8 text-white/30" />
-                </div>
-                <h3 className="text-lg font-semibold text-white mb-2">No target companies yet</h3>
-                <p className="text-white/40 mb-6 text-sm max-w-xs">
-                  Add your first target company to define who you sell to and who buys.
-                </p>
-                <button
-                  onClick={() => router.push('/company-criteria/new')}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-arcova-teal text-white text-sm font-semibold rounded-lg hover:bg-arcova-teal/85 transition-colors"
-                >
-                  <Plus className="w-4 h-4" />
-                  Add your first company
-                </button>
-              </div>
-            ) : (
-              <div className={'space-y-4 [&_.text-xs]:text-[0.9375rem] [&_.text-xs]:leading-normal [&_.text-sm]:text-base [&_.text-sm]:leading-relaxed'}>
-                {icps.map((icp, i) => {
-                  const persona = personas.find((p) => p.icp_id === icp.id) ?? null;
-                  const collapsed = !expandedIds.has(icp.id);
-                  return (
-                    <ICPCard
-                      key={icp.id}
-                      icp={icp}
-                      index={icps.length - i}
-                      persona={persona}
-                      collapsed={collapsed}
-                      onToggle={() => setExpandedIds((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(icp.id)) next.delete(icp.id);
-                        else next.add(icp.id);
-                        return next;
-                      })}
-                      onSaved={handleIcpSaved}
-                      onDelete={() => setConfirmDeleteId(icp.id)}
-                      deleting={deletingId === icp.id}
-                      reenriching={normalizeReenrichmentStatus(icp.reenrichment_status) === 'running'}
-                      onPersonaUpdate={handlePersonaUpdate}
-                      onPersonaDelete={handlePersonaDelete}
-                      onAddBuyingTeam={() => router.push(`/personas/new?icpId=${icp.id}`)}
-                      onReenrich={() => void handleReenrich(icp)}
-                    />
-                  );
-                })}
-              </div>
-            )}
-
-          </div>
         </div>
-      </div>
+      </main>
 
       {/* ── Delete confirmation modal ── */}
       {confirmDeleteId && (
@@ -1965,17 +1979,17 @@ export default function ICPManagerPage() {
           aria-labelledby="delete-icp-modal-title"
         >
           <div
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            className="absolute inset-0 bg-arcova-navy/20 backdrop-blur-sm"
             onClick={() => setConfirmDeleteId(null)}
           />
-          <div className="relative w-full max-w-md rounded-2xl border border-white/10 bg-slate-900 p-6 shadow-2xl">
-            <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-500/15">
-              <AlertTriangle className="h-6 w-6 text-red-400" />
+          <div className="relative w-full max-w-md rounded-2xl border border-arcova-navy/10 bg-white p-6 shadow-2xl">
+            <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-500/10">
+              <AlertTriangle className="h-6 w-6 text-red-500" />
             </div>
-            <h2 id="delete-icp-modal-title" className="mb-2 text-lg font-semibold text-white">
+            <h2 id="delete-icp-modal-title" className="mb-2 text-lg font-semibold text-arcova-navy">
               Delete this ICP profile?
             </h2>
-            <p className="mb-6 text-sm leading-relaxed text-white/55">
+            <p className="mb-6 text-sm leading-relaxed text-arcova-navy/60">
               This will permanently remove the target company profile along with its criteria and buying team. Any contacts already found using this profile won&apos;t be affected, but you won&apos;t be able to find new ones with it.
             </p>
             <div className="flex gap-3">
@@ -1990,7 +2004,7 @@ export default function ICPManagerPage() {
               <button
                 type="button"
                 onClick={() => setConfirmDeleteId(null)}
-                className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg border border-white/15 px-4 py-2.5 text-sm font-medium text-white/70 transition-colors hover:bg-white/[0.06] hover:text-white"
+                className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg border border-arcova-navy/10 px-4 py-2.5 text-sm font-medium text-arcova-navy/60 transition-colors hover:bg-arcova-navy/5 hover:text-arcova-navy"
               >
                 Keep it
               </button>

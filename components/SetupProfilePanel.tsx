@@ -12,6 +12,9 @@ import {
   FUNDING_STAGE_OPTIONS,
   BUSINESS_AREA_OPTIONS,
   SENIORITY_LEVEL_OPTIONS,
+  INDUSTRY_OPTIONS,
+  normalizeIndustrySelectValue,
+  selectOptionsWithCurrentValue,
 } from '@/lib/arcova-taxonomy';
 import {
   formatCurrencyShort,
@@ -19,6 +22,7 @@ import {
 } from '@/lib/funding-display';
 import { getSignalDisplayName } from '@/lib/signal-display-names';
 import { resolveCustomerSegments } from '@/lib/split-customer-segments';
+import { PLATFORM_CATEGORY_OPTIONS } from '@/lib/platform-category';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -304,34 +308,65 @@ function CardShell({
   );
 }
 
+const LIGHT_SECTION_OPEN = 'rounded-xl overflow-hidden border border-arcova-navy/8 bg-white/50';
+const LIGHT_SECTION_CLOSED = 'rounded-xl overflow-hidden bg-arcova-navy/[0.04] hover:bg-arcova-navy/[0.07]';
+
 // ── Card 1 — Your company ──────────────────────────────────────────────────
 
 function SubSection({
   label,
   open,
   onToggle,
+  light,
   children,
 }: {
   label: string;
   open: boolean;
   onToggle: () => void;
+  light?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <div className={`rounded-xl overflow-hidden transition-colors ${
-      open ? 'border border-white/10 bg-white/[0.06]' : 'bg-white/[0.18] hover:bg-white/[0.22]'
-    }`}>
+    <div
+      className={`rounded-xl overflow-hidden transition-colors ${
+        light
+          ? open
+            ? LIGHT_SECTION_OPEN
+            : LIGHT_SECTION_CLOSED
+          : open
+          ? 'border border-white/10 bg-white/[0.06]'
+          : 'bg-white/[0.18] hover:bg-white/[0.22]'
+      }`}
+    >
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center justify-between px-3 py-2 text-left transition-colors"
+        className="flex w-full items-center justify-between px-3 py-2.5 text-left transition-colors"
       >
-        <span className={`text-xs font-semibold ${open ? 'text-white/60' : 'text-white'}`}>{label}</span>
-        {open
-          ? <ChevronUp className="h-3 w-3 text-white/60 shrink-0" />
-          : <ChevronDown className="h-3 w-3 text-white shrink-0" />}
+        <span
+          className={`font-manrope text-sm font-semibold tracking-[-0.012em] ${
+            light
+              ? open
+                ? 'text-arcova-navy'
+                : 'text-arcova-navy/88'
+              : open
+              ? 'text-white/80'
+              : 'text-white'
+          }`}
+        >
+          {label}
+        </span>
+        {open ? (
+          <ChevronUp
+            className={`h-4 w-4 shrink-0 ${light ? 'text-arcova-navy/45' : 'text-white/60'}`}
+          />
+        ) : (
+          <ChevronDown
+            className={`h-4 w-4 shrink-0 ${light ? 'text-arcova-navy' : 'text-white'}`}
+          />
+        )}
       </button>
-      {open && <div className="px-3 pb-3 space-y-2">{children}</div>}
+      {open && <div className="space-y-2 px-3 pb-3">{children}</div>}
     </div>
   );
 }
@@ -353,11 +388,23 @@ function EditableBulletList({
   items,
   onChange,
   addPlaceholder = 'Add item…',
+  light,
 }: {
   items: string[];
   onChange: (items: string[]) => void;
   addPlaceholder?: string;
+  light?: boolean;
 }) {
+  const rowInput = light
+    ? 'flex-1 rounded-lg border border-arcova-navy/12 bg-white/90 px-2.5 py-1.5 text-[13px] text-arcova-navy placeholder:text-arcova-navy/35 focus:outline-none focus:border-arcova-teal/50'
+    : 'flex-1 rounded-lg bg-white/[0.06] border border-white/15 px-2 py-1 text-xs text-white/80 placeholder:text-white/25 focus:outline-none focus:border-arcova-teal/50';
+  const removeBtn = light
+    ? 'shrink-0 text-arcova-navy/30 hover:text-arcova-navy/60 transition-colors'
+    : 'shrink-0 text-white/25 hover:text-white/60 transition-colors';
+  const addBtn = light
+    ? 'text-[12.5px] text-arcova-navy/40 hover:text-arcova-teal transition-colors flex items-center gap-1 pl-2.5'
+    : 'text-xs text-white/30 hover:text-white/60 transition-colors flex items-center gap-1 pl-2.5';
+
   return (
     <div className="space-y-1.5">
       {items.map((item, i) => (
@@ -371,12 +418,12 @@ function EditableBulletList({
               next[i] = e.target.value;
               onChange(next);
             }}
-            className={`flex-1 rounded-lg bg-white/[0.06] border border-white/15 px-2 py-1 text-xs text-white/80 placeholder:text-white/25 focus:outline-none focus:border-arcova-teal/50`}
+            className={rowInput}
           />
           <button
             type="button"
             onClick={() => onChange(items.filter((_, j) => j !== i))}
-            className="shrink-0 text-white/25 hover:text-white/60 transition-colors"
+            className={removeBtn}
           >
             <X className="h-3 w-3" />
           </button>
@@ -385,7 +432,7 @@ function EditableBulletList({
       <button
         type="button"
         onClick={() => onChange([...items, ''])}
-        className="text-xs text-white/30 hover:text-white/60 transition-colors flex items-center gap-1 pl-2.5"
+        className={addBtn}
       >
         <span className="text-base leading-none">+</span> {addPlaceholder}
       </button>
@@ -460,28 +507,34 @@ function shortLabel(s: string): string {
 }
 
 
-function AddTagSelect({
+export function AddTagSelect({
   options,
   selected,
   onAdd,
   placeholder = 'Add…',
+  light,
 }: {
   options: string[];
   selected: string[];
   onAdd: (v: string) => void;
   placeholder?: string;
+  light?: boolean;
 }) {
   const remaining = options.filter((o) => !selected.includes(o));
   if (remaining.length === 0) return null;
+  const cls = light
+    ? 'w-full rounded-lg border border-arcova-navy/12 bg-white/90 px-2.5 py-2 text-[13px] text-arcova-navy/70 focus:outline-none focus:border-arcova-teal/50 cursor-pointer'
+    : 'w-full rounded-lg bg-white/[0.06] border border-white/15 px-2 py-1 text-xs text-white/40 focus:outline-none focus:border-arcova-teal/50 cursor-pointer';
+  const optCls = light ? 'bg-white text-arcova-navy' : 'bg-slate-900 text-white';
   return (
     <select
       value=""
       onChange={(e) => { if (e.target.value) onAdd(e.target.value); }}
-      className="w-full rounded-lg bg-white/[0.06] border border-white/15 px-2 py-1 text-xs text-white/40 focus:outline-none focus:border-arcova-teal/50 cursor-pointer"
+      className={cls}
     >
       <option value="">{placeholder}</option>
       {remaining.map((o) => (
-        <option key={o} value={o} className="bg-slate-900 text-white">{o}</option>
+        <option key={o} value={o} className={optCls}>{o}</option>
       ))}
     </select>
   );
@@ -498,6 +551,22 @@ function Stat({ label, value, subValue }: { label: string; value: string; subVal
 }
 
 const EDIT_INPUT = "w-full rounded-lg bg-white/[0.06] border border-white/15 px-2 py-1 text-xs text-white/80 focus:outline-none focus:border-arcova-teal/50 placeholder:text-white/25";
+
+/** Light-theme tokens for ProfileCard when `appearance="light"` (e.g. my-company glass page). */
+const LIGHT_INPUT =
+  'w-full rounded-lg border border-arcova-navy/12 bg-white/90 px-2.5 py-2 text-[13px] text-arcova-navy focus:outline-none focus:border-arcova-teal/50 placeholder:text-arcova-navy/35';
+const LIGHT_SELECT =
+  'w-full rounded-lg border border-arcova-navy/12 bg-white/90 px-2.5 py-2 text-[13px] text-arcova-navy focus:outline-none focus:border-arcova-teal/50 cursor-pointer';
+
+function fieldLabelClass(light: boolean) {
+  return light
+    ? 'mb-1.5 text-[9.5px] font-semibold uppercase tracking-[0.12em] text-arcova-navy/40'
+    : 'mb-1 text-xs text-white/40';
+}
+
+function bodyTextClass(light: boolean) {
+  return light ? 'text-[13px] text-arcova-navy/75 leading-snug' : 'text-xs text-white/70 leading-snug';
+}
 
 export interface ProfileCardProps {
   status: CardStatus;
@@ -520,6 +589,10 @@ export interface ProfileCardProps {
   defaultAllOpen?: boolean;
   /** Render sections in a multi-column grid (desktop only). 2 = top-3 / bottom-4, 3 = balanced thirds */
   columns?: 2 | 3;
+  /** `light` matches app glass pages; skips dark CardShell and uses navy/surface inputs. */
+  appearance?: 'dark' | 'light';
+  /** Hide the small logo + name block (parent page already shows a hero). */
+  hideCompanyHeader?: boolean;
 }
 
 export function ProfileCard({
@@ -539,6 +612,8 @@ export function ProfileCard({
   onToggle,
   defaultAllOpen = false,
   columns,
+  appearance = 'dark',
+  hideCompanyHeader = false,
 }: ProfileCardProps) {
   const ALL_OPEN = { about: true, customers: true, valueProps: true, firmographics: true, social: true, competitors: true, products: true };
   const ALL_CLOSED = { about: false, customers: false, valueProps: false, firmographics: false, social: false, competitors: false, products: false };
@@ -570,26 +645,75 @@ export function ProfileCard({
     productsServices, services, technologies,
     employeeCount, employeeRange, followerCount, foundedYear,
     fundingStage, totalFundingUsd, hqCity, hqCountry,
+    industry,
   } = myCompany;
+
+  const industrySelectOptions = React.useMemo(() => {
+    const raw = (industry ?? '').trim();
+    const key = normalizeIndustrySelectValue(raw) || raw;
+    return selectOptionsWithCurrentValue([...INDUSTRY_OPTIONS] as string[], key);
+  }, [industry]);
+
+  const platformSelectOptions = React.useMemo(() => {
+    const c = (platformCategory ?? '').trim();
+    return selectOptionsWithCurrentValue([...PLATFORM_CATEGORY_OPTIONS], c);
+  }, [platformCategory]);
 
   const displayDomain = website?.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
   const visiblePlatformCategory = isSaasCompanyType(companyType) ? (platformCategory ?? '').trim() : '';
 
   const hasAbout =
     !!description?.[0] ||
-    !!companyType ||
+    !!(companyType || companyTypeDisplay) ||
     !!visiblePlatformCategory ||
     (therapeuticAreas?.length ?? 0) > 0 ||
-    (modalities?.length ?? 0) > 0;
+    (modalities?.length ?? 0) > 0 ||
+    (developmentStages?.length ?? 0) > 0;
   const hasCustomers = (customersWeServe?.length ?? 0) > 0 || (goodFit?.length ?? 0) > 0 || (badFit?.length ?? 0) > 0;
   const hasValueProps = (valuePropositions?.length ?? 0) > 0;
-  const hasFirmographics = !!(employeeCount || employeeRange || foundedYear || hqCity || fundingStage || totalFundingUsd != null || companyStatus);
+  const hasFirmographics = !!(
+    employeeCount ||
+    employeeRange ||
+    foundedYear ||
+    hqCity ||
+    hqCountry ||
+    fundingStage ||
+    totalFundingUsd != null ||
+    companyStatus ||
+    industry
+  );
   const hasSocial = !!(followerCount != null || linkedinUrl);
 
-  return (
-    <CardShell icon={Building2} label="Your company" status={status} collapsed={collapsed} onToggle={onToggle}>
+  const isLight = appearance === 'light';
+  const inputCls = isLight ? LIGHT_INPUT : EDIT_INPUT;
+  const selectCls = isLight
+    ? LIGHT_SELECT
+    : 'w-full rounded-lg bg-white/[0.06] border border-white/15 px-2 py-1 text-xs text-white/80 focus:outline-none focus:border-arcova-teal/50 cursor-pointer';
+  const optionCls = isLight ? 'bg-white text-arcova-navy' : 'bg-slate-900 text-white';
+  const optionMutedCls = isLight ? 'bg-white text-arcova-navy/50' : 'bg-slate-900 text-white/40';
+
+  const commitNewCompetitor = React.useCallback(() => {
+    if (!editMode || !onMyCompanyChange) return;
+    const raw = newCompetitorUrl.trim();
+    if (!raw) return;
+    let url = raw;
+    if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+    let name = raw;
+    try {
+      name = new URL(url).hostname.replace(/^www\./, '');
+    } catch {
+      /* keep typed text as display name */
+    }
+    onMyCompanyChange('competitorsEnriched', [...(competitorsEnriched ?? []), { name, url }]);
+    setNewCompetitorUrl('');
+  }, [editMode, newCompetitorUrl, onMyCompanyChange, competitorsEnriched]);
+
+  const inner = (
+    <>
       {status === 'pending' && (
-        <p className="text-xs text-white/30">Your company profile will appear here.</p>
+        <p className={isLight ? 'text-[13px] text-arcova-navy/45' : 'text-xs text-white/30'}>
+          Your company profile will appear here.
+        </p>
       )}
 
       {status === 'building' && analysisLoading && (
@@ -601,17 +725,21 @@ export function ProfileCard({
                   style={{ animationDelay: `${d}ms` }} />
               ))}
             </span>
-            <span className="text-xs text-white/50">{enrichmentMsg || 'Analysing your website…'}</span>
+            <span className={isLight ? 'text-[13px] text-arcova-navy/60' : 'text-xs text-white/50'}>
+              {enrichmentMsg || 'Analysing your website…'}
+            </span>
           </div>
           {typeof enrichmentPct === 'number' && enrichmentPct > 0 && (
             <div className="space-y-1">
-              <div className="relative h-1.5 overflow-hidden rounded-full bg-white/10">
+              <div className={`relative h-1.5 overflow-hidden rounded-full ${isLight ? 'bg-arcova-navy/10' : 'bg-white/10'}`}>
                 <div
                   className="arcova-enrichment-progress absolute inset-y-0 left-0 rounded-full transition-[width] duration-700 ease-out"
                   style={{ width: `${enrichmentPct}%` }}
                 />
               </div>
-              <p className="text-right text-xs tabular-nums text-white/30">{enrichmentPct}%</p>
+              <p className={`text-right text-xs tabular-nums ${isLight ? 'text-arcova-navy/45' : 'text-white/30'}`}>
+                {enrichmentPct}%
+              </p>
             </div>
           )}
         </div>
@@ -621,13 +749,27 @@ export function ProfileCard({
         <div className="space-y-2">
 
           {/* Always-visible header — logo + name + domain + tagline */}
-          {(companyName || website) && (
+          {!hideCompanyHeader && (companyName || website) && (
             <div className="flex items-start gap-2.5 pb-1">
               {logoUrl && (
-                <img src={logoUrl} alt="" className="h-8 w-8 shrink-0 rounded-lg object-contain bg-white/10 p-0.5" />
+                <img
+                  src={logoUrl}
+                  alt=""
+                  className={`h-8 w-8 shrink-0 rounded-lg object-contain p-0.5 ${
+                    isLight ? 'bg-arcova-navy/6 ring-1 ring-arcova-navy/8' : 'bg-white/10'
+                  }`}
+                />
               )}
               <div className="min-w-0">
-                {companyName && <p className="text-sm font-semibold text-white leading-tight">{companyName}</p>}
+                {companyName && (
+                  <p
+                    className={`text-sm font-semibold leading-tight ${
+                      isLight ? 'text-arcova-navy' : 'text-white'
+                    }`}
+                  >
+                    {companyName}
+                  </p>
+                )}
                 {displayDomain && (
                   <a href={website} target="_blank" rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 text-xs text-arcova-teal hover:underline mt-0.5">
@@ -635,7 +777,15 @@ export function ProfileCard({
                     <ExternalLink className="h-2.5 w-2.5 shrink-0" />
                   </a>
                 )}
-                {tagline && <p className="mt-1 text-xs italic text-white/40 leading-snug line-clamp-1">{tagline}</p>}
+                {tagline && (
+                  <p
+                    className={`mt-1 text-xs italic leading-snug line-clamp-1 ${
+                      isLight ? 'text-arcova-navy/55' : 'text-white/40'
+                    }`}
+                  >
+                    {tagline}
+                  </p>
+                )}
               </div>
             </div>
           )}
@@ -643,7 +793,7 @@ export function ProfileCard({
           {/* ── Sections ── extracted so we can optionally render in two columns */}
           {(() => {
             const aboutSection = (hasAbout || editMode) ? (
-              <SubSection key="about" label="About" open={openSections.about} onToggle={() => toggleSection('about')}>
+              <SubSection key="about" label="About" open={openSections.about} onToggle={() => toggleSection('about')} light={isLight}>
                 {(description?.[0] || editMode) && (
                   editMode ? (
                     <textarea
@@ -651,43 +801,52 @@ export function ProfileCard({
                       onChange={(e) => onMyCompanyChange?.('description', [e.target.value])}
                       rows={3}
                       placeholder="Short description…"
-                      className={`${EDIT_INPUT} resize-none leading-snug`}
+                      className={`${inputCls} resize-none leading-snug`}
                     />
                   ) : (
-                    <p className="text-xs text-white/70 leading-snug">{description![0]}</p>
+                    <p className={bodyTextClass(isLight)}>{description![0]}</p>
                   )
                 )}
-                {(companyType || editMode) && (
+                {(companyType || companyTypeDisplay || editMode) && (
                   <div>
-                    <p className="mb-1 text-xs text-white/40">Company type</p>
+                    <p className={fieldLabelClass(isLight)}>Company type</p>
                     {editMode ? (
                       <select
                         value={companyType ?? ''}
-                        onChange={(e) => onMyCompanyChange?.('companyType', e.target.value || undefined)}
-                        className="w-full rounded-lg bg-white/[0.06] border border-white/15 px-2 py-1 text-xs text-white/80 focus:outline-none focus:border-arcova-teal/50 cursor-pointer"
+                        onChange={(e) => {
+                          const v = e.target.value || undefined;
+                          onMyCompanyChange?.('companyType', v);
+                          onMyCompanyChange?.('companyTypeDisplay', undefined);
+                          if (!isSaasCompanyType(v)) onMyCompanyChange?.('platformCategory', undefined);
+                        }}
+                        className={selectCls}
                       >
-                        <option value="" className="bg-slate-900 text-white/40">Select type…</option>
+                        <option value="" className={optionMutedCls}>Select type…</option>
                         {COMPANY_TYPE_OPTIONS.map((o) => (
-                          <option key={o.value} value={o.value} className="bg-slate-900 text-white">{o.value}</option>
+                          <option key={o.value} value={o.value} className={optionCls}>{o.value}</option>
                         ))}
                       </select>
-                    ) : companyType ? (
-                      <Tag label={companyType} />
+                    ) : (companyTypeDisplay || companyType) ? (
+                      <Tag label={String(companyTypeDisplay ?? companyType)} />
                     ) : null}
                   </div>
                 )}
                 {isSaasCompanyType(companyType) && (visiblePlatformCategory || editMode) && (
                   <div>
-                    <p className="mb-1 text-xs text-white/40">Platform category</p>
+                    <p className={fieldLabelClass(isLight)}>Platform category</p>
                     {editMode ? (
-                      <input
-                        type="text"
+                      <select
                         value={platformCategory ?? ''}
-                        onChange={(e) => onMyCompanyChange?.('platformCategory', e.target.value || undefined)}
-                        placeholder="e.g. Scientific Content Platform"
-                        maxLength={48}
-                        className={EDIT_INPUT}
-                      />
+                        onChange={(e) =>
+                          onMyCompanyChange?.('platformCategory', e.target.value || undefined)
+                        }
+                        className={selectCls}
+                      >
+                        <option value="" className={optionMutedCls}>Select platform…</option>
+                        {platformSelectOptions.map((o) => (
+                          <option key={o} value={o} className={optionCls}>{o}</option>
+                        ))}
+                      </select>
                     ) : visiblePlatformCategory ? (
                       <Tag label={visiblePlatformCategory} />
                     ) : null}
@@ -695,7 +854,7 @@ export function ProfileCard({
                 )}
                 {((therapeuticAreas?.length ?? 0) > 0 || editMode) && (
                   <div>
-                    <p className="mb-1 text-xs text-white/40">Therapeutic areas</p>
+                    <p className={fieldLabelClass(isLight)}>Therapeutic areas</p>
                     {(therapeuticAreas?.length ?? 0) > 0 && (
                       <div className="flex flex-wrap gap-1 mb-1">
                         {therapeuticAreas!.map((t) => (
@@ -711,13 +870,14 @@ export function ProfileCard({
                         selected={therapeuticAreas ?? []}
                         onAdd={(v) => onMyCompanyChange?.('therapeuticAreas', [...(therapeuticAreas ?? []), v])}
                         placeholder="Add therapeutic area…"
+                        light={isLight}
                       />
                     )}
                   </div>
                 )}
                 {((modalities?.length ?? 0) > 0 || editMode) && (
                   <div>
-                    <p className="mb-1 text-xs text-white/40">Modalities</p>
+                    <p className={fieldLabelClass(isLight)}>Modalities</p>
                     {(modalities?.length ?? 0) > 0 && (
                       <div className="flex flex-wrap gap-1 mb-1">
                         {modalities!.map((m) => (
@@ -733,13 +893,14 @@ export function ProfileCard({
                         selected={modalities ?? []}
                         onAdd={(v) => onMyCompanyChange?.('modalities', [...(modalities ?? []), v])}
                         placeholder="Add modality…"
+                        light={isLight}
                       />
                     )}
                   </div>
                 )}
                 {((developmentStages?.length ?? 0) > 0 || editMode) && (
                   <div>
-                    <p className="mb-1 text-xs text-white/40">Development stages</p>
+                    <p className={fieldLabelClass(isLight)}>Development stages</p>
                     {(developmentStages?.length ?? 0) > 0 && (
                       <div className="flex flex-wrap gap-1 mb-1">
                         {developmentStages!.map((s) => (
@@ -755,6 +916,7 @@ export function ProfileCard({
                         selected={developmentStages ?? []}
                         onAdd={(v) => onMyCompanyChange?.('developmentStages', [...(developmentStages ?? []), v])}
                         placeholder="Add stage…"
+                        light={isLight}
                       />
                     )}
                   </div>
@@ -763,54 +925,72 @@ export function ProfileCard({
             ) : null;
 
             const firmographicsSection = (hasFirmographics || editMode) ? (
-              <SubSection key="firmographics" label="Firmographics" open={openSections.firmographics} onToggle={() => toggleSection('firmographics')}>
+              <SubSection key="firmographics" label="Firmographics" open={openSections.firmographics} onToggle={() => toggleSection('firmographics')} light={isLight}>
                 {editMode ? (
                   <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
+                    <div className="col-span-2">
+                      <p className={fieldLabelClass(isLight)}>Industry</p>
+                      <select
+                        value={normalizeIndustrySelectValue(industry ?? '') || industry || ''}
+                        onChange={(e) =>
+                          onMyCompanyChange?.('industry', e.target.value || undefined)
+                        }
+                        className={selectCls}
+                      >
+                        <option value="" className={optionMutedCls}>Select industry…</option>
+                        {industrySelectOptions.map((o) => (
+                          <option key={o} value={o} className={optionCls}>{o}</option>
+                        ))}
+                      </select>
+                    </div>
                     <div>
-                      <p className="mb-1 text-xs text-white/40">Employees</p>
+                      <p className={fieldLabelClass(isLight)}>Employees</p>
                       <input type="number" min={0} value={employeeCount ?? ''} placeholder={employeeRange ?? '—'}
                         onChange={(e) => onMyCompanyChange?.('employeeCount', e.target.value ? Number(e.target.value) : undefined)}
-                        className={EDIT_INPUT} />
+                        className={inputCls} />
                     </div>
                     <div>
-                      <p className="mb-1 text-xs text-white/40">Founded</p>
+                      <p className={fieldLabelClass(isLight)}>Founded</p>
                       <input type="number" min={1800} max={2100} value={foundedYear ?? ''} placeholder="Year"
                         onChange={(e) => onMyCompanyChange?.('foundedYear', e.target.value ? Number(e.target.value) : undefined)}
-                        className={EDIT_INPUT} />
+                        className={inputCls} />
                     </div>
                     <div>
-                      <p className="mb-1 text-xs text-white/40">HQ city</p>
+                      <p className={fieldLabelClass(isLight)}>HQ city</p>
                       <input type="text" value={hqCity ?? ''} placeholder="City"
                         onChange={(e) => onMyCompanyChange?.('hqCity', e.target.value || undefined)}
-                        className={EDIT_INPUT} />
+                        className={inputCls} />
                     </div>
                     <div>
-                      <p className="mb-1 text-xs text-white/40">HQ country</p>
+                      <p className={fieldLabelClass(isLight)}>HQ country</p>
                       <input type="text" value={hqCountry ?? ''} placeholder="Country"
                         onChange={(e) => onMyCompanyChange?.('hqCountry', e.target.value || undefined)}
-                        className={EDIT_INPUT} />
+                        className={inputCls} />
                     </div>
                     <div>
-                      <p className="mb-1 text-xs text-white/40">Status</p>
+                      <p className={fieldLabelClass(isLight)}>Status</p>
                       <input type="text" value={companyStatus ?? ''} placeholder="e.g. Private"
                         onChange={(e) => onMyCompanyChange?.('companyStatus', e.target.value || undefined)}
-                        className={EDIT_INPUT} />
+                        className={inputCls} />
                     </div>
                     <div>
-                      <p className="mb-1 text-xs text-white/40">Funding stage</p>
+                      <p className={fieldLabelClass(isLight)}>Funding stage</p>
                       <input type="text" value={fundingStage ?? ''} placeholder="e.g. Series B"
                         onChange={(e) => onMyCompanyChange?.('fundingStage', e.target.value || undefined)}
-                        className={EDIT_INPUT} />
+                        className={inputCls} />
                     </div>
                     <div className="col-span-2">
-                      <p className="mb-1 text-xs text-white/40">Total funding (USD)</p>
+                      <p className={fieldLabelClass(isLight)}>Total funding (USD)</p>
                       <input type="number" min={0} value={totalFundingUsd ?? ''} placeholder="e.g. 50000000"
                         onChange={(e) => onMyCompanyChange?.('totalFundingUsd', e.target.value ? Number(e.target.value) : undefined)}
-                        className={EDIT_INPUT} />
+                        className={inputCls} />
                     </div>
                   </div>
                 ) : (
                   <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
+                    {industry && (
+                      <Stat label="Industry" value={normalizeIndustrySelectValue(industry) || industry} />
+                    )}
                     {(employeeCount || employeeRange) && (
                       <Stat label="Employees" value={employeeCount ? employeeCount.toLocaleString() : employeeRange!} />
                     )}
@@ -832,15 +1012,16 @@ export function ProfileCard({
             ) : null;
 
             const customersSection = (hasCustomers || editMode) ? (
-              <SubSection key="customers" label="Customers" open={openSections.customers} onToggle={() => toggleSection('customers')}>
+              <SubSection key="customers" label="Customers" open={openSections.customers} onToggle={() => toggleSection('customers')} light={isLight}>
                 {((customersWeServe?.length ?? 0) > 0 || editMode) && (
                   <div className={((goodFit?.length ?? 0) > 0 || (badFit?.length ?? 0) > 0 || editMode) ? 'mb-2' : ''}>
-                    {editMode && <p className="mb-1 text-xs text-white/40">Customer types</p>}
+                    {editMode && <p className={fieldLabelClass(isLight)}>Customer types</p>}
                     {editMode ? (
                       <EditableBulletList
                         items={customersWeServe ?? []}
                         onChange={(v) => onMyCompanyChange?.('customersWeServe', v)}
                         addPlaceholder="Add customer type…"
+                        light={isLight}
                       />
                     ) : (
                       <div className="flex flex-wrap gap-1">
@@ -855,12 +1036,13 @@ export function ProfileCard({
                   <div className="space-y-2 border-t border-white/10 pt-2 mt-1">
                     {((goodFit?.length ?? 0) > 0 || editMode) && (
                       <div>
-                        <p className="mb-1 text-xs text-white/40">Good fit</p>
+                        <p className={fieldLabelClass(isLight)}>Good fit</p>
                         {editMode ? (
                           <EditableBulletList
                             items={goodFit ?? []}
                             onChange={(v) => onMyCompanyChange?.('goodFit', v)}
                             addPlaceholder="Add good fit…"
+                            light={isLight}
                           />
                         ) : (
                           <BulletList items={goodFit!} />
@@ -869,12 +1051,13 @@ export function ProfileCard({
                     )}
                     {((badFit?.length ?? 0) > 0 || editMode) && (
                       <div>
-                        <p className="mb-1 text-xs text-white/40">Not a fit</p>
+                        <p className={fieldLabelClass(isLight)}>Not a fit</p>
                         {editMode ? (
                           <EditableBulletList
                             items={badFit ?? []}
                             onChange={(v) => onMyCompanyChange?.('badFit', v)}
                             addPlaceholder="Add not a fit…"
+                            light={isLight}
                           />
                         ) : (
                           <BulletList items={badFit!} />
@@ -887,50 +1070,77 @@ export function ProfileCard({
             ) : null;
 
             const competitorsSection = ((competitorsEnriched?.length ?? 0) > 0 || editMode) ? (
-              <SubSection key="competitors" label="Competitors" open={openSections.competitors} onToggle={() => toggleSection('competitors')}>
-                <div className="space-y-1.5">
+              <SubSection key="competitors" label="Competitors" open={openSections.competitors} onToggle={() => toggleSection('competitors')} light={isLight}>
+                <div className="space-y-2">
                   {(competitorsEnriched ?? []).map((c, i) => (
-                    <div key={i} className="flex items-center gap-1.5">
+                    <div key={i} className="flex items-center gap-2">
                       {c.url ? (
                         <a href={c.url} target="_blank" rel="noopener noreferrer"
-                          className="flex flex-1 items-center gap-1 text-xs font-medium text-arcova-teal hover:underline min-w-0">
+                          className={`flex min-w-0 flex-1 items-center gap-1.5 font-medium hover:underline ${
+                            isLight ? 'text-[13px] text-arcova-teal' : 'text-sm text-arcova-teal'
+                          }`}>
                           <span className="truncate">{c.name}</span>
-                          <ExternalLink className="h-2.5 w-2.5 shrink-0" />
+                          <ExternalLink className={`shrink-0 ${isLight ? 'h-3.5 w-3.5' : 'h-3 w-3'}`} />
                         </a>
                       ) : (
-                        <p className="flex-1 text-xs font-medium text-white/80 truncate">{c.name}</p>
+                        <p className={`flex-1 truncate font-medium ${isLight ? 'text-[13px] text-arcova-navy/85' : 'text-sm text-white/85'}`}>
+                          {c.name}
+                        </p>
                       )}
                       {editMode && (
-                        <button type="button"
+                        <button
+                          type="button"
                           onClick={() => onMyCompanyChange?.('competitorsEnriched', competitorsEnriched!.filter((_, j) => j !== i))}
-                          className="shrink-0 text-white/25 hover:text-white/60 transition-colors">
-                          <X className="h-3 w-3" />
+                          className={`shrink-0 rounded-md p-1 transition-colors ${
+                            isLight
+                              ? 'text-arcova-navy/45 hover:bg-red-50 hover:text-red-600'
+                              : 'text-white/35 hover:bg-white/[0.08] hover:text-white/80'
+                          }`}
+                          aria-label={`Remove ${c.name}`}
+                        >
+                          <X className="h-4 w-4" />
                         </button>
                       )}
                     </div>
                   ))}
                   {editMode && (
-                    <div className="flex items-center gap-1.5 pt-0.5">
-                      <span className="mt-0 h-1 w-1 shrink-0 rounded-full bg-arcova-teal/60" />
-                      <input
-                        type="text"
-                        value={newCompetitorUrl}
-                        onChange={(e) => setNewCompetitorUrl(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && newCompetitorUrl.trim()) {
-                            e.preventDefault();
-                            const raw = newCompetitorUrl.trim();
-                            let url = raw;
-                            if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
-                            let name = raw;
-                            try { name = new URL(url).hostname.replace(/^www\./, ''); } catch {}
-                            onMyCompanyChange?.('competitorsEnriched', [...(competitorsEnriched ?? []), { name, url }]);
-                            setNewCompetitorUrl('');
+                    <div
+                      className={`space-y-1.5 ${
+                        (competitorsEnriched?.length ?? 0) > 0
+                          ? isLight
+                            ? 'mt-2 border-t border-arcova-navy/10 pt-2.5'
+                            : 'mt-2 border-t border-white/10 pt-2.5'
+                          : ''
+                      }`}
+                    >
+                      <p className={fieldLabelClass(isLight)}>Add a competitor</p>
+                      <div className="flex flex-wrap items-stretch gap-2">
+                        <input
+                          type="text"
+                          value={newCompetitorUrl}
+                          onChange={(e) => setNewCompetitorUrl(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              commitNewCompetitor();
+                            }
+                          }}
+                          placeholder="Competitor website URL"
+                          className={`min-w-[12rem] flex-1 ${inputCls}`}
+                        />
+                        <button
+                          type="button"
+                          onClick={commitNewCompetitor}
+                          disabled={!newCompetitorUrl.trim()}
+                          className={
+                            isLight
+                              ? 'shrink-0 rounded-lg border border-arcova-navy/12 bg-white/90 px-3 py-2 text-[13px] font-medium text-arcova-navy shadow-sm transition-colors hover:border-arcova-teal/35 hover:bg-arcova-teal/[0.06] disabled:cursor-not-allowed disabled:opacity-40'
+                              : 'shrink-0 rounded-lg border border-white/15 bg-white/[0.08] px-3 py-2 text-sm font-medium text-white/85 transition-colors hover:bg-white/[0.12] disabled:cursor-not-allowed disabled:opacity-40'
                           }
-                        }}
-                        placeholder="Add competitor URL… (press Enter)"
-                        className="flex-1 rounded-lg bg-white/[0.06] border border-white/15 px-2 py-1 text-xs text-white/80 placeholder:text-white/25 focus:outline-none focus:border-arcova-teal/50"
-                      />
+                        >
+                          Add
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -938,16 +1148,17 @@ export function ProfileCard({
             ) : null;
 
             const productsSection = ((productsServices?.length ?? 0) > 0 || (services?.length ?? 0) > 0 || (technologies?.length ?? 0) > 0 || editMode) ? (
-              <SubSection key="products" label="Products, Services, Tech" open={openSections.products} onToggle={() => toggleSection('products')}>
+              <SubSection key="products" label="Products, Services, Tech" open={openSections.products} onToggle={() => toggleSection('products')} light={isLight}>
                 <div className="space-y-2.5">
                   {((productsServices?.length ?? 0) > 0 || editMode) && (
                     <div>
-                      <p className="mb-1 text-xs text-white/40">Products</p>
+                      <p className={fieldLabelClass(isLight)}>Products</p>
                       {editMode ? (
                         <EditableBulletList
                           items={productsServices ?? []}
                           onChange={(v) => onMyCompanyChange?.('productsServices', v)}
                           addPlaceholder="Add product…"
+                          light={isLight}
                         />
                       ) : (
                         <div className="flex flex-wrap gap-1">
@@ -960,12 +1171,13 @@ export function ProfileCard({
                   )}
                   {((services?.length ?? 0) > 0 || editMode) && (
                     <div>
-                      <p className="mb-1 text-xs text-white/40">Services</p>
+                      <p className={fieldLabelClass(isLight)}>Services</p>
                       {editMode ? (
                         <EditableBulletList
                           items={services ?? []}
                           onChange={(v) => onMyCompanyChange?.('services', v)}
                           addPlaceholder="Add service…"
+                          light={isLight}
                         />
                       ) : (
                         <div className="flex flex-wrap gap-1">
@@ -978,12 +1190,13 @@ export function ProfileCard({
                   )}
                   {((technologies?.length ?? 0) > 0 || editMode) && (
                     <div>
-                      <p className="mb-1 text-xs text-white/40">Technologies</p>
+                      <p className={fieldLabelClass(isLight)}>Technologies</p>
                       {editMode ? (
                         <EditableBulletList
                           items={technologies ?? []}
                           onChange={(v) => onMyCompanyChange?.('technologies', v)}
                           addPlaceholder="Add technology…"
+                          light={isLight}
                         />
                       ) : (
                         <div className="flex flex-wrap gap-1">
@@ -999,12 +1212,13 @@ export function ProfileCard({
             ) : null;
 
             const valuePropsSection = (hasValueProps || editMode) ? (
-              <SubSection key="valueProps" label="Value props" open={openSections.valueProps} onToggle={() => toggleSection('valueProps')}>
+              <SubSection key="valueProps" label="Value props" open={openSections.valueProps} onToggle={() => toggleSection('valueProps')} light={isLight}>
                 {editMode ? (
                   <EditableBulletList
                     items={valuePropositions ?? []}
                     onChange={(v) => onMyCompanyChange?.('valuePropositions', v)}
                     addPlaceholder="Add value prop…"
+                    light={isLight}
                   />
                 ) : (
                   <BulletList items={valuePropositions!} />
@@ -1013,20 +1227,20 @@ export function ProfileCard({
             ) : null;
 
             const socialSection = (hasSocial || editMode) ? (
-              <SubSection key="social" label="Social" open={openSections.social} onToggle={() => toggleSection('social')}>
+              <SubSection key="social" label="Social" open={openSections.social} onToggle={() => toggleSection('social')} light={isLight}>
                 {editMode ? (
                   <div className="space-y-2.5">
                     <div>
-                      <p className="mb-1 text-xs text-white/40">LinkedIn URL</p>
+                      <p className={fieldLabelClass(isLight)}>LinkedIn URL</p>
                       <input type="url" value={linkedinUrl ?? ''} placeholder="https://linkedin.com/company/…"
                         onChange={(e) => onMyCompanyChange?.('linkedinUrl', e.target.value || undefined)}
-                        className={EDIT_INPUT} />
+                        className={inputCls} />
                     </div>
                     <div>
-                      <p className="mb-1 text-xs text-white/40">LinkedIn followers</p>
+                      <p className={fieldLabelClass(isLight)}>LinkedIn followers</p>
                       <input type="number" min={0} value={followerCount ?? ''} placeholder="e.g. 12000"
                         onChange={(e) => onMyCompanyChange?.('followerCount', e.target.value ? Number(e.target.value) : undefined)}
-                        className={EDIT_INPUT} />
+                        className={inputCls} />
                     </div>
                   </div>
                 ) : (
@@ -1178,6 +1392,14 @@ export function ProfileCard({
 
         </div>
       )}
+    </>
+  );
+
+  if (isLight) return inner;
+
+  return (
+    <CardShell icon={Building2} label="Your company" status={status} collapsed={collapsed} onToggle={onToggle}>
+      {inner}
     </CardShell>
   );
 }

@@ -25,14 +25,13 @@ const APP_ROUTES = [
   ROUTES.settings,
   ROUTES.setup.company,
   ROUTES.setup.icps,
-  ROUTES.setup.personas,
   '/arcova-setup',
   '/contacts',
   '/find-more-leads',
 ]
 
 // Routes that are part of the setup flow — the guard does NOT redirect away from these
-const SETUP_ROUTES = ['/arcova-setup', ROUTES.setup.company, ROUTES.setup.newIcp, '/contacts/new', ROUTES.setup.newPersona]
+const SETUP_ROUTES = ['/arcova-setup', ROUTES.setup.company, ROUTES.setup.newIcp, '/contacts/new']
 
 function matchesRoutePrefix(pathname: string, route: string) {
   return pathname === route || pathname.startsWith(`${route}/`);
@@ -40,7 +39,7 @@ function matchesRoutePrefix(pathname: string, route: string) {
 
 function SetupGuard({ children }: { children: React.ReactNode }) {
   const { user, loading: authLoading } = useAuth()
-  const { loading: setupLoading, setupComplete, step1Complete, step2Complete, step3Complete } = useSetupState()
+  const { loading: setupLoading, setupComplete, step1Complete, step2Complete } = useSetupState()
   const pathname = usePathname() ?? ''
   const router = useRouter()
 
@@ -51,7 +50,7 @@ function SetupGuard({ children }: { children: React.ReactNode }) {
   // Compute the next step path from primitive values (avoids object-ref churn)
   const nextSetupPath: string | null = setupComplete
     ? null
-    : getNextSetupPath({ step1Complete, step2Complete, step3Complete, setupComplete })
+    : getNextSetupPath({ step1Complete, step2Complete })
 
   useEffect(() => {
     // Wait for both auth and setup state to resolve

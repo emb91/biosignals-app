@@ -1,3 +1,4 @@
+import { TASK_AGENT_OPENING } from '@/lib/prompts/agent-voice';
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@/lib/supabase-server';
@@ -38,7 +39,7 @@ const VALID_COLUMNS: QueryColumn[] = [
 
 // ─── Claude NLP → structured filters ─────────────────────────────────────────
 
-const SYSTEM_PROMPT = `You are an AI agent for Arcova, a life sciences go-to-market workspace. Interpret natural language queries about contacts/leads and return structured JSON.
+const SYSTEM_PROMPT = `${TASK_AGENT_OPENING} Interpret natural language queries about contacts/leads and return structured JSON.
 
 Contact data available:
 - name (full_name, first_name, last_name)
@@ -89,7 +90,7 @@ Return JSON with this exact shape:
   "conversational": null      // set this if query is truly uninterpretable; leave null otherwise
 }
 
-COLUMN RULES — be conservative, only add columns when the query explicitly asks about that data:
+COLUMN RULES - be conservative, only add columns when the query explicitly asks about that data:
 - Default columns are always: ["name", "job_title", "company", "status"]
 - Add "company_fit" only if the user asks about company fit, scores, or fit percentages
 - Add "contact_fit" only if the user asks about contact fit or persona fit

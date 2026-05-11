@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense, useMemo } from 'react';
 import Image from 'next/image';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { ChevronDown, ChevronLeft } from 'lucide-react';
 import {
   NavIconAccount,
@@ -22,6 +22,8 @@ import {
 import { cn } from '@/lib/utils';
 import { useEnrichmentGuard } from '@/context/EnrichmentGuardContext';
 import { ROUTES } from '@/lib/routes';
+import { useSetupState } from '@/lib/use-setup-state';
+import { useSetupGuidedNav } from '@/context/SetupGuidedNavContext';
 
 interface NavItem {
   name: string;
@@ -81,8 +83,32 @@ interface AppSidebarProps {
   setupFlowOnly?: boolean;
 }
 
-export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
+function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const { step1Complete, step2Complete, setupComplete, loading: setupStateLoading } = useSetupState();
+  const guidedNav = useSetupGuidedNav();
+  const reachedStepIndex = setupFlowOnly ? (guidedNav?.reachedStepIndex ?? 0) : 0;
+  const guidedSetupNestedItems = useMemo((): NavItem[] => {
+    const items: NavItem[] = [
+      { name: 'My company', href: `${ROUTES.setup.arcova}?step=company`, icon: NavIconMyCompany },
+    ];
+    if (reachedStepIndex >= 1) {
+      items.push({
+        name: 'Target ICP',
+        href: `${ROUTES.setup.arcova}?step=target`,
+        icon: NavIconMyIcps,
+      });
+    }
+    if (reachedStepIndex >= 2) {
+      items.push({
+        name: 'Buying team',
+        href: `${ROUTES.setup.arcova}?step=buying`,
+        icon: NavIconContact,
+      });
+    }
+    return items;
+  }, [reachedStepIndex]);
   const { guardedNavigate } = useEnrichmentGuard();
   const [showCompaniesDot, setShowCompaniesDot] = useState(false);
   const [showMyProfileDot, setShowMyProfileDot] = useState(false);
@@ -96,13 +122,43 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const isActive = (href: string) => {
+    if (href === ROUTES.setup.arcova) {
+      return pathname === ROUTES.setup.arcova && !searchParams.get('step');
+    }
+    const qAt = href.indexOf('?');
+    if (qAt !== -1) {
+      const path = href.slice(0, qAt);
+      if (pathname !== path) return false;
+      const want = new URLSearchParams(href.slice(qAt + 1));
+      for (const [k, v] of want.entries()) {
+        if (searchParams.get(k) !== v) return false;
+      }
+      return true;
+    }
     if (pathname === href) return true;
     if (href === ROUTES.gtmBase || href === ROUTES.today) return false;
     return pathname.startsWith(`${href}/`);
   };
 
+  const setupActive =
+    setupItems.some((item) => isActive(item.href)) ||
+    pathname === ROUTES.setup.arcova;
+
+  const setupAccordionItems: NavItem[] =
+    setupComplete || setupStateLoading
+      ? setupItems
+      : [
+          { name: 'Guided setup', href: ROUTES.setup.arcova, icon: NavIconSetup },
+          { name: 'My company', href: `${ROUTES.setup.arcova}?step=company`, icon: NavIconMyCompany },
+          ...(step1Complete
+            ? [{ name: 'Target ICP', href: `${ROUTES.setup.arcova}?step=target`, icon: NavIconMyIcps } as NavItem]
+            : []),
+          ...(step2Complete
+            ? [{ name: 'Buying team', href: `${ROUTES.setup.arcova}?step=buying`, icon: NavIconContact } as NavItem]
+            : []),
+        ];
+
   const leadsActive = leadsItems.some((item) => isActive(item.href));
-  const setupActive = setupItems.some((item) => isActive(item.href));
 
   const [leadsOpen, setLeadsOpen] = useState(leadsActive);
   const [setupOpen, setSetupOpen] = useState(setupActive);
@@ -267,8 +323,10 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
     if (itemName === 'Health') return showHealthDot;
     if (itemName === 'Data') return showDataDot;
     if (itemName === 'Signals') return showSignalsDot;
-    if (itemName === 'My Company') return showMyProfileDot;
+    if (itemName === 'My Company' || itemName === 'My company') return showMyProfileDot;
     if (itemName === 'My ICPs') return showCompaniesDot;
+    if (itemName === 'Guided setup') return setupDotVisible;
+    if (itemName === 'Target ICP') return showCompaniesDot;
     return false;
   };
 
@@ -374,9 +432,10 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
       return (
         <>
           {railIconButton('setup-flow', NavIconSetup, {
-            onClick: () => guardedNavigate(ROUTES.setup.company),
-            active: setupActive,
-            title: 'Setup',
+            onClick: () => guardedNavigate(ROUTES.setup.arcova),
+            active: pathname === ROUTES.setup.arcova,
+            title: 'Guided setup',
+            dot: setupDotVisible,
           })}
         </>
       );
@@ -406,7 +465,8 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
           }),
         )}
         {railIconButton('setup', NavIconSetup, {
-          onClick: () => guardedNavigate(ROUTES.setup.company),
+          onClick: () =>
+            guardedNavigate(!setupComplete && !setupStateLoading ? ROUTES.setup.arcova : ROUTES.setup.company),
           active: setupActive,
           title: 'Setup',
           dot: setupDotVisible,
@@ -479,33 +539,35 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
             <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden px-2 py-4">
               {renderCollapsedRail()}
             </div>
-            {!setupFlowOnly ? (
-              <div className="shrink-0 border-t border-[rgba(13,53,71,0.08)] px-2 pb-4 pt-3">
-                {bottomNavigation.map((item) =>
-                  railIconButton(item.name, item.icon, {
-                    onClick: () => guardedNavigate(item.href),
-                    active: isActive(item.href),
-                    title: item.name,
-                  }),
-                )}
-              </div>
-            ) : null}
+            <div className="shrink-0 border-t border-[rgba(13,53,71,0.08)] px-2 pb-4 pt-3">
+              {bottomNavigation.map((item) =>
+                railIconButton(item.name, item.icon, {
+                  onClick: () => guardedNavigate(item.href),
+                  active: isActive(item.href),
+                  title: item.name,
+                }),
+              )}
+            </div>
           </nav>
         ) : (
           <nav className="flex min-h-0 flex-1 flex-col">
             <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-5">
               {setupFlowOnly ? (
-                <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-white/45 px-3 py-3 backdrop-blur-sm">
-                  <div className="flex items-start gap-3">
-                    <NavIconSetup className="mt-0.5 h-5 w-5 text-arcova-teal" />
-                    <div>
-                      <p className="text-sm font-semibold font-manrope text-arcova-navy">Setup</p>
-                      <p className="mt-1 text-xs leading-relaxed text-[#4a6470]">
-                        Stay in the chat to finish. The rest of the app opens when setup is complete.
-                      </p>
-                    </div>
+                setupComplete || setupStateLoading ? (
+                  <div className="space-y-1">
+                    {setupItems.map(renderNavItem)}
                   </div>
-                </div>
+                ) : (
+                  renderAccordion({
+                    label: 'Guided setup',
+                    icon: NavIconSetup,
+                    items: guidedSetupNestedItems,
+                    open: setupOpen,
+                    onToggle: () => setSetupOpen((o) => !o),
+                    active: setupActive && !setupOpen,
+                    dotVisible: setupDotVisible,
+                  })
+                )
               ) : (
                 <>
                   {renderNavItem({ name: 'Today', href: ROUTES.today, icon: NavIconToday })}
@@ -526,7 +588,7 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
                   {renderAccordion({
                     label: 'Setup',
                     icon: NavIconSetup,
-                    items: setupItems,
+                    items: setupAccordionItems,
                     open: setupOpen,
                     onToggle: () => setSetupOpen((o) => !o),
                     active: setupActive && !setupOpen,
@@ -535,14 +597,31 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
                 </>
               )}
             </div>
-            {!setupFlowOnly ? (
-              <div className="shrink-0 border-t border-[rgba(13,53,71,0.08)] px-4 py-3.5">
-                {bottomNavigation.map(renderNavItem)}
-              </div>
-            ) : null}
+            <div className="shrink-0 border-t border-[rgba(13,53,71,0.08)] px-4 py-3.5">
+              {bottomNavigation.map(renderNavItem)}
+            </div>
           </nav>
         )}
       </div>
     </div>
+  );
+}
+
+export default function AppSidebar(props: AppSidebarProps) {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-full min-h-0 shrink-0 pl-3">
+          <div
+            className={cn(
+              railGlass,
+              'h-full min-h-[320px] w-[18.25rem] shrink-0 animate-pulse rounded-[1.75rem] bg-white/35',
+            )}
+          />
+        </div>
+      }
+    >
+      <AppSidebarInner {...props} />
+    </Suspense>
   );
 }

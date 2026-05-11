@@ -68,6 +68,21 @@ const nextConfig = {
         destination: '/api/today/pulse-series',
         permanent: false,
       },
+      {
+        source: '/contacts/:id/edit',
+        destination: '/company-criteria',
+        permanent: false,
+      },
+      {
+        source: '/personas/:id/edit',
+        destination: '/company-criteria',
+        permanent: false,
+      },
+      {
+        source: '/personas',
+        destination: '/company-criteria',
+        permanent: false,
+      },
     ]
   },
 }

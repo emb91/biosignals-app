@@ -1,3 +1,4 @@
+import { TASK_AGENT_OPENING } from '@/lib/prompts/agent-voice';
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@/lib/supabase-server';
@@ -38,7 +39,7 @@ const DEFAULT_ACCOUNT_COLUMNS: AccountQueryColumn[] = [
   'action',
 ];
 
-const SYSTEM_PROMPT = `You are an AI agent for Arcova, a life sciences go-to-market workspace. Interpret natural language queries about company accounts and return structured JSON.
+const SYSTEM_PROMPT = `${TASK_AGENT_OPENING} Interpret natural language queries about company accounts and return structured JSON.
 
 Account data available:
 - company_name and domain

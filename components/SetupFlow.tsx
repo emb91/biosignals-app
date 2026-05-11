@@ -11,14 +11,18 @@
  * instant scripted narration + chip-select widgets.
  */
 
-import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
 import { parseSSEStream } from '@/lib/sse';
 import Image from 'next/image';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { ArcovaLoader } from '@/components/ArcovaLoader';
 import { AppAmbientBackground } from '@/components/AppAmbientBackground';
-import SetupProfilePanel, { type PanelCompanyData, type PanelPersonaData } from '@/components/SetupProfilePanel';
+import SetupProfilePanel, {
+  AddTagSelect,
+  type PanelCompanyData,
+  type PanelPersonaData,
+} from '@/components/SetupProfilePanel';
 import { useEnrichmentGuard } from '@/context/EnrichmentGuardContext';
 import {
   BUSINESS_AREA_OPTIONS,
@@ -29,9 +33,12 @@ import {
   MODALITY_OPTIONS,
   SENIORITY_LEVEL_OPTIONS,
   THERAPEUTIC_AREA_OPTIONS,
+  INDUSTRY_OPTIONS,
   employeeCountToSizeBucket,
   followerCountToFollowerBucket,
   canonicalizeFundingStage,
+  normalizeIndustrySelectValue,
+  selectOptionsWithCurrentValue,
 } from '@/lib/arcova-taxonomy';
 import type { TargetCompanyEnrichmentResult } from '@/lib/target-company-enrichment';
 import type { IcpSuggestion } from '@/app/api/suggest-icp-companies/route';
@@ -40,6 +47,10 @@ import { resolveCustomerSegments } from '@/lib/split-customer-segments';
 import { fetchLatestUserCompanyRow } from '@/lib/fetch-latest-user-company';
 import { ArcovaWelcomeOrb } from '@/components/ArcovaWelcomeOrb';
 import { ROUTES } from '@/lib/routes';
+import { useSetupGuidedNav } from '@/context/SetupGuidedNavContext';
+import { PLATFORM_CATEGORY_OPTIONS } from '@/lib/platform-category';
+import { Send, Sparkles, ChevronDown, ExternalLink, Check, Building2, X } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 /** Funding, headcount + customer-segment context for buying-team inference */
 function icContextForBuyingTeam(
@@ -143,6 +154,8 @@ type Phase =
   | 'analysis_loading'
   | 'analysis_results'
   | 'icp_suggestion'
+  /** Same onboarding prompt as customer_url_input, but glass chat + composer instead of the URL splash form. */
+  | 'customer_url_conversation'
   | 'customer_url_input'
   | 'customer_url_loading'
   | 'customer_url_review'
@@ -160,6 +173,12 @@ type Phase =
   | 'persona_seniority'
   | 'persona_saving'
   | 'done';
+
+/** UI-only phases that reuse another step's onboarding system prompt / tools. */
+function mapPhaseForOnboardingApi(phase: Phase): string {
+  if (phase === 'customer_url_conversation') return 'customer_url_input';
+  return phase;
+}
 
 // ── Scripted narration per field ───────────────────────────────────────────
 
@@ -232,7 +251,7 @@ const FINDINGS_SECTION_CONFIG = [
   { key: 'bad_fit', label: 'Companies that are not a good fit are' },
 ] as const;
 
-type EntryPoint = 'full' | 'target-company' | 'buying-group' | 'company-only';
+type EntryPoint = 'full' | 'target-company' | 'company-only';
 
 interface TargetCompanyProfile {
   id: string;
@@ -256,6 +275,20 @@ interface TargetCompanyProfile {
 
 const TYPING_MS = 18;
 
+/** Shown while Apify LinkedIn scrape runs (long-running; server has no finer-grained events). */
+const OWN_COMPANY_LINKEDIN_SCRAPE_LINES = [
+  'LinkedIn located ✓ Pulling logo, tagline, and followers from the public page…',
+  'Still working ✓ LinkedIn can take 20 to 40 seconds, hang tight…',
+  'Almost there ✓ Parsing location, specialties, and follower reach…',
+] as const;
+
+/** Shown while bullets are condensed and taxonomy runs after LinkedIn data lands. */
+const OWN_COMPANY_SYNTHESIS_LINES = [
+  'Merging web, registry, and LinkedIn signals…',
+  'Condensing lists so your profile is easy to scan…',
+  'Mapping company type and therapy areas to our taxonomy…',
+] as const;
+
 /** Full-area backdrop behind the chat column (setup flows only). Dark navy base, teal as accent. */
 const SETUP_CHAT_SURROUND =
   'bg-gradient-to-b from-slate-950 to-arcova-darkblue';
@@ -275,6 +308,828 @@ function visiblePlatformCategory(companyType?: string | null, platformCategory?:
 // ═══════════════════════════════════════════════════════════════════════════
 // Sub-components
 // ═══════════════════════════════════════════════════════════════════════════
+
+// ── Persistent "Step X of 3" eyebrow shown across every setup phase ─────────
+function StepEyebrow({ step }: { step: 0 | 1 | 2 }) {
+  const labels = ['Your company', 'Target companies', 'Buying teams'] as const;
+  return (
+    <div className="inline-flex items-center gap-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/50">
+      <span className="inline-flex items-center gap-[3px]">
+        {[0, 1, 2].map((i) => (
+          <span
+            key={i}
+            className={`h-[3px] rounded-full transition-all ${
+              i < step
+                ? 'w-3.5 bg-arcova-teal/55'
+                : i === step
+                  ? 'w-5 bg-arcova-teal'
+                  : 'w-3.5 bg-arcova-teal/15'
+            }`}
+          />
+        ))}
+      </span>
+      <span>
+        Step {step + 1} of 3
+        <span className="ml-2 normal-case tracking-normal text-arcova-navy/45">· {labels[step]}</span>
+      </span>
+    </div>
+  );
+}
+
+// ── Setup "My company" card (light glass, matches Setup.html design) ────────
+function SetupSection({
+  label,
+  defaultOpen = false,
+  children,
+}: {
+  label: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className="overflow-hidden rounded-xl border border-arcova-navy/8 bg-white/40 transition-colors hover:bg-white/55">
+      <header
+        className="flex cursor-pointer items-center justify-between px-3.5 py-2.5"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <h3 className="m-0 font-manrope text-[12.5px] font-semibold tracking-[-0.01em] text-arcova-navy">
+          {label}
+        </h3>
+        <ChevronDown
+          className={`h-3 w-3 text-arcova-navy/50 transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+      </header>
+      {open && (
+        <div className="flex flex-col gap-2.5 border-t border-arcova-navy/8 px-3.5 pb-3 pt-3">
+          {children}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SetupTag({ children, link }: { children: ReactNode; link?: boolean }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border border-arcova-teal/20 bg-arcova-teal/10 px-2.5 py-1 text-[11.5px] font-medium text-arcova-teal ${
+        link ? 'cursor-pointer hover:bg-arcova-teal/18' : ''
+      }`}
+    >
+      {children}
+      {link && <ExternalLink className="h-2.5 w-2.5 opacity-70" />}
+    </span>
+  );
+}
+
+function SetupTagRow({ items, link }: { items: string[]; link?: boolean }) {
+  if (!items || items.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {items.map((t, i) => (
+        <SetupTag key={`${t}-${i}`} link={link}>
+          {t}
+        </SetupTag>
+      ))}
+    </div>
+  );
+}
+
+function SetupSubLabel({ children }: { children: ReactNode }) {
+  return (
+    <p className="m-0 text-[9.5px] font-semibold uppercase tracking-[0.12em] text-arcova-navy/40">
+      {children}
+    </p>
+  );
+}
+
+function SetupKV({ rows }: { rows: Array<[string, ReactNode]> }) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="grid grid-cols-2 gap-x-5 gap-y-2.5">
+      {rows.map(([k, v], i) => (
+        <div key={i} className="min-w-0">
+          <div className="mb-0.5 text-[9.5px] font-semibold uppercase tracking-[0.12em] text-arcova-navy/40">
+            {k}
+          </div>
+          <div className="text-[13px] font-medium text-arcova-navy">{v}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SetupBullets({ items }: { items: string[] }) {
+  if (!items || items.length === 0) return null;
+  return (
+    <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
+      {items.map((t, i) => (
+        <li
+          key={i}
+          className="relative pl-3.5 text-[12.5px] leading-[1.5] text-arcova-navy/75 before:absolute before:left-1 before:top-2 before:h-1 before:w-1 before:rounded-full before:bg-arcova-teal/70 before:content-['']"
+        >
+          {t}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+const SETUP_SELECT =
+  'w-full cursor-pointer rounded-lg border border-arcova-navy/15 bg-white/85 px-3 py-2 text-[12.5px] text-arcova-navy outline-none transition-colors focus:border-arcova-teal/45 focus:bg-white focus:ring-2 focus:ring-arcova-teal/15';
+
+function multilineDraftToList(raw: string): string[] {
+  const lines = raw.split('\n').map((line) => line.trim());
+  while (lines.length > 0 && lines[lines.length - 1] === '') {
+    lines.pop();
+  }
+  return lines.filter(Boolean);
+}
+
+function SetupTaxonomyTag({
+  label,
+  editMode,
+  onRemove,
+}: {
+  label: string;
+  editMode: boolean;
+  onRemove?: () => void;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-arcova-teal/20 bg-arcova-teal/10 px-2.5 py-1 text-[11.5px] font-medium text-arcova-teal">
+      {label}
+      {editMode && onRemove && (
+        <button
+          type="button"
+          onClick={onRemove}
+          className="text-arcova-teal/50 transition-colors hover:text-arcova-teal"
+          aria-label={`Remove ${label}`}
+        >
+          <X className="h-2.5 w-2.5" />
+        </button>
+      )}
+    </span>
+  );
+}
+
+function formatSetupFunding(stage?: string, total?: number): string | undefined {
+  if (!stage && total == null) return undefined;
+  const fmtUsd = (usd: number) => {
+    if (usd >= 1e9) return `$${(usd / 1e9).toFixed(1)}B`;
+    if (usd >= 1e6) return `$${(usd / 1e6).toFixed(0)}M`;
+    if (usd >= 1e3) return `$${(usd / 1e3).toFixed(0)}K`;
+    return `$${usd}`;
+  };
+  if (stage && total != null) return `${stage} · ${fmtUsd(total)}`;
+  if (stage) return stage;
+  return total != null ? fmtUsd(total) : undefined;
+}
+
+function SetupEditableText({
+  value,
+  multiline,
+  onChange,
+  placeholder,
+}: {
+  value: string;
+  multiline?: boolean;
+  onChange: (v: string) => void;
+  placeholder?: string;
+}) {
+  const common =
+    'w-full rounded-lg border border-arcova-navy/15 bg-white/85 px-3 py-2 text-[12.5px] text-arcova-navy outline-none transition-colors placeholder:text-arcova-navy/35 focus:border-arcova-teal/45 focus:bg-white focus:ring-2 focus:ring-arcova-teal/15';
+  if (multiline) {
+    return (
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        rows={3}
+        className={`${common} resize-y leading-[1.5]`}
+      />
+    );
+  }
+  return (
+    <input
+      type="text"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      className={common}
+    />
+  );
+}
+
+/** Lets users type digits and spaces freely; commits parsed integer on blur. */
+function SetupPositiveIntDraftField({
+  value,
+  onCommit,
+  placeholder,
+}: {
+  value?: number;
+  onCommit: (next: number | undefined) => void;
+  placeholder?: string;
+}) {
+  const common =
+    'w-full rounded-lg border border-arcova-navy/15 bg-white/85 px-3 py-2 text-[12.5px] text-arcova-navy outline-none transition-colors placeholder:text-arcova-navy/35 focus:border-arcova-teal/45 focus:bg-white focus:ring-2 focus:ring-arcova-teal/15';
+  const [draft, setDraft] = useState(() => (value != null ? String(value) : ''));
+  useEffect(() => {
+    setDraft(value != null ? String(value) : '');
+  }, [value]);
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        const t = draft.trim();
+        if (!t) {
+          onCommit(undefined);
+          return;
+        }
+        const digits = t.replace(/[^\d]/g, '');
+        if (!digits) {
+          onCommit(undefined);
+          return;
+        }
+        const n = Number(digits);
+        onCommit(Number.isFinite(n) && n > 0 ? n : undefined);
+      }}
+      placeholder={placeholder}
+      className={common}
+    />
+  );
+}
+
+function SetupEditableList({
+  items,
+  onChange,
+  placeholder,
+}: {
+  items: string[];
+  onChange: (next: string[]) => void;
+  placeholder?: string;
+}) {
+  const serialized = JSON.stringify(items);
+  const [draft, setDraft] = useState(() => items.join('\n'));
+  const prevSerialized = useRef(serialized);
+
+  useEffect(() => {
+    if (serialized !== prevSerialized.current) {
+      prevSerialized.current = serialized;
+      setDraft(items.join('\n'));
+    }
+  }, [serialized, items]);
+
+  return (
+    <textarea
+      value={draft}
+      onChange={(e) => {
+        const raw = e.target.value;
+        setDraft(raw);
+        onChange(multilineDraftToList(raw));
+      }}
+      placeholder={placeholder ?? 'One per line'}
+      rows={Math.max(3, Math.min(16, items.length + 2))}
+      spellCheck={false}
+      className="w-full resize-y rounded-lg border border-arcova-navy/15 bg-white/85 px-3 py-2 text-[12.5px] leading-[1.5] text-arcova-navy outline-none transition-colors placeholder:text-arcova-navy/35 focus:border-arcova-teal/45 focus:bg-white focus:ring-2 focus:ring-arcova-teal/15"
+    />
+  );
+}
+
+function SetupMyCompanyCard({
+  data,
+  editMode = false,
+  onChange,
+}: {
+  data: import('@/components/SetupProfilePanel').PanelMyCompanyData;
+  editMode?: boolean;
+  onChange?: (
+    field: keyof import('@/components/SetupProfilePanel').PanelMyCompanyData,
+    value: import('@/components/SetupProfilePanel').MyCompanyChangeValue,
+  ) => void;
+}) {
+  const set = <K extends keyof import('@/components/SetupProfilePanel').PanelMyCompanyData>(
+    field: K,
+    value: import('@/components/SetupProfilePanel').MyCompanyChangeValue,
+  ) => onChange?.(field, value);
+  const [newCompetitorUrl, setNewCompetitorUrl] = useState('');
+  const domain = (data.website ?? '').replace(/^https?:\/\//, '').replace(/\/$/, '');
+  const fundingLine = formatSetupFunding(data.fundingStage, data.totalFundingUsd);
+  const platformCategoryDisplay = visiblePlatformCategory(data.companyType, data.platformCategory);
+  const rawIndustry = (data.industry ?? '').trim();
+  const industrySelectValue = normalizeIndustrySelectValue(rawIndustry) || rawIndustry;
+  const industryOptions = selectOptionsWithCurrentValue(INDUSTRY_OPTIONS, industrySelectValue);
+  const platformOptions = selectOptionsWithCurrentValue(PLATFORM_CATEGORY_OPTIONS, data.platformCategory);
+  const industryDisplay = normalizeIndustrySelectValue(data.industry ?? '') || data.industry;
+
+  const commitNewCompetitor = () => {
+    const raw = newCompetitorUrl.trim();
+    if (!raw) return;
+    let url = raw;
+    if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+    let name = raw;
+    try {
+      name = new URL(url).hostname.replace(/^www\./, '');
+    } catch {
+      /* keep typed text as display name */
+    }
+    set('competitorsEnriched', [...(data.competitorsEnriched ?? []), { name, url }]);
+    setNewCompetitorUrl('');
+  };
+  return (
+    <article
+      data-my-company-card
+      className="overflow-hidden rounded-[20px] border border-arcova-navy/10 bg-white/65 shadow-[0_18px_40px_-28px_rgba(13,53,71,0.15)] backdrop-blur-xl"
+    >
+      {/* Card header */}
+      <header className="grid grid-cols-[28px_1fr_22px_22px] items-center gap-2.5 border-b border-arcova-navy/8 px-4 py-3.5">
+        <span className="grid h-7 w-7 place-items-center rounded-lg bg-arcova-teal/12 text-arcova-teal">
+          <Building2 className="h-3.5 w-3.5" />
+        </span>
+        <span className="font-manrope text-[14.5px] font-semibold tracking-[-0.014em] text-arcova-navy">
+          My company
+        </span>
+        <span className="grid h-[22px] w-[22px] place-items-center rounded-full bg-arcova-teal text-white">
+          <Check className="h-2.5 w-2.5" strokeWidth={3} />
+        </span>
+        <ChevronDown className="h-3.5 w-3.5 rotate-180 text-arcova-navy/65" />
+      </header>
+
+      <div className="flex flex-col gap-3.5 p-4">
+        {/* Identity strip */}
+        <div className="grid grid-cols-[40px_1fr] items-center gap-3 rounded-xl border border-arcova-navy/8 bg-white/55 px-3 py-2.5">
+          <div className="grid h-10 w-10 place-items-center overflow-hidden rounded-[10px] bg-gradient-to-br from-arcova-teal to-[#007e8b] font-bold text-white">
+            {data.logoUrl ? (
+              <Image
+                src={data.logoUrl}
+                alt={data.companyName ?? 'Company'}
+                width={40}
+                height={40}
+                className="h-10 w-10 object-cover"
+              />
+            ) : (
+              <span className="text-base">{(data.companyName?.[0] ?? 'A').toUpperCase()}</span>
+            )}
+          </div>
+          <div className="min-w-0">
+            <div className="text-[14px] font-semibold text-arcova-navy">{data.companyName ?? '—'}</div>
+            {domain && (
+              <a
+                href={data.website && /^https?:\/\//i.test(data.website) ? data.website : `https://${domain}`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-[11.5px] text-arcova-teal hover:underline"
+              >
+                {domain}
+                <ExternalLink className="h-2.5 w-2.5" />
+              </a>
+            )}
+            {data.tagline && (
+              <div className="mt-0.5 text-[11.5px] italic text-arcova-navy/50">{data.tagline}</div>
+            )}
+          </div>
+        </div>
+
+        {/* About */}
+        <SetupSection label="About" defaultOpen>
+          {editMode ? (
+            <SetupEditableText
+              multiline
+              value={(data.description ?? []).join('\n\n')}
+              onChange={(v) => set('description', v.split(/\n{2,}/).map((s) => s.trim()).filter(Boolean))}
+              placeholder="Describe what the company does"
+            />
+          ) : (
+            data.description && data.description.length > 0 && (
+              <p className="m-0 text-[12.5px] leading-[1.5] text-arcova-navy">
+                {data.description.join(' ')}
+              </p>
+            )
+          )}
+          <div>
+            <SetupSubLabel>Company type</SetupSubLabel>
+            <div className="mt-1.5">
+              {editMode ? (
+                <select
+                  value={data.companyType ?? ''}
+                  onChange={(e) => {
+                    const v = e.target.value || undefined;
+                    set('companyType', v);
+                    set('companyTypeDisplay', undefined);
+                    if (!isSaasCompanyType(v)) set('platformCategory', undefined);
+                  }}
+                  className={SETUP_SELECT}
+                >
+                  <option value="">Select type…</option>
+                  {COMPANY_TYPE_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.value}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                (data.companyTypeDisplay || data.companyType) && (
+                  <SetupTagRow items={[String(data.companyTypeDisplay ?? data.companyType)]} />
+                )
+              )}
+            </div>
+          </div>
+          {isSaasCompanyType(data.companyType) && (editMode || !!platformCategoryDisplay) && (
+            <div>
+              <SetupSubLabel>Platform category</SetupSubLabel>
+              <div className="mt-1.5">
+                {editMode ? (
+                  <select
+                    value={data.platformCategory ?? ''}
+                    onChange={(e) => set('platformCategory', e.target.value || undefined)}
+                    className={SETUP_SELECT}
+                  >
+                    <option value="">Select platform…</option>
+                    {platformOptions.map((o) => (
+                      <option key={o} value={o}>
+                        {o}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  platformCategoryDisplay && <SetupTagRow items={[platformCategoryDisplay]} />
+                )}
+              </div>
+            </div>
+          )}
+          {((data.therapeuticAreas?.length ?? 0) > 0 || editMode) && (
+            <div>
+              <SetupSubLabel>Therapeutic areas</SetupSubLabel>
+              {(data.therapeuticAreas?.length ?? 0) > 0 && (
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {(data.therapeuticAreas ?? []).map((t) => (
+                    <SetupTaxonomyTag
+                      key={t}
+                      label={t}
+                      editMode={editMode}
+                      onRemove={
+                        editMode
+                          ? () =>
+                              set(
+                                'therapeuticAreas',
+                                (data.therapeuticAreas ?? []).filter((x) => x !== t),
+                              )
+                          : undefined
+                      }
+                    />
+                  ))}
+                </div>
+              )}
+              {editMode && (
+                <div className="mt-1.5">
+                  <AddTagSelect
+                    light
+                    options={TA_OPTIONS}
+                    selected={data.therapeuticAreas ?? []}
+                    onAdd={(v) =>
+                      set('therapeuticAreas', [...(data.therapeuticAreas ?? []), v])
+                    }
+                    placeholder="Add therapeutic area…"
+                  />
+                </div>
+              )}
+            </div>
+          )}
+          {((data.modalities?.length ?? 0) > 0 || editMode) && (
+            <div>
+              <SetupSubLabel>Modalities</SetupSubLabel>
+              {(data.modalities?.length ?? 0) > 0 && (
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {(data.modalities ?? []).map((m) => (
+                    <SetupTaxonomyTag
+                      key={m}
+                      label={m}
+                      editMode={editMode}
+                      onRemove={
+                        editMode
+                          ? () =>
+                              set('modalities', (data.modalities ?? []).filter((x) => x !== m))
+                          : undefined
+                      }
+                    />
+                  ))}
+                </div>
+              )}
+              {editMode && (
+                <div className="mt-1.5">
+                  <AddTagSelect
+                    light
+                    options={MODALITY_SELECTION_OPTIONS}
+                    selected={data.modalities ?? []}
+                    onAdd={(v) => set('modalities', [...(data.modalities ?? []), v])}
+                    placeholder="Add modality…"
+                  />
+                </div>
+              )}
+            </div>
+          )}
+          {((data.developmentStages?.length ?? 0) > 0 || editMode) && (
+            <div>
+              <SetupSubLabel>Development stages</SetupSubLabel>
+              {(data.developmentStages?.length ?? 0) > 0 && (
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {(data.developmentStages ?? []).map((s) => (
+                    <SetupTaxonomyTag
+                      key={s}
+                      label={s}
+                      editMode={editMode}
+                      onRemove={
+                        editMode
+                          ? () =>
+                              set(
+                                'developmentStages',
+                                (data.developmentStages ?? []).filter((x) => x !== s),
+                              )
+                          : undefined
+                      }
+                    />
+                  ))}
+                </div>
+              )}
+              {editMode && (
+                <div className="mt-1.5">
+                  <AddTagSelect
+                    light
+                    options={[...DEVELOPMENT_STAGE_OPTIONS] as string[]}
+                    selected={data.developmentStages ?? []}
+                    onAdd={(v) =>
+                      set('developmentStages', [...(data.developmentStages ?? []), v])
+                    }
+                    placeholder="Add development stage…"
+                  />
+                </div>
+              )}
+            </div>
+          )}
+        </SetupSection>
+
+        {/* Firmographics */}
+        <SetupSection label="Firmographics">
+          {editMode ? (
+            <div className="grid grid-cols-2 gap-x-5 gap-y-3">
+              <div>
+                <SetupSubLabel>Industry</SetupSubLabel>
+                <div className="mt-1.5">
+                  <select
+                    value={industrySelectValue}
+                    onChange={(e) => set('industry', e.target.value || undefined)}
+                    className={SETUP_SELECT}
+                  >
+                    <option value="">Select industry…</option>
+                    {industryOptions.map((o) => (
+                      <option key={`ind-opt-${o}`} value={o}>
+                        {o}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <SetupSubLabel>City</SetupSubLabel>
+                <div className="mt-1.5">
+                  <SetupEditableText value={data.hqCity ?? ''} onChange={(v) => set('hqCity', v)} />
+                </div>
+              </div>
+              <div>
+                <SetupSubLabel>Country</SetupSubLabel>
+                <div className="mt-1.5">
+                  <SetupEditableText value={data.hqCountry ?? ''} onChange={(v) => set('hqCountry', v)} />
+                </div>
+              </div>
+              <div>
+                <SetupSubLabel>Founded</SetupSubLabel>
+                <div className="mt-1.5">
+                  <SetupPositiveIntDraftField
+                    value={data.foundedYear}
+                    onCommit={(v) => set('foundedYear', v)}
+                    placeholder="Year"
+                  />
+                </div>
+              </div>
+              <div>
+                <SetupSubLabel>Headcount</SetupSubLabel>
+                <div className="mt-1.5">
+                  <SetupPositiveIntDraftField
+                    value={data.employeeCount}
+                    onCommit={(v) => set('employeeCount', v)}
+                    placeholder="Approx. employees"
+                  />
+                </div>
+              </div>
+              <div>
+                <SetupSubLabel>Funding stage</SetupSubLabel>
+                <div className="mt-1.5">
+                  <SetupEditableText value={data.fundingStage ?? ''} onChange={(v) => set('fundingStage', v)} />
+                </div>
+              </div>
+            </div>
+          ) : (
+            <SetupKV
+              rows={[
+                industryDisplay ? (['Industry', industryDisplay] as [string, ReactNode]) : null,
+                data.hqCity || data.hqCountry
+                  ? ([
+                      'Headquarters',
+                      [data.hqCity, data.hqCountry].filter(Boolean).join(', '),
+                    ] as [string, ReactNode])
+                  : null,
+                data.foundedYear != null
+                  ? (['Founded', String(data.foundedYear)] as [string, ReactNode])
+                  : null,
+                data.employeeCount != null
+                  ? (['Headcount', String(data.employeeCount)] as [string, ReactNode])
+                  : data.employeeRange
+                    ? (['Headcount', data.employeeRange] as [string, ReactNode])
+                    : null,
+                fundingLine ? (['Funding', fundingLine] as [string, ReactNode]) : null,
+                data.companyStatus
+                  ? (['Stage', data.companyStatus] as [string, ReactNode])
+                  : null,
+              ].filter(Boolean) as Array<[string, ReactNode]>}
+            />
+          )}
+        </SetupSection>
+
+        {/* Customers */}
+        {(editMode ||
+          (data.customersWeServe && data.customersWeServe.length > 0) ||
+          (data.goodFit && data.goodFit.length > 0) ||
+          (data.badFit && data.badFit.length > 0)) && (
+          <SetupSection label="Customers">
+            <div>
+              <SetupSubLabel>Customer segments</SetupSubLabel>
+              <div className="mt-1.5">
+                {editMode ? (
+                  <SetupEditableList
+                    items={data.customersWeServe ?? []}
+                    onChange={(v) => set('customersWeServe', v)}
+                  />
+                ) : (
+                  data.customersWeServe && data.customersWeServe.length > 0 && (
+                    <SetupTagRow items={data.customersWeServe} />
+                  )
+                )}
+              </div>
+            </div>
+            <div>
+              <SetupSubLabel>Good fit</SetupSubLabel>
+              <div className="mt-1.5">
+                {editMode ? (
+                  <SetupEditableList items={data.goodFit ?? []} onChange={(v) => set('goodFit', v)} />
+                ) : (
+                  data.goodFit && data.goodFit.length > 0 && <SetupBullets items={data.goodFit} />
+                )}
+              </div>
+            </div>
+            <div>
+              <SetupSubLabel>Not a fit</SetupSubLabel>
+              <div className="mt-1.5">
+                {editMode ? (
+                  <SetupEditableList items={data.badFit ?? []} onChange={(v) => set('badFit', v)} />
+                ) : (
+                  data.badFit && data.badFit.length > 0 && <SetupBullets items={data.badFit} />
+                )}
+              </div>
+            </div>
+          </SetupSection>
+        )}
+
+        {/* What you sell */}
+        {(editMode ||
+          (data.productsServices && data.productsServices.length > 0) ||
+          (data.services && data.services.length > 0) ||
+          (data.technologies && data.technologies.length > 0)) && (
+          <SetupSection label="What you sell">
+            <div>
+              <SetupSubLabel>Products</SetupSubLabel>
+              <div className="mt-1.5">
+                {editMode ? (
+                  <SetupEditableList
+                    items={data.productsServices ?? []}
+                    onChange={(v) => set('productsServices', v)}
+                  />
+                ) : (
+                  data.productsServices && data.productsServices.length > 0 && (
+                    <SetupTagRow items={data.productsServices} />
+                  )
+                )}
+              </div>
+            </div>
+            <div>
+              <SetupSubLabel>Services</SetupSubLabel>
+              <div className="mt-1.5">
+                {editMode ? (
+                  <SetupEditableList items={data.services ?? []} onChange={(v) => set('services', v)} />
+                ) : (
+                  data.services && data.services.length > 0 && <SetupTagRow items={data.services} />
+                )}
+              </div>
+            </div>
+            <div>
+              <SetupSubLabel>Technologies</SetupSubLabel>
+              <div className="mt-1.5">
+                {editMode ? (
+                  <SetupEditableList items={data.technologies ?? []} onChange={(v) => set('technologies', v)} />
+                ) : (
+                  data.technologies && data.technologies.length > 0 && <SetupTagRow items={data.technologies} />
+                )}
+              </div>
+            </div>
+          </SetupSection>
+        )}
+
+        {/* Competitors */}
+        {(editMode || (data.competitorsEnriched && data.competitorsEnriched.length > 0)) && (
+          <SetupSection label="Competitors">
+            <div className="space-y-2">
+              {(data.competitorsEnriched ?? []).map((c, i) => (
+                <div key={`${c.url ?? 'n'}-${c.name}-${i}`} className="flex items-center gap-2">
+                  {c.url ? (
+                    <a
+                      href={c.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex min-w-0 flex-1 items-center gap-1.5 text-[12.5px] font-medium text-arcova-teal hover:underline"
+                    >
+                      <span className="truncate">{c.name}</span>
+                      <ExternalLink className="h-3 w-3 shrink-0" />
+                    </a>
+                  ) : (
+                    <p className="flex-1 truncate text-[12.5px] font-medium text-arcova-navy/85">{c.name}</p>
+                  )}
+                  {editMode && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        set(
+                          'competitorsEnriched',
+                          (data.competitorsEnriched ?? []).filter((_, j) => j !== i),
+                        )
+                      }
+                      className="shrink-0 rounded-md p-1 text-arcova-navy/45 transition-colors hover:bg-red-50 hover:text-red-600"
+                      aria-label={`Remove ${c.name}`}
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              ))}
+              {editMode && (
+                <div className={`space-y-1.5 ${(data.competitorsEnriched?.length ?? 0) > 0 ? 'border-t border-arcova-navy/10 pt-2.5' : ''}`}>
+                  <SetupSubLabel>Add competitor (website)</SetupSubLabel>
+                  <div className="flex flex-wrap items-stretch gap-2">
+                    <input
+                      type="text"
+                      value={newCompetitorUrl}
+                      onChange={(e) => setNewCompetitorUrl(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          commitNewCompetitor();
+                        }
+                      }}
+                      placeholder="https://…"
+                      className="min-w-[12rem] flex-1 rounded-lg border border-arcova-navy/15 bg-white/85 px-3 py-2 text-[12.5px] text-arcova-navy outline-none transition-colors placeholder:text-arcova-navy/35 focus:border-arcova-teal/45 focus:bg-white focus:ring-2 focus:ring-arcova-teal/15"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => commitNewCompetitor()}
+                      disabled={!newCompetitorUrl.trim()}
+                      className="shrink-0 rounded-lg border border-arcova-navy/12 bg-white/90 px-3 py-2 text-[13px] font-medium text-arcova-navy shadow-sm transition-colors hover:border-arcova-teal/35 hover:bg-arcova-teal/[0.06] disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Add
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </SetupSection>
+        )}
+
+        {/* Value proposition */}
+        {(editMode || (data.valuePropositions && data.valuePropositions.length > 0)) && (
+          <SetupSection label="Value proposition">
+            {editMode ? (
+              <SetupEditableList
+                items={data.valuePropositions ?? []}
+                onChange={(v) => set('valuePropositions', v)}
+              />
+            ) : (
+              data.valuePropositions && <SetupBullets items={data.valuePropositions} />
+            )}
+          </SetupSection>
+        )}
+      </div>
+    </article>
+  );
+}
 
 function AgentAvatar() {
   return (
@@ -297,38 +1152,259 @@ function ThinkingDots() {
   );
 }
 
-function TypingText({ target, delay = 0, speed = TYPING_MS }: { target: string; delay?: number; speed?: number }) {
-  const [started, setStarted] = useState(delay === 0);
-  const [shown, setShown] = useState('');
-  const i = useRef(0);
+/** Assistant paragraphs for setup chat (matches Today / AgentPanel paragraph split on blank lines). */
+function setupAssistantBubbles(text: string): string[] {
+  const parts = text.split(/\n\n+/).map((s) => s.trim()).filter(Boolean);
+  return parts.length > 0 ? parts : [text];
+}
+
+/** Character ranges per paragraph (same split as `setupAssistantBubbles` when not typing). */
+function paragraphRangesForAssistant(full: string): { start: number; end: number }[] {
+  if (!full) return [];
+  const ranges: { start: number; end: number }[] = [];
+  const re = /\n\n+/g;
+  let lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(full)) !== null) {
+    if (m.index > lastIndex) {
+      ranges.push({ start: lastIndex, end: m.index });
+    }
+    lastIndex = m.index + m[0].length;
+  }
+  if (lastIndex < full.length || ranges.length === 0) {
+    ranges.push({ start: lastIndex, end: full.length });
+  }
+  const filtered = ranges.filter((r) => full.slice(r.start, r.end).trim().length > 0);
+  return filtered.length > 0 ? filtered : [{ start: 0, end: full.length }];
+}
+
+/** Types full message while keeping the same paragraph breaks as the finished bubbles (no layout jump). */
+function TypingAssistantParagraphs({
+  target,
+  speed = TYPING_MS,
+  paragraphClassName,
+  onTypingLayout,
+}: {
+  target: string;
+  speed?: number;
+  paragraphClassName?: string;
+  /** Called after each typed character is laid out so the parent scroll region can follow. */
+  onTypingLayout?: () => void;
+}) {
+  const ranges = useMemo(() => paragraphRangesForAssistant(target), [target]);
+  const [shownLen, setShownLen] = useState(0);
 
   useEffect(() => {
-    if (delay === 0) return;
-    const t = setTimeout(() => setStarted(true), delay);
-    return () => clearTimeout(t);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (!started) return;
-    i.current = 0;
-    setShown('');
-    const t = setInterval(() => {
-      i.current += 1;
-      setShown(target.slice(0, i.current));
-      if (i.current >= target.length) clearInterval(t);
+    setShownLen(0);
+    if (!target.length) return;
+    let n = 0;
+    const id = setInterval(() => {
+      n += 1;
+      setShownLen(n);
+      if (n >= target.length) clearInterval(id);
     }, speed);
-    return () => clearInterval(t);
-  }, [target, started, speed]);
+    return () => clearInterval(id);
+  }, [target, speed]);
 
-  if (!started) return null;
+  useLayoutEffect(() => {
+    onTypingLayout?.();
+  }, [shownLen, onTypingLayout]);
+
+  if (!target) return null;
 
   return (
     <>
-      {shown}
-      {shown.length < target.length && (
-        <span className="inline-block w-[2px] h-[14px] bg-arcova-teal ml-0.5 align-middle animate-pulse" />
-      )}
+      {ranges.map((r, bi) => {
+        if (shownLen < r.start) return null;
+        const slice = target.slice(r.start, Math.min(r.end, shownLen));
+        const caret =
+          shownLen < target.length &&
+          ((shownLen < r.end) ||
+            (bi < ranges.length - 1 &&
+              shownLen >= r.end &&
+              shownLen < ranges[bi + 1].start));
+        return (
+          <p key={`${r.start}-${r.end}`} className={cn(bi > 0 && 'mt-3', paragraphClassName)}>
+            {slice}
+            {caret ? (
+              <span className="inline-block h-[14px] w-[2px] animate-pulse bg-arcova-teal ml-0.5 align-middle" />
+            ) : null}
+          </p>
+        );
+      })}
     </>
+  );
+}
+
+function SetupAssistantMessageParagraphs({
+  text,
+  typing,
+  paragraphClassName,
+  onTypingLayout,
+}: {
+  text: string;
+  typing?: boolean;
+  paragraphClassName?: string;
+  onTypingLayout?: () => void;
+}) {
+  const bubbles = setupAssistantBubbles(text);
+
+  if (!typing) {
+    return (
+      <>
+        {bubbles.map((bubble, bi) => (
+          <p key={bi} className={cn(bi > 0 && 'mt-3', paragraphClassName)}>
+            {bubble}
+          </p>
+        ))}
+      </>
+    );
+  }
+
+  return (
+    <TypingAssistantParagraphs
+      target={text}
+      speed={TYPING_MS}
+      paragraphClassName={paragraphClassName}
+      onTypingLayout={onTypingLayout}
+    />
+  );
+}
+
+function normalizeForWelcomeDuplicate(s: string): string {
+  return s
+    .trim()
+    .toLowerCase()
+    .replace(/\u2026/g, '...')
+    .replace(/\u2019|\u2018/g, "'")
+    .replace(/\s+/g, ' ')
+    .replace(/[`´]/g, "'");
+}
+
+/** Model often echoes the static welcome headline already shown on the card. */
+function assistantRepeatsWelcomeHeadline(assistantText: string, welcomePart1: string, welcomePart2: string): boolean {
+  const headline = normalizeForWelcomeDuplicate(`${welcomePart1}${welcomePart2}`);
+  const body = normalizeForWelcomeDuplicate(assistantText);
+  if (!headline || !body) return false;
+  if (body === headline) return true;
+  const compact = (t: string) => t.replace(/\s/g, '');
+  if (compact(body) === compact(headline)) return true;
+  if (body.startsWith(headline)) {
+    const rest = body.slice(headline.length).trim();
+    return rest.length === 0 || /^[.!…?]+$/.test(rest);
+  }
+  return false;
+}
+
+/** Drop the first assistant bubble after the user if it only repeats welcome copy. */
+function filterFirstAssistantIfWelcomeHeadlineDuplicate(messages: TextMsg[], welcomePart1: string, welcomePart2: string): TextMsg[] {
+  let seenUser = false;
+  let handledFirstAssistantAfterUser = false;
+  const out: TextMsg[] = [];
+  for (const msg of messages) {
+    if (msg.role === 'user') {
+      seenUser = true;
+      out.push(msg);
+      continue;
+    }
+    if (msg.role === 'assistant' && seenUser && !handledFirstAssistantAfterUser) {
+      handledFirstAssistantAfterUser = true;
+      if (!msg.typing && assistantRepeatsWelcomeHeadline(msg.text, welcomePart1, welcomePart2)) {
+        continue;
+      }
+    }
+    out.push(msg);
+  }
+  return out;
+}
+
+function visibleGreetingStyleMessages(thread: DisplayMsg[], welcomePart1: string, welcomePart2: string): TextMsg[] {
+  const visible = thread.filter((m): m is TextMsg => m.kind === 'text');
+  const firstUserIdx = visible.findIndex((m) => m.role === 'user');
+  const sliced = firstUserIdx >= 0 ? visible.slice(firstUserIdx) : visible;
+  return filterFirstAssistantIfWelcomeHeadlineDuplicate(sliced, welcomePart1, welcomePart2);
+}
+
+function SetupGlassAgentMetaStrip({
+  clock,
+  statusKey,
+}: {
+  clock: Date;
+  statusKey: 'waiting' | 'thinking' | 'ready';
+}) {
+  return (
+    <div
+      className="mb-[1cm] flex min-h-[3.5rem] shrink-0 items-center justify-between text-[11px] tracking-[0.04em] text-slate-500"
+      aria-live="polite"
+    >
+      <span className="inline-flex items-center gap-2">
+        <span
+          className="h-1.5 w-1.5 shrink-0 rounded-full bg-arcova-teal"
+          style={{
+            animation: 'arcova-dot-pulse 2.6s ease-in-out infinite',
+            boxShadow: '0 0 0 4px rgba(0, 164, 180, 0.18)',
+          }}
+          aria-hidden
+        />
+        <span className="font-medium text-slate-500">Arcova · {statusKey}</span>
+      </span>
+      <time className="tabular-nums text-[10px] text-slate-400" dateTime={clock.toISOString()}>
+        {clock.toLocaleTimeString('en-GB', {
+          hour: '2-digit',
+          minute: '2-digit',
+        })}{' '}
+        · local
+      </time>
+    </div>
+  );
+}
+
+function SetupEmbedChatInput({
+  value,
+  onChange,
+  onSubmit,
+  disabled,
+  placeholder = 'Reply…',
+  autoFocusInput,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onSubmit: (e: React.FormEvent) => void;
+  disabled?: boolean;
+  placeholder?: string;
+  autoFocusInput?: boolean;
+}) {
+  return (
+    <form
+      onSubmit={onSubmit}
+      className="shrink-0 border-t border-[rgba(13,53,71,0.07)] bg-transparent px-0 pb-1 pt-2"
+    >
+      <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2 rounded-2xl border border-[rgba(13,53,71,0.12)] bg-white/90 px-3 py-2.5 shadow-[0_8px_32px_-20px_rgba(13,53,71,0.18)] backdrop-blur-md transition-all focus-within:border-arcova-teal/45 focus-within:shadow-[0_8px_28px_-18px_rgba(0,164,180,0.22)]">
+          <Sparkles className="h-4 w-4 shrink-0 text-arcova-teal/45" />
+          <input
+            type="text"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={placeholder}
+            spellCheck={false}
+            autoComplete="off"
+            autoFocus={autoFocusInput}
+            disabled={disabled}
+            className="min-w-0 flex-1 bg-transparent font-manrope text-[1.0625rem] text-slate-800 outline-none placeholder:text-slate-400"
+          />
+          <button
+            type="submit"
+            disabled={disabled || !value.trim()}
+            className="flex shrink-0 items-center gap-1.5 rounded-xl bg-arcova-teal px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/90 disabled:cursor-not-allowed disabled:opacity-30"
+            aria-label="Send message"
+          >
+            <Send className="h-4 w-4" />
+            Send
+          </button>
+        </div>
+      </div>
+    </form>
   );
 }
 
@@ -538,327 +1614,48 @@ function SetupWelcomeCard({
   );
 }
 
-// ── Enriching card (loading screen) ──────────────────────────────────────
-
-const ENRICHING_CONFIGS = {
-  company: {
-    eyebrow: (url: string) => `Reading ${url || 'your site'}`,
-    title: (url: string) => (
-      <>
-        Hang tight — getting to know{' '}
-        <span className="bg-gradient-to-br from-arcova-teal to-[#007e8b] bg-clip-text text-transparent">
-          {url ? normalizeDomain(url) : 'your company'}
-        </span>
-        .
-      </>
-    ),
-    sub: (url: string) =>
-      `I'm reading ${normalizeDomain(url) || 'your site'}, your LinkedIn page and a couple of recent press mentions. In a moment you'll review the draft together.`,
-    lines: [
-      'Reading the homepage and product pages',
-      'Cross-checking LinkedIn & Crunchbase',
-      'Sketching your value prop & differentiators',
-      'Drafting your company profile',
-    ],
-  },
-  targets: {
-    eyebrow: (url: string) => `Modelling target companies · ${normalizeDomain(url) || '…'}`,
-    title: (_url: string) => (
-      <>
-        Looking at the world through{' '}
-        <span className="bg-gradient-to-br from-arcova-teal to-[#007e8b] bg-clip-text text-transparent">
-          their lens
-        </span>
-        .
-      </>
-    ),
-    sub: (url: string) =>
-      `I'm reading ${normalizeDomain(url) || 'that company'}, mapping their pipeline, modality and therapeutic areas — then finding companies that look like it on the dimensions that matter.`,
-    lines: [
-      'Reading the site & SEC filings',
-      'Mapping pipeline stage, modality & therapeutic areas',
-      'Searching for companies that match the profile',
-      'Scoring candidates against your fit',
-    ],
-  },
-  buying: {
-    eyebrow: () => `Mapping buying teams inside your targets`,
-    title: () => (
-      <>
-        Working out{' '}
-        <span className="bg-gradient-to-br from-arcova-teal to-[#007e8b] bg-clip-text text-transparent">
-          who signs the deal
-        </span>
-        .
-      </>
-    ),
-    sub: () =>
-      `Inside each target account I'm mapping the buying committee — the scientists who'll use your platform, the heads who'll champion it, and the teams who'll sign.`,
-    lines: [
-      'Reading scientific publications & conference rosters',
-      'Mapping reporting structures on LinkedIn',
-      'Identifying champions, users & economic buyers',
-      'Tagging contacts by function & seniority',
-    ],
-  },
-} as const;
-
-function SetupEnrichingCard({
-  mode,
-  url = '',
-  step = 0,
+function SetupInlineEnrichmentPanel({
+  statusLine,
+  displayPct,
+  partialName,
+  showStop,
   onCancel,
 }: {
-  mode: 'company' | 'targets' | 'buying';
-  url?: string;
-  step?: number;
+  statusLine: string;
+  displayPct: number;
+  partialName?: string | null;
+  showStop: boolean;
   onCancel?: () => void;
 }) {
-  const cfg = ENRICHING_CONFIGS[mode];
-  const lines = cfg.lines;
-  const [active, setActive] = useState(0);
-
-  useEffect(() => {
-    if (step > 0) {
-      setActive(step);
-      return;
-    }
-    setActive(0);
-    const t = setInterval(() => {
-      setActive((a) => Math.min(a + 1, lines.length));
-    }, 1100);
-    return () => clearInterval(t);
-  }, [step, lines.length]);
-
-  return (
-    <div className="relative z-10 flex min-h-dvh flex-col items-center justify-center px-4 py-12">
-      <div className="w-full max-w-[480px] rounded-3xl border border-white/55 bg-white/65 p-10 shadow-arcova backdrop-blur-xl">
-        <div className="mb-8 flex justify-center">
-          <SetupOrb variant="welcome" welcomeEnergised />
-        </div>
-        <div className="mb-2 text-center text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/45">
-          {cfg.eyebrow(url)}
-        </div>
-        <h2 className="mb-3 text-center font-manrope text-2xl font-medium leading-snug tracking-tight text-arcova-navy">
-          {cfg.title(url)}
-        </h2>
-        <p className="mb-8 text-center text-sm leading-relaxed text-arcova-navy/55">
-          {cfg.sub(url)}
-        </p>
-        <div className="space-y-2.5">
-          {lines.map((line, i) => (
-            <div
-              key={i}
-              className={`flex items-center gap-3 text-sm transition-opacity duration-500 ${
-                i <= active ? 'opacity-100' : 'opacity-30'
-              }`}
-            >
-              <span
-                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] transition-all ${
-                  i < active
-                    ? 'bg-arcova-teal text-white'
-                    : i === active
-                    ? 'border border-arcova-teal/50 text-arcova-teal'
-                    : 'border border-arcova-navy/15 text-arcova-navy/30'
-                }`}
-              >
-                {i < active ? (
-                  <svg
-                    viewBox="0 0 24 24"
-                    width="9"
-                    height="9"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="3"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="m5 12 5 5 9-10" />
-                  </svg>
-                ) : i === active ? (
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-arcova-teal" />
-                ) : null}
-              </span>
-              <span
-                className={
-                  i < active
-                    ? 'text-arcova-navy/70'
-                    : i === active
-                    ? 'font-medium text-arcova-navy'
-                    : 'text-arcova-navy/35'
-                }
-              >
-                {line}
-              </span>
-            </div>
-          ))}
-        </div>
-        {onCancel && (
-          <button
-            onClick={onCancel}
-            className="mt-8 w-full text-center text-xs text-arcova-navy/35 underline underline-offset-2 transition-colors hover:text-arcova-navy/60"
-          >
-            Stop
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ── Floating agent dock ───────────────────────────────────────────────────
-
-function SetupAgentDock({
-  messages,
-  thinking,
-  inputEnabled,
-  inputValue,
-  onInputChange,
-  onSend,
-}: {
-  messages: TextMsg[];
-  thinking: boolean;
-  inputEnabled?: boolean;
-  inputValue?: string;
-  onInputChange?: (v: string) => void;
-  onSend?: (e: React.FormEvent) => void;
-}) {
-  const [collapsed, setCollapsed] = useState(false);
-  const threadRef = useRef<HTMLDivElement>(null);
-  const recentMessages = messages.slice(-4);
-
-  useEffect(() => {
-    if (!collapsed && threadRef.current) {
-      threadRef.current.scrollTop = threadRef.current.scrollHeight;
-    }
-  }, [messages, thinking, collapsed]);
-
   return (
     <div
-      className={`fixed bottom-6 right-6 z-40 flex flex-col overflow-hidden rounded-2xl border border-white/55 bg-white/80 shadow-[0_28px_60px_-28px_rgba(13,53,71,0.25),0_2px_6px_rgba(13,53,71,0.06)] backdrop-blur-xl transition-all duration-300 ${
-        collapsed ? 'w-[220px]' : 'w-[340px]'
-      }`}
+      className="w-full rounded-2xl rounded-tl-sm bg-gradient-to-br from-slate-50 to-white px-4 py-4 font-manrope text-slate-700 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.9)] ring-1 ring-slate-200/55"
+      style={{ animation: 'arcova-msg-in 0.2s ease' }}
     >
-      <div
-        className="flex cursor-pointer items-center gap-2.5 border-b border-arcova-navy/8 px-3.5 py-2.5"
-        onClick={() => setCollapsed((c) => !c)}
-      >
-        <div className="relative h-7 w-7 shrink-0">
+      <p className="text-sm leading-snug text-slate-600">{statusLine}</p>
+      {partialName ? (
+        <p className="mt-1 text-xs font-medium text-slate-500">{partialName}</p>
+      ) : null}
+      <div className="mt-3 space-y-1.5">
+        <div className="relative h-2 overflow-hidden rounded-full bg-slate-200/80">
           <div
-            className="absolute inset-0 rounded-full"
-            style={{
-              background: 'radial-gradient(circle at 30% 28%, #ffffff 0%, #00A4B4 56%, #003344 130%)',
-              animation: 'arcova-orb-breathe 5.4s ease-in-out infinite',
-            }}
-          />
-          <div
-            className="absolute inset-0 rounded-full"
-            style={{
-              background:
-                'radial-gradient(ellipse 60% 30% at 36% 26%, rgba(255,255,255,0.65), transparent 60%)',
-            }}
-          />
-        </div>
-        <div className="flex flex-1 flex-col overflow-hidden">
-          <span className="text-xs font-semibold text-arcova-navy">Setup agent</span>
-          <span className="flex items-center gap-1.5 text-[10px] text-arcova-navy/50">
-            <span
-              className="h-1.5 w-1.5 rounded-full bg-arcova-teal"
-              style={{ animation: 'arcova-dot-pulse 2.6s ease-in-out infinite' }}
-            />
-            {thinking ? 'Thinking…' : 'Ready'}
-          </span>
-        </div>
-        <svg
-          viewBox="0 0 24 24"
-          width="12"
-          height="12"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="shrink-0 text-arcova-navy/35 transition-transform"
-          style={{ transform: collapsed ? 'rotate(180deg)' : 'none' }}
-        >
-          <path d="m6 9 6 6 6-6" />
-        </svg>
-      </div>
-
-      {!collapsed && (
-        <>
-          <div
-            ref={threadRef}
-            className="max-h-[260px] min-h-[60px] overflow-y-auto px-3.5 py-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            className="arcova-enrichment-progress absolute inset-y-0 left-0 rounded-full transition-[width] duration-700 ease-out"
+            style={{ width: `${Math.min(100, displayPct)}%` }}
           >
-            <div className="space-y-2.5">
-              {recentMessages.length === 0 && !thinking && (
-                <p className="text-xs text-arcova-navy/35">Agent messages will appear here.</p>
-              )}
-              {recentMessages.map((msg, i) => {
-                if (msg.role === 'user') {
-                  return (
-                    <div key={msg.id} className="flex justify-end">
-                      <div className="max-w-[85%] rounded-xl rounded-tr-sm bg-arcova-teal px-3 py-2 text-xs leading-relaxed text-white">
-                        {msg.text}
-                      </div>
-                    </div>
-                  );
-                }
-                const isLast = i === recentMessages.length - 1;
-                return (
-                  <div key={msg.id} className="flex">
-                    <div
-                      className={`max-w-[88%] rounded-xl rounded-tl-sm border border-arcova-navy/8 bg-white/85 px-3 py-2 text-xs leading-relaxed text-arcova-navy transition-opacity ${
-                        !isLast ? 'opacity-55' : ''
-                      }`}
-                    >
-                      {msg.typing ? <TypingText target={msg.text} /> : msg.text}
-                    </div>
-                  </div>
-                );
-              })}
-              {thinking && (
-                <div className="flex">
-                  <div className="rounded-xl rounded-tl-sm border border-arcova-navy/8 bg-white/85 px-3 py-2.5">
-                    <div className="flex gap-1">
-                      {[0, 150, 300].map((d) => (
-                        <div
-                          key={d}
-                          className="h-1 w-1 animate-bounce rounded-full bg-arcova-teal/60"
-                          style={{ animationDelay: `${d}ms` }}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
+            <div className="arcova-enrichment-glow absolute inset-y-0 right-0 w-10 rounded-full" />
           </div>
-
-          {inputEnabled && onSend && (
-            <form
-              onSubmit={onSend}
-              className="flex gap-2 border-t border-arcova-navy/8 px-3 py-2.5"
-            >
-              <input
-                type="text"
-                value={inputValue ?? ''}
-                onChange={(e) => onInputChange?.(e.target.value)}
-                placeholder="Reply to the agent…"
-                className="min-w-0 flex-1 rounded-lg bg-arcova-navy/5 px-2.5 py-1.5 text-xs text-arcova-navy outline-none placeholder:text-arcova-navy/35 focus:ring-1 focus:ring-arcova-teal/40"
-              />
-              <button
-                type="submit"
-                disabled={!inputValue?.trim()}
-                className="rounded-lg bg-arcova-navy px-2.5 py-1.5 text-xs font-medium text-white disabled:opacity-30"
-              >
-                →
-              </button>
-            </form>
-          )}
-        </>
-      )}
+        </div>
+        <p className="text-right text-xs tabular-nums text-slate-400">{Math.min(100, Math.round(displayPct))}%</p>
+      </div>
+      {showStop && onCancel ? (
+        <button
+          type="button"
+          onClick={onCancel}
+          className="mt-4 text-left text-xs text-slate-400 underline underline-offset-2 transition-colors hover:text-slate-600"
+        >
+          Stop
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -948,14 +1745,19 @@ export default function SetupFlow({
   companyContactsMap = {},
 }: SetupFlowProps) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const guidedNav = useSetupGuidedNav();
 
   // ── UI state ─────────────────────────────────────────────────────────────
   const [phase, setPhase] = useState<Phase>('greeting');
+  const [bootstrapFinished, setBootstrapFinished] = useState(false);
   const [thread, setThread] = useState<DisplayMsg[]>([]);
   const [thinking, setThinking] = useState(true);
   const [inputEnabled, setInput] = useState(false);
   const [inputValue, setInputVal] = useState('');
   const [chipSel, setChipSel] = useState<string[]>([]);
+  const [setupGreetingChatClock, setSetupGreetingChatClock] = useState(() => new Date());
   const [loadMsg, setLoadMsg] = useState('Visiting your website…');
   const [customerUrlLoadMsg, setCustomerUrlLoadMsg] = useState('Visiting the website…');
   const [customerUrlProgressNow, setCustomerUrlProgressNow] = useState(0);
@@ -969,6 +1771,11 @@ export default function SetupFlow({
   const [partialOwnEnrichment, setPartialOwnEnrichment] = useState<Partial<Record<string, unknown>> | null>(null);
   const [targetEnrichStep, setTargetEnrichStep] = useState(0); // 0 = not started, 1–4 = step completed
   const [ownEnrichStep, setOwnEnrichStep] = useState(0);
+  const [ownEnrichLinkedinWait, setOwnEnrichLinkedinWait] = useState(false);
+  const [ownEnrichSynthesisWait, setOwnEnrichSynthesisWait] = useState(false);
+  const [customerUrlLinkedinWait, setCustomerUrlLinkedinWait] = useState(false);
+  const [customerUrlSynthesisWait, setCustomerUrlSynthesisWait] = useState(false);
+  const [buyingLoadPct, setBuyingLoadPct] = useState(18);
   const [analysisError, setAnalysisError] = useState('');
   const [pendingTransition, setPendingTransition] = useState<{
     target: 'proceed_to_customer_url' | 'confirm_own_company' | 'restart';
@@ -991,7 +1798,13 @@ export default function SetupFlow({
   const [enrichedTargetCompany, setEnrichedTargetCompany] = useState<import('@/lib/target-company-enrichment').TargetCompanyEnrichmentResult | null>(null);
   const [editingFindings, setEditingFindings] = useState(false);
   const [editingFindingsData, setEditingFindingsData] = useState<Record<string, unknown> | null>(null);
+  const editingFindingsDataRef = useRef<Record<string, unknown> | null>(null);
+
+  useEffect(() => {
+    editingFindingsDataRef.current = editingFindingsData;
+  }, [editingFindingsData]);
   const [savingFindings, setSavingFindings] = useState(false);
+  const [saveChangesClickAnim, setSaveChangesClickAnim] = useState(false);
   const [icpEditMode, setIcpEditMode] = useState(false);
   const icpEditSnapshotRef = useRef<typeof reviewDraft | null>(null);
   /** Snapshot of enrichment (e.g. competitors) when opening ICP edit from the panel. */
@@ -1029,10 +1842,13 @@ export default function SetupFlow({
   const lastAnalyzedUrlRef = useRef<string | null>(null);
   const analysisAbortRef = useRef<AbortController | null>(null);
   const preEditDataRef = useRef<Record<string, unknown> | null>(null);
+  /** Dedupes applying the same `?step=` hop from the sidebar while staying on /arcova-setup. */
+  const urlStepAppliedRef = useRef<string | null>(null);
 
   // ── Enrichment navigation guard ────────────────────────────────────────────
   const { setIsEnriching } = useEnrichmentGuard();
-  const isEnrichingPhase = phase === 'customer_url_loading' || phase === 'analysis_loading';
+  const isEnrichingPhase =
+    phase === 'customer_url_loading' || phase === 'analysis_loading' || phase === 'buying_team_loading';
 
   useEffect(() => {
     setIsEnriching(isEnrichingPhase);
@@ -1056,10 +1872,25 @@ export default function SetupFlow({
   }, [firstName]);
 
   const bottomRef = useRef<HTMLDivElement>(null);
+  const mainChatScrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const welcomeInputRef = useRef<HTMLInputElement>(null);
+  const setupGreetingThreadRef = useRef<HTMLDivElement>(null);
+
+  const scrollSetupGreetingThreadToBottom = useCallback(() => {
+    const el = setupGreetingThreadRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, []);
+
+  const scrollMainChatToBottom = useCallback(() => {
+    const el = mainChatScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, []);
   const availableCompanyProfiles = companyProfiles.filter((company) => !companyContactsMap[company.id]);
   const resolvedCompletePath =
-    onCompletePath ?? (entryPoint === 'full' ? '/import' : entryPoint === 'target-company' ? '/company-criteria' : entryPoint === 'company-only' ? '/my-profile' : '/personas');
+    onCompletePath ?? (entryPoint === 'full' ? '/import' : entryPoint === 'target-company' ? '/company-criteria' : entryPoint === 'company-only' ? '/my-profile' : ROUTES.setup.icps);
 
   const parseSectionItems = useCallback((value: unknown): string[] => {
     if (Array.isArray(value)) {
@@ -1090,8 +1921,76 @@ export default function SetupFlow({
   }, [thread, thinking, phase]);
 
   useEffect(() => {
-    if (inputEnabled) inputRef.current?.focus();
-  }, [inputEnabled]);
+    if (!inputEnabled) return;
+    const greetingWelcome =
+      phase === 'greeting' &&
+      !thread.some((m) => m.kind === 'text' && m.role === 'user');
+    if (greetingWelcome) welcomeInputRef.current?.focus();
+    else inputRef.current?.focus();
+  }, [inputEnabled, phase, thread]);
+
+  useEffect(() => {
+    const tickClock =
+      phase === 'greeting' ||
+      phase === 'customer_url_conversation' ||
+      phase === 'analysis_loading' ||
+      phase === 'customer_url_loading' ||
+      phase === 'buying_team_loading';
+    if (!tickClock) return;
+    setSetupGreetingChatClock(new Date());
+    const id = setInterval(() => setSetupGreetingChatClock(new Date()), 30_000);
+    return () => clearInterval(id);
+  }, [phase]);
+
+  /** Rotate status text during long Apify LinkedIn scrape (my company). */
+  useEffect(() => {
+    if (phase !== 'analysis_loading' || !ownEnrichLinkedinWait) return;
+    let i = 0;
+    const id = setInterval(() => {
+      i = (i + 1) % OWN_COMPANY_LINKEDIN_SCRAPE_LINES.length;
+      setLoadMsg(OWN_COMPANY_LINKEDIN_SCRAPE_LINES[i]);
+    }, 5200);
+    return () => clearInterval(id);
+  }, [phase, ownEnrichLinkedinWait]);
+
+  /** Rotate status during bullet condense + taxonomy (my company). */
+  useEffect(() => {
+    if (phase !== 'analysis_loading' || !ownEnrichSynthesisWait) return;
+    let i = 0;
+    const id = setInterval(() => {
+      i = (i + 1) % OWN_COMPANY_SYNTHESIS_LINES.length;
+      setLoadMsg(OWN_COMPANY_SYNTHESIS_LINES[i]);
+    }, 3800);
+    return () => clearInterval(id);
+  }, [phase, ownEnrichSynthesisWait]);
+
+  /** Same rotation for target-company enrichment glass UI. */
+  useEffect(() => {
+    if (phase !== 'customer_url_loading' || !customerUrlLinkedinWait) return;
+    let i = 0;
+    const id = setInterval(() => {
+      i = (i + 1) % OWN_COMPANY_LINKEDIN_SCRAPE_LINES.length;
+      setCustomerUrlLoadMsg(OWN_COMPANY_LINKEDIN_SCRAPE_LINES[i]);
+    }, 5200);
+    return () => clearInterval(id);
+  }, [phase, customerUrlLinkedinWait]);
+
+  useEffect(() => {
+    if (phase !== 'customer_url_loading' || !customerUrlSynthesisWait) return;
+    let i = 0;
+    const id = setInterval(() => {
+      i = (i + 1) % OWN_COMPANY_SYNTHESIS_LINES.length;
+      setCustomerUrlLoadMsg(OWN_COMPANY_SYNTHESIS_LINES[i]);
+    }, 3800);
+    return () => clearInterval(id);
+  }, [phase, customerUrlSynthesisWait]);
+
+  useEffect(() => {
+    if (phase !== 'buying_team_loading') return;
+    setBuyingLoadPct(18);
+    const id = setInterval(() => setBuyingLoadPct((p) => Math.min(p + 7, 88)), 880);
+    return () => clearInterval(id);
+  }, [phase]);
 
   // Tick the customer-URL progress bar while enrichment is in flight
   useEffect(() => {
@@ -1212,7 +2111,7 @@ export default function SetupFlow({
           messages: historyRef.current,
           firstName: firstNameRef.current,
           mode,
-          phase,
+          phase: mapPhaseForOnboardingApi(phase),
           context: {
             entryPoint,
             selectedCompanyName: selectedCompanyName ?? selectedCompanyRef.current?.name ?? null,
@@ -1727,7 +2626,7 @@ export default function SetupFlow({
   // ── Handle analysis results confirmed ────────────────────────────────────
 
   const handleResultsConfirmed = useCallback(async () => {
-    pushText('user', 'Looks right');
+    pushText('user', 'Looks good');
     setThread((p) => p.filter((m) => m.kind !== 'results'));
 
     if (entryPoint === 'company-only') {
@@ -1777,16 +2676,14 @@ export default function SetupFlow({
       return;
     }
 
+    historyRef.current = [...historyRef.current, { role: 'user', content: 'Looks good' }];
+    setPhase('customer_url_conversation');
+    setInput(false);
     const { displayParts } = await askClaude({
-      mode: 'narration',
-      extra: {
-        role: 'user',
-        content:
-          "[System: the user confirmed their own company profile looks right. Transition to step 2 in one short sentence — something like: \"Great, now let's build your target company list. Drop in a URL — a dream account or a company that looks like your best customer — and I'll profile it.\" Conversational, no bullet points, max 2 sentences.]",
-      },
+      mode: 'conversation',
+      phase: 'customer_url_conversation',
     });
     if (displayParts.length) await sayBeats(displayParts);
-    setPhase('customer_url_input');
     setInput(true);
   }, [askClaude, editingFindingsData, entryPoint, icpSuggestions, resolvedCompletePath, router]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1822,11 +2719,47 @@ export default function SetupFlow({
     }
   }, []);
 
+  const getLatestResultsData = useCallback((): Record<string, unknown> | null => {
+    for (let i = thread.length - 1; i >= 0; i -= 1) {
+      const message = thread[i];
+      if (message.kind === 'results') return message.data;
+    }
+    return null;
+  }, [thread]);
+
   // ── Progress step navigation ──────────────────────────────────────────────
 
   const handleGoToStep = useCallback(async (stepIndex: number) => {
     if (stepIndex === 0) {
-      // Back to profile — restart own company URL
+      const latestProfile = editingFindingsData ?? getLatestResultsData();
+      const rec = latestProfile && typeof latestProfile === 'object'
+        ? (latestProfile as Record<string, unknown>)
+        : null;
+      const hasCompanyProfile = Boolean(
+        rec
+        && (typeof rec.id === 'string'
+          || typeof rec.company_name === 'string'
+          || typeof rec.website === 'string'
+          || lastAnalyzedUrlRef.current),
+      );
+
+      if (hasCompanyProfile && rec) {
+        setEditingFindingsData({ ...rec });
+        setEditingFindings(false);
+        const { displayParts } = await askClaude({
+          mode: 'narration',
+          extra: {
+            role: 'user',
+            content: '[System: the user went back to step 1 to review their own company. One sentence: acknowledge that their company profile is below so they can confirm it, tweak anything that is off, or start over if they want a clean run.]',
+          },
+        });
+        if (displayParts.length) await sayBeats(displayParts);
+        setPhase('analysis_results');
+        setInput(false);
+        return;
+      }
+
+      // No saved profile yet: restart URL capture
       icpIdRef.current = null;
       const { displayParts } = await askClaude({
         mode: 'narration',
@@ -1839,7 +2772,25 @@ export default function SetupFlow({
       setPhase('greeting');
       setInput(true);
     } else if (stepIndex === 1) {
-      if (icpSuggestions.length > 0) {
+      const hasTargetReview =
+        enrichedTargetCompany != null
+        || icpIdRef.current != null
+        || (Boolean(lastTargetUrlRef.current)
+          && (Boolean(reviewedCompanyName?.trim()) || Boolean(companyRef.current.companyType)));
+
+      if (hasTargetReview) {
+        const { displayParts } = await askClaude({
+          mode: 'narration',
+          extra: {
+            role: 'user',
+            content: '[System: the user is revisiting their target company and ICP criteria. One sentence: acknowledge that the target profile is below so they can confirm, tweak, or try a different company.]',
+          },
+        });
+        if (displayParts.length) await sayBeats(displayParts);
+        setIcpEditMode(false);
+        setPhase('customer_url_review');
+        setInput(false);
+      } else if (icpSuggestions.length > 0) {
         const { displayParts } = await askClaude({
           mode: 'narration',
           extra: {
@@ -1858,7 +2809,7 @@ export default function SetupFlow({
           },
         });
         if (displayParts.length) await sayBeats(displayParts);
-        setPhase('customer_url_input');
+        setPhase('customer_url_conversation');
         setInput(true);
       }
     } else if (stepIndex === 2) {
@@ -1873,12 +2824,10 @@ export default function SetupFlow({
       setPhase('buying_team_review');
       setInput(false);
     }
-  }, [askClaude, icpSuggestions]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [askClaude, editingFindingsData, enrichedTargetCompany, getLatestResultsData, icpSuggestions, reviewedCompanyName, sayBeats]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
   const handleResumeRestart = useCallback(async () => {
-    pushText('user', 'Start again');
-
     // Delete ICP from DB
     const icpId = icpIdRef.current;
     if (icpId) {
@@ -1916,6 +2865,16 @@ export default function SetupFlow({
     setEditingFindings(false);
     setEditingFindingsData(null);
     setThread([]);
+    historyRef.current = [];
+    setOwnEnrichLinkedinWait(false);
+    setOwnEnrichSynthesisWait(false);
+    setCustomerUrlLinkedinWait(false);
+    setCustomerUrlSynthesisWait(false);
+
+    // Jump to greeting before the onboarding API toggles thinking — avoids the dark interim shell
+    // (`thinking && thread.length === 0`) while phase was still analysis_results.
+    setPhase('greeting');
+    setInput(false);
 
     const { displayParts } = await askClaude({
       mode: 'narration',
@@ -1925,7 +2884,6 @@ export default function SetupFlow({
       },
     });
     if (displayParts.length) await sayBeats(displayParts);
-    setPhase('greeting');
     setInput(true);
   }, [askClaude, editingFindingsData]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1941,7 +2899,7 @@ export default function SetupFlow({
         await handleResumeRestart();
         break;
       case 'proceed_to_customer_url':
-        setPhase('customer_url_input');
+        setPhase('customer_url_conversation');
         setInput(true);
         break;
       case 'confirm_own_company':
@@ -1962,6 +2920,8 @@ export default function SetupFlow({
     setCustomerUrlLoadMsg('Researching the company…');
     setPartialTargetEnrichment(null);
     setTargetEnrichStep(0);
+    setCustomerUrlLinkedinWait(false);
+    setCustomerUrlSynthesisWait(false);
 
     try {
       const res = await fetch('/api/analyze-example-company-stream', {
@@ -1981,7 +2941,7 @@ export default function SetupFlow({
             description: Array.isArray(eventData.description) ? (eventData.description as string[]) : null,
           });
         } else if (event === 'step_apollo') {
-          setCustomerUrlLoadMsg('Company data retrieved ✓  Scanning LinkedIn…');
+          setCustomerUrlLoadMsg('Company and web data in ✓ Resolving LinkedIn…');
           setTargetEnrichStep(2);
           setPartialTargetEnrichment((prev) => ({
             ...prev,
@@ -1992,8 +2952,18 @@ export default function SetupFlow({
             founded_year: typeof eventData.company_founded_year === 'number' ? eventData.company_founded_year : null,
             funding_stage: (eventData.company_funding_stage as string) || null,
           }));
+        } else if (event === 'step_linkedin') {
+          const found = Boolean(eventData.linkedin_found);
+          setCustomerUrlLinkedinWait(found);
+          setCustomerUrlSynthesisWait(false);
+          if (found) {
+            setCustomerUrlLoadMsg(OWN_COMPANY_LINKEDIN_SCRAPE_LINES[0]);
+          } else {
+            setCustomerUrlLoadMsg('No public LinkedIn company URL found ✓ Enriching from site and registry only…');
+          }
         } else if (event === 'step_apify') {
-          setCustomerUrlLoadMsg('LinkedIn scanned ✓  Classifying company…');
+          setCustomerUrlLinkedinWait(false);
+          setCustomerUrlLoadMsg('Sources merged ✓ Organizing profile…');
           setTargetEnrichStep(3);
           setPartialTargetEnrichment((prev) => ({
             ...prev,
@@ -2001,7 +2971,11 @@ export default function SetupFlow({
             tagline: (eventData.tagline as string) || null,
             follower_count: typeof eventData.follower_count === 'number' ? eventData.follower_count : null,
           }));
+        } else if (event === 'step_synthesis') {
+          setCustomerUrlSynthesisWait(true);
+          setCustomerUrlLoadMsg(OWN_COMPANY_SYNTHESIS_LINES[0]);
         } else if (event === 'step_taxonomy') {
+          setCustomerUrlSynthesisWait(false);
           setCustomerUrlLoadMsg('Classified ✓  Finishing up…');
           setTargetEnrichStep(4);
         } else if (event === 'done') {
@@ -2066,7 +3040,7 @@ export default function SetupFlow({
       setInput(true);
     } catch {
       await say("Couldn't analyse that URL — check it's correct and try again.");
-      setPhase('customer_url_input');
+      setPhase('customer_url_conversation');
       setInput(true);
     }
   }, [askClaude]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -2086,8 +3060,12 @@ export default function SetupFlow({
     setPartialTargetEnrichment(null);
     setOwnEnrichStep(0);
     setTargetEnrichStep(0);
+    setOwnEnrichLinkedinWait(false);
+    setOwnEnrichSynthesisWait(false);
+    setCustomerUrlLinkedinWait(false);
+    setCustomerUrlSynthesisWait(false);
     if (phase === 'customer_url_loading') {
-      setPhase('customer_url_input');
+      setPhase('customer_url_conversation');
       return;
     }
     // Clear thread so welcome card is shown again (hasUserMsg → false)
@@ -2114,6 +3092,8 @@ export default function SetupFlow({
     setLoadMsg('Researching your company…');
     setPartialOwnEnrichment(null);
     setOwnEnrichStep(0);
+    setOwnEnrichLinkedinWait(false);
+    setOwnEnrichSynthesisWait(false);
 
     try {
       const res = await fetch('/api/analyze-and-store-stream', {
@@ -2136,7 +3116,7 @@ export default function SetupFlow({
             description: Array.isArray(eventData.description) ? eventData.description : null,
           });
         } else if (event === 'step_apollo') {
-          setLoadMsg('Company data retrieved ✓  Scanning LinkedIn…');
+          setLoadMsg('Company and web data in ✓ Resolving LinkedIn…');
           setOwnEnrichStep(2);
           setPartialOwnEnrichment((prev) => ({
             ...prev,
@@ -2146,8 +3126,18 @@ export default function SetupFlow({
             hq_country: (eventData.company_hq_country as string) || null,
             funding_stage: (eventData.company_funding_stage as string) || null,
           }));
+        } else if (event === 'step_linkedin') {
+          const found = Boolean(eventData.linkedin_found);
+          setOwnEnrichLinkedinWait(found);
+          setOwnEnrichSynthesisWait(false);
+          if (found) {
+            setLoadMsg(OWN_COMPANY_LINKEDIN_SCRAPE_LINES[0]);
+          } else {
+            setLoadMsg('No public LinkedIn company URL found ✓ Enriching from site and registry only…');
+          }
         } else if (event === 'step_apify') {
-          setLoadMsg('LinkedIn scanned ✓  Classifying company…');
+          setOwnEnrichLinkedinWait(false);
+          setLoadMsg('Sources merged ✓ Organizing profile…');
           setOwnEnrichStep(3);
           setPartialOwnEnrichment((prev) => ({
             ...prev,
@@ -2155,7 +3145,11 @@ export default function SetupFlow({
             tagline: (eventData.tagline as string) || null,
             follower_count: typeof eventData.follower_count === 'number' ? eventData.follower_count : null,
           }));
+        } else if (event === 'step_synthesis') {
+          setOwnEnrichSynthesisWait(true);
+          setLoadMsg(OWN_COMPANY_SYNTHESIS_LINES[0]);
         } else if (event === 'step_taxonomy') {
+          setOwnEnrichSynthesisWait(false);
           setLoadMsg('Classified ✓  Finishing up…');
           setOwnEnrichStep(4);
         } else if (event === 'done') {
@@ -2241,14 +3235,6 @@ export default function SetupFlow({
     if (u) void runAnalysis(u, true);
   }, [runAnalysis]);
 
-  const getLatestResultsData = useCallback((): Record<string, unknown> | null => {
-    for (let i = thread.length - 1; i >= 0; i -= 1) {
-      const message = thread[i];
-      if (message.kind === 'results') return message.data;
-    }
-    return null;
-  }, [thread]);
-
   const handleMyCompanyChange = useCallback((
     field: keyof import('@/components/SetupProfilePanel').PanelMyCompanyData,
     value: import('@/components/SetupProfilePanel').MyCompanyChangeValue,
@@ -2278,6 +3264,7 @@ export default function SetupFlow({
       hqCity: 'hq_city',
       hqCountry: 'hq_country',
       companyStatus: 'company_status',
+      industry: 'industry',
       companyName: 'company_name',
       website: 'website',
       tagline: 'tagline',
@@ -2346,7 +3333,7 @@ export default function SetupFlow({
     setSavedIcpName('');
     companyRef.current.signals = [];
     lastTargetUrlRef.current = null;
-    setPhase('customer_url_input');
+    setPhase('customer_url_conversation');
     setInput(true);
     await say('Profile deleted. Drop in a URL or company name and I\'ll build a fresh one.');
   }, [say]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -2421,17 +3408,25 @@ export default function SetupFlow({
   }, []);
 
   const handleSaveFindingsEdit = useCallback(async () => {
-    if (!editingFindingsData) return;
+    if (typeof document !== 'undefined') {
+      const ae = document.activeElement;
+      if (ae instanceof HTMLElement && ae.closest('[data-my-company-card]')) ae.blur();
+    }
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+    const snapshot = editingFindingsDataRef.current;
+    if (!snapshot) return;
     setSavingFindings(true);
     try {
-      const id = typeof editingFindingsData.id === 'string' ? editingFindingsData.id : null;
-      let nextData = editingFindingsData;
+      const id = typeof snapshot.id === 'string' ? snapshot.id : null;
+      let nextData = snapshot;
 
       if (id) {
         const response = await fetch('/api/user-company', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(editingFindingsData),
+          body: JSON.stringify(snapshot),
         });
         if (!response.ok) throw new Error('Failed to save analysis edits');
         nextData = await response.json();
@@ -2449,7 +3444,7 @@ export default function SetupFlow({
     } finally {
       setSavingFindings(false);
     }
-  }, [editingFindingsData]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [say]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── ICP card inline edit handlers ────────────────────────────────────────
 
@@ -2520,9 +3515,16 @@ export default function SetupFlow({
     setInputVal('');
     setInput(false);
     setPendingTransition(null);
+    // Show the user bubble immediately; don't wait on the onboarding API (or analysis kick-off).
+    pushText('user', text);
 
     const response = await askClaude({
-      mode: phase === 'greeting' || phase === 'customer_url_input' ? 'conversation' : 'phase_help',
+      mode:
+        phase === 'greeting' ||
+        phase === 'customer_url_input' ||
+        phase === 'customer_url_conversation'
+          ? 'conversation'
+          : 'phase_help',
       phase,
       extra: { role: 'user', content: text },
     });
@@ -2533,9 +3535,10 @@ export default function SetupFlow({
     );
 
     if (beginAnalysis?.website_url) {
-      // Skip the chat window — go straight to analysis loading
+      // Skip dedicated URL splash when user is already in the glass chat for target ICP
       const isCustomer =
         phase === 'customer_url_input' ||
+        phase === 'customer_url_conversation' ||
         beginAnalysis.analysis_type === 'target_customer';
       if (isCustomer) {
         await handleCustomerUrlAnalyse(beginAnalysis.website_url);
@@ -2545,8 +3548,6 @@ export default function SetupFlow({
       return;
     }
 
-    // Conversational reply — now show the chat window with user message + agent response
-    pushText('user', text);
     if (response.displayParts.length) {
       await sayBeats(response.displayParts);
     }
@@ -2568,6 +3569,7 @@ export default function SetupFlow({
     startedRef.current = true;
 
     (async () => {
+      try {
       if (entryPoint === 'full') {
         let bootstrapExampleEnrichment: TargetCompanyEnrichmentResult | null = null;
         // Decision tree: check what the user has already completed and resume from the right step.
@@ -2654,8 +3656,8 @@ export default function SetupFlow({
         // Leg 1: nothing stored — greet and ask for company URL
         if (!existingAnalysis) {
           const { displayParts } = await askClaude();
-          if (displayParts.length) await sayBeats(displayParts);
           setInput(true);
+          if (displayParts.length) void sayBeats(displayParts);
           return;
         }
 
@@ -2669,7 +3671,7 @@ export default function SetupFlow({
             },
           });
           if (displayParts.length) await sayBeats(displayParts);
-          setPhase('customer_url_input');
+          setPhase('customer_url_conversation');
           setInput(true);
           return;
         }
@@ -2770,8 +3772,8 @@ export default function SetupFlow({
             content: `[System: The user wants to change their company. One short sentence: greet them warmly and ask them to share the website URL of their new company so you can analyse it.]`,
           },
         });
-        if (displayParts.length) await sayBeats(displayParts);
         setInput(true);
+        if (displayParts.length) void sayBeats(displayParts);
         return;
       }
 
@@ -2827,7 +3829,7 @@ export default function SetupFlow({
             },
           });
           if (dp3.length) await sayBeats(dp3);
-          setPhase('customer_url_input');
+          setPhase('customer_url_conversation');
           setInput(true);
           return;
         }
@@ -2857,44 +3859,13 @@ export default function SetupFlow({
           },
         });
         if (displayParts.length) await sayBeats(displayParts);
-        setPhase('customer_url_input');
+        setPhase('customer_url_conversation');
         setInput(true);
         return;
       }
-
-      // buying-group: needs an ICP row to attach the persona to
-      if (availableCompanyProfiles.length === 0) {
-        const { displayParts } = await askClaude({
-          mode: 'narration',
-          extra: {
-            role: 'user',
-            content:
-              '[System: There is no target company profile available yet for a buying group. Two short sentences: explain they need a target company profile first, and that you will send them to create one.]',
-          },
-        });
-        if (displayParts.length) await sayBeats(displayParts);
-        setPhase('done');
-        setTimeout(() => router.push(ROUTES.setup.newIcp), 2200);
-        return;
+    } finally {
+        setBootstrapFinished(true);
       }
-
-      if (availableCompanyProfiles.length === 1) {
-        const co = availableCompanyProfiles[0];
-        await startBuyingGroupForCompany(co);
-        return;
-      }
-
-      const { displayParts } = await askClaude({
-        mode: 'narration',
-        extra: {
-          role: 'user',
-          content:
-            '[System: The user has more than one target company profile that still needs a buying group. Two short sentences: ask them to pick which profile below, then they will define the full buying group for it.]',
-        },
-      });
-      if (displayParts.length) await sayBeats(displayParts);
-      setPhase('company_select');
-      setInput(true);
     })();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -2922,6 +3893,7 @@ export default function SetupFlow({
   const showChatBar =
     phase === 'greeting' ||
     phase === 'customer_url_input' ||
+    phase === 'customer_url_conversation' ||
     phase === 'company_select' ||
     phase === 'company_type' ||
     phase === 'company_size' ||
@@ -2967,13 +3939,49 @@ export default function SetupFlow({
 
   const SETUP_STEPS = [
     { label: 'Your company', phases: ['greeting', 'analysis_loading', 'analysis_results'] as Phase[] },
-    { label: 'Target companies', phases: ['icp_suggestion', 'customer_url_input', 'customer_url_loading', 'customer_url_review', 'company_type', 'company_size', 'company_ta', 'company_modality', 'company_stage', 'company_funding', 'company_saving'] as Phase[] },
+    { label: 'Target companies', phases: ['icp_suggestion', 'customer_url_input', 'customer_url_conversation', 'customer_url_loading', 'customer_url_review', 'company_type', 'company_size', 'company_ta', 'company_modality', 'company_stage', 'company_funding', 'company_saving'] as Phase[] },
     {
       label: 'Buying teams',
       phases: ['buying_team_loading', 'buying_team_review', 'persona_functions', 'persona_seniority', 'persona_saving', 'done'] as Phase[],
     },
   ];
   const currentStepIndex = SETUP_STEPS.findIndex((s) => s.phases.includes(phase));
+
+  useEffect(() => {
+    if (!guidedNav || entryPoint !== 'full') return;
+    if (currentStepIndex < 0) return;
+    guidedNav.reportStep(currentStepIndex);
+  }, [guidedNav, entryPoint, currentStepIndex]);
+
+  useEffect(() => {
+    if (entryPoint !== 'full' || !bootstrapFinished) return;
+    if (pathname !== ROUTES.setup.arcova) return;
+    if (currentStepIndex < 0) return;
+    const key = currentStepIndex === 0 ? 'company' : currentStepIndex === 1 ? 'target' : 'buying';
+    if (searchParams.get('step') === key) return;
+    router.replace(`${pathname}?step=${key}`, { scroll: false });
+  }, [entryPoint, bootstrapFinished, currentStepIndex, pathname, router, searchParams]);
+
+  /** Sidebar / deep link: `/arcova-setup?step=company|target|buying` jumps after bootstrap hydrates local state. */
+  useEffect(() => {
+    if (!bootstrapFinished || entryPoint !== 'full') return;
+    const raw = searchParams.get('step');
+    if (!raw) {
+      urlStepAppliedRef.current = null;
+      return;
+    }
+    const idx = raw === 'company' ? 0 : raw === 'target' ? 1 : raw === 'buying' ? 2 : null;
+    if (idx == null) return;
+    const key = `${raw}:${idx}`;
+    if (currentStepIndex === idx) {
+      urlStepAppliedRef.current = key;
+      return;
+    }
+    if (urlStepAppliedRef.current === key) return;
+    urlStepAppliedRef.current = key;
+    void handleGoToStep(idx);
+  }, [bootstrapFinished, entryPoint, searchParams, handleGoToStep, currentStepIndex]);
+
   const showProgress = (entryPoint === 'full') && currentStepIndex >= 0;
   const isCustomerUrlReview = phase === 'customer_url_review';
   const isReviewValid =
@@ -3017,6 +4025,32 @@ export default function SetupFlow({
   const showResultsActions = Boolean(isResultsStep && resultsPanelData);
   const visibleMessages = thread.filter((m) => m.kind !== 'results');
   const analysedUrlForPanel = lastAnalyzedUrlRef.current ?? '';
+
+  useEffect(() => {
+    const enrichGlass =
+      phase === 'analysis_loading' || phase === 'customer_url_loading' || phase === 'buying_team_loading';
+    if (phase === 'greeting') {
+      if (!visibleMessages.some((m) => m.role === 'user')) return;
+    } else if (!enrichGlass && phase !== 'customer_url_conversation') {
+      return;
+    }
+    const el = setupGreetingThreadRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+  }, [
+    phase,
+    visibleMessages,
+    thinking,
+    loadMsg,
+    customerUrlLoadMsg,
+    customerUrlPercent,
+    ownCompanyPercent,
+    ownEnrichStep,
+    targetEnrichStep,
+    ownEnrichDisplayPct,
+    targetEnrichDisplayPct,
+    buyingLoadPct,
+  ]);
 
   // ── Data helpers (available to all phase renders below) ─────────────────
 
@@ -3136,262 +4170,362 @@ export default function SetupFlow({
 
   // ── Redesigned phase screens ──────────────────────────────────────────────
 
-  // Phase: greeting
-  // • Before the user sends anything: show the welcome card (orb + headline + URL input).
-  //   The input is wired directly to inputValue/handleSend so the agent handles it normally.
-  // • After the user sends their first message: card morphs into a glass chat window.
-  if (phase === 'greeting') {
-    const hasUserMsg = visibleMessages.some((m) => m.role === 'user');
+  const welcomeChatPart1 = `Hi ${firstName || 'there'}, let's get you set up. `;
+  const welcomeChatPart2 = `First, what's your company's website?`;
 
-    if (!hasUserMsg) {
-      // ── Welcome card ─────────────────────────────────────────────────────
-      const part1 = `Hi ${firstName || 'there'}, let's get you set up. `;
-      const part2 = `First, what's your company's website?`;
-      const WELCOME_SPEED = 44;
-      const isWorkDomain = !!emailDomain && !FREE_EMAIL_DOMAINS.has(emailDomain.toLowerCase());
-      return (
-        <div className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-4 py-16">
-          <AppAmbientBackground />
-          <div className="relative z-10 flex min-h-[510px] w-[460px] flex-col overflow-visible rounded-3xl border border-white/55 bg-white/65 px-10 pb-10 pt-8 shadow-arcova backdrop-blur-xl">
-            {/*
-              Orb center must sit halfway between the inner top of the card and the eyebrow line.
-              A plain grid row of 1fr does not get height when the grid is auto-sized, so it collapsed
-              and the eyebrow hugged the orb. This block uses a fixed-height band: flex-1 fills all
-              space above the eyebrow, and the orb is centered in that region (geometry: center at
-              half the distance from band top to eyebrow top).
-            */}
-            <div className="flex h-[15.5rem] w-full shrink-0 flex-col items-center">
-              <div className="flex min-h-0 w-full flex-1 flex-col items-center justify-center">
-                <SetupOrb variant="welcome" welcomeEnergised={false} />
-              </div>
-              <div className="shrink-0 text-center text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/45">
-                Welcome to Arcova
-              </div>
-            </div>
-            <div className="flex min-h-0 flex-1 flex-col justify-start">
-              <h1 className="mb-7 mt-[0.75cm] min-h-[5rem] text-center font-manrope text-3xl font-medium leading-snug tracking-tight text-arcova-navy">
-                <TypingHeadline part1={part1} part2={part2} speed={WELCOME_SPEED} />
-              </h1>
+  // Phase: greeting, or step-2 target ICP as a continuation of the same glass agent window
+  // • Before the user sends anything: welcome card (orb + headline + URL input).
+  // • After the first user message: same 460px shell, in-place thread + Today-style composer (no separate header chrome).
+  if (phase === 'greeting' || phase === 'customer_url_conversation') {
+    const hasUserMsg =
+      visibleMessages.some((m) => m.role === 'user') || phase === 'customer_url_conversation';
+    // Opening beats are appended to `thread` on mount while the welcome card shows static headline copy.
+    // In chat mode, list only messages from the first user turn so the UI matches what the user experienced.
+    const firstGreetingUserIdx = visibleMessages.findIndex((m) => m.role === 'user');
+    const greetingChatMessages =
+      firstGreetingUserIdx >= 0 ? visibleMessages.slice(firstGreetingUserIdx) : visibleMessages;
+    const greetingChatMessagesDisplay = filterFirstAssistantIfWelcomeHeadlineDuplicate(
+      greetingChatMessages,
+      welcomeChatPart1,
+      welcomeChatPart2,
+    );
+    const WELCOME_SPEED = 44;
+    const isWorkDomain = !!emailDomain && !FREE_EMAIL_DOMAINS.has(emailDomain.toLowerCase());
 
-              <div className="space-y-3">
-                <form onSubmit={(e) => void handleSend(e)}>
-                  <div className="flex overflow-hidden rounded-xl border border-arcova-navy/12 bg-white/75 shadow-sm transition-all focus-within:border-arcova-teal focus-within:ring-2 focus-within:ring-arcova-teal/15">
-                    <input
-                      value={inputValue.replace(/^https?:\/\//i, '')}
-                      onChange={(e) => setInputVal(e.target.value.replace(/^https?:\/\//i, ''))}
-                      placeholder="Your company name or website"
-                      spellCheck={false}
-                      autoComplete="off"
-                      autoFocus={inputEnabled}
-                      disabled={!inputEnabled}
-                      className="min-w-0 flex-1 bg-transparent py-3.5 pl-4 pr-2 text-sm text-arcova-navy outline-none placeholder:text-arcova-navy/35 disabled:opacity-50"
-                    />
-                    <button
-                      type="submit"
-                      disabled={!inputValue.trim() || !inputEnabled}
-                      className="m-1 rounded-lg bg-arcova-teal px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-arcova-navy disabled:opacity-30"
-                    >
-                      Continue
-                    </button>
-                  </div>
-                </form>
-                {isWorkDomain && !inputValue.trim() && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      pushText('user', emailDomain);
-                      void runAnalysis(emailDomain);
-                    }}
-                    className="flex items-center gap-1.5 rounded-full border border-arcova-teal/30 bg-arcova-teal/8 px-3.5 py-1.5 text-xs font-medium text-arcova-teal transition-all hover:bg-arcova-teal/15"
-                  >
-                    Use {emailDomain} from my email
-                  </button>
-                )}
-                {analysisError && (
-                  <p className="text-xs text-red-600">{analysisError}</p>
-                )}
-              </div>
-            </div>
-            <div className="mt-8 flex items-center justify-center gap-2 text-xs text-arcova-navy/40">
-              <span className="flex -space-x-1.5">
-                {['#a3e3df', '#f6d6c1', '#b5d6f0'].map((bg, i) => (
-                  <span
-                    key={i}
-                    className="h-5 w-5 rounded-full border border-white/60"
-                    style={{ background: bg }}
-                  />
-                ))}
-              </span>
-              <span>
-                Joining as{' '}
-                <strong className="font-semibold text-arcova-navy/70">{firstName || 'you'}</strong>
-                {email && (
-                  <span className="ml-1 text-arcova-navy/35">• {email}</span>
-                )}
-              </span>
-            </div>
+    return (
+      <div className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-4 py-16">
+        <AppAmbientBackground />
+        <div className="absolute left-0 right-0 top-0 z-20 flex justify-center px-6 pt-6 sm:px-10">
+          <div className="flex w-full max-w-[1080px] flex-wrap items-center gap-3">
+            {phase === 'customer_url_conversation' && entryPoint === 'full' && (
+              <button
+                type="button"
+                onClick={() => void handleGoToStep(0)}
+                disabled={thinking}
+                className="inline-flex items-center gap-1.5 rounded-full border border-arcova-navy/10 bg-white/65 px-3 py-1.5 text-[12px] font-medium text-arcova-navy/65 backdrop-blur transition-all hover:-translate-x-0.5 hover:bg-white hover:text-arcova-navy disabled:opacity-50"
+              >
+                <span aria-hidden>←</span> Back to edit your company
+              </button>
+            )}
+            <StepEyebrow step={0} />
           </div>
         </div>
-      );
-    }
-
-    // ── Chat window (after first user message) ─────────────────────────────
-    return (
-      <div className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-4 py-12">
-        <AppAmbientBackground />
-        <div className="relative z-10 flex w-full max-w-[480px] flex-col overflow-hidden rounded-3xl border border-white/55 bg-white/65 shadow-arcova backdrop-blur-xl">
-          {/* Mini orb header */}
-          <div className="flex items-center gap-2.5 border-b border-arcova-navy/8 px-5 py-3">
-            <SetupOrb size="sm" />
-            <div>
-              <p className="text-xs font-semibold text-arcova-navy">Setup agent</p>
-              <p className="flex items-center gap-1 text-[10px] text-arcova-navy/45">
-                <span
-                  className="h-1.5 w-1.5 rounded-full bg-arcova-teal"
-                  style={{ animation: 'arcova-dot-pulse 2.6s ease-in-out infinite' }}
-                />
-                {thinking ? 'Thinking…' : 'Ready'}
-              </p>
-            </div>
-          </div>
-
-          {/* Messages */}
-          <div className="max-h-[360px] min-h-[80px] space-y-3 overflow-y-auto px-5 py-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {visibleMessages.map((msg, i) => {
-              if (msg.role === 'user') {
-                return (
-                  <div key={msg.id} className="flex justify-end">
-                    <div className="max-w-[85%] rounded-2xl rounded-tr-sm bg-arcova-teal px-4 py-2.5 text-sm leading-relaxed text-white">
-                      {msg.text}
-                    </div>
-                  </div>
-                );
-              }
-              const isLast = i === visibleMessages.length - 1;
-              return (
-                <div key={msg.id} className="flex" style={{ animation: 'arcova-msg-in 0.2s ease' }}>
-                  <div
-                    className={`max-w-[88%] rounded-2xl rounded-tl-sm border border-arcova-navy/8 bg-white/85 px-4 py-2.5 text-sm leading-relaxed text-arcova-navy transition-opacity ${
-                      !isLast ? 'opacity-60' : ''
-                    }`}
-                  >
-                    {msg.typing ? <TypingText target={msg.text} /> : msg.text}
-                  </div>
+        <div
+          className={cn(
+            'relative z-10 flex w-[460px] flex-col rounded-3xl border border-white/55 bg-white/65 px-10 pb-10 pt-0 shadow-arcova backdrop-blur-xl',
+            hasUserMsg
+              ? 'h-[min(85vh,52rem)] min-h-[580px] max-h-[85vh] overflow-hidden'
+              : 'min-h-[580px] overflow-visible',
+          )}
+        >
+          {!hasUserMsg ? (
+            <>
+              <SetupGlassAgentMetaStrip
+                clock={setupGreetingChatClock}
+                statusKey={thinking ? 'thinking' : inputEnabled ? 'ready' : 'waiting'}
+              />
+              {/*
+                Fixed-height orb band keeps the orb centered in the same window as before; larger
+                margin-top on the eyebrow moves “Welcome to Arcova” down toward the headline.
+              */}
+              <div className="flex w-full shrink-0 flex-col items-center">
+                <div className="flex h-[13.4375rem] w-full flex-col items-center justify-center">
+                  <SetupOrb variant="welcome" welcomeEnergised={false} />
                 </div>
-              );
-            })}
-            {thinking && (
-              <div className="flex">
-                <div className="rounded-2xl rounded-tl-sm border border-arcova-navy/8 bg-white/85 px-4 py-3">
-                  <div className="flex gap-1">
-                    {[0, 150, 300].map((d) => (
-                      <div
-                        key={d}
-                        className="h-1.5 w-1.5 animate-bounce rounded-full bg-arcova-teal/50"
-                        style={{ animationDelay: `${d}ms` }}
-                      />
-                    ))}
-                  </div>
+                <div className="mt-[1.15cm] shrink-0 text-center text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/45">
+                  Welcome to Arcova
                 </div>
               </div>
-            )}
-            {analysisError && (
-              <p className="text-center text-xs text-red-500">{analysisError}</p>
-            )}
-          </div>
+              <div className="flex min-h-0 flex-1 flex-col justify-start">
+                <h1 className="mb-7 mt-[0.75cm] min-h-[5rem] text-center font-manrope text-3xl font-medium leading-snug tracking-tight text-arcova-navy">
+                  {inputEnabled ? (
+                    <TypingHeadline part1={welcomeChatPart1} part2={welcomeChatPart2} speed={WELCOME_SPEED} />
+                  ) : (
+                    <span className="block text-arcova-navy/40">Getting ready.</span>
+                  )}
+                </h1>
 
-          {/* Input bar */}
-          {inputEnabled && (
-            <form
-              onSubmit={(e) => void handleSend(e)}
-              className="flex gap-2 border-t border-arcova-navy/8 px-4 py-3"
-            >
-              <input
-                value={inputValue}
-                onChange={(e) => setInputVal(e.target.value)}
-                placeholder="Reply…"
-                spellCheck={false}
-                autoComplete="off"
-                autoFocus
-                className="min-w-0 flex-1 rounded-xl border border-arcova-navy/12 bg-white/75 px-3.5 py-2.5 text-sm text-arcova-navy outline-none placeholder:text-arcova-navy/35 focus:border-arcova-teal focus:ring-2 focus:ring-arcova-teal/15"
+                <div className="space-y-3">
+                  <form onSubmit={(e) => void handleSend(e)}>
+                    <div
+                      className={cn(
+                        'flex min-w-0 items-center gap-2 rounded-2xl border bg-white/90 px-3 py-2.5 shadow-[0_8px_32px_-20px_rgba(13,53,71,0.18)] backdrop-blur-md transition-all',
+                        inputEnabled
+                          ? 'border-[rgba(13,53,71,0.12)] focus-within:border-arcova-teal/45 focus-within:shadow-[0_8px_28px_-18px_rgba(0,164,180,0.22)]'
+                          : 'pointer-events-none border-arcova-navy/10 opacity-55',
+                      )}
+                    >
+                      <Sparkles
+                        className={cn(
+                          'h-4 w-4 shrink-0',
+                          inputEnabled ? 'text-arcova-teal/45' : 'text-arcova-navy/25',
+                        )}
+                      />
+                      <input
+                        ref={welcomeInputRef}
+                        value={inputValue.replace(/^https?:\/\//i, '')}
+                        onChange={(e) => setInputVal(e.target.value.replace(/^https?:\/\//i, ''))}
+                        placeholder="Your company name or website"
+                        spellCheck={false}
+                        autoComplete="off"
+                        disabled={!inputEnabled}
+                        aria-disabled={!inputEnabled}
+                        className="min-w-0 flex-1 bg-transparent font-manrope text-[1.0625rem] text-slate-800 outline-none placeholder:text-slate-400 disabled:cursor-not-allowed"
+                      />
+                      <button
+                        type="submit"
+                        disabled={!inputValue.trim() || !inputEnabled}
+                        className="flex shrink-0 items-center gap-1.5 rounded-xl bg-arcova-teal px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/90 disabled:cursor-not-allowed disabled:opacity-30"
+                        aria-label={inputEnabled ? 'Send' : 'Getting ready'}
+                      >
+                        <Send className="h-4 w-4" />
+                        Send
+                      </button>
+                    </div>
+                  </form>
+                  {inputEnabled && isWorkDomain && !inputValue.trim() && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        pushText('user', emailDomain);
+                        void runAnalysis(emailDomain);
+                      }}
+                      className="flex items-center gap-1.5 rounded-full border border-arcova-teal/30 bg-arcova-teal/8 px-3.5 py-1.5 text-xs font-medium text-arcova-teal transition-all hover:bg-arcova-teal/15"
+                    >
+                      Use {emailDomain} from my email
+                    </button>
+                  )}
+                  {analysisError && (
+                    <p className="text-xs text-red-600">{analysisError}</p>
+                  )}
+                </div>
+              </div>
+              <div className="mt-8 flex items-center justify-center gap-2 text-xs text-arcova-navy/40">
+                <span className="flex -space-x-1.5">
+                  {['#a3e3df', '#f6d6c1', '#b5d6f0'].map((bg, i) => (
+                    <span
+                      key={i}
+                      className="h-5 w-5 rounded-full border border-white/60"
+                      style={{ background: bg }}
+                    />
+                  ))}
+                </span>
+                <span>
+                  Joining as{' '}
+                  <strong className="font-semibold text-arcova-navy/70">{firstName || 'you'}</strong>
+                  {email && (
+                    <span className="ml-1 text-arcova-navy/35">• {email}</span>
+                  )}
+                </span>
+              </div>
+            </>
+          ) : (
+            <>
+              <SetupGlassAgentMetaStrip
+                clock={setupGreetingChatClock}
+                statusKey={thinking ? 'thinking' : inputEnabled ? 'ready' : 'waiting'}
               />
-              <button
-                type="submit"
-                disabled={!inputValue.trim()}
-                className="rounded-xl bg-arcova-teal px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-arcova-navy disabled:opacity-30"
+              {phase === 'customer_url_conversation' && (
+                <div className="px-1 pb-2 pt-1 text-center">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/45">
+                    Step 2 · Target ICP
+                  </p>
+                  <p className="mt-1.5 text-xs leading-snug text-arcova-navy/50">
+                    Share a dream-account URL in chat, or type a company name and we will take it from there.
+                  </p>
+                </div>
+              )}
+              <div
+                ref={setupGreetingThreadRef}
+                className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-1 py-2 [touch-action:pan-y] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
               >
-                →
-              </button>
-            </form>
+                {greetingChatMessagesDisplay.map((msg, i) => {
+                  if (msg.role === 'user') {
+                    return (
+                      <div
+                        key={msg.id}
+                        className="flex justify-end"
+                        style={{ animation: 'arcova-msg-in 0.2s ease' }}
+                      >
+                        <div className="max-w-[min(100%,36rem)] rounded-2xl rounded-br-md rounded-tl-2xl rounded-tr-2xl bg-arcova-teal px-4 py-3.5 font-manrope text-[1.125rem] leading-[1.45] tracking-[-0.016em] text-white shadow-[0_10px_40px_-18px_rgba(0,164,180,0.45)]">
+                          {msg.text}
+                        </div>
+                      </div>
+                    );
+                  }
+                  const isLast = i === greetingChatMessagesDisplay.length - 1;
+                  return (
+                    <div key={msg.id} className="flex w-full" style={{ animation: 'arcova-msg-in 0.2s ease' }}>
+                      <div
+                        className={cn(
+                          'max-w-[min(100%,40rem)] rounded-2xl rounded-tl-sm bg-gradient-to-br from-slate-50 to-white px-4 py-4 font-manrope text-[1.1875rem] leading-[1.45] tracking-[-0.018em] text-slate-700 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.9)] ring-1 ring-slate-200/55 transition-opacity',
+                          !isLast ? 'opacity-55' : 'opacity-100',
+                        )}
+                      >
+                        <SetupAssistantMessageParagraphs
+                          text={msg.text}
+                          typing={!!msg.typing}
+                          onTypingLayout={msg.typing ? scrollSetupGreetingThreadToBottom : undefined}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+                {thinking && (
+                  <div className="flex w-full">
+                    <div className="max-w-[min(100%,40rem)] rounded-2xl rounded-tl-sm bg-gradient-to-br from-slate-50 to-slate-100/80 px-4 py-4 font-manrope text-[1.1875rem] leading-[1.45] tracking-[-0.018em] text-slate-700 ring-1 ring-slate-200/60">
+                      <div className="flex h-5 items-center gap-1.5">
+                        {[0, 120, 240].map((d) => (
+                          <span
+                            key={d}
+                            className="h-1.5 w-1.5 animate-bounce rounded-full bg-arcova-teal/60"
+                            style={{ animationDelay: `${d}ms` }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {analysisError && (
+                  <p className="text-center text-xs text-red-500">{analysisError}</p>
+                )}
+              </div>
+              {inputEnabled && (
+                <SetupEmbedChatInput
+                  value={inputValue}
+                  onChange={(v) => setInputVal(v)}
+                  onSubmit={(e) => void handleSend(e)}
+                  disabled={!inputEnabled}
+                  placeholder={
+                    phase === 'customer_url_conversation'
+                      ? 'URL or company name…'
+                      : 'Reply…'
+                  }
+                  autoFocusInput
+                />
+              )}
+            </>
           )}
         </div>
       </div>
     );
   }
 
-  // Phase: analysis_loading → Enriching card (own company)
-  if (phase === 'analysis_loading') {
-    return (
-      <div className="relative flex min-h-dvh flex-col overflow-hidden">
-        <AppAmbientBackground />
-        <SetupEnrichingCard
-          mode="company"
-          url={lastAnalyzedUrlRef.current ?? ''}
-          step={ownEnrichStep}
-          onCancel={cancelAnalysis}
-        />
-      </div>
-    );
-  }
+  // Phases: inline enrichment (own company, target URL, buying team) inside the same glass chat shell
+  if (
+    phase === 'analysis_loading' ||
+    phase === 'customer_url_loading' ||
+    phase === 'buying_team_loading'
+  ) {
+    const enrichMessages = visibleGreetingStyleMessages(thread, welcomeChatPart1, welcomeChatPart2);
+    const partialOwnLabel =
+      typeof partialOwnEnrichment?.company_name === 'string' && partialOwnEnrichment.company_name.trim()
+        ? partialOwnEnrichment.company_name
+        : null;
 
-  // Phase: customer_url_loading → Enriching card (targets)
-  if (phase === 'customer_url_loading') {
     return (
-      <div className="relative flex min-h-dvh flex-col overflow-hidden">
+      <div className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-4 py-16">
         <AppAmbientBackground />
-        <SetupEnrichingCard
-          mode="targets"
-          url={lastTargetUrlRef.current ?? ''}
-          step={targetEnrichStep}
-          onCancel={cancelAnalysis}
-        />
-      </div>
-    );
-  }
-
-  // Phase: buying_team_loading → Enriching card (buying)
-  if (phase === 'buying_team_loading') {
-    return (
-      <div className="relative flex min-h-dvh flex-col overflow-hidden">
-        <AppAmbientBackground />
-        <SetupEnrichingCard mode="buying" />
+        <div className="absolute left-0 right-0 top-0 z-20 flex justify-center px-6 pt-6 sm:px-10">
+          <div className="w-full max-w-[1080px]">
+            <StepEyebrow step={Math.max(0, currentStepIndex) as 0 | 1 | 2} />
+          </div>
+        </div>
+        <div className="relative z-10 flex h-[min(85vh,52rem)] w-[460px] min-h-[580px] max-h-[85vh] flex-col overflow-hidden rounded-3xl border border-white/55 bg-white/65 px-10 pb-0 pt-0 shadow-arcova backdrop-blur-xl">
+          <SetupGlassAgentMetaStrip clock={setupGreetingChatClock} statusKey="thinking" />
+          <div
+            ref={setupGreetingThreadRef}
+            className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-1 py-2 pb-4 [touch-action:pan-y] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          >
+            {enrichMessages.map((msg, i) => {
+              if (msg.role === 'user') {
+                return (
+                  <div
+                    key={msg.id}
+                    className="flex justify-end"
+                    style={{ animation: 'arcova-msg-in 0.2s ease' }}
+                  >
+                    <div className="max-w-[min(100%,36rem)] rounded-2xl rounded-br-md rounded-tl-2xl rounded-tr-2xl bg-arcova-teal px-4 py-3.5 font-manrope text-[1.125rem] leading-[1.45] tracking-[-0.016em] text-white shadow-[0_10px_40px_-18px_rgba(0,164,180,0.45)]">
+                      {msg.text}
+                    </div>
+                  </div>
+                );
+              }
+              const isLast = i === enrichMessages.length - 1;
+              return (
+                <div key={msg.id} className="flex w-full" style={{ animation: 'arcova-msg-in 0.2s ease' }}>
+                  <div
+                    className={cn(
+                      'max-w-[min(100%,40rem)] rounded-2xl rounded-tl-sm bg-gradient-to-br from-slate-50 to-white px-4 py-4 font-manrope text-[1.1875rem] leading-[1.45] tracking-[-0.018em] text-slate-700 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.9)] ring-1 ring-slate-200/55 transition-opacity',
+                      !isLast ? 'opacity-55' : 'opacity-100',
+                    )}
+                  >
+                    <SetupAssistantMessageParagraphs
+                      text={msg.text}
+                      typing={!!msg.typing}
+                      onTypingLayout={msg.typing ? scrollSetupGreetingThreadToBottom : undefined}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+            {analysisError ? <p className="text-center text-xs text-red-500">{analysisError}</p> : null}
+            {phase === 'analysis_loading' ? (
+              <SetupInlineEnrichmentPanel
+                statusLine={loadMsg}
+                displayPct={ownEnrichDisplayPct}
+                partialName={partialOwnLabel}
+                showStop
+                onCancel={cancelAnalysis}
+              />
+            ) : phase === 'customer_url_loading' ? (
+              <SetupInlineEnrichmentPanel
+                statusLine={customerUrlLoadMsg}
+                displayPct={targetEnrichDisplayPct}
+                partialName={partialTargetEnrichment?.company_name ?? null}
+                showStop
+                onCancel={cancelAnalysis}
+              />
+            ) : (
+              <SetupInlineEnrichmentPanel
+                statusLine="Mapping buying teams for your target accounts…"
+                displayPct={buyingLoadPct}
+                partialName={reviewedCompanyName || savedIcpName || null}
+                showStop={false}
+              />
+            )}
+          </div>
+        </div>
       </div>
     );
   }
 
   // ── Welcome splash (dark, fallback for chip-select phases during boot) ────
-
-  if (thinking && thread.length === 0) {
+  // Do not steal the canvas from light review / URL phases if they are still mounted.
+  if (
+    thinking &&
+    thread.length === 0 &&
+    phase !== 'analysis_results' &&
+    phase !== 'icp_suggestion' &&
+    phase !== 'customer_url_input' &&
+    phase !== 'customer_url_review' &&
+    phase !== 'buying_team_review'
+  ) {
     return (
       <div className={`flex min-h-0 flex-1 flex-col ${SETUP_CHAT_SURROUND}`}>
-        <div className="flex min-h-0 flex-1 items-center justify-center p-4 sm:p-6">
-          <div
-            className={`flex min-h-[18rem] max-h-[min(32rem,calc(100dvh-12rem))] w-full max-w-3xl ${SETUP_CHAT_CARD}`}
-          >
-            <div className="flex flex-1 flex-col items-center justify-center gap-6 bg-arcova-darkblue px-6 py-10 text-center">
-              <ArcovaLoader size={64} />
-              <div>
-                <h1 className="text-2xl font-bold text-white">
-                  {entryPoint === 'target-company' ? 'Add a target company'
-                    : entryPoint === 'buying-group' ? 'Add a buying team'
-                    : entryPoint === 'company-only' ? 'Update your company'
-                    : 'Welcome to Arcova'}
-                </h1>
-                <p className="mt-2 text-sm text-slate-300">
-                  {entryPoint === 'full' ? 'Getting your workspace ready.' : 'One moment…'}
-                </p>
-              </div>
-            </div>
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-8 p-6 sm:p-10">
+          <div className="flex h-[min(36vh,220px)] w-full shrink-0 items-center justify-center">
+            <ArcovaWelcomeOrb energised size="lg" />
+          </div>
+          <div className="max-w-md text-center">
+            <h1 className="text-2xl font-bold text-white">
+              {entryPoint === 'target-company' ? 'Add a target company'
+                : entryPoint === 'company-only' ? 'Update your company'
+                : 'Welcome to Arcova'}
+            </h1>
+            <p className="mt-2 text-sm text-slate-300">
+              {entryPoint === 'full' ? 'Getting your workspace ready.' : 'One moment…'}
+            </p>
           </div>
         </div>
       </div>
@@ -3409,136 +4543,172 @@ export default function SetupFlow({
   const greetName = firstName ? `, ${firstName}` : '';
 
   // Shared hero wrapper for all light-layout phases
+  const setupReviewBackButtonClass =
+    'mb-4 inline-flex items-center gap-1.5 rounded-full border border-arcova-navy/10 bg-white/65 px-3 py-1.5 text-[12px] font-medium text-arcova-navy/65 backdrop-blur transition-all hover:-translate-x-0.5 hover:bg-white hover:text-arcova-navy disabled:opacity-50';
+
+  const setupProgressBackButtonClass =
+    'shrink-0 inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-medium text-white/75 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-40';
+
   const LightLayout = ({
     eyebrow,
     title,
     subtitle,
     children,
-    dock,
+    onBack,
+    backLabel,
   }: {
     eyebrow?: ReactNode;
     title: string;
     subtitle?: string;
     children: ReactNode;
-    dock?: ReactNode;
+    onBack?: () => void;
+    backLabel?: string;
   }) => (
-    <div className="relative flex min-h-dvh flex-col overflow-hidden">
+    <div className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col overflow-y-auto">
       <AppAmbientBackground />
-      <div className="relative z-10 flex min-h-dvh flex-col px-4 pb-24 pt-10 sm:px-6">
+      <div className="relative z-10 flex min-h-full flex-col px-4 pb-16 pt-10 sm:px-6">
         <div className="mx-auto w-full max-w-2xl">
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              disabled={thinking}
+              className={setupReviewBackButtonClass}
+            >
+              <span aria-hidden>←</span> Back{backLabel ? ` to ${backLabel}` : ''}
+            </button>
+          )}
           {eyebrow && <div className="mb-3">{eyebrow}</div>}
           <h1 className="text-2xl font-semibold text-arcova-navy sm:text-3xl">{title}</h1>
           {subtitle && <p className="mt-1.5 text-sm text-arcova-ink-soft">{subtitle}</p>}
         </div>
         <div className="mx-auto mt-6 w-full max-w-2xl flex-1">{children}</div>
       </div>
-      {dock}
     </div>
   );
 
-  // Step dots eyebrow (matches design: small dots showing which of 3 steps)
-  const StepDots = ({ current }: { current: 0 | 1 | 2 }) => (
-    <div className="flex items-center gap-1.5">
-      {(['My company', 'Target ICP', 'Buying team'] as const).map((label, i) => (
-        <div
-          key={label}
-          className={`h-1.5 rounded-full transition-all ${
-            i < current
-              ? 'w-4 bg-arcova-teal/50'
-              : i === current
-              ? 'w-6 bg-arcova-teal'
-              : 'w-1.5 bg-arcova-navy/15'
-          }`}
-        />
-      ))}
-      <span className="ml-2 text-xs font-medium tracking-wide text-arcova-ink-mute uppercase">
-        {['My company', 'Target ICP', 'Buying team'][current]}
-      </span>
-    </div>
-  );
 
-  // Phase: analysis_results → light glass review of own company
+  // Phase: analysis_results → light glass review of own company (matches Setup.html design)
   if (phase === 'analysis_results') {
     const domain = analysedUrlForPanel.replace(/^https?:\/\//, '').replace(/\/$/, '') || 'your company';
     return (
-      <LightLayout
-        eyebrow={<StepDots current={0} />}
-        title={`${timeGreeting}${greetName}. Here's what I found on ${domain}.`}
-        subtitle={editingFindings ? 'Edit any fields below, then save when you\'re done.' : 'Take a look — edit anything that doesn\'t look right.'}
-        dock={
-          <SetupAgentDock
-            messages={visibleMessages}
-            thinking={thinking}
-            inputEnabled={false}
-            inputValue=""
-            onInputChange={() => undefined}
-            onSend={() => undefined}
-          />
-        }
-      >
-        <div className="arcova-glass-panel p-6">
-          <SetupProfilePanel
-            {...sharedPanelProps}
-            phase={phase}
-            analysisLoading={false}
-          />
+      <div className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <AppAmbientBackground />
+        <div className="relative z-10 flex flex-col px-6 py-9 lg:px-10">
+            {entryPoint === 'full' && !editingFindings && (
+              <div className="max-w-[820px]">
+                <button
+                  type="button"
+                  onClick={() => void handleAnalyseDifferentWebsite()}
+                  disabled={thinking}
+                  className={setupReviewBackButtonClass}
+                >
+                  <span aria-hidden>←</span> Back to enter website
+                </button>
+              </div>
+            )}
+            {/* Hero */}
+            <div className="mb-6 max-w-[820px]">
+              <div className="mb-5">
+                <StepEyebrow step={0} />
+              </div>
+              <h1 className="mb-3 font-manrope text-[44px] font-medium leading-[1.06] tracking-[-0.032em] text-arcova-navy">
+                {timeGreeting}{greetName}.<br />
+                Here&apos;s what I found on{' '}
+                <span className="bg-gradient-to-br from-arcova-teal to-[#007e8b] bg-clip-text text-transparent">
+                  {domain}
+                </span>
+                .
+              </h1>
+              <p className="m-0 max-w-[640px] text-[15px] leading-[1.6] text-arcova-navy/65">
+                {editingFindings ? (
+                  'Edit any fields below, then save when you\'re done.'
+                ) : (
+                  <>
+                    Have a read with your coffee. If something&apos;s off, just tell me below — I&apos;ll fix it.
+                    When it looks right, hit <strong className="font-semibold text-arcova-navy">Looks good</strong> and we&apos;ll move on together.
+                  </>
+                )}
+              </p>
+            </div>
+
+            {/* Centred company card */}
+            <div className="mx-auto w-full max-w-[760px]">
+              <SetupMyCompanyCard
+                data={myCompany}
+                editMode={editingFindings}
+                onChange={handleMyCompanyChange}
+              />
+
+              {/* CTA row */}
+              {!editingFindings && (
+                <>
+                <div className="mt-5 flex flex-wrap items-center gap-3 px-1">
+                  <button
+                    type="button"
+                    onClick={() => void handleResultsConfirmed()}
+                    disabled={thinking}
+                    className="inline-flex items-center gap-2 rounded-[14px] bg-gradient-to-br from-arcova-teal to-[#007e8b] px-[22px] py-[13px] text-sm font-semibold text-white shadow-[0_12px_28px_-12px_rgba(0,164,180,0.5)] transition-all hover:-translate-y-px hover:bg-arcova-navy disabled:opacity-50"
+                  >
+                    <Check className="h-3.5 w-3.5" strokeWidth={2.4} />
+                    Looks good — continue
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleAnalysisNotRight()}
+                    disabled={thinking}
+                    className="bg-transparent px-3.5 py-3 text-[13px] font-medium text-arcova-navy/50 transition-colors hover:text-arcova-navy disabled:opacity-50"
+                  >
+                    Something&apos;s off
+                  </button>
+                  <div className="ml-auto inline-flex items-center gap-1.5 text-[12px] text-arcova-navy/50">
+                    <span>→</span>
+                    Next: <strong className="font-semibold text-arcova-navy/70">Target companies</strong>
+                  </div>
+                </div>
+                <p className="mt-4 px-1 text-center text-[12px] text-arcova-navy/50">
+                  Need to enter a different website from scratch?{' '}
+                  <button
+                    type="button"
+                    disabled={thinking}
+                    onClick={() => void handleResumeRestart()}
+                    className="font-medium text-arcova-teal underline decoration-arcova-teal/35 underline-offset-2 hover:text-arcova-navy disabled:opacity-50"
+                  >
+                    Start setup over
+                  </button>
+                </p>
+                </>
+              )}
+              {editingFindings && (
+                <div className="mt-5 flex flex-wrap items-center gap-3 px-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSaveChangesClickAnim(true);
+                      window.setTimeout(() => setSaveChangesClickAnim(false), 420);
+                      void handleSaveFindingsEdit();
+                    }}
+                    disabled={thinking}
+                    className={cn(
+                      'inline-flex items-center gap-2 rounded-[14px] bg-gradient-to-br from-arcova-teal to-[#007e8b] px-[22px] py-[13px] text-sm font-semibold text-white shadow-[0_12px_28px_-12px_rgba(0,164,180,0.5)] transition-all duration-200 ease-out hover:-translate-y-px hover:bg-arcova-navy disabled:opacity-50',
+                      saveChangesClickAnim && 'origin-center scale-[0.96] brightness-105 ring-2 ring-arcova-teal/40 ring-offset-2 ring-offset-white/70',
+                    )}
+                  >
+                    <Check className="h-3.5 w-3.5" strokeWidth={2.4} />
+                    Save changes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCancelFindingsEdit}
+                    className="rounded-[14px] border border-arcova-navy/10 bg-white/70 px-5 py-3 text-sm font-medium text-arcova-navy transition-colors hover:bg-white"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
         </div>
-        {!editingFindings && (
-          <div className="mt-5 flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              onClick={() => void handleResultsConfirmed()}
-              disabled={thinking}
-              className={ctaPrimary}
-            >
-              Looks good →
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleAnalysisNotRight()}
-              disabled={thinking}
-              className={ctaSecondary}
-            >
-              Something's off
-            </button>
-            <button
-              type="button"
-              onClick={handleReanalyseFromPanel}
-              disabled={thinking}
-              className={ctaSecondary}
-            >
-              Re-analyse
-            </button>
-            <button
-              type="button"
-              onClick={() => { setPhase('greeting'); }}
-              disabled={thinking}
-              className={ctaGhost}
-            >
-              Use a different site
-            </button>
-          </div>
-        )}
-        {editingFindings && (
-          <div className="mt-5 flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              onClick={() => void handleSaveFindingsEdit()}
-              disabled={thinking}
-              className={ctaPrimary}
-            >
-              Save changes
-            </button>
-            <button
-              type="button"
-              onClick={handleCancelFindingsEdit}
-              className={ctaSecondary}
-            >
-              Cancel
-            </button>
-          </div>
-        )}
-      </LightLayout>
+      </div>
     );
   }
 
@@ -3546,19 +4716,11 @@ export default function SetupFlow({
   if (phase === 'icp_suggestion') {
     return (
       <LightLayout
-        eyebrow={<StepDots current={1} />}
+        eyebrow={<StepEyebrow step={1} />}
         title="We found some companies that look like strong model accounts."
         subtitle="Each represents a different buyer type. Pick one to build your ICP on, or enter your own."
-        dock={
-          <SetupAgentDock
-            messages={visibleMessages}
-            thinking={thinking}
-            inputEnabled={false}
-            inputValue=""
-            onInputChange={() => undefined}
-            onSend={() => undefined}
-          />
-        }
+        onBack={() => void handleGoToStep(0)}
+        backLabel="edit your company"
       >
         <div className="space-y-3">
           {icpSuggestions.map((s) => (
@@ -3580,7 +4742,7 @@ export default function SetupFlow({
             type="button"
             onClick={() => {
               pushText('user', 'Enter my own');
-              setPhase('customer_url_input');
+              setPhase('customer_url_conversation');
               setInput(true);
             }}
             className="w-full rounded-2xl border border-dashed border-arcova-navy/20 bg-transparent px-5 py-4 text-sm font-medium text-arcova-ink-soft transition-all hover:border-arcova-navy/40 hover:text-arcova-navy"
@@ -3597,6 +4759,17 @@ export default function SetupFlow({
     return (
       <div className="relative flex min-h-dvh flex-col overflow-hidden">
         <AppAmbientBackground />
+        <div className="relative z-10 flex flex-wrap items-center gap-3 px-4 pt-6 sm:px-6">
+          <button
+            type="button"
+            onClick={() => void handleGoToStep(0)}
+            disabled={thinking}
+            className="inline-flex items-center gap-1.5 rounded-full border border-arcova-navy/10 bg-white/65 px-3 py-1.5 text-[12px] font-medium text-arcova-navy/65 backdrop-blur transition-all hover:-translate-x-0.5 hover:bg-white hover:text-arcova-navy disabled:opacity-50"
+          >
+            <span aria-hidden>←</span> Back to edit your company
+          </button>
+          <StepEyebrow step={1} />
+        </div>
         <SetupWelcomeCard
           firstName={firstName}
           onSubmit={(url) => void handleCustomerUrlAnalyse(url)}
@@ -3613,19 +4786,11 @@ export default function SetupFlow({
     const targetName = reviewedCompanyName || (lastTargetUrlRef.current?.replace(/^https?:\/\//, '').replace(/\/$/, '') ?? 'the target company');
     return (
       <LightLayout
-        eyebrow={<StepDots current={1} />}
+        eyebrow={<StepEyebrow step={1} />}
         title={`Here's what I found on ${targetName}.`}
         subtitle="Check the fit and confirm — you can tweak before saving."
-        dock={
-          <SetupAgentDock
-            messages={visibleMessages}
-            thinking={thinking}
-            inputEnabled={false}
-            inputValue=""
-            onInputChange={() => undefined}
-            onSend={() => undefined}
-          />
-        }
+        onBack={() => void handleGoToStep(0)}
+        backLabel="edit your company"
       >
         <div className="arcova-glass-panel p-6">
           <SetupProfilePanel
@@ -3645,7 +4810,7 @@ export default function SetupFlow({
           </button>
           <button
             type="button"
-            onClick={() => { setIcpEditMode(false); setPhase('customer_url_input'); setInput(true); }}
+            onClick={() => { setIcpEditMode(false); setPhase('customer_url_conversation'); setInput(true); }}
             disabled={thinking}
             className={ctaSecondary}
           >
@@ -3661,19 +4826,11 @@ export default function SetupFlow({
     const icpName = savedIcpName || reviewedCompanyName || 'this ICP';
     return (
       <LightLayout
-        eyebrow={<StepDots current={2} />}
+        eyebrow={<StepEyebrow step={2} />}
         title={`Here's who typically buys from companies like ${icpName}.`}
         subtitle="Review the roles and seniority — you can adjust before saving."
-        dock={
-          <SetupAgentDock
-            messages={visibleMessages}
-            thinking={thinking}
-            inputEnabled
-            inputValue={inputValue}
-            onInputChange={(v) => setInputVal(v)}
-            onSend={(e) => void handleSend(e)}
-          />
-        }
+        onBack={() => void handleGoToStep(1)}
+        backLabel="edit target ICP"
       >
         <div className="arcova-glass-panel p-6">
           <SetupProfilePanel
@@ -3701,6 +4858,15 @@ export default function SetupFlow({
             {buyingTeamEditMode ? 'Cancel edits' : "Something's off"}
           </button>
         </div>
+        {inputEnabled && (
+          <SetupEmbedChatInput
+            value={inputValue}
+            onChange={(v) => setInputVal(v)}
+            onSubmit={(e) => void handleSend(e)}
+            disabled={thinking}
+            placeholder="Reply to the agent…"
+          />
+        )}
       </LightLayout>
     );
   }
@@ -3712,6 +4878,11 @@ export default function SetupFlow({
     return (
       <div className="relative flex min-h-dvh flex-col overflow-hidden">
         <AppAmbientBackground />
+        <div className="absolute left-0 right-0 top-0 z-20 flex justify-center px-6 pt-6 sm:px-10">
+          <div className="w-full max-w-[1080px]">
+            <StepEyebrow step={Math.max(0, currentStepIndex) as 0 | 1 | 2} />
+          </div>
+        </div>
         <div className="relative z-10 flex min-h-dvh flex-col items-center justify-center gap-5 px-4">
           <ArcovaLoader size={56} />
           <p className="text-sm font-medium text-arcova-ink-soft">{savingLabel}</p>
@@ -3724,7 +4895,7 @@ export default function SetupFlow({
 
   const chatColumn = (
     <div className={`flex min-h-0 flex-1 flex-col ${SETUP_CHAT_CARD}`}>
-      <div className="min-h-0 flex-1 overflow-y-auto bg-arcova-darkblue px-4 py-4">
+      <div ref={mainChatScrollRef} className="min-h-0 flex-1 overflow-y-auto bg-arcova-darkblue px-4 py-4">
         <div className="space-y-4">
           {visibleMessages.map((msg, i) => {
             if (msg.role === 'user') {
@@ -3746,9 +4917,12 @@ export default function SetupFlow({
                     !isLastAssistant && i < visibleMessages.length - 2 ? 'opacity-55' : thinking && isLastAssistant ? 'opacity-100 animate-pulse' : 'opacity-100'
                   }`}
                 >
-                  <p className="whitespace-pre-wrap text-base leading-relaxed text-gray-800">
-                    {msg.typing ? <TypingText target={msg.text} /> : msg.text}
-                  </p>
+                  <SetupAssistantMessageParagraphs
+                    text={msg.text}
+                    typing={!!msg.typing}
+                    paragraphClassName="text-base leading-relaxed text-gray-800"
+                    onTypingLayout={msg.typing ? scrollMainChatToBottom : undefined}
+                  />
                 </div>
               </div>
             );
@@ -4010,9 +5184,21 @@ export default function SetupFlow({
     <div className={`flex min-h-0 flex-1 flex-col ${SETUP_CHAT_SURROUND}`}>
       {showProgress && (
         <div className="shrink-0 border-b border-white/10 px-6 py-4">
-          <div className="mx-auto flex max-w-6xl items-center justify-between">
-            <div className="flex items-center gap-2">
-              {SETUP_STEPS.map((step, i) => {
+          <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              {entryPoint === 'full' && !isSaving && currentStepIndex > 0 && (
+                <button
+                  type="button"
+                  onClick={() => void handleGoToStep(currentStepIndex - 1)}
+                  disabled={thinking}
+                  className={setupProgressBackButtonClass}
+                >
+                  <span aria-hidden>←</span>
+                  {currentStepIndex === 2 ? 'Back to edit target ICP' : 'Back to edit your company'}
+                </button>
+              )}
+              <div className="flex flex-wrap items-center gap-2">
+                {SETUP_STEPS.map((step, i) => {
                 const isComplete = i < currentStepIndex;
                 const isCurrent = i === currentStepIndex;
                 const canGoBack = isComplete && !isSaving;

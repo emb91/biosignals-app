@@ -34,6 +34,11 @@ const LEGACY_PLATFORM_CATEGORY_ALIASES: Record<string, string> = {
   'scientific content platform': 'Scientific Content Platform',
 };
 
+/** Canonical SaaS platform buckets for constrained UI selects. */
+export const PLATFORM_CATEGORY_OPTIONS: readonly string[] = Array.from(
+  new Set(Object.values(LEGACY_PLATFORM_CATEGORY_ALIASES)),
+).sort((a, b) => a.localeCompare(b));
+
 function normalizeText(value: string): string {
   return value
     .trim()

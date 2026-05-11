@@ -4,7 +4,9 @@
  * Events emitted in order:
  *   step_claude   — Claude web-search narrative fields arrive
  *   step_apollo   — Apollo firmographic fields arrive
+ *   step_linkedin — LinkedIn URL resolved (scraping next, or skipped)
  *   step_apify    — Apify LinkedIn fields arrive (logo, tagline, followers)
+ *   step_synthesis— Sources merged; bullet condensing + taxonomy running
  *   step_taxonomy — Taxonomy classification (company_type, TAs, modalities, stages)
  *   done          — Full merged result (same shape as the non-streaming JSON response)
  *   error         — Pipeline error (stream closes after this)
@@ -13,7 +15,9 @@
 export type SSEStepName =
   | 'step_claude'
   | 'step_apollo'
+  | 'step_linkedin'
   | 'step_apify'
+  | 'step_synthesis'
   | 'step_taxonomy'
   | 'done'
   | 'error';

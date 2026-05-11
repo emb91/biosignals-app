@@ -8,11 +8,11 @@ export const ROUTES = {
   data: '/data',
   contactUs: '/contact-us',
   setup: {
+    /** Full-screen guided onboarding (company → ICP → buying team). */
+    arcova: '/arcova-setup',
     company: '/my-profile',
     icps: '/company-criteria',
     newIcp: '/company-criteria/new',
-    personas: '/personas',
-    newPersona: '/personas/new',
   },
   leads: {
     contacts: '/leads/contacts',

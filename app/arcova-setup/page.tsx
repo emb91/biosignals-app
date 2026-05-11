@@ -1,15 +1,21 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, Suspense } from 'react';
 import { useRouter } from 'next/navigation';
 import SetupShell from '@/components/SetupShell';
 import SetupFlow from '@/components/SetupFlow';
 import { useAuth } from '@/context/AuthContext';
-import { useSetupState } from '@/lib/use-setup-state';
+import { useSetupState, getNextSetupPath } from '@/lib/use-setup-state';
+import { ROUTES } from '@/lib/routes';
+import { SetupGuidedNavProvider } from '@/context/SetupGuidedNavContext';
 
 export default function ArcovaSetupPage() {
   const { user, loading } = useAuth();
-  const { step1Complete, loading: setupLoading } = useSetupState();
+  const {
+    step1Complete,
+    step2Complete,
+    loading: setupLoading,
+  } = useSetupState();
   const router = useRouter();
 
   useEffect(() => {
@@ -18,11 +24,14 @@ export default function ArcovaSetupPage() {
     }
   }, [loading, user, router]);
 
+  /** Company or ICP still missing: stay on this page (SetupFlow). Otherwise continue to import. */
   useEffect(() => {
-    if (!setupLoading && step1Complete) {
-      router.replace('/import');
+    if (setupLoading) return;
+    const next = getNextSetupPath({ step1Complete, step2Complete });
+    if (next !== ROUTES.setup.arcova) {
+      router.replace(next);
     }
-  }, [setupLoading, step1Complete, router]);
+  }, [setupLoading, step1Complete, step2Complete, router]);
 
   if (loading || setupLoading) {
     return (
@@ -36,8 +45,13 @@ export default function ArcovaSetupPage() {
     return null;
   }
 
-  if (step1Complete) {
-    return null;
+  const needsArcovaSetupFlow = !step1Complete || !step2Complete;
+  if (!needsArcovaSetupFlow) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-transparent">
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-arcova-teal" />
+      </div>
+    );
   }
 
   const firstName = (() => {
@@ -49,19 +63,29 @@ export default function ArcovaSetupPage() {
   })();
 
   return (
-    <SetupShell
-      inSetup={true}
-      step={1}
-      setupUserGreeting={firstName || undefined}
-      hideSetupProgress={true}
-    >
-      <div className="flex min-h-0 flex-1 flex-col">
-        <SetupFlow
-          firstName={firstName || undefined}
-          email={user.email || undefined}
-          emailDomain={user.email?.split('@')[1] || undefined}
-        />
-      </div>
-    </SetupShell>
+    <SetupGuidedNavProvider>
+      <SetupShell
+        inSetup={true}
+        step={1}
+        setupUserGreeting={firstName || undefined}
+        hideSetupProgress={true}
+      >
+        <div className="flex min-h-0 flex-1 flex-col">
+          <Suspense
+            fallback={
+              <div className="flex flex-1 items-center justify-center py-20">
+                <div className="h-12 w-12 animate-spin rounded-full border-2 border-arcova-teal border-t-transparent" />
+              </div>
+            }
+          >
+            <SetupFlow
+              firstName={firstName || undefined}
+              email={user.email || undefined}
+              emailDomain={user.email?.split('@')[1] || undefined}
+            />
+          </Suspense>
+        </div>
+      </SetupShell>
+    </SetupGuidedNavProvider>
   );
 }

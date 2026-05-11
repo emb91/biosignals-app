@@ -339,7 +339,7 @@ export default function BriefingPage() {
         setSteps([
           { id: 'profile', label: 'company profile', completed: profileComplete, actionPath: profileComplete ? ROUTES.setup.company : '/arcova-setup' },
           { id: 'companies', label: 'ICPs', completed: companiesComplete, actionPath: ROUTES.setup.icps },
-          { id: 'personas', label: 'buying teams', completed: contactsComplete, actionPath: ROUTES.setup.personas },
+          { id: 'personas', label: 'buying teams', completed: contactsComplete, actionPath: ROUTES.setup.icps },
           { id: 'import', label: 'contact import', completed: importComplete, actionPath: ROUTES.import },
           { id: 'signals', label: 'signals setup', completed: signalsComplete, actionPath: ROUTES.setup.icps },
         ]);
