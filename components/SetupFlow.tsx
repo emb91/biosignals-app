@@ -275,19 +275,34 @@ interface TargetCompanyProfile {
 
 const TYPING_MS = 18;
 
-/** Shown while Apify LinkedIn scrape runs (long-running; server has no finer-grained events). */
-const OWN_COMPANY_LINKEDIN_SCRAPE_LINES = [
-  'LinkedIn located ✓ Pulling logo, tagline, and followers from the public page…',
-  'Still working ✓ LinkedIn can take 20 to 40 seconds, hang tight…',
-  'Almost there ✓ Parsing location, specialties, and follower reach…',
+/** Shared enrichment UI: mid-pass (firm details landed, widening context before next SSE). */
+const ENRICH_GENERIC_LOOKUP_LINES = [
+  'Key signals in ✓ Widening search for a fuller company picture…',
+  'Still gathering ✓ Matching names and domains to public firm data…',
+  'Almost there ✓ This stretch is usually quick, sometimes needs a beat…',
+  'Working the match ✓ Trade names and legal names often differ…',
+  'Still collecting ✓ Layering another pass of context…',
+  'Narrowing it down ✓ Sticking to broadly visible information…',
 ] as const;
 
-/** Shown while bullets are condensed and taxonomy runs after LinkedIn data lands. */
-const OWN_COMPANY_SYNTHESIS_LINES = [
-  'Merging web, registry, and LinkedIn signals…',
-  'Condensing lists so your profile is easy to scan…',
-  'Mapping company type and therapy areas to our taxonomy…',
+/** Shared: slower deep-gather phase (generic, no vendor or channel detail). */
+const ENRICH_GENERIC_DEEP_GATHER_LINES = [
+  'Solid lead ✓ Pulling richer firm context (can take half a minute)…',
+  'Still collecting ✓ Heavier lookups sometimes need patience…',
+  'Almost there ✓ Sorting location, footprint, and positioning clues…',
+  'Hang tight ✓ Bigger footprints usually mean more to reconcile…',
 ] as const;
+
+/** Shared: condensed profile after sources land. */
+const ENRICH_GENERIC_SYNTHESIS_LINES = [
+  'Merging findings into one clear snapshot…',
+  'Tightening lists so this profile stays easy to scan…',
+  'Fitting details into your setup structure…',
+] as const;
+
+const TARGET_ICP_LINKEDIN_LOOKUP_LINES = ENRICH_GENERIC_LOOKUP_LINES;
+const TARGET_ICP_LINKEDIN_SCRAPE_LINES = ENRICH_GENERIC_DEEP_GATHER_LINES;
+const TARGET_ICP_SYNTHESIS_LINES = ENRICH_GENERIC_SYNTHESIS_LINES;
 
 /** Full-area backdrop behind the chat column (setup flows only). Dark navy base, teal as accent. */
 const SETUP_CHAT_SURROUND =
@@ -296,6 +311,10 @@ const SETUP_CHAT_SURROUND =
 /** Card panel floating over the dark surround. */
 const SETUP_CHAT_CARD =
   'flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.06] shadow-[0_28px_70px_-20px_rgba(0,0,0,0.8)] ring-1 ring-white/10 backdrop-blur-[2px]';
+
+/** Back control on glass / light shells, placed above the rounded chat card (early setup phases). */
+const SETUP_GLASS_BACK_ABOVE_CARD_CLASS =
+  'inline-flex items-center gap-1.5 rounded-full border border-arcova-navy/10 bg-white/65 px-3 py-1.5 text-[12px] font-medium text-arcova-navy/65 backdrop-blur transition-all hover:-translate-x-0.5 hover:bg-white hover:text-arcova-navy disabled:opacity-50';
 
 function isSaasCompanyType(value?: string | null): boolean {
   return (value ?? '').trim() === 'SaaS';
@@ -520,6 +539,49 @@ function SetupEditableText({
   );
 }
 
+/** About text: paragraphs separated by a blank line. Preserves spaces and single newlines inside a paragraph. */
+function paragraphsToAboutDraft(paragraphs: string[] | undefined): string {
+  return (paragraphs ?? []).join('\n\n');
+}
+
+function aboutDraftToParagraphs(raw: string): string[] {
+  return raw.split(/\n\s*\n/).filter((chunk) => chunk.length > 0);
+}
+
+function SetupAboutDescriptionEditor({
+  paragraphs,
+  onCommit,
+}: {
+  paragraphs: string[] | undefined;
+  onCommit: (next: string[]) => void;
+}) {
+  const serialized = JSON.stringify(paragraphs ?? []);
+  const [draft, setDraft] = useState(() => paragraphsToAboutDraft(paragraphs));
+  const prevSerialized = useRef(serialized);
+
+  useEffect(() => {
+    if (serialized !== prevSerialized.current) {
+      prevSerialized.current = serialized;
+      setDraft(paragraphsToAboutDraft(paragraphs));
+    }
+  }, [serialized, paragraphs]);
+
+  const cls =
+    'w-full resize-y rounded-lg border border-arcova-navy/15 bg-white/85 px-3 py-2 text-[12.5px] leading-[1.5] text-arcova-navy outline-none transition-colors placeholder:text-arcova-navy/35 focus:border-arcova-teal/45 focus:bg-white focus:ring-2 focus:ring-arcova-teal/15';
+
+  return (
+    <textarea
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={(e) => onCommit(aboutDraftToParagraphs(e.currentTarget.value))}
+      placeholder="Describe what the company does. Use a blank line between paragraphs."
+      rows={6}
+      spellCheck
+      className={cls}
+    />
+  );
+}
+
 /** Lets users type digits and spaces freely; commits parsed integer on blur. */
 function SetupPositiveIntDraftField({
   value,
@@ -695,16 +757,14 @@ function SetupMyCompanyCard({
         {/* About */}
         <SetupSection label="About" defaultOpen>
           {editMode ? (
-            <SetupEditableText
-              multiline
-              value={(data.description ?? []).join('\n\n')}
-              onChange={(v) => set('description', v.split(/\n{2,}/).map((s) => s.trim()).filter(Boolean))}
-              placeholder="Describe what the company does"
+            <SetupAboutDescriptionEditor
+              paragraphs={data.description}
+              onCommit={(next) => set('description', next)}
             />
           ) : (
             data.description && data.description.length > 0 && (
-              <p className="m-0 text-[12.5px] leading-[1.5] text-arcova-navy">
-                {data.description.join(' ')}
+              <p className="m-0 whitespace-pre-line text-[12.5px] leading-[1.5] text-arcova-navy">
+                {(data.description ?? []).join('\n\n')}
               </p>
             )
           )}
@@ -1772,9 +1832,17 @@ export default function SetupFlow({
   const [targetEnrichStep, setTargetEnrichStep] = useState(0); // 0 = not started, 1–4 = step completed
   const [ownEnrichStep, setOwnEnrichStep] = useState(0);
   const [ownEnrichLinkedinWait, setOwnEnrichLinkedinWait] = useState(false);
+  /** True from `step_apollo` until `step_linkedin` during my-company enrichment. */
+  const [ownEnrichAwaitingLinkedinEvent, setOwnEnrichAwaitingLinkedinEvent] = useState(false);
   const [ownEnrichSynthesisWait, setOwnEnrichSynthesisWait] = useState(false);
   const [customerUrlLinkedinWait, setCustomerUrlLinkedinWait] = useState(false);
+  /** True from `step_apollo` until `step_linkedin` (lookup can feel silent without rotating copy). */
+  const [customerUrlAwaitingLinkedinEvent, setCustomerUrlAwaitingLinkedinEvent] = useState(false);
   const [customerUrlSynthesisWait, setCustomerUrlSynthesisWait] = useState(false);
+  /** Anchor for soft progress creep while stuck on enrich step 2 (before `step_apify`). */
+  const customerUrlStep2AnchorRef = useRef<number | null>(null);
+  /** Anchor for soft progress creep during my-company enrich step 2 (before `step_apify`). */
+  const ownCompanyStep2AnchorRef = useRef<number | null>(null);
   const [buyingLoadPct, setBuyingLoadPct] = useState(18);
   const [analysisError, setAnalysisError] = useState('');
   const [pendingTransition, setPendingTransition] = useState<{
@@ -1942,35 +2010,57 @@ export default function SetupFlow({
     return () => clearInterval(id);
   }, [phase]);
 
-  /** Rotate status text during long Apify LinkedIn scrape (my company). */
+  /** Rotate generic status during my-company deep-gather phase. */
   useEffect(() => {
     if (phase !== 'analysis_loading' || !ownEnrichLinkedinWait) return;
     let i = 0;
     const id = setInterval(() => {
-      i = (i + 1) % OWN_COMPANY_LINKEDIN_SCRAPE_LINES.length;
-      setLoadMsg(OWN_COMPANY_LINKEDIN_SCRAPE_LINES[i]);
+      i = (i + 1) % ENRICH_GENERIC_DEEP_GATHER_LINES.length;
+      setLoadMsg(ENRICH_GENERIC_DEEP_GATHER_LINES[i]);
     }, 5200);
     return () => clearInterval(id);
   }, [phase, ownEnrichLinkedinWait]);
 
-  /** Rotate status during bullet condense + taxonomy (my company). */
+  /** Rotate status during my-company profile condense phase. */
   useEffect(() => {
     if (phase !== 'analysis_loading' || !ownEnrichSynthesisWait) return;
     let i = 0;
     const id = setInterval(() => {
-      i = (i + 1) % OWN_COMPANY_SYNTHESIS_LINES.length;
-      setLoadMsg(OWN_COMPANY_SYNTHESIS_LINES[i]);
+      i = (i + 1) % ENRICH_GENERIC_SYNTHESIS_LINES.length;
+      setLoadMsg(ENRICH_GENERIC_SYNTHESIS_LINES[i]);
     }, 3800);
     return () => clearInterval(id);
   }, [phase, ownEnrichSynthesisWait]);
 
-  /** Same rotation for target-company enrichment glass UI. */
+  /** Rotate during my-company mid-pass wait (before deep-gather SSE lands). */
+  useEffect(() => {
+    if (phase !== 'analysis_loading' || !ownEnrichAwaitingLinkedinEvent) return;
+    let i = 0;
+    const id = setInterval(() => {
+      i = (i + 1) % ENRICH_GENERIC_LOOKUP_LINES.length;
+      setLoadMsg(ENRICH_GENERIC_LOOKUP_LINES[i]);
+    }, 3400);
+    return () => clearInterval(id);
+  }, [phase, ownEnrichAwaitingLinkedinEvent]);
+
+  /** Rotate while waiting mid-pass during target ICP enrichment. */
+  useEffect(() => {
+    if (phase !== 'customer_url_loading' || !customerUrlAwaitingLinkedinEvent) return;
+    let i = 0;
+    const id = setInterval(() => {
+      i = (i + 1) % TARGET_ICP_LINKEDIN_LOOKUP_LINES.length;
+      setCustomerUrlLoadMsg(TARGET_ICP_LINKEDIN_LOOKUP_LINES[i]);
+    }, 3400);
+    return () => clearInterval(id);
+  }, [phase, customerUrlAwaitingLinkedinEvent]);
+
+  /** Target ICP deep-gather phase rotation. */
   useEffect(() => {
     if (phase !== 'customer_url_loading' || !customerUrlLinkedinWait) return;
     let i = 0;
     const id = setInterval(() => {
-      i = (i + 1) % OWN_COMPANY_LINKEDIN_SCRAPE_LINES.length;
-      setCustomerUrlLoadMsg(OWN_COMPANY_LINKEDIN_SCRAPE_LINES[i]);
+      i = (i + 1) % TARGET_ICP_LINKEDIN_SCRAPE_LINES.length;
+      setCustomerUrlLoadMsg(TARGET_ICP_LINKEDIN_SCRAPE_LINES[i]);
     }, 5200);
     return () => clearInterval(id);
   }, [phase, customerUrlLinkedinWait]);
@@ -1979,8 +2069,8 @@ export default function SetupFlow({
     if (phase !== 'customer_url_loading' || !customerUrlSynthesisWait) return;
     let i = 0;
     const id = setInterval(() => {
-      i = (i + 1) % OWN_COMPANY_SYNTHESIS_LINES.length;
-      setCustomerUrlLoadMsg(OWN_COMPANY_SYNTHESIS_LINES[i]);
+      i = (i + 1) % TARGET_ICP_SYNTHESIS_LINES.length;
+      setCustomerUrlLoadMsg(TARGET_ICP_SYNTHESIS_LINES[i]);
     }, 3800);
     return () => clearInterval(id);
   }, [phase, customerUrlSynthesisWait]);
@@ -2920,7 +3010,9 @@ export default function SetupFlow({
     setCustomerUrlLoadMsg('Researching the company…');
     setPartialTargetEnrichment(null);
     setTargetEnrichStep(0);
+    customerUrlStep2AnchorRef.current = null;
     setCustomerUrlLinkedinWait(false);
+    setCustomerUrlAwaitingLinkedinEvent(false);
     setCustomerUrlSynthesisWait(false);
 
     try {
@@ -2934,14 +3026,16 @@ export default function SetupFlow({
       let data: import('@/lib/target-company-enrichment').TargetCompanyEnrichmentResult | null = null;
       for await (const { event, data: eventData } of parseSSEStream(res)) {
         if (event === 'step_claude') {
-          setCustomerUrlLoadMsg('Website analysed ✓  Checking company database…');
+          setCustomerUrlLoadMsg('Website analysed ✓ Verifying firm details…');
           setTargetEnrichStep(1);
           setPartialTargetEnrichment({
             company_name: (eventData.company_name as string) || null,
             description: Array.isArray(eventData.description) ? (eventData.description as string[]) : null,
           });
         } else if (event === 'step_apollo') {
-          setCustomerUrlLoadMsg('Company and web data in ✓ Resolving LinkedIn…');
+          customerUrlStep2AnchorRef.current = Date.now();
+          setCustomerUrlAwaitingLinkedinEvent(true);
+          setCustomerUrlLoadMsg(TARGET_ICP_LINKEDIN_LOOKUP_LINES[0]);
           setTargetEnrichStep(2);
           setPartialTargetEnrichment((prev) => ({
             ...prev,
@@ -2953,17 +3047,19 @@ export default function SetupFlow({
             funding_stage: (eventData.company_funding_stage as string) || null,
           }));
         } else if (event === 'step_linkedin') {
+          setCustomerUrlAwaitingLinkedinEvent(false);
           const found = Boolean(eventData.linkedin_found);
           setCustomerUrlLinkedinWait(found);
           setCustomerUrlSynthesisWait(false);
           if (found) {
-            setCustomerUrlLoadMsg(OWN_COMPANY_LINKEDIN_SCRAPE_LINES[0]);
+            setCustomerUrlLoadMsg(TARGET_ICP_LINKEDIN_SCRAPE_LINES[0]);
           } else {
-            setCustomerUrlLoadMsg('No public LinkedIn company URL found ✓ Enriching from site and registry only…');
+            setCustomerUrlLoadMsg('No strong public profile signal ✓ Continuing with web and available records…');
           }
         } else if (event === 'step_apify') {
+          customerUrlStep2AnchorRef.current = null;
           setCustomerUrlLinkedinWait(false);
-          setCustomerUrlLoadMsg('Sources merged ✓ Organizing profile…');
+          setCustomerUrlLoadMsg('Sources merged ✓ Shaping the profile…');
           setTargetEnrichStep(3);
           setPartialTargetEnrichment((prev) => ({
             ...prev,
@@ -2973,10 +3069,10 @@ export default function SetupFlow({
           }));
         } else if (event === 'step_synthesis') {
           setCustomerUrlSynthesisWait(true);
-          setCustomerUrlLoadMsg(OWN_COMPANY_SYNTHESIS_LINES[0]);
+          setCustomerUrlLoadMsg(TARGET_ICP_SYNTHESIS_LINES[0]);
         } else if (event === 'step_taxonomy') {
           setCustomerUrlSynthesisWait(false);
-          setCustomerUrlLoadMsg('Classified ✓  Finishing up…');
+          setCustomerUrlLoadMsg('Profile shaped ✓ Finishing up…');
           setTargetEnrichStep(4);
         } else if (event === 'done') {
           data = eventData as unknown as import('@/lib/target-company-enrichment').TargetCompanyEnrichmentResult;
@@ -3061,8 +3157,12 @@ export default function SetupFlow({
     setOwnEnrichStep(0);
     setTargetEnrichStep(0);
     setOwnEnrichLinkedinWait(false);
+    setOwnEnrichAwaitingLinkedinEvent(false);
+    ownCompanyStep2AnchorRef.current = null;
     setOwnEnrichSynthesisWait(false);
     setCustomerUrlLinkedinWait(false);
+    setCustomerUrlAwaitingLinkedinEvent(false);
+    customerUrlStep2AnchorRef.current = null;
     setCustomerUrlSynthesisWait(false);
     if (phase === 'customer_url_loading') {
       setPhase('customer_url_conversation');
@@ -3923,9 +4023,21 @@ export default function SetupFlow({
   // Once SSE steps arrive, switch from fake timer curve to real step-based progress.
   // Cap the fake curve at 20% so the first real event (step 1 → 30%) always feels like forward movement.
   const ENRICH_STEP_PCT = [30, 55, 75, 92] as const;
-  const targetEnrichDisplayPct = targetEnrichStep > 0
-    ? ENRICH_STEP_PCT[targetEnrichStep - 1] ?? 92
-    : Math.min(customerUrlPercent, 20);
+  const targetEnrichDisplayPct = (() => {
+    if (targetEnrichStep <= 0) return Math.min(customerUrlPercent, 20);
+    const stepBase = ENRICH_STEP_PCT[targetEnrichStep - 1] ?? 92;
+    if (
+      phase === 'customer_url_loading' &&
+      targetEnrichStep === 2 &&
+      customerUrlStep2AnchorRef.current !== null
+    ) {
+      const elapsed = Math.max(0, customerUrlProgressNow - customerUrlStep2AnchorRef.current);
+      const maxCreep = 17;
+      const creep = Math.min(maxCreep, (elapsed / 20000) * maxCreep);
+      return Math.round(stepBase + creep);
+    }
+    return stepBase;
+  })();
   const ownEnrichDisplayPct = ownEnrichStep > 0
     ? ENRICH_STEP_PCT[ownEnrichStep - 1] ?? 92
     : Math.min(ownCompanyPercent, 20);
@@ -4197,27 +4309,28 @@ export default function SetupFlow({
         <AppAmbientBackground />
         <div className="absolute left-0 right-0 top-0 z-20 flex justify-center px-6 pt-6 sm:px-10">
           <div className="flex w-full max-w-[1080px] flex-wrap items-center gap-3">
-            {phase === 'customer_url_conversation' && entryPoint === 'full' && (
-              <button
-                type="button"
-                onClick={() => void handleGoToStep(0)}
-                disabled={thinking}
-                className="inline-flex items-center gap-1.5 rounded-full border border-arcova-navy/10 bg-white/65 px-3 py-1.5 text-[12px] font-medium text-arcova-navy/65 backdrop-blur transition-all hover:-translate-x-0.5 hover:bg-white hover:text-arcova-navy disabled:opacity-50"
-              >
-                <span aria-hidden>←</span> Back to edit your company
-              </button>
-            )}
-            <StepEyebrow step={0} />
+            <StepEyebrow step={phase === 'customer_url_conversation' ? 1 : 0} />
           </div>
         </div>
-        <div
-          className={cn(
-            'relative z-10 flex w-[460px] flex-col rounded-3xl border border-white/55 bg-white/65 px-10 pb-10 pt-0 shadow-arcova backdrop-blur-xl',
-            hasUserMsg
-              ? 'h-[min(85vh,52rem)] min-h-[580px] max-h-[85vh] overflow-hidden'
-              : 'min-h-[580px] overflow-visible',
+        <div className="relative z-10 flex w-[460px] flex-col">
+          {phase === 'customer_url_conversation' && entryPoint === 'full' && (
+            <button
+              type="button"
+              onClick={() => void handleGoToStep(0)}
+              disabled={thinking}
+              className={cn(SETUP_GLASS_BACK_ABOVE_CARD_CLASS, 'mb-3 self-start')}
+            >
+              <span aria-hidden>←</span> Back to edit your company
+            </button>
           )}
-        >
+          <div
+            className={cn(
+              'relative flex w-full flex-col rounded-3xl border border-white/55 bg-white/65 px-10 pb-10 pt-0 shadow-arcova backdrop-blur-xl',
+              hasUserMsg
+                ? 'h-[min(85vh,52rem)] min-h-[580px] max-h-[85vh] overflow-hidden'
+                : 'min-h-[580px] overflow-visible',
+            )}
+          >
           {!hasUserMsg ? (
             <>
               <SetupGlassAgentMetaStrip
@@ -4406,6 +4519,7 @@ export default function SetupFlow({
               )}
             </>
           )}
+          </div>
         </div>
       </div>
     );
@@ -4431,7 +4545,28 @@ export default function SetupFlow({
             <StepEyebrow step={Math.max(0, currentStepIndex) as 0 | 1 | 2} />
           </div>
         </div>
-        <div className="relative z-10 flex h-[min(85vh,52rem)] w-[460px] min-h-[580px] max-h-[85vh] flex-col overflow-hidden rounded-3xl border border-white/55 bg-white/65 px-10 pb-0 pt-0 shadow-arcova backdrop-blur-xl">
+        <div className="relative z-10 flex w-[460px] flex-col">
+          {entryPoint === 'full' && phase === 'customer_url_loading' && (
+            <button
+              type="button"
+              onClick={() => void handleGoToStep(0)}
+              disabled={thinking}
+              className={cn(SETUP_GLASS_BACK_ABOVE_CARD_CLASS, 'mb-3 self-start')}
+            >
+              <span aria-hidden>←</span> Back to edit your company
+            </button>
+          )}
+          {entryPoint === 'full' && phase === 'buying_team_loading' && (
+            <button
+              type="button"
+              onClick={() => void handleGoToStep(1)}
+              disabled={thinking}
+              className={cn(SETUP_GLASS_BACK_ABOVE_CARD_CLASS, 'mb-3 self-start')}
+            >
+              <span aria-hidden>←</span> Back to edit target ICP
+            </button>
+          )}
+          <div className="relative flex h-[min(85vh,52rem)] w-full min-h-[580px] max-h-[85vh] flex-col overflow-hidden rounded-3xl border border-white/55 bg-white/65 px-10 pb-0 pt-0 shadow-arcova backdrop-blur-xl">
           <SetupGlassAgentMetaStrip clock={setupGreetingChatClock} statusKey="thinking" />
           <div
             ref={setupGreetingThreadRef}
@@ -4494,6 +4629,7 @@ export default function SetupFlow({
                 showStop={false}
               />
             )}
+          </div>
           </div>
         </div>
       </div>
@@ -4688,14 +4824,14 @@ export default function SetupFlow({
                       window.setTimeout(() => setSaveChangesClickAnim(false), 420);
                       void handleSaveFindingsEdit();
                     }}
-                    disabled={thinking}
+                    disabled={thinking || savingFindings}
                     className={cn(
                       'inline-flex items-center gap-2 rounded-[14px] bg-gradient-to-br from-arcova-teal to-[#007e8b] px-[22px] py-[13px] text-sm font-semibold text-white shadow-[0_12px_28px_-12px_rgba(0,164,180,0.5)] transition-all duration-200 ease-out hover:-translate-y-px hover:bg-arcova-navy disabled:opacity-50',
                       saveChangesClickAnim && 'origin-center scale-[0.96] brightness-105 ring-2 ring-arcova-teal/40 ring-offset-2 ring-offset-white/70',
                     )}
                   >
                     <Check className="h-3.5 w-3.5" strokeWidth={2.4} />
-                    Save changes
+                    {savingFindings ? 'Saving…' : 'Save changes'}
                   </button>
                   <button
                     type="button"
@@ -4759,24 +4895,26 @@ export default function SetupFlow({
     return (
       <div className="relative flex min-h-dvh flex-col overflow-hidden">
         <AppAmbientBackground />
-        <div className="relative z-10 flex flex-wrap items-center gap-3 px-4 pt-6 sm:px-6">
+        <div className="relative z-10 flex flex-col px-4 pt-6 sm:px-6">
           <button
             type="button"
             onClick={() => void handleGoToStep(0)}
             disabled={thinking}
-            className="inline-flex items-center gap-1.5 rounded-full border border-arcova-navy/10 bg-white/65 px-3 py-1.5 text-[12px] font-medium text-arcova-navy/65 backdrop-blur transition-all hover:-translate-x-0.5 hover:bg-white hover:text-arcova-navy disabled:opacity-50"
+            className={cn(SETUP_GLASS_BACK_ABOVE_CARD_CLASS, 'mb-3 self-start')}
           >
             <span aria-hidden>←</span> Back to edit your company
           </button>
-          <StepEyebrow step={1} />
+          <div className="mb-4">
+            <StepEyebrow step={1} />
+          </div>
+          <SetupWelcomeCard
+            firstName={firstName}
+            onSubmit={(url) => void handleCustomerUrlAnalyse(url)}
+            analysisError={analysisError}
+            isLoading={thinking}
+            mode="target"
+          />
         </div>
-        <SetupWelcomeCard
-          firstName={firstName}
-          onSubmit={(url) => void handleCustomerUrlAnalyse(url)}
-          analysisError={analysisError}
-          isLoading={thinking}
-          mode="target"
-        />
       </div>
     );
   }
@@ -5185,19 +5323,7 @@ export default function SetupFlow({
       {showProgress && (
         <div className="shrink-0 border-b border-white/10 px-6 py-4">
           <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3">
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              {entryPoint === 'full' && !isSaving && currentStepIndex > 0 && (
-                <button
-                  type="button"
-                  onClick={() => void handleGoToStep(currentStepIndex - 1)}
-                  disabled={thinking}
-                  className={setupProgressBackButtonClass}
-                >
-                  <span aria-hidden>←</span>
-                  {currentStepIndex === 2 ? 'Back to edit target ICP' : 'Back to edit your company'}
-                </button>
-              )}
-              <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
                 {SETUP_STEPS.map((step, i) => {
                 const isComplete = i < currentStepIndex;
                 const isCurrent = i === currentStepIndex;
@@ -5240,6 +5366,19 @@ export default function SetupFlow({
         {/* Chat column */}
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex h-[min(56rem,calc(100dvh-12rem))] min-h-[20rem] w-full flex-col">
+            {entryPoint === 'full' && !isSaving && currentStepIndex > 0 && (
+              <div className="mb-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => void handleGoToStep(currentStepIndex - 1)}
+                  disabled={thinking}
+                  className={setupProgressBackButtonClass}
+                >
+                  <span aria-hidden>←</span>
+                  {currentStepIndex === 2 ? 'Back to edit target ICP' : 'Back to edit your company'}
+                </button>
+              </div>
+            )}
             {chatColumn}
           </div>
         </div>
