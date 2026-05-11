@@ -259,7 +259,7 @@ export default function BriefingPage() {
           fetch('/api/accounts/icp-coverage'),
           fetch('/api/pipeline/icp-cards'),
           fetch('/api/import-ready'),
-          fetch('/api/briefing/pulse-series'),
+          fetch('/api/today/pulse-series'),
         ]);
 
         if (profileError) throw profileError;
@@ -471,7 +471,7 @@ export default function BriefingPage() {
               ? `${healthIssues[0].label} needs attention.`
               : `${healthIssues.length} ICPs need review.`,
           href: withQuery(
-            ROUTES.leads.health,
+            ROUTES.health,
             new URLSearchParams({
               agentTask: 'health_review',
               from: 'today',
@@ -585,10 +585,10 @@ export default function BriefingPage() {
               </div>
               <div className="bt-agent-panel-host bt-agent-panel-host--fill">
                 <AgentPanel
-                  page="dashboard"
+                  page="today"
                   pageContext={{
-                    dashboardBrief: briefing,
-                    dashboardAgenda: agenda.map(({ title, detail, href }) => ({ title, detail, href })),
+                    todayBrief: briefing,
+                    todayAgenda: agenda.map(({ title, detail, href }) => ({ title, detail, href })),
                   }}
                   wide
                   hideHeader

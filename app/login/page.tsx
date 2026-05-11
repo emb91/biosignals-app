@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Eye, EyeOff } from 'lucide-react';
+import { ROUTES } from '@/lib/routes';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -32,7 +33,7 @@ export default function LoginPage() {
       } else {
         await login(email, password);
       }
-      router.push('/briefing');
+      router.push(ROUTES.today);
     } catch (error: any) {
       const message = error.message || '';
       if (message.includes('Invalid login credentials')) {
@@ -61,7 +62,7 @@ export default function LoginPage() {
 
     try {
       await loginWithGoogle();
-      router.push('/briefing');
+      router.push(ROUTES.today);
     } catch (error: any) {
       setError(error.message || 'An error occurred with Google sign-in.');
     } finally {

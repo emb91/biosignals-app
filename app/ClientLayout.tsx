@@ -10,30 +10,25 @@ import { SiteFooter } from "@/components/site-footer"
 import { useAuth } from "@/context/AuthContext"
 import { useSetupState, getNextSetupPath } from "@/lib/use-setup-state"
 import { Toaster } from "sonner"
-import { LEGACY_ROUTES, ROUTES } from "@/lib/routes"
+import { ROUTES } from "@/lib/routes"
 
 // Routes that are part of the authenticated app (no header/footer)
 const APP_ROUTES = [
-  LEGACY_ROUTES.accounts,
-  LEGACY_ROUTES.contacts,
-  LEGACY_ROUTES.data,
-  LEGACY_ROUTES.health,
-  LEGACY_ROUTES.pipeline,
-  ROUTES.briefing,
-  ROUTES.dashboard,
-  ROUTES.import,
-  ROUTES.leads.contacts,
   ROUTES.leads.accounts,
-  ROUTES.leads.health,
-  ROUTES.leads.data,
+  ROUTES.leads.contacts,
+  ROUTES.data,
+  ROUTES.health,
+  ROUTES.today,
+  ROUTES.gtmBase,
+  ROUTES.import,
+  ROUTES.signals,
+  ROUTES.settings,
   ROUTES.setup.company,
   ROUTES.setup.icps,
   ROUTES.setup.personas,
   '/arcova-setup',
   '/contacts',
   '/find-more-leads',
-  '/signals',
-  '/upload',
 ]
 
 // Routes that are part of the setup flow — the guard does NOT redirect away from these

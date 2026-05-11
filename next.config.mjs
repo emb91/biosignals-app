@@ -24,18 +24,48 @@ const nextConfig = {
         permanent: false,
       },
       {
-        source: '/health',
-        destination: '/leads/health',
+        source: '/briefing',
+        destination: '/today',
         permanent: false,
       },
       {
-        source: '/data',
-        destination: '/leads/data',
+        source: '/dashboard',
+        destination: '/gtm-base',
+        permanent: false,
+      },
+      {
+        source: '/leads/health',
+        destination: '/health',
+        permanent: false,
+      },
+      {
+        source: '/leads/data',
+        destination: '/data',
         permanent: false,
       },
       {
         source: '/pipeline',
-        destination: '/leads/health',
+        destination: '/health',
+        permanent: false,
+      },
+      {
+        source: '/customer-signals',
+        destination: '/signals',
+        permanent: false,
+      },
+      {
+        source: '/contact',
+        destination: '/contact-us',
+        permanent: false,
+      },
+      {
+        source: '/upload',
+        destination: '/import',
+        permanent: false,
+      },
+      {
+        source: '/api/briefing/pulse-series',
+        destination: '/api/today/pulse-series',
         permanent: false,
       },
     ]

@@ -107,7 +107,7 @@ test('source contacts recommend contact sourcing in Data', () => {
   }));
 
   assert.equal(state.journey_stage, 'leads_contact_quality');
-  assert.equal(state.recommended_next_action?.href, ROUTES.leads.data);
+  assert.equal(state.recommended_next_action?.href, ROUTES.data);
 });
 
 test('low ICP company coverage recommends company sourcing for that ICP', () => {
@@ -125,7 +125,7 @@ test('low ICP company coverage recommends company sourcing for that ICP', () => 
 
   assert.equal(state.journey_stage, 'health_icp_gap');
   assert.equal(state.recommended_next_action?.mode, 'companies');
-  assert.equal(state.recommended_next_action?.href, withQuery(ROUTES.leads.data, 'mode=companies&icpId=icp-1'));
+  assert.equal(state.recommended_next_action?.href, withQuery(ROUTES.data, 'mode=companies&icpId=icp-1'));
 });
 
 test('high-fit accounts with poor contacts recommend batch contact sourcing', () => {

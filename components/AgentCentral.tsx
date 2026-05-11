@@ -10,9 +10,8 @@
  *   • /data        (sourcing jobs + queue)
  *   • /my-company  (setup / company profile)
  *
- * The briefing page (/briefing or /today) uses AgentPanel directly with
- * `embedInBriefingBento` — that flow is intentionally kept separate.
- *
+ * The Today page (/today) uses AgentPanel directly with `embedInBriefingBento`.
+ * That layout is intentionally kept separate from this wrapper.
  * Props mirror AgentPanel (same underlying component) minus any side-rail
  * geometry concerns. Caller can still pass `page`, `pageContext`,
  * `pendingMessage`, `onJobStarted`, `headerSubtitle`, etc.

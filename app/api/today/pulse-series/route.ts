@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 
-/** Last N UTC calendar days (inclusive): count workspace `signals` rows per day for the Pulse sparkline */
+/** Pulse sparkline counts for Today page (GET /api/today/pulse-series). */
 const DAYS = 28;
 
 export async function GET() {
@@ -28,7 +28,7 @@ export async function GET() {
       .order('detected_at', { ascending: true });
 
     if (error) {
-      console.error('[GET /api/briefing/pulse-series]', error);
+      console.error('[GET /api/today/pulse-series]', error);
       return NextResponse.json({ error: 'Failed to load pulse series' }, { status: 500 });
     }
 
@@ -48,7 +48,7 @@ export async function GET() {
 
     return NextResponse.json({ data: counts });
   } catch (e) {
-    console.error('[GET /api/briefing/pulse-series]', e);
+    console.error('[GET /api/today/pulse-series]', e);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

@@ -1,8 +1,12 @@
 export const ROUTES = {
-  briefing: '/briefing',
-  dashboard: '/dashboard',
+  today: '/today',
+  gtmBase: '/gtm-base',
   import: '/import',
   signals: '/signals',
+  settings: '/settings',
+  health: '/health',
+  data: '/data',
+  contactUs: '/contact-us',
   setup: {
     company: '/my-profile',
     icps: '/company-criteria',
@@ -13,17 +17,7 @@ export const ROUTES = {
   leads: {
     contacts: '/leads/contacts',
     accounts: '/leads/accounts',
-    health: '/leads/health',
-    data: '/leads/data',
   },
-} as const;
-
-export const LEGACY_ROUTES = {
-  contacts: '/results',
-  accounts: '/accounts',
-  health: '/health',
-  data: '/data',
-  pipeline: '/pipeline',
 } as const;
 
 export function withQuery(path: string, params: URLSearchParams | string): string {
