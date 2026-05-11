@@ -47,7 +47,6 @@ import { resolveCustomerSegments } from '@/lib/split-customer-segments';
 import { fetchLatestUserCompanyRow } from '@/lib/fetch-latest-user-company';
 import { ArcovaWelcomeOrb } from '@/components/ArcovaWelcomeOrb';
 import { ROUTES } from '@/lib/routes';
-import { useSetupGuidedNav } from '@/context/SetupGuidedNavContext';
 import { PLATFORM_CATEGORY_OPTIONS } from '@/lib/platform-category';
 import { Send, Sparkles, ChevronDown, ExternalLink, Check, Building2, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -1674,16 +1673,537 @@ function SetupWelcomeCard({
   );
 }
 
+type InlineEnrichmentSnapshot = {
+  title: string;
+  logoUrl: string | null;
+  tagline: string | null;
+  blurb: string | null;
+  metaLine: string | null;
+  locationLine: string | null;
+};
+
+type EnrichmentSnapshotStage = {
+  tier: string;
+  label: string;
+  snapshot: InlineEnrichmentSnapshot;
+};
+
+function prettyCompanyUrlHint(raw: string | null | undefined): string | null {
+  if (!raw?.trim()) return null;
+  try {
+    const u = /^https?:\/\//i.test(raw.trim()) ? raw.trim() : `https://${raw.trim()}`;
+    const host = new URL(u).hostname.replace(/^www\./i, '').trim();
+    return host.length > 0 ? host : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildInlineSnapshotFromTarget(
+  p: Partial<TargetCompanyEnrichmentResult> | null | undefined,
+  urlHint: string | null,
+): InlineEnrichmentSnapshot | null {
+  const rawName =
+    typeof p?.company_name === 'string' && p.company_name.trim() ? p.company_name.trim() : '';
+  const descArr = Array.isArray(p?.description) ? p.description : [];
+  const blurb =
+    typeof descArr[0] === 'string' && descArr[0].trim()
+      ? (descArr[0] as string).trim().slice(0, 380)
+      : null;
+  const logoUrl =
+    typeof p?.logo_url === 'string' && p.logo_url.trim() ? p.logo_url.trim() : null;
+  const tagline =
+    typeof p?.tagline === 'string' && p.tagline.trim() ? p.tagline.trim().slice(0, 280) : null;
+  const industry =
+    typeof p?.industry === 'string' && p.industry.trim() ? p.industry.trim() : null;
+  const empPart =
+    typeof p?.employee_count === 'number' ? `${p.employee_count.toLocaleString()} employees` : null;
+  const metaLine = [industry, empPart].filter(Boolean).join(' · ') || null;
+  const city = typeof p?.hq_city === 'string' && p.hq_city.trim() ? p.hq_city.trim() : null;
+  const country =
+    typeof p?.hq_country === 'string' && p.hq_country.trim() ? p.hq_country.trim() : null;
+  const locationLine = [city, country].filter(Boolean).join(', ') || null;
+
+  const hasDetail =
+    Boolean(rawName) ||
+    Boolean(logoUrl) ||
+    Boolean(tagline) ||
+    Boolean(blurb) ||
+    Boolean(metaLine) ||
+    Boolean(locationLine);
+
+  if (!hasDetail && urlHint) {
+    return {
+      title: urlHint,
+      logoUrl: null,
+      tagline: null,
+      blurb: null,
+      metaLine: null,
+      locationLine: null,
+    };
+  }
+  if (!hasDetail) return null;
+
+  return {
+    title: rawName || urlHint || 'Company',
+    logoUrl,
+    tagline,
+    blurb,
+    metaLine,
+    locationLine,
+  };
+}
+
+function buildInlineSnapshotFromOwn(
+  p: Partial<Record<string, unknown>> | null,
+  urlHint: string | null,
+): InlineEnrichmentSnapshot | null {
+  const rawName =
+    typeof p?.company_name === 'string' && p.company_name.trim() ? p.company_name.trim() : '';
+  const descArr = Array.isArray(p?.description) ? p.description : [];
+  const blurb =
+    typeof descArr[0] === 'string' && descArr[0].trim()
+      ? (descArr[0] as string).trim().slice(0, 380)
+      : null;
+  const logoUrl =
+    typeof p?.logo_url === 'string' && p.logo_url.trim() ? (p.logo_url as string).trim() : null;
+  const tagline =
+    typeof p?.tagline === 'string' && p.tagline.trim() ? (p.tagline as string).trim().slice(0, 280) : null;
+  const industry =
+    typeof p?.industry === 'string' && p.industry.trim() ? (p.industry as string).trim() : null;
+  const empPart =
+    typeof p?.employee_count === 'number'
+      ? `${(p.employee_count as number).toLocaleString()} employees`
+      : null;
+  const metaLine = [industry, empPart].filter(Boolean).join(' · ') || null;
+  const city =
+    typeof p?.hq_city === 'string' && p.hq_city.trim() ? (p.hq_city as string).trim() : null;
+  const country =
+    typeof p?.hq_country === 'string' && p.hq_country.trim() ? (p.hq_country as string).trim() : null;
+  const locationLine = [city, country].filter(Boolean).join(', ') || null;
+
+  const hasDetail =
+    Boolean(rawName) ||
+    Boolean(logoUrl) ||
+    Boolean(tagline) ||
+    Boolean(blurb) ||
+    Boolean(metaLine) ||
+    Boolean(locationLine);
+
+  if (!hasDetail && urlHint) {
+    return {
+      title: urlHint,
+      logoUrl: null,
+      tagline: null,
+      blurb: null,
+      metaLine: null,
+      locationLine: null,
+    };
+  }
+  if (!hasDetail) return null;
+
+  return {
+    title: rawName || urlHint || 'Company',
+    logoUrl,
+    tagline,
+    blurb,
+    metaLine,
+    locationLine,
+  };
+}
+
+/** Buying-team step; prefer full example enrichment snapshot, else saved ICP / URL labels. */
+function buildBuyingTeamSnapshot(
+  enrichment: TargetCompanyEnrichmentResult | null | undefined,
+  fallbackName: string | null | undefined,
+  urlHint: string | null,
+): InlineEnrichmentSnapshot | null {
+  const fromData = buildInlineSnapshotFromTarget(enrichment ?? null, urlHint);
+  if (fromData) return fromData;
+  const nm =
+    typeof fallbackName === 'string' && fallbackName.trim()
+      ? fallbackName.trim().slice(0, 200)
+      : '';
+  if (nm) {
+    return {
+      title: nm,
+      logoUrl: null,
+      tagline: null,
+      blurb: null,
+      metaLine: null,
+      locationLine: null,
+    };
+  }
+  if (urlHint) {
+    return {
+      title: urlHint,
+      logoUrl: null,
+      tagline: null,
+      blurb: null,
+      metaLine: null,
+      locationLine: null,
+    };
+  }
+  return null;
+}
+
+/** Separate cards per SSE milestone so each new tier visibly stacks in the loader. */
+function buildTieredSnapshotsFromTarget(
+  p: Partial<TargetCompanyEnrichmentResult> | null | undefined,
+  urlHint: string | null,
+  enrichStep: number,
+): EnrichmentSnapshotStage[] {
+  const stages: EnrichmentSnapshotStage[] = [];
+  const rawName =
+    typeof p?.company_name === 'string' && p.company_name.trim() ? p.company_name.trim() : '';
+  const descArr = Array.isArray(p?.description) ? p.description : [];
+  const blurbWebsite =
+    typeof descArr[0] === 'string' && descArr[0].trim()
+      ? (descArr[0] as string).trim().slice(0, 380)
+      : null;
+  const titleBase = rawName || urlHint || 'Company';
+
+  if (enrichStep === 0 && urlHint) {
+    stages.push({
+      tier: 'starting-point',
+      label: 'Starting point',
+      snapshot: {
+        title: urlHint,
+        logoUrl: null,
+        tagline: null,
+        blurb: null,
+        metaLine: null,
+        locationLine: null,
+      },
+    });
+  }
+
+  if (enrichStep >= 1 && (rawName || blurbWebsite || urlHint)) {
+    stages.push({
+      tier: 'from-website',
+      label: 'From the website',
+      snapshot: {
+        title: titleBase,
+        logoUrl: null,
+        tagline: null,
+        blurb: blurbWebsite,
+        metaLine: null,
+        locationLine: null,
+      },
+    });
+  }
+
+  if (enrichStep >= 2) {
+    const industry =
+      typeof p?.industry === 'string' && p.industry.trim() ? p.industry.trim() : null;
+    const empPart =
+      typeof p?.employee_count === 'number' ? `${p.employee_count.toLocaleString()} employees` : null;
+    const metaLine = [industry, empPart].filter(Boolean).join(' · ') || null;
+    const city = typeof p?.hq_city === 'string' && p.hq_city.trim() ? p.hq_city.trim() : null;
+    const country =
+      typeof p?.hq_country === 'string' && p.hq_country.trim() ? p.hq_country.trim() : null;
+    const locationLine = [city, country].filter(Boolean).join(', ') || null;
+    const founded =
+      typeof p?.founded_year === 'number' ? `Founded ${p.founded_year}` : null;
+    const fundingRaw =
+      typeof p?.funding_stage === 'string' && p.funding_stage.trim() ? p.funding_stage.trim() : null;
+    const timelineLine = [founded, fundingRaw].filter(Boolean).join(' · ') || null;
+    if (metaLine || locationLine || timelineLine) {
+      stages.push({
+        tier: 'firm-context',
+        label: 'Firm context',
+        snapshot: {
+          title: titleBase,
+          logoUrl: null,
+          tagline: null,
+          blurb: timelineLine,
+          metaLine,
+          locationLine,
+        },
+      });
+    }
+  }
+
+  if (enrichStep >= 3) {
+    const logoUrl =
+      typeof p?.logo_url === 'string' && p.logo_url.trim() ? p.logo_url.trim() : null;
+    const tagline =
+      typeof p?.tagline === 'string' && p.tagline.trim()
+        ? p.tagline.trim().slice(0, 280)
+        : null;
+    const followers =
+      typeof p?.follower_count === 'number'
+        ? `${p.follower_count.toLocaleString()} followers`
+        : null;
+    if (logoUrl || tagline || followers) {
+      stages.push({
+        tier: 'public-presence',
+        label: 'Public presence',
+        snapshot: {
+          title: titleBase,
+          logoUrl,
+          tagline,
+          blurb: null,
+          metaLine: followers,
+          locationLine: null,
+        },
+      });
+    }
+  }
+
+  return stages;
+}
+
+function buildTieredSnapshotsFromOwn(
+  p: Partial<Record<string, unknown>> | null,
+  urlHint: string | null,
+  enrichStep: number,
+): EnrichmentSnapshotStage[] {
+  const stages: EnrichmentSnapshotStage[] = [];
+  const rawName =
+    typeof p?.company_name === 'string' && p.company_name.trim() ? p.company_name.trim() : '';
+  const descArr = Array.isArray(p?.description) ? p.description : [];
+  const blurbWebsite =
+    typeof descArr[0] === 'string' && descArr[0].trim()
+      ? (descArr[0] as string).trim().slice(0, 380)
+      : null;
+  const titleBase = rawName || urlHint || 'Company';
+
+  if (enrichStep === 0 && urlHint) {
+    stages.push({
+      tier: 'starting-point',
+      label: 'Starting point',
+      snapshot: {
+        title: urlHint,
+        logoUrl: null,
+        tagline: null,
+        blurb: null,
+        metaLine: null,
+        locationLine: null,
+      },
+    });
+  }
+
+  if (enrichStep >= 1 && (rawName || blurbWebsite || urlHint)) {
+    stages.push({
+      tier: 'from-website',
+      label: 'From the website',
+      snapshot: {
+        title: titleBase,
+        logoUrl: null,
+        tagline: null,
+        blurb: blurbWebsite,
+        metaLine: null,
+        locationLine: null,
+      },
+    });
+  }
+
+  if (enrichStep >= 2) {
+    const industry =
+      typeof p?.industry === 'string' && p.industry.trim() ? (p.industry as string).trim() : null;
+    const empPart =
+      typeof p?.employee_count === 'number'
+        ? `${(p.employee_count as number).toLocaleString()} employees`
+        : null;
+    const metaLine = [industry, empPart].filter(Boolean).join(' · ') || null;
+    const city =
+      typeof p?.hq_city === 'string' && p.hq_city.trim() ? (p.hq_city as string).trim() : null;
+    const country =
+      typeof p?.hq_country === 'string' && p.hq_country.trim() ? (p.hq_country as string).trim() : null;
+    const locationLine = [city, country].filter(Boolean).join(', ') || null;
+    const fundingRaw =
+      typeof p?.funding_stage === 'string' && p.funding_stage.trim()
+        ? (p.funding_stage as string).trim()
+        : null;
+    if (metaLine || locationLine || fundingRaw) {
+      stages.push({
+        tier: 'firm-context',
+        label: 'Firm context',
+        snapshot: {
+          title: titleBase,
+          logoUrl: null,
+          tagline: null,
+          blurb: fundingRaw || null,
+          metaLine,
+          locationLine,
+        },
+      });
+    }
+  }
+
+  if (enrichStep >= 3) {
+    const logoUrl =
+      typeof p?.logo_url === 'string' && p.logo_url.trim() ? (p.logo_url as string).trim() : null;
+    const tagline =
+      typeof p?.tagline === 'string' && p.tagline.trim()
+        ? (p.tagline as string).trim().slice(0, 280)
+        : null;
+    const followers =
+      typeof p?.follower_count === 'number'
+        ? `${(p.follower_count as number).toLocaleString()} followers`
+        : null;
+    if (logoUrl || tagline || followers) {
+      stages.push({
+        tier: 'public-presence',
+        label: 'Public presence',
+        snapshot: {
+          title: titleBase,
+          logoUrl,
+          tagline,
+          blurb: null,
+          metaLine: followers,
+          locationLine: null,
+        },
+      });
+    }
+  }
+
+  return stages;
+}
+
+function EnrichmentSnapshotBody({
+  snapshot,
+  variant = 'glass',
+}: {
+  snapshot: InlineEnrichmentSnapshot;
+  variant?: 'glass' | 'chat';
+}) {
+  const isGlass = variant === 'glass';
+  return (
+    <div className="flex gap-3">
+      <div
+        className={cn(
+          'relative h-11 w-11 shrink-0 overflow-hidden rounded-xl ring-1 ring-inset',
+          isGlass ? 'bg-slate-100 ring-slate-200/80' : 'bg-gray-100 ring-gray-200/90',
+        )}
+      >
+        {snapshot.logoUrl ? (
+          <Image
+            src={snapshot.logoUrl}
+            alt=""
+            width={44}
+            height={44}
+            className="h-full w-full object-cover"
+            unoptimized
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center">
+            <Building2 className={cn('h-5 w-5', isGlass ? 'text-slate-500' : 'text-gray-500')} />
+          </div>
+        )}
+      </div>
+      <div className="min-w-0 flex-1 space-y-1">
+        <p
+          className={cn(
+            'font-semibold leading-tight tracking-[-0.02em]',
+            isGlass ? 'text-[14px] text-slate-800' : 'text-sm text-gray-800',
+          )}
+        >
+          {snapshot.title}
+        </p>
+        {snapshot.tagline ? (
+          <p
+            className={cn(
+              'line-clamp-2 leading-snug',
+              isGlass ? 'text-xs text-slate-600' : 'text-xs text-gray-500',
+            )}
+          >
+            {snapshot.tagline}
+          </p>
+        ) : null}
+        {snapshot.metaLine ? (
+          <p className={cn('text-xs', isGlass ? 'text-slate-500' : 'text-gray-400')}>{snapshot.metaLine}</p>
+        ) : null}
+        {snapshot.locationLine ? (
+          <p className={cn('text-xs', isGlass ? 'text-slate-500' : 'text-gray-400')}>
+            {snapshot.locationLine}
+          </p>
+        ) : null}
+        {snapshot.blurb ? (
+          <p
+            className={cn(
+              'line-clamp-2 leading-snug',
+              isGlass ? 'text-xs text-slate-600' : 'text-xs text-gray-500',
+            )}
+          >
+            {snapshot.blurb}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function SnapshotStageCard({
+  label,
+  snapshot,
+  variant,
+}: {
+  label: string;
+  snapshot: InlineEnrichmentSnapshot;
+  variant: 'glass' | 'chat';
+}) {
+  const isGlass = variant === 'glass';
+  return (
+    <div
+      className={cn(
+        'rounded-xl px-3 py-2.5 ring-1',
+        isGlass
+          ? 'bg-white/40 ring-slate-200/60 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.65)]'
+          : 'bg-gray-50/90 ring-gray-100',
+      )}
+      style={{ animation: 'arcova-msg-in 0.42s cubic-bezier(0.22, 1, 0.36, 1) both' }}
+    >
+      {label.trim().length > 0 ? (
+        <p
+          className={cn(
+            'text-[10px] font-semibold uppercase tracking-[0.14em]',
+            isGlass ? 'text-slate-500' : 'text-gray-400',
+          )}
+        >
+          {label}
+        </p>
+      ) : null}
+      <div className={label.trim().length > 0 ? 'mt-2' : undefined}>
+        <EnrichmentSnapshotBody snapshot={snapshot} variant={variant} />
+      </div>
+    </div>
+  );
+}
+
+function SetupEnrichmentSnapshotStrip({
+  stages,
+  variant,
+}: {
+  stages: EnrichmentSnapshotStage[];
+  variant: 'glass' | 'chat';
+}) {
+  if (stages.length === 0) return null;
+  return (
+    <div className="mt-3 max-h-[min(340px,45vh)] space-y-2 overflow-y-auto pr-0.5 [scrollbar-width:thin]">
+      {stages.map((s) => (
+        <SnapshotStageCard
+          key={s.tier}
+          label={s.label}
+          snapshot={s.snapshot}
+          variant={variant}
+        />
+      ))}
+    </div>
+  );
+}
+
 function SetupInlineEnrichmentPanel({
   statusLine,
   displayPct,
-  partialName,
+  snapshotStages,
   showStop,
   onCancel,
 }: {
   statusLine: string;
   displayPct: number;
-  partialName?: string | null;
+  snapshotStages?: EnrichmentSnapshotStage[] | null;
   showStop: boolean;
   onCancel?: () => void;
 }) {
@@ -1693,8 +2213,8 @@ function SetupInlineEnrichmentPanel({
       style={{ animation: 'arcova-msg-in 0.2s ease' }}
     >
       <p className="text-sm leading-snug text-slate-600">{statusLine}</p>
-      {partialName ? (
-        <p className="mt-1 text-xs font-medium text-slate-500">{partialName}</p>
+      {snapshotStages && snapshotStages.length > 0 ? (
+        <SetupEnrichmentSnapshotStrip stages={snapshotStages} variant="glass" />
       ) : null}
       <div className="mt-3 space-y-1.5">
         <div className="relative h-2 overflow-hidden rounded-full bg-slate-200/80">
@@ -1807,8 +2327,6 @@ export default function SetupFlow({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const guidedNav = useSetupGuidedNav();
-
   // ── UI state ─────────────────────────────────────────────────────────────
   const [phase, setPhase] = useState<Phase>('greeting');
   const [bootstrapFinished, setBootstrapFinished] = useState(false);
@@ -1835,6 +2353,8 @@ export default function SetupFlow({
   /** True from `step_apollo` until `step_linkedin` during my-company enrichment. */
   const [ownEnrichAwaitingLinkedinEvent, setOwnEnrichAwaitingLinkedinEvent] = useState(false);
   const [ownEnrichSynthesisWait, setOwnEnrichSynthesisWait] = useState(false);
+  /** True during own-company SSE (initial load or re-enrich on the results screen). */
+  const [ownCompanyAnalysisInFlight, setOwnCompanyAnalysisInFlight] = useState(false);
   const [customerUrlLinkedinWait, setCustomerUrlLinkedinWait] = useState(false);
   /** True from `step_apollo` until `step_linkedin` (lookup can feel silent without rotating copy). */
   const [customerUrlAwaitingLinkedinEvent, setCustomerUrlAwaitingLinkedinEvent] = useState(false);
@@ -3168,6 +3688,18 @@ export default function SetupFlow({
       setPhase('customer_url_conversation');
       return;
     }
+    if (phase === 'analysis_results') {
+      setOwnCompanyAnalysisInFlight(false);
+      setLoadMsg('');
+      setPartialOwnEnrichment(null);
+      setOwnEnrichStep(0);
+      ownCompanyStep2AnchorRef.current = null;
+      setOwnEnrichLinkedinWait(false);
+      setOwnEnrichAwaitingLinkedinEvent(false);
+      setOwnEnrichSynthesisWait(false);
+      setInput(true);
+      return;
+    }
     // Clear thread so welcome card is shown again (hasUserMsg → false)
     setThread([]);
     setPhase('greeting');
@@ -3197,6 +3729,7 @@ export default function SetupFlow({
     setOwnEnrichAwaitingLinkedinEvent(false);
     setOwnEnrichSynthesisWait(false);
 
+    setOwnCompanyAnalysisInFlight(true);
     try {
       const res = await fetch('/api/analyze-and-store-stream', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -3305,7 +3838,8 @@ export default function SetupFlow({
       analysisAbortRef.current = null;
       // Aborted (user cancel or timeout) — reset silently, don't show an error
       if (err instanceof Error && err.name === 'AbortError') {
-        if (!isReenrich) { setPhase('greeting'); setInput(true); }
+        if (!isReenrich) setPhase('greeting');
+        setInput(true);
         return;
       }
 
@@ -3333,6 +3867,8 @@ export default function SetupFlow({
           : "Couldn't analyse that website, maybe it's blocking us. Try another URL.",
       );
       if (!isReenrich) { setPhase('greeting'); setInput(true); }
+    } finally {
+      setOwnCompanyAnalysisInFlight(false);
     }
   }, [askClaude, formatFindingsSummary, generateIcpSuggestions, say, sayBeats]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -4078,12 +4614,6 @@ export default function SetupFlow({
   const currentStepIndex = SETUP_STEPS.findIndex((s) => s.phases.includes(phase));
 
   useEffect(() => {
-    if (!guidedNav || entryPoint !== 'full') return;
-    if (currentStepIndex < 0) return;
-    guidedNav.reportStep(currentStepIndex);
-  }, [guidedNav, entryPoint, currentStepIndex]);
-
-  useEffect(() => {
     if (entryPoint !== 'full' || !bootstrapFinished) return;
     if (pathname !== ROUTES.setup.arcova) return;
     if (currentStepIndex < 0) return;
@@ -4180,6 +4710,8 @@ export default function SetupFlow({
     ownEnrichDisplayPct,
     targetEnrichDisplayPct,
     buyingLoadPct,
+    partialOwnEnrichment,
+    partialTargetEnrichment,
   ]);
 
   // ── Data helpers (available to all phase renders below) ─────────────────
@@ -4338,7 +4870,7 @@ export default function SetupFlow({
               disabled={thinking}
               className={cn(SETUP_GLASS_BACK_ABOVE_CARD_CLASS, 'mb-3 self-start')}
             >
-              <span aria-hidden>←</span> Back to edit your company
+              <span aria-hidden>←</span> Back
             </button>
           )}
           <div
@@ -4550,10 +5082,24 @@ export default function SetupFlow({
     phase === 'buying_team_loading'
   ) {
     const enrichMessages = visibleGreetingStyleMessages(thread, welcomeChatPart1, welcomeChatPart2);
-    const partialOwnLabel =
-      typeof partialOwnEnrichment?.company_name === 'string' && partialOwnEnrichment.company_name.trim()
-        ? partialOwnEnrichment.company_name
-        : null;
+    const glassOwnStages = buildTieredSnapshotsFromOwn(
+      partialOwnEnrichment,
+      prettyCompanyUrlHint(lastAnalyzedUrlRef.current),
+      ownEnrichStep,
+    );
+    const glassTargetStages = buildTieredSnapshotsFromTarget(
+      partialTargetEnrichment,
+      prettyCompanyUrlHint(lastTargetUrlRef.current),
+      targetEnrichStep,
+    );
+    const glassBuyingSnapshot = buildBuyingTeamSnapshot(
+      enrichedTargetCompany,
+      reviewedCompanyName || savedIcpName || null,
+      prettyCompanyUrlHint(lastTargetUrlRef.current),
+    );
+    const glassBuyingStages: EnrichmentSnapshotStage[] | null = glassBuyingSnapshot
+      ? [{ tier: 'buying-summary', label: '', snapshot: glassBuyingSnapshot }]
+      : null;
 
     return (
       <div className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-4 py-16">
@@ -4571,7 +5117,7 @@ export default function SetupFlow({
               disabled={thinking}
               className={cn(SETUP_GLASS_BACK_ABOVE_CARD_CLASS, 'mb-3 self-start')}
             >
-              <span aria-hidden>←</span> Back to edit your company
+              <span aria-hidden>←</span> Back
             </button>
           )}
           {entryPoint === 'full' && phase === 'buying_team_loading' && (
@@ -4581,7 +5127,7 @@ export default function SetupFlow({
               disabled={thinking}
               className={cn(SETUP_GLASS_BACK_ABOVE_CARD_CLASS, 'mb-3 self-start')}
             >
-              <span aria-hidden>←</span> Back to edit target ICP
+              <span aria-hidden>←</span> Back
             </button>
           )}
           <div className="relative flex h-[min(85vh,52rem)] w-full min-h-[580px] max-h-[85vh] flex-col overflow-hidden rounded-3xl border border-white/55 bg-white/65 px-10 pb-0 pt-0 shadow-arcova backdrop-blur-xl">
@@ -4627,7 +5173,7 @@ export default function SetupFlow({
               <SetupInlineEnrichmentPanel
                 statusLine={loadMsg}
                 displayPct={ownEnrichDisplayPct}
-                partialName={partialOwnLabel}
+                snapshotStages={glassOwnStages}
                 showStop
                 onCancel={cancelAnalysis}
               />
@@ -4635,7 +5181,7 @@ export default function SetupFlow({
               <SetupInlineEnrichmentPanel
                 statusLine={customerUrlLoadMsg}
                 displayPct={targetEnrichDisplayPct}
-                partialName={partialTargetEnrichment?.company_name ?? null}
+                snapshotStages={glassTargetStages}
                 showStop
                 onCancel={cancelAnalysis}
               />
@@ -4643,7 +5189,7 @@ export default function SetupFlow({
               <SetupInlineEnrichmentPanel
                 statusLine="Mapping buying teams for your target accounts…"
                 displayPct={buyingLoadPct}
-                partialName={reviewedCompanyName || savedIcpName || null}
+                snapshotStages={glassBuyingStages}
                 showStop={false}
               />
             )}
@@ -4709,14 +5255,12 @@ export default function SetupFlow({
     subtitle,
     children,
     onBack,
-    backLabel,
   }: {
     eyebrow?: ReactNode;
     title: string;
     subtitle?: string;
     children: ReactNode;
     onBack?: () => void;
-    backLabel?: string;
   }) => (
     <div className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col overflow-y-auto">
       <AppAmbientBackground />
@@ -4729,7 +5273,7 @@ export default function SetupFlow({
               disabled={thinking}
               className={setupReviewBackButtonClass}
             >
-              <span aria-hidden>←</span> Back{backLabel ? ` to ${backLabel}` : ''}
+              <span aria-hidden>←</span> Back
             </button>
           )}
           {eyebrow && <div className="mb-3">{eyebrow}</div>}
@@ -4757,7 +5301,7 @@ export default function SetupFlow({
                   disabled={thinking}
                   className={setupReviewBackButtonClass}
                 >
-                  <span aria-hidden>←</span> Back to enter website
+                  <span aria-hidden>←</span> Back
                 </button>
               </div>
             )}
@@ -4874,7 +5418,6 @@ export default function SetupFlow({
         title="We found some companies that look like strong model accounts."
         subtitle="Each represents a different buyer type. Pick one to build your ICP on, or enter your own."
         onBack={() => void handleGoToStep(0)}
-        backLabel="edit your company"
       >
         <div className="space-y-3">
           {icpSuggestions.map((s) => (
@@ -4920,7 +5463,7 @@ export default function SetupFlow({
             disabled={thinking}
             className={cn(SETUP_GLASS_BACK_ABOVE_CARD_CLASS, 'mb-3 self-start')}
           >
-            <span aria-hidden>←</span> Back to edit your company
+            <span aria-hidden>←</span> Back
           </button>
           <div className="mb-4">
             <StepEyebrow step={1} />
@@ -4946,7 +5489,6 @@ export default function SetupFlow({
         title={`Here's what I found on ${targetName}.`}
         subtitle="Check the fit and confirm — you can tweak before saving."
         onBack={() => void handleGoToStep(0)}
-        backLabel="edit your company"
       >
         <div className="arcova-glass-panel p-6">
           <SetupProfilePanel
@@ -4986,7 +5528,6 @@ export default function SetupFlow({
         title={`Here's who typically buys from companies like ${icpName}.`}
         subtitle="Review the roles and seniority — you can adjust before saving."
         onBack={() => void handleGoToStep(1)}
-        backLabel="edit target ICP"
       >
         <div className="arcova-glass-panel p-6">
           <SetupProfilePanel
@@ -5049,6 +5590,12 @@ export default function SetupFlow({
 
   // ── Main render ───────────────────────────────────────────────────────────
 
+  const customerUrlChatStages = buildTieredSnapshotsFromTarget(
+    partialTargetEnrichment,
+    prettyCompanyUrlHint(lastTargetUrlRef.current),
+    targetEnrichStep,
+  );
+
   const chatColumn = (
     <div className={`flex min-h-0 flex-1 flex-col ${SETUP_CHAT_CARD}`}>
       <div ref={mainChatScrollRef} className="min-h-0 flex-1 overflow-y-auto bg-arcova-darkblue px-4 py-4">
@@ -5090,33 +5637,15 @@ export default function SetupFlow({
             <div className="flex items-start gap-3">
               <ArcovaLoader size={36} />
               <div className="rounded-2xl rounded-tl-none border border-gray-200 bg-white px-4 py-3 shadow-sm min-w-52 max-w-sm">
-                <p className="mb-2.5 text-sm text-gray-500">{customerUrlLoadMsg}</p>
-                {/* Partial data preview — populates as SSE steps arrive */}
-                {partialTargetEnrichment && (partialTargetEnrichment.company_name || partialTargetEnrichment.description) && (
-                  <div className="mb-3 space-y-1 border-t border-gray-100 pt-2.5">
-                    {partialTargetEnrichment.company_name && (
-                      <p className="font-semibold text-sm text-gray-800">{partialTargetEnrichment.company_name}</p>
-                    )}
-                    {partialTargetEnrichment.description?.[0] && (
-                      <p className="text-xs text-gray-500 line-clamp-2">{partialTargetEnrichment.description[0]}</p>
-                    )}
-                    {(partialTargetEnrichment.industry || partialTargetEnrichment.employee_count) && (
-                      <p className="text-xs text-gray-400">
-                        {[
-                          partialTargetEnrichment.industry,
-                          partialTargetEnrichment.employee_count
-                            ? `${partialTargetEnrichment.employee_count.toLocaleString()} employees`
-                            : null,
-                        ].filter(Boolean).join(' · ')}
-                      </p>
-                    )}
-                    {(partialTargetEnrichment.hq_city || partialTargetEnrichment.hq_country) && (
-                      <p className="text-xs text-gray-400">
-                        {[partialTargetEnrichment.hq_city, partialTargetEnrichment.hq_country].filter(Boolean).join(', ')}
-                      </p>
-                    )}
-                  </div>
-                )}
+                <p
+                  className={cn(
+                    'text-sm text-gray-500',
+                    customerUrlChatStages.length > 0 ? '' : 'mb-2.5',
+                  )}
+                >
+                  {customerUrlLoadMsg}
+                </p>
+                <SetupEnrichmentSnapshotStrip stages={customerUrlChatStages} variant="chat" />
                 <div className="space-y-1.5">
                   <div className="relative h-2 overflow-hidden rounded-full bg-slate-200/80">
                     <div
@@ -5392,8 +5921,7 @@ export default function SetupFlow({
                   disabled={thinking}
                   className={setupProgressBackButtonClass}
                 >
-                  <span aria-hidden>←</span>
-                  {currentStepIndex === 2 ? 'Back to edit target ICP' : 'Back to edit your company'}
+                  <span aria-hidden>←</span> Back
                 </button>
               </div>
             )}

@@ -23,7 +23,6 @@ import { cn } from '@/lib/utils';
 import { useEnrichmentGuard } from '@/context/EnrichmentGuardContext';
 import { ROUTES } from '@/lib/routes';
 import { useSetupState } from '@/lib/use-setup-state';
-import { useSetupGuidedNav } from '@/context/SetupGuidedNavContext';
 
 interface NavItem {
   name: string;
@@ -87,20 +86,19 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { step1Complete, step2Complete, setupComplete, loading: setupStateLoading } = useSetupState();
-  const guidedNav = useSetupGuidedNav();
-  const reachedStepIndex = setupFlowOnly ? (guidedNav?.reachedStepIndex ?? 0) : 0;
+  /** Guided setup rail mirrors Supabase: company row unlocks target, ICP row unlocks buying team. */
   const guidedSetupNestedItems = useMemo((): NavItem[] => {
     const items: NavItem[] = [
       { name: 'My company', href: `${ROUTES.setup.arcova}?step=company`, icon: NavIconMyCompany },
     ];
-    if (reachedStepIndex >= 1) {
+    if (step1Complete) {
       items.push({
         name: 'Target ICP',
         href: `${ROUTES.setup.arcova}?step=target`,
         icon: NavIconMyIcps,
       });
     }
-    if (reachedStepIndex >= 2) {
+    if (step2Complete) {
       items.push({
         name: 'Buying team',
         href: `${ROUTES.setup.arcova}?step=buying`,
@@ -108,7 +106,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
       });
     }
     return items;
-  }, [reachedStepIndex]);
+  }, [step1Complete, step2Complete]);
   const { guardedNavigate } = useEnrichmentGuard();
   const [showCompaniesDot, setShowCompaniesDot] = useState(false);
   const [showMyProfileDot, setShowMyProfileDot] = useState(false);
