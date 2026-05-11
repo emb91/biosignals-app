@@ -12,8 +12,6 @@ export default function ArcovaSetupPage() {
   const {
     step1Complete,
     step2Complete,
-    step3Complete,
-    setupComplete,
     loading: setupLoading,
   } = useSetupState();
   const router = useRouter();
@@ -24,14 +22,14 @@ export default function ArcovaSetupPage() {
     }
   }, [loading, user, router]);
 
-  /** After refresh (or when company row already exists), continue the funnel instead of skipping to import. */
+  /** Company or ICP still missing: stay on this page (SetupFlow). Otherwise continue to import. */
   useEffect(() => {
-    if (setupLoading || !step1Complete) return;
-    const next = getNextSetupPath({ step1Complete, step2Complete, step3Complete, setupComplete });
+    if (setupLoading) return;
+    const next = getNextSetupPath({ step1Complete, step2Complete });
     if (next !== '/arcova-setup') {
       router.replace(next);
     }
-  }, [setupLoading, step1Complete, step2Complete, step3Complete, setupComplete, router]);
+  }, [setupLoading, step1Complete, step2Complete, router]);
 
   if (loading || setupLoading) {
     return (
@@ -45,7 +43,8 @@ export default function ArcovaSetupPage() {
     return null;
   }
 
-  if (step1Complete) {
+  const needsArcovaSetupFlow = !step1Complete || !step2Complete;
+  if (!needsArcovaSetupFlow) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-transparent">
         <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-arcova-teal" />
