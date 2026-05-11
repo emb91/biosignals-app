@@ -479,17 +479,15 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
             <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden px-2 py-4">
               {renderCollapsedRail()}
             </div>
-            {!setupFlowOnly ? (
-              <div className="shrink-0 border-t border-[rgba(13,53,71,0.08)] px-2 pb-4 pt-3">
-                {bottomNavigation.map((item) =>
-                  railIconButton(item.name, item.icon, {
-                    onClick: () => guardedNavigate(item.href),
-                    active: isActive(item.href),
-                    title: item.name,
-                  }),
-                )}
-              </div>
-            ) : null}
+            <div className="shrink-0 border-t border-[rgba(13,53,71,0.08)] px-2 pb-4 pt-3">
+              {bottomNavigation.map((item) =>
+                railIconButton(item.name, item.icon, {
+                  onClick: () => guardedNavigate(item.href),
+                  active: isActive(item.href),
+                  title: item.name,
+                }),
+              )}
+            </div>
           </nav>
         ) : (
           <nav className="flex min-h-0 flex-1 flex-col">
@@ -535,11 +533,9 @@ export default function AppSidebar({ setupFlowOnly = false }: AppSidebarProps) {
                 </>
               )}
             </div>
-            {!setupFlowOnly ? (
-              <div className="shrink-0 border-t border-[rgba(13,53,71,0.08)] px-4 py-3.5">
-                {bottomNavigation.map(renderNavItem)}
-              </div>
-            ) : null}
+            <div className="shrink-0 border-t border-[rgba(13,53,71,0.08)] px-4 py-3.5">
+              {bottomNavigation.map(renderNavItem)}
+            </div>
           </nav>
         )}
       </div>
