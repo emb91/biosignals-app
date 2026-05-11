@@ -337,16 +337,16 @@ function SubSection({
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center justify-between px-3 py-2 text-left transition-colors"
+        className="flex w-full items-center justify-between px-3 py-2.5 text-left transition-colors"
       >
         <span
-          className={`text-xs font-semibold ${
+          className={`font-manrope text-sm font-semibold tracking-[-0.012em] ${
             light
               ? open
-                ? 'text-arcova-navy/70'
-                : 'text-arcova-navy'
+                ? 'text-arcova-navy'
+                : 'text-arcova-navy/88'
               : open
-              ? 'text-white/60'
+              ? 'text-white/80'
               : 'text-white'
           }`}
         >
@@ -354,11 +354,11 @@ function SubSection({
         </span>
         {open ? (
           <ChevronUp
-            className={`h-3 w-3 shrink-0 ${light ? 'text-arcova-navy/45' : 'text-white/60'}`}
+            className={`h-4 w-4 shrink-0 ${light ? 'text-arcova-navy/45' : 'text-white/60'}`}
           />
         ) : (
           <ChevronDown
-            className={`h-3 w-3 shrink-0 ${light ? 'text-arcova-navy' : 'text-white'}`}
+            className={`h-4 w-4 shrink-0 ${light ? 'text-arcova-navy' : 'text-white'}`}
           />
         )}
       </button>
@@ -664,6 +664,22 @@ export function ProfileCard({
     : 'w-full rounded-lg bg-white/[0.06] border border-white/15 px-2 py-1 text-xs text-white/80 focus:outline-none focus:border-arcova-teal/50 cursor-pointer';
   const optionCls = isLight ? 'bg-white text-arcova-navy' : 'bg-slate-900 text-white';
   const optionMutedCls = isLight ? 'bg-white text-arcova-navy/50' : 'bg-slate-900 text-white/40';
+
+  const commitNewCompetitor = React.useCallback(() => {
+    if (!editMode || !onMyCompanyChange) return;
+    const raw = newCompetitorUrl.trim();
+    if (!raw) return;
+    let url = raw;
+    if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+    let name = raw;
+    try {
+      name = new URL(url).hostname.replace(/^www\./, '');
+    } catch {
+      /* keep typed text as display name */
+    }
+    onMyCompanyChange('competitorsEnriched', [...(competitorsEnriched ?? []), { name, url }]);
+    setNewCompetitorUrl('');
+  }, [editMode, newCompetitorUrl, onMyCompanyChange, competitorsEnriched]);
 
   const inner = (
     <>
@@ -1001,49 +1017,76 @@ export function ProfileCard({
 
             const competitorsSection = ((competitorsEnriched?.length ?? 0) > 0 || editMode) ? (
               <SubSection key="competitors" label="Competitors" open={openSections.competitors} onToggle={() => toggleSection('competitors')} light={isLight}>
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   {(competitorsEnriched ?? []).map((c, i) => (
-                    <div key={i} className="flex items-center gap-1.5">
+                    <div key={i} className="flex items-center gap-2">
                       {c.url ? (
                         <a href={c.url} target="_blank" rel="noopener noreferrer"
-                          className="flex flex-1 items-center gap-1 text-xs font-medium text-arcova-teal hover:underline min-w-0">
+                          className={`flex min-w-0 flex-1 items-center gap-1.5 font-medium hover:underline ${
+                            isLight ? 'text-[13px] text-arcova-teal' : 'text-sm text-arcova-teal'
+                          }`}>
                           <span className="truncate">{c.name}</span>
-                          <ExternalLink className="h-2.5 w-2.5 shrink-0" />
+                          <ExternalLink className={`shrink-0 ${isLight ? 'h-3.5 w-3.5' : 'h-3 w-3'}`} />
                         </a>
                       ) : (
-                        <p className="flex-1 text-xs font-medium text-white/80 truncate">{c.name}</p>
+                        <p className={`flex-1 truncate font-medium ${isLight ? 'text-[13px] text-arcova-navy/85' : 'text-sm text-white/85'}`}>
+                          {c.name}
+                        </p>
                       )}
                       {editMode && (
-                        <button type="button"
+                        <button
+                          type="button"
                           onClick={() => onMyCompanyChange?.('competitorsEnriched', competitorsEnriched!.filter((_, j) => j !== i))}
-                          className="shrink-0 text-white/25 hover:text-white/60 transition-colors">
-                          <X className="h-3 w-3" />
+                          className={`shrink-0 rounded-md p-1 transition-colors ${
+                            isLight
+                              ? 'text-arcova-navy/45 hover:bg-red-50 hover:text-red-600'
+                              : 'text-white/35 hover:bg-white/[0.08] hover:text-white/80'
+                          }`}
+                          aria-label={`Remove ${c.name}`}
+                        >
+                          <X className="h-4 w-4" />
                         </button>
                       )}
                     </div>
                   ))}
                   {editMode && (
-                    <div className="flex items-center gap-1.5 pt-0.5">
-                      <span className="mt-0 h-1 w-1 shrink-0 rounded-full bg-arcova-teal/60" />
-                      <input
-                        type="text"
-                        value={newCompetitorUrl}
-                        onChange={(e) => setNewCompetitorUrl(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && newCompetitorUrl.trim()) {
-                            e.preventDefault();
-                            const raw = newCompetitorUrl.trim();
-                            let url = raw;
-                            if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
-                            let name = raw;
-                            try { name = new URL(url).hostname.replace(/^www\./, ''); } catch {}
-                            onMyCompanyChange?.('competitorsEnriched', [...(competitorsEnriched ?? []), { name, url }]);
-                            setNewCompetitorUrl('');
+                    <div
+                      className={`space-y-1.5 ${
+                        (competitorsEnriched?.length ?? 0) > 0
+                          ? isLight
+                            ? 'mt-2 border-t border-arcova-navy/10 pt-2.5'
+                            : 'mt-2 border-t border-white/10 pt-2.5'
+                          : ''
+                      }`}
+                    >
+                      <p className={fieldLabelClass(isLight)}>Add a competitor</p>
+                      <div className="flex flex-wrap items-stretch gap-2">
+                        <input
+                          type="text"
+                          value={newCompetitorUrl}
+                          onChange={(e) => setNewCompetitorUrl(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              commitNewCompetitor();
+                            }
+                          }}
+                          placeholder="Competitor website URL"
+                          className={`min-w-[12rem] flex-1 ${inputCls}`}
+                        />
+                        <button
+                          type="button"
+                          onClick={commitNewCompetitor}
+                          disabled={!newCompetitorUrl.trim()}
+                          className={
+                            isLight
+                              ? 'shrink-0 rounded-lg border border-arcova-navy/12 bg-white/90 px-3 py-2 text-[13px] font-medium text-arcova-navy shadow-sm transition-colors hover:border-arcova-teal/35 hover:bg-arcova-teal/[0.06] disabled:cursor-not-allowed disabled:opacity-40'
+                              : 'shrink-0 rounded-lg border border-white/15 bg-white/[0.08] px-3 py-2 text-sm font-medium text-white/85 transition-colors hover:bg-white/[0.12] disabled:cursor-not-allowed disabled:opacity-40'
                           }
-                        }}
-                        placeholder="Add competitor URL… (press Enter)"
-                        className="flex-1 rounded-lg bg-white/[0.06] border border-white/15 px-2 py-1 text-xs text-white/80 placeholder:text-white/25 focus:outline-none focus:border-arcova-teal/50"
-                      />
+                        >
+                          Add
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>

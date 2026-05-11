@@ -42,7 +42,6 @@ import { ArcovaWelcomeOrb } from '@/components/ArcovaWelcomeOrb';
 import { ROUTES } from '@/lib/routes';
 import { Send, Sparkles, ChevronDown, ExternalLink, Check, Building2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import AppSidebar from '@/components/AppSidebar';
 
 /** Funding, headcount + customer-segment context for buying-team inference */
 function icContextForBuyingTeam(
@@ -3456,9 +3455,7 @@ export default function SetupFlow({
     const isWorkDomain = !!emailDomain && !FREE_EMAIL_DOMAINS.has(emailDomain.toLowerCase());
 
     return (
-      <div className="flex h-screen min-h-0 bg-transparent font-jakarta">
-        <AppSidebar setupFlowOnly />
-        <main className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col items-center justify-center overflow-hidden px-4 py-16">
+      <div className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-4 py-16">
         <AppAmbientBackground />
         <div
           className={cn(
@@ -3639,7 +3636,6 @@ export default function SetupFlow({
             </>
           )}
         </div>
-        </main>
       </div>
     );
   }
@@ -3657,15 +3653,13 @@ export default function SetupFlow({
         : null;
 
     return (
-      <div className="flex h-screen min-h-0 bg-transparent font-jakarta">
-        <AppSidebar setupFlowOnly />
-        <main className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col items-center justify-center overflow-hidden px-4 py-16">
+      <div className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-4 py-16">
         <AppAmbientBackground />
-        <div className="relative z-10 flex h-[min(85vh,52rem)] w-[460px] min-h-[580px] max-h-[85vh] flex-col overflow-hidden rounded-3xl border border-white/55 bg-white/65 px-10 pb-4 pt-0 shadow-arcova backdrop-blur-xl">
+        <div className="relative z-10 flex h-[min(85vh,52rem)] w-[460px] min-h-[580px] max-h-[85vh] flex-col overflow-hidden rounded-3xl border border-white/55 bg-white/65 px-10 pb-0 pt-0 shadow-arcova backdrop-blur-xl">
           <SetupGlassAgentMetaStrip clock={setupGreetingChatClock} statusKey="thinking" />
           <div
             ref={setupGreetingThreadRef}
-            className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-1 py-2 [touch-action:pan-y] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-1 py-2 pb-4 [touch-action:pan-y] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           >
             {enrichMessages.map((msg, i) => {
               if (msg.role === 'user') {
@@ -3696,8 +3690,6 @@ export default function SetupFlow({
               );
             })}
             {analysisError ? <p className="text-center text-xs text-red-500">{analysisError}</p> : null}
-          </div>
-          <div className="shrink-0 pt-1">
             {phase === 'analysis_loading' ? (
               <SetupInlineEnrichmentPanel
                 statusLine={loadMsg}
@@ -3724,7 +3716,6 @@ export default function SetupFlow({
             )}
           </div>
         </div>
-        </main>
       </div>
     );
   }
@@ -3733,9 +3724,7 @@ export default function SetupFlow({
 
   if (thinking && thread.length === 0) {
     return (
-      <div className="flex h-screen min-h-0 bg-transparent font-jakarta">
-        <AppSidebar setupFlowOnly />
-        <main className={`flex min-h-0 flex-1 flex-col ${SETUP_CHAT_SURROUND}`}>
+      <div className={`flex min-h-0 flex-1 flex-col ${SETUP_CHAT_SURROUND}`}>
         <div className="flex min-h-0 flex-1 items-center justify-center p-4 sm:p-6">
           <div
             className={`flex min-h-[18rem] max-h-[min(32rem,calc(100dvh-12rem))] w-full max-w-3xl ${SETUP_CHAT_CARD}`}
@@ -3756,7 +3745,6 @@ export default function SetupFlow({
             </div>
           </div>
         </div>
-        </main>
       </div>
     );
   }
@@ -3783,19 +3771,16 @@ export default function SetupFlow({
     subtitle?: string;
     children: ReactNode;
   }) => (
-    <div className="flex h-screen min-h-0 bg-transparent font-jakarta">
-      <AppSidebar setupFlowOnly />
-      <main className="arcova-scroll-surface relative min-h-0 flex-1 overflow-y-auto">
-        <AppAmbientBackground />
-        <div className="relative z-10 flex min-h-full flex-col px-4 pb-16 pt-10 sm:px-6">
-          <div className="mx-auto w-full max-w-2xl">
-            {eyebrow && <div className="mb-3">{eyebrow}</div>}
-            <h1 className="text-2xl font-semibold text-arcova-navy sm:text-3xl">{title}</h1>
-            {subtitle && <p className="mt-1.5 text-sm text-arcova-ink-soft">{subtitle}</p>}
-          </div>
-          <div className="mx-auto mt-6 w-full max-w-2xl flex-1">{children}</div>
+    <div className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <AppAmbientBackground />
+      <div className="relative z-10 flex min-h-full flex-col px-4 pb-16 pt-10 sm:px-6">
+        <div className="mx-auto w-full max-w-2xl">
+          {eyebrow && <div className="mb-3">{eyebrow}</div>}
+          <h1 className="text-2xl font-semibold text-arcova-navy sm:text-3xl">{title}</h1>
+          {subtitle && <p className="mt-1.5 text-sm text-arcova-ink-soft">{subtitle}</p>}
         </div>
-      </main>
+        <div className="mx-auto mt-6 w-full max-w-2xl flex-1">{children}</div>
+      </div>
     </div>
   );
 
@@ -3824,11 +3809,9 @@ export default function SetupFlow({
   if (phase === 'analysis_results') {
     const domain = analysedUrlForPanel.replace(/^https?:\/\//, '').replace(/\/$/, '') || 'your company';
     return (
-      <div className="flex h-screen min-h-0 bg-transparent font-jakarta">
-        <AppSidebar setupFlowOnly />
-        <main className="arcova-scroll-surface relative min-h-0 flex-1 overflow-y-auto">
-          <AppAmbientBackground />
-          <div className="relative z-10 mx-auto flex max-w-[1080px] flex-col px-6 py-9 lg:px-10">
+      <div className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <AppAmbientBackground />
+        <div className="relative z-10 flex flex-col px-6 py-9 lg:px-10">
             {/* Hero */}
             <div className="mb-6 max-w-[820px]">
               <div className="mb-5 inline-flex items-center gap-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/50">
@@ -3910,8 +3893,7 @@ export default function SetupFlow({
                 </div>
               )}
             </div>
-          </div>
-        </main>
+        </div>
       </div>
     );
   }
@@ -3959,18 +3941,15 @@ export default function SetupFlow({
   // Phase: customer_url_input → URL entry for target company
   if (phase === 'customer_url_input') {
     return (
-      <div className="flex h-screen min-h-0 bg-transparent font-jakarta">
-        <AppSidebar setupFlowOnly />
-        <main className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col overflow-hidden">
-          <AppAmbientBackground />
-          <SetupWelcomeCard
-            firstName={firstName}
-            onSubmit={(url) => void handleCustomerUrlAnalyse(url)}
-            analysisError={analysisError}
-            isLoading={thinking}
-            mode="target"
-          />
-        </main>
+      <div className="relative flex min-h-dvh flex-col overflow-hidden">
+        <AppAmbientBackground />
+        <SetupWelcomeCard
+          firstName={firstName}
+          onSubmit={(url) => void handleCustomerUrlAnalyse(url)}
+          analysisError={analysisError}
+          isLoading={thinking}
+          mode="target"
+        />
       </div>
     );
   }
@@ -4066,15 +4045,12 @@ export default function SetupFlow({
     const savingLabel =
       phase === 'done' ? 'Redirecting…' : phase === 'persona_saving' ? 'Saving buying team…' : 'Saving profile…';
     return (
-      <div className="flex h-screen min-h-0 bg-transparent font-jakarta">
-        <AppSidebar setupFlowOnly />
-        <main className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col overflow-hidden">
-          <AppAmbientBackground />
-          <div className="relative z-10 flex flex-1 flex-col items-center justify-center gap-5 px-4">
-            <ArcovaLoader size={56} />
-            <p className="text-sm font-medium text-arcova-ink-soft">{savingLabel}</p>
-          </div>
-        </main>
+      <div className="relative flex min-h-dvh flex-col overflow-hidden">
+        <AppAmbientBackground />
+        <div className="relative z-10 flex min-h-dvh flex-col items-center justify-center gap-5 px-4">
+          <ArcovaLoader size={56} />
+          <p className="text-sm font-medium text-arcova-ink-soft">{savingLabel}</p>
+        </div>
       </div>
     );
   }
@@ -4368,9 +4344,7 @@ export default function SetupFlow({
   );
 
   return (
-    <div className="flex h-screen min-h-0 bg-transparent font-jakarta">
-      <AppSidebar setupFlowOnly />
-      <main className={`flex min-h-0 flex-1 flex-col ${SETUP_CHAT_SURROUND}`}>
+    <div className={`flex min-h-0 flex-1 flex-col ${SETUP_CHAT_SURROUND}`}>
       {showProgress && (
         <div className="shrink-0 border-b border-white/10 px-6 py-4">
           <div className="mx-auto flex max-w-6xl items-center justify-between">
@@ -4474,7 +4448,6 @@ export default function SetupFlow({
           </div>
         </div>
       </div>
-      </main>
     </div>
   );
 }

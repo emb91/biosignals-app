@@ -5,11 +5,17 @@ import { useRouter } from 'next/navigation';
 import SetupShell from '@/components/SetupShell';
 import SetupFlow from '@/components/SetupFlow';
 import { useAuth } from '@/context/AuthContext';
-import { useSetupState } from '@/lib/use-setup-state';
+import { useSetupState, getNextSetupPath } from '@/lib/use-setup-state';
 
 export default function ArcovaSetupPage() {
   const { user, loading } = useAuth();
-  const { step1Complete, loading: setupLoading } = useSetupState();
+  const {
+    step1Complete,
+    step2Complete,
+    step3Complete,
+    setupComplete,
+    loading: setupLoading,
+  } = useSetupState();
   const router = useRouter();
 
   useEffect(() => {
@@ -18,11 +24,14 @@ export default function ArcovaSetupPage() {
     }
   }, [loading, user, router]);
 
+  /** After refresh (or when company row already exists), continue the funnel instead of skipping to import. */
   useEffect(() => {
-    if (!setupLoading && step1Complete) {
-      router.replace('/import');
+    if (setupLoading || !step1Complete) return;
+    const next = getNextSetupPath({ step1Complete, step2Complete, step3Complete, setupComplete });
+    if (next !== '/arcova-setup') {
+      router.replace(next);
     }
-  }, [setupLoading, step1Complete, router]);
+  }, [setupLoading, step1Complete, step2Complete, step3Complete, setupComplete, router]);
 
   if (loading || setupLoading) {
     return (
@@ -37,7 +46,11 @@ export default function ArcovaSetupPage() {
   }
 
   if (step1Complete) {
-    return null;
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-transparent">
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-arcova-teal" />
+      </div>
+    );
   }
 
   const firstName = (() => {

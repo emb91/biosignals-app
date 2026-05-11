@@ -49,16 +49,20 @@ export default function SetupShell({
   return (
     <div
       className={cn(
-        'flex h-screen',
-        inSetup ? 'bg-arcova-darkblue' : 'bg-gray-50',
+        'relative flex h-screen',
+        inSetup ? 'bg-transparent' : 'bg-gray-50',
       )}
     >
-      <AppSidebar setupFlowOnly={inSetup} />
+      <div className="relative z-20 h-full shrink-0">
+        <AppSidebar setupFlowOnly={inSetup} />
+      </div>
       <div
         className={cn(
-          'flex min-h-0 flex-1 flex-col overflow-hidden',
-          inSetup && hideSetupProgress && 'bg-slate-950',
-          inSetup && !hideSetupProgress && 'bg-arcova-darkblue',
+          // Below the sidebar stack: SetupFlow mounts a fixed aurora (full viewport) at z-0; same z-index
+          // as the rail would let this column paint on top and hide the nav.
+          'relative z-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden',
+          inSetup && hideSetupProgress && 'bg-transparent',
+          inSetup && !hideSetupProgress && 'bg-transparent',
         )}
       >
         {inSetup && !hideSetupProgress && (

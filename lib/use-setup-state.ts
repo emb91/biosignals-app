@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { supabase } from './supabase';
 import { useAuth } from '@/context/AuthContext';
+import { ROUTES } from '@/lib/routes';
 
 export type SetupState = {
   /** Step 1: seller has analysed their own company */
@@ -19,12 +20,13 @@ export type SetupState = {
 
 /**
  * Returns the next setup path the user should visit given their current progress.
- * Once all steps are done, returns '/import'.
+ * Order: own company → target companies (ICPs) → buyer personas → import.
  */
 export function getNextSetupPath(state: Omit<SetupState, 'loading'>): string {
   if (!state.step1Complete) return '/arcova-setup';
-  if (!state.step2Complete) return '/company-criteria';
-  return '/import';
+  if (!state.step2Complete) return ROUTES.setup.icps;
+  if (!state.step3Complete) return ROUTES.setup.newPersona;
+  return ROUTES.import;
 }
 
 export function useSetupState(): SetupState {
@@ -85,7 +87,7 @@ export function useSetupState(): SetupState {
           step1Complete,
           step2Complete,
           step3Complete,
-          setupComplete: step1Complete && step2Complete,
+          setupComplete: step1Complete && step2Complete && step3Complete,
           loading: false,
         });
       } catch (err) {

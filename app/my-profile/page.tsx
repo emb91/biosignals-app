@@ -121,7 +121,7 @@ function McSection({
 function McTag({ children, link }: { children: React.ReactNode; link?: boolean }) {
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-md border border-arcova-teal/22 bg-arcova-teal/10 px-2.5 py-1 text-[11.5px] font-medium tracking-[-0.005em] text-arcova-teal ${
+      className={`inline-flex items-center gap-1 rounded-md border border-arcova-teal/22 bg-arcova-teal/10 px-2.5 py-1.5 text-[12.5px] font-medium tracking-[-0.005em] text-arcova-teal ${
         link ? 'cursor-pointer hover:bg-arcova-teal/18' : ''
       }`}
     >
