@@ -2436,7 +2436,10 @@ export default function SetupFlow({
   // ── Enrichment navigation guard ────────────────────────────────────────────
   const { setIsEnriching } = useEnrichmentGuard();
   const isEnrichingPhase =
-    phase === 'customer_url_loading' || phase === 'analysis_loading' || phase === 'buying_team_loading';
+    phase === 'customer_url_loading' ||
+    phase === 'analysis_loading' ||
+    phase === 'buying_team_loading' ||
+    (phase === 'analysis_results' && ownCompanyAnalysisInFlight);
 
   useEffect(() => {
     setIsEnriching(isEnrichingPhase);
@@ -2618,7 +2621,9 @@ export default function SetupFlow({
 
   // Tick the own-company analysis progress bar
   useEffect(() => {
-    if (phase !== 'analysis_loading') {
+    const ownEnrichActive =
+      phase === 'analysis_loading' || (phase === 'analysis_results' && ownCompanyAnalysisInFlight);
+    if (!ownEnrichActive) {
       ownCompanyStartedAtRef.current = null;
       return;
     }
@@ -2628,7 +2633,7 @@ export default function SetupFlow({
     setOwnCompanyProgressNow(Date.now());
     const interval = setInterval(() => setOwnCompanyProgressNow(Date.now()), 900);
     return () => clearInterval(interval);
-  }, [phase]);
+  }, [phase, ownCompanyAnalysisInFlight]);
 
   // Tick the saving progress bar (ICP + persona saves)
   useEffect(() => {
@@ -4556,7 +4561,9 @@ export default function SetupFlow({
   })();
 
   const ownCompanyPercent = (() => {
-    if (phase !== 'analysis_loading' || ownCompanyStartedAtRef.current === null) return 0;
+    const ownEnrichTicker =
+      phase === 'analysis_loading' || (phase === 'analysis_results' && ownCompanyAnalysisInFlight);
+    if (!ownEnrichTicker || ownCompanyStartedAtRef.current === null) return 0;
     const elapsed = Math.max(ownCompanyProgressNow - ownCompanyStartedAtRef.current, 0);
     const progress = 1 - Math.exp(-elapsed / 11000);
     return Math.round(5 + (85 - 5) * progress);
@@ -4583,8 +4590,10 @@ export default function SetupFlow({
   const ownEnrichDisplayPct = (() => {
     if (ownEnrichStep <= 0) return Math.min(ownCompanyPercent, 20);
     const stepBase = ENRICH_STEP_PCT[ownEnrichStep - 1] ?? 92;
+    const creepPhase =
+      phase === 'analysis_loading' || (phase === 'analysis_results' && ownCompanyAnalysisInFlight);
     if (
-      phase === 'analysis_loading' &&
+      creepPhase &&
       ownEnrichStep === 2 &&
       ownCompanyStep2AnchorRef.current !== null
     ) {
@@ -5289,6 +5298,11 @@ export default function SetupFlow({
   // Phase: analysis_results → light glass review of own company (matches Setup.html design)
   if (phase === 'analysis_results') {
     const domain = analysedUrlForPanel.replace(/^https?:\/\//, '').replace(/\/$/, '') || 'your company';
+    const ownResultsSnapshots = buildTieredSnapshotsFromOwn(
+      partialOwnEnrichment,
+      prettyCompanyUrlHint(lastAnalyzedUrlRef.current),
+      ownEnrichStep,
+    );
     return (
       <div className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col overflow-y-auto">
         <AppAmbientBackground />
@@ -5298,7 +5312,7 @@ export default function SetupFlow({
                 <button
                   type="button"
                   onClick={() => void handleAnalyseDifferentWebsite()}
-                  disabled={thinking}
+                  disabled={thinking || ownCompanyAnalysisInFlight}
                   className={setupReviewBackButtonClass}
                 >
                   <span aria-hidden>←</span> Back
@@ -5330,8 +5344,40 @@ export default function SetupFlow({
               </p>
             </div>
 
+            {ownCompanyAnalysisInFlight ? (
+              <div className="mx-auto mb-8 w-full max-w-[760px] rounded-2xl border border-arcova-navy/10 bg-white/80 p-5 shadow-[0_14px_44px_-26px_rgba(13,53,71,0.22)] backdrop-blur-sm">
+                <p className="text-sm leading-snug text-arcova-navy/70">{loadMsg}</p>
+                <SetupEnrichmentSnapshotStrip stages={ownResultsSnapshots} variant="glass" />
+                <div className="mt-3 space-y-1.5">
+                  <div className="relative h-2 overflow-hidden rounded-full bg-arcova-navy/[0.09]">
+                    <div
+                      className="arcova-enrichment-progress absolute inset-y-0 left-0 rounded-full transition-[width] duration-700 ease-out"
+                      style={{ width: `${Math.min(100, ownEnrichDisplayPct)}%` }}
+                    >
+                      <div className="arcova-enrichment-glow absolute inset-y-0 right-0 w-10 rounded-full" />
+                    </div>
+                  </div>
+                  <p className="text-right text-xs tabular-nums text-arcova-navy/40">
+                    {Math.min(100, Math.round(ownEnrichDisplayPct))}%
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => cancelAnalysis()}
+                  className="mt-4 text-left text-xs text-arcova-navy/45 underline underline-offset-2 transition-colors hover:text-arcova-navy"
+                >
+                  Stop
+                </button>
+              </div>
+            ) : null}
+
             {/* Centred company card */}
-            <div className="mx-auto w-full max-w-[760px]">
+            <div
+              className={cn(
+                'mx-auto w-full max-w-[760px]',
+                ownCompanyAnalysisInFlight && 'pointer-events-none opacity-[0.42]',
+              )}
+            >
               <SetupMyCompanyCard
                 data={myCompany}
                 editMode={editingFindings}
@@ -5345,7 +5391,7 @@ export default function SetupFlow({
                   <button
                     type="button"
                     onClick={() => void handleResultsConfirmed()}
-                    disabled={thinking}
+                    disabled={thinking || ownCompanyAnalysisInFlight}
                     className="inline-flex items-center gap-2 rounded-[14px] bg-gradient-to-br from-arcova-teal to-[#007e8b] px-[22px] py-[13px] text-sm font-semibold text-white shadow-[0_12px_28px_-12px_rgba(0,164,180,0.5)] transition-all hover:-translate-y-px hover:bg-arcova-navy disabled:opacity-50"
                   >
                     <Check className="h-3.5 w-3.5" strokeWidth={2.4} />
@@ -5354,7 +5400,7 @@ export default function SetupFlow({
                   <button
                     type="button"
                     onClick={() => void handleAnalysisNotRight()}
-                    disabled={thinking}
+                    disabled={thinking || ownCompanyAnalysisInFlight}
                     className="bg-transparent px-3.5 py-3 text-[13px] font-medium text-arcova-navy/50 transition-colors hover:text-arcova-navy disabled:opacity-50"
                   >
                     Something&apos;s off
@@ -5368,7 +5414,7 @@ export default function SetupFlow({
                   Need to enter a different website from scratch?{' '}
                   <button
                     type="button"
-                    disabled={thinking}
+                    disabled={thinking || ownCompanyAnalysisInFlight}
                     onClick={() => void handleResumeRestart()}
                     className="font-medium text-arcova-teal underline decoration-arcova-teal/35 underline-offset-2 hover:text-arcova-navy disabled:opacity-50"
                   >
@@ -5386,7 +5432,7 @@ export default function SetupFlow({
                       window.setTimeout(() => setSaveChangesClickAnim(false), 420);
                       void handleSaveFindingsEdit();
                     }}
-                    disabled={thinking || savingFindings}
+                    disabled={thinking || savingFindings || ownCompanyAnalysisInFlight}
                     className={cn(
                       'inline-flex items-center gap-2 rounded-[14px] bg-gradient-to-br from-arcova-teal to-[#007e8b] px-[22px] py-[13px] text-sm font-semibold text-white shadow-[0_12px_28px_-12px_rgba(0,164,180,0.5)] transition-all duration-200 ease-out hover:-translate-y-px hover:bg-arcova-navy disabled:opacity-50',
                       saveChangesClickAnim && 'origin-center scale-[0.96] brightness-105 ring-2 ring-arcova-teal/40 ring-offset-2 ring-offset-white/70',
