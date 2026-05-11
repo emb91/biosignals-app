@@ -3192,7 +3192,9 @@ export default function SetupFlow({
     setLoadMsg('Researching your company…');
     setPartialOwnEnrichment(null);
     setOwnEnrichStep(0);
+    ownCompanyStep2AnchorRef.current = null;
     setOwnEnrichLinkedinWait(false);
+    setOwnEnrichAwaitingLinkedinEvent(false);
     setOwnEnrichSynthesisWait(false);
 
     try {
@@ -3209,14 +3211,16 @@ export default function SetupFlow({
       for await (const { event, data: eventData } of parseSSEStream(res)) {
         if (controller.signal.aborted) return;
         if (event === 'step_claude') {
-          setLoadMsg('Website analysed ✓  Checking company database…');
+          setLoadMsg('Website analysed ✓ Verifying firm details…');
           setOwnEnrichStep(1);
           setPartialOwnEnrichment({
             company_name: (eventData.company_name as string) || null,
             description: Array.isArray(eventData.description) ? eventData.description : null,
           });
         } else if (event === 'step_apollo') {
-          setLoadMsg('Company and web data in ✓ Resolving LinkedIn…');
+          ownCompanyStep2AnchorRef.current = Date.now();
+          setOwnEnrichAwaitingLinkedinEvent(true);
+          setLoadMsg(ENRICH_GENERIC_LOOKUP_LINES[0]);
           setOwnEnrichStep(2);
           setPartialOwnEnrichment((prev) => ({
             ...prev,
@@ -3227,17 +3231,19 @@ export default function SetupFlow({
             funding_stage: (eventData.company_funding_stage as string) || null,
           }));
         } else if (event === 'step_linkedin') {
+          setOwnEnrichAwaitingLinkedinEvent(false);
           const found = Boolean(eventData.linkedin_found);
           setOwnEnrichLinkedinWait(found);
           setOwnEnrichSynthesisWait(false);
           if (found) {
-            setLoadMsg(OWN_COMPANY_LINKEDIN_SCRAPE_LINES[0]);
+            setLoadMsg(ENRICH_GENERIC_DEEP_GATHER_LINES[0]);
           } else {
-            setLoadMsg('No public LinkedIn company URL found ✓ Enriching from site and registry only…');
+            setLoadMsg('No strong public profile signal ✓ Continuing with web and available records…');
           }
         } else if (event === 'step_apify') {
+          ownCompanyStep2AnchorRef.current = null;
           setOwnEnrichLinkedinWait(false);
-          setLoadMsg('Sources merged ✓ Organizing profile…');
+          setLoadMsg('Sources merged ✓ Shaping the profile…');
           setOwnEnrichStep(3);
           setPartialOwnEnrichment((prev) => ({
             ...prev,
@@ -3247,10 +3253,10 @@ export default function SetupFlow({
           }));
         } else if (event === 'step_synthesis') {
           setOwnEnrichSynthesisWait(true);
-          setLoadMsg(OWN_COMPANY_SYNTHESIS_LINES[0]);
+          setLoadMsg(ENRICH_GENERIC_SYNTHESIS_LINES[0]);
         } else if (event === 'step_taxonomy') {
           setOwnEnrichSynthesisWait(false);
-          setLoadMsg('Classified ✓  Finishing up…');
+          setLoadMsg('Profile shaped ✓ Finishing up…');
           setOwnEnrichStep(4);
         } else if (event === 'done') {
           data = eventData;
@@ -4038,9 +4044,21 @@ export default function SetupFlow({
     }
     return stepBase;
   })();
-  const ownEnrichDisplayPct = ownEnrichStep > 0
-    ? ENRICH_STEP_PCT[ownEnrichStep - 1] ?? 92
-    : Math.min(ownCompanyPercent, 20);
+  const ownEnrichDisplayPct = (() => {
+    if (ownEnrichStep <= 0) return Math.min(ownCompanyPercent, 20);
+    const stepBase = ENRICH_STEP_PCT[ownEnrichStep - 1] ?? 92;
+    if (
+      phase === 'analysis_loading' &&
+      ownEnrichStep === 2 &&
+      ownCompanyStep2AnchorRef.current !== null
+    ) {
+      const elapsed = Math.max(0, ownCompanyProgressNow - ownCompanyStep2AnchorRef.current);
+      const maxCreep = 17;
+      const creep = Math.min(maxCreep, (elapsed / 20000) * maxCreep);
+      return Math.round(stepBase + creep);
+    }
+    return stepBase;
+  })();
 
   const savingPercent = (() => {
     if (!isSaving || savingStartedAtRef.current === null) return 0;
