@@ -35,6 +35,7 @@ import {
 import type { TargetCompanyEnrichmentResult } from '@/lib/target-company-enrichment';
 import { normalizeOrderedSignalIds } from '@/lib/signals/normalize-client';
 import { resolveCustomerSegments } from '@/lib/split-customer-segments';
+import { fetchLatestUserCompanyRow } from '@/lib/fetch-latest-user-company';
 
 /** Funding, headcount + customer-segment context for buying-team inference */
 function icContextForBuyingTeam(
@@ -1483,19 +1484,26 @@ export default function SetupFlow({
           throw new Error((eventData.message as string) || 'Analysis failed');
         }
       }
-      if (!data) throw new Error('Analysis failed');
+      if (!data) {
+        throw new Error(
+          'Analysis did not finish. If this keeps happening, try again or use a different network.',
+        );
+      }
       setEditingFindings(false);
       setEditingFindingsData(data);
 
-      // Claude comments on what it found
-      const narrationPrompt = isReenrich
-        ? `[System: re-enrichment of ${data.company_name ?? normalized} is complete. Give a single short sentence confirming the company profile has been refreshed with the latest data — no reaction, no praise, just a calm factual update.]`
-        : `[System: analysis of ${normalized} is complete. Company: ${data.company_name ?? normalized}. Give a 1-sentence warm reaction and tell them all the details are now showing in their company card on the right — no need to list anything out.]`;
-      const { displayParts } = await askClaude({
-        mode: 'narration',
-        extra: { role: 'user', content: narrationPrompt },
-      });
-      if (displayParts.length) await sayBeats(displayParts);
+      try {
+        const narrationPrompt = isReenrich
+          ? `[System: re-enrichment of ${data.company_name ?? normalized} is complete. Give a single short sentence confirming the company profile has been refreshed with the latest data — no reaction, no praise, just a calm factual update.]`
+          : `[System: analysis of ${normalized} is complete. Company: ${data.company_name ?? normalized}. Give a 1-sentence warm reaction and tell them all the details are now showing in their company card on the right — no need to list anything out.]`;
+        const { displayParts } = await askClaude({
+          mode: 'narration',
+          extra: { role: 'user', content: narrationPrompt },
+        });
+        if (displayParts.length) await sayBeats(displayParts);
+      } catch {
+        await say('Your company profile is ready on the right. Continue when you have reviewed it.');
+      }
 
       // Keep results on the thread for data + history; UI shows them in the side panel only.
       setThread((p) => [...p, { id: crypto.randomUUID(), kind: 'results', data }]);
@@ -1510,10 +1518,33 @@ export default function SetupFlow({
         if (!isReenrich) { setPhase('greeting'); setInput(true); }
         return;
       }
-      setAnalysisError("Couldn't analyse that website, maybe it's blocking us. Try another URL.");
+
+      const saved = await fetchLatestUserCompanyRow();
+      if (saved && typeof saved.id === 'string') {
+        setEditingFindingsData(saved);
+        setEditingFindings(false);
+        setThread((p) => {
+          const withoutResults = p.filter((m) => m.kind !== 'results');
+          return [...withoutResults, { id: crypto.randomUUID(), kind: 'results', data: saved }];
+        });
+        setPhase('analysis_results');
+        setInput(true);
+        const detail =
+          err instanceof Error && err.message ? err.message.slice(0, 280) : 'Something went wrong.';
+        setAnalysisError(
+          `We could not refresh from the web. Your saved company profile is still shown. (${detail})`,
+        );
+        return;
+      }
+
+      setAnalysisError(
+        err instanceof Error && err.name !== 'AbortError' && err.message
+          ? err.message.slice(0, 500)
+          : "Couldn't analyse that website, maybe it's blocking us. Try another URL.",
+      );
       if (!isReenrich) { setPhase('greeting'); setInput(true); }
     }
-  }, [askClaude, formatFindingsSummary]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [askClaude, formatFindingsSummary, say, sayBeats]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleReanalyseFromPanel = useCallback(() => {
     const u = lastAnalyzedUrlRef.current;

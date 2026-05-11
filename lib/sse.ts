@@ -20,8 +20,26 @@ export type SSEStepName =
 
 const encoder = new TextEncoder();
 
+function jsonReplacerForSSE(_key: string, value: unknown): unknown {
+  if (typeof value === 'bigint') return value.toString();
+  if (value === undefined) return null;
+  return value;
+}
+
+function stringifySseData(data: Record<string, unknown>): string {
+  try {
+    return JSON.stringify(data, jsonReplacerForSSE);
+  } catch {
+    const slim: Record<string, unknown> = { ...data };
+    delete slim.apollo_firmographics;
+    delete slim.apify_firmographics;
+    return JSON.stringify(slim, jsonReplacerForSSE);
+  }
+}
+
 export function encodeSSEEvent(event: SSEStepName, data: Record<string, unknown>): Uint8Array {
-  return encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  const json = stringifySseData(data);
+  return encoder.encode(`event: ${event}\ndata: ${json}\n\n`);
 }
 
 export const SSE_HEADERS: HeadersInit = {
@@ -57,7 +75,10 @@ export async function* parseSSEStream(
       let dataStr = '';
       for (const line of block.split('\n')) {
         if (line.startsWith('event: ')) eventName = line.slice(7).trim() as SSEStepName;
-        else if (line.startsWith('data: ')) dataStr = line.slice(6);
+        else if (line.startsWith('data: ')) {
+          const chunk = line.slice(6);
+          dataStr = dataStr ? `${dataStr}\n${chunk}` : chunk;
+        }
       }
       if (eventName && dataStr) {
         try {
