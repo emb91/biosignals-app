@@ -51,6 +51,66 @@ import { PLATFORM_CATEGORY_OPTIONS } from '@/lib/platform-category';
 import { Send, Sparkles, ChevronDown, ExternalLink, Check, Building2, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
+/** Glass setup (step 2): Today-style quick picks from model-account suggestions + enriched company fields. */
+type SetupGlassTargetPill =
+  | { kind: 'domain'; suggestion: IcpSuggestion }
+  | { kind: 'chat'; label: string; userBubble: string; chatText: string };
+
+function panelStringList(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+    .map((s) => s.trim());
+}
+
+function buildSetupGlassTargetPills(
+  panel: Record<string, unknown> | null,
+  icpSuggestions: IcpSuggestion[],
+): SetupGlassTargetPill[] {
+  const pills: SetupGlassTargetPill[] = [];
+  const seenChat = new Set<string>();
+  for (const s of icpSuggestions) {
+    pills.push({ kind: 'domain', suggestion: s });
+  }
+
+  if (!panel) return pills;
+
+  const addChat = (raw: string, descriptor: string) => {
+    const t = raw.trim();
+    if (!t || t.length > 72) return;
+    const key = `${descriptor}:${t.toLowerCase()}`;
+    if (seenChat.has(key)) return;
+    seenChat.add(key);
+    const short = t.length > 24 ? `${t.slice(0, 23)}…` : t;
+    pills.push({
+      kind: 'chat',
+      label: `+ ${short}`,
+      userBubble:
+        t.length > 50
+          ? `Use this profile angle: ${t.slice(0, 47)}…`
+          : `Use this profile angle: ${t}`,
+      chatText:
+        `Workspace context only (do not recite verbatim): my company profile maps this ${descriptor}: "${t}". ` +
+        'I am on the target company step for an ICP. Reply briefly, then call begin_analysis with a well-known public company URL that exemplifies this buyer angle and analysis_type target_customer.',
+    });
+  };
+
+  for (const ta of panelStringList(panel.therapeutic_areas).slice(0, 3)) {
+    addChat(ta, 'therapeutic area');
+  }
+  for (const m of panelStringList(panel.modalities).slice(0, 3)) {
+    addChat(m, 'modality');
+  }
+  for (const d of panelStringList(panel.development_stages).slice(0, 2)) {
+    addChat(d, 'development stage');
+  }
+  for (const g of panelStringList(panel.good_fit).slice(0, 2)) {
+    if (g.length <= 52) addChat(g, 'good-fit buyer signal');
+  }
+
+  return pills.slice(0, 12);
+}
+
 /** Funding, headcount + customer-segment context for buying-team inference */
 function icContextForBuyingTeam(
   icp: PanelCompanyData,
@@ -188,6 +248,7 @@ type Phase =
 /** UI-only phases that reuse another step's onboarding system prompt / tools. */
 function mapPhaseForOnboardingApi(phase: Phase): string {
   if (phase === 'customer_url_conversation') return 'customer_url_input';
+  if (phase === 'icp_suggestion') return 'customer_url_input';
   return phase;
 }
 
@@ -3307,11 +3368,17 @@ export default function SetupFlow({
         mode: 'narration',
         extra: {
           role: 'user',
-          content: `[System: the user confirmed their company profile for ${companyName}. Based on the enrichment data I've already found some companies that look like strong ICP model accounts representing different buyer types: ${segmentList}. Two short sentences: tell them you've done some research and found a few companies that look like they could be strong model accounts — each representing a different type of buyer. Ask them to pick one to model their ICP on, or enter their own.]`,
+          content:
+            `[System: the user confirmed their enriched company profile for ${companyName}. You are pleased with how the profile came through and genuinely acknowledge that outcome before moving on. ` +
+            `Then explain the next step: they will define ideal customer profiles (ICPs), meaning the target buyer types they sell to. ` +
+            `Say that over time the aim is to have enough distinct ICPs to cover their whole market, with each profile clearly different so they do not overlap much. ` +
+            `Then mention you have example model-account companies they can use to start the first profile: ${segmentList}. ` +
+            `Ask them to pick one of those or paste their own target URL. Warm, concise, 3-5 short paragraphs. No em dashes.]`,
         },
       });
       if (displayParts.length) await sayBeats(displayParts);
       setPhase('icp_suggestion');
+      setInput(true);
       return;
     }
 
@@ -3406,6 +3473,7 @@ export default function SetupFlow({
         setInput(false);
       } else if (icpSuggestions.length > 0) {
         setPhase('icp_suggestion');
+        setInput(true);
       } else {
         setPhase('customer_url_conversation');
         setInput(true);
@@ -4135,68 +4203,77 @@ export default function SetupFlow({
 
   // ── Handle user text input (greeting phase) ───────────────────────────────
 
-  const handleSend = useCallback(async (e: React.FormEvent) => {
-    e.preventDefault();
-    const text = inputValue.trim();
-    if (!text || !inputEnabled) return;
+  const submitSetupChatText = useCallback(
+    async (displayText: string, modelContent?: string) => {
+      const show = displayText.trim();
+      const api = (modelContent ?? displayText).trim();
+      if (!show || !api || !inputEnabled) return;
 
-    setInputVal('');
-    setInput(false);
-    setPendingTransition(null);
-    // Show the user bubble immediately; don't wait on the onboarding API (or analysis kick-off).
-    pushText('user', text);
+      setInputVal('');
+      setInput(false);
+      setPendingTransition(null);
+      pushText('user', show);
 
-    const response = await askClaude({
-      mode:
-        phase === 'greeting' ||
-        phase === 'customer_url_input' ||
-        phase === 'customer_url_conversation'
-          ? 'conversation'
-          : 'phase_help',
-      phase,
-      extra: { role: 'user', content: text },
-    });
+      const response = await askClaude({
+        mode:
+          phase === 'greeting' ||
+          phase === 'customer_url_input' ||
+          phase === 'customer_url_conversation' ||
+          phase === 'icp_suggestion'
+            ? 'conversation'
+            : 'phase_help',
+        phase,
+        extra: { role: 'user', content: api },
+      });
 
-    const beginAnalysis = response.actions.find(
-      (action): action is Extract<OnboardingAction, { type: 'begin_analysis' }> =>
-        action.type === 'begin_analysis'
-    );
+      const beginAnalysis = response.actions.find(
+        (action): action is Extract<OnboardingAction, { type: 'begin_analysis' }> =>
+          action.type === 'begin_analysis',
+      );
 
-    if (beginAnalysis?.website_url) {
-      /* Greeting is always the seller-company URL step for full + company-only, even if Supabase
-       * already has a user_company row (back navigation / redo). The model often picks
-       * target_customer from account context, which would wrongly run target enrichment. */
-      const treatAsOwnCompany =
-        phase === 'greeting' && (entryPoint === 'full' || entryPoint === 'company-only');
-      if (treatAsOwnCompany) {
-        await runAnalysis(beginAnalysis.website_url);
+      if (beginAnalysis?.website_url) {
+        const treatAsOwnCompany =
+          phase === 'greeting' && (entryPoint === 'full' || entryPoint === 'company-only');
+        if (treatAsOwnCompany) {
+          await runAnalysis(beginAnalysis.website_url);
+          return;
+        }
+        const isCustomer =
+          phase === 'customer_url_input' ||
+          phase === 'customer_url_conversation' ||
+          phase === 'icp_suggestion' ||
+          beginAnalysis.analysis_type === 'target_customer';
+        if (isCustomer) {
+          await handleCustomerUrlAnalyse(beginAnalysis.website_url);
+        } else {
+          await runAnalysis(beginAnalysis.website_url);
+        }
         return;
       }
-      const isCustomer =
-        phase === 'customer_url_input' ||
-        phase === 'customer_url_conversation' ||
-        beginAnalysis.analysis_type === 'target_customer';
-      if (isCustomer) {
-        await handleCustomerUrlAnalyse(beginAnalysis.website_url);
-      } else {
-        await runAnalysis(beginAnalysis.website_url);
+
+      if (response.displayParts.length) {
+        await sayBeats(response.displayParts);
       }
-      return;
-    }
 
-    if (response.displayParts.length) {
-      await sayBeats(response.displayParts);
-    }
+      const transition = response.actions.find(
+        (a): a is Extract<OnboardingAction, { type: 'confirm_transition' }> => a.type === 'confirm_transition',
+      );
+      if (transition) {
+        setPendingTransition({ target: transition.target, buttonLabel: transition.button_label });
+      }
 
-    const transition = response.actions.find(
-      (a): a is Extract<OnboardingAction, { type: 'confirm_transition' }> => a.type === 'confirm_transition'
-    );
-    if (transition) {
-      setPendingTransition({ target: transition.target, buttonLabel: transition.button_label });
-    }
+      setInput(true);
+    },
+    [inputEnabled, phase, entryPoint, askClaude, runAnalysis, handleCustomerUrlAnalyse],
+  ); // eslint-disable-line react-hooks/exhaustive-deps
 
-    setInput(true);
-  }, [inputValue, inputEnabled, phase, askClaude, runAnalysis, handleCustomerUrlAnalyse]); // eslint-disable-line react-hooks/exhaustive-deps
+  const handleSend = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      await submitSetupChatText(inputValue.trim());
+    },
+    [inputValue, submitSetupChatText],
+  );
 
   // ── Mount: start the conversation (entry point chooses opening phase) ──
 
@@ -4431,28 +4508,27 @@ export default function SetupFlow({
         }
 
         if (existingIcps.length === 0) {
-          // No ICPs yet — generate fresh suggestions and present them
-          const { displayParts } = await askClaude({
-            mode: 'narration',
-            extra: {
-              role: 'user',
-              content: `[System: The user is adding their first target company profile and they have no ICPs yet. One sentence: tell them you're looking for some strong model accounts based on their company data.]`,
-            },
-          });
-          if (displayParts.length) await sayBeats(displayParts);
-
+          // No ICPs yet — generate fresh suggestions and present them in chat
           if (existingAnalysis) {
+            await say('Give me just a moment while I line up a few example target accounts from your profile.');
             const suggestions = await generateIcpSuggestions(existingAnalysis as Record<string, unknown>);
             if (suggestions.length > 0) {
+              const segmentList = suggestions.map((s) => `${s.name} (${s.segmentLabel})`).join(', ');
               const { displayParts: dp2 } = await askClaude({
                 mode: 'narration',
                 extra: {
                   role: 'user',
-                  content: `[System: suggestions for target model accounts are ready — each represents a different buyer segment. One sentence: tell them you've found a few companies that look like strong ICP model accounts, each a different type of buyer, and to pick one or enter their own.]`,
+                  content:
+                    '[System: The user is resuming setup. Their company profile is already enriched and looks strong. Open by saying you are glad that pass went well. ' +
+                    'Then explain they are moving on to define ideal customer profiles (ICPs), the target buyer types they pursue. ' +
+                    'Say the long-term goal is enough distinct ICPs to cover their whole market, with each profile meaningfully different so overlap stays low. ' +
+                    `Then introduce example model-account companies to anchor their first profile: ${segmentList}. ` +
+                    'Ask them to pick one or paste their own target URL. Straightforward tone, 3-5 short paragraphs. No em dashes.]',
                 },
               });
               if (dp2.length) await sayBeats(dp2);
               setPhase('icp_suggestion');
+              setInput(true);
               return;
             }
           }
@@ -4478,11 +4554,14 @@ export default function SetupFlow({
             mode: 'narration',
             extra: {
               role: 'user',
-              content: `[System: The user is adding another target company profile. We previously suggested some model accounts and they haven't all been used yet. One sentence: remind them there are still a couple of suggested model accounts they haven't profiled — pick one or enter their own.]`,
+              content:
+                '[System: The user is adding another ideal customer profile. Remind them each ICP should cover a distinct slice of the market with little overlap to others. ' +
+                'They still have suggested model accounts below that they have not used: pick one to profile next, or enter their own URL. Two short sentences. No em dashes.]',
             },
           });
           if (displayParts.length) await sayBeats(displayParts);
           setPhase('icp_suggestion');
+          setInput(true);
           return;
         }
 
@@ -4710,7 +4789,7 @@ export default function SetupFlow({
       phase === 'analysis_loading' || phase === 'customer_url_loading' || phase === 'buying_team_loading';
     if (phase === 'greeting') {
       if (!visibleMessages.some((m) => m.role === 'user')) return;
-    } else if (!enrichGlass && phase !== 'customer_url_conversation') {
+    } else if (!enrichGlass && phase !== 'customer_url_conversation' && phase !== 'icp_suggestion') {
       return;
     }
     const el = setupGreetingThreadRef.current;
@@ -4794,6 +4873,11 @@ export default function SetupFlow({
     industry: getStr(resultsPanelData?.industry),
   };
 
+  const setupGlassTargetPills = buildSetupGlassTargetPills(
+    resultsPanelData,
+    icpSuggestions,
+  );
+
   // Shared props for SetupProfilePanel (avoids repetition across phase renders)
   const sharedPanelProps = {
     myCompany,
@@ -4854,22 +4938,29 @@ export default function SetupFlow({
   const welcomeChatPart1 = `Hi ${firstName || 'there'}, let's get you set up. `;
   const welcomeChatPart2 = `First, what's your company's website?`;
 
-  // Phase: greeting, or step-2 target ICP as a continuation of the same glass agent window
+  // Phase: greeting, step-2 target ICP URL chat, or suggested model accounts, all in the same glass agent window.
   // • Before the user sends anything: welcome card (orb + headline + URL input).
   // • After the first user message: same 460px shell, in-place thread + Today-style composer (no separate header chrome).
-  if (phase === 'greeting' || phase === 'customer_url_conversation') {
-    const hasUserMsg =
-      visibleMessages.some((m) => m.role === 'user') || phase === 'customer_url_conversation';
+  if (phase === 'greeting' || phase === 'customer_url_conversation' || phase === 'icp_suggestion') {
+    const isGlassTargetStep = phase === 'customer_url_conversation' || phase === 'icp_suggestion';
+    const hasUserMsg = visibleMessages.some((m) => m.role === 'user') || isGlassTargetStep;
     // Opening beats are appended to `thread` on mount while the welcome card shows static headline copy.
     // In chat mode, list only messages from the first user turn so the UI matches what the user experienced.
     const firstGreetingUserIdx = visibleMessages.findIndex((m) => m.role === 'user');
     const greetingChatMessages =
-      firstGreetingUserIdx >= 0 ? visibleMessages.slice(firstGreetingUserIdx) : visibleMessages;
-    const greetingChatMessagesDisplay = filterFirstAssistantIfWelcomeHeadlineDuplicate(
-      greetingChatMessages,
-      welcomeChatPart1,
-      welcomeChatPart2,
-    );
+      phase === 'icp_suggestion'
+        ? visibleMessages
+        : firstGreetingUserIdx >= 0
+          ? visibleMessages.slice(firstGreetingUserIdx)
+          : visibleMessages;
+    const greetingChatMessagesDisplay =
+      phase === 'icp_suggestion'
+        ? greetingChatMessages.filter((m): m is TextMsg => m.kind === 'text')
+        : filterFirstAssistantIfWelcomeHeadlineDuplicate(
+            greetingChatMessages,
+            welcomeChatPart1,
+            welcomeChatPart2,
+          );
     const WELCOME_SPEED = 44;
     const isWorkDomain = !!emailDomain && !FREE_EMAIL_DOMAINS.has(emailDomain.toLowerCase());
 
@@ -4878,11 +4969,11 @@ export default function SetupFlow({
         <AppAmbientBackground />
         <div className="absolute left-0 right-0 top-0 z-20 flex justify-center px-6 pt-6 sm:px-10">
           <div className="flex w-full max-w-[1080px] flex-wrap items-center gap-3">
-            <StepEyebrow step={phase === 'customer_url_conversation' ? 1 : 0} />
+            <StepEyebrow step={isGlassTargetStep ? 1 : 0} />
           </div>
         </div>
         <div className="relative z-10 flex w-[460px] flex-col">
-          {phase === 'customer_url_conversation' && entryPoint === 'full' && (
+          {isGlassTargetStep && entryPoint === 'full' && (
             <button
               type="button"
               onClick={() => void handleGoToStep(0)}
@@ -5007,16 +5098,6 @@ export default function SetupFlow({
                 clock={setupGreetingChatClock}
                 statusKey={thinking ? 'thinking' : inputEnabled ? 'ready' : 'waiting'}
               />
-              {phase === 'customer_url_conversation' && (
-                <div className="px-1 pb-2 pt-1 text-center">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/45">
-                    Step 2 · Target ICP
-                  </p>
-                  <p className="mt-1.5 text-xs leading-snug text-arcova-navy/50">
-                    Share a dream-account URL in chat, or type a company name and we will take it from there.
-                  </p>
-                </div>
-              )}
               <div
                 ref={setupGreetingThreadRef}
                 className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-1 py-2 [touch-action:pan-y] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
@@ -5072,6 +5153,64 @@ export default function SetupFlow({
                   <p className="text-center text-xs text-red-500">{analysisError}</p>
                 )}
               </div>
+              {(phase === 'icp_suggestion' || phase === 'customer_url_conversation') &&
+                setupGlassTargetPills.length > 0 &&
+                !thinking &&
+                inputEnabled && (
+                  <div className="shrink-0 border-t border-arcova-navy/[0.06] px-1 pb-1 pt-3">
+                    <p className="mb-2 text-center text-[10px] font-semibold uppercase tracking-[0.16em] text-arcova-navy/40">
+                      Quick picks
+                    </p>
+                    <div className="flex flex-wrap justify-center gap-2">
+                      {setupGlassTargetPills.map((pill, idx) =>
+                        pill.kind === 'domain' ? (
+                          <button
+                            key={pill.suggestion.domain}
+                            type="button"
+                            title={pill.suggestion.segmentLabel}
+                            disabled={thinking}
+                            onClick={() => {
+                              markDomainEnrolled(pill.suggestion.domain);
+                              pushText('user', pill.suggestion.name);
+                              void handleCustomerUrlAnalyse(pill.suggestion.domain);
+                            }}
+                            className="inline-flex items-center gap-1.5 rounded-full border border-slate-200/90 bg-white/95 px-3.5 py-2 font-manrope text-sm font-semibold text-arcova-teal shadow-sm transition-colors hover:border-arcova-teal/35 hover:bg-slate-50/90 disabled:pointer-events-none disabled:opacity-40"
+                          >
+                            <Sparkles className="h-3.5 w-3.5 shrink-0 text-arcova-teal/70" />
+                            {pill.suggestion.name}
+                          </button>
+                        ) : (
+                          <button
+                            key={`setup-pill-${idx}-${pill.label}`}
+                            type="button"
+                            disabled={thinking}
+                            onClick={() => void submitSetupChatText(pill.userBubble, pill.chatText)}
+                            className="inline-flex items-center gap-1.5 rounded-full border border-slate-200/90 bg-white/95 px-3.5 py-2 font-manrope text-sm font-semibold text-arcova-teal shadow-sm transition-colors hover:border-arcova-teal/35 hover:bg-slate-50/90 disabled:pointer-events-none disabled:opacity-40"
+                          >
+                            <Sparkles className="h-3.5 w-3.5 shrink-0 text-arcova-teal/70" />
+                            {pill.label}
+                          </button>
+                        ),
+                      )}
+                    </div>
+                  </div>
+                )}
+              {phase === 'icp_suggestion' && !thinking && inputEnabled && (
+                <div className="shrink-0 px-1 pb-1 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      pushText('user', 'I will enter my own');
+                      setPhase('customer_url_conversation');
+                      setInput(true);
+                    }}
+                    disabled={thinking}
+                    className="w-full rounded-2xl border border-dashed border-arcova-navy/22 bg-white/45 px-4 py-3.5 text-left font-manrope text-sm font-medium text-arcova-navy/65 transition-all hover:border-arcova-teal/35 hover:bg-white/75 hover:text-arcova-navy disabled:opacity-45"
+                  >
+                    I will enter my own ICP →
+                  </button>
+                </div>
+              )}
               {inputEnabled && (
                 <SetupEmbedChatInput
                   value={inputValue}
@@ -5079,7 +5218,7 @@ export default function SetupFlow({
                   onSubmit={(e) => void handleSend(e)}
                   disabled={!inputEnabled}
                   placeholder={
-                    phase === 'customer_url_conversation'
+                    phase === 'customer_url_conversation' || phase === 'icp_suggestion'
                       ? 'URL or company name…'
                       : 'Reply…'
                   }
@@ -5225,7 +5364,6 @@ export default function SetupFlow({
     thinking &&
     thread.length === 0 &&
     phase !== 'analysis_results' &&
-    phase !== 'icp_suggestion' &&
     phase !== 'customer_url_input' &&
     phase !== 'customer_url_review' &&
     phase !== 'buying_team_review'
@@ -5453,47 +5591,6 @@ export default function SetupFlow({
             </div>
         </div>
       </div>
-    );
-  }
-
-  // Phase: icp_suggestion → pick one of the suggested target companies
-  if (phase === 'icp_suggestion') {
-    return (
-      <LightLayout
-        eyebrow={<StepEyebrow step={1} />}
-        title="We found some companies that look like strong model accounts."
-        subtitle="Each represents a different buyer type. Pick one to build your ICP on, or enter your own."
-        onBack={() => void handleGoToStep(0)}
-      >
-        <div className="space-y-3">
-          {icpSuggestions.map((s) => (
-            <button
-              key={s.domain}
-              type="button"
-              onClick={() => {
-                markDomainEnrolled(s.domain);
-                pushText('user', s.name);
-                void handleCustomerUrlAnalyse(s.domain);
-              }}
-              className="group w-full rounded-2xl border border-white/60 bg-white/65 px-5 py-4 text-left shadow-[0_4px_16px_-8px_rgba(13,53,71,0.12)] backdrop-blur-xl transition-all hover:border-arcova-teal/40 hover:bg-white/80 hover:shadow-[0_8px_24px_-8px_rgba(0,164,180,0.18)]"
-            >
-              <p className="text-sm font-semibold text-arcova-navy">{s.name}</p>
-              <p className="mt-0.5 text-xs text-arcova-ink-mute">{s.segmentLabel}</p>
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={() => {
-              pushText('user', 'Enter my own');
-              setPhase('customer_url_conversation');
-              setInput(true);
-            }}
-            className="w-full rounded-2xl border border-dashed border-arcova-navy/20 bg-transparent px-5 py-4 text-sm font-medium text-arcova-ink-soft transition-all hover:border-arcova-navy/40 hover:text-arcova-navy"
-          >
-            I'll enter my own ICP →
-          </button>
-        </div>
-      </LightLayout>
     );
   }
 
