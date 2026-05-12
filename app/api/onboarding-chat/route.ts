@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@/lib/supabase-server';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import {
   buildSetupCustomerUrlPhaseSystemPrompt,
   buildSetupMainChatSystemPrompt,
@@ -301,6 +302,20 @@ export async function POST(request: Request) {
         system,
         messages: conversation,
       });
+      await recordLlmUsageEvent({
+        userId: user.id,
+        userEmail: user.email,
+        provider: 'anthropic',
+        feature: resolvedMode === 'narration' ? 'onboarding_narration' : 'onboarding_phase_help',
+        route: '/api/onboarding-chat',
+        model: 'claude-haiku-4-5',
+        usage: response.usage,
+        metadata: {
+          mode: resolvedMode,
+          phase: phase ?? null,
+          message_count: conversation.length,
+        },
+      });
 
       const text = getAssistantText(response.content);
       return NextResponse.json({
@@ -320,6 +335,22 @@ export async function POST(request: Request) {
         system: buildSystemPrompt(firstName, phase, accountCtx),
         messages: conversation,
         tools: TOOLS,
+      });
+      await recordLlmUsageEvent({
+        userId: user.id,
+        userEmail: user.email,
+        provider: 'anthropic',
+        feature: 'onboarding_chat',
+        route: '/api/onboarding-chat',
+        model: 'claude-haiku-4-5',
+        usage: response.usage,
+        metadata: {
+          mode: resolvedMode,
+          phase: phase ?? null,
+          attempt: attempt + 1,
+          message_count: conversation.length,
+          tool_count: response.content.filter((block) => block.type === 'tool_use').length,
+        },
       });
 
       const toolUses = response.content.filter(

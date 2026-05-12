@@ -25,6 +25,7 @@ import {
   inferPlatformCategoryFromLegacyModalities,
   normalizePlatformCategory,
 } from '@/lib/platform-category';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const MODEL = 'claude-sonnet-4-6';
@@ -380,6 +381,18 @@ Return ONLY valid JSON:
         max_uses: 3,
       } as Parameters<typeof client.messages.create>[0]['tools'] extends Array<infer T> ? T : never,
     ],
+  });
+  await recordLlmUsageEvent({
+    provider: 'anthropic',
+    feature: 'company_monitor_taxonomy',
+    route: 'lib/company-monitor/taxonomy#resolveCompanyTaxonomy',
+    model: MODEL,
+    usage: message.usage,
+    metadata: {
+      company_name: input.company_name,
+      domain: input.domain ?? null,
+      tool: 'web_search_20250305',
+    },
   });
 
   const text = message.content

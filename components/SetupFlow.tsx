@@ -14,7 +14,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
 import { parseSSEStream } from '@/lib/sse';
 import Image from 'next/image';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { ArcovaLoader } from '@/components/ArcovaLoader';
 import { AppAmbientBackground } from '@/components/AppAmbientBackground';
@@ -49,6 +49,7 @@ import { resolveCustomerSegments } from '@/lib/split-customer-segments';
 import { fetchLatestUserCompanyRow } from '@/lib/fetch-latest-user-company';
 import { ArcovaWelcomeOrb } from '@/components/ArcovaWelcomeOrb';
 import { ROUTES } from '@/lib/routes';
+import { consumePendingSetupSection, setActiveSetupSection, useSetupNavigation } from '@/lib/setup-navigation';
 import { PLATFORM_CATEGORY_OPTIONS } from '@/lib/platform-category';
 import { formatCurrencyShort, extractFundingStatus } from '@/lib/funding-display';
 import { getSignalDisplayName } from '@/lib/signal-display-names';
@@ -183,8 +184,20 @@ function clearStoredIcpSuggestionState(): void {
   }
 }
 
+function uniqueSuggestionsByDomain(suggestions: IcpSuggestion[]): IcpSuggestion[] {
+  const seen = new Set<string>();
+  return suggestions.filter((suggestion) => {
+    const key = normalizeDomain(suggestion.domain);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 const START_AGAIN_CONFIRM =
   'This removes your saved company profile, target company profiles, and buying team for this account. Continue?';
+
+const DEV_TEST_ADMIN_EMAIL = 'emma@arcova.bio';
 
 // ── Phase type ─────────────────────────────────────────────────────────────
 
@@ -212,6 +225,14 @@ type Phase =
   | 'persona_seniority'
   | 'persona_saving'
   | 'done';
+
+type NavigationSnapshot = {
+  phase: Phase;
+  inputEnabled: boolean;
+  editingFindings: boolean;
+  icpEditMode: boolean;
+  buyingTeamEditMode: boolean;
+};
 
 /** UI-only phases that reuse another step's onboarding system prompt / tools. */
 function mapPhaseForOnboardingApi(phase: Phase): string {
@@ -421,12 +442,20 @@ function StepEyebrow({ step }: { step: 0 | 1 | 2 }) {
  * Full-width setup header row: optional leading control (e.g. Back), step eyebrow
  * centered in the page, with symmetric side gutters (same pattern as the dark strip).
  */
-function SetupLightProgressRow({ leading, center }: { leading?: ReactNode; center: ReactNode }) {
+function SetupLightProgressRow({
+  leading,
+  center,
+  trailing,
+}: {
+  leading?: ReactNode;
+  center: ReactNode;
+  trailing?: ReactNode;
+}) {
   return (
     <div className="grid w-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-4 gap-y-2">
       <div className="flex min-w-0 items-center justify-start">{leading}</div>
       <div className="flex justify-center">{center}</div>
-      <div className="min-w-0" aria-hidden />
+      <div className="flex min-w-0 items-center justify-end">{trailing}</div>
     </div>
   );
 }
@@ -471,6 +500,144 @@ function SetupSection({
         </div>
       )}
     </section>
+  );
+}
+
+function SetupBootstrapWaitingCard({
+  variant,
+  firstName,
+  email,
+  inputEnabled,
+  inputValue,
+  onInputChange,
+  onSubmit,
+  inputRef,
+  isWorkDomain,
+  emailDomain,
+  onUseEmailDomain,
+  analysisError,
+}: {
+  variant: 'welcome' | 'add-icp';
+  firstName?: string;
+  email?: string;
+  inputEnabled: boolean;
+  inputValue: string;
+  onInputChange: (next: string) => void;
+  onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  isWorkDomain: boolean;
+  emailDomain?: string;
+  onUseEmailDomain: () => void;
+  analysisError: string;
+}) {
+  const isAdditionalIcp = variant === 'add-icp';
+
+  return (
+    <>
+      <SetupGlassAgentMetaStrip
+        clock={new Date()}
+        statusKey={inputEnabled ? 'ready' : 'thinking'}
+      />
+      <div className="flex w-full shrink-0 flex-col items-center">
+        <div className="flex h-[13.4375rem] w-full flex-col items-center justify-center">
+          <SetupOrb variant="welcome" welcomeEnergised={false} />
+        </div>
+        <div className="mt-[1.15cm] shrink-0 text-center text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/45">
+          {isAdditionalIcp ? 'Add another ICP' : 'Welcome to Arcova'}
+        </div>
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col justify-start">
+        <h1 className="mb-7 mt-[0.75cm] min-h-[5rem] text-center font-manrope text-3xl font-medium leading-snug tracking-tight text-arcova-navy">
+          {isAdditionalIcp ? (
+            <span className="block text-arcova-navy/40">Loading your setup.</span>
+          ) : inputEnabled ? (
+            <TypingHeadline part1={`Hi ${firstName || 'there'}, let's get you set up. `} part2="First, what's your company's website?" speed={44} />
+          ) : (
+            <span className="block text-arcova-navy/40">Getting ready.</span>
+          )}
+        </h1>
+
+        {isAdditionalIcp ? (
+          <div className="space-y-3">
+            <p className="text-center text-sm leading-relaxed text-arcova-navy/45">
+              Pulling your saved company context and previous ICPs so we can start a fresh target profile.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <form onSubmit={onSubmit}>
+              <div
+                className={cn(
+                  'flex min-w-0 items-center gap-2 rounded-2xl border bg-white/90 px-3 py-2.5 shadow-[0_8px_32px_-20px_rgba(13,53,71,0.18)] backdrop-blur-md transition-all',
+                  inputEnabled
+                    ? 'border-[rgba(13,53,71,0.12)] focus-within:border-arcova-teal/45 focus-within:shadow-[0_8px_28px_-18px_rgba(0,164,180,0.22)]'
+                    : 'pointer-events-none border-arcova-navy/10 opacity-55',
+                )}
+              >
+                <Sparkles
+                  className={cn(
+                    'h-4 w-4 shrink-0',
+                    inputEnabled ? 'text-arcova-teal/45' : 'text-arcova-navy/25',
+                  )}
+                />
+                <input
+                  ref={inputRef}
+                  value={inputValue.replace(/^https?:\/\//i, '')}
+                  onChange={(e) => onInputChange(e.target.value.replace(/^https?:\/\//i, ''))}
+                  placeholder="Your company name or website"
+                  spellCheck={false}
+                  autoComplete="off"
+                  disabled={!inputEnabled}
+                  aria-disabled={!inputEnabled}
+                  className="min-w-0 flex-1 bg-transparent font-manrope text-[1.0625rem] text-slate-800 outline-none placeholder:text-slate-400 disabled:cursor-not-allowed"
+                />
+                <button
+                  type="submit"
+                  disabled={!inputValue.trim() || !inputEnabled}
+                  className="flex shrink-0 items-center gap-1.5 rounded-xl bg-arcova-teal px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/90 disabled:cursor-not-allowed disabled:opacity-30"
+                  aria-label={inputEnabled ? 'Send' : 'Getting ready'}
+                >
+                  <Send className="h-4 w-4" />
+                  Send
+                </button>
+              </div>
+            </form>
+            {inputEnabled && isWorkDomain && !inputValue.trim() && (
+              <button
+                type="button"
+                onClick={onUseEmailDomain}
+                className="flex items-center gap-1.5 rounded-full border border-arcova-teal/30 bg-arcova-teal/8 px-3.5 py-1.5 text-xs font-medium text-arcova-teal transition-all hover:bg-arcova-teal/15"
+              >
+                Use {emailDomain} from my email
+              </button>
+            )}
+            {analysisError && (
+              <p className="text-xs text-red-600">{analysisError}</p>
+            )}
+          </div>
+        )}
+      </div>
+      {!isAdditionalIcp && (
+        <div className="mt-8 flex items-center justify-center gap-2 text-xs text-arcova-navy/40">
+          <span className="flex -space-x-1.5">
+            {['#a3e3df', '#f6d6c1', '#b5d6f0'].map((bg, i) => (
+              <span
+                key={i}
+                className="h-5 w-5 rounded-full border border-white/60"
+                style={{ background: bg }}
+              />
+            ))}
+          </span>
+          <span>
+            Joining as{' '}
+            <strong className="font-semibold text-arcova-navy/70">{firstName || 'you'}</strong>
+            {email && (
+              <span className="ml-1 text-arcova-navy/35">• {email}</span>
+            )}
+          </span>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -2668,7 +2835,7 @@ function SetupWelcomeCard({
             ))}
           </span>
           <span>
-            Setting up as{' '}
+            Signed in as{' '}
             <strong className="font-semibold text-arcova-navy/70">{firstName || 'you'}</strong>
           </span>
         </div>
@@ -3328,7 +3495,11 @@ export default function SetupFlow({
   companyContactsMap = {},
 }: SetupFlowProps) {
   const router = useRouter();
-  const pathname = usePathname();
+  const { pendingSection } = useSetupNavigation();
+  const normalizedUserEmail = (email ?? '').trim().toLowerCase();
+  const isDevSetupTestMode =
+    process.env.NEXT_PUBLIC_DEV_SETUP_TEST_MODE === 'true' ||
+    normalizedUserEmail === DEV_TEST_ADMIN_EMAIL;
   // ── UI state ─────────────────────────────────────────────────────────────
   const [phase, setPhase] = useState<Phase>('greeting');
   const [bootstrapFinished, setBootstrapFinished] = useState(false);
@@ -3406,7 +3577,7 @@ export default function SetupFlow({
     modalities: [], developmentStages: [], customerTherapeuticAreas: [], customerModalities: [], customerDevelopmentStages: [],
     fundingStages: [], signals: [], targetCustomers: [], buyerTypes: [], competitors: [],
   });
-  const [panelPersona, setPanelPersona] = useState<PanelPersonaData>({ functions: [], seniority: [], signals: [] });
+  const [panelPersona, setPanelPersona] = useState<PanelPersonaData>({ functions: [], seniority: [], jobTitles: [], signals: [] });
   const [buyingTeamEditMode, setBuyingTeamEditMode] = useState(false);
   const [savedIcpName, setSavedIcpName] = useState('');
   const [savedPersonaName, setSavedPersonaName] = useState('');
@@ -3432,19 +3603,55 @@ export default function SetupFlow({
   const lastAnalyzedUrlRef = useRef<string | null>(null);
   const analysisAbortRef = useRef<AbortController | null>(null);
   const preEditDataRef = useRef<Record<string, unknown> | null>(null);
-  /**
-   * `/arcova-setup?step=` sync: first run aligns URL to current phase only (fixes stale ?step=target
-   * on step 0). Later, only a *changed* step param (sidebar, back/forward) calls handleGoToStep.
-   */
-  const setupStepDeepLinkDoneRef = useRef(false);
-  const setupStepParamPrevRef = useRef<string | null>(null);
-  const setupStepInitialReplacePendingRef = useRef(false);
+  const manualNavHistoryRef = useRef<NavigationSnapshot[]>([]);
+  const manualForwardHistoryRef = useRef<NavigationSnapshot[]>([]);
 
-  const resetSetupStepUrlSyncRefs = () => {
-    setupStepDeepLinkDoneRef.current = false;
-    setupStepParamPrevRef.current = null;
-    setupStepInitialReplacePendingRef.current = false;
-  };
+  const normalizePhaseForManualNav = useCallback((value: Phase): Phase => {
+    if (value === 'analysis_loading') return 'greeting';
+    if (value === 'customer_url_loading') return 'customer_url_conversation';
+    if (value === 'buying_team_loading') return 'buying_team_review';
+    if (value === 'company_saving') return 'customer_url_review';
+    if (value === 'persona_saving') return 'buying_team_review';
+    return value;
+  }, []);
+
+  const pushManualNavigationSnapshot = useCallback(() => {
+    const snapshot: NavigationSnapshot = {
+      phase: normalizePhaseForManualNav(phase),
+      inputEnabled,
+      editingFindings,
+      icpEditMode,
+      buyingTeamEditMode,
+    };
+    const prev = manualNavHistoryRef.current[manualNavHistoryRef.current.length - 1];
+    if (
+      prev
+      && prev.phase === snapshot.phase
+      && prev.inputEnabled === snapshot.inputEnabled
+      && prev.editingFindings === snapshot.editingFindings
+      && prev.icpEditMode === snapshot.icpEditMode
+      && prev.buyingTeamEditMode === snapshot.buyingTeamEditMode
+    ) {
+      return;
+    }
+    manualNavHistoryRef.current.push(snapshot);
+  }, [buyingTeamEditMode, editingFindings, icpEditMode, inputEnabled, normalizePhaseForManualNav, phase]);
+
+  const captureCurrentNavigationSnapshot = useCallback((): NavigationSnapshot => ({
+    phase: normalizePhaseForManualNav(phase),
+    inputEnabled,
+    editingFindings,
+    icpEditMode,
+    buyingTeamEditMode,
+  }), [buyingTeamEditMode, editingFindings, icpEditMode, inputEnabled, normalizePhaseForManualNav, phase]);
+
+  const restoreManualNavigationSnapshot = useCallback((snapshot: NavigationSnapshot) => {
+    setEditingFindings(snapshot.editingFindings);
+    setIcpEditMode(snapshot.icpEditMode);
+    setBuyingTeamEditMode(snapshot.buyingTeamEditMode);
+    setPhase(snapshot.phase);
+    setInput(snapshot.inputEnabled);
+  }, []);
 
   // ── Enrichment navigation guard ────────────────────────────────────────────
   const { setIsEnriching } = useEnrichmentGuard();
@@ -4328,7 +4535,10 @@ export default function SetupFlow({
       (s) => typeof s.name === 'string' && s.name.trim().length > 0 && typeof s.domain === 'string' && s.domain.trim().length > 0,
     );
     if (resolvedSuggestions.length === 0) {
-      resolvedSuggestions = unenrolledSuggestions();
+      resolvedSuggestions =
+        entryPoint === 'target-company'
+          ? uniqueSuggestionsByDomain(loadStoredSuggestions())
+          : unenrolledSuggestions();
     }
     const sellerProfile = editingFindingsData;
     if (
@@ -4386,13 +4596,20 @@ export default function SetupFlow({
   useEffect(() => {
     if (phase !== 'customer_url_conversation' && phase !== 'icp_suggestion') return;
     if (icpSuggestions.length > 0) return;
-    const stored = unenrolledSuggestions();
+    const stored =
+      entryPoint === 'target-company'
+        ? uniqueSuggestionsByDomain(loadStoredSuggestions())
+        : unenrolledSuggestions();
     if (stored.length > 0) setIcpSuggestions(stored);
   }, [phase, icpSuggestions.length]);
 
   // ── Progress step navigation ──────────────────────────────────────────────
 
-  const handleGoToStep = useCallback(async (stepIndex: number) => {
+  const handleGoToStep = useCallback(async (stepIndex: number, options?: { recordHistory?: boolean }) => {
+    if (options?.recordHistory) {
+      pushManualNavigationSnapshot();
+      manualForwardHistoryRef.current = [];
+    }
     if (stepIndex === 0) {
       const latestProfile = editingFindingsData ?? getLatestResultsData();
       const rec = latestProfile && typeof latestProfile === 'object'
@@ -4433,7 +4650,10 @@ export default function SetupFlow({
           (s) => typeof s.name === 'string' && s.name.trim().length > 0 && typeof s.domain === 'string' && s.domain.trim().length > 0,
         );
         if (resolvedSuggestions.length === 0) {
-          resolvedSuggestions = unenrolledSuggestions();
+          resolvedSuggestions =
+            entryPoint === 'target-company'
+              ? uniqueSuggestionsByDomain(loadStoredSuggestions())
+              : unenrolledSuggestions();
         }
         const profile = editingFindingsData ?? getLatestResultsData();
         if (
@@ -4463,7 +4683,35 @@ export default function SetupFlow({
       setPhase('buying_team_review');
       setInput(false);
     }
-  }, [editingFindingsData, enrichedTargetCompany, generateIcpSuggestions, getLatestResultsData, icpSuggestions, reviewedCompanyName, askClaude, sayBeats]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [editingFindingsData, enrichedTargetCompany, generateIcpSuggestions, getLatestResultsData, icpSuggestions, reviewedCompanyName, askClaude, sayBeats, pushManualNavigationSnapshot]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const restorePreviousManualNavigation = useCallback(() => {
+    const snapshot = manualNavHistoryRef.current.pop();
+    if (snapshot) {
+      manualForwardHistoryRef.current.push(captureCurrentNavigationSnapshot());
+      restoreManualNavigationSnapshot(snapshot);
+      return true;
+    }
+    return false;
+  }, [captureCurrentNavigationSnapshot, restoreManualNavigationSnapshot]);
+
+  const restoreForwardManualNavigation = useCallback(() => {
+    const snapshot = manualForwardHistoryRef.current.pop();
+    if (snapshot) {
+      manualNavHistoryRef.current.push(captureCurrentNavigationSnapshot());
+      restoreManualNavigationSnapshot(snapshot);
+      return true;
+    }
+    return false;
+  }, [captureCurrentNavigationSnapshot, restoreManualNavigationSnapshot]);
+
+  const handleBackNavigation = useCallback(async (fallbackStepIndex?: number) => {
+    if (restorePreviousManualNavigation()) return;
+    if (typeof fallbackStepIndex === 'number') {
+      manualForwardHistoryRef.current.push(captureCurrentNavigationSnapshot());
+      await handleGoToStep(fallbackStepIndex);
+    }
+  }, [captureCurrentNavigationSnapshot, handleGoToStep, restorePreviousManualNavigation]);
 
   /** Leave full onboarding and return to the main app (company step has no prior wizard step). */
   const handleLeaveArcovaSetup = useCallback(() => {
@@ -4527,7 +4775,8 @@ export default function SetupFlow({
     setOwnEnrichStep(0);
     setTargetEnrichStep(0);
     setInputVal('');
-    resetSetupStepUrlSyncRefs();
+    manualNavHistoryRef.current = [];
+    manualForwardHistoryRef.current = [];
 
     // Jump to greeting before the onboarding API toggles thinking — avoids the dark interim shell
     // (`thinking && thread.length === 0`) while phase was still analysis_results.
@@ -4983,7 +5232,6 @@ export default function SetupFlow({
   }, [editingFindingsData, getLatestResultsData]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDeleteCompanyProfile = useCallback(async () => {
-    resetSetupStepUrlSyncRefs();
     const data = editingFindingsData ?? getLatestResultsData();
     const id = typeof data?.id === 'string' ? data.id : null;
     if (id) {
@@ -5367,6 +5615,20 @@ export default function SetupFlow({
           };
         }
 
+        const requestedSection = consumePendingSetupSection();
+        if (requestedSection === 'company' && existingAnalysis) {
+          setEditingFindings(false);
+          setPhase('analysis_results');
+          setInput(false);
+          return;
+        }
+        if (requestedSection === 'target' && existingAnalysis && existingIcps.length > 0) {
+          setIcpEditMode(false);
+          setPhase('customer_url_review');
+          setInput(false);
+          return;
+        }
+
         // Leg 1: nothing stored — greet and ask for company URL
         if (!existingAnalysis) {
           const { displayParts } = await askClaude();
@@ -5490,6 +5752,27 @@ export default function SetupFlow({
       }
 
       if (entryPoint === 'target-company') {
+        const filterSuggestionsForAdditionalIcp = (
+          suggestions: IcpSuggestion[],
+          existingIcpProfiles: TargetCompanyProfile[],
+        ): IcpSuggestion[] => {
+          const usedDomains = new Set(
+            existingIcpProfiles
+              .map((icp) =>
+                normalizeDomain(
+                  icp.example_company_url ||
+                    icp.example_company_enrichment?.website ||
+                    '',
+                ),
+              )
+              .filter(Boolean),
+          );
+
+          return uniqueSuggestionsByDomain(suggestions).filter(
+            (suggestion) => !usedDomains.has(normalizeDomain(suggestion.domain)),
+          );
+        };
+
         // Fetch seller analysis and existing ICPs in parallel
         const [analysesRes, icpsRes] = await Promise.all([
           fetch('/api/user-company'),
@@ -5545,21 +5828,26 @@ export default function SetupFlow({
           return;
         }
 
-        // Has existing ICPs — check for unenrolled suggestions
-        const remaining = unenrolledSuggestions();
+        // Has existing ICPs — prefer a fresh/additional suggestion set rather than
+        // hiding old options just because they were clicked before in local storage.
+        const storedSuggestions = filterSuggestionsForAdditionalIcp(loadStoredSuggestions(), existingIcps);
+        let remaining = storedSuggestions;
+        if (remaining.length < 3 && existingAnalysis) {
+          const fresh = filterSuggestionsForAdditionalIcp(
+            await generateIcpSuggestions(existingAnalysis as Record<string, unknown>),
+            existingIcps,
+          );
+          remaining = uniqueSuggestionsByDomain([...remaining, ...fresh]);
+        }
         if (remaining.length > 0) {
           setIcpSuggestions(remaining);
-          const { displayParts } = await askClaude({
-            mode: 'narration',
-            extra: {
-              role: 'user',
-              content:
-                '[System: The user is adding another ideal customer profile. Two or three short sentences, no em dashes. ' +
-                'Each ICP should stay a distinct slice of the market with little overlap. ' +
-                'They still have suggested accounts below, or they can type their own. If they are not sure, picking one of the suggestions below is fine.]',
-            },
-          });
-          if (displayParts.length) await sayBeats(displayParts);
+          await sayBeats([
+            'Welcome back. Let’s set up another ICP.',
+            'Keep this one focused on a distinct slice of the market so it does not overlap with your existing profiles.',
+            remaining.length > 1
+              ? 'Pick one of the suggestions below, or type in your own company.'
+              : 'I’ve put a suggested company below, or you can type in your own company.',
+          ]);
           setPhase('icp_suggestion');
           setInput(true);
           return;
@@ -5567,13 +5855,11 @@ export default function SetupFlow({
 
         // All previous suggestions enrolled or none stored — they have one in mind
         setPhase('customer_url_conversation');
-        setInput(false);
-        const { displayParts: targetIntroParts } = await askClaude({
-          mode: 'narration',
-          extra: { role: 'user', content: SETUP_NARRATION_TARGET_ACCOUNTS_STEP },
-        });
-        if (targetIntroParts.length) await sayBeats(targetIntroParts);
         setInput(true);
+        await sayBeats([
+          'Welcome back. Let’s set up another ICP.',
+          'Type in a company you want to model next, and we’ll build a separate target account profile around it.',
+        ]);
         return;
       }
     } finally {
@@ -5688,53 +5974,25 @@ export default function SetupFlow({
   ];
   const currentStepIndex = SETUP_STEPS.findIndex((s) => s.phases.includes(phase));
 
-  /** Single reconciliation: first sync URL ← phase; later, changed ?step= from nav may call handleGoToStep. */
   useEffect(() => {
-    if (entryPoint !== 'full' || !bootstrapFinished) return;
-    if (pathname !== ROUTES.setup.arcova) return;
-    if (currentStepIndex < 0) return;
-
-    const canonical =
-      currentStepIndex === 0 ? 'company' : currentStepIndex === 1 ? 'target' : 'buying';
-    const raw = new URLSearchParams(window.location.search).get('step');
-    const idxFromUrl =
-      raw === 'company' ? 0 : raw === 'target' ? 1 : raw === 'buying' ? 2 : null;
-
-    const prevRaw = setupStepParamPrevRef.current;
-
-    if (!setupStepDeepLinkDoneRef.current) {
-      setupStepDeepLinkDoneRef.current = true;
-      if (raw !== canonical) {
-        setupStepInitialReplacePendingRef.current = true;
-        router.replace(`${pathname}?step=${canonical}`, { scroll: false });
-      }
-      setupStepParamPrevRef.current = canonical;
+    if (currentStepIndex < 0) {
+      setActiveSetupSection(null);
       return;
     }
+    setActiveSetupSection(currentStepIndex === 0 ? 'company' : currentStepIndex === 1 ? 'target' : 'buying');
+  }, [currentStepIndex]);
 
-    if (setupStepInitialReplacePendingRef.current) {
-      if (raw === canonical) {
-        setupStepInitialReplacePendingRef.current = false;
-        setupStepParamPrevRef.current = raw;
-      } else {
-        router.replace(`${pathname}?step=${canonical}`, { scroll: false });
-      }
-      return;
+  useEffect(() => () => setActiveSetupSection(null), []);
+
+  useEffect(() => {
+    if (entryPoint !== 'full' || !bootstrapFinished || !pendingSection) return;
+    const requested = consumePendingSetupSection();
+    if (!requested) return;
+    const idx = requested === 'company' ? 0 : requested === 'target' ? 1 : 2;
+    if (idx !== currentStepIndex) {
+      void handleGoToStep(idx, { recordHistory: true });
     }
-
-    const stepParamChanged = prevRaw !== null && prevRaw !== raw;
-    if (stepParamChanged && idxFromUrl != null && idxFromUrl !== currentStepIndex) {
-      setupStepParamPrevRef.current = raw;
-      void handleGoToStep(idxFromUrl);
-      return;
-    }
-
-    setupStepParamPrevRef.current = raw;
-
-    if (raw !== canonical) {
-      router.replace(`${pathname}?step=${canonical}`, { scroll: false });
-    }
-  }, [entryPoint, bootstrapFinished, pathname, currentStepIndex, router, handleGoToStep]);
+  }, [bootstrapFinished, currentStepIndex, entryPoint, handleGoToStep, pendingSection]);
 
   const showProgress = (entryPoint === 'full') && currentStepIndex >= 0;
   /** Only show step pills up to the current leg so step 1 does not preview target / buying. */
@@ -5927,17 +6185,38 @@ export default function SetupFlow({
     'rounded-[14px] border border-arcova-navy/12 bg-white/70 px-5 py-3 text-sm font-medium text-arcova-navy/70 transition-all hover:bg-white hover:text-arcova-navy disabled:opacity-50';
   const ctaGhost =
     'rounded-[14px] border border-transparent px-4 py-3 text-sm font-medium text-arcova-navy/45 transition-all hover:text-arcova-navy/70 ml-auto';
-
   // ── Redesigned phase screens ──────────────────────────────────────────────
 
   const welcomeChatPart1 = `Hi ${firstName || 'there'}, let's get you set up. `;
   const welcomeChatPart2 = `First, what's your company's website?`;
+  const canUseDevForward = isDevSetupTestMode && manualForwardHistoryRef.current.length > 0;
+  const devForwardButton = isDevSetupTestMode ? (
+    <button
+      type="button"
+      onClick={() => {
+        if (canUseDevForward) restoreForwardManualNavigation();
+      }}
+      disabled={thinking || !canUseDevForward}
+      className={SETUP_TOP_BACK_LIGHT_CLASS}
+    >
+      Forward <span aria-hidden>→</span>
+    </button>
+  ) : null;
+  const headerCenter = (step: 0 | 1 | 2) =>
+    entryPoint === 'target-company' ? (
+      <div className="text-center text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/45">
+        Add Another ICP
+      </div>
+    ) : (
+      <StepEyebrow step={step} />
+    );
 
   // Phase: greeting, step-2 target ICP URL chat, or suggested model accounts, all in the same glass agent window.
   // • Before the user sends anything: welcome card (orb + headline + URL input).
   // • After the first user message: same 460px shell, in-place thread + Today-style composer (no separate header chrome).
   if (phase === 'greeting' || phase === 'customer_url_conversation' || phase === 'icp_suggestion') {
     const isGlassTargetStep = phase === 'customer_url_conversation' || phase === 'icp_suggestion';
+    const isAdditionalIcpEntry = entryPoint === 'target-company';
     const hasUserMsg = visibleMessages.some((m) => m.role === 'user') || isGlassTargetStep;
     // Opening beats are appended to `thread` on mount while the welcome card shows static headline copy.
     // In chat mode, list only messages from the first user turn so the UI matches what the user experienced.
@@ -5969,16 +6248,7 @@ export default function SetupFlow({
                 isGlassTargetStep && entryPoint === 'full' ? (
                   <button
                     type="button"
-                    onClick={() => void handleGoToStep(0)}
-                    disabled={thinking}
-                    className={SETUP_TOP_BACK_LIGHT_CLASS}
-                  >
-                    <span aria-hidden>←</span> Back
-                  </button>
-                ) : entryPoint === 'full' && phase === 'greeting' ? (
-                  <button
-                    type="button"
-                    onClick={() => handleLeaveArcovaSetup()}
+                    onClick={() => void handleBackNavigation(0)}
                     disabled={thinking}
                     className={SETUP_TOP_BACK_LIGHT_CLASS}
                   >
@@ -5986,7 +6256,8 @@ export default function SetupFlow({
                   </button>
                 ) : undefined
               }
-              center={<StepEyebrow step={isGlassTargetStep ? 1 : 0} />}
+              center={isAdditionalIcpEntry && !hasUserMsg ? null : headerCenter(isGlassTargetStep ? 1 : 0)}
+              trailing={devForwardButton}
             />
           </div>
         </div>
@@ -6014,91 +6285,103 @@ export default function SetupFlow({
                   <SetupOrb variant="welcome" welcomeEnergised={false} />
                 </div>
                 <div className="mt-[1.15cm] shrink-0 text-center text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/45">
-                  Welcome to Arcova
+                  {isAdditionalIcpEntry ? 'Add another ICP' : 'Welcome to Arcova'}
                 </div>
               </div>
               <div className="flex min-h-0 flex-1 flex-col justify-start">
                 <h1 className="mb-7 mt-[0.75cm] min-h-[5rem] text-center font-manrope text-3xl font-medium leading-snug tracking-tight text-arcova-navy">
-                  {inputEnabled ? (
+                  {isAdditionalIcpEntry ? (
+                    <span className="block text-arcova-navy/40">Loading your setup.</span>
+                  ) : inputEnabled ? (
                     <TypingHeadline part1={welcomeChatPart1} part2={welcomeChatPart2} speed={WELCOME_SPEED} />
                   ) : (
                     <span className="block text-arcova-navy/40">Getting ready.</span>
                   )}
                 </h1>
 
-                <div className="space-y-3">
-                  <form onSubmit={(e) => void handleSend(e)}>
-                    <div
-                      className={cn(
-                        'flex min-w-0 items-center gap-2 rounded-2xl border bg-white/90 px-3 py-2.5 shadow-[0_8px_32px_-20px_rgba(13,53,71,0.18)] backdrop-blur-md transition-all',
-                        inputEnabled
-                          ? 'border-[rgba(13,53,71,0.12)] focus-within:border-arcova-teal/45 focus-within:shadow-[0_8px_28px_-18px_rgba(0,164,180,0.22)]'
-                          : 'pointer-events-none border-arcova-navy/10 opacity-55',
-                      )}
-                    >
-                      <Sparkles
+                {isAdditionalIcpEntry ? (
+                  <div className="space-y-3">
+                    <p className="text-center text-sm leading-relaxed text-arcova-navy/45">
+                      Pulling your saved company context and previous ICPs so we can start a fresh target profile.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <form onSubmit={(e) => void handleSend(e)}>
+                      <div
                         className={cn(
-                          'h-4 w-4 shrink-0',
-                          inputEnabled ? 'text-arcova-teal/45' : 'text-arcova-navy/25',
+                          'flex min-w-0 items-center gap-2 rounded-2xl border bg-white/90 px-3 py-2.5 shadow-[0_8px_32px_-20px_rgba(13,53,71,0.18)] backdrop-blur-md transition-all',
+                          inputEnabled
+                            ? 'border-[rgba(13,53,71,0.12)] focus-within:border-arcova-teal/45 focus-within:shadow-[0_8px_28px_-18px_rgba(0,164,180,0.22)]'
+                            : 'pointer-events-none border-arcova-navy/10 opacity-55',
                         )}
-                      />
-                      <input
-                        ref={welcomeInputRef}
-                        value={inputValue.replace(/^https?:\/\//i, '')}
-                        onChange={(e) => setInputVal(e.target.value.replace(/^https?:\/\//i, ''))}
-                        placeholder="Your company name or website"
-                        spellCheck={false}
-                        autoComplete="off"
-                        disabled={!inputEnabled}
-                        aria-disabled={!inputEnabled}
-                        className="min-w-0 flex-1 bg-transparent font-manrope text-[1.0625rem] text-slate-800 outline-none placeholder:text-slate-400 disabled:cursor-not-allowed"
-                      />
-                      <button
-                        type="submit"
-                        disabled={!inputValue.trim() || !inputEnabled}
-                        className="flex shrink-0 items-center gap-1.5 rounded-xl bg-arcova-teal px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/90 disabled:cursor-not-allowed disabled:opacity-30"
-                        aria-label={inputEnabled ? 'Send' : 'Getting ready'}
                       >
-                        <Send className="h-4 w-4" />
-                        Send
+                        <Sparkles
+                          className={cn(
+                            'h-4 w-4 shrink-0',
+                            inputEnabled ? 'text-arcova-teal/45' : 'text-arcova-navy/25',
+                          )}
+                        />
+                        <input
+                          ref={welcomeInputRef}
+                          value={inputValue.replace(/^https?:\/\//i, '')}
+                          onChange={(e) => setInputVal(e.target.value.replace(/^https?:\/\//i, ''))}
+                          placeholder="Your company name or website"
+                          spellCheck={false}
+                          autoComplete="off"
+                          disabled={!inputEnabled}
+                          aria-disabled={!inputEnabled}
+                          className="min-w-0 flex-1 bg-transparent font-manrope text-[1.0625rem] text-slate-800 outline-none placeholder:text-slate-400 disabled:cursor-not-allowed"
+                        />
+                        <button
+                          type="submit"
+                          disabled={!inputValue.trim() || !inputEnabled}
+                          className="flex shrink-0 items-center gap-1.5 rounded-xl bg-arcova-teal px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/90 disabled:cursor-not-allowed disabled:opacity-30"
+                          aria-label={inputEnabled ? 'Send' : 'Getting ready'}
+                        >
+                          <Send className="h-4 w-4" />
+                          Send
+                        </button>
+                      </div>
+                    </form>
+                    {inputEnabled && isWorkDomain && !inputValue.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          pushText('user', emailDomain);
+                          void runAnalysis(emailDomain);
+                        }}
+                        className="flex items-center gap-1.5 rounded-full border border-arcova-teal/30 bg-arcova-teal/8 px-3.5 py-1.5 text-xs font-medium text-arcova-teal transition-all hover:bg-arcova-teal/15"
+                      >
+                        Use {emailDomain} from my email
                       </button>
-                    </div>
-                  </form>
-                  {inputEnabled && isWorkDomain && !inputValue.trim() && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        pushText('user', emailDomain);
-                        void runAnalysis(emailDomain);
-                      }}
-                      className="flex items-center gap-1.5 rounded-full border border-arcova-teal/30 bg-arcova-teal/8 px-3.5 py-1.5 text-xs font-medium text-arcova-teal transition-all hover:bg-arcova-teal/15"
-                    >
-                      Use {emailDomain} from my email
-                    </button>
-                  )}
-                  {analysisError && (
-                    <p className="text-xs text-red-600">{analysisError}</p>
-                  )}
+                    )}
+                    {analysisError && (
+                      <p className="text-xs text-red-600">{analysisError}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+              {!isAdditionalIcpEntry && (
+                <div className="mt-8 flex items-center justify-center gap-2 text-xs text-arcova-navy/40">
+                  <span className="flex -space-x-1.5">
+                    {['#a3e3df', '#f6d6c1', '#b5d6f0'].map((bg, i) => (
+                      <span
+                        key={i}
+                        className="h-5 w-5 rounded-full border border-white/60"
+                        style={{ background: bg }}
+                      />
+                    ))}
+                  </span>
+                  <span>
+                    Signed in as{' '}
+                    <strong className="font-semibold text-arcova-navy/70">{firstName || 'you'}</strong>
+                    {email && (
+                      <span className="ml-1 text-arcova-navy/35">• {email}</span>
+                    )}
+                  </span>
                 </div>
-              </div>
-              <div className="mt-8 flex items-center justify-center gap-2 text-xs text-arcova-navy/40">
-                <span className="flex -space-x-1.5">
-                  {['#a3e3df', '#f6d6c1', '#b5d6f0'].map((bg, i) => (
-                    <span
-                      key={i}
-                      className="h-5 w-5 rounded-full border border-white/60"
-                      style={{ background: bg }}
-                    />
-                  ))}
-                </span>
-                <span>
-                  Joining as{' '}
-                  <strong className="font-semibold text-arcova-navy/70">{firstName || 'you'}</strong>
-                  {email && (
-                    <span className="ml-1 text-arcova-navy/35">• {email}</span>
-                  )}
-                </span>
-              </div>
+              )}
             </>
           ) : (
             <>
@@ -6254,7 +6537,7 @@ export default function SetupFlow({
                 ) : entryPoint === 'full' && phase === 'customer_url_loading' ? (
                   <button
                     type="button"
-                    onClick={() => void handleGoToStep(0)}
+                    onClick={() => cancelAnalysis()}
                     disabled={thinking}
                     className={SETUP_TOP_BACK_LIGHT_CLASS}
                   >
@@ -6459,7 +6742,8 @@ export default function SetupFlow({
                     </button>
                   ) : undefined
                 }
-                center={<StepEyebrow step={0} />}
+                center={headerCenter(0)}
+                trailing={devForwardButton}
               />
             </div>
             {/* Hero */}
@@ -6631,20 +6915,21 @@ export default function SetupFlow({
         <AppAmbientBackground />
         <div className="relative z-10 flex flex-col px-4 pt-6 sm:px-6">
           <div className="mb-4">
-            <SetupLightProgressRow
-              leading={
-                <button
+              <SetupLightProgressRow
+                leading={
+                  <button
                   type="button"
-                  onClick={() => void handleGoToStep(0)}
+                  onClick={() => void handleBackNavigation(0)}
                   disabled={thinking}
                   className={SETUP_TOP_BACK_LIGHT_CLASS}
                 >
-                  <span aria-hidden>←</span> Back
-                </button>
-              }
-              center={<StepEyebrow step={1} />}
-            />
-          </div>
+                    <span aria-hidden>←</span> Back
+                  </button>
+                }
+                center={headerCenter(1)}
+                trailing={devForwardButton}
+              />
+            </div>
           <SetupWelcomeCard
             firstName={firstName}
             onSubmit={(url) => void handleCustomerUrlAnalyse(url)}
@@ -6665,11 +6950,12 @@ export default function SetupFlow({
         <AppAmbientBackground />
         <div className="relative z-10 flex flex-col px-6 py-9 lg:px-10">
           <div className="mb-6">
-            <SetupLightProgressRow
-              leading={
-                <button
+              <SetupLightProgressRow
+                leading={
+                  <button
                   type="button"
                   onClick={() => {
+                    if (restorePreviousManualNavigation()) return;
                     setIcpEditMode(false);
                     setPhase('customer_url_conversation');
                     setInput(true);
@@ -6677,11 +6963,12 @@ export default function SetupFlow({
                   disabled={thinking}
                   className={SETUP_TOP_BACK_LIGHT_CLASS}
                 >
-                  <span aria-hidden>←</span> Back
-                </button>
-              }
-              center={<StepEyebrow step={1} />}
-            />
+                    <span aria-hidden>←</span> Back
+                  </button>
+                }
+                center={headerCenter(1)}
+                trailing={devForwardButton}
+              />
           </div>
           {/* Hero */}
           <div className="mb-6 max-w-[820px]">
@@ -6755,10 +7042,10 @@ export default function SetupFlow({
     const icpName = savedIcpName || reviewedCompanyName || 'this ICP';
     return (
       <LightLayout
-        eyebrow={<StepEyebrow step={2} />}
+        eyebrow={headerCenter(2)}
         title={`Here's who typically buys from companies like ${icpName}.`}
         subtitle="Review the roles and seniority — you can adjust before saving."
-        onBack={() => void handleGoToStep(1)}
+        onBack={() => void handleBackNavigation(1)}
       >
         <div className="arcova-glass-panel p-6">
           <SetupProfilePanel
@@ -7105,7 +7392,7 @@ export default function SetupFlow({
               {entryPoint === 'full' && !isSaving && currentStepIndex > 0 && (
                 <button
                   type="button"
-                  onClick={() => void handleGoToStep(currentStepIndex - 1)}
+                  onClick={() => void handleBackNavigation(currentStepIndex - 1)}
                   disabled={thinking}
                   className={SETUP_TOP_BACK_DARK_CLASS}
                 >
@@ -7133,7 +7420,7 @@ export default function SetupFlow({
                     key={step.label}
                     type="button"
                     disabled={!canGoBack}
-                    onClick={() => canGoBack && void handleGoToStep(i)}
+                    onClick={() => canGoBack && void handleGoToStep(i, { recordHistory: true })}
                     className={`flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
                       isCurrent
                         ? 'bg-arcova-teal text-white'

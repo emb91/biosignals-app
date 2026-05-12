@@ -2,7 +2,7 @@
 
 import { useEffect, useState, Suspense, useMemo } from 'react';
 import Image from 'next/image';
-import { usePathname, useSearchParams } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { ChevronDown, ChevronLeft } from 'lucide-react';
 import {
   NavIconAccount,
@@ -21,13 +21,17 @@ import {
 } from '@/components/NavRailIcons';
 import { cn } from '@/lib/utils';
 import { useEnrichmentGuard } from '@/context/EnrichmentGuardContext';
+import { useAuth } from '@/context/AuthContext';
 import { ROUTES } from '@/lib/routes';
 import { useSetupState } from '@/lib/use-setup-state';
+import { requestSetupSection, useSetupNavigation, type SetupSection } from '@/lib/setup-navigation';
 
 interface NavItem {
   name: string;
   href: string;
   icon: React.ComponentType<{ className?: string }>;
+  onClick?: () => void;
+  active?: boolean;
 }
 
 const setupItems: NavItem[] = [
@@ -52,6 +56,8 @@ const topNavigation: NavItem[] = [
 const bottomNavigation: NavItem[] = [
   { name: 'Settings', href: ROUTES.settings, icon: NavIconSettings },
 ];
+
+const ADMIN_EMAIL = 'emma@arcova.bio';
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'arcova_sidebar_collapsed';
 const SIDEBAR_LEGACY_HIDDEN_KEY = 'arcova_sidebar_hidden';
@@ -83,35 +89,50 @@ interface AppSidebarProps {
 }
 
 function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
+  const { user } = useAuth();
   const pathname = usePathname();
-  const searchParams = useSearchParams();
   const { step2Complete, setupComplete, loading: setupStateLoading } = useSetupState();
-  /** URL-aligned: do not show Target ICP while still on the company leg (?step=company or unset). */
-  const setupStepParam = searchParams.get('step');
+  const { activeSection: activeSetupSection } = useSetupNavigation();
+  const { guardedNavigate } = useEnrichmentGuard();
   const showTargetIcpInGuidedNav =
-    step2Complete || setupStepParam === 'target' || setupStepParam === 'buying';
+    step2Complete || (pathname === ROUTES.setup.arcova && (activeSetupSection === 'target' || activeSetupSection === 'buying'));
+  const jumpToSetupSection = (section: SetupSection) => {
+    requestSetupSection(section);
+    if (pathname !== ROUTES.setup.arcova) {
+      guardedNavigate(ROUTES.setup.arcova);
+    }
+  };
   /** Guided setup rail mirrors Supabase: company row unlocks target, ICP row unlocks buying team. */
   const guidedSetupNestedItems = useMemo((): NavItem[] => {
     const items: NavItem[] = [
-      { name: 'My company', href: `${ROUTES.setup.arcova}?step=company`, icon: NavIconMyCompany },
+      {
+        name: 'My company',
+        href: ROUTES.setup.arcova,
+        icon: NavIconMyCompany,
+        onClick: () => jumpToSetupSection('company'),
+        active: pathname === ROUTES.setup.arcova && activeSetupSection === 'company',
+      },
     ];
     if (showTargetIcpInGuidedNav) {
       items.push({
         name: 'Target ICP',
-        href: `${ROUTES.setup.arcova}?step=target`,
+        href: ROUTES.setup.arcova,
         icon: NavIconMyIcps,
+        onClick: () => jumpToSetupSection('target'),
+        active: pathname === ROUTES.setup.arcova && activeSetupSection === 'target',
       });
     }
     if (step2Complete) {
       items.push({
         name: 'Buying team',
-        href: `${ROUTES.setup.arcova}?step=buying`,
+        href: ROUTES.setup.arcova,
         icon: NavIconContact,
+        onClick: () => jumpToSetupSection('buying'),
+        active: pathname === ROUTES.setup.arcova && activeSetupSection === 'buying',
       });
     }
     return items;
-  }, [showTargetIcpInGuidedNav, step2Complete]);
-  const { guardedNavigate } = useEnrichmentGuard();
+  }, [activeSetupSection, pathname, showTargetIcpInGuidedNav, step2Complete]);
   const [showCompaniesDot, setShowCompaniesDot] = useState(false);
   const [showMyProfileDot, setShowMyProfileDot] = useState(false);
   const [showTodayDot, setShowTodayDot] = useState(false);
@@ -122,20 +143,17 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
   const [showDataDot, setShowDataDot] = useState(false);
   const [showSignalsDot, setShowSignalsDot] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const isAdminUser = user?.email?.trim().toLowerCase() === ADMIN_EMAIL;
+  const bottomItems = isAdminUser
+    ? [...bottomNavigation, { name: 'Admin Dash', href: ROUTES.admin.llmUsage, icon: NavIconSettings }]
+    : bottomNavigation;
 
   const isActive = (href: string) => {
-    if (href === ROUTES.setup.arcova) {
-      return pathname === ROUTES.setup.arcova && !searchParams.get('step');
-    }
     const qAt = href.indexOf('?');
     if (qAt !== -1) {
       const path = href.slice(0, qAt);
       if (pathname !== path) return false;
-      const want = new URLSearchParams(href.slice(qAt + 1));
-      for (const [k, v] of want.entries()) {
-        if (searchParams.get(k) !== v) return false;
-      }
-      return true;
+      return false;
     }
     if (pathname === href) return true;
     if (href === ROUTES.gtmBase || href === ROUTES.today) return false;
@@ -151,12 +169,30 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
       ? setupItems
       : [
           { name: 'Guided setup', href: ROUTES.setup.arcova, icon: NavIconSetup },
-          { name: 'My company', href: `${ROUTES.setup.arcova}?step=company`, icon: NavIconMyCompany },
+          {
+            name: 'My company',
+            href: ROUTES.setup.arcova,
+            icon: NavIconMyCompany,
+            onClick: () => jumpToSetupSection('company'),
+            active: pathname === ROUTES.setup.arcova && activeSetupSection === 'company',
+          },
           ...(showTargetIcpInGuidedNav
-            ? [{ name: 'Target ICP', href: `${ROUTES.setup.arcova}?step=target`, icon: NavIconMyIcps } as NavItem]
+            ? [{
+              name: 'Target ICP',
+              href: ROUTES.setup.arcova,
+              icon: NavIconMyIcps,
+              onClick: () => jumpToSetupSection('target'),
+              active: pathname === ROUTES.setup.arcova && activeSetupSection === 'target',
+            } as NavItem]
             : []),
           ...(step2Complete
-            ? [{ name: 'Buying team', href: `${ROUTES.setup.arcova}?step=buying`, icon: NavIconContact } as NavItem]
+            ? [{
+              name: 'Buying team',
+              href: ROUTES.setup.arcova,
+              icon: NavIconContact,
+              onClick: () => jumpToSetupSection('buying'),
+              active: pathname === ROUTES.setup.arcova && activeSetupSection === 'buying',
+            } as NavItem]
             : []),
         ];
 
@@ -336,10 +372,10 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
     <div key={item.name}>
       <button
         type="button"
-        onClick={() => guardedNavigate(item.href)}
+        onClick={() => item.onClick?.() ?? guardedNavigate(item.href)}
         className={cn(
           'w-full flex items-center space-x-3 rounded-xl px-3.5 py-2.5 text-[0.9375rem] font-medium font-manrope leading-snug transition-colors text-left',
-          isActive(item.href)
+          (item.active ?? isActive(item.href))
             ? 'bg-arcova-navy text-white shadow-sm'
             : 'text-[#4a6470] hover:bg-white/70 hover:text-arcova-navy',
         )}
@@ -542,7 +578,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
               {renderCollapsedRail()}
             </div>
             <div className="shrink-0 border-t border-[rgba(13,53,71,0.08)] px-2 pb-4 pt-3">
-              {bottomNavigation.map((item) =>
+              {bottomItems.map((item) =>
                 railIconButton(item.name, item.icon, {
                   onClick: () => guardedNavigate(item.href),
                   active: isActive(item.href),
@@ -600,7 +636,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
               )}
             </div>
             <div className="shrink-0 border-t border-[rgba(13,53,71,0.08)] px-4 py-3.5">
-              {bottomNavigation.map(renderNavItem)}
+              {bottomItems.map(renderNavItem)}
             </div>
           </nav>
         )}
