@@ -67,8 +67,8 @@ export default function SetupShell({
       >
         {inSetup && !hideSetupProgress && (
           <div className="shrink-0 border-b border-white/10 px-4 py-2.5 sm:px-6">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div className="min-w-0 flex-1">
+            <div className="grid w-full grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-center md:gap-x-4">
+              <div className="min-w-0 md:justify-self-start">
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-arcova-teal">
                   Getting started
                 </p>
@@ -81,11 +81,10 @@ export default function SetupShell({
                 )}
               </div>
 
-              <div className="flex shrink-0 items-center gap-3 lg:gap-4">
-                <ol
-                  className="flex items-center gap-1.5 sm:gap-2"
-                  aria-label="Setup progress"
-                >
+              <ol
+                className="flex items-center justify-center gap-1.5 justify-self-center sm:gap-2"
+                aria-label="Setup progress"
+              >
                   {STEPS.map((s, idx) => {
                     const done = s.num < step;
                     const current = s.num === step;
@@ -131,8 +130,9 @@ export default function SetupShell({
                       </li>
                     );
                   })}
-                </ol>
+              </ol>
 
+              <div className="flex justify-center md:justify-end">
                 <Link
                   href="/settings"
                   className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-white/15 bg-white/10 text-slate-300 transition-colors hover:bg-white/20 hover:text-white"

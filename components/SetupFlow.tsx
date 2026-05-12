@@ -22,6 +22,7 @@ import SetupProfilePanel, {
   AddTagSelect,
   type PanelCompanyData,
   type PanelPersonaData,
+  type IcpChangeValue,
 } from '@/components/SetupProfilePanel';
 import { useEnrichmentGuard } from '@/context/EnrichmentGuardContext';
 import {
@@ -30,6 +31,7 @@ import {
   COMPANY_TYPE_OPTIONS,
   DEVELOPMENT_STAGE_OPTIONS,
   FUNDING_STAGE_OPTIONS,
+  LI_FOLLOWER_OPTIONS,
   MODALITY_OPTIONS,
   SENIORITY_LEVEL_OPTIONS,
   THERAPEUTIC_AREA_OPTIONS,
@@ -48,7 +50,22 @@ import { fetchLatestUserCompanyRow } from '@/lib/fetch-latest-user-company';
 import { ArcovaWelcomeOrb } from '@/components/ArcovaWelcomeOrb';
 import { ROUTES } from '@/lib/routes';
 import { PLATFORM_CATEGORY_OPTIONS } from '@/lib/platform-category';
-import { Send, Sparkles, ChevronDown, ExternalLink, Check, Building2, X } from 'lucide-react';
+import { formatCurrencyShort, extractFundingStatus } from '@/lib/funding-display';
+import { getSignalDisplayName } from '@/lib/signal-display-names';
+import {
+  Send,
+  Sparkles,
+  ChevronDown,
+  ExternalLink,
+  Check,
+  Building2,
+  X,
+  Target,
+  Pencil,
+  Trash2,
+  Save,
+  RefreshCw,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /** Quick picks on step 2: model accounts from /api/suggest-icp-companies (domains, one-click analyse). */
@@ -221,10 +238,19 @@ const NARRATION: Partial<Record<Phase, string>> = {
 const ASSISTANT_BEAT_RE = /\s*<<<\s*msg\s*>>>\s*/gi;
 
 function splitAssistantBeats(raw: string): string[] {
-  return raw
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+  const byDelimiter = trimmed
     .split(ASSISTANT_BEAT_RE)
     .map((s) => s.trim())
     .filter(Boolean);
+  if (byDelimiter.length > 1) return byDelimiter;
+  const byPara = trimmed
+    .split(/\n\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (byPara.length > 1) return byPara;
+  return [trimmed];
 }
 
 // ── Display message types ──────────────────────────────────────────────────
@@ -300,11 +326,12 @@ const TYPING_MS = 18;
 
 /** Narration when entering the target-account step: clear purpose, low verbosity, point to suggestion picks. */
 const SETUP_NARRATION_TARGET_ACCOUNTS_STEP =
-  '[System: The user\'s own company profile is already saved. Write 3-5 short sentences total, plain language, no em dashes, no long product pitch. ' +
-  '(1) Say clearly what we are doing next: we are defining ideal target accounts, meaning concrete companies they want as customers, so we can profile the right fit. ' +
-  '(2) Ask who counts as a best customer or dream account for them, company name or URL. ' +
-  '(3) If they are not sure, say we put suggestions below based on their company and they can pick one of those options or keep typing. ' +
-  'One idea per sentence. Stay concise.]';
+  '[System: The user\'s own company profile is already saved. Plain language, no em dashes, no long product pitch. ' +
+  'Use three separate chat bubbles. After bubble 1 and after bubble 2, output a line containing only <<< msg >>>. Do not output that delimiter after bubble 3. ' +
+  'Bubble 1: what we are doing next, defining ideal target accounts (concrete companies they want as customers) for profiling fit. ' +
+  'Bubble 2: ask for their best customer or dream account, company name or URL. ' +
+  'Bubble 3: if they are not sure, we put suggestions below from their company and they can pick one or keep typing. ' +
+  'Each bubble: 1-3 short sentences. Stay concise.]';
 
 /** Shared enrichment UI: mid-pass (firm details landed, widening context before next SSE). */
 const ENRICH_GENERIC_LOOKUP_LINES = [
@@ -343,9 +370,13 @@ const SETUP_CHAT_SURROUND =
 const SETUP_CHAT_CARD =
   'flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.06] shadow-[0_28px_70px_-20px_rgba(0,0,0,0.8)] ring-1 ring-white/10 backdrop-blur-[2px]';
 
-/** Back control on glass / light shells, placed above the rounded chat card (early setup phases). */
-const SETUP_GLASS_BACK_ABOVE_CARD_CLASS =
-  'inline-flex items-center gap-1.5 rounded-full border border-arcova-navy/10 bg-white/65 px-3 py-1.5 text-[12px] font-medium text-arcova-navy/65 backdrop-blur transition-all hover:-translate-x-0.5 hover:bg-white hover:text-arcova-navy disabled:opacity-50';
+/** Back on light setup surfaces; same row as StepEyebrow (glass, hero, light layout). */
+const SETUP_TOP_BACK_LIGHT_CLASS =
+  'inline-flex shrink-0 items-center gap-1.5 rounded-full border border-arcova-navy/10 bg-white/65 px-3 py-1.5 text-[12px] font-medium text-arcova-navy/65 backdrop-blur transition-all hover:-translate-x-0.5 hover:bg-white hover:text-arcova-navy disabled:opacity-50';
+
+/** Back on dark progress strip, left of numbered pills. */
+const SETUP_TOP_BACK_DARK_CLASS =
+  'shrink-0 inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-medium text-white/75 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-40';
 
 function isSaasCompanyType(value?: string | null): boolean {
   return (value ?? '').trim() === 'SaaS';
@@ -386,17 +417,41 @@ function StepEyebrow({ step }: { step: 0 | 1 | 2 }) {
   );
 }
 
+/**
+ * Full-width setup header row: optional leading control (e.g. Back), step eyebrow
+ * centered in the page, with symmetric side gutters (same pattern as the dark strip).
+ */
+function SetupLightProgressRow({ leading, center }: { leading?: ReactNode; center: ReactNode }) {
+  return (
+    <div className="grid w-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-4 gap-y-2">
+      <div className="flex min-w-0 items-center justify-start">{leading}</div>
+      <div className="flex justify-center">{center}</div>
+      <div className="min-w-0" aria-hidden />
+    </div>
+  );
+}
+
 // ── Setup "My company" card (light glass, matches Setup.html design) ────────
 function SetupSection({
   label,
   defaultOpen = false,
+  expandNonce = 0,
   children,
 }: {
   label: string;
   defaultOpen?: boolean;
+  /** Increments when the parent enters company edit mode; opens this section without changing chrome. */
+  expandNonce?: number;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const prevNonceRef = useRef(expandNonce);
+
+  useEffect(() => {
+    if (expandNonce > prevNonceRef.current) setOpen(true);
+    prevNonceRef.current = expandNonce;
+  }, [expandNonce]);
+
   return (
     <section className="overflow-hidden rounded-xl border border-arcova-navy/8 bg-white/40 transition-colors hover:bg-white/55">
       <header
@@ -519,6 +574,78 @@ function SetupTaxonomyTag({
         </button>
       )}
     </span>
+  );
+}
+
+function SetupTargetModelledStat({ label, value, subValue }: { label: string; value: string; subValue?: string }) {
+  return (
+    <div className="min-w-0">
+      <SetupSubLabel>{label}</SetupSubLabel>
+      <p className="mt-1 text-[13px] font-semibold leading-tight text-arcova-navy">{value}</p>
+      {subValue && (
+        <p className="mt-0.5 text-[12px] leading-snug text-arcova-navy/70">{subValue}</p>
+      )}
+    </div>
+  );
+}
+
+function SetupLightEditableTagList({
+  items,
+  onChange,
+  addPlaceholder,
+}: {
+  items: string[];
+  onChange: (next: string[]) => void;
+  addPlaceholder: string;
+}) {
+  const [draft, setDraft] = useState('');
+  const addItem = () => {
+    const next = draft.trim();
+    if (!next) return;
+    const exists = items.some((item) => item.trim().toLowerCase() === next.toLowerCase());
+    if (exists) {
+      setDraft('');
+      return;
+    }
+    onChange([...items, next]);
+    setDraft('');
+  };
+  return (
+    <div className="space-y-2">
+      {items.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {items.map((item, index) => (
+            <SetupTaxonomyTag
+              key={`${item}-${index}`}
+              label={item}
+              editMode
+              onRemove={() => onChange(items.filter((_, i) => i !== index))}
+            />
+          ))}
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          type="text"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            addItem();
+          }}
+          placeholder={addPlaceholder}
+          className={cn('min-w-0 flex-1', SETUP_SELECT)}
+        />
+        <button
+          type="button"
+          onClick={addItem}
+          className="shrink-0 rounded-lg border border-arcova-navy/12 bg-white/80 px-3 py-2 text-[12px] font-medium text-arcova-navy/70 transition-colors hover:bg-white"
+        >
+          Add
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -708,6 +835,16 @@ function SetupMyCompanyCard({
     value: import('@/components/SetupProfilePanel').MyCompanyChangeValue,
   ) => onChange?.(field, value);
   const [newCompetitorUrl, setNewCompetitorUrl] = useState('');
+  const prevEditModeRef = useRef(editMode);
+  const [sectionExpandNonce, setSectionExpandNonce] = useState(0);
+
+  useEffect(() => {
+    if (editMode && !prevEditModeRef.current) {
+      setSectionExpandNonce((n) => n + 1);
+    }
+    prevEditModeRef.current = editMode;
+  }, [editMode]);
+
   const domain = (data.website ?? '').replace(/^https?:\/\//, '').replace(/\/$/, '');
   const fundingLine = formatSetupFunding(data.fundingStage, data.totalFundingUsd);
   const platformCategoryDisplay = visiblePlatformCategory(data.companyType, data.platformCategory);
@@ -786,7 +923,7 @@ function SetupMyCompanyCard({
         </div>
 
         {/* About */}
-        <SetupSection label="About" defaultOpen>
+        <SetupSection label="About" defaultOpen expandNonce={sectionExpandNonce}>
           {editMode ? (
             <SetupAboutDescriptionEditor
               paragraphs={data.description}
@@ -965,7 +1102,7 @@ function SetupMyCompanyCard({
         </SetupSection>
 
         {/* Firmographics */}
-        <SetupSection label="Firmographics">
+        <SetupSection label="Firmographics" expandNonce={sectionExpandNonce}>
           {editMode ? (
             <div className="grid grid-cols-2 gap-x-5 gap-y-3">
               <div>
@@ -1013,7 +1150,21 @@ function SetupMyCompanyCard({
                   <SetupPositiveIntDraftField
                     value={data.employeeCount}
                     onCommit={(v) => set('employeeCount', v)}
-                    placeholder="Approx. employees"
+                    placeholder={
+                      data.employeeCount == null && data.employeeRange
+                        ? String(data.employeeRange)
+                        : 'Approx. employees'
+                    }
+                  />
+                </div>
+              </div>
+              <div>
+                <SetupSubLabel>Status</SetupSubLabel>
+                <div className="mt-1.5">
+                  <SetupEditableText
+                    value={data.companyStatus ?? ''}
+                    onChange={(v) => set('companyStatus', v || undefined)}
+                    placeholder="e.g. Private"
                   />
                 </div>
               </div>
@@ -1021,6 +1172,16 @@ function SetupMyCompanyCard({
                 <SetupSubLabel>Funding stage</SetupSubLabel>
                 <div className="mt-1.5">
                   <SetupEditableText value={data.fundingStage ?? ''} onChange={(v) => set('fundingStage', v)} />
+                </div>
+              </div>
+              <div className="col-span-2">
+                <SetupSubLabel>Total funding USD</SetupSubLabel>
+                <div className="mt-1.5">
+                  <SetupPositiveIntDraftField
+                    value={data.totalFundingUsd ?? undefined}
+                    onCommit={(v) => set('totalFundingUsd', v)}
+                    placeholder="e.g. 50000000"
+                  />
                 </div>
               </div>
             </div>
@@ -1056,7 +1217,7 @@ function SetupMyCompanyCard({
           (data.customersWeServe && data.customersWeServe.length > 0) ||
           (data.goodFit && data.goodFit.length > 0) ||
           (data.badFit && data.badFit.length > 0)) && (
-          <SetupSection label="Customers">
+          <SetupSection label="Customers" expandNonce={sectionExpandNonce}>
             <div>
               <SetupSubLabel>Customer segments</SetupSubLabel>
               <div className="mt-1.5">
@@ -1100,7 +1261,7 @@ function SetupMyCompanyCard({
           (data.productsServices && data.productsServices.length > 0) ||
           (data.services && data.services.length > 0) ||
           (data.technologies && data.technologies.length > 0)) && (
-          <SetupSection label="What you sell">
+          <SetupSection label="What you sell" expandNonce={sectionExpandNonce}>
             <div>
               <SetupSubLabel>Products</SetupSubLabel>
               <div className="mt-1.5">
@@ -1141,7 +1302,7 @@ function SetupMyCompanyCard({
 
         {/* Competitors */}
         {(editMode || (data.competitorsEnriched && data.competitorsEnriched.length > 0)) && (
-          <SetupSection label="Competitors">
+          <SetupSection label="Competitors" expandNonce={sectionExpandNonce}>
             <div className="space-y-2">
               {(data.competitorsEnriched ?? []).map((c, i) => (
                 <div key={`${c.url ?? 'n'}-${c.name}-${i}`} className="flex items-center gap-2">
@@ -1209,7 +1370,7 @@ function SetupMyCompanyCard({
 
         {/* Value proposition */}
         {(editMode || (data.valuePropositions && data.valuePropositions.length > 0)) && (
-          <SetupSection label="Value proposition">
+          <SetupSection label="Value proposition" expandNonce={sectionExpandNonce}>
             {editMode ? (
               <SetupEditableList
                 items={data.valuePropositions ?? []}
@@ -1219,6 +1380,814 @@ function SetupMyCompanyCard({
               data.valuePropositions && <SetupBullets items={data.valuePropositions} />
             )}
           </SetupSection>
+        )}
+
+        {(editMode ||
+          (typeof data.followerCount === 'number') ||
+          (data.linkedinUrl && data.linkedinUrl.trim().length > 0)) && (
+          <SetupSection label="Social" expandNonce={sectionExpandNonce}>
+            {editMode ? (
+              <div className="space-y-3">
+                <div>
+                  <SetupSubLabel>LinkedIn URL</SetupSubLabel>
+                  <div className="mt-1.5">
+                    <SetupEditableText
+                      value={data.linkedinUrl ?? ''}
+                      onChange={(v) => set('linkedinUrl', v || undefined)}
+                      placeholder="https://linkedin.com/company/…"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <SetupSubLabel>LinkedIn followers</SetupSubLabel>
+                  <div className="mt-1.5">
+                    <SetupPositiveIntDraftField
+                      value={data.followerCount ?? undefined}
+                      onCommit={(v) => set('followerCount', v)}
+                      placeholder="e.g. 12000"
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {typeof data.followerCount === 'number' && (
+                  <SetupKV rows={[['LinkedIn followers', data.followerCount.toLocaleString()]]} />
+                )}
+                {data.linkedinUrl && data.linkedinUrl.trim().length > 0 && (
+                  <div className="min-w-0">
+                    <SetupSubLabel>LinkedIn</SetupSubLabel>
+                    <a
+                      href={data.linkedinUrl.startsWith('http') ? data.linkedinUrl : `https://${data.linkedinUrl}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-1 inline-flex flex-wrap items-center gap-1 break-all text-[12.5px] font-medium text-arcova-teal hover:underline"
+                    >
+                      {data.linkedinUrl.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')}
+                      <ExternalLink className="h-3 w-3 shrink-0" />
+                    </a>
+                  </div>
+                )}
+              </div>
+            )}
+          </SetupSection>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function SetupTargetCompanyCard({
+  panelCompany,
+  enrichedTargetCompany: e,
+  icpEditMode,
+  savedIcpName,
+  onEditIcp,
+  onCancelIcp,
+  onSaveIcp,
+  onReenrichIcp,
+  onDeleteIcp,
+  onIcpFieldChange,
+  showSignalPills = true,
+}: {
+  panelCompany: PanelCompanyData;
+  enrichedTargetCompany: TargetCompanyEnrichmentResult | null;
+  icpEditMode: boolean;
+  savedIcpName: string;
+  onEditIcp?: () => void;
+  onCancelIcp?: () => void;
+  onSaveIcp?: () => void | Promise<void>;
+  onReenrichIcp?: () => void;
+  onDeleteIcp?: () => void | Promise<void>;
+  onIcpFieldChange?: (field: string, value: IcpChangeValue) => void;
+  showSignalPills?: boolean;
+}) {
+  const [modelledOnOpen, setModelledOnOpen] = useState(false);
+  const [newCompetitorUrl, setNewCompetitorUrl] = useState('');
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+
+  useEffect(() => {
+    if (icpEditMode) setModelledOnOpen(false);
+  }, [icpEditMode]);
+
+  const displayDomain = e?.website?.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
+  const logoInitial = (e?.company_name ?? panelCompany.companyType ?? 'T')[0]?.toUpperCase() ?? 'T';
+  const platformCategoryDisplay = visiblePlatformCategory(panelCompany.companyType, panelCompany.platformCategory);
+
+  const hasModelledOnNarrative = !!(
+    e?.description?.[0]
+    || e?.customers_we_serve?.length
+    || e?.value_propositions?.length
+    || e?.linkedin_url
+  );
+  const hasModelledOnFirmographics = !!(
+    e?.employee_count
+    || e?.employee_range
+    || e?.hq_city
+    || e?.follower_count != null
+    || e?.funding_status_label
+    || e?.funding_stage
+    || e?.total_funding_usd != null
+    || e?.funding_resolution_summary
+    || e?.company_status
+  );
+  const modelledOnFundingStatus =
+    e?.funding_status_label?.trim() || (e?.company_status ? extractFundingStatus(e.company_status) : null);
+
+  const referenceCustomerSegments = resolveCustomerSegments({
+    targetCustomers: e?.target_customers ?? [],
+    customersWeServe: e?.customers_we_serve ?? [],
+    fallbackItems: e?.customers_we_serve ?? [],
+  });
+
+  const hasCompetitors = icpEditMode || panelCompany.competitors.length > 0;
+  const showTargetCardFooter = !!(onReenrichIcp || onDeleteIcp || onSaveIcp || onCancelIcp);
+
+  const addCompetitorFromInput = () => {
+    const raw = newCompetitorUrl.trim();
+    if (!raw || !onIcpFieldChange) return;
+    let url = raw;
+    if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+    let name = raw;
+    try {
+      name = new URL(url).hostname.replace(/^www\./, '');
+    } catch {
+      /* keep typed label */
+    }
+    onIcpFieldChange('competitors', [...panelCompany.competitors, { name, url }]);
+    setNewCompetitorUrl('');
+  };
+
+  return (
+    <article
+      data-target-company-card
+      className="overflow-hidden rounded-[20px] border border-arcova-navy/10 bg-white/65 shadow-[0_18px_40px_-28px_rgba(13,53,71,0.15)] backdrop-blur-xl"
+    >
+      <header className="flex items-center gap-2.5 border-b border-arcova-navy/8 px-4 py-3.5">
+        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-arcova-teal/12 text-arcova-teal">
+          <Target className="h-3.5 w-3.5" />
+        </span>
+        <span className="flex-1 font-manrope text-[14.5px] font-semibold tracking-[-0.014em] text-arcova-navy">
+          Target companies
+        </span>
+        {!icpEditMode ? (
+          <button
+            type="button"
+            onClick={onEditIcp}
+            className="flex items-center gap-1.5 rounded-lg border border-arcova-navy/10 bg-white/60 px-2.5 py-1 text-[11.5px] font-medium text-arcova-navy/60 transition-colors hover:bg-white hover:text-arcova-navy"
+          >
+            Edit
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onCancelIcp}
+            className="flex items-center gap-1.5 rounded-lg border border-arcova-navy/10 bg-white/60 px-2.5 py-1 text-[11.5px] font-medium text-arcova-navy/60 transition-colors hover:bg-white hover:text-arcova-navy"
+          >
+            <X className="h-3 w-3" />
+            Cancel
+          </button>
+        )}
+      </header>
+
+      <div className="flex flex-col gap-3.5 p-4">
+        {/* Identity strip + expandable reference snapshot (parity with SetupProfile TargetCard) */}
+        {(e?.company_name || displayDomain) && (
+          <div className="space-y-2">
+            <div className="grid grid-cols-[40px_1fr] items-center gap-3 rounded-xl border border-arcova-navy/8 bg-white/55 px-3 py-2.5">
+              <div className="grid h-10 w-10 place-items-center overflow-hidden rounded-[10px] bg-gradient-to-br from-arcova-teal/20 to-arcova-teal/10 font-bold text-arcova-teal">
+                <span className="text-base">{logoInitial}</span>
+              </div>
+              <div className="min-w-0">
+                <SetupSubLabel>Reference account</SetupSubLabel>
+                <div className="mt-1 text-[14px] font-semibold text-arcova-navy">{e?.company_name ?? '—'}</div>
+                {displayDomain && (
+                  <a
+                    href={e!.website!}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-1 inline-flex items-center gap-1 text-[11.5px] text-arcova-teal hover:underline"
+                  >
+                    {displayDomain}
+                    <ExternalLink className="h-2.5 w-2.5" />
+                  </a>
+                )}
+              </div>
+            </div>
+
+            {e?.company_name && (
+              <>
+                <button
+                  type="button"
+                  disabled={icpEditMode}
+                  onClick={() => !icpEditMode && setModelledOnOpen((v) => !v)}
+                  aria-expanded={modelledOnOpen}
+                  className="group flex w-full items-start gap-2 rounded-xl border border-arcova-navy/10 bg-white/50 px-3 py-2.5 text-left transition-colors hover:bg-white/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-arcova-teal/35 disabled:cursor-not-allowed"
+                >
+                  <ChevronDown
+                    className={cn(
+                      'mt-0.5 h-4 w-4 shrink-0 text-arcova-navy/45 transition-transform duration-200 group-hover:text-arcova-navy/60',
+                      modelledOnOpen ? 'rotate-180' : '',
+                    )}
+                    aria-hidden
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-manrope text-sm font-semibold text-arcova-navy">
+                      Modelled on {e.company_name}
+                    </span>
+                    <span className="mt-0.5 block text-xs leading-snug text-arcova-navy/55">
+                      {icpEditMode
+                        ? 'Reference snapshot is read-only during edit. Cancel to expand.'
+                        : modelledOnOpen
+                          ? 'Click to hide'
+                          : 'Click to see enrichment from this account'}
+                    </span>
+                  </span>
+                </button>
+
+                {modelledOnOpen && (
+                  <div className="space-y-2.5 rounded-xl border border-arcova-navy/8 bg-white/55 px-3 py-2.5">
+                    {e.website && displayDomain && (
+                      <a
+                        href={e.website}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-arcova-teal hover:underline"
+                      >
+                        {displayDomain}
+                        <ExternalLink className="h-2.5 w-2.5 shrink-0" />
+                      </a>
+                    )}
+                    {e.tagline && (
+                      <p className="m-0 text-xs italic leading-snug text-arcova-navy/50">{e.tagline}</p>
+                    )}
+                    {e.description?.[0] && (
+                      <p className="m-0 text-[12.5px] leading-[1.5] text-arcova-navy/75">{e.description[0]}</p>
+                    )}
+
+                    {hasModelledOnFirmographics && (
+                      <div className="space-y-2 border-t border-arcova-navy/8 pt-2.5">
+                        <SetupSubLabel>Firmographics</SetupSubLabel>
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
+                          {(e.employee_count || e.employee_range) && (
+                            <SetupTargetModelledStat
+                              label="Employees"
+                              value={e.employee_count ? e.employee_count.toLocaleString() : (e.employee_range ?? '')}
+                            />
+                          )}
+                          {e.hq_city && (
+                            <SetupTargetModelledStat
+                              label="HQ"
+                              value={e.hq_city}
+                              subValue={e.hq_country ?? undefined}
+                            />
+                          )}
+                          {e.follower_count != null && (
+                            <SetupTargetModelledStat
+                              label="LinkedIn followers"
+                              value={e.follower_count.toLocaleString()}
+                            />
+                          )}
+                          {modelledOnFundingStatus && (
+                            <SetupTargetModelledStat label="Funding status" value={modelledOnFundingStatus} />
+                          )}
+                          {e.funding_stage && (
+                            <SetupTargetModelledStat label="Funding stage" value={e.funding_stage} />
+                          )}
+                          {e.total_funding_usd != null && (
+                            <SetupTargetModelledStat label="Total funding" value={formatCurrencyShort(e.total_funding_usd)} />
+                          )}
+                        </div>
+                        {(e.funding_resolution_summary || e.company_status) && (
+                          <div>
+                            <SetupSubLabel>Funding summary</SetupSubLabel>
+                            <p className="mt-1 text-[12px] leading-snug text-arcova-navy/70">
+                              {e.funding_resolution_summary ?? e.company_status}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {hasModelledOnNarrative && (
+                      <div className="space-y-2 border-t border-arcova-navy/8 pt-2.5">
+                        {(referenceCustomerSegments.customerOrganizations.length > 0
+                          || referenceCustomerSegments.buyerTypes.length > 0) && (
+                          <div className="space-y-2">
+                            {referenceCustomerSegments.customerOrganizations.length > 0 && (
+                              <div>
+                                <SetupSubLabel>Customer organisations</SetupSubLabel>
+                                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                  {referenceCustomerSegments.customerOrganizations.map((t) => (
+                                    <span
+                                      key={t}
+                                      className="inline-flex rounded-full border border-arcova-teal/20 bg-arcova-teal/10 px-2.5 py-0.5 text-[11px] font-medium text-arcova-teal"
+                                    >
+                                      {t}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            {referenceCustomerSegments.buyerTypes.length > 0 && (
+                              <div>
+                                <SetupSubLabel>Buyer / user types</SetupSubLabel>
+                                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                  {referenceCustomerSegments.buyerTypes.map((t) => (
+                                    <span
+                                      key={t}
+                                      className="inline-flex rounded-full border border-arcova-teal/20 bg-arcova-teal/10 px-2.5 py-0.5 text-[11px] font-medium text-arcova-teal"
+                                    >
+                                      {t}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {(e.value_propositions?.length ?? 0) > 0 && (
+                          <div>
+                            <SetupSubLabel>Value props</SetupSubLabel>
+                            <SetupBullets items={e.value_propositions!.slice(0, 3)} />
+                          </div>
+                        )}
+                        {e.linkedin_url && (
+                          <a
+                            href={e.linkedin_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 break-all text-xs text-arcova-teal hover:underline"
+                          >
+                            {e.linkedin_url.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')}
+                            <ExternalLink className="h-2.5 w-2.5 shrink-0" />
+                          </a>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {!(e?.company_name || displayDomain) && e?.description?.[0] && (
+          <SetupSection label="Summary" defaultOpen>
+            <p className="m-0 text-[12.5px] leading-[1.5] text-arcova-navy">{e.description[0]}</p>
+          </SetupSection>
+        )}
+
+        {icpEditMode ? (
+          <input
+            type="text"
+            value={savedIcpName}
+            onChange={(ev) => onIcpFieldChange?.('icpName', ev.target.value)}
+            className={SETUP_SELECT}
+            placeholder="Profile name"
+          />
+        ) : savedIcpName ? (
+          <p className="m-0 font-manrope text-sm font-semibold text-arcova-navy">{savedIcpName}</p>
+        ) : null}
+
+        {/* Company type */}
+        {(panelCompany.companyType || icpEditMode) && (
+          <SetupSection label="Company type" defaultOpen={!!panelCompany.companyType}>
+            {icpEditMode ? (
+              <select
+                value={panelCompany.companyType ?? ''}
+                onChange={(ev) => onIcpFieldChange?.('companyType', ev.target.value || '')}
+                className={SETUP_SELECT}
+              >
+                <option value="">Select type…</option>
+                {COMPANY_TYPE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.value}</option>
+                ))}
+              </select>
+            ) : (
+              panelCompany.companyType && <SetupTagRow items={[panelCompany.companyType]} />
+            )}
+          </SetupSection>
+        )}
+
+        {isSaasCompanyType(panelCompany.companyType) && (platformCategoryDisplay || icpEditMode) && (
+          <SetupSection label="Platform category" defaultOpen={!!platformCategoryDisplay}>
+            {icpEditMode ? (
+              <input
+                type="text"
+                value={panelCompany.platformCategory ?? ''}
+                onChange={(ev) => onIcpFieldChange?.('platformCategory', ev.target.value)}
+                placeholder="e.g. Sales Intelligence Platform"
+                maxLength={48}
+                className={SETUP_SELECT}
+              />
+            ) : (
+              platformCategoryDisplay && <SetupTagRow items={[platformCategoryDisplay]} />
+            )}
+          </SetupSection>
+        )}
+
+        {(panelCompany.therapeuticAreas.length > 0 || icpEditMode) && (
+          <SetupSection label="Therapeutic areas" defaultOpen={panelCompany.therapeuticAreas.length > 0}>
+            {icpEditMode ? (
+              <>
+                {panelCompany.therapeuticAreas.length > 0 && (
+                  <div className="mb-2 flex flex-wrap gap-1.5">
+                    {panelCompany.therapeuticAreas.map((t) => (
+                      <SetupTaxonomyTag
+                        key={t}
+                        label={t}
+                        editMode
+                        onRemove={() =>
+                          onIcpFieldChange?.(
+                            'therapeuticAreas',
+                            panelCompany.therapeuticAreas.filter((x) => x !== t),
+                          )}
+                      />
+                    ))}
+                  </div>
+                )}
+                <AddTagSelect
+                  options={THERAPEUTIC_AREA_OPTIONS as unknown as string[]}
+                  selected={panelCompany.therapeuticAreas}
+                  onAdd={(v) => onIcpFieldChange?.('therapeuticAreas', [...panelCompany.therapeuticAreas, v])}
+                  placeholder="Add therapeutic area…"
+                  light
+                />
+              </>
+            ) : (
+              <SetupTagRow items={panelCompany.therapeuticAreas} />
+            )}
+          </SetupSection>
+        )}
+
+        {(panelCompany.modalities.length > 0 || icpEditMode) && (
+          <SetupSection label="Modalities" defaultOpen={panelCompany.modalities.length > 0}>
+            {icpEditMode ? (
+              <>
+                {panelCompany.modalities.length > 0 && (
+                  <div className="mb-2 flex flex-wrap gap-1.5">
+                    {panelCompany.modalities.map((m) => (
+                      <SetupTaxonomyTag
+                        key={m}
+                        label={m}
+                        editMode
+                        onRemove={() =>
+                          onIcpFieldChange?.('modalities', panelCompany.modalities.filter((x) => x !== m))}
+                      />
+                    ))}
+                  </div>
+                )}
+                <AddTagSelect
+                  options={MODALITY_OPTIONS as unknown as string[]}
+                  selected={panelCompany.modalities}
+                  onAdd={(v) => onIcpFieldChange?.('modalities', [...panelCompany.modalities, v])}
+                  placeholder="Add modality…"
+                  light
+                />
+              </>
+            ) : (
+              <SetupTagRow items={panelCompany.modalities} />
+            )}
+          </SetupSection>
+        )}
+
+        {(panelCompany.developmentStages.length > 0 || icpEditMode) && (
+          <SetupSection label="Pipeline stage" defaultOpen={panelCompany.developmentStages.length > 0}>
+            {icpEditMode ? (
+              <>
+                {panelCompany.developmentStages.length > 0 && (
+                  <div className="mb-2 flex flex-wrap gap-1.5">
+                    {panelCompany.developmentStages.map((s) => (
+                      <SetupTaxonomyTag
+                        key={s}
+                        label={s}
+                        editMode
+                        onRemove={() =>
+                          onIcpFieldChange?.(
+                            'developmentStages',
+                            panelCompany.developmentStages.filter((x) => x !== s),
+                          )}
+                      />
+                    ))}
+                  </div>
+                )}
+                <AddTagSelect
+                  options={DEVELOPMENT_STAGE_OPTIONS as unknown as string[]}
+                  selected={panelCompany.developmentStages}
+                  onAdd={(v) => onIcpFieldChange?.('developmentStages', [...panelCompany.developmentStages, v])}
+                  placeholder="Add stage…"
+                  light
+                />
+              </>
+            ) : (
+              <SetupTagRow items={panelCompany.developmentStages} />
+            )}
+          </SetupSection>
+        )}
+
+        {(panelCompany.companySizes.length > 0 || icpEditMode) && (
+          <SetupSection label="Company size" defaultOpen={panelCompany.companySizes.length > 0}>
+            {icpEditMode ? (
+              <>
+                {panelCompany.companySizes.length > 0 && (
+                  <div className="mb-2 flex flex-wrap gap-1.5">
+                    {panelCompany.companySizes.map((s) => (
+                      <SetupTaxonomyTag
+                        key={s}
+                        label={s}
+                        editMode
+                        onRemove={() =>
+                          onIcpFieldChange?.('companySizes', panelCompany.companySizes.filter((x) => x !== s))}
+                      />
+                    ))}
+                  </div>
+                )}
+                <AddTagSelect
+                  options={COMPANY_SIZE_OPTIONS as unknown as string[]}
+                  selected={panelCompany.companySizes}
+                  onAdd={(v) => onIcpFieldChange?.('companySizes', [...panelCompany.companySizes, v])}
+                  placeholder="Add size band…"
+                  light
+                />
+              </>
+            ) : (
+              <SetupTagRow items={panelCompany.companySizes} />
+            )}
+          </SetupSection>
+        )}
+
+        {(panelCompany.liFollowerSizes.length > 0 || icpEditMode) && (
+          <SetupSection label="LinkedIn follower base" defaultOpen={panelCompany.liFollowerSizes.length > 0}>
+            {icpEditMode ? (
+              <>
+                {panelCompany.liFollowerSizes.length > 0 && (
+                  <div className="mb-2 flex flex-wrap gap-1.5">
+                    {panelCompany.liFollowerSizes.map((s) => (
+                      <SetupTaxonomyTag
+                        key={s}
+                        label={s}
+                        editMode
+                        onRemove={() =>
+                          onIcpFieldChange?.(
+                            'liFollowerSizes',
+                            panelCompany.liFollowerSizes.filter((x) => x !== s),
+                          )}
+                      />
+                    ))}
+                  </div>
+                )}
+                <AddTagSelect
+                  options={LI_FOLLOWER_OPTIONS as unknown as string[]}
+                  selected={panelCompany.liFollowerSizes}
+                  onAdd={(v) => onIcpFieldChange?.('liFollowerSizes', [...panelCompany.liFollowerSizes, v])}
+                  placeholder="Add follower band…"
+                  light
+                />
+              </>
+            ) : (
+              <SetupTagRow items={panelCompany.liFollowerSizes} />
+            )}
+          </SetupSection>
+        )}
+
+        {(panelCompany.fundingStages.length > 0 || icpEditMode) && (
+          <SetupSection label="Funding stage" defaultOpen={panelCompany.fundingStages.length > 0}>
+            {icpEditMode ? (
+              <>
+                {panelCompany.fundingStages.length > 0 && (
+                  <div className="mb-2 flex flex-wrap gap-1.5">
+                    {panelCompany.fundingStages.map((f) => (
+                      <SetupTaxonomyTag
+                        key={f}
+                        label={f}
+                        editMode
+                        onRemove={() =>
+                          onIcpFieldChange?.('fundingStages', panelCompany.fundingStages.filter((x) => x !== f))}
+                      />
+                    ))}
+                  </div>
+                )}
+                <AddTagSelect
+                  options={FUNDING_STAGE_OPTIONS as unknown as string[]}
+                  selected={panelCompany.fundingStages}
+                  onAdd={(v) => onIcpFieldChange?.('fundingStages', [...panelCompany.fundingStages, v])}
+                  placeholder="Add funding stage…"
+                  light
+                />
+              </>
+            ) : (
+              <SetupTagRow items={panelCompany.fundingStages} />
+            )}
+          </SetupSection>
+        )}
+
+        {showSignalPills && panelCompany.signals.length > 0 && (
+          <SetupSection label="Company signals">
+            <div className="flex flex-wrap gap-1.5">
+              {panelCompany.signals.map((signalId) => (
+                <span
+                  key={signalId}
+                  className="inline-flex rounded-full border border-arcova-teal/20 bg-arcova-teal/10 px-2.5 py-1 text-[11.5px] font-medium text-arcova-teal"
+                >
+                  {getSignalDisplayName(signalId)}
+                </span>
+              ))}
+            </div>
+          </SetupSection>
+        )}
+
+        {(panelCompany.targetCustomers.length > 0
+          || panelCompany.buyerTypes.length > 0
+          || icpEditMode) && (
+          <SetupSection label="Customer segments" defaultOpen={panelCompany.targetCustomers.length + panelCompany.buyerTypes.length > 0}>
+            {icpEditMode ? (
+              <div className="space-y-3">
+                <div>
+                  <p className="mb-1.5 text-[9.5px] font-semibold uppercase tracking-[0.12em] text-arcova-navy/40">
+                    Sells to companies like
+                  </p>
+                  <SetupLightEditableTagList
+                    items={panelCompany.targetCustomers}
+                    onChange={(items) => onIcpFieldChange?.('targetCustomers', items)}
+                    addPlaceholder="Add company segment…"
+                  />
+                </div>
+                <div>
+                  <p className="mb-1.5 text-[9.5px] font-semibold uppercase tracking-[0.12em] text-arcova-navy/40">
+                    Sells to people like
+                  </p>
+                  <SetupLightEditableTagList
+                    items={panelCompany.buyerTypes}
+                    onChange={(items) => onIcpFieldChange?.('customersWeServe', items)}
+                    addPlaceholder="Add buyer or team segment…"
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {panelCompany.targetCustomers.length > 0 && (
+                  <div>
+                    <p className="mb-1.5 text-[9.5px] font-semibold uppercase tracking-[0.12em] text-arcova-navy/40">
+                      Sells to companies like
+                    </p>
+                    <SetupTagRow items={panelCompany.targetCustomers} link />
+                  </div>
+                )}
+                {panelCompany.buyerTypes.length > 0 && (
+                  <div>
+                    <p className="mb-1.5 text-[9.5px] font-semibold uppercase tracking-[0.12em] text-arcova-navy/40">
+                      Sells to people like
+                    </p>
+                    <SetupTagRow items={panelCompany.buyerTypes} link />
+                  </div>
+                )}
+              </div>
+            )}
+          </SetupSection>
+        )}
+
+        {hasCompetitors && (
+          <SetupSection label="Competitors of theirs" defaultOpen={panelCompany.competitors.length > 0 || icpEditMode}>
+            <div className="space-y-2">
+              {panelCompany.competitors.map((c, i) => (
+                <div key={`${c.name}-${i}`} className="flex items-center gap-1.5">
+                  <div className="flex min-w-0 flex-1 items-center gap-1">
+                    {c.url ? (
+                      <a
+                        href={c.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex min-w-0 items-center gap-1 truncate text-xs font-semibold text-arcova-teal hover:underline"
+                      >
+                        <span className="truncate">{c.name}</span>
+                        <ExternalLink className="h-2.5 w-2.5 shrink-0" />
+                      </a>
+                    ) : (
+                      <p className="m-0 truncate text-xs font-semibold text-arcova-navy">{c.name}</p>
+                    )}
+                  </div>
+                  {icpEditMode && onIcpFieldChange && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onIcpFieldChange(
+                          'competitors',
+                          panelCompany.competitors.filter((_, j) => j !== i),
+                        )}
+                      className="shrink-0 text-arcova-navy/30 transition-colors hover:text-arcova-navy/55"
+                      aria-label={`Remove ${c.name}`}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              ))}
+              {icpEditMode && onIcpFieldChange && (
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <input
+                    type="text"
+                    value={newCompetitorUrl}
+                    onChange={(ev) => setNewCompetitorUrl(ev.target.value)}
+                    onKeyDown={(ev) => {
+                      if (ev.key === 'Enter') {
+                        ev.preventDefault();
+                        addCompetitorFromInput();
+                      }
+                    }}
+                    placeholder="Add competitor URL… (Enter)"
+                    className={`min-w-0 flex-1 ${SETUP_SELECT}`}
+                  />
+                  <button
+                    type="button"
+                    onClick={addCompetitorFromInput}
+                    className="shrink-0 rounded-lg border border-arcova-navy/12 bg-white/80 px-3 py-2 text-[12px] font-medium text-arcova-navy/70 hover:bg-white"
+                  >
+                    Add
+                  </button>
+                </div>
+              )}
+            </div>
+          </SetupSection>
+        )}
+
+        {showTargetCardFooter && (
+          <div className="border-t border-arcova-navy/8 pt-3">
+            {confirmingDelete ? (
+              <div className="space-y-2">
+                <p className="m-0 text-xs text-arcova-navy/70">
+                  Delete this target company profile? This can&apos;t be undone.
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setConfirmingDelete(false);
+                      void onDeleteIcp?.();
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-red-600/90 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-red-600"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    Yes, delete
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmingDelete(false)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-arcova-navy/12 bg-white/80 px-3 py-1.5 text-xs font-medium text-arcova-navy/60 hover:bg-white"
+                  >
+                    <X className="h-3 w-3" />
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : icpEditMode ? (
+              <div className="flex flex-wrap items-center gap-2">
+                {onSaveIcp && (
+                  <button
+                    type="button"
+                    onClick={() => void onSaveIcp()}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-teal px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-arcova-teal/90"
+                  >
+                    <Save className="h-3 w-3" />
+                    Save changes
+                  </button>
+                )}
+                {onCancelIcp && (
+                  <button
+                    type="button"
+                    onClick={onCancelIcp}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-arcova-navy/12 bg-white/80 px-3 py-1.5 text-xs font-medium text-arcova-navy/60 hover:bg-white"
+                  >
+                    <X className="h-3 w-3" />
+                    Cancel
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                {onReenrichIcp && (
+                  <button
+                    type="button"
+                    onClick={onReenrichIcp}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-arcova-navy/12 bg-white/80 px-3 py-1.5 text-xs font-medium text-arcova-navy/65 transition-colors hover:bg-white"
+                  >
+                    <RefreshCw className="h-3 w-3" />
+                    Re-enrich
+                  </button>
+                )}
+                {onDeleteIcp && (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmingDelete(true)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/40 bg-red-500/[0.06] px-3 py-1.5 text-xs font-medium text-red-700/90 transition-colors hover:border-red-500/50 hover:bg-red-500/10"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    Delete
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         )}
       </div>
     </article>
@@ -3379,12 +4348,13 @@ export default function SetupFlow({
         extra: {
           role: 'user',
           content:
-            `[System: the user confirmed their company profile for ${companyName}. 4-6 short sentences max, no em dashes, no long essay. ` +
-            `(1) Brief ack the profile looks good. ` +
-            `(2) One line on purpose: we are defining ideal target accounts, real companies they want as customers. ` +
-            `(3) Example companies that illustrate different buyer types: ${segmentList}. ` +
-            `(4) They can tap one to start or paste their own URL. ` +
-            `(5) If they are not sure, say we suggested those options from their company and they can use one of those picks.]`,
+            `[System: the user confirmed their company profile for ${companyName}. No em dashes, no long essay. ` +
+            `Use four separate chat bubbles. Between bubbles, output a line containing only <<< msg >>> (after bubbles 1-3, not after bubble 4). ` +
+            `Bubble 1: brief ack that their profile looks good. ` +
+            `Bubble 2: one line on purpose, we are defining ideal target accounts, real companies they want as customers, so we can build buying group profiles. ` +
+            `Bubble 3: example companies for different buyer types: ${segmentList}. ` +
+            `Bubble 4: they can tap one to start or paste their own URL; if unsure, the suggestions came from their space and picking one or typing is fine. ` +
+            `Each bubble: 1-3 short sentences.]`,
         },
       });
       if (displayParts.length) await sayBeats(displayParts);
@@ -3495,6 +4465,10 @@ export default function SetupFlow({
     }
   }, [editingFindingsData, enrichedTargetCompany, generateIcpSuggestions, getLatestResultsData, icpSuggestions, reviewedCompanyName, askClaude, sayBeats]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /** Leave full onboarding and return to the main app (company step has no prior wizard step). */
+  const handleLeaveArcovaSetup = useCallback(() => {
+    router.push(ROUTES.today);
+  }, [router]);
 
   const handleResumeRestart = useCallback(async () => {
     if (typeof window !== 'undefined' && !window.confirm(START_AGAIN_CONFIRM)) return;
@@ -4003,7 +4977,9 @@ export default function SetupFlow({
     preEditDataRef.current = current;
     setEditingFindingsData(current);
     setEditingFindings(true);
-    await say('Sure — edit any fields directly in the panel on the right, then hit Save when you\'re done.');
+    await say(
+      'Sure. You can edit any fields in your company profile on this screen, then tap Save changes.',
+    );
   }, [editingFindingsData, getLatestResultsData]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDeleteCompanyProfile = useCallback(async () => {
@@ -4542,12 +5518,13 @@ export default function SetupFlow({
                 extra: {
                   role: 'user',
                   content:
-                    `[System: The user is resuming setup; company profile is ready. 4-6 short sentences max, no em dashes. ` +
-                    `(1) Brief glad the company pass went well. ` +
-                    `(2) One line: we are defining ideal target accounts, real companies they sell to. ` +
-                    `(3) Examples for different buyer types: ${segmentList}. ` +
-                    `(4) Tap one or paste their own URL. ` +
-                    `(5) If unsure, those suggestions came from their company and any pick is fine.]`,
+                    `[System: The user is resuming setup; company profile is ready. No em dashes. ` +
+                    `Use four separate chat bubbles. Between bubbles, output a line containing only <<< msg >>> (after bubbles 1-3, not after bubble 4). ` +
+                    `Bubble 1: brief glad the company pass went well. ` +
+                    `Bubble 2: one line that we are defining ideal target accounts, real companies they sell to. ` +
+                    `Bubble 3: examples for different buyer types: ${segmentList}. ` +
+                    `Bubble 4: tap one or paste their own URL; if unsure, suggestions came from their company and any pick is fine. ` +
+                    `Each bubble: 1-3 short sentences.]`,
                 },
               });
               if (dp2.length) await sayBeats(dp2);
@@ -4986,21 +5963,34 @@ export default function SetupFlow({
       <div className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-4 py-16">
         <AppAmbientBackground />
         <div className="absolute left-0 right-0 top-0 z-20 flex justify-center px-6 pt-6 sm:px-10">
-          <div className="flex w-full max-w-[1080px] flex-wrap items-center gap-3">
-            <StepEyebrow step={isGlassTargetStep ? 1 : 0} />
+          <div className="w-full max-w-[1080px]">
+            <SetupLightProgressRow
+              leading={
+                isGlassTargetStep && entryPoint === 'full' ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleGoToStep(0)}
+                    disabled={thinking}
+                    className={SETUP_TOP_BACK_LIGHT_CLASS}
+                  >
+                    <span aria-hidden>←</span> Back
+                  </button>
+                ) : entryPoint === 'full' && phase === 'greeting' ? (
+                  <button
+                    type="button"
+                    onClick={() => handleLeaveArcovaSetup()}
+                    disabled={thinking}
+                    className={SETUP_TOP_BACK_LIGHT_CLASS}
+                  >
+                    <span aria-hidden>←</span> Back
+                  </button>
+                ) : undefined
+              }
+              center={<StepEyebrow step={isGlassTargetStep ? 1 : 0} />}
+            />
           </div>
         </div>
         <div className="relative z-10 flex w-[460px] flex-col">
-          {isGlassTargetStep && entryPoint === 'full' && (
-            <button
-              type="button"
-              onClick={() => void handleGoToStep(0)}
-              disabled={thinking}
-              className={cn(SETUP_GLASS_BACK_ABOVE_CARD_CLASS, 'mb-3 self-start')}
-            >
-              <span aria-hidden>←</span> Back
-            </button>
-          )}
           <div
             className={cn(
               'relative flex w-full flex-col rounded-3xl border border-white/55 bg-white/65 px-10 pb-10 pt-0 shadow-arcova backdrop-blur-xl',
@@ -5197,22 +6187,6 @@ export default function SetupFlow({
                     </div>
                   </div>
                 )}
-              {phase === 'icp_suggestion' && !thinking && inputEnabled && (
-                <div className="shrink-0 px-1 pb-1 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      pushText('user', 'I will enter my own');
-                      setPhase('customer_url_conversation');
-                      setInput(true);
-                    }}
-                    disabled={thinking}
-                    className="w-full rounded-2xl border border-dashed border-arcova-navy/22 bg-white/45 px-4 py-3.5 text-left font-manrope text-sm font-medium text-arcova-navy/65 transition-all hover:border-arcova-teal/35 hover:bg-white/75 hover:text-arcova-navy disabled:opacity-45"
-                  >
-                    I will enter my own ICP →
-                  </button>
-                </div>
-              )}
               {inputEnabled && (
                 <SetupEmbedChatInput
                   value={inputValue}
@@ -5266,30 +6240,42 @@ export default function SetupFlow({
         <AppAmbientBackground />
         <div className="absolute left-0 right-0 top-0 z-20 flex justify-center px-6 pt-6 sm:px-10">
           <div className="w-full max-w-[1080px]">
-            <StepEyebrow step={Math.max(0, currentStepIndex) as 0 | 1 | 2} />
+            <SetupLightProgressRow
+              leading={
+                entryPoint === 'full' && phase === 'analysis_loading' ? (
+                  <button
+                    type="button"
+                    onClick={() => cancelAnalysis()}
+                    disabled={thinking}
+                    className={SETUP_TOP_BACK_LIGHT_CLASS}
+                  >
+                    <span aria-hidden>←</span> Back
+                  </button>
+                ) : entryPoint === 'full' && phase === 'customer_url_loading' ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleGoToStep(0)}
+                    disabled={thinking}
+                    className={SETUP_TOP_BACK_LIGHT_CLASS}
+                  >
+                    <span aria-hidden>←</span> Back
+                  </button>
+                ) : entryPoint === 'full' && phase === 'buying_team_loading' ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleGoToStep(1)}
+                    disabled={thinking}
+                    className={SETUP_TOP_BACK_LIGHT_CLASS}
+                  >
+                    <span aria-hidden>←</span> Back
+                  </button>
+                ) : undefined
+              }
+              center={<StepEyebrow step={Math.max(0, currentStepIndex) as 0 | 1 | 2} />}
+            />
           </div>
         </div>
         <div className="relative z-10 flex w-[460px] flex-col">
-          {entryPoint === 'full' && phase === 'customer_url_loading' && (
-            <button
-              type="button"
-              onClick={() => void handleGoToStep(0)}
-              disabled={thinking}
-              className={cn(SETUP_GLASS_BACK_ABOVE_CARD_CLASS, 'mb-3 self-start')}
-            >
-              <span aria-hidden>←</span> Back
-            </button>
-          )}
-          {entryPoint === 'full' && phase === 'buying_team_loading' && (
-            <button
-              type="button"
-              onClick={() => void handleGoToStep(1)}
-              disabled={thinking}
-              className={cn(SETUP_GLASS_BACK_ABOVE_CARD_CLASS, 'mb-3 self-start')}
-            >
-              <span aria-hidden>←</span> Back
-            </button>
-          )}
           <div className="relative flex h-[min(85vh,52rem)] w-full min-h-[580px] max-h-[85vh] flex-col overflow-hidden rounded-3xl border border-white/55 bg-white/65 px-10 pb-0 pt-0 shadow-arcova backdrop-blur-xl">
           <SetupGlassAgentMetaStrip clock={setupGreetingChatClock} statusKey="thinking" />
           <div
@@ -5402,12 +6388,6 @@ export default function SetupFlow({
   const greetName = firstName ? `, ${firstName}` : '';
 
   // Shared hero wrapper for all light-layout phases
-  const setupReviewBackButtonClass =
-    'mb-4 inline-flex items-center gap-1.5 rounded-full border border-arcova-navy/10 bg-white/65 px-3 py-1.5 text-[12px] font-medium text-arcova-navy/65 backdrop-blur transition-all hover:-translate-x-0.5 hover:bg-white hover:text-arcova-navy disabled:opacity-50';
-
-  const setupProgressBackButtonClass =
-    'shrink-0 inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-medium text-white/75 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-40';
-
   const LightLayout = ({
     eyebrow,
     title,
@@ -5425,17 +6405,25 @@ export default function SetupFlow({
       <AppAmbientBackground />
       <div className="relative z-10 flex min-h-full flex-col px-4 pb-16 pt-10 sm:px-6">
         <div className="mx-auto w-full max-w-2xl">
-          {onBack && (
-            <button
-              type="button"
-              onClick={onBack}
-              disabled={thinking}
-              className={setupReviewBackButtonClass}
-            >
-              <span aria-hidden>←</span> Back
-            </button>
+          {(onBack || eyebrow) && (
+            <div className="mb-4">
+              <SetupLightProgressRow
+                leading={
+                  onBack ? (
+                    <button
+                      type="button"
+                      onClick={onBack}
+                      disabled={thinking}
+                      className={SETUP_TOP_BACK_LIGHT_CLASS}
+                    >
+                      <span aria-hidden>←</span> Back
+                    </button>
+                  ) : undefined
+                }
+                center={eyebrow ?? null}
+              />
+            </div>
           )}
-          {eyebrow && <div className="mb-3">{eyebrow}</div>}
           <h1 className="text-2xl font-semibold text-arcova-navy sm:text-3xl">{title}</h1>
           {subtitle && <p className="mt-1.5 text-sm text-arcova-ink-soft">{subtitle}</p>}
         </div>
@@ -5457,11 +6445,25 @@ export default function SetupFlow({
       <div className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col overflow-y-auto">
         <AppAmbientBackground />
         <div className="relative z-10 flex flex-col px-6 py-9 lg:px-10">
+            <div className="mb-6">
+              <SetupLightProgressRow
+                leading={
+                  entryPoint === 'full' ? (
+                    <button
+                      type="button"
+                      onClick={() => handleLeaveArcovaSetup()}
+                      disabled={thinking}
+                      className={SETUP_TOP_BACK_LIGHT_CLASS}
+                    >
+                      <span aria-hidden>←</span> Back
+                    </button>
+                  ) : undefined
+                }
+                center={<StepEyebrow step={0} />}
+              />
+            </div>
             {/* Hero */}
             <div className="mb-6 max-w-[820px]">
-              <div className="mb-5">
-                <StepEyebrow step={0} />
-              </div>
               <h1 className="mb-3 font-manrope text-[44px] font-medium leading-[1.06] tracking-[-0.032em] text-arcova-navy">
                 {timeGreeting}{greetName}.<br />
                 Here&apos;s what I found on{' '}
@@ -5475,8 +6477,7 @@ export default function SetupFlow({
                   'Edit any fields below, then save when you\'re done.'
                 ) : (
                   <>
-                    Here&apos;s what we have so far. Hit{' '}
-                    <strong className="font-semibold text-arcova-navy">Looks good</strong> when it matches how
+                    Here&apos;s what we have so far. Hit Looks good when it matches how
                     you&apos;d describe the company, or edit to tighten anything that&apos;s off.
                   </>
                 )}
@@ -5544,6 +6545,19 @@ export default function SetupFlow({
                   >
                     Something&apos;s off
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleReanalyseFromPanel()}
+                    disabled={
+                      thinking
+                      || ownCompanyAnalysisInFlight
+                      || lastAnalyzedUrlRef.current == null
+                    }
+                    className="inline-flex items-center gap-1.5 rounded-[14px] border border-arcova-navy/10 bg-white/70 px-5 py-3 text-sm font-medium text-arcova-navy transition-colors hover:bg-white disabled:opacity-50"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    Re-analyse site
+                  </button>
                   <div className="ml-auto inline-flex items-center gap-1.5 text-[12px] text-arcova-navy/50">
                     <span>→</span>
                     Next: <strong className="font-semibold text-arcova-navy/70">Target companies</strong>
@@ -5588,6 +6602,20 @@ export default function SetupFlow({
                   >
                     Cancel
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleReanalyseFromPanel()}
+                    disabled={
+                      thinking
+                      || savingFindings
+                      || ownCompanyAnalysisInFlight
+                      || lastAnalyzedUrlRef.current == null
+                    }
+                    className="inline-flex items-center gap-1.5 rounded-[14px] border border-arcova-navy/10 bg-white/70 px-5 py-3 text-sm font-medium text-arcova-navy transition-colors hover:bg-white disabled:opacity-50"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    Re-analyse site
+                  </button>
                 </div>
               )}
             </div>
@@ -5602,16 +6630,20 @@ export default function SetupFlow({
       <div className="relative flex min-h-dvh flex-col overflow-hidden">
         <AppAmbientBackground />
         <div className="relative z-10 flex flex-col px-4 pt-6 sm:px-6">
-          <button
-            type="button"
-            onClick={() => void handleGoToStep(0)}
-            disabled={thinking}
-            className={cn(SETUP_GLASS_BACK_ABOVE_CARD_CLASS, 'mb-3 self-start')}
-          >
-            <span aria-hidden>←</span> Back
-          </button>
           <div className="mb-4">
-            <StepEyebrow step={1} />
+            <SetupLightProgressRow
+              leading={
+                <button
+                  type="button"
+                  onClick={() => void handleGoToStep(0)}
+                  disabled={thinking}
+                  className={SETUP_TOP_BACK_LIGHT_CLASS}
+                >
+                  <span aria-hidden>←</span> Back
+                </button>
+              }
+              center={<StepEyebrow step={1} />}
+            />
           </div>
           <SetupWelcomeCard
             firstName={firstName}
@@ -5625,42 +6657,96 @@ export default function SetupFlow({
     );
   }
 
-  // Phase: customer_url_review → light glass review of target company
+  // Phase: customer_url_review → hero layout review of target company (mirrors analysis_results)
   if (phase === 'customer_url_review') {
     const targetName = reviewedCompanyName || (lastTargetUrlRef.current?.replace(/^https?:\/\//, '').replace(/\/$/, '') ?? 'the target company');
     return (
-      <LightLayout
-        eyebrow={<StepEyebrow step={1} />}
-        title={`Here's what I found on ${targetName}.`}
-        subtitle="Check the fit and confirm — you can tweak before saving."
-        onBack={() => void handleGoToStep(0)}
-      >
-        <div className="arcova-glass-panel p-6">
-          <SetupProfilePanel
-            {...sharedPanelProps}
-            phase={phase}
-            analysisLoading={false}
-          />
+      <div className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <AppAmbientBackground />
+        <div className="relative z-10 flex flex-col px-6 py-9 lg:px-10">
+          <div className="mb-6">
+            <SetupLightProgressRow
+              leading={
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIcpEditMode(false);
+                    setPhase('customer_url_conversation');
+                    setInput(true);
+                  }}
+                  disabled={thinking}
+                  className={SETUP_TOP_BACK_LIGHT_CLASS}
+                >
+                  <span aria-hidden>←</span> Back
+                </button>
+              }
+              center={<StepEyebrow step={1} />}
+            />
+          </div>
+          {/* Hero */}
+          <div className="mb-6 max-w-[820px]">
+            <h1 className="mb-3 font-manrope text-[44px] font-medium leading-[1.06] tracking-[-0.032em] text-arcova-navy">
+              Based on{' '}
+              <span className="bg-gradient-to-br from-arcova-teal to-[#007e8b] bg-clip-text text-transparent">
+                {targetName}
+              </span>
+              , here&apos;s a model of your ICP
+            </h1>
+            <p className="m-0 max-w-[640px] text-[15px] leading-[1.6] text-arcova-navy/65">
+              {icpEditMode ? (
+                "Edit any fields below, then save when you're done."
+              ) : (
+                <>
+                  Hit Looks good to save, or edit anything that&apos;s not quite right.
+                </>
+              )}
+            </p>
+          </div>
+
+          {/* Target company card */}
+          <div className="mx-auto w-full max-w-[760px]">
+            <SetupTargetCompanyCard
+              panelCompany={panelCompany}
+              enrichedTargetCompany={enrichedTargetCompany}
+              icpEditMode={icpEditMode}
+              savedIcpName={savedIcpName}
+              onEditIcp={handleEditIcp}
+              onCancelIcp={handleCancelIcp}
+              onSaveIcp={() => void handleSaveIcp()}
+              onReenrichIcp={handleReenrichIcp}
+              onDeleteIcp={() => void handleDeleteIcp()}
+              onIcpFieldChange={handleIcpFieldChange}
+            />
+
+            {/* CTA row — view mode */}
+            {!icpEditMode && (
+              <div className="mt-5 flex flex-wrap items-center gap-3 px-1">
+                <button
+                  type="button"
+                  onClick={() => void handleReviewConfirm()}
+                  disabled={thinking}
+                  className="inline-flex items-center gap-2 rounded-[14px] bg-gradient-to-br from-arcova-teal to-[#007e8b] px-[22px] py-[13px] text-sm font-semibold text-white shadow-[0_12px_28px_-12px_rgba(0,164,180,0.5)] transition-all hover:-translate-y-px hover:bg-arcova-navy disabled:opacity-50"
+                >
+                  <Check className="h-3.5 w-3.5" strokeWidth={2.4} />
+                  Looks good — continue
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setIcpEditMode(false); setPhase('customer_url_conversation'); setInput(true); }}
+                  disabled={thinking}
+                  className="bg-transparent px-3.5 py-3 text-[13px] font-medium text-arcova-navy/50 transition-colors hover:text-arcova-navy disabled:opacity-50"
+                >
+                  Try a different company
+                </button>
+                <div className="ml-auto inline-flex items-center gap-1.5 text-[12px] text-arcova-navy/50">
+                  <span>→</span>
+                  Next: <strong className="font-semibold text-arcova-navy/70">Buying teams</strong>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
-        <div className="mt-5 flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={() => void handleReviewConfirm()}
-            disabled={thinking}
-            className={ctaPrimary}
-          >
-            Looks good, save ICP →
-          </button>
-          <button
-            type="button"
-            onClick={() => { setIcpEditMode(false); setPhase('customer_url_conversation'); setInput(true); }}
-            disabled={thinking}
-            className={ctaSecondary}
-          >
-            Try a different company
-          </button>
-        </div>
-      </LightLayout>
+      </div>
     );
   }
 
@@ -5722,7 +6808,7 @@ export default function SetupFlow({
         <AppAmbientBackground />
         <div className="absolute left-0 right-0 top-0 z-20 flex justify-center px-6 pt-6 sm:px-10">
           <div className="w-full max-w-[1080px]">
-            <StepEyebrow step={Math.max(0, currentStepIndex) as 0 | 1 | 2} />
+            <SetupLightProgressRow center={<StepEyebrow step={Math.max(0, currentStepIndex) as 0 | 1 | 2} />} />
           </div>
         </div>
         <div className="relative z-10 flex min-h-dvh flex-col items-center justify-center gap-5 px-4">
@@ -6014,9 +7100,31 @@ export default function SetupFlow({
     <div className={`flex min-h-0 flex-1 flex-col ${SETUP_CHAT_SURROUND}`}>
       {showProgress && (
         <div className="shrink-0 border-b border-white/10 px-6 py-4">
-          <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-                {visibleSetupSteps.map((step, i) => {
+          <div className="mx-auto grid max-w-6xl grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-4 gap-y-2">
+            <div className="flex min-w-0 items-center justify-start">
+              {entryPoint === 'full' && !isSaving && currentStepIndex > 0 && (
+                <button
+                  type="button"
+                  onClick={() => void handleGoToStep(currentStepIndex - 1)}
+                  disabled={thinking}
+                  className={SETUP_TOP_BACK_DARK_CLASS}
+                >
+                  <span aria-hidden>←</span> Back
+                </button>
+              )}
+              {entryPoint === 'full' && !isSaving && currentStepIndex === 0 && (
+                <button
+                  type="button"
+                  onClick={() => handleLeaveArcovaSetup()}
+                  disabled={thinking}
+                  className={SETUP_TOP_BACK_DARK_CLASS}
+                >
+                  <span aria-hidden>←</span> Back
+                </button>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {visibleSetupSteps.map((step, i) => {
                 const isComplete = i < currentStepIndex;
                 const isCurrent = i === currentStepIndex;
                 const canGoBack = isComplete && !isSaving;
@@ -6030,13 +7138,15 @@ export default function SetupFlow({
                       isCurrent
                         ? 'bg-arcova-teal text-white'
                         : isComplete
-                        ? 'bg-white/10 text-white/70 hover:bg-white/15 hover:text-white cursor-pointer'
-                        : 'bg-white/5 text-white/30 cursor-default'
+                          ? 'cursor-pointer bg-white/10 text-white/70 hover:bg-white/15 hover:text-white'
+                          : 'cursor-default bg-white/5 text-white/30'
                     }`}
                   >
-                    <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-                      isCurrent ? 'bg-white/20' : isComplete ? 'bg-white/10' : 'bg-white/5'
-                    }`}>
+                    <span
+                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                        isCurrent ? 'bg-white/20' : isComplete ? 'bg-white/10' : 'bg-white/5'
+                      }`}
+                    >
                       {i + 1}
                     </span>
                     {step.label}
@@ -6044,13 +7154,15 @@ export default function SetupFlow({
                 );
               })}
             </div>
-            <button
-              type="button"
-              onClick={() => void handleResumeRestart()}
-              className="shrink-0 rounded-full border border-white/25 bg-white/5 px-4 py-2 text-sm font-medium text-white/90 transition-colors hover:border-white/35 hover:bg-white/10"
-            >
-              Start again
-            </button>
+            <div className="flex min-w-0 items-center justify-end">
+              <button
+                type="button"
+                onClick={() => void handleResumeRestart()}
+                className="shrink-0 rounded-full border border-white/25 bg-white/5 px-4 py-2 text-sm font-medium text-white/90 transition-colors hover:border-white/35 hover:bg-white/10"
+              >
+                Start again
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -6058,18 +7170,6 @@ export default function SetupFlow({
         {/* Chat column */}
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex h-[min(56rem,calc(100dvh-12rem))] min-h-[20rem] w-full flex-col">
-            {entryPoint === 'full' && !isSaving && currentStepIndex > 0 && (
-              <div className="mb-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => void handleGoToStep(currentStepIndex - 1)}
-                  disabled={thinking}
-                  className={setupProgressBackButtonClass}
-                >
-                  <span aria-hidden>←</span> Back
-                </button>
-              </div>
-            )}
             {chatColumn}
           </div>
         </div>
