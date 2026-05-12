@@ -14,7 +14,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
 import { parseSSEStream } from '@/lib/sse';
 import Image from 'next/image';
-import { useRouter, useSearchParams, usePathname } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { ArcovaLoader } from '@/components/ArcovaLoader';
 import { AppAmbientBackground } from '@/components/AppAmbientBackground';
@@ -145,6 +145,18 @@ function unenrolledSuggestions(): IcpSuggestion[] {
   const enrolled = loadEnrolledDomains();
   return stored.filter((s) => !enrolled.has(normalizeDomain(s.domain)));
 }
+
+function clearStoredIcpSuggestionState(): void {
+  try {
+    localStorage.removeItem(SUGGESTIONS_STORAGE_KEY);
+    localStorage.removeItem(ENROLLED_SUGGESTIONS_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+const START_AGAIN_CONFIRM =
+  'This removes your saved company profile, target company profiles, and buying team for this account. Continue?';
 
 // ── Phase type ─────────────────────────────────────────────────────────────
 
@@ -762,8 +774,11 @@ function SetupMyCompanyCard({
             />
           ) : (
             data.description && data.description.length > 0 && (
-              <p className="m-0 whitespace-pre-line text-[12.5px] leading-[1.5] text-arcova-navy">
-                {(data.description ?? []).join('\n\n')}
+              <p className="m-0 text-[12.5px] leading-[1.5] text-arcova-navy">
+                {(data.description ?? [])
+                  .map((s) => s.trim().replace(/\s+/g, ' '))
+                  .filter(Boolean)
+                  .join(' ')}
               </p>
             )
           )}
@@ -2180,16 +2195,15 @@ function SetupEnrichmentSnapshotStrip({
   variant: 'glass' | 'chat';
 }) {
   if (stages.length === 0) return null;
+  const latest = stages[stages.length - 1]!;
   return (
-    <div className="mt-3 max-h-[min(340px,45vh)] space-y-2 overflow-y-auto pr-0.5 [scrollbar-width:thin]">
-      {stages.map((s) => (
-        <SnapshotStageCard
-          key={s.tier}
-          label={s.label}
-          snapshot={s.snapshot}
-          variant={variant}
-        />
-      ))}
+    <div className="mt-3 max-h-[min(340px,45vh)] overflow-y-auto pr-0.5 [scrollbar-width:thin]">
+      <SnapshotStageCard
+        key={latest.tier}
+        label={latest.label}
+        snapshot={latest.snapshot}
+        variant={variant}
+      />
     </div>
   );
 }
@@ -2326,7 +2340,6 @@ export default function SetupFlow({
 }: SetupFlowProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const searchParams = useSearchParams();
   // ── UI state ─────────────────────────────────────────────────────────────
   const [phase, setPhase] = useState<Phase>('greeting');
   const [bootstrapFinished, setBootstrapFinished] = useState(false);
@@ -2430,8 +2443,19 @@ export default function SetupFlow({
   const lastAnalyzedUrlRef = useRef<string | null>(null);
   const analysisAbortRef = useRef<AbortController | null>(null);
   const preEditDataRef = useRef<Record<string, unknown> | null>(null);
-  /** Dedupes applying the same `?step=` hop from the sidebar while staying on /arcova-setup. */
-  const urlStepAppliedRef = useRef<string | null>(null);
+  /**
+   * `/arcova-setup?step=` sync: first run aligns URL to current phase only (fixes stale ?step=target
+   * on step 0). Later, only a *changed* step param (sidebar, back/forward) calls handleGoToStep.
+   */
+  const setupStepDeepLinkDoneRef = useRef(false);
+  const setupStepParamPrevRef = useRef<string | null>(null);
+  const setupStepInitialReplacePendingRef = useRef(false);
+
+  const resetSetupStepUrlSyncRefs = () => {
+    setupStepDeepLinkDoneRef.current = false;
+    setupStepParamPrevRef.current = null;
+    setupStepInitialReplacePendingRef.current = false;
+  };
 
   // ── Enrichment navigation guard ────────────────────────────────────────────
   const { setIsEnriching } = useEnrichmentGuard();
@@ -3353,22 +3377,13 @@ export default function SetupFlow({
       const hasCompanyProfile = Boolean(
         rec
         && (typeof rec.id === 'string'
-          || typeof rec.company_name === 'string'
-          || typeof rec.website === 'string'
-          || lastAnalyzedUrlRef.current),
+          || (typeof rec.company_name === 'string' && rec.company_name.trim().length > 0)
+          || (typeof rec.website === 'string' && rec.website.trim().length > 0)),
       );
 
       if (hasCompanyProfile && rec) {
         setEditingFindingsData({ ...rec });
         setEditingFindings(false);
-        const { displayParts } = await askClaude({
-          mode: 'narration',
-          extra: {
-            role: 'user',
-            content: '[System: the user went back to step 1 to review their own company. One sentence: acknowledge that their company profile is below so they can confirm it, tweak anything that is off, or start over if they want a clean run.]',
-          },
-        });
-        if (displayParts.length) await sayBeats(displayParts);
         setPhase('analysis_results');
         setInput(false);
         return;
@@ -3376,14 +3391,6 @@ export default function SetupFlow({
 
       // No saved profile yet: restart URL capture
       icpIdRef.current = null;
-      const { displayParts } = await askClaude({
-        mode: 'narration',
-        extra: {
-          role: 'user',
-          content: '[System: the user wants to go back and redo their company profile. One sentence: acknowledge and ask them to enter their company website URL.]',
-        },
-      });
-      if (displayParts.length) await sayBeats(displayParts);
       setPhase('greeting');
       setInput(true);
     } else if (stepIndex === 1) {
@@ -3394,76 +3401,53 @@ export default function SetupFlow({
           && (Boolean(reviewedCompanyName?.trim()) || Boolean(companyRef.current.companyType)));
 
       if (hasTargetReview) {
-        const { displayParts } = await askClaude({
-          mode: 'narration',
-          extra: {
-            role: 'user',
-            content: '[System: the user is revisiting their target company and ICP criteria. One sentence: acknowledge that the target profile is below so they can confirm, tweak, or try a different company.]',
-          },
-        });
-        if (displayParts.length) await sayBeats(displayParts);
         setIcpEditMode(false);
         setPhase('customer_url_review');
         setInput(false);
       } else if (icpSuggestions.length > 0) {
-        const { displayParts } = await askClaude({
-          mode: 'narration',
-          extra: {
-            role: 'user',
-            content: '[System: the user wants to go back to the target company step. One sentence: acknowledge and remind them to pick one of the suggested model accounts or enter their own.]',
-          },
-        });
-        if (displayParts.length) await sayBeats(displayParts);
         setPhase('icp_suggestion');
       } else {
-        const { displayParts } = await askClaude({
-          mode: 'narration',
-          extra: {
-            role: 'user',
-            content: '[System: the user wants to go back and update their target company profile. One sentence: acknowledge and ask them to drop in a URL for a target account.]',
-          },
-        });
-        if (displayParts.length) await sayBeats(displayParts);
         setPhase('customer_url_conversation');
         setInput(true);
       }
     } else if (stepIndex === 2) {
-      const { displayParts } = await askClaude({
-        mode: 'narration',
-        extra: {
-          role: 'user',
-          content: '[System: the user wants to revisit their buying team. One sentence: acknowledge this and tell them the buying group is ready to review on the right.]',
-        },
-      });
-      if (displayParts.length) await sayBeats(displayParts);
       setPhase('buying_team_review');
       setInput(false);
     }
-  }, [askClaude, editingFindingsData, enrichedTargetCompany, getLatestResultsData, icpSuggestions, reviewedCompanyName, sayBeats]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [editingFindingsData, enrichedTargetCompany, getLatestResultsData, icpSuggestions, reviewedCompanyName]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
   const handleResumeRestart = useCallback(async () => {
-    // Delete ICP from DB
-    const icpId = icpIdRef.current;
-    if (icpId) {
-      try {
-        await fetch('/api/company-criteria', {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: icpId }),
-        });
-      } catch {}
+    if (typeof window !== 'undefined' && !window.confirm(START_AGAIN_CONFIRM)) return;
+
+    let resetOk = false;
+    try {
+      const res = await fetch('/api/setup-reset', { method: 'POST' });
+      resetOk = res.ok;
+      if (!res.ok) {
+        console.error('[setup-flow] setup-reset failed:', await res.text().catch(() => ''));
+      }
+    } catch (e) {
+      console.error('[setup-flow] setup-reset:', e);
     }
 
-    // Delete own-company analysis from DB
-    const analysisId = typeof editingFindingsData?.id === 'string' ? editingFindingsData.id : null;
-    if (analysisId) {
-      try {
-        await fetch(`/api/user-company?id=${analysisId}`, { method: 'DELETE' });
-      } catch {}
+    if (!resetOk) {
+      await say('We could not wipe your setup on the server. Check your connection and try again.');
+      return;
     }
+
+    clearStoredIcpSuggestionState();
 
     // Reset all local state
+    setPendingTransition(null);
+    setAnalysisError('');
+    setIcpSuggestions([]);
+    setChipSel([]);
+    setBuyingTeamEditMode(false);
+    setIcpEditMode(false);
+    setOwnCompanyAnalysisInFlight(false);
+    setSavingFindings(false);
+    personaIdRef.current = null;
     icpIdRef.current = null;
     lastTargetUrlRef.current = null;
     lastAnalyzedUrlRef.current = null;
@@ -3485,6 +3469,12 @@ export default function SetupFlow({
     setOwnEnrichSynthesisWait(false);
     setCustomerUrlLinkedinWait(false);
     setCustomerUrlSynthesisWait(false);
+    setPartialOwnEnrichment(null);
+    setPartialTargetEnrichment(null);
+    setOwnEnrichStep(0);
+    setTargetEnrichStep(0);
+    setInputVal('');
+    resetSetupStepUrlSyncRefs();
 
     // Jump to greeting before the onboarding API toggles thinking — avoids the dark interim shell
     // (`thinking && thread.length === 0`) while phase was still analysis_results.
@@ -3500,7 +3490,7 @@ export default function SetupFlow({
     });
     if (displayParts.length) await sayBeats(displayParts);
     setInput(true);
-  }, [askClaude, editingFindingsData]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [askClaude, say, sayBeats]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Handle LLM-surfaced transition confirmation ───────────────────────────
 
@@ -3652,7 +3642,7 @@ export default function SetupFlow({
         mode: 'narration',
         extra: {
           role: 'user',
-          content: `[System: analysis of the customer company "${name}" is complete and we've auto-generated an ICP profile from it. One sentence: tell the user the profile is ready on the right — they can edit it before saving or just save it as is.]`,
+          content: `[System: analysis of the customer company "${name}" is complete and we've auto-generated an ICP profile from it. One sentence: the draft profile is ready in this step so they can tweak anything before saving or save it as is. Do not mention a left or right panel or sidebar.]`,
         },
       });
       if (displayParts.length) await sayBeats(displayParts);
@@ -3817,15 +3807,15 @@ export default function SetupFlow({
 
       try {
         const narrationPrompt = isReenrich
-          ? `[System: re-enrichment of ${data.company_name ?? normalized} is complete. Give a single short sentence confirming the company profile has been refreshed with the latest data — no reaction, no praise, just a calm factual update.]`
-          : `[System: analysis of ${normalized} is complete. Company: ${data.company_name ?? normalized}. Give a 1-sentence warm reaction and tell them all the details are now showing in their company card on the right — no need to list anything out.]`;
+          ? `[System: re-enrichment of ${data.company_name ?? normalized} is complete. Give a single short sentence confirming the company profile has been refreshed with the latest data, no reaction, no praise, just a calm factual update.]`
+          : `[System: analysis of ${normalized} is complete. Company: ${data.company_name ?? normalized}. One short warm sentence: the enriched profile is ready in this step. They can review the details, adjust anything that looks off, then tap Looks right when they are happy. Do not mention a left or right panel or sidebar.]`;
         const { displayParts } = await askClaude({
           mode: 'narration',
           extra: { role: 'user', content: narrationPrompt },
         });
         if (displayParts.length) await sayBeats(displayParts);
       } catch {
-        await say('Your company profile is ready on the right. Continue when you have reviewed it.');
+        await say('Your company profile is ready in this step. Review the details and tap Looks right when you are happy.');
       }
 
       if (controller.signal.aborted) return;
@@ -3930,6 +3920,7 @@ export default function SetupFlow({
   }, [editingFindingsData, getLatestResultsData]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDeleteCompanyProfile = useCallback(async () => {
+    resetSetupStepUrlSyncRefs();
     const data = editingFindingsData ?? getLatestResultsData();
     const id = typeof data?.id === 'string' ? data.id : null;
     if (id) {
@@ -4038,16 +4029,6 @@ export default function SetupFlow({
       setInput(false);
     }
   }, [editingFindingsData, reviewedCompanyName, enrichedTargetCompany]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleAnalyseDifferentWebsite = useCallback(async () => {
-    setThread((prev) => prev.filter((m) => m.kind !== 'results'));
-    setEditingFindings(false);
-    setEditingFindingsData(null);
-    setPhase('greeting');
-    setInput(true);
-    setInputVal('');
-    await say('Sure. Share the new company website and I will analyse that instead.');
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCancelFindingsEdit = useCallback(() => {
     setEditingFindings(false);
@@ -4182,7 +4163,15 @@ export default function SetupFlow({
     );
 
     if (beginAnalysis?.website_url) {
-      // Skip dedicated URL splash when user is already in the glass chat for target ICP
+      /* Greeting is always the seller-company URL step for full + company-only, even if Supabase
+       * already has a user_company row (back navigation / redo). The model often picks
+       * target_customer from account context, which would wrongly run target enrichment. */
+      const treatAsOwnCompany =
+        phase === 'greeting' && (entryPoint === 'full' || entryPoint === 'company-only');
+      if (treatAsOwnCompany) {
+        await runAnalysis(beginAnalysis.website_url);
+        return;
+      }
       const isCustomer =
         phase === 'customer_url_input' ||
         phase === 'customer_url_conversation' ||
@@ -4622,36 +4611,57 @@ export default function SetupFlow({
   ];
   const currentStepIndex = SETUP_STEPS.findIndex((s) => s.phases.includes(phase));
 
+  /** Single reconciliation: first sync URL ← phase; later, changed ?step= from nav may call handleGoToStep. */
   useEffect(() => {
     if (entryPoint !== 'full' || !bootstrapFinished) return;
     if (pathname !== ROUTES.setup.arcova) return;
     if (currentStepIndex < 0) return;
-    const key = currentStepIndex === 0 ? 'company' : currentStepIndex === 1 ? 'target' : 'buying';
-    if (searchParams.get('step') === key) return;
-    router.replace(`${pathname}?step=${key}`, { scroll: false });
-  }, [entryPoint, bootstrapFinished, currentStepIndex, pathname, router, searchParams]);
 
-  /** Sidebar / deep link: `/arcova-setup?step=company|target|buying` jumps after bootstrap hydrates local state. */
-  useEffect(() => {
-    if (!bootstrapFinished || entryPoint !== 'full') return;
-    const raw = searchParams.get('step');
-    if (!raw) {
-      urlStepAppliedRef.current = null;
+    const canonical =
+      currentStepIndex === 0 ? 'company' : currentStepIndex === 1 ? 'target' : 'buying';
+    const raw = new URLSearchParams(window.location.search).get('step');
+    const idxFromUrl =
+      raw === 'company' ? 0 : raw === 'target' ? 1 : raw === 'buying' ? 2 : null;
+
+    const prevRaw = setupStepParamPrevRef.current;
+
+    if (!setupStepDeepLinkDoneRef.current) {
+      setupStepDeepLinkDoneRef.current = true;
+      if (raw !== canonical) {
+        setupStepInitialReplacePendingRef.current = true;
+        router.replace(`${pathname}?step=${canonical}`, { scroll: false });
+      }
+      setupStepParamPrevRef.current = canonical;
       return;
     }
-    const idx = raw === 'company' ? 0 : raw === 'target' ? 1 : raw === 'buying' ? 2 : null;
-    if (idx == null) return;
-    const key = `${raw}:${idx}`;
-    if (currentStepIndex === idx) {
-      urlStepAppliedRef.current = key;
+
+    if (setupStepInitialReplacePendingRef.current) {
+      if (raw === canonical) {
+        setupStepInitialReplacePendingRef.current = false;
+        setupStepParamPrevRef.current = raw;
+      } else {
+        router.replace(`${pathname}?step=${canonical}`, { scroll: false });
+      }
       return;
     }
-    if (urlStepAppliedRef.current === key) return;
-    urlStepAppliedRef.current = key;
-    void handleGoToStep(idx);
-  }, [bootstrapFinished, entryPoint, searchParams, handleGoToStep, currentStepIndex]);
+
+    const stepParamChanged = prevRaw !== null && prevRaw !== raw;
+    if (stepParamChanged && idxFromUrl != null && idxFromUrl !== currentStepIndex) {
+      setupStepParamPrevRef.current = raw;
+      void handleGoToStep(idxFromUrl);
+      return;
+    }
+
+    setupStepParamPrevRef.current = raw;
+
+    if (raw !== canonical) {
+      router.replace(`${pathname}?step=${canonical}`, { scroll: false });
+    }
+  }, [entryPoint, bootstrapFinished, pathname, currentStepIndex, router, handleGoToStep]);
 
   const showProgress = (entryPoint === 'full') && currentStepIndex >= 0;
+  /** Only show step pills up to the current leg so step 1 does not preview target / buying. */
+  const visibleSetupSteps = SETUP_STEPS.slice(0, Math.min(SETUP_STEPS.length, currentStepIndex + 1));
   const isCustomerUrlReview = phase === 'customer_url_review';
   const isReviewValid =
     reviewDraft.companyType !== '' &&
@@ -5307,18 +5317,6 @@ export default function SetupFlow({
       <div className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col overflow-y-auto">
         <AppAmbientBackground />
         <div className="relative z-10 flex flex-col px-6 py-9 lg:px-10">
-            {entryPoint === 'full' && !editingFindings && (
-              <div className="max-w-[820px]">
-                <button
-                  type="button"
-                  onClick={() => void handleAnalyseDifferentWebsite()}
-                  disabled={thinking || ownCompanyAnalysisInFlight}
-                  className={setupReviewBackButtonClass}
-                >
-                  <span aria-hidden>←</span> Back
-                </button>
-              </div>
-            )}
             {/* Hero */}
             <div className="mb-6 max-w-[820px]">
               <div className="mb-5">
@@ -5337,8 +5335,9 @@ export default function SetupFlow({
                   'Edit any fields below, then save when you\'re done.'
                 ) : (
                   <>
-                    Have a read with your coffee. If something&apos;s off, just tell me below — I&apos;ll fix it.
-                    When it looks right, hit <strong className="font-semibold text-arcova-navy">Looks good</strong> and we&apos;ll move on together.
+                    Here&apos;s what we have so far. Hit{' '}
+                    <strong className="font-semibold text-arcova-navy">Looks good</strong> when it matches how
+                    you&apos;d describe the company, or edit to tighten anything that&apos;s off.
                   </>
                 )}
               </p>
@@ -5410,16 +5409,17 @@ export default function SetupFlow({
                     Next: <strong className="font-semibold text-arcova-navy/70">Target companies</strong>
                   </div>
                 </div>
-                <p className="mt-4 px-1 text-center text-[12px] text-arcova-navy/50">
-                  Need to enter a different website from scratch?{' '}
+                <p className="mt-4 px-1 text-center text-[12px] leading-relaxed text-arcova-navy/50">
+                  Need a different company website?{' '}
                   <button
                     type="button"
                     disabled={thinking || ownCompanyAnalysisInFlight}
                     onClick={() => void handleResumeRestart()}
-                    className="font-medium text-arcova-teal underline decoration-arcova-teal/35 underline-offset-2 hover:text-arcova-navy disabled:opacity-50"
+                    className="font-semibold text-arcova-teal underline decoration-arcova-teal/35 underline-offset-2 hover:text-arcova-navy disabled:opacity-50"
                   >
-                    Start setup over
-                  </button>
+                    Start again
+                  </button>{' '}
+                  (clears company, targets, and buying team).
                 </p>
                 </>
               )}
@@ -5890,10 +5890,10 @@ export default function SetupFlow({
                   </button>
                   <button
                     type="button"
-                    onClick={() => void handleAnalyseDifferentWebsite()}
+                    onClick={() => void handleResumeRestart()}
                     className="rounded-xl border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
                   >
-                    Analyse a different site
+                    Start again
                   </button>
                   <button
                     type="button"
@@ -5917,7 +5917,7 @@ export default function SetupFlow({
         <div className="shrink-0 border-b border-white/10 px-6 py-4">
           <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
-                {SETUP_STEPS.map((step, i) => {
+                {visibleSetupSteps.map((step, i) => {
                 const isComplete = i < currentStepIndex;
                 const isCurrent = i === currentStepIndex;
                 const canGoBack = isComplete && !isSaving;
@@ -5948,7 +5948,7 @@ export default function SetupFlow({
             <button
               type="button"
               onClick={() => void handleResumeRestart()}
-              className="text-sm text-white/40 hover:text-white/70 transition-colors"
+              className="shrink-0 rounded-full border border-white/25 bg-white/5 px-4 py-2 text-sm font-medium text-white/90 transition-colors hover:border-white/35 hover:bg-white/10"
             >
               Start again
             </button>
