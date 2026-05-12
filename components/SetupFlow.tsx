@@ -14,7 +14,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
 import { parseSSEStream } from '@/lib/sse';
 import Image from 'next/image';
-import { useRouter, useSearchParams, usePathname } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { ArcovaLoader } from '@/components/ArcovaLoader';
 import { AppAmbientBackground } from '@/components/AppAmbientBackground';
@@ -50,6 +50,8 @@ import { ROUTES } from '@/lib/routes';
 import { PLATFORM_CATEGORY_OPTIONS } from '@/lib/platform-category';
 import { Send, Sparkles, ChevronDown, ExternalLink, Check, Building2, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
+
+/** Quick picks on step 2: model accounts from /api/suggest-icp-companies (domains, one-click analyse). */
 
 /** Funding, headcount + customer-segment context for buying-team inference */
 function icContextForBuyingTeam(
@@ -143,8 +145,29 @@ function markDomainEnrolled(domain: string): void {
 function unenrolledSuggestions(): IcpSuggestion[] {
   const stored = loadStoredSuggestions();
   const enrolled = loadEnrolledDomains();
-  return stored.filter((s) => !enrolled.has(normalizeDomain(s.domain)));
+  return stored
+    .filter(
+      (s): s is IcpSuggestion =>
+        s != null
+        && typeof s.name === 'string'
+        && s.name.trim().length > 0
+        && typeof s.domain === 'string'
+        && normalizeDomain(s.domain).length > 0,
+    )
+    .filter((s) => !enrolled.has(normalizeDomain(s.domain)));
 }
+
+function clearStoredIcpSuggestionState(): void {
+  try {
+    localStorage.removeItem(SUGGESTIONS_STORAGE_KEY);
+    localStorage.removeItem(ENROLLED_SUGGESTIONS_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+const START_AGAIN_CONFIRM =
+  'This removes your saved company profile, target company profiles, and buying team for this account. Continue?';
 
 // ── Phase type ─────────────────────────────────────────────────────────────
 
@@ -176,6 +199,7 @@ type Phase =
 /** UI-only phases that reuse another step's onboarding system prompt / tools. */
 function mapPhaseForOnboardingApi(phase: Phase): string {
   if (phase === 'customer_url_conversation') return 'customer_url_input';
+  if (phase === 'icp_suggestion') return 'customer_url_input';
   return phase;
 }
 
@@ -273,6 +297,14 @@ interface TargetCompanyProfile {
 // ── Typing speed ───────────────────────────────────────────────────────────
 
 const TYPING_MS = 18;
+
+/** Narration when entering the target-account step: clear purpose, low verbosity, point to suggestion picks. */
+const SETUP_NARRATION_TARGET_ACCOUNTS_STEP =
+  '[System: The user\'s own company profile is already saved. Write 3-5 short sentences total, plain language, no em dashes, no long product pitch. ' +
+  '(1) Say clearly what we are doing next: we are defining ideal target accounts, meaning concrete companies they want as customers, so we can profile the right fit. ' +
+  '(2) Ask who counts as a best customer or dream account for them, company name or URL. ' +
+  '(3) If they are not sure, say we put suggestions below based on their company and they can pick one of those options or keep typing. ' +
+  'One idea per sentence. Stay concise.]';
 
 /** Shared enrichment UI: mid-pass (firm details landed, widening context before next SSE). */
 const ENRICH_GENERIC_LOOKUP_LINES = [
@@ -762,8 +794,11 @@ function SetupMyCompanyCard({
             />
           ) : (
             data.description && data.description.length > 0 && (
-              <p className="m-0 whitespace-pre-line text-[12.5px] leading-[1.5] text-arcova-navy">
-                {(data.description ?? []).join('\n\n')}
+              <p className="m-0 text-[12.5px] leading-[1.5] text-arcova-navy">
+                {(data.description ?? [])
+                  .map((s) => s.trim().replace(/\s+/g, ' '))
+                  .filter(Boolean)
+                  .join(' ')}
               </p>
             )
           )}
@@ -2180,16 +2215,15 @@ function SetupEnrichmentSnapshotStrip({
   variant: 'glass' | 'chat';
 }) {
   if (stages.length === 0) return null;
+  const latest = stages[stages.length - 1]!;
   return (
-    <div className="mt-3 max-h-[min(340px,45vh)] space-y-2 overflow-y-auto pr-0.5 [scrollbar-width:thin]">
-      {stages.map((s) => (
-        <SnapshotStageCard
-          key={s.tier}
-          label={s.label}
-          snapshot={s.snapshot}
-          variant={variant}
-        />
-      ))}
+    <div className="mt-3 max-h-[min(340px,45vh)] overflow-y-auto pr-0.5 [scrollbar-width:thin]">
+      <SnapshotStageCard
+        key={latest.tier}
+        label={latest.label}
+        snapshot={latest.snapshot}
+        variant={variant}
+      />
     </div>
   );
 }
@@ -2326,7 +2360,6 @@ export default function SetupFlow({
 }: SetupFlowProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const searchParams = useSearchParams();
   // ── UI state ─────────────────────────────────────────────────────────────
   const [phase, setPhase] = useState<Phase>('greeting');
   const [bootstrapFinished, setBootstrapFinished] = useState(false);
@@ -2430,8 +2463,19 @@ export default function SetupFlow({
   const lastAnalyzedUrlRef = useRef<string | null>(null);
   const analysisAbortRef = useRef<AbortController | null>(null);
   const preEditDataRef = useRef<Record<string, unknown> | null>(null);
-  /** Dedupes applying the same `?step=` hop from the sidebar while staying on /arcova-setup. */
-  const urlStepAppliedRef = useRef<string | null>(null);
+  /**
+   * `/arcova-setup?step=` sync: first run aligns URL to current phase only (fixes stale ?step=target
+   * on step 0). Later, only a *changed* step param (sidebar, back/forward) calls handleGoToStep.
+   */
+  const setupStepDeepLinkDoneRef = useRef(false);
+  const setupStepParamPrevRef = useRef<string | null>(null);
+  const setupStepInitialReplacePendingRef = useRef(false);
+
+  const resetSetupStepUrlSyncRefs = () => {
+    setupStepDeepLinkDoneRef.current = false;
+    setupStepParamPrevRef.current = null;
+    setupStepInitialReplacePendingRef.current = false;
+  };
 
   // ── Enrichment navigation guard ────────────────────────────────────────────
   const { setIsEnriching } = useEnrichmentGuard();
@@ -3238,6 +3282,39 @@ export default function SetupFlow({
     })();
   }, [phase, advanceTo, saveIcp, askClaude, sayBeats]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── ICP suggestions: fire-and-forget after own-company analysis ───────────
+
+  const generateIcpSuggestions = useCallback(async (enrichmentData: Record<string, unknown>): Promise<IcpSuggestion[]> => {
+    try {
+      const res = await fetch('/api/suggest-icp-companies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          company_name: enrichmentData.company_name,
+          description: enrichmentData.description,
+          products_services: enrichmentData.products_services,
+          services: enrichmentData.services,
+          target_customers: enrichmentData.target_customers,
+          customers_we_serve: enrichmentData.customers_we_serve,
+          good_fit: enrichmentData.good_fit,
+          therapeutic_areas: enrichmentData.therapeutic_areas,
+          modalities: enrichmentData.modalities,
+          company_type: enrichmentData.company_type,
+        }),
+      });
+      if (!res.ok) return [];
+      const { suggestions } = await res.json() as { suggestions: IcpSuggestion[] };
+      if (Array.isArray(suggestions) && suggestions.length > 0) {
+        setIcpSuggestions(suggestions);
+        saveStoredSuggestions(suggestions);
+      }
+      return suggestions ?? [];
+    } catch {
+      // Non-fatal — fall back to manual URL entry
+      return [];
+    }
+  }, []);
+
   // ── Handle analysis results confirmed ────────────────────────────────────
 
   const handleResultsConfirmed = useCallback(async () => {
@@ -3276,63 +3353,56 @@ export default function SetupFlow({
       return;
     }
 
-    if (icpSuggestions.length > 0) {
+    // Resolve suggested target accounts: in-memory, then localStorage (background API may have
+    // finished after "Looks good"), then await API so copy about "suggestions below" matches the UI.
+    let resolvedSuggestions = icpSuggestions.filter(
+      (s) => typeof s.name === 'string' && s.name.trim().length > 0 && typeof s.domain === 'string' && s.domain.trim().length > 0,
+    );
+    if (resolvedSuggestions.length === 0) {
+      resolvedSuggestions = unenrolledSuggestions();
+    }
+    const sellerProfile = editingFindingsData;
+    if (
+      resolvedSuggestions.length === 0
+      && sellerProfile
+      && typeof sellerProfile === 'object'
+      && Object.keys(sellerProfile).length > 0
+    ) {
+      resolvedSuggestions = await generateIcpSuggestions(sellerProfile as Record<string, unknown>);
+    }
+    if (resolvedSuggestions.length > 0) {
+      setIcpSuggestions(resolvedSuggestions);
       const companyName = (editingFindingsData?.company_name as string | undefined) ?? 'your company';
-      const segmentList = icpSuggestions.map((s) => `${s.name} (${s.segmentLabel})`).join(', ');
+      const segmentList = resolvedSuggestions.map((s) => `${s.name} (${s.segmentLabel})`).join(', ');
       const { displayParts } = await askClaude({
         mode: 'narration',
         extra: {
           role: 'user',
-          content: `[System: the user confirmed their company profile for ${companyName}. Based on the enrichment data I've already found some companies that look like strong ICP model accounts representing different buyer types: ${segmentList}. Two short sentences: tell them you've done some research and found a few companies that look like they could be strong model accounts — each representing a different type of buyer. Ask them to pick one to model their ICP on, or enter their own.]`,
+          content:
+            `[System: the user confirmed their company profile for ${companyName}. 4-6 short sentences max, no em dashes, no long essay. ` +
+            `(1) Brief ack the profile looks good. ` +
+            `(2) One line on purpose: we are defining ideal target accounts, real companies they want as customers. ` +
+            `(3) Example companies that illustrate different buyer types: ${segmentList}. ` +
+            `(4) They can tap one to start or paste their own URL. ` +
+            `(5) If they are not sure, say we suggested those options from their company and they can use one of those picks.]`,
         },
       });
       if (displayParts.length) await sayBeats(displayParts);
       setPhase('icp_suggestion');
+      setInput(true);
       return;
     }
 
     historyRef.current = [...historyRef.current, { role: 'user', content: 'Looks good' }];
     setPhase('customer_url_conversation');
     setInput(false);
-    const { displayParts } = await askClaude({
-      mode: 'conversation',
-      phase: 'customer_url_conversation',
+    const { displayParts: targetIntroParts } = await askClaude({
+      mode: 'narration',
+      extra: { role: 'user', content: SETUP_NARRATION_TARGET_ACCOUNTS_STEP },
     });
-    if (displayParts.length) await sayBeats(displayParts);
+    if (targetIntroParts.length) await sayBeats(targetIntroParts);
     setInput(true);
-  }, [askClaude, editingFindingsData, entryPoint, icpSuggestions, resolvedCompletePath, router]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ── ICP suggestions: fire-and-forget after own-company analysis ───────────
-
-  const generateIcpSuggestions = useCallback(async (enrichmentData: Record<string, unknown>): Promise<IcpSuggestion[]> => {
-    try {
-      const res = await fetch('/api/suggest-icp-companies', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          company_name: enrichmentData.company_name,
-          description: enrichmentData.description,
-          products_services: enrichmentData.products_services,
-          services: enrichmentData.services,
-          customers_we_serve: enrichmentData.customers_we_serve,
-          good_fit: enrichmentData.good_fit,
-          therapeutic_areas: enrichmentData.therapeutic_areas,
-          modalities: enrichmentData.modalities,
-          company_type: enrichmentData.company_type,
-        }),
-      });
-      if (!res.ok) return [];
-      const { suggestions } = await res.json() as { suggestions: IcpSuggestion[] };
-      if (Array.isArray(suggestions) && suggestions.length > 0) {
-        setIcpSuggestions(suggestions);
-        saveStoredSuggestions(suggestions);
-      }
-      return suggestions ?? [];
-    } catch {
-      // Non-fatal — fall back to manual URL entry
-      return [];
-    }
-  }, []);
+  }, [askClaude, editingFindingsData, entryPoint, icpSuggestions, generateIcpSuggestions, resolvedCompletePath, router, sayBeats]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const getLatestResultsData = useCallback((): Record<string, unknown> | null => {
     for (let i = thread.length - 1; i >= 0; i -= 1) {
@@ -3341,6 +3411,14 @@ export default function SetupFlow({
     }
     return null;
   }, [thread]);
+
+  /** If background suggest-icp finished after we navigated, pull from localStorage into state so pills render. */
+  useEffect(() => {
+    if (phase !== 'customer_url_conversation' && phase !== 'icp_suggestion') return;
+    if (icpSuggestions.length > 0) return;
+    const stored = unenrolledSuggestions();
+    if (stored.length > 0) setIcpSuggestions(stored);
+  }, [phase, icpSuggestions.length]);
 
   // ── Progress step navigation ──────────────────────────────────────────────
 
@@ -3353,22 +3431,13 @@ export default function SetupFlow({
       const hasCompanyProfile = Boolean(
         rec
         && (typeof rec.id === 'string'
-          || typeof rec.company_name === 'string'
-          || typeof rec.website === 'string'
-          || lastAnalyzedUrlRef.current),
+          || (typeof rec.company_name === 'string' && rec.company_name.trim().length > 0)
+          || (typeof rec.website === 'string' && rec.website.trim().length > 0)),
       );
 
       if (hasCompanyProfile && rec) {
         setEditingFindingsData({ ...rec });
         setEditingFindings(false);
-        const { displayParts } = await askClaude({
-          mode: 'narration',
-          extra: {
-            role: 'user',
-            content: '[System: the user went back to step 1 to review their own company. One sentence: acknowledge that their company profile is below so they can confirm it, tweak anything that is off, or start over if they want a clean run.]',
-          },
-        });
-        if (displayParts.length) await sayBeats(displayParts);
         setPhase('analysis_results');
         setInput(false);
         return;
@@ -3376,14 +3445,6 @@ export default function SetupFlow({
 
       // No saved profile yet: restart URL capture
       icpIdRef.current = null;
-      const { displayParts } = await askClaude({
-        mode: 'narration',
-        extra: {
-          role: 'user',
-          content: '[System: the user wants to go back and redo their company profile. One sentence: acknowledge and ask them to enter their company website URL.]',
-        },
-      });
-      if (displayParts.length) await sayBeats(displayParts);
       setPhase('greeting');
       setInput(true);
     } else if (stepIndex === 1) {
@@ -3394,76 +3455,78 @@ export default function SetupFlow({
           && (Boolean(reviewedCompanyName?.trim()) || Boolean(companyRef.current.companyType)));
 
       if (hasTargetReview) {
-        const { displayParts } = await askClaude({
-          mode: 'narration',
-          extra: {
-            role: 'user',
-            content: '[System: the user is revisiting their target company and ICP criteria. One sentence: acknowledge that the target profile is below so they can confirm, tweak, or try a different company.]',
-          },
-        });
-        if (displayParts.length) await sayBeats(displayParts);
         setIcpEditMode(false);
         setPhase('customer_url_review');
         setInput(false);
-      } else if (icpSuggestions.length > 0) {
-        const { displayParts } = await askClaude({
-          mode: 'narration',
-          extra: {
-            role: 'user',
-            content: '[System: the user wants to go back to the target company step. One sentence: acknowledge and remind them to pick one of the suggested model accounts or enter their own.]',
-          },
-        });
-        if (displayParts.length) await sayBeats(displayParts);
-        setPhase('icp_suggestion');
       } else {
-        const { displayParts } = await askClaude({
-          mode: 'narration',
-          extra: {
-            role: 'user',
-            content: '[System: the user wants to go back and update their target company profile. One sentence: acknowledge and ask them to drop in a URL for a target account.]',
-          },
-        });
-        if (displayParts.length) await sayBeats(displayParts);
-        setPhase('customer_url_conversation');
-        setInput(true);
+        let resolvedSuggestions = icpSuggestions.filter(
+          (s) => typeof s.name === 'string' && s.name.trim().length > 0 && typeof s.domain === 'string' && s.domain.trim().length > 0,
+        );
+        if (resolvedSuggestions.length === 0) {
+          resolvedSuggestions = unenrolledSuggestions();
+        }
+        const profile = editingFindingsData ?? getLatestResultsData();
+        if (
+          resolvedSuggestions.length === 0
+          && profile
+          && typeof profile === 'object'
+          && Object.keys(profile).length > 0
+        ) {
+          resolvedSuggestions = await generateIcpSuggestions(profile as Record<string, unknown>);
+        }
+        if (resolvedSuggestions.length > 0) {
+          setIcpSuggestions(resolvedSuggestions);
+          setPhase('icp_suggestion');
+          setInput(true);
+        } else {
+          setPhase('customer_url_conversation');
+          setInput(false);
+          const { displayParts: targetIntroParts } = await askClaude({
+            mode: 'narration',
+            extra: { role: 'user', content: SETUP_NARRATION_TARGET_ACCOUNTS_STEP },
+          });
+          if (targetIntroParts.length) await sayBeats(targetIntroParts);
+          setInput(true);
+        }
       }
     } else if (stepIndex === 2) {
-      const { displayParts } = await askClaude({
-        mode: 'narration',
-        extra: {
-          role: 'user',
-          content: '[System: the user wants to revisit their buying team. One sentence: acknowledge this and tell them the buying group is ready to review on the right.]',
-        },
-      });
-      if (displayParts.length) await sayBeats(displayParts);
       setPhase('buying_team_review');
       setInput(false);
     }
-  }, [askClaude, editingFindingsData, enrichedTargetCompany, getLatestResultsData, icpSuggestions, reviewedCompanyName, sayBeats]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [editingFindingsData, enrichedTargetCompany, generateIcpSuggestions, getLatestResultsData, icpSuggestions, reviewedCompanyName, askClaude, sayBeats]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
   const handleResumeRestart = useCallback(async () => {
-    // Delete ICP from DB
-    const icpId = icpIdRef.current;
-    if (icpId) {
-      try {
-        await fetch('/api/company-criteria', {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: icpId }),
-        });
-      } catch {}
+    if (typeof window !== 'undefined' && !window.confirm(START_AGAIN_CONFIRM)) return;
+
+    let resetOk = false;
+    try {
+      const res = await fetch('/api/setup-reset', { method: 'POST' });
+      resetOk = res.ok;
+      if (!res.ok) {
+        console.error('[setup-flow] setup-reset failed:', await res.text().catch(() => ''));
+      }
+    } catch (e) {
+      console.error('[setup-flow] setup-reset:', e);
     }
 
-    // Delete own-company analysis from DB
-    const analysisId = typeof editingFindingsData?.id === 'string' ? editingFindingsData.id : null;
-    if (analysisId) {
-      try {
-        await fetch(`/api/user-company?id=${analysisId}`, { method: 'DELETE' });
-      } catch {}
+    if (!resetOk) {
+      await say('We could not wipe your setup on the server. Check your connection and try again.');
+      return;
     }
+
+    clearStoredIcpSuggestionState();
 
     // Reset all local state
+    setPendingTransition(null);
+    setAnalysisError('');
+    setIcpSuggestions([]);
+    setChipSel([]);
+    setBuyingTeamEditMode(false);
+    setIcpEditMode(false);
+    setOwnCompanyAnalysisInFlight(false);
+    setSavingFindings(false);
+    personaIdRef.current = null;
     icpIdRef.current = null;
     lastTargetUrlRef.current = null;
     lastAnalyzedUrlRef.current = null;
@@ -3485,6 +3548,12 @@ export default function SetupFlow({
     setOwnEnrichSynthesisWait(false);
     setCustomerUrlLinkedinWait(false);
     setCustomerUrlSynthesisWait(false);
+    setPartialOwnEnrichment(null);
+    setPartialTargetEnrichment(null);
+    setOwnEnrichStep(0);
+    setTargetEnrichStep(0);
+    setInputVal('');
+    resetSetupStepUrlSyncRefs();
 
     // Jump to greeting before the onboarding API toggles thinking — avoids the dark interim shell
     // (`thinking && thread.length === 0`) while phase was still analysis_results.
@@ -3500,7 +3569,7 @@ export default function SetupFlow({
     });
     if (displayParts.length) await sayBeats(displayParts);
     setInput(true);
-  }, [askClaude, editingFindingsData]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [askClaude, say, sayBeats]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Handle LLM-surfaced transition confirmation ───────────────────────────
 
@@ -3515,13 +3584,21 @@ export default function SetupFlow({
         break;
       case 'proceed_to_customer_url':
         setPhase('customer_url_conversation');
-        setInput(true);
+        setInput(false);
+        {
+          const { displayParts: targetIntroParts } = await askClaude({
+            mode: 'narration',
+            extra: { role: 'user', content: SETUP_NARRATION_TARGET_ACCOUNTS_STEP },
+          });
+          if (targetIntroParts.length) await sayBeats(targetIntroParts);
+          setInput(true);
+        }
         break;
       case 'confirm_own_company':
         await handleResultsConfirmed();
         break;
     }
-  }, [pendingTransition, handleResumeRestart, handleResultsConfirmed]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pendingTransition, handleResumeRestart, handleResultsConfirmed, askClaude, sayBeats]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Handle customer URL analysis (ICP step) ──────────────────────────────
 
@@ -3652,7 +3729,7 @@ export default function SetupFlow({
         mode: 'narration',
         extra: {
           role: 'user',
-          content: `[System: analysis of the customer company "${name}" is complete and we've auto-generated an ICP profile from it. One sentence: tell the user the profile is ready on the right — they can edit it before saving or just save it as is.]`,
+          content: `[System: analysis of the customer company "${name}" is complete and we've auto-generated an ICP profile from it. One sentence: the draft profile is ready in this step so they can tweak anything before saving or save it as is. Do not mention a left or right panel or sidebar.]`,
         },
       });
       if (displayParts.length) await sayBeats(displayParts);
@@ -3817,15 +3894,15 @@ export default function SetupFlow({
 
       try {
         const narrationPrompt = isReenrich
-          ? `[System: re-enrichment of ${data.company_name ?? normalized} is complete. Give a single short sentence confirming the company profile has been refreshed with the latest data — no reaction, no praise, just a calm factual update.]`
-          : `[System: analysis of ${normalized} is complete. Company: ${data.company_name ?? normalized}. Give a 1-sentence warm reaction and tell them all the details are now showing in their company card on the right — no need to list anything out.]`;
+          ? `[System: re-enrichment of ${data.company_name ?? normalized} is complete. Give a single short sentence confirming the company profile has been refreshed with the latest data, no reaction, no praise, just a calm factual update.]`
+          : `[System: analysis of ${normalized} is complete. Company: ${data.company_name ?? normalized}. One short warm sentence: the enriched profile is ready in this step. They can review the details, adjust anything that looks off, then tap Looks right when they are happy. Do not mention a left or right panel or sidebar.]`;
         const { displayParts } = await askClaude({
           mode: 'narration',
           extra: { role: 'user', content: narrationPrompt },
         });
         if (displayParts.length) await sayBeats(displayParts);
       } catch {
-        await say('Your company profile is ready on the right. Continue when you have reviewed it.');
+        await say('Your company profile is ready in this step. Review the details and tap Looks right when you are happy.');
       }
 
       if (controller.signal.aborted) return;
@@ -3930,6 +4007,7 @@ export default function SetupFlow({
   }, [editingFindingsData, getLatestResultsData]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDeleteCompanyProfile = useCallback(async () => {
+    resetSetupStepUrlSyncRefs();
     const data = editingFindingsData ?? getLatestResultsData();
     const id = typeof data?.id === 'string' ? data.id : null;
     if (id) {
@@ -3981,9 +4059,15 @@ export default function SetupFlow({
     companyRef.current.signals = [];
     lastTargetUrlRef.current = null;
     setPhase('customer_url_conversation');
+    setInput(false);
+    await say('Profile deleted.');
+    const { displayParts: targetIntroParts } = await askClaude({
+      mode: 'narration',
+      extra: { role: 'user', content: SETUP_NARRATION_TARGET_ACCOUNTS_STEP },
+    });
+    if (targetIntroParts.length) await sayBeats(targetIntroParts);
     setInput(true);
-    await say('Profile deleted. Drop in a URL or company name and I\'ll build a fresh one.');
-  }, [say]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [say, askClaude, sayBeats]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDeletePersona = useCallback(async () => {
     const id = personaIdRef.current;
@@ -4038,16 +4122,6 @@ export default function SetupFlow({
       setInput(false);
     }
   }, [editingFindingsData, reviewedCompanyName, enrichedTargetCompany]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleAnalyseDifferentWebsite = useCallback(async () => {
-    setThread((prev) => prev.filter((m) => m.kind !== 'results'));
-    setEditingFindings(false);
-    setEditingFindingsData(null);
-    setPhase('greeting');
-    setInput(true);
-    setInputVal('');
-    await say('Sure. Share the new company website and I will analyse that instead.');
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCancelFindingsEdit = useCallback(() => {
     setEditingFindings(false);
@@ -4154,60 +4228,77 @@ export default function SetupFlow({
 
   // ── Handle user text input (greeting phase) ───────────────────────────────
 
-  const handleSend = useCallback(async (e: React.FormEvent) => {
-    e.preventDefault();
-    const text = inputValue.trim();
-    if (!text || !inputEnabled) return;
+  const submitSetupChatText = useCallback(
+    async (displayText: string, modelContent?: string) => {
+      const show = displayText.trim();
+      const api = (modelContent ?? displayText).trim();
+      if (!show || !api || !inputEnabled) return;
 
-    setInputVal('');
-    setInput(false);
-    setPendingTransition(null);
-    // Show the user bubble immediately; don't wait on the onboarding API (or analysis kick-off).
-    pushText('user', text);
+      setInputVal('');
+      setInput(false);
+      setPendingTransition(null);
+      pushText('user', show);
 
-    const response = await askClaude({
-      mode:
-        phase === 'greeting' ||
-        phase === 'customer_url_input' ||
-        phase === 'customer_url_conversation'
-          ? 'conversation'
-          : 'phase_help',
-      phase,
-      extra: { role: 'user', content: text },
-    });
+      const response = await askClaude({
+        mode:
+          phase === 'greeting' ||
+          phase === 'customer_url_input' ||
+          phase === 'customer_url_conversation' ||
+          phase === 'icp_suggestion'
+            ? 'conversation'
+            : 'phase_help',
+        phase,
+        extra: { role: 'user', content: api },
+      });
 
-    const beginAnalysis = response.actions.find(
-      (action): action is Extract<OnboardingAction, { type: 'begin_analysis' }> =>
-        action.type === 'begin_analysis'
-    );
+      const beginAnalysis = response.actions.find(
+        (action): action is Extract<OnboardingAction, { type: 'begin_analysis' }> =>
+          action.type === 'begin_analysis',
+      );
 
-    if (beginAnalysis?.website_url) {
-      // Skip dedicated URL splash when user is already in the glass chat for target ICP
-      const isCustomer =
-        phase === 'customer_url_input' ||
-        phase === 'customer_url_conversation' ||
-        beginAnalysis.analysis_type === 'target_customer';
-      if (isCustomer) {
-        await handleCustomerUrlAnalyse(beginAnalysis.website_url);
-      } else {
-        await runAnalysis(beginAnalysis.website_url);
+      if (beginAnalysis?.website_url) {
+        const treatAsOwnCompany =
+          phase === 'greeting' && (entryPoint === 'full' || entryPoint === 'company-only');
+        if (treatAsOwnCompany) {
+          await runAnalysis(beginAnalysis.website_url);
+          return;
+        }
+        const isCustomer =
+          phase === 'customer_url_input' ||
+          phase === 'customer_url_conversation' ||
+          phase === 'icp_suggestion' ||
+          beginAnalysis.analysis_type === 'target_customer';
+        if (isCustomer) {
+          await handleCustomerUrlAnalyse(beginAnalysis.website_url);
+        } else {
+          await runAnalysis(beginAnalysis.website_url);
+        }
+        return;
       }
-      return;
-    }
 
-    if (response.displayParts.length) {
-      await sayBeats(response.displayParts);
-    }
+      if (response.displayParts.length) {
+        await sayBeats(response.displayParts);
+      }
 
-    const transition = response.actions.find(
-      (a): a is Extract<OnboardingAction, { type: 'confirm_transition' }> => a.type === 'confirm_transition'
-    );
-    if (transition) {
-      setPendingTransition({ target: transition.target, buttonLabel: transition.button_label });
-    }
+      const transition = response.actions.find(
+        (a): a is Extract<OnboardingAction, { type: 'confirm_transition' }> => a.type === 'confirm_transition',
+      );
+      if (transition) {
+        setPendingTransition({ target: transition.target, buttonLabel: transition.button_label });
+      }
 
-    setInput(true);
-  }, [inputValue, inputEnabled, phase, askClaude, runAnalysis, handleCustomerUrlAnalyse]); // eslint-disable-line react-hooks/exhaustive-deps
+      setInput(true);
+    },
+    [inputEnabled, phase, entryPoint, askClaude, runAnalysis, handleCustomerUrlAnalyse],
+  ); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSend = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      await submitSetupChatText(inputValue.trim());
+    },
+    [inputValue, submitSetupChatText],
+  );
 
   // ── Mount: start the conversation (entry point chooses opening phase) ──
 
@@ -4310,15 +4401,13 @@ export default function SetupFlow({
 
         // Leg 2: company done, no ICP — skip greeting, go straight to target company step
         if (existingIcps.length === 0) {
-          const { displayParts } = await askClaude({
-            mode: 'narration',
-            extra: {
-              role: 'user',
-              content: '[System: the user\'s company profile is already set up. One sentence: acknowledge this and invite them to drop in a target account URL to define who they sell to.]',
-            },
-          });
-          if (displayParts.length) await sayBeats(displayParts);
           setPhase('customer_url_conversation');
+          setInput(false);
+          const { displayParts: targetIntroParts } = await askClaude({
+            mode: 'narration',
+            extra: { role: 'user', content: SETUP_NARRATION_TARGET_ACCOUNTS_STEP },
+          });
+          if (targetIntroParts.length) await sayBeats(targetIntroParts);
           setInput(true);
           return;
         }
@@ -4442,41 +4531,39 @@ export default function SetupFlow({
         }
 
         if (existingIcps.length === 0) {
-          // No ICPs yet — generate fresh suggestions and present them
-          const { displayParts } = await askClaude({
-            mode: 'narration',
-            extra: {
-              role: 'user',
-              content: `[System: The user is adding their first target company profile and they have no ICPs yet. One sentence: tell them you're looking for some strong model accounts based on their company data.]`,
-            },
-          });
-          if (displayParts.length) await sayBeats(displayParts);
-
+          // No ICPs yet — generate fresh suggestions and present them in chat
           if (existingAnalysis) {
+            await say('Give me just a moment while I line up a few example target accounts from your profile.');
             const suggestions = await generateIcpSuggestions(existingAnalysis as Record<string, unknown>);
             if (suggestions.length > 0) {
+              const segmentList = suggestions.map((s) => `${s.name} (${s.segmentLabel})`).join(', ');
               const { displayParts: dp2 } = await askClaude({
                 mode: 'narration',
                 extra: {
                   role: 'user',
-                  content: `[System: suggestions for target model accounts are ready — each represents a different buyer segment. One sentence: tell them you've found a few companies that look like strong ICP model accounts, each a different type of buyer, and to pick one or enter their own.]`,
+                  content:
+                    `[System: The user is resuming setup; company profile is ready. 4-6 short sentences max, no em dashes. ` +
+                    `(1) Brief glad the company pass went well. ` +
+                    `(2) One line: we are defining ideal target accounts, real companies they sell to. ` +
+                    `(3) Examples for different buyer types: ${segmentList}. ` +
+                    `(4) Tap one or paste their own URL. ` +
+                    `(5) If unsure, those suggestions came from their company and any pick is fine.]`,
                 },
               });
               if (dp2.length) await sayBeats(dp2);
               setPhase('icp_suggestion');
+              setInput(true);
               return;
             }
           }
           // Fallback to URL input if suggestion generation failed
-          const { displayParts: dp3 } = await askClaude({
-            mode: 'narration',
-            extra: {
-              role: 'user',
-              content: `[System: The user is adding a new target company profile. One sentence: invite them to drop in the URL of a dream target account to get started.]`,
-            },
-          });
-          if (dp3.length) await sayBeats(dp3);
           setPhase('customer_url_conversation');
+          setInput(false);
+          const { displayParts: targetIntroParts } = await askClaude({
+            mode: 'narration',
+            extra: { role: 'user', content: SETUP_NARRATION_TARGET_ACCOUNTS_STEP },
+          });
+          if (targetIntroParts.length) await sayBeats(targetIntroParts);
           setInput(true);
           return;
         }
@@ -4489,24 +4576,26 @@ export default function SetupFlow({
             mode: 'narration',
             extra: {
               role: 'user',
-              content: `[System: The user is adding another target company profile. We previously suggested some model accounts and they haven't all been used yet. One sentence: remind them there are still a couple of suggested model accounts they haven't profiled — pick one or enter their own.]`,
+              content:
+                '[System: The user is adding another ideal customer profile. Two or three short sentences, no em dashes. ' +
+                'Each ICP should stay a distinct slice of the market with little overlap. ' +
+                'They still have suggested accounts below, or they can type their own. If they are not sure, picking one of the suggestions below is fine.]',
             },
           });
           if (displayParts.length) await sayBeats(displayParts);
           setPhase('icp_suggestion');
+          setInput(true);
           return;
         }
 
         // All previous suggestions enrolled or none stored — they have one in mind
-        const { displayParts } = await askClaude({
-          mode: 'narration',
-          extra: {
-            role: 'user',
-            content: `[System: The user is adding a new target company profile. They already have some ICPs set up. One sentence: welcome them and invite them to drop in the URL of their next target account.]`,
-          },
-        });
-        if (displayParts.length) await sayBeats(displayParts);
         setPhase('customer_url_conversation');
+        setInput(false);
+        const { displayParts: targetIntroParts } = await askClaude({
+          mode: 'narration',
+          extra: { role: 'user', content: SETUP_NARRATION_TARGET_ACCOUNTS_STEP },
+        });
+        if (targetIntroParts.length) await sayBeats(targetIntroParts);
         setInput(true);
         return;
       }
@@ -4622,36 +4711,57 @@ export default function SetupFlow({
   ];
   const currentStepIndex = SETUP_STEPS.findIndex((s) => s.phases.includes(phase));
 
+  /** Single reconciliation: first sync URL ← phase; later, changed ?step= from nav may call handleGoToStep. */
   useEffect(() => {
     if (entryPoint !== 'full' || !bootstrapFinished) return;
     if (pathname !== ROUTES.setup.arcova) return;
     if (currentStepIndex < 0) return;
-    const key = currentStepIndex === 0 ? 'company' : currentStepIndex === 1 ? 'target' : 'buying';
-    if (searchParams.get('step') === key) return;
-    router.replace(`${pathname}?step=${key}`, { scroll: false });
-  }, [entryPoint, bootstrapFinished, currentStepIndex, pathname, router, searchParams]);
 
-  /** Sidebar / deep link: `/arcova-setup?step=company|target|buying` jumps after bootstrap hydrates local state. */
-  useEffect(() => {
-    if (!bootstrapFinished || entryPoint !== 'full') return;
-    const raw = searchParams.get('step');
-    if (!raw) {
-      urlStepAppliedRef.current = null;
+    const canonical =
+      currentStepIndex === 0 ? 'company' : currentStepIndex === 1 ? 'target' : 'buying';
+    const raw = new URLSearchParams(window.location.search).get('step');
+    const idxFromUrl =
+      raw === 'company' ? 0 : raw === 'target' ? 1 : raw === 'buying' ? 2 : null;
+
+    const prevRaw = setupStepParamPrevRef.current;
+
+    if (!setupStepDeepLinkDoneRef.current) {
+      setupStepDeepLinkDoneRef.current = true;
+      if (raw !== canonical) {
+        setupStepInitialReplacePendingRef.current = true;
+        router.replace(`${pathname}?step=${canonical}`, { scroll: false });
+      }
+      setupStepParamPrevRef.current = canonical;
       return;
     }
-    const idx = raw === 'company' ? 0 : raw === 'target' ? 1 : raw === 'buying' ? 2 : null;
-    if (idx == null) return;
-    const key = `${raw}:${idx}`;
-    if (currentStepIndex === idx) {
-      urlStepAppliedRef.current = key;
+
+    if (setupStepInitialReplacePendingRef.current) {
+      if (raw === canonical) {
+        setupStepInitialReplacePendingRef.current = false;
+        setupStepParamPrevRef.current = raw;
+      } else {
+        router.replace(`${pathname}?step=${canonical}`, { scroll: false });
+      }
       return;
     }
-    if (urlStepAppliedRef.current === key) return;
-    urlStepAppliedRef.current = key;
-    void handleGoToStep(idx);
-  }, [bootstrapFinished, entryPoint, searchParams, handleGoToStep, currentStepIndex]);
+
+    const stepParamChanged = prevRaw !== null && prevRaw !== raw;
+    if (stepParamChanged && idxFromUrl != null && idxFromUrl !== currentStepIndex) {
+      setupStepParamPrevRef.current = raw;
+      void handleGoToStep(idxFromUrl);
+      return;
+    }
+
+    setupStepParamPrevRef.current = raw;
+
+    if (raw !== canonical) {
+      router.replace(`${pathname}?step=${canonical}`, { scroll: false });
+    }
+  }, [entryPoint, bootstrapFinished, pathname, currentStepIndex, router, handleGoToStep]);
 
   const showProgress = (entryPoint === 'full') && currentStepIndex >= 0;
+  /** Only show step pills up to the current leg so step 1 does not preview target / buying. */
+  const visibleSetupSteps = SETUP_STEPS.slice(0, Math.min(SETUP_STEPS.length, currentStepIndex + 1));
   const isCustomerUrlReview = phase === 'customer_url_review';
   const isReviewValid =
     reviewDraft.companyType !== '' &&
@@ -4700,7 +4810,7 @@ export default function SetupFlow({
       phase === 'analysis_loading' || phase === 'customer_url_loading' || phase === 'buying_team_loading';
     if (phase === 'greeting') {
       if (!visibleMessages.some((m) => m.role === 'user')) return;
-    } else if (!enrichGlass && phase !== 'customer_url_conversation') {
+    } else if (!enrichGlass && phase !== 'customer_url_conversation' && phase !== 'icp_suggestion') {
       return;
     }
     const el = setupGreetingThreadRef.current;
@@ -4784,6 +4894,8 @@ export default function SetupFlow({
     industry: getStr(resultsPanelData?.industry),
   };
 
+  const setupGlassTargetPills = icpSuggestions.slice(0, 12);
+
   // Shared props for SetupProfilePanel (avoids repetition across phase renders)
   const sharedPanelProps = {
     myCompany,
@@ -4844,22 +4956,29 @@ export default function SetupFlow({
   const welcomeChatPart1 = `Hi ${firstName || 'there'}, let's get you set up. `;
   const welcomeChatPart2 = `First, what's your company's website?`;
 
-  // Phase: greeting, or step-2 target ICP as a continuation of the same glass agent window
+  // Phase: greeting, step-2 target ICP URL chat, or suggested model accounts, all in the same glass agent window.
   // • Before the user sends anything: welcome card (orb + headline + URL input).
   // • After the first user message: same 460px shell, in-place thread + Today-style composer (no separate header chrome).
-  if (phase === 'greeting' || phase === 'customer_url_conversation') {
-    const hasUserMsg =
-      visibleMessages.some((m) => m.role === 'user') || phase === 'customer_url_conversation';
+  if (phase === 'greeting' || phase === 'customer_url_conversation' || phase === 'icp_suggestion') {
+    const isGlassTargetStep = phase === 'customer_url_conversation' || phase === 'icp_suggestion';
+    const hasUserMsg = visibleMessages.some((m) => m.role === 'user') || isGlassTargetStep;
     // Opening beats are appended to `thread` on mount while the welcome card shows static headline copy.
     // In chat mode, list only messages from the first user turn so the UI matches what the user experienced.
     const firstGreetingUserIdx = visibleMessages.findIndex((m) => m.role === 'user');
     const greetingChatMessages =
-      firstGreetingUserIdx >= 0 ? visibleMessages.slice(firstGreetingUserIdx) : visibleMessages;
-    const greetingChatMessagesDisplay = filterFirstAssistantIfWelcomeHeadlineDuplicate(
-      greetingChatMessages,
-      welcomeChatPart1,
-      welcomeChatPart2,
-    );
+      phase === 'icp_suggestion'
+        ? visibleMessages
+        : firstGreetingUserIdx >= 0
+          ? visibleMessages.slice(firstGreetingUserIdx)
+          : visibleMessages;
+    const greetingChatMessagesDisplay =
+      phase === 'icp_suggestion'
+        ? greetingChatMessages.filter((m): m is TextMsg => m.kind === 'text')
+        : filterFirstAssistantIfWelcomeHeadlineDuplicate(
+            greetingChatMessages,
+            welcomeChatPart1,
+            welcomeChatPart2,
+          );
     const WELCOME_SPEED = 44;
     const isWorkDomain = !!emailDomain && !FREE_EMAIL_DOMAINS.has(emailDomain.toLowerCase());
 
@@ -4868,11 +4987,11 @@ export default function SetupFlow({
         <AppAmbientBackground />
         <div className="absolute left-0 right-0 top-0 z-20 flex justify-center px-6 pt-6 sm:px-10">
           <div className="flex w-full max-w-[1080px] flex-wrap items-center gap-3">
-            <StepEyebrow step={phase === 'customer_url_conversation' ? 1 : 0} />
+            <StepEyebrow step={isGlassTargetStep ? 1 : 0} />
           </div>
         </div>
         <div className="relative z-10 flex w-[460px] flex-col">
-          {phase === 'customer_url_conversation' && entryPoint === 'full' && (
+          {isGlassTargetStep && entryPoint === 'full' && (
             <button
               type="button"
               onClick={() => void handleGoToStep(0)}
@@ -4997,16 +5116,6 @@ export default function SetupFlow({
                 clock={setupGreetingChatClock}
                 statusKey={thinking ? 'thinking' : inputEnabled ? 'ready' : 'waiting'}
               />
-              {phase === 'customer_url_conversation' && (
-                <div className="px-1 pb-2 pt-1 text-center">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/45">
-                    Step 2 · Target ICP
-                  </p>
-                  <p className="mt-1.5 text-xs leading-snug text-arcova-navy/50">
-                    Share a dream-account URL in chat, or type a company name and we will take it from there.
-                  </p>
-                </div>
-              )}
               <div
                 ref={setupGreetingThreadRef}
                 className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-1 py-2 [touch-action:pan-y] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
@@ -5062,6 +5171,48 @@ export default function SetupFlow({
                   <p className="text-center text-xs text-red-500">{analysisError}</p>
                 )}
               </div>
+              {(phase === 'icp_suggestion' || phase === 'customer_url_conversation') &&
+                setupGlassTargetPills.length > 0 &&
+                !thinking &&
+                inputEnabled && (
+                  <div className="shrink-0 border-t border-arcova-navy/[0.06] px-1 pb-1 pt-3">
+                    <div className="flex w-full flex-col gap-2">
+                      {setupGlassTargetPills.map((suggestion) => (
+                          <button
+                            key={suggestion.domain}
+                            type="button"
+                            title={suggestion.segmentLabel}
+                            disabled={thinking}
+                            onClick={() => {
+                              markDomainEnrolled(suggestion.domain);
+                              pushText('user', suggestion.name);
+                              void handleCustomerUrlAnalyse(suggestion.domain);
+                            }}
+                            className="inline-flex w-full min-w-0 max-w-none items-start gap-1.5 rounded-2xl border border-slate-200/90 bg-white/95 px-3.5 py-2 text-left font-manrope text-sm font-semibold leading-snug text-arcova-teal shadow-sm transition-colors hover:border-arcova-teal/35 hover:bg-slate-50/90 disabled:pointer-events-none disabled:opacity-40"
+                          >
+                            <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-arcova-teal/70" />
+                            <span className="min-w-0 flex-1 whitespace-normal break-words">{suggestion.name}</span>
+                          </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              {phase === 'icp_suggestion' && !thinking && inputEnabled && (
+                <div className="shrink-0 px-1 pb-1 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      pushText('user', 'I will enter my own');
+                      setPhase('customer_url_conversation');
+                      setInput(true);
+                    }}
+                    disabled={thinking}
+                    className="w-full rounded-2xl border border-dashed border-arcova-navy/22 bg-white/45 px-4 py-3.5 text-left font-manrope text-sm font-medium text-arcova-navy/65 transition-all hover:border-arcova-teal/35 hover:bg-white/75 hover:text-arcova-navy disabled:opacity-45"
+                  >
+                    I will enter my own ICP →
+                  </button>
+                </div>
+              )}
               {inputEnabled && (
                 <SetupEmbedChatInput
                   value={inputValue}
@@ -5069,7 +5220,7 @@ export default function SetupFlow({
                   onSubmit={(e) => void handleSend(e)}
                   disabled={!inputEnabled}
                   placeholder={
-                    phase === 'customer_url_conversation'
+                    phase === 'customer_url_conversation' || phase === 'icp_suggestion'
                       ? 'URL or company name…'
                       : 'Reply…'
                   }
@@ -5215,7 +5366,6 @@ export default function SetupFlow({
     thinking &&
     thread.length === 0 &&
     phase !== 'analysis_results' &&
-    phase !== 'icp_suggestion' &&
     phase !== 'customer_url_input' &&
     phase !== 'customer_url_review' &&
     phase !== 'buying_team_review'
@@ -5307,18 +5457,6 @@ export default function SetupFlow({
       <div className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col overflow-y-auto">
         <AppAmbientBackground />
         <div className="relative z-10 flex flex-col px-6 py-9 lg:px-10">
-            {entryPoint === 'full' && !editingFindings && (
-              <div className="max-w-[820px]">
-                <button
-                  type="button"
-                  onClick={() => void handleAnalyseDifferentWebsite()}
-                  disabled={thinking || ownCompanyAnalysisInFlight}
-                  className={setupReviewBackButtonClass}
-                >
-                  <span aria-hidden>←</span> Back
-                </button>
-              </div>
-            )}
             {/* Hero */}
             <div className="mb-6 max-w-[820px]">
               <div className="mb-5">
@@ -5337,8 +5475,9 @@ export default function SetupFlow({
                   'Edit any fields below, then save when you\'re done.'
                 ) : (
                   <>
-                    Have a read with your coffee. If something&apos;s off, just tell me below — I&apos;ll fix it.
-                    When it looks right, hit <strong className="font-semibold text-arcova-navy">Looks good</strong> and we&apos;ll move on together.
+                    Here&apos;s what we have so far. Hit{' '}
+                    <strong className="font-semibold text-arcova-navy">Looks good</strong> when it matches how
+                    you&apos;d describe the company, or edit to tighten anything that&apos;s off.
                   </>
                 )}
               </p>
@@ -5410,16 +5549,17 @@ export default function SetupFlow({
                     Next: <strong className="font-semibold text-arcova-navy/70">Target companies</strong>
                   </div>
                 </div>
-                <p className="mt-4 px-1 text-center text-[12px] text-arcova-navy/50">
-                  Need to enter a different website from scratch?{' '}
+                <p className="mt-4 px-1 text-center text-[12px] leading-relaxed text-arcova-navy/50">
+                  Need a different company website?{' '}
                   <button
                     type="button"
                     disabled={thinking || ownCompanyAnalysisInFlight}
                     onClick={() => void handleResumeRestart()}
-                    className="font-medium text-arcova-teal underline decoration-arcova-teal/35 underline-offset-2 hover:text-arcova-navy disabled:opacity-50"
+                    className="font-semibold text-arcova-teal underline decoration-arcova-teal/35 underline-offset-2 hover:text-arcova-navy disabled:opacity-50"
                   >
-                    Start setup over
-                  </button>
+                    Start again
+                  </button>{' '}
+                  (clears company, targets, and buying team).
                 </p>
                 </>
               )}
@@ -5453,47 +5593,6 @@ export default function SetupFlow({
             </div>
         </div>
       </div>
-    );
-  }
-
-  // Phase: icp_suggestion → pick one of the suggested target companies
-  if (phase === 'icp_suggestion') {
-    return (
-      <LightLayout
-        eyebrow={<StepEyebrow step={1} />}
-        title="We found some companies that look like strong model accounts."
-        subtitle="Each represents a different buyer type. Pick one to build your ICP on, or enter your own."
-        onBack={() => void handleGoToStep(0)}
-      >
-        <div className="space-y-3">
-          {icpSuggestions.map((s) => (
-            <button
-              key={s.domain}
-              type="button"
-              onClick={() => {
-                markDomainEnrolled(s.domain);
-                pushText('user', s.name);
-                void handleCustomerUrlAnalyse(s.domain);
-              }}
-              className="group w-full rounded-2xl border border-white/60 bg-white/65 px-5 py-4 text-left shadow-[0_4px_16px_-8px_rgba(13,53,71,0.12)] backdrop-blur-xl transition-all hover:border-arcova-teal/40 hover:bg-white/80 hover:shadow-[0_8px_24px_-8px_rgba(0,164,180,0.18)]"
-            >
-              <p className="text-sm font-semibold text-arcova-navy">{s.name}</p>
-              <p className="mt-0.5 text-xs text-arcova-ink-mute">{s.segmentLabel}</p>
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={() => {
-              pushText('user', 'Enter my own');
-              setPhase('customer_url_conversation');
-              setInput(true);
-            }}
-            className="w-full rounded-2xl border border-dashed border-arcova-navy/20 bg-transparent px-5 py-4 text-sm font-medium text-arcova-ink-soft transition-all hover:border-arcova-navy/40 hover:text-arcova-navy"
-          >
-            I'll enter my own ICP →
-          </button>
-        </div>
-      </LightLayout>
     );
   }
 
@@ -5890,10 +5989,10 @@ export default function SetupFlow({
                   </button>
                   <button
                     type="button"
-                    onClick={() => void handleAnalyseDifferentWebsite()}
+                    onClick={() => void handleResumeRestart()}
                     className="rounded-xl border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
                   >
-                    Analyse a different site
+                    Start again
                   </button>
                   <button
                     type="button"
@@ -5917,7 +6016,7 @@ export default function SetupFlow({
         <div className="shrink-0 border-b border-white/10 px-6 py-4">
           <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
-                {SETUP_STEPS.map((step, i) => {
+                {visibleSetupSteps.map((step, i) => {
                 const isComplete = i < currentStepIndex;
                 const isCurrent = i === currentStepIndex;
                 const canGoBack = isComplete && !isSaving;
@@ -5948,7 +6047,7 @@ export default function SetupFlow({
             <button
               type="button"
               onClick={() => void handleResumeRestart()}
-              className="text-sm text-white/40 hover:text-white/70 transition-colors"
+              className="shrink-0 rounded-full border border-white/25 bg-white/5 px-4 py-2 text-sm font-medium text-white/90 transition-colors hover:border-white/35 hover:bg-white/10"
             >
               Start again
             </button>

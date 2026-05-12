@@ -25,8 +25,8 @@ Company summaries, ICP fit breakdowns, competitor data, customer segments — th
 **Layer 3 — Coverage / new data** (not built)
 Find net-new contacts at good-fit companies the user already knows, and net-new companies in their SAM they don't have at all. This is the upsell once the base is sticky. Surfaces via the Accounts page.
 
-**Layer 4 — Signals** (not built)
-Third-party public signals (job postings, funding announcements, clinical trial registrations, LinkedIn activity, FDA approvals, conference presentations). Signals are **triggers**, not ranking inputs. Fit gets the shortlist, signals tell you when to act and what to say. Signal strength hierarchy: pricing/demo intent (strong) → webinar/content engagement (medium) → LinkedIn activity (weak). Biotech-specific signals (CMC hires, phase transitions, IND filings) are the moat — meaningless to generic tools, highly relevant to biotech BD.
+**Layer 4 — Signals / readiness** (not built)
+Arcova should not just track raw events. It should infer **readiness** from many underlying life-sciences signals. Fit gets the shortlist; readiness tells you **when to work an account now**; reason tells you **what changed and what likely problem now exists**. The core readiness dimensions are: `new_budget`, `new_needs`, `new_people`, `new_strategy`, and `caution`. Biotech-specific signals (CMC hiring, phase transitions, manufacturing expansion, regulatory milestones) are the moat because they map to real buying conditions, not generic activity noise.
 
 ### The product sequence
 
@@ -164,3 +164,341 @@ User expectation and contracts should **not** treat requested volumes as exact g
 **Testing note**
 
 - During end-to-end testing, validate messaging and metrics when delivered count is below target, within band, and zero.
+
+## Readiness model (signals -> inference -> reason)
+
+Use this as the canonical product and data model for signals. Arcova should ingest many source-specific events, normalize them, infer commercial readiness states, and then generate an explanation that agents and users can act on.
+
+### The readiness dimensions
+
+- `new_budget`: evidence that fresh capital, approved spend, or purchasing capacity likely exists.
+- `new_needs`: evidence that operational, clinical, manufacturing, regulatory, or commercial complexity has increased.
+- `new_people`: evidence that a new owner, buyer, champion, or team is now in place.
+- `new_strategy`: evidence that the company has changed direction, scope, program mix, market focus, or partnership posture.
+- `caution`: evidence that timing may be poor, budgets may be constrained, or activity is misleading rather than actionable.
+
+### What the product should do
+
+- `fit` answers: should we care about this account at all?
+- `readiness` answers: is something meaningful happening now?
+- `reason` answers: what changed, why it matters commercially, and what likely problem now exists?
+- `route` answers: who is most likely to care inside the account?
+
+### Design principle
+
+- Do not optimize for a giant flat signal list.
+- Optimize for a clean inference system where many raw events roll up into a small number of readiness dimensions.
+- Preserve the underlying evidence so agents can reason over it and cite it.
+
+## Normalized signal families -> readiness dimensions
+
+These are the canonical signal families. They are not the final product output; they are the normalized building blocks that feed readiness.
+
+### `new_budget`
+
+- Funding and capital:
+  - `funding_round`
+  - `grant_award`
+  - `ipo_or_follow_on`
+  - `milestone_payment`
+  - `ma_event`
+  - `partnership_with_upfront_economics`
+- First-party commercial intent:
+  - `demo_requested`
+  - `inbound_enquiry`
+  - `open_opportunity_in_crm`
+
+### `new_needs`
+
+- Clinical and regulatory progression:
+  - `clinical_trial_registered`
+  - `phase_transition`
+  - `trial_site_expansion`
+  - `indication_expansion`
+  - `breakthrough_designation`
+  - `fda_approval`
+- Manufacturing / facilities / quality:
+  - `new_facility`
+  - `facility_expansion`
+  - `cmc_scale_up`
+  - `cdmo_partnership`
+  - `quality_compliance_buildout`
+- Demand/engagement signals:
+  - `visited_your_website`
+  - `attended_your_webinar_or_event`
+  - `downloaded_your_content`
+  - `responded_to_previous_outreach`
+
+### `new_people`
+
+- Team buildout and hiring:
+  - `cmc_hiring`
+  - `clinical_ops_hiring`
+  - `regulatory_hiring`
+  - `bd_hiring`
+  - `commercial_hiring`
+  - `job_surge`
+- Contact movement:
+  - `new_to_role`
+  - `recently_promoted`
+  - `recently_changed_company`
+  - `new_internal_role`
+  - `title_change`
+  - `board_or_advisory_role`
+
+### `new_strategy`
+
+- Strategic and portfolio change:
+  - `partnership_deal`
+  - `licensing_deal`
+  - `co_development_deal`
+  - `regional_expansion`
+  - `commercialization_move`
+  - `platform_repositioning`
+  - `indication_expansion`
+- Scientific / market visibility that may support a strategy shift:
+  - `conference_presentation`
+  - `conference_speaker`
+  - `publication`
+  - `new_paper_published`
+  - `patent_filed_or_granted`
+
+### `caution`
+
+- Negative or suppressive conditions:
+  - `layoffs`
+  - `trial_failure_or_halt`
+  - `program_discontinuation`
+  - `restructuring`
+  - `distressed_financing`
+  - `acquisition_distraction`
+  - `leadership_churn`
+  - `lapsed_customer`
+
+## Inference rules (how Arcova should think)
+
+### Core rule
+
+- Raw source events are never shown as the product abstraction by themselves.
+- Each raw event is normalized into one or more canonical signal types.
+- Each canonical signal type contributes to one or more readiness dimensions.
+- Readiness dimensions are scored independently, then combined into an overall readiness assessment.
+
+### Scoring inputs
+
+Each readiness dimension should consider:
+
+- `signal_strength`: how strong the signal is as a buying-intent proxy in general.
+- `relevance`: how relevant the signal is to the buyer function or vendor category.
+- `recency`: how fresh the event is right now.
+- `confidence`: how confident Arcova is that the signal was detected and classified correctly.
+- `compound_support`: whether multiple related signals are appearing together.
+- `suppression`: whether caution signals should reduce or cap readiness.
+
+### Recency / decay
+
+- Funding and major strategy changes should persist longer, but still decay over time.
+- Hiring and role changes should be strongest in the first 30-120 days.
+- Clinical and regulatory milestones should be strongest around the milestone window and then decay.
+- Conferences, publications, and visibility signals should be short-lived and mostly supportive.
+
+### Compound logic
+
+Readiness should increase materially when multiple dimensions co-fire.
+
+Examples:
+
+- `new_budget` + `new_needs` = likely vendor evaluation window
+- `new_needs` + `new_people` = likely execution and tooling/services gap
+- `new_strategy` + `new_people` = likely re-evaluation or new mandate
+- `new_budget` + `new_needs` + `new_people` = high-priority account
+
+## Reason model
+
+`reason` is the product explanation layer generated from current readiness state plus evidence. It should be regenerated whenever readiness changes; it should not be a manually maintained text field.
+
+### What `reason` should contain
+
+- what happened
+- which readiness dimensions are active
+- why this likely matters commercially
+- which buyer functions are likely affected
+- how strong/confident the inference is
+- what the likely outreach angle is
+
+### `reason` output shape
+
+- `summary_short`: a one-line explanation for lists and compact surfaces
+- `summary_long`: a richer explanation for drawers, agents, and account detail
+- `why_now`: direct statement of why this account appears timely now
+- `affected_functions`: likely stakeholders or pain-owning teams
+- `suggested_angle`: plain-English outreach angle or hypothesis
+- `confidence_label`: low / medium / high
+
+### Example `reason`
+
+- `summary_short`: Recently funded and expanding CMC operations.
+- `summary_long`: The account raised fresh capital, is hiring into CMC, and appears to be scaling manufacturing operations, suggesting both new budget and increased execution complexity.
+- `why_now`: This looks like a near-term vendor evaluation window rather than a passive good-fit account.
+- `affected_functions`: CMC, Tech Ops, Quality
+- `suggested_angle`: Support scale-up, manufacturing readiness, and operational execution.
+
+## Signal evidence model
+
+Agents should not read only prose. They should receive structured signal context plus evidence.
+
+### Raw evidence object
+
+Each underlying event should preserve:
+
+- `signal_event_id`
+- `entity_id`
+- `entity_scope` (`company` or `contact`)
+- `signal_type_raw`
+- `signal_type_normalized`
+- `source`
+- `source_url`
+- `event_at`
+- `observed_at`
+- `excerpt`
+- `confidence`
+
+### Inference object
+
+For each account, Arcova should compute:
+
+- `overall_readiness_score`
+- `overall_readiness_label`
+- `new_budget_score`
+- `new_needs_score`
+- `new_people_score`
+- `new_strategy_score`
+- `caution_score`
+- `confidence_score`
+- `freshness_score`
+- `affected_functions`
+- `top_supporting_signal_event_ids`
+
+## Agent context contract
+
+Every agent working an account should receive structured signal context, not just a page of prose.
+
+### Required payload sections
+
+- account identity and fit summary
+- readiness dimension scores and labels
+- top supporting evidence
+- computed reason object
+- route context (best people/functions to approach)
+- confidence and freshness indicators
+
+### Example account signal context payload
+
+```json
+{
+  "account_id": "acct_123",
+  "fit": {
+    "score": 91,
+    "label": "high"
+  },
+  "readiness": {
+    "overall_score": 0.84,
+    "overall_label": "high",
+    "new_budget": {
+      "score": 0.82,
+      "label": "high",
+      "confidence": 0.9,
+      "evidence_ids": ["sig_1", "sig_2"]
+    },
+    "new_needs": {
+      "score": 0.76,
+      "label": "high",
+      "confidence": 0.88,
+      "evidence_ids": ["sig_3", "sig_4"]
+    },
+    "new_people": {
+      "score": 0.61,
+      "label": "medium",
+      "confidence": 0.8,
+      "evidence_ids": ["sig_5"]
+    },
+    "new_strategy": {
+      "score": 0.57,
+      "label": "medium",
+      "confidence": 0.72,
+      "evidence_ids": ["sig_6"]
+    },
+    "caution": {
+      "score": 0.12,
+      "label": "low",
+      "confidence": 0.7,
+      "evidence_ids": []
+    }
+  },
+  "reason": {
+    "summary_short": "Recently funded and expanding CMC operations.",
+    "summary_long": "The account raised fresh capital, is hiring in CMC, and appears to be scaling operations, suggesting both new budget and increased execution complexity.",
+    "why_now": "This looks like an active scale-up period rather than a passive good-fit account.",
+    "affected_functions": ["cmc_manufacturing", "tech_ops"],
+    "suggested_angle": "Support scale-up and operational readiness.",
+    "confidence_label": "high"
+  },
+  "top_signals": [
+    {
+      "id": "sig_1",
+      "type": "funding_round",
+      "source": "company_press_release",
+      "event_at": "2026-03-18",
+      "confidence": 0.93
+    }
+  ]
+}
+```
+
+### Product rule
+
+- The UI may render this as a signals/readiness page or account drawer.
+- The source of truth should be structured records and computed fields, not manually written page copy.
+- Agent prompts should consume the structured payload and optionally the rendered summary, never the summary alone.
+
+## Source roadmap (ordered by signal value and implementation quality)
+
+Build sources in the order that best supports readiness, not in the order that sources are easiest to name.
+
+### Phase 1 — structured, high-confidence readiness sources
+
+- HubSpot integration for first-party engagement and CRM-state context
+- ClinicalTrials.gov for trial and program progression
+- FDA/public regulatory feeds for approvals and designations
+- Grants/funding/partnership datasets where structured coverage exists
+- Company careers pages and job postings for hiring and team buildout
+
+### Phase 2 — operational expansion and org change
+
+- manufacturing/facility expansion detection
+- CMC / Clinical Ops / Regulatory role classification
+- contact movement and leadership-change enrichment
+- CDMO / partner relationship detection where available
+
+### Phase 3 — corroborative and narrative-enrichment sources
+
+- PubMed
+- conference programs / speaker pages
+- patents datasets
+- newsroom / press release scraping
+- broader PR/news sources
+
+### Phase 4 — compound readiness engine
+
+- correlate multiple signals inside a time window
+- increase readiness when dimensions co-fire
+- suppress readiness when caution signals are present
+- improve `reason` generation from corroborated evidence rather than single events
+
+## What "done" looks like
+
+- Arcova can detect source events, normalize them, and preserve evidence.
+- Arcova can infer `new_budget`, `new_needs`, `new_people`, `new_strategy`, and `caution` at the account level.
+- Arcova can generate a clear, agent-readable `reason` explaining why a high-fit account is worth working now.
+- Agents can consume a stable structured payload for outreach, prioritization, and explanation.
+- The CRO can see not just that an account is high-fit, but why it is timely now and what angle to use.

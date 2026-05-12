@@ -85,13 +85,17 @@ interface AppSidebarProps {
 function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { step1Complete, step2Complete, setupComplete, loading: setupStateLoading } = useSetupState();
+  const { step2Complete, setupComplete, loading: setupStateLoading } = useSetupState();
+  /** URL-aligned: do not show Target ICP while still on the company leg (?step=company or unset). */
+  const setupStepParam = searchParams.get('step');
+  const showTargetIcpInGuidedNav =
+    step2Complete || setupStepParam === 'target' || setupStepParam === 'buying';
   /** Guided setup rail mirrors Supabase: company row unlocks target, ICP row unlocks buying team. */
   const guidedSetupNestedItems = useMemo((): NavItem[] => {
     const items: NavItem[] = [
       { name: 'My company', href: `${ROUTES.setup.arcova}?step=company`, icon: NavIconMyCompany },
     ];
-    if (step1Complete) {
+    if (showTargetIcpInGuidedNav) {
       items.push({
         name: 'Target ICP',
         href: `${ROUTES.setup.arcova}?step=target`,
@@ -106,7 +110,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
       });
     }
     return items;
-  }, [step1Complete, step2Complete]);
+  }, [showTargetIcpInGuidedNav, step2Complete]);
   const { guardedNavigate } = useEnrichmentGuard();
   const [showCompaniesDot, setShowCompaniesDot] = useState(false);
   const [showMyProfileDot, setShowMyProfileDot] = useState(false);
@@ -148,7 +152,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
       : [
           { name: 'Guided setup', href: ROUTES.setup.arcova, icon: NavIconSetup },
           { name: 'My company', href: `${ROUTES.setup.arcova}?step=company`, icon: NavIconMyCompany },
-          ...(step1Complete
+          ...(showTargetIcpInGuidedNav
             ? [{ name: 'Target ICP', href: `${ROUTES.setup.arcova}?step=target`, icon: NavIconMyIcps } as NavItem]
             : []),
           ...(step2Complete

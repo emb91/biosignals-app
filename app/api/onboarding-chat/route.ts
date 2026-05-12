@@ -54,7 +54,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'begin_analysis',
     description:
-      "Call this once you have a website URL or bare domain to analyse. Set analysis_type to 'own_company' when you are collecting the user's own company URL (first-time setup or explicit restart). Set analysis_type to 'target_customer' when the user's own company profile is already set up and you are collecting a target customer or prospect company URL. If the account context shows their company is already stored, always use 'target_customer'.",
+      "Call this once you have a website URL or bare domain to analyse. Set analysis_type to 'own_company' when you are collecting the user's own seller company URL (first-time setup, restart, or they are on the opening setup screen asking for their company's website). Set analysis_type to 'target_customer' only when the conversation is in the target-customer step and they give a prospect company URL after their own company is set for this flow. If their company row exists in account context but they are on the opening screen or clearly re-entering their seller site, still use 'own_company'.",
     input_schema: {
       type: 'object' as const,
       properties: {

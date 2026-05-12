@@ -24,6 +24,7 @@ export async function POST(req: NextRequest) {
       description,
       products_services,
       services,
+      target_customers,
       customers_we_serve,
       good_fit,
       therapeutic_areas,
@@ -37,12 +38,13 @@ Seller: ${company_name ?? 'Unknown'}
 Type: ${company_type ?? ''}
 What they do: ${arr(description)}
 Products / services: ${arr(products_services)}${arr(services) ? `\n${arr(services)}` : ''}
-Who they sell to: ${arr(customers_we_serve)}
+Target customer segments (primary ICP categories they defined): ${arr(target_customers)}
+Who they sell to / customers served: ${arr(customers_we_serve)}
 Good fit signals: ${arr(good_fit)}
 Therapeutic areas: ${arr(therapeutic_areas)}
 Modalities: ${arr(modalities)}
 
-Suggest 2–3 real, publicly-known companies that would make strong representative ICP model accounts for this seller. Each suggestion MUST represent a clearly different buyer segment — do not suggest two companies of the same type.
+Suggest 2–3 real, publicly-known companies that would make strong representative ICP model accounts for this seller. Prioritize companies that clearly fit the target customer segments they defined above. Each suggestion MUST represent a clearly different buyer segment — do not suggest two companies of the same type.
 
 Return ONLY valid JSON, no other text:
 {"suggestions":[{"name":"Company Name","domain":"example.com","segmentLabel":"2–4 word segment label"}]}
