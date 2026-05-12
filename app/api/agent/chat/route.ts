@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@/lib/supabase-server';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import {
   type AccountQueryColumn,
   type AccountQueryFilters,
@@ -1098,6 +1099,7 @@ async function toolGetImportHistory(
 async function runAgentLoop(
   supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string,
+  userEmail: string | null | undefined,
   page: Page,
   messages: ChatMessage[],
   pageContext?: PageContext,
@@ -1141,6 +1143,21 @@ async function runAgentLoop(
       system: systemPrompt,
       tools: TOOLS,
       messages: anthropicMessages,
+    });
+    await recordLlmUsageEvent({
+      userId,
+      userEmail,
+      provider: 'anthropic',
+      feature: 'page_agent',
+      route: '/api/agent/chat',
+      model: 'claude-sonnet-4-6',
+      usage: response.usage,
+      metadata: {
+        page,
+        iteration: i + 1,
+        stop_reason: response.stop_reason ?? null,
+        message_count: anthropicMessages.length,
+      },
     });
 
     // Collect text blocks and tool use blocks
@@ -1400,6 +1417,20 @@ async function runAgentLoop(
     system: systemPrompt,
     messages: anthropicMessages,
   });
+  await recordLlmUsageEvent({
+    userId,
+    userEmail,
+    provider: 'anthropic',
+    feature: 'page_agent',
+    route: '/api/agent/chat',
+    model: 'claude-sonnet-4-6',
+    usage: finalResponse.usage,
+    metadata: {
+      page,
+      iteration: 'final',
+      message_count: anthropicMessages.length,
+    },
+  });
 
   const finalText = [
     spilloverText,
@@ -1439,7 +1470,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'messages array is required' }, { status: 400 });
     }
 
-    const result = await runAgentLoop(supabase, user.id, page, messages, pageContext);
+    const result = await runAgentLoop(supabase, user.id, user.email, page, messages, pageContext);
 
     return NextResponse.json(result satisfies ChatResponse);
   } catch (err) {

@@ -10,6 +10,7 @@
  *   3. Apify LinkedIn     — social proof (follower count, employee range, etc.) ┘ after 1+2 give us the LinkedIn URL
  */
 import Anthropic from '@anthropic-ai/sdk';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 
 const ANALYSIS_MODEL = 'claude-sonnet-4-6';
 const HARVESTAPI_COMPANY_ACTOR = 'harvestapi~linkedin-company';
@@ -142,6 +143,17 @@ Return ONLY the JSON object. No markdown, no explanation.`;
         max_uses: 8,
       } as unknown as Parameters<typeof client.messages.create>[0] extends { tools?: Array<infer T> } ? T : never,
     ],
+  });
+  await recordLlmUsageEvent({
+    provider: 'anthropic',
+    feature: 'my_company_enrichment_analysis',
+    route: 'lib/my-company-enrichment#analyseCompanyWithClaude',
+    model: ANALYSIS_MODEL,
+    usage: message.usage,
+    metadata: {
+      website,
+      tool: 'web_search_20250305',
+    },
   });
 
   const text = extractTextBlocks(message as { content?: unknown });
@@ -352,6 +364,17 @@ ${JSON.stringify(
     model: ANALYSIS_MODEL,
     max_tokens: 1536,
     messages: [{ role: 'user', content: prompt }],
+  });
+  await recordLlmUsageEvent({
+    provider: 'anthropic',
+    feature: 'my_company_enrichment_linkedin_resolution',
+    route: 'lib/my-company-enrichment#findLinkedInWithClaude',
+    model: ANALYSIS_MODEL,
+    usage: message.usage,
+    metadata: {
+      company_name: companyName,
+      website,
+    },
   });
 
   const text = message.content

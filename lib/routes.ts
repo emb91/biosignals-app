@@ -1,4 +1,7 @@
 export const ROUTES = {
+  admin: {
+    llmUsage: '/admin/llm-usage',
+  },
   today: '/today',
   gtmBase: '/gtm-base',
   import: '/import',

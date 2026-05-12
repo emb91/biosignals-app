@@ -3,6 +3,7 @@
 // linkedin resolution = Claude web search for LinkedIn URL
 // profile enrichment  = Apify LinkedIn profile scrape + company scrape + Apollo company enrich + LLM bio summary
 import Anthropic from '@anthropic-ai/sdk';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import {
   enrichOrganizationWithApollo,
   tryApolloPersonalEmailRevealForLookup,
@@ -556,6 +557,16 @@ async function summariseCompanyBio(description: string): Promise<string | null> 
         },
       ],
     });
+    await recordLlmUsageEvent({
+      provider: 'anthropic',
+      feature: 'company_bio_summarization',
+      route: 'lib/enrichment-pipeline#summariseCompanyBio',
+      model: 'claude-sonnet-4-6',
+      usage: message.usage,
+      metadata: {
+        description_length: description.length,
+      },
+    });
 
     const block = message.content[0];
     if (block.type !== 'text') return null;
@@ -602,6 +613,18 @@ ${historyText || '— No history available'}`;
       model: 'claude-sonnet-4-6',
       max_tokens: 100,
       messages: [{ role: 'user', content: `${instruction}\n\n${sourceBlock}` }],
+    });
+    await recordLlmUsageEvent({
+      provider: 'anthropic',
+      feature: 'contact_bio_generation',
+      route: 'lib/enrichment-pipeline#generateContactBio',
+      model: 'claude-sonnet-4-6',
+      usage: message.usage,
+      metadata: {
+        full_name: fullName,
+        current_company: currentCompany,
+        employment_history_count: employmentHistory.length,
+      },
     });
 
     const block = message.content[0];

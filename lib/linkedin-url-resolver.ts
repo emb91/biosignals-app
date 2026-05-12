@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 
 type ApolloEmploymentLike = {
   organization_name?: string | null;
@@ -180,6 +181,19 @@ Person context:
         allowed_domains: ['linkedin.com'],
       },
     ],
+  });
+  await recordLlmUsageEvent({
+    provider: 'anthropic',
+    feature: 'linkedin_url_resolution',
+    route: 'lib/linkedin-url-resolver#searchLinkedinUrlWithAnthropic',
+    model: SEARCH_MODEL,
+    usage: message.usage,
+    metadata: {
+      full_name: fullName || null,
+      company_name: normalizeString(input.company_name) || null,
+      company_domain: companyDomain,
+      tool: 'web_search_20250305',
+    },
   });
 
   const text = extractTextBlocks(message);

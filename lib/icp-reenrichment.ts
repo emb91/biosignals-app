@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import {
   BUSINESS_AREA_OPTIONS,
   COMPANY_SIZE_OPTIONS,
@@ -276,6 +277,21 @@ Return ONLY the JSON array, nothing else.`;
     max_tokens: 1024,
     messages: [{ role: 'user', content: prompt }],
   });
+  await recordLlmUsageEvent({
+    provider: 'anthropic',
+    feature: 'icp_signal_recommendation',
+    route: 'lib/icp-reenrichment#recommendCompanySignals',
+    model: 'claude-sonnet-4-6',
+    usage: message.usage,
+    metadata: {
+      company_type: input.companyType,
+      platform_category: input.platformCategory || null,
+      company_size_count: input.companySizes.length,
+      therapeutic_area_count: input.therapeuticAreas.length,
+      modality_count: input.modalities.length,
+      development_stage_count: input.developmentStages.length,
+    },
+  });
 
   const responseText = (message.content[0] as { type: string; text: string }).text.trim();
   const recommendedIds = normalizeUniqueIds(parseJsonArrayResponse(responseText));
@@ -353,6 +369,18 @@ Rules:
     system:
       'Output only the requested sentence. Never mention the underlying company. Start exactly with "This ICP defines". Avoid promotional phrasing like "powered by".',
     messages: [{ role: 'user', content: prompt }],
+  });
+  await recordLlmUsageEvent({
+    provider: 'anthropic',
+    feature: 'icp_summary_generation',
+    route: 'lib/icp-reenrichment#generateIcpSummary',
+    model: 'claude-haiku-4-5',
+    usage: message.usage,
+    metadata: {
+      company_type: input.companyType,
+      platform_category: input.platformCategory || null,
+      example_company_name: input.exampleCompanyName,
+    },
   });
 
   const rawSummary = (message.content[0] as { type: string; text: string }).text.trim();
@@ -476,6 +504,19 @@ Return ONLY valid JSON — no markdown, no explanation:
     model: BUYING_TEAM_MODEL,
     max_tokens: 768,
     messages: [{ role: 'user', content: prompt }],
+  });
+  await recordLlmUsageEvent({
+    provider: 'anthropic',
+    feature: 'icp_buying_team_generation',
+    route: 'lib/icp-reenrichment#generateBuyingTeam',
+    model: BUYING_TEAM_MODEL,
+    usage: message.usage,
+    metadata: {
+      icp_company_type: input.icpCompanyType,
+      icp_platform_category: input.icpPlatformCategory || null,
+      example_company_name: input.exampleCompanyName,
+      example_employee_count: input.icpExampleEmployeeCount,
+    },
   });
 
   const text = message.content

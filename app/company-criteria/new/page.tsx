@@ -30,9 +30,12 @@ export default function ICPNewPage() {
   if (!user) return null;
 
   return (
-    <div className="flex h-screen bg-slate-950">
-      <AppSidebar />
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div className="relative flex h-screen bg-slate-950">
+      {/* Stack above SetupFlow's fixed AppAmbientBackground (z-0), same pattern as SetupShell */}
+      <div className="relative z-20 h-full shrink-0">
+        <AppSidebar />
+      </div>
+      <div className="relative z-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <div className="shrink-0 border-b border-white/10 px-6 py-3">
           <button
             type="button"

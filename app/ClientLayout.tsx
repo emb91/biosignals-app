@@ -30,8 +30,9 @@ const APP_ROUTES = [
   '/find-more-leads',
 ]
 
-// Routes that are part of the setup flow — the guard does NOT redirect away from these
-const SETUP_ROUTES = ['/arcova-setup', ROUTES.setup.company, ROUTES.setup.newIcp, '/contacts/new']
+// Routes that are part of the setup flow — the guard does NOT redirect away from these.
+// Settings is allowed so users can manage account preferences without leaving onboarding.
+const SETUP_ROUTES = ['/arcova-setup', ROUTES.setup.company, ROUTES.setup.newIcp, '/contacts/new', ROUTES.settings]
 
 function matchesRoutePrefix(pathname: string, route: string) {
   return pathname === route || pathname.startsWith(`${route}/`);

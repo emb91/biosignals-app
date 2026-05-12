@@ -12,6 +12,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { FUNDING_STAGE_OPTIONS, type FundingStage } from '@/lib/arcova-taxonomy';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 
 export type { FundingStage };
 
@@ -135,6 +136,18 @@ Rules for funding_status_label:
         max_uses: 3,
       } as Parameters<typeof client.messages.create>[0]['tools'] extends Array<infer T> ? T : never,
     ],
+  });
+  await recordLlmUsageEvent({
+    provider: 'anthropic',
+    feature: 'company_monitor_funding',
+    route: 'lib/company-monitor/funding#searchFundingStage',
+    model: MODEL,
+    usage: message.usage,
+    metadata: {
+      company_name: input.company_name,
+      domain: input.domain ?? null,
+      tool: 'web_search_20250305',
+    },
   });
 
   // Extract final text block

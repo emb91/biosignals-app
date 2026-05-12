@@ -10,6 +10,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -132,6 +133,17 @@ Return ONLY a valid JSON array with exactly ${contacts.length} objects, one per 
     model: MODEL,
     max_tokens: 2048,
     messages: [{ role: 'user', content: prompt }],
+  });
+  await recordLlmUsageEvent({
+    provider: 'anthropic',
+    feature: 'contact_fit_scoring',
+    route: 'lib/scoring#scoreBatch',
+    model: MODEL,
+    usage: message.usage,
+    metadata: {
+      batch_size: contacts.length,
+      persona_count: personas.length,
+    },
   });
 
   const text = message.content[0].type === 'text' ? message.content[0].text : '';

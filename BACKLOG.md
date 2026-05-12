@@ -119,6 +119,16 @@ The Arcova loop:
 - Decide whether fit and intent scoring runs automatically or via explicit user action.
 - Enforce minimum required fields during the data upload step so rows without enough information to resolve and enrich are blocked or clearly flagged before import.
 
+## Agentic unlocks / micropayments
+
+- Explore whether Arcova should support **on-demand paid unlocks** for specific high-value actions rather than only full subscription gates.
+- Candidate unlock types: premium contact reveal/verification, deep company enrichment, premium signal checks, or a paid "why now" account analysis pack.
+- The best fit is likely **agent-triggered third-party data procurement behind the scenes**: Arcova decides when a paid lookup is worth it, runs it, and returns the result without making the user think about payment rails.
+- Treat this as a **later-stage monetization/distribution pattern**, not a core prerequisite for readiness or route.
+- Do not make crypto, wallets, or x402-style payment mechanics part of the primary CRO experience unless they clearly remove friction rather than add it.
+- If pursued, the user-facing product language should be "unlock deeper analysis" or "run premium check", not blockchain/payment-rail language.
+- Validate first which premium lookups are actually worth buying on demand before choosing any agent-payment infrastructure.
+
 ## Product storytelling and reveal
 
 - Make the product feel more like Arcova is actively doing work on the user's behalf, rather than silently outputting tables and boxes.
