@@ -54,18 +54,20 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'begin_analysis',
     description:
-      "Call this once you have a website URL or bare domain to analyse. Set analysis_type to 'own_company' when you are collecting the user's own seller company URL (first-time setup, restart, or they are on the opening setup screen asking for their company's website). Set analysis_type to 'target_customer' only when the conversation is in the target-customer step and they give a prospect company URL after their own company is set for this flow. If their company row exists in account context but they are on the opening screen or clearly re-entering their seller site, still use 'own_company'.",
+      "Call this once you have a website URL or bare domain to analyse. Set analysis_type to 'own_company' when you are collecting the user's own seller company URL (first-time setup, restart, or they are on the opening setup screen asking for their company's website). Set analysis_type to 'target_customer' only when the conversation is in the target-customer step and they give a prospect company URL after their own company is set for this flow. If they describe a target segment (company type, size band, geography) without naming a company, infer one well-known real company's primary domain and pass it as website_url with analysis_type target_customer, unless you are too unsure (then ask one short question instead). If their company row exists in account context but they are on the opening screen or clearly re-entering their seller site, still use 'own_company'.",
     input_schema: {
       type: 'object' as const,
       properties: {
         website_url: {
           type: 'string',
-          description: 'The website URL to analyse (e.g. https://acme.com)',
+          description:
+            'The website URL to analyse (e.g. https://acme.com). May be a domain you inferred from a company name or from a described target segment when you chose one well-known exemplar company.',
         },
         analysis_type: {
           type: 'string',
           enum: ['own_company', 'target_customer'],
-          description: "Use 'own_company' only when collecting the user's own company URL. Use 'target_customer' when collecting a target customer or prospect URL.",
+          description:
+            "Use 'own_company' only when collecting the user's own company URL. Use 'target_customer' when they gave a target prospect URL or name, or when you inferred a well-known exemplar company's domain from how they described their target segment.",
         },
       },
       required: ['website_url', 'analysis_type'],
@@ -295,7 +297,7 @@ export async function POST(request: Request) {
 
       const response = await client.messages.create({
         model: 'claude-haiku-4-5',
-        max_tokens: 256,
+        max_tokens: 512,
         system,
         messages: conversation,
       });
