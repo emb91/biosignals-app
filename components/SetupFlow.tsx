@@ -7145,6 +7145,12 @@ export default function SetupFlow({
       <div className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col overflow-y-auto">
         <AppAmbientBackground />
         <div className="relative z-10 flex flex-col px-6 py-9 lg:px-10">
+          {/*
+            Review page nav chrome: only Back is shown — the hero + eyebrow below already convey
+            the step context, so the centred step indicator + dev forward are hidden here.
+            Step progress is still shown on agent/conversation phases where there's no hero.
+            We keep the row's reserved height so phases swap without the layout jumping.
+          */}
           <div className="mb-6">
               <SetupLightProgressRow
                 leading={
@@ -7163,8 +7169,8 @@ export default function SetupFlow({
                     <span aria-hidden>←</span> Back
                   </button>
                 }
-                center={headerCenter(1)}
-                trailing={devForwardButton}
+                center={null}
+                trailing={null}
               />
           </div>
           {/* Hero — canvas layout (matches /today) */}
