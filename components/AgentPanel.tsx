@@ -802,7 +802,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
             Try asking
           </p>
           <div className={cn('flex flex-col', lightSetupChat ? 'gap-2' : todayChat ? 'gap-1.5' : 'gap-2')}>
-            {PROMPTS[page].map((prompt) => (
+            {(PROMPTS[page as keyof typeof PROMPTS] ?? []).map((prompt) => (
               <button
                 key={prompt}
                 onClick={() => sendMessage(prompt)}
