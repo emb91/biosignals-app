@@ -1830,7 +1830,7 @@ export default function ICPManagerPage() {
           <div className="w-full max-w-[1180px] mx-auto">
 
             <PageHeader
-              eyebrow="Setup · ICPs"
+              eyebrow="About you · ICPs"
               title="My ICPs"
               subtitle={icps.length > 0
                 ? `The types of accounts you sell to, and who buys within them. ${icps.length} ${icps.length === 1 ? 'ICP' : 'ICPs'} defined — click any to inspect or edit.`
@@ -1901,6 +1901,7 @@ export default function ICPManagerPage() {
         <AgentPanel
           page="icps"
           pageContext={{}}
+          onIcpMutation={() => { void refreshPageData(); }}
         />
       </div>
 

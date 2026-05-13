@@ -10,6 +10,8 @@ import { supabase } from '@/lib/supabase';
 import { ArrowRight, Check, Loader2, TrendingUp } from 'lucide-react';
 import './briefing-today.css';
 import { ROUTES, withQuery } from '@/lib/routes';
+import { fetchTodayPriorities } from '@/lib/today-priorities-client';
+import type { TodayPriority } from '@/lib/priorities/types';
 import { getDisplayName } from '@/lib/auth-helpers';
 import { healthLabel, type HealthDim } from '@/lib/pipeline-icp-health';
 import { cn } from '@/lib/utils';
@@ -155,6 +157,10 @@ export default function BriefingPage() {
   const [doneTaskIds, setDoneTaskIds] = useState<Set<string>>(() => new Set());
   const [agentBusy, setAgentBusy] = useState(false);
   const [clock, setClock] = useState(() => new Date());
+  // Cross-page priorities aggregated server-side. Each source (icp-audit today,
+  // enrichment-failures / pipeline-health / etc. tomorrow) returns at most one grouped
+  // TodayPriority row. /today is a dumb consumer — never knows what's in the list.
+  const [aggregatedPriorities, setAggregatedPriorities] = useState<TodayPriority[]>([]);
   /** Pulse chart: stable layout while series loads so the card height (and shadow) does not jump */
   const [pulseSeries, setPulseSeries] = useState<BriefingPulseSeriesState>({ state: 'loading' });
   const prevBriefingUserIdRef = useRef<string | undefined>(undefined);
@@ -358,6 +364,18 @@ export default function BriefingPage() {
     void fetchEnrichmentJobs();
   }, [fetchEnrichmentJobs]);
 
+  // Fetch the cross-page priorities aggregate (cached, sessionStorage). Every source on
+  // the server runs in parallel; we just render what comes back.
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    void (async () => {
+      const priorities = await fetchTodayPriorities();
+      if (!cancelled) setAggregatedPriorities(priorities);
+    })();
+    return () => { cancelled = true; };
+  }, [user]);
+
   useEffect(() => {
     const hasRunning = enrichmentJobs.some((job) => job.status === 'running');
     if (!hasRunning) return;
@@ -436,13 +454,24 @@ export default function BriefingPage() {
     ...(nextStep
       ? [{
           id: `setup-${nextStep.id}`,
-          label: '1',
+          label: '',
           title: `Finish ${nextStep.label}`,
           detail: 'The rest of the product depends on this being complete.',
           href: nextStep.actionPath,
           cta: 'Continue',
         }]
       : []),
+    // Cross-page aggregator priorities. Placed near the top so a new source can't get
+    // chopped off behind the long tail of hand-rolled items. One entry per source per
+    // groupKey; the source itself decides what to surface (icp-audit, future ones).
+    ...aggregatedPriorities.map((p, idx) => ({
+      id: `agg-${p.source}-${p.groupKey}-${idx}`,
+      label: '',
+      title: p.title,
+      detail: p.detail,
+      href: p.href,
+      cta: p.cta,
+    })),
     ...(showImportReady
       ? [{
           id: 'import-ready',
@@ -500,7 +529,7 @@ export default function BriefingPage() {
           cta: 'View import',
         }]
       : []),
-  ].slice(0, 5).map((item, index) => ({ ...item, label: String(index + 1) }));
+  ].map((item, index) => ({ ...item, label: String(index + 1) }));
 
   const prioritiesDone = useMemo(
     () => agenda.reduce((n, item) => n + (doneTaskIds.has(item.id) ? 1 : 0), 0),

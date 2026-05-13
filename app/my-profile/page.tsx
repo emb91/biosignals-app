@@ -7,9 +7,8 @@ import { normalizePlatformTaxonomyFields } from '@/lib/platform-category';
 import { parseSSEStream } from '@/lib/sse';
 import AppSidebar from '@/components/AppSidebar';
 import { PageHeader } from '@/components/PageHeader';
-import { AppWarningBanner } from '@/components/AppWarningBanner';
 import { ProfileCard, type PanelMyCompanyData, type MyCompanyChangeValue, type CompetitorItem } from '@/components/SetupProfilePanel';
-import { Pencil, RefreshCw, Trash2, Save, X, AlertTriangle, Building2, ArrowRight, ChevronDown, ExternalLink, Check, Loader2 } from 'lucide-react';
+import { Pencil, RefreshCw, Save, X, Building2, ArrowRight, ChevronDown, ExternalLink, Check, Loader2 } from 'lucide-react';
 import Image from 'next/image';
 import { supabase } from '@/lib/supabase';
 import { ROUTES } from '@/lib/routes';
@@ -37,6 +36,8 @@ const FIELD_MAP: Record<string, string> = {
   valuePropositions: 'value_propositions',
   goodFit: 'good_fit',
   badFit: 'bad_fit',
+  buyerPrerequisites: 'buyer_prerequisites',
+  buyerDisqualifiers: 'buyer_disqualifiers',
   competitorsEnriched: 'competitors_enriched',
   companyStatus: 'company_status',
   companyType: 'company_type',
@@ -75,6 +76,8 @@ function toMyCompany(d: Record<string, unknown>): PanelMyCompanyData {
     valuePropositions: arr(d.value_propositions),
     goodFit: arr(d.good_fit),
     badFit: arr(d.bad_fit),
+    buyerPrerequisites: arr(d.buyer_prerequisites),
+    buyerDisqualifiers: arr(d.buyer_disqualifiers),
     competitorsEnriched: Array.isArray(d.competitors_enriched)
       ? (d.competitors_enriched as CompetitorItem[])
       : undefined,
@@ -227,7 +230,6 @@ export default function MyProfilePage() {
   const [isReenriching, setIsReenriching] = useState(false);
   const [reenrichMsg, setReenrichMsg] = useState('');
   const [reenrichPct, setReenrichPct] = useState(0);
-  const [confirmDelete, setConfirmDelete] = useState(false);
   const [showChangeInput, setShowChangeInput] = useState(false);
   const [changeUrl, setChangeUrl] = useState('');
 
@@ -292,14 +294,6 @@ export default function MyProfilePage() {
   const handleCancel = () => {
     setEditedData(analysisData);
     setEditMode(false);
-  };
-
-  const handleDelete = async () => {
-    const id = typeof analysisData?.id === 'string' ? analysisData.id : null;
-    if (id) {
-      await fetch(`/api/user-company?id=${id}`, { method: 'DELETE' }).catch(() => {});
-    }
-    router.replace(ROUTES.today);
   };
 
   const runEnrichment = async (website: string) => {
@@ -398,70 +392,27 @@ export default function MyProfilePage() {
         <div className="mx-auto max-w-[1180px]">
 
           <PageHeader
-            eyebrow="Setup · My company"
+            eyebrow="About you · My company"
             title="Your company profile"
             subtitle="Used to build target criteria, define buying personas, and find the right leads."
-            action={analysisData ? (
+            action={analysisData && !editMode ? (
               <div className="flex flex-wrap items-center gap-2">
-                {editMode ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={handleSave}
-                      disabled={isSaving}
-                      className="inline-flex items-center gap-1.5 rounded-[10px] bg-arcova-teal px-3.5 py-2 text-[12.5px] font-semibold text-white transition-all hover:bg-arcova-teal/85 disabled:opacity-50"
-                    >
-                      <Save className="h-3.5 w-3.5" />
-                      {isSaving ? 'Saving…' : 'Save changes'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleCancel}
-                      disabled={isSaving}
-                      className="inline-flex items-center gap-1.5 rounded-[10px] border border-arcova-navy/10 bg-white/70 px-3.5 py-2 text-[12.5px] font-medium text-arcova-navy backdrop-blur transition-all hover:-translate-y-px hover:bg-white disabled:opacity-50"
-                    >
-                      <X className="h-3.5 w-3.5" /> Cancel
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => { setShowChangeInput((v) => !v); setChangeUrl(''); }}
-                      className="inline-flex items-center gap-1.5 rounded-[10px] border border-arcova-teal/25 bg-arcova-teal/10 px-3.5 py-2 text-[12.5px] font-medium text-[#00707b] transition-all hover:-translate-y-px hover:bg-arcova-teal/16"
-                    >
-                      <RefreshCw className="h-3.5 w-3.5 opacity-80" /> Change my company
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowChangeInput(false);
-                        setChangeUrl('');
-                        setEditMode(true);
-                      }}
-                      disabled={isReenriching}
-                      className="inline-flex items-center gap-1.5 rounded-[10px] border border-arcova-navy/10 bg-white/70 px-3.5 py-2 text-[12.5px] font-medium text-arcova-navy backdrop-blur transition-all hover:-translate-y-px hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <Pencil className="h-3.5 w-3.5 opacity-80" /> Edit
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleReenrich}
-                      disabled={isReenriching}
-                      className="inline-flex items-center gap-1.5 rounded-[10px] border border-arcova-navy/10 bg-white/70 px-3.5 py-2 text-[12.5px] font-medium text-arcova-navy backdrop-blur transition-all hover:-translate-y-px hover:bg-white disabled:opacity-50"
-                    >
-                      <RefreshCw className={`h-3.5 w-3.5 opacity-80 ${isReenriching ? 'animate-spin' : ''}`} />
-                      {isReenriching ? 'Re-enriching…' : 'Re-enrich'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirmDelete(true)}
-                      className="inline-flex items-center gap-1.5 rounded-[10px] border border-[rgba(177,69,69,0.22)] bg-red-50/60 px-3.5 py-2 text-[12.5px] font-medium text-[#b14545] transition-all hover:-translate-y-px hover:border-[rgba(177,69,69,0.36)] hover:bg-red-100/80"
-                    >
-                      <Trash2 className="h-3.5 w-3.5 opacity-80" /> Delete
-                    </button>
-                  </>
-                )}
+                <button
+                  type="button"
+                  onClick={() => { setShowChangeInput((v) => !v); setChangeUrl(''); }}
+                  className="inline-flex items-center gap-1.5 rounded-[10px] border border-arcova-teal/25 bg-arcova-teal/10 px-3.5 py-2 text-[12.5px] font-medium text-[#00707b] transition-all hover:-translate-y-px hover:bg-arcova-teal/16"
+                >
+                  <RefreshCw className="h-3.5 w-3.5 opacity-80" /> Change my company
+                </button>
+                <button
+                  type="button"
+                  onClick={handleReenrich}
+                  disabled={isReenriching}
+                  className="inline-flex items-center gap-1.5 rounded-[10px] border border-arcova-navy/10 bg-white/70 px-3.5 py-2 text-[12.5px] font-medium text-arcova-navy backdrop-blur transition-all hover:-translate-y-px hover:bg-white disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 opacity-80 ${isReenriching ? 'animate-spin' : ''}`} />
+                  {isReenriching ? 'Re-enriching…' : 'Re-enrich'}
+                </button>
               </div>
             ) : undefined}
           />
@@ -499,6 +450,22 @@ export default function MyProfilePage() {
             </div>
           )}
 
+          {/* Re-enrichment progress — above company card so it is not anchored to section footers */}
+          {isReenriching && !editMode && (
+            <div className="mb-6 rounded-xl border border-arcova-teal/20 bg-arcova-teal/5 px-4 py-3">
+              <div className="mb-2 flex items-center justify-between text-[12.5px]">
+                <span className="font-medium text-arcova-navy">{reenrichMsg || 'Re-enriching…'}</span>
+                <span className="font-mono text-[11px] text-arcova-navy/60">{reenrichPct}%</span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-arcova-navy/8">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-arcova-teal to-[#007e8b] transition-[width] duration-700"
+                  style={{ width: `${reenrichPct}%` }}
+                />
+              </div>
+            </div>
+          )}
+
           {/* ── Main card: read-only glass layout, or full editor (shared ProfileCard) when editing ── */}
           {editMode && analysisData ? (
             <article className="overflow-hidden rounded-[22px] border border-arcova-navy/10 bg-white/65 backdrop-blur-xl shadow-arcova">
@@ -525,6 +492,25 @@ export default function MyProfilePage() {
                   defaultAllOpen
                   columns={2}
                 />
+              </div>
+              <div className="flex justify-end gap-2 border-t border-arcova-navy/[0.06] px-[22px] py-3">
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  disabled={isSaving}
+                  className="inline-flex items-center gap-1.5 rounded-[10px] border border-arcova-navy/10 bg-white/70 px-3.5 py-2 text-[12.5px] font-medium text-arcova-navy backdrop-blur transition-all hover:-translate-y-px hover:bg-white disabled:opacity-50"
+                >
+                  <X className="h-3.5 w-3.5" /> Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={isSaving}
+                  className="inline-flex items-center gap-1.5 rounded-[10px] bg-arcova-teal px-3.5 py-2 text-[12.5px] font-semibold text-white transition-all hover:bg-arcova-teal/85 disabled:opacity-50"
+                >
+                  <Save className="h-3.5 w-3.5" />
+                  {isSaving ? 'Saving…' : 'Save changes'}
+                </button>
               </div>
             </article>
           ) : (
@@ -653,6 +639,18 @@ export default function MyProfilePage() {
                     </McSection>
                   )}
 
+                  {((myCompanyData.buyerPrerequisites && myCompanyData.buyerPrerequisites.length > 0) ||
+                    (myCompanyData.buyerDisqualifiers && myCompanyData.buyerDisqualifiers.length > 0)) && (
+                    <McSection label="Buyer requirements">
+                      {myCompanyData.buyerPrerequisites && myCompanyData.buyerPrerequisites.length > 0 && (
+                        <McBullets items={myCompanyData.buyerPrerequisites} sub="Prerequisites" />
+                      )}
+                      {myCompanyData.buyerDisqualifiers && myCompanyData.buyerDisqualifiers.length > 0 && (
+                        <McBullets items={myCompanyData.buyerDisqualifiers} sub="Disqualifiers" />
+                      )}
+                    </McSection>
+                  )}
+
                   {myCompanyData.valuePropositions && myCompanyData.valuePropositions.length > 0 && (
                     <McSection label="Value props">
                       <McBullets items={myCompanyData.valuePropositions} />
@@ -724,22 +722,16 @@ export default function MyProfilePage() {
                   )}
                 </div>
               </div>
-
-              {/* Re-enrichment progress (inline status) */}
-              {isReenriching && (
-                <div className="rounded-xl border border-arcova-teal/20 bg-arcova-teal/5 px-4 py-3">
-                  <div className="mb-2 flex items-center justify-between text-[12.5px]">
-                    <span className="font-medium text-arcova-navy">{reenrichMsg || 'Re-enriching…'}</span>
-                    <span className="font-mono text-[11px] text-arcova-navy/60">{reenrichPct}%</span>
-                  </div>
-                  <div className="h-1.5 overflow-hidden rounded-full bg-arcova-navy/8">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-arcova-teal to-[#007e8b] transition-[width] duration-700"
-                      style={{ width: `${reenrichPct}%` }}
-                    />
-                  </div>
-                </div>
-              )}
+            </div>
+            <div className="flex justify-end border-t border-arcova-navy/[0.06] px-[22px] py-3">
+              <button
+                type="button"
+                onClick={() => setEditMode(true)}
+                disabled={isReenriching}
+                className="inline-flex items-center gap-1.5 rounded-[10px] border border-arcova-navy/10 bg-white/70 px-3.5 py-2 text-[12.5px] font-medium text-arcova-navy backdrop-blur transition-all hover:-translate-y-px hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Pencil className="h-3.5 w-3.5 opacity-70" /> Edit
+              </button>
             </div>
           </article>
           )}
@@ -747,52 +739,6 @@ export default function MyProfilePage() {
         </div>
       </main>
 
-      {confirmDelete && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="delete-modal-title"
-        >
-          <div
-            className="absolute inset-0 bg-arcova-navy/20 backdrop-blur-sm"
-            onClick={() => setConfirmDelete(false)}
-          />
-          <div className="relative w-full max-w-md rounded-2xl border border-arcova-navy/10 bg-white p-6 shadow-2xl">
-            <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-500/10">
-              <AlertTriangle className="h-6 w-6 text-red-500" />
-            </div>
-            <h2 id="delete-modal-title" className="mb-2 text-lg font-semibold text-arcova-navy">
-              Delete company profile?
-            </h2>
-            <AppWarningBanner
-              layout="compact"
-              tone="danger"
-              className="mb-4"
-              title="This cannot be undone. Your profile is deleted from the database."
-            />
-            <p className="mb-6 text-sm leading-relaxed text-arcova-navy/60">
-              This will remove your company analysis, including enriched data, narrative fields, and firmographics. You will need to run setup and analysis again.
-            </p>
-            <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={handleDelete}
-                className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-red-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-red-600"
-              >
-                <Trash2 className="h-4 w-4" /> Yes, delete it
-              </button>
-              <button
-                type="button"
-                onClick={() => setConfirmDelete(false)}
-                className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg border border-arcova-navy/10 px-4 py-2.5 text-sm font-medium text-arcova-navy/60 transition-colors hover:bg-arcova-navy/5 hover:text-arcova-navy"
-              >
-                Keep it
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

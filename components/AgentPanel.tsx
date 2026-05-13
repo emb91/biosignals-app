@@ -10,6 +10,7 @@ import { BorderBeam } from '@/components/ui/border-beam';
 import { BriefingAgentOrb } from '@/components/briefing/BriefingAgentOrb';
 import type { AccountQueryColumn, AccountQueryFilters, AccountSortBy, QueryAccount } from '@/lib/accounts-data';
 import type { QueryColumn as LeadQueryColumn, LeadQueryFilters, LeadSortBy, QueryLead } from '@/lib/leads-data';
+import { fetchIcpPriorities, clearIcpPrioritiesCache, getDismissedPriorityIds, dismissPriority } from '@/lib/icp-priorities-client';
 import { BATCH_CONTACTS_KEY } from '@/lib/batch-contacts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -64,6 +65,8 @@ export interface AgentPanelProps {
   /** When true, the panel fills its container width instead of the fixed w-80 default. */
   wide?: boolean;
   onJobStarted?: (job: { requestType: string; icpId?: string; companyId?: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[]; quantity: number }) => void;
+  /** Fires after the agent has written to the ICPs table (update / delete). Parent should re-fetch the ICP list. */
+  onIcpMutation?: (mutations: Array<{ kind: 'updated' | 'deleted'; icpId: string; name: string | null; reasoning: string }>) => void;
   /** Hide the Arcova Agent title row (full-bleed chat, e.g. Data page). */
   hideHeader?: boolean;
   /** Hide suggested prompt chips when the parent is providing state-aware onboarding. */
@@ -133,10 +136,10 @@ const PROMPTS: Record<AgentPage, string[]> = {
     'Were there any duplicate contacts?',
   ],
   icps: [
-    'Help me refine ICP 1',
-    'Which ICP has the broadest criteria?',
-    'Suggest signals for a Series A biotech ICP',
-    'Draft a new ICP for oncology VP buyers',
+    'Audit my ICPs — anything too broad or overlapping?',
+    'Where are my gaps based on what my company sells?',
+    'Compare ICP 1 and ICP 3',
+    'Draft a new ICP for me to consider',
   ],
 };
 
@@ -209,7 +212,7 @@ function stripMarkdown(text: string): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, onLeadsFilter, onTableClear, wide, onJobStarted, hideHeader, suppressPrompts, embedInBriefingBento, onBusyChange, briefingWelcome, briefingIdleChips, surfaceClassName, headerSubtitle, className, variant = 'side-rail' }: AgentPanelProps) {
+export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, onLeadsFilter, onTableClear, wide, onJobStarted, onIcpMutation, hideHeader, suppressPrompts, embedInBriefingBento, onBusyChange, briefingWelcome, briefingIdleChips, surfaceClassName, headerSubtitle, className, variant = 'side-rail' }: AgentPanelProps) {
   const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -217,9 +220,25 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
   const [handoffFrom, setHandoffFrom] = useState<AgentPage | null>(null);
   /** Today tile: orb and "standing" surface until the user types, sends, or taps an idle chip (one-way). */
   const [briefingSurfaceEngaged, setBriefingSurfaceEngaged] = useState(false);
+  // ICPs page: silent audit run on mount → up to 3 priority cards rendered in the empty state
+  // (instead of generic chip suggestions). Each click auto-submits its seedPrompt.
+  type IcpPriority = {
+    id: string;
+    kind: 'overlap' | 'gap' | 'too_broad' | 'too_narrow' | 'rename' | 'other';
+    severity: 'low' | 'medium' | 'high';
+    headline: string;
+    detail: string;
+    cta: { label: string; seedPrompt: string };
+    icpIds: string[];
+  };
+  const [icpPriorities, setIcpPriorities] = useState<IcpPriority[]>([]);
+  const [icpPrioritiesLoading, setIcpPrioritiesLoading] = useState(page === 'icps');
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastPendingNonceRef = useRef<number | null>(null);
+  // Tracks which ICP priority card triggered the current conversation so we can
+  // dismiss it after the agent responds (regardless of verdict).
+  const activePriorityIdRef = useRef<string | null>(null);
 
   // Restore conversation handed off from another page (layout effect avoids a one-frame idle welcome flash)
   useLayoutEffect(() => {
@@ -252,6 +271,24 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
   useEffect(() => {
     onBusyChange?.(isLoading);
   }, [isLoading, onBusyChange]);
+
+  // ICPs page: silently fetch priority audit on first mount. Goes through the shared
+  // client cache so /today can reuse the same audit without re-running Claude.
+  // Re-fetches (force) when an icp mutation lands.
+  const [priorityRefreshKey, setPriorityRefreshKey] = useState(0);
+  useEffect(() => {
+    if (page !== 'icps') return;
+    let cancelled = false;
+    setIcpPrioritiesLoading(true);
+    void (async () => {
+      const priorities = await fetchIcpPriorities({ forceRefresh: priorityRefreshKey > 0 });
+      if (cancelled) return;
+      const dismissed = getDismissedPriorityIds();
+      setIcpPriorities(priorities.filter((p) => !dismissed.has(p.id)));
+      setIcpPrioritiesLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [page, priorityRefreshKey]);
 
   // Fire a programmatic message when the parent sets pendingMessage
   useEffect(() => {
@@ -305,6 +342,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
         tableLeads?: QueryLead[];
         suggestedNavigation?: { href: string; label: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[] };
         pendingJobStart?: { requestType: string; icpId?: string; companyId?: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[]; quantity: number };
+        icpMutations?: Array<{ kind: 'updated' | 'deleted'; icpId: string; name: string | null; reasoning: string }>;
       } = await res.json();
 
       // Update the pending placeholder with the real response
@@ -334,6 +372,25 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
       // Notify parent to start a job
       if (data.pendingJobStart && onJobStarted) {
         onJobStarted(data.pendingJobStart);
+      }
+
+      // Notify parent that the agent wrote to the ICPs table (icps page) and refresh the
+      // priorities inbox + cache so /today and /company-criteria see the new state.
+      if (Array.isArray(data.icpMutations) && data.icpMutations.length > 0) {
+        if (onIcpMutation) onIcpMutation(data.icpMutations);
+        clearIcpPrioritiesCache();
+        setPriorityRefreshKey((k) => k + 1);
+      }
+
+      // If this response closes out a priority-card conversation, remove the card.
+      // When the agent made no mutations ("not a problem"), persist the dismissal so
+      // the same flag never resurfaces after a cache refresh.
+      if (activePriorityIdRef.current) {
+        const closedId = activePriorityIdRef.current;
+        activePriorityIdRef.current = null;
+        setIcpPriorities((prev) => prev.filter((p) => p.id !== closedId));
+        const hadMutations = Array.isArray(data.icpMutations) && data.icpMutations.length > 0;
+        if (!hadMutations) dismissPriority(closedId);
       }
     } catch {
       setMessages((prev) =>
@@ -670,8 +727,42 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
       </div>
       )}
 
-      {/* ── Suggested prompts ── */}
-      {showPrompts && (
+      {/* ── ICP priorities inbox (icps page only, idle state) ── */}
+      {showPrompts && page === 'icps' && !icpPrioritiesLoading && icpPriorities.length > 0 && (
+        <div className={cn('shrink-0 px-[18px] pb-2 pt-1', !wide && 'max-[1279px]:hidden')}>
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#b6c2c8]">
+            Worth your attention
+          </p>
+          <div className="flex flex-col gap-2">
+            {icpPriorities.map((p) => (
+              <div
+                key={p.id}
+                className="rounded-[12px] border border-[rgba(13,53,71,0.08)] bg-white/65 px-3 py-2.5"
+              >
+                <p className="m-0 text-[12.5px] font-semibold leading-snug text-[#0d3547]">
+                  {p.headline}
+                </p>
+                {p.detail && (
+                  <p className="m-0 mt-1 text-[11.5px] leading-snug text-[#4a6470]">{p.detail}</p>
+                )}
+                <button
+                  type="button"
+                  onClick={() => { activePriorityIdRef.current = p.id; sendMessage(p.cta.seedPrompt, false, p.cta.label); }}
+                  className="mt-2 inline-flex items-center gap-1 rounded-full border border-arcova-teal/30 bg-arcova-teal/10 px-2.5 py-0.5 text-[11px] font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/15"
+                >
+                  <Sparkles className="h-3 w-3" />
+                  {p.cta.label}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Suggested prompts ──
+          Hidden on /icps when priorities are showing — the inbox + chat input are enough,
+          duplicating with chips makes the panel feel cramped. */}
+      {showPrompts && !(page === 'icps' && icpPriorities.length > 0) && (
         <div className={cn('shrink-0', lightSetupChat ? 'px-5 pt-5 pb-3' : todayChat ? 'px-4 pt-4 pb-2' : 'px-[18px] pb-2 pt-1', !wide && 'max-[1279px]:hidden')}>
           <p className={cn('font-semibold uppercase tracking-[0.16em]', lightSetupChat ? 'mb-3 text-[10px] text-slate-400' : todayChat ? 'mb-2 text-[11px] text-slate-400' : 'mb-2 text-[10px] text-[#b6c2c8]')}>
             Try asking

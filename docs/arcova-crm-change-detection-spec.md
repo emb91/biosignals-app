@@ -258,6 +258,214 @@ Required:
 | contact replied / meeting booked captured in CRM | `responded_to_previous_outreach` | contact | `new_needs` strong |
 | new stakeholder added to account with active deal | future CRM stakeholder signal | contact | `new_people` medium |
 
+---
+
+## 9. Arcova vs HubSpot identity precedence
+
+This is a critical modeling rule for CRM-driven readiness.
+
+HubSpot and Arcova do not answer the same identity questions.
+
+HubSpot is primarily:
+
+- CRM account context
+- deal/account association
+- historical or operational ownership context
+
+Arcova is primarily:
+
+- current company truth when enrichment has higher-confidence evidence
+- canonical account identity for fit/readiness surfaces
+- contact-level current-employer understanding
+
+Arcova must not let HubSpot company fields automatically overwrite Arcova’s current-company truth.
+
+### 9.1 User-facing framing
+
+When both are available:
+
+- show `Arcova company` first
+- show `Arcova domain` first
+- treat HubSpot as secondary CRM context
+
+If they differ, show both explicitly:
+
+- `Arcova: Acumino`
+- `HubSpot: Radar Ventures`
+
+That gives the user:
+
+- a newer / preferred Arcova truth layer
+- preserved CRM context without silent clobbering
+
+### 9.2 Internal field semantics
+
+Arcova should keep these concepts separate:
+
+- `hubspot_company_name`
+- `hubspot_company_domain`
+- `arcova_company_name`
+- `arcova_company_domain`
+- `arcova_contact_company_name`
+- `arcova_contact_company_domain`
+
+Semantics:
+
+- `hubspot_company_*`
+  - the CRM account/company attached in HubSpot
+  - useful for deal/account context
+  - not authoritative current-employer truth
+
+- `arcova_company_*`
+  - the canonical Arcova account row used for fit/readiness
+  - preferred user-facing company identity when available
+
+- `arcova_contact_company_*`
+  - Arcova’s best view of the contact’s current company
+  - derived from enrichment/resolution
+  - used for route, contact quality, and identity accuracy
+
+Important:
+
+- contact email domain is weak evidence
+- HubSpot company association is strong CRM context
+- Arcova current-company resolution is strong current-employer context
+
+They must coexist, not overwrite one another.
+
+### 9.3 Field precedence rules
+
+#### For display
+
+1. prefer `arcova_company_name`
+2. prefer `arcova_company_domain`
+3. only show `hubspot_company_*` as secondary when useful or mismatched
+
+#### For contact current-company truth
+
+1. preserve Arcova-enriched current company if confidence is good
+2. do not overwrite it from HubSpot company name/domain alone
+3. do not infer it solely from contact email domain
+
+#### For CRM account context
+
+1. preserve HubSpot company name/domain exactly as CRM context
+2. do not collapse it into Arcova company truth without explicit resolution
+
+---
+
+## 10. Company mismatch states
+
+Arcova should explicitly classify mismatches instead of forcing a single company truth.
+
+Recommended statuses:
+
+- `direct_company_match`
+  - HubSpot company domain cleanly matches an Arcova company
+
+- `resolved_via_contact_current_company`
+  - HubSpot company did not match directly, but the associated Arcova contact’s current-company evidence resolved the account confidently
+
+- `crm_company_contact_mismatch`
+  - HubSpot company and Arcova contact current company differ materially
+
+- `personal_or_nonwork_domain`
+  - associated contact uses a personal or non-work email/domain, so company inference is weak
+
+- `multiple_current_roles`
+  - contact has concurrent roles and there is no clear single employer truth
+
+- `stale_hubspot_company`
+  - HubSpot company appears older than Arcova’s current-company understanding
+
+- `ambiguous_unresolved`
+  - insufficient evidence to attach the deal confidently to an Arcova account
+
+These statuses should be stored in CRM metadata and used to decide whether readiness should fire.
+
+---
+
+## 11. Deal resolution ladder
+
+When a HubSpot deal arrives, Arcova should resolve it into readiness using this ladder.
+
+### Step 1: direct company match
+
+Try to match:
+
+- HubSpot company domain
+- HubSpot company website host
+
+against:
+
+- Arcova canonical company domain
+- Arcova canonical company website/domain
+
+If matched:
+
+- resolution status = `direct_company_match`
+- emit readiness normally
+
+### Step 2: contact-assisted resolution
+
+If direct company match fails:
+
+1. load associated HubSpot contacts
+2. resolve those to Arcova contacts
+3. inspect Arcova contact current-company truth:
+   - `arcova_contact_company_name`
+   - `arcova_contact_company_domain`
+   - contact `company_id` if present
+
+If the contact-level current-company truth confidently maps to an Arcova account:
+
+- resolution status = `resolved_via_contact_current_company`
+- emit readiness only if confidence is high enough
+
+### Step 3: classify mismatch
+
+If HubSpot company and Arcova contact current-company truth disagree:
+
+- record the mismatch status
+- preserve both values
+- do not overwrite Arcova company truth
+
+Examples:
+
+- HubSpot company = `Radar Ventures`
+- Arcova contact current company = `Acumino`
+
+This should be stored as:
+
+- CRM account context = `Radar Ventures`
+- Arcova current company = `Acumino`
+- mismatch status = `crm_company_contact_mismatch` or `multiple_current_roles`
+
+### Step 4: suppress when ambiguous
+
+If Arcova cannot confidently resolve the deal to an Arcova account:
+
+- mirror the deal
+- mirror associations
+- store mismatch metadata
+- do **not** emit readiness
+
+This avoids creating false account motion.
+
+---
+
+## 12. Rules Arcova should avoid
+
+Arcova should **not**:
+
+- auto-create Arcova company truth from unmatched HubSpot deal-company domains by default
+- overwrite Arcova current-company truth from HubSpot company fields
+- assume `hubspot_company_name === arcova_company_name`
+- assume contact email domain equals current employer
+- silently collapse multi-role contacts into one employer without evidence
+
+These are the mistakes that create noisy or wrong readiness.
+
 Important:
 
 Contact changes affect both:
@@ -560,4 +768,3 @@ Arcova is “there” on CRM readiness when:
 - readiness updates without manual intervention
 - reason includes CRM evidence alongside public signals
 - accounts can become more or less timely based on actual buying-process movement in CRM
-

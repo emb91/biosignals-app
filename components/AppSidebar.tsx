@@ -510,7 +510,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
           onClick: () =>
             guardedNavigate(!setupComplete && !setupStateLoading ? ROUTES.setup.arcova : ROUTES.setup.company),
           active: setupActive,
-          title: 'Setup',
+          title: 'About you',
           dot: setupDotVisible,
         })}
       </>
@@ -628,7 +628,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
                   {renderNavItem({ name: 'Data', href: ROUTES.data, icon: NavIconData })}
                   {renderNavItem({ name: 'Signals', href: ROUTES.signals, icon: NavIconSignals })}
                   {renderAccordion({
-                    label: 'Setup',
+                    label: 'About you',
                     icon: NavIconSetup,
                     items: setupAccordionItems,
                     open: setupOpen,
