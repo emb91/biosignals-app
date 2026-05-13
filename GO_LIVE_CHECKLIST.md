@@ -38,5 +38,5 @@
 
 - Re-run representative import tests on target customer personas, not just VC/operator edge cases.
 - Re-check Apollo freshness on recent job movers.
-- Resolve the pre-existing TypeScript issues in `app/my-profile/page.tsx` and `app/signals/page.tsx`.
+- Resolve the pre-existing TypeScript issues in `app/my-company/page.tsx` and `app/signals/page.tsx`.
 - Run a final end-to-end pass from CSV import through Leads rendering and scoring trigger behavior.

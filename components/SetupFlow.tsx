@@ -354,7 +354,7 @@ interface TargetCompanyProfile {
 
 /**
  * Dev setup test mode only: choose which saved ICP row hydrates Forward on the add-target flow.
- * Prefer name substring match, then fall back to 0-based index in GET /api/company-criteria order
+ * Prefer name substring match, then fall back to 0-based index in GET /api/icps order
  * (newest first). Override with NEXT_PUBLIC_DEV_SETUP_SEED_ICP_SUBSTRING or
  * NEXT_PUBLIC_DEV_SETUP_SEED_ICP_INDEX.
  */
@@ -515,7 +515,7 @@ function SetupLightProgressRow({
 
 // ── Setup "My company" card (light glass, matches Setup.html design) ────────
 /**
- * Flat field row (label + content) — matches the my-icps card field layout.
+ * Flat field row (label + content) — matches the ICPCard layout on `/icps`.
  * Used inside SetupTargetCompanyCard to align the setup review card with the saved-ICP card visual.
  */
 function SetupTargetFieldRow({ label, children }: { label: string; children: ReactNode }) {
@@ -1756,7 +1756,7 @@ function SetupTargetCompanyCard({
       data-target-company-card
       className="overflow-hidden rounded-2xl border border-arcova-navy/10 bg-white/75 shadow-arcova backdrop-blur-xl"
     >
-      {/* Card header bar — matches my-icps ICPCard header */}
+      {/* Card header bar — matches ICPCard header on `/icps` */}
       <div className="flex items-center gap-3 border-b border-arcova-navy/8 px-4 py-3">
         {/* Logo (or fallback initial) */}
         {e?.logo_url ? (
@@ -1809,7 +1809,7 @@ function SetupTargetCompanyCard({
         </div>
       </div>
 
-      {/* Modelled-on full-panel view (matches my-icps ICPCard) — hides criteria when shown */}
+      {/* Modelled-on full-panel view (matches ICPCard on `/icps`) — hides criteria when shown */}
       {modelledOnOpen && e && (
         <div className="space-y-4 px-4 py-4">
           {/* Top: name + linkedin link | logo */}
@@ -2372,7 +2372,7 @@ function SetupTargetCompanyCard({
 
       {showTargetCardFooter && (
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-arcova-navy/8 px-4 py-3">
-          {/* Bottom-left: Modelled on toggle (matches my-icps footer) */}
+          {/* Bottom-left: Modelled on toggle (matches ICP footer on `/icps`) */}
             <div className="flex items-center gap-3">
               {!icpEditMode && !confirmingDelete && e?.company_name && (
                 <button
@@ -2390,7 +2390,7 @@ function SetupTargetCompanyCard({
               )}
             </div>
 
-          {/* Bottom-right: action buttons (hidden in modelled-on view, matching my-icps) */}
+          {/* Bottom-right: action buttons (hidden in modelled-on view, matching `/icps`) */}
           {!modelledOnOpen && (
             <div className="flex flex-wrap items-center gap-2">
               {confirmingDelete ? (
@@ -3885,7 +3885,7 @@ export default function SetupFlow({
   }, []);
   const availableCompanyProfiles = companyProfiles.filter((company) => !companyContactsMap[company.id]);
   const resolvedCompletePath =
-    onCompletePath ?? (entryPoint === 'full' ? '/import' : entryPoint === 'target-company' ? '/company-criteria' : entryPoint === 'company-only' ? '/my-profile' : ROUTES.setup.icps);
+    onCompletePath ?? (entryPoint === 'full' ? '/import' : entryPoint === 'target-company' ? '/icps' : entryPoint === 'company-only' ? '/my-company' : ROUTES.setup.icps);
 
   const parseSectionItems = useCallback((value: unknown): string[] => {
     if (Array.isArray(value)) {
@@ -4236,7 +4236,7 @@ export default function SetupFlow({
       ? await summaryRes.json() as { summary: string }
       : { summary: null as string | null };
 
-    const saveRes = await fetch('/api/company-criteria', {
+    const saveRes = await fetch(ROUTES.api.icps, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name,
@@ -4380,7 +4380,7 @@ export default function SetupFlow({
     setSavedPersonaName(personaName);
 
     if (icpIdRef.current) {
-      await fetch(`/api/company-criteria/${icpIdRef.current}`, {
+      await fetch(`${ROUTES.api.icps}/${icpIdRef.current}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -4894,7 +4894,7 @@ export default function SetupFlow({
   /** Dev-only: load a real saved ICP from the API and jump to target review for manual testing. */
   const fetchAndApplyDevSeedIcp = useCallback(async () => {
     try {
-      const res = await fetch('/api/company-criteria');
+      const res = await fetch(ROUTES.api.icps);
       if (!res.ok) return;
       const payload = (await res.json()) as { data?: TargetCompanyProfile[] };
       const list = payload.data ?? [];
@@ -5507,7 +5507,7 @@ export default function SetupFlow({
     const id = icpIdRef.current;
     if (id) {
       try {
-        await fetch('/api/company-criteria', {
+        await fetch(ROUTES.api.icps, {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id }),
@@ -5776,7 +5776,7 @@ export default function SetupFlow({
         // Decision tree: check what the user has already completed and resume from the right step.
         const [analysesRes, icpRes, personaRes] = await Promise.all([
           fetch('/api/user-company'),
-          fetch('/api/company-criteria'),
+          fetch(ROUTES.api.icps),
           fetch('/api/contacts'),
         ]);
         const existingAnalysis = analysesRes.ok ? ((await analysesRes.json())?.analyses?.[0] ?? null) : null;
@@ -6015,7 +6015,7 @@ export default function SetupFlow({
         // Fetch seller analysis and existing ICPs in parallel
         const [analysesRes, icpsRes] = await Promise.all([
           fetch('/api/user-company'),
-          fetch('/api/company-criteria'),
+          fetch(ROUTES.api.icps),
         ]);
         const existingAnalysis = analysesRes.ok ? ((await analysesRes.json())?.analyses?.[0] ?? null) : null;
         const existingIcps: TargetCompanyProfile[] = icpsRes.ok ? ((await icpsRes.json())?.data ?? []) : [];
@@ -6734,7 +6734,7 @@ export default function SetupFlow({
         <div className="relative z-10 mt-4 w-[460px]">
           <SetupLightProgressRow
             leading={
-              // /company-criteria/new: Cancel exits the new-ICP flow entirely back to the ICP list.
+              // /icps/new: Cancel exits the new-ICP flow entirely back to the ICP list.
               // Full arcova-setup: Back walks one step backwards through the flow.
               entryPoint === 'target-company' ? (
                 <button
@@ -7285,10 +7285,6 @@ export default function SetupFlow({
                   Try a different company
                 </button>
                 <div className="ml-auto inline-flex items-center gap-3">
-                  <div className="inline-flex items-center gap-1.5 text-[12px] text-arcova-navy/50">
-                    <span>→</span>
-                    Next: <strong className="font-semibold text-arcova-navy/70">Buying teams</strong>
-                  </div>
                   {devForwardButton}
                 </div>
               </div>

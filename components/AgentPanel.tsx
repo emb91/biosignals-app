@@ -375,7 +375,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
       }
 
       // Notify parent that the agent wrote to the ICPs table (icps page) and refresh the
-      // priorities inbox + cache so /today and /company-criteria see the new state.
+      // priorities inbox + cache so /today and /icps see the new state.
       if (Array.isArray(data.icpMutations) && data.icpMutations.length > 0) {
         if (onIcpMutation) onIcpMutation(data.icpMutations);
         clearIcpPrioritiesCache();
@@ -468,9 +468,9 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                         ? embedGlass
                           ? 'bg-arcova-teal max-w-[min(100%,36rem)] rounded-2xl rounded-br-md rounded-tl-2xl rounded-tr-2xl px-4 py-3.5 font-manrope text-[1.125rem] leading-[1.45] tracking-[-0.016em] shadow-[0_10px_40px_-18px_rgba(0,164,180,0.45)]'
                           : 'bg-arcova-teal max-w-[min(100%,34rem)] rounded-2xl rounded-br-md rounded-tl-2xl rounded-tr-2xl px-4 py-3 text-[15px] leading-relaxed shadow-[0_10px_40px_-18px_rgba(0,164,180,0.45)]'
-                        : 'bg-[#0d3547] max-w-[calc(100%-2.5rem)] rounded-2xl rounded-br-none px-3.5 py-2.5 text-[13px] leading-[1.55]',
+                        : 'bg-[#0d3547] max-w-[90%] rounded-tl-[14px] rounded-tr-[14px] rounded-bl-[14px] rounded-br-[4px] px-3.5 py-2.5 text-[13px] leading-[1.55]',
                   )}
-                  style={!lightSetupChat && !todayChat ? { animation: 'arcova-msg-in 0.18s ease-out' } : undefined}
+                  style={!lightSetupChat && !todayChat ? { animation: 'arcova-msg-in 0.4s cubic-bezier(.16,1,.3,1)' } : undefined}
                 >
                   {msg.displayContent ?? msg.content}
                 </div>
@@ -534,7 +534,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                           ? embedGlass
                             ? 'rounded-2xl rounded-tl-sm bg-gradient-to-br from-slate-50 to-slate-100/80 px-4 py-4 font-manrope text-[1.1875rem] leading-[1.45] tracking-[-0.018em] text-slate-700 ring-1 ring-slate-200/60'
                             : 'rounded-2xl rounded-tl-sm bg-gradient-to-br from-slate-50 to-slate-100/80 px-4 py-4 text-[15px] leading-relaxed text-slate-700 ring-1 ring-slate-200/60'
-                          : 'rounded-2xl rounded-tl-none border border-[rgba(13,53,71,0.08)] bg-white/70 px-3.5 py-2.5 text-[13px] leading-[1.55] text-[#0d3547] shadow-sm backdrop-blur-sm',
+                          : 'rounded-tl-[14px] rounded-tr-[14px] rounded-bl-[4px] rounded-br-[14px] border border-[rgba(13,53,71,0.07)] bg-white/80 px-3.5 py-2.5 text-[13px] leading-[1.55] text-[#0d3547] backdrop-blur-sm',
                     )}
                   >
                     <div className="flex h-5 items-center gap-1.5">
@@ -567,12 +567,11 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                     <div
                       key={bi}
                       className={cn(
-                        'rounded-2xl rounded-tl-none border shadow-sm',
                         lightSetupChat
-                          ? 'border-slate-200 bg-white px-4 py-3 text-base leading-relaxed text-slate-800'
-                          : 'border-[rgba(13,53,71,0.08)] bg-white/70 px-3.5 py-2.5 text-[13px] leading-[1.55] text-[#0d3547] backdrop-blur-sm',
+                          ? 'rounded-2xl rounded-tl-none border border-slate-200 bg-white px-4 py-3 text-base leading-relaxed text-slate-800 shadow-sm'
+                          : 'rounded-tl-[14px] rounded-tr-[14px] rounded-bl-[4px] rounded-br-[14px] border border-[rgba(13,53,71,0.07)] bg-white/80 px-3.5 py-2.5 text-[13px] leading-[1.55] text-[#0d3547] backdrop-blur-sm',
                       )}
-                      style={{ animation: 'arcova-msg-in 0.18s ease-out' }}
+                      style={{ animation: !lightSetupChat ? 'arcova-msg-in 0.4s cubic-bezier(.16,1,.3,1)' : 'arcova-msg-in 0.18s ease-out' }}
                     >
                       {bubble}
                     </div>
@@ -617,7 +616,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
     >
       <div
         className={cn(
-          'flex min-h-0 flex-1 flex-col overflow-hidden rounded-[inherit]',
+          'flex min-h-0 flex-1 flex-col overflow-hidden',
           embedGlass && 'h-full min-h-0',
           wide ? 'w-full' : 'w-[360px] max-[1279px]:w-full',
           embedGlass
@@ -625,13 +624,14 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
             : surfaceClassName
               ? surfaceClassName
               : lightSetupChat
-              ? 'border border-slate-200/80 bg-white shadow-[0_24px_70px_-34px_rgba(15,23,42,0.45)] ring-1 ring-white'
+              ? 'rounded-[inherit] border border-slate-200/80 bg-white shadow-[0_24px_70px_-34px_rgba(15,23,42,0.45)] ring-1 ring-white'
               : todayChat
-                ? 'relative border border-slate-200/90 bg-white shadow-[0_28px_80px_-44px_rgba(15,23,42,0.22)] ring-1 ring-slate-900/[0.04]'
+                ? 'relative rounded-[inherit] border border-slate-200/90 bg-white shadow-[0_28px_80px_-44px_rgba(15,23,42,0.22)] ring-1 ring-slate-900/[0.04]'
                 : cn(
-                    'border border-white/80 bg-white/55',
-                    'shadow-[0_4px_24px_-8px_rgba(13,53,71,0.12)]',
-                    'backdrop-blur-xl',
+                    'relative rounded-[24px]',
+                    'border border-white/85 bg-white/55',
+                    'shadow-[0_24px_60px_-32px_rgba(13,53,71,0.18),_0_2px_6px_-2px_rgba(13,53,71,0.06)]',
+                    'backdrop-blur-[28px] backdrop-saturate-150',
                   ),
         )}
       >
@@ -727,10 +727,44 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
       </div>
       )}
 
+      {/* ── ICP priorities loading state ── */}
+      {showPrompts && page === 'icps' && icpPrioritiesLoading && (
+        <div className={cn('shrink-0 flex flex-col items-center justify-center gap-3 px-[18px] py-8', !wide && 'max-[1279px]:hidden')}>
+          <div className="relative h-14 w-14 shrink-0" aria-hidden>
+            <span className="absolute rounded-full" style={{
+              inset: '-25%',
+              background: 'radial-gradient(circle, rgba(0,164,180,0.45) 0%, transparent 65%)',
+              filter: 'blur(10px)',
+              animation: 'arcova-halo-pulse 2s ease-in-out infinite',
+            }} />
+            <span className="absolute inset-0 rounded-full" style={{
+              background: 'radial-gradient(circle at 30% 28%, #ffffff 0%, #00c8dc 45%, #005f80 130%)',
+              boxShadow: 'inset 0 -4px 8px rgba(13,53,71,0.18), inset 0 2px 6px rgba(255,255,255,0.5), 0 0 18px 4px rgba(0,164,180,0.35)',
+              animation: 'arcova-orb-breathe 2s ease-in-out infinite',
+            }} />
+          </div>
+          <p className="text-[11px] font-medium text-[#7d909a]">Reviewing your ICPs…</p>
+        </div>
+      )}
+
+      {/* ── ICP priorities all-clear (icps page, audit done, nothing flagged) ── */}
+      {showPrompts && page === 'icps' && !icpPrioritiesLoading && icpPriorities.length === 0 && (
+        <div className={cn('shrink-0 px-[18px] pb-2 pt-1', !wide && 'max-[1279px]:hidden')}>
+          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#b6c2c8]">ICP definitions</p>
+          <div className="rounded-[12px] border border-[rgba(13,53,71,0.07)] bg-white/55 px-3 py-2.5">
+            <div className="flex items-center gap-2">
+              <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-arcova-teal/15 text-arcova-teal text-[9px]">✓</span>
+              <p className="text-[12px] font-semibold text-[#0d3547]">Definitions look good</p>
+            </div>
+            <p className="mt-1 text-[11px] leading-snug text-[#0d3547]">No structural issues with your ICPs. For coverage gaps, check ICP Health.</p>
+          </div>
+        </div>
+      )}
+
       {/* ── ICP priorities inbox (icps page only, idle state) ── */}
       {showPrompts && page === 'icps' && !icpPrioritiesLoading && icpPriorities.length > 0 && (
         <div className={cn('shrink-0 px-[18px] pb-2 pt-1', !wide && 'max-[1279px]:hidden')}>
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#b6c2c8]">
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#4a6470]">
             Worth your attention
           </p>
           <div className="flex flex-col gap-2">
@@ -743,7 +777,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                   {p.headline}
                 </p>
                 {p.detail && (
-                  <p className="m-0 mt-1 text-[11.5px] leading-snug text-[#4a6470]">{p.detail}</p>
+                  <p className="m-0 mt-1 text-[11.5px] leading-snug text-[#0d3547]">{p.detail}</p>
                 )}
                 <button
                   type="button"
@@ -762,7 +796,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
       {/* ── Suggested prompts ──
           Hidden on /icps when priorities are showing — the inbox + chat input are enough,
           duplicating with chips makes the panel feel cramped. */}
-      {showPrompts && !(page === 'icps' && icpPriorities.length > 0) && (
+      {showPrompts && page !== 'icps' && (
         <div className={cn('shrink-0', lightSetupChat ? 'px-5 pt-5 pb-3' : todayChat ? 'px-4 pt-4 pb-2' : 'px-[18px] pb-2 pt-1', !wide && 'max-[1279px]:hidden')}>
           <p className={cn('font-semibold uppercase tracking-[0.16em]', lightSetupChat ? 'mb-3 text-[10px] text-slate-400' : todayChat ? 'mb-2 text-[11px] text-slate-400' : 'mb-2 text-[10px] text-[#b6c2c8]')}>
             Try asking
@@ -860,7 +894,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
               ? 'flex-1 space-y-5 bg-slate-50/70 px-5 py-5'
               : todayChat
                 ? 'flex-1 space-y-5 px-5 py-5 sm:px-6'
-                : 'flex-1 space-y-4 bg-transparent px-4 py-3',
+                : 'flex-1 space-y-3.5 bg-transparent px-[18px] py-4 [&::-webkit-scrollbar]:w-[5px] [&::-webkit-scrollbar-thumb]:rounded-[3px] [&::-webkit-scrollbar-thumb]:bg-[rgba(13,53,71,0.12)]',
           )}
         >
           {messageThread}
@@ -877,7 +911,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
               ? embedGlass
                 ? 'border-t border-[rgba(13,53,71,0.07)] bg-transparent px-0 pb-2 pt-2'
                 : 'border-t border-slate-100 bg-white px-4 py-4'
-              : 'border-t border-[rgba(13,53,71,0.07)] px-3 pb-3 pt-2',
+              : 'border-t border-[rgba(13,53,71,0.07)] px-[14px] pb-[14px] pt-3',
         )}
       >
         <div className="flex items-center gap-2">
@@ -905,7 +939,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                   ? embedGlass
                     ? 'rounded-2xl border border-[rgba(13,53,71,0.12)] bg-white/90 px-3 py-2.5 shadow-[0_8px_32px_-20px_rgba(13,53,71,0.18)] backdrop-blur-md focus-within:border-arcova-teal/45 focus-within:shadow-[0_8px_28px_-18px_rgba(0,164,180,0.22)]'
                     : 'rounded-2xl bg-slate-100/85 px-3 py-2 ring-1 ring-slate-200/70 focus-within:ring-arcova-teal/25'
-                  : 'rounded-[14px] border border-[rgba(13,53,71,0.07)] bg-white/70 px-3 py-[6px] focus-within:border-arcova-teal focus-within:bg-white focus-within:shadow-[0_0_0_4px_rgba(0,164,180,0.12)]',
+                  : 'rounded-[14px] border border-[rgba(13,53,71,0.07)] bg-white/70 pl-3 pr-[6px] py-[6px] focus-within:border-arcova-teal focus-within:bg-white focus-within:shadow-[0_0_0_4px_rgba(0,164,180,0.12)]',
             )}
           >
             <Sparkles

@@ -52,7 +52,7 @@ export async function POST(
       { status: 202 },
     );
   } catch (error) {
-    console.error('Error in POST /api/company-criteria/[id]/reenrich:', error);
+    console.error('Error in POST /api/icps/[id]/reenrich:', error);
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : 'Internal server error',

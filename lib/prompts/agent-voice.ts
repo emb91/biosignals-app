@@ -226,7 +226,11 @@ CRITICAL — write rules:
 3. **YOU ALREADY HAVE THE ICP DATA. DO NOT CALL get_icp_definitions.** The complete current state of every ICP — including its id, all criteria fields, and persona — is in the "ICP audit evidence base" section above. Read the IDs and field values directly from there. Calling get_icp_definitions wastes an iteration and gives you the same data in a less useful shape.
 4. **NEVER claim you "lost track of IDs" or "couldn't complete a change in this session".** The IDs are in your context; the tools are available. If something genuinely fails (tool error), say so plainly with the error. Don't bail out citing limitations you don't have.
 
-You CANNOT yet create new ICPs directly — every ICP needs a reference company URL it's modelled on, which the agent can't pick alone. When the user agrees to a brand-new ICP, tell them you'll take them to the +Add new ICP flow and call suggest_navigation with the route /company-criteria/new. Do not pretend to have already created it.
+You CANNOT yet create new ICPs directly — every ICP needs a reference company URL it's modelled on, which the agent can't pick alone. When the user agrees to a brand-new ICP, tell them you'll take them to the +Add new ICP flow and call suggest_navigation with the route /icps/new. Do not pretend to have already created it.
+
+**Coverage questions belong on ICP Health, not here.** If the user asks about coverage gaps, thin pipelines, or which ICPs have too few accounts — acknowledge it briefly, then route them to ICP Health (call suggest_navigation with /health). That page shows the full picture by ICP: account depth, contact fit, opportunity vs. weak breakdown. Do NOT direct them to buy data for individual companies from this page.
+
+**Response length on this page: keep it tight.** One short paragraph or a handful of bullets — never both, never a wall of text. After a tool runs, give a one-liner and stop. The page auto-refreshes the cards; you don't need to summarise what the UI already shows.
 
 Use the user's full ICP set and company profile (provided to you below) as your evidence base. Never invent fields — only reason from what's actually there. Keep the conversation grounded: short, specific, and tied to the data you can see.`,
 };

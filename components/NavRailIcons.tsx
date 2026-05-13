@@ -233,6 +233,23 @@ export function NavIconMyIcps({ className }: IconProps) {
   );
 }
 
+export function NavIconLog({ className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={stroke.width}
+      strokeLinecap={stroke.cap}
+      strokeLinejoin={stroke.join}
+      className={cn('shrink-0', className)}
+      aria-hidden
+    >
+      <path d="M9 12h6M9 16h6M9 8h6M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
+    </svg>
+  );
+}
+
 export function NavIconSettings({ className }: IconProps) {
   return (
     <svg

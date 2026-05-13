@@ -1,5 +1,5 @@
 /**
- * Client-side cache for ICP audit priorities used in the agent inbox on /company-criteria.
+ * Client-side cache for ICP audit priorities used in the agent inbox on `/icps`.
  *
  * /today now reads the aggregator at `/api/today/priorities` (grouped form), which has its
  * own server-side life. This module is unchanged from its original purpose — fetch the raw
@@ -93,7 +93,7 @@ export function dismissPriority(id: string): void {
   } catch {
     // ignore network errors — local hide still works
   }
-  // Bust both caches so /today and /company-criteria refetch the filtered list next time.
+  // Bust both caches so /today and `/icps` refetch the filtered list next time.
   try {
     sessionStorage.removeItem(CACHE_KEY);
     sessionStorage.removeItem('arcova:today-priorities');
@@ -113,7 +113,7 @@ export function clearIcpPrioritiesCache(): void {
   }
 }
 
-/** Fetches the raw individual ICP-audit items used by the agent inbox on /company-criteria. */
+/** Fetches the raw individual ICP-audit items used by the agent inbox on `/icps`. */
 export async function fetchIcpPriorities(opts?: { forceRefresh?: boolean }): Promise<IcpPriority[]> {
   if (!opts?.forceRefresh) {
     const cached = readCache();

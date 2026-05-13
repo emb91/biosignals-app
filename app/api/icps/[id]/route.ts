@@ -13,16 +13,16 @@ import {
   withoutIcpSegmentColumns,
 } from '@/lib/supabase-column-compat';
 
-export async function GET(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
     const supabase = await createClient();
-    
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    
+
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
+
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -42,21 +42,21 @@ export async function GET(
     const [hydrated] = await hydrateIcpsWithSignals(supabase, user.id, [data]);
     return NextResponse.json({ data: hydrated });
   } catch (error) {
-    console.error('Error in GET /api/icp/[id]:', error);
+    console.error('Error in GET /api/icps/[id]:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
 
-export async function PUT(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
     const supabase = await createClient();
-    
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    
+
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
+
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -86,7 +86,7 @@ export async function PUT(
       company_sizes: body.companySizes || [],
       li_follower_sizes: body.liFollowerSizes || [],
       funding_stages: body.fundingStages || [],
-      signals: weightedSignals.map(s => JSON.stringify(s)),
+      signals: weightedSignals.map((s) => JSON.stringify(s)),
       example_companies: body.exampleCompanies || [],
       example_company_enrichment: body.exampleCompanyEnrichment ?? null,
       updated_at: new Date().toISOString(),
@@ -96,15 +96,10 @@ export async function PUT(
     if (Array.isArray(body.buyerTypes)) icpData.buyer_types = body.buyerTypes;
     if (Array.isArray(body.competitors)) icpData.competitors = body.competitors;
 
-    // Preserve the existing stored summary on partial updates unless the client
-    // explicitly provides a replacement.
     if (Object.prototype.hasOwnProperty.call(body, 'icpSummary')) {
       icpData.icp_summary = body.icpSummary || null;
     }
 
-    // example_company_url is NOT NULL in the DB. Only update it if the client
-    // explicitly provides a non-empty value — partial edits (e.g. inline tag
-    // edits) shouldn't blank it out.
     if (typeof body.exampleCompanyUrl === 'string' && body.exampleCompanyUrl.trim()) {
       icpData.example_company_url = body.exampleCompanyUrl.trim();
     }
@@ -148,35 +143,31 @@ export async function PUT(
     const [hydrated] = await hydrateIcpsWithSignals(supabase, user.id, [data]);
 
     rescoreAllContactsForUser(user.id).catch((err) =>
-      console.error('[company-criteria PUT] Background lead-fit rescore failed:', err),
+      console.error('[icps PUT] Background lead-fit rescore failed:', err),
     );
 
     return NextResponse.json({ data: hydrated });
   } catch (error) {
-    console.error('Error in PUT /api/icp/[id]:', error);
+    console.error('Error in PUT /api/icps/[id]:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
 
-export async function DELETE(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
     const supabase = await createClient();
-    
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    
+
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
+
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { error } = await supabase
-      .from('icps')
-      .delete()
-      .eq('id', id)
-      .eq('user_id', user.id);
+    const { error } = await supabase.from('icps').delete().eq('id', id).eq('user_id', user.id);
 
     if (error) {
       console.error('Error deleting ICP:', error);
@@ -184,12 +175,12 @@ export async function DELETE(
     }
 
     rescoreAllContactsForUser(user.id).catch((err) =>
-      console.error('[company-criteria DELETE] Background lead-fit rescore failed:', err),
+      console.error('[icps id DELETE] Background lead-fit rescore failed:', err),
     );
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Error in DELETE /api/icp/[id]:', error);
+    console.error('Error in DELETE /api/icps/[id]:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

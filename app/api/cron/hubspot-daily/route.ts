@@ -86,6 +86,7 @@ async function pushUserToHubSpot(
       id, email, first_name, last_name, job_title, seniority_level, business_area,
       contact_fit_score, intent_score, overall_fit_score, contact_bio, linkedin_url,
       companies(
+        id, domain,
         company_name, company_fit_score, modalities, therapeutic_areas, development_stages,
         company_type, platform_category, bio_summary, industry, employee_count,
         founded_year, headquarters_city, headquarters_country, linkedin_url,
@@ -137,6 +138,7 @@ async function pushUserToHubSpot(
     const props: Record<string, string> = {
       arcova_action: action,
       arcova_enriched_at: enrichedAt,
+      arcova_contact_id: lead.id,
     };
 
     if (overallFit !== null) props.arcova_overall_fit_score = fmt(overallFit);
@@ -152,6 +154,9 @@ async function pushUserToHubSpot(
     if (lead.linkedin_url) props.arcova_linkedin_url = lead.linkedin_url;
     if (lead.linkedin_url) props.hs_linkedin_url = lead.linkedin_url;
     if (lead.job_title) props.jobtitle = lead.job_title;
+    if (co?.id) props.arcova_company_id = co.id;
+    if (co?.company_name) props.arcova_company_name = co.company_name;
+    if (co?.domain) props.arcova_company_domain = co.domain;
 
     upserts.push({ email: lead.email!.toLowerCase(), properties: props });
   }
@@ -405,18 +410,35 @@ export async function GET(request: Request) {
         nangoConnectionId: conn.nango_connection_id,
       });
 
-      // Update sync log
-      await admin.from('hubspot_sync_log').upsert({
-        user_id: conn.user_id,
-        synced_at: new Date().toISOString(),
-        contacts_synced: pushResult.contacts.upserted,
-        contacts_errors: pushResult.contacts.errors,
-        contacts_skipped: pushResult.skippedContacts.length,
-        skipped_contacts: pushResult.skippedContacts,
-        last_error_details: pushResult.contacts.errorDetails,
-        auto_pull_count: pullResult.pulled,
-        auto_pull_at: new Date().toISOString(),
-      }, { onConflict: 'user_id' });
+      const now = new Date().toISOString();
+      await Promise.all([
+        admin.from('hubspot_sync_log').upsert({
+          user_id: conn.user_id,
+          synced_at: now,
+          contacts_synced: pushResult.contacts.upserted,
+          contacts_errors: pushResult.contacts.errors,
+          contacts_skipped: pushResult.skippedContacts.length,
+          skipped_contacts: pushResult.skippedContacts,
+          last_error_details: pushResult.contacts.errorDetails,
+          auto_pull_count: pullResult.pulled,
+          auto_pull_at: now,
+        }, { onConflict: 'user_id' }),
+        admin.from('hubspot_sync_events').insert({
+          user_id: conn.user_id,
+          event_type: 'full',
+          created_at: now,
+          contacts_synced: pushResult.contacts.upserted,
+          contacts_errors: pushResult.contacts.errors,
+          contacts_skipped: pushResult.skippedContacts.length,
+          skipped_contacts: pushResult.skippedContacts,
+          error_details: pushResult.contacts.errorDetails,
+          companies_updated: pushResult.companies.updated ?? 0,
+          pull_count: pullResult.pulled,
+          deals_fetched: dealResult.fetchedDeals,
+          deals_mirrored: dealResult.mirroredDeals,
+          deal_events_emitted: dealResult.emittedEvents,
+        }),
+      ]);
 
       results.push({
         userId: conn.user_id,

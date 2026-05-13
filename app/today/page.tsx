@@ -257,7 +257,7 @@ export default function BriefingPage() {
           pulseSeriesRes,
         ] = await Promise.all([
           supabase.from('user_company').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
-          fetch('/api/company-criteria'),
+          fetch(ROUTES.api.icps),
           fetch('/api/contacts'),
           supabase.from('raw_uploads').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
           fetch('/api/leads?pageSize=5&page=1'),

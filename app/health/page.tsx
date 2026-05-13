@@ -349,7 +349,7 @@ export default function HealthPage() {
                 </p>
                 <button
                   type="button"
-                  onClick={() => router.push('/company-criteria/new')}
+                  onClick={() => router.push(ROUTES.setup.newIcp)}
                   className="inline-flex items-center gap-2 px-4 py-2 bg-arcova-teal text-white text-sm font-semibold rounded-lg hover:bg-arcova-teal/90 transition-colors"
                 >
                   <Plus className="w-4 h-4" />

@@ -2,7 +2,7 @@
  * POST /api/agent/dismiss-priority { id, source }
  *
  * Records that a user has dismissed a server-side priority. Used by the agent inbox on
- * /company-criteria when the user clicks the X on a priority card. Server-side `compute*`
+ * `/icps` when the user clicks the X on a priority card. Server-side `compute*`
  * functions for each source filter dismissed ids out before returning anything, so /today
  * and the source page stay in sync — the moment a card is dismissed, the corresponding
  * /today row also disappears on next fetch.

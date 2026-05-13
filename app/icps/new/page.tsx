@@ -47,7 +47,7 @@ export default function ICPNewPage() {
         <div className="shrink-0 px-4 pt-4 sm:px-6">
           <button
             type="button"
-            onClick={() => guardedNavigate('/company-criteria')}
+            onClick={() => guardedNavigate('/icps')}
             className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-arcova-navy/10 bg-white/65 px-3 py-1.5 text-[12px] font-medium text-arcova-navy/65 backdrop-blur transition-all hover:-translate-x-0.5 hover:bg-white hover:text-arcova-navy"
           >
             <ChevronLeft className="h-3.5 w-3.5" />
@@ -59,7 +59,7 @@ export default function ICPNewPage() {
           email={user.email || undefined}
           emailDomain={user.email?.split('@')[1] || undefined}
           entryPoint="target-company"
-          onCompletePath="/company-criteria"
+          onCompletePath="/icps"
         />
       </div>
     </div>

@@ -1,7 +1,7 @@
 /**
  * POST /api/agent/icp-priorities
  *
- * Returns the raw individual ICP-audit priorities for the agent inbox on /company-criteria.
+ * Returns the raw individual ICP-audit priorities for the agent inbox on `/icps`.
  * The Claude call + JSON validation are factored into `lib/priorities/sources/icp-audit` so
  * the /today aggregator (which only needs the grouped count) can share the same code path.
  */

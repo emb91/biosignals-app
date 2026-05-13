@@ -1,6 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from 'react';
 import { supabase } from './supabase';
 import { useAuth } from '@/context/AuthContext';
 import { ROUTES } from '@/lib/routes';
@@ -17,14 +23,22 @@ export type SetupState = {
 
 /**
  * Returns the next setup path the user should visit given their current progress.
- * Missing company or ICP: `/arcova-setup`. Otherwise the core funnel is done → import.
+ * Missing company or ICP: `/arcova-setup`. Once both exist, send users somewhere useful —
+ * `/today` if they accidentally opened guided setup again (avoid bouncing them into Import).
  */
 export function getNextSetupPath(state: Pick<SetupState, 'step1Complete' | 'step2Complete'>): string {
   if (!state.step1Complete || !state.step2Complete) return ROUTES.setup.arcova;
-  return ROUTES.import;
+  return ROUTES.today;
 }
 
-export function useSetupState(): SetupState {
+const SetupStateContext = createContext<SetupState | undefined>(undefined);
+
+/**
+ * Single shared source for onboarding completion flags (company profile + first ICP).
+ * Avoid mounting multiple independent `useEffect` polls — duplicates briefly disagreed during
+ * Supabase errors/races and triggered SetupGuard → `/arcova-setup` → `/import` ping-pong.
+ */
+export function SetupStateProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const [state, setState] = useState<SetupState>({
     step1Complete: false,
@@ -46,7 +60,9 @@ export function useSetupState(): SetupState {
 
     let cancelled = false;
 
-    const checkSetup = async () => {
+    const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+    const checkSetup = async (attempt: number): Promise<void> => {
       try {
         const [profileResult, icpsResult] = await Promise.all([
           supabase
@@ -71,17 +87,29 @@ export function useSetupState(): SetupState {
         });
       } catch (err) {
         console.error('[useSetupState] failed to check setup state:', err);
-        if (!cancelled) {
-          setState((prev) => ({ ...prev, loading: false }));
+        if (cancelled) return;
+        if (attempt < 2) {
+          await sleep(400);
+          if (!cancelled) await checkSetup(attempt + 1);
+          return;
         }
+        setState((prev) => ({ ...prev, loading: false }));
       }
     };
 
-    checkSetup();
+    void checkSetup(0);
     return () => {
       cancelled = true;
     };
   }, [user]);
 
-  return state;
+  return <SetupStateContext.Provider value={state}>{children}</SetupStateContext.Provider>;
+}
+
+export function useSetupState(): SetupState {
+  const ctx = useContext(SetupStateContext);
+  if (ctx === undefined) {
+    throw new Error('useSetupState must be used within SetupStateProvider');
+  }
+  return ctx;
 }

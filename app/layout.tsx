@@ -3,6 +3,7 @@ import { Inter, JetBrains_Mono, Manrope, Plus_Jakarta_Sans, Poppins } from "next
 import ClientLayout from "./ClientLayout"
 import { AuthProvider } from "@/context/AuthContext"
 import { EnrichmentGuardProvider } from "@/context/EnrichmentGuardContext"
+import { SetupStateProvider } from "@/lib/use-setup-state"
 import './globals.css'
 // import { Analytics } from "@vercel/analytics/next"
 
@@ -116,9 +117,11 @@ export default function RootLayout({
       </head>
       <body className="font-jakarta antialiased">
         <AuthProvider>
-          <EnrichmentGuardProvider>
-            <ClientLayout>{children}</ClientLayout>
-          </EnrichmentGuardProvider>
+          <SetupStateProvider>
+            <EnrichmentGuardProvider>
+              <ClientLayout>{children}</ClientLayout>
+            </EnrichmentGuardProvider>
+          </SetupStateProvider>
         </AuthProvider>
         {/* <Analytics /> */}
       </body>

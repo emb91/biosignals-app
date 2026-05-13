@@ -6,6 +6,13 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  /** Legacy API path → handlers live under `/api/icps/*`. Transparent rewrite preserves POST/DELETE bodies. */
+  async rewrites() {
+    return [
+      { source: '/api/company-criteria', destination: '/api/icps' },
+      { source: '/api/company-criteria/:path*', destination: '/api/icps/:path*' },
+    ];
+  },
   async redirects() {
     return [
       {
@@ -70,17 +77,32 @@ const nextConfig = {
       },
       {
         source: '/contacts/:id/edit',
-        destination: '/company-criteria',
+        destination: '/icps',
         permanent: false,
       },
       {
         source: '/personas/:id/edit',
-        destination: '/company-criteria',
+        destination: '/icps',
         permanent: false,
       },
       {
         source: '/personas',
-        destination: '/company-criteria',
+        destination: '/icps',
+        permanent: false,
+      },
+      {
+        source: '/my-profile',
+        destination: '/my-company',
+        permanent: false,
+      },
+      {
+        source: '/company-criteria',
+        destination: '/icps',
+        permanent: false,
+      },
+      {
+        source: '/company-criteria/:path*',
+        destination: '/icps/:path*',
         permanent: false,
       },
     ]
