@@ -60,6 +60,7 @@ import {
   ExternalLink,
   Check,
   Building2,
+  Users,
   X,
   Target,
   Pencil,
@@ -192,6 +193,16 @@ function uniqueSuggestionsByDomain(suggestions: IcpSuggestion[]): IcpSuggestion[
     seen.add(key);
     return true;
   });
+}
+
+function describeSuggestionCount(count: number): string {
+  if (count <= 0) return 'a few';
+  if (count === 1) return 'one';
+  if (count === 2) return 'two';
+  if (count === 3) return 'three';
+  if (count === 4) return 'four';
+  if (count === 5) return 'five';
+  return `${count}`;
 }
 
 const START_AGAIN_CONFIRM =
@@ -341,6 +352,28 @@ interface TargetCompanyProfile {
   } | null;
 }
 
+/**
+ * Dev setup test mode only: choose which saved ICP row hydrates Forward on the add-target flow.
+ * Prefer name substring match, then fall back to 0-based index in GET /api/company-criteria order
+ * (newest first). Override with NEXT_PUBLIC_DEV_SETUP_SEED_ICP_SUBSTRING or
+ * NEXT_PUBLIC_DEV_SETUP_SEED_ICP_INDEX.
+ */
+function pickDevSeedIcp(icps: TargetCompanyProfile[]): TargetCompanyProfile | null {
+  if (icps.length === 0) return null;
+  const substring = (process.env.NEXT_PUBLIC_DEV_SETUP_SEED_ICP_SUBSTRING ?? 'Multi-Modality Oncology')
+    .trim()
+    .toLowerCase();
+  if (substring.length > 0) {
+    const byName = icps.find((i) => (i.name ?? '').toLowerCase().includes(substring));
+    if (byName) return byName;
+  }
+  const idxRaw = process.env.NEXT_PUBLIC_DEV_SETUP_SEED_ICP_INDEX;
+  const parsed = idxRaw != null && idxRaw !== '' ? Number.parseInt(String(idxRaw), 10) : Number.NaN;
+  const idx = Number.isFinite(parsed) ? parsed : 3;
+  const clamped = Math.max(0, Math.min(icps.length - 1, idx));
+  return icps[clamped] ?? null;
+}
+
 // ── Typing speed ───────────────────────────────────────────────────────────
 
 const TYPING_MS = 18;
@@ -413,27 +446,45 @@ function visiblePlatformCategory(companyType?: string | null, platformCategory?:
 
 // ── Persistent "Step X of 3" eyebrow shown across every setup phase ─────────
 function StepEyebrow({ step }: { step: 0 | 1 | 2 }) {
-  const labels = ['Your company', 'Target companies', 'Buying teams'] as const;
   return (
-    <div className="inline-flex items-center gap-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/50">
+    <div className="inline-flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.12em] text-arcova-navy/55">
       <span className="inline-flex items-center gap-[3px]">
         {[0, 1, 2].map((i) => (
           <span
             key={i}
             className={`h-[3px] rounded-full transition-all ${
               i < step
-                ? 'w-3.5 bg-arcova-teal/55'
+                ? 'w-3 bg-arcova-teal/55'
                 : i === step
-                  ? 'w-5 bg-arcova-teal'
-                  : 'w-3.5 bg-arcova-teal/15'
+                  ? 'w-4 bg-arcova-teal'
+                  : 'w-3 bg-arcova-teal/15'
             }`}
           />
         ))}
       </span>
-      <span>
-        Step {step + 1} of 3
-        <span className="ml-2 normal-case tracking-normal text-arcova-navy/45">· {labels[step]}</span>
+      <span>Step {step + 1} of 3</span>
+    </div>
+  );
+}
+
+function AddIcpStepEyebrow({ step }: { step: 0 | 1 }) {
+  return (
+    <div className="inline-flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.12em] text-arcova-navy/55">
+      <span className="inline-flex items-center gap-[3px]">
+        {[0, 1].map((i) => (
+          <span
+            key={i}
+            className={`h-[3px] rounded-full transition-all ${
+              i < step
+                ? 'w-3 bg-arcova-teal/55'
+                : i === step
+                  ? 'w-4 bg-arcova-teal'
+                  : 'w-3 bg-arcova-teal/15'
+            }`}
+          />
+        ))}
       </span>
+      <span>Step {step + 1} of 2</span>
     </div>
   );
 }
@@ -452,7 +503,9 @@ function SetupLightProgressRow({
   trailing?: ReactNode;
 }) {
   return (
-    <div className="grid w-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-4 gap-y-2">
+    // min-h reserves a consistent row height across phases (some phases hide center/trailing) so
+    // swapping between agent/review phases doesn't make the page jump vertically.
+    <div className="grid min-h-[2.25rem] w-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-4 gap-y-2">
       <div className="flex min-w-0 items-center justify-start">{leading}</div>
       <div className="flex justify-center">{center}</div>
       <div className="flex min-w-0 items-center justify-end">{trailing}</div>
@@ -461,6 +514,19 @@ function SetupLightProgressRow({
 }
 
 // ── Setup "My company" card (light glass, matches Setup.html design) ────────
+/**
+ * Flat field row (label + content) — matches the my-icps card field layout.
+ * Used inside SetupTargetCompanyCard to align the setup review card with the saved-ICP card visual.
+ */
+function SetupTargetFieldRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="space-y-1.5">
+      <p className="m-0 text-[10.5px] font-semibold uppercase tracking-[0.11em] text-arcova-navy/55">{label}</p>
+      {children}
+    </div>
+  );
+}
+
 function SetupSection({
   label,
   defaultOpen = false,
@@ -505,6 +571,11 @@ function SetupSection({
 
 function SetupBootstrapWaitingCard({
   variant,
+  clock,
+  statusKey,
+  welcomePart1,
+  welcomePart2,
+  welcomeSpeed,
   firstName,
   email,
   inputEnabled,
@@ -516,8 +587,14 @@ function SetupBootstrapWaitingCard({
   emailDomain,
   onUseEmailDomain,
   analysisError,
+  centerSlot,
 }: {
   variant: 'welcome' | 'add-icp';
+  clock: Date;
+  statusKey: 'waiting' | 'thinking' | 'ready';
+  welcomePart1: string;
+  welcomePart2: string;
+  welcomeSpeed: number;
   firstName?: string;
   email?: string;
   inputEnabled: boolean;
@@ -529,18 +606,17 @@ function SetupBootstrapWaitingCard({
   emailDomain?: string;
   onUseEmailDomain: () => void;
   analysisError: string;
+  /** Step indicator to render centred in the agent meta strip. */
+  centerSlot?: ReactNode;
 }) {
   const isAdditionalIcp = variant === 'add-icp';
 
   return (
     <>
-      <SetupGlassAgentMetaStrip
-        clock={new Date()}
-        statusKey={inputEnabled ? 'ready' : 'thinking'}
-      />
+      <SetupGlassAgentMetaStrip clock={clock} statusKey={statusKey} centerSlot={centerSlot} />
       <div className="flex w-full shrink-0 flex-col items-center">
         <div className="flex h-[13.4375rem] w-full flex-col items-center justify-center">
-          <SetupOrb variant="welcome" welcomeEnergised={false} />
+          <SetupOrb variant="welcome" welcomeEnergised />
         </div>
         <div className="mt-[1.15cm] shrink-0 text-center text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/45">
           {isAdditionalIcp ? 'Add another ICP' : 'Welcome to Arcova'}
@@ -551,18 +627,22 @@ function SetupBootstrapWaitingCard({
           {isAdditionalIcp ? (
             <span className="block text-arcova-navy/40">Loading your setup.</span>
           ) : inputEnabled ? (
-            <TypingHeadline part1={`Hi ${firstName || 'there'}, let's get you set up. `} part2="First, what's your company's website?" speed={44} />
+            <TypingHeadline part1={welcomePart1} part2={welcomePart2} speed={welcomeSpeed} />
           ) : (
             <span className="block text-arcova-navy/40">Getting ready.</span>
           )}
         </h1>
 
         {isAdditionalIcp ? (
-          <div className="space-y-3">
-            <p className="text-center text-sm leading-relaxed text-arcova-navy/45">
-              Pulling your saved company context and previous ICPs so we can start a fresh target profile.
-            </p>
-          </div>
+          <SetupOrbProgressList
+            steps={[
+              'Pulling your saved company context',
+              'Loading your previous ICPs',
+              'Generating fresh suggestions',
+              'Almost ready',
+            ]}
+            intervalMs={750}
+          />
         ) : (
           <div className="space-y-3">
             <form onSubmit={onSubmit}>
@@ -629,7 +709,7 @@ function SetupBootstrapWaitingCard({
             ))}
           </span>
           <span>
-            Joining as{' '}
+            Signed in as{' '}
             <strong className="font-semibold text-arcova-navy/70">{firstName || 'you'}</strong>
             {email && (
               <span className="ml-1 text-arcova-navy/35">• {email}</span>
@@ -1038,22 +1118,8 @@ function SetupMyCompanyCard({
   return (
     <article
       data-my-company-card
-      className="overflow-hidden rounded-[20px] border border-arcova-navy/10 bg-white/65 shadow-[0_18px_40px_-28px_rgba(13,53,71,0.15)] backdrop-blur-xl"
+      className="overflow-hidden rounded-2xl border border-arcova-navy/10 bg-white/75 shadow-arcova backdrop-blur-xl"
     >
-      {/* Card header */}
-      <header className="grid grid-cols-[28px_1fr_22px_22px] items-center gap-2.5 border-b border-arcova-navy/8 px-4 py-3.5">
-        <span className="grid h-7 w-7 place-items-center rounded-lg bg-arcova-teal/12 text-arcova-teal">
-          <Building2 className="h-3.5 w-3.5" />
-        </span>
-        <span className="font-manrope text-[14.5px] font-semibold tracking-[-0.014em] text-arcova-navy">
-          My company
-        </span>
-        <span className="grid h-[22px] w-[22px] place-items-center rounded-full bg-arcova-teal text-white">
-          <Check className="h-2.5 w-2.5" strokeWidth={3} />
-        </span>
-        <ChevronDown className="h-3.5 w-3.5 rotate-180 text-arcova-navy/65" />
-      </header>
-
       <div className="flex flex-col gap-3.5 p-4">
         {/* Identity strip */}
         <div className="grid grid-cols-[40px_1fr] items-center gap-3 rounded-xl border border-arcova-navy/8 bg-white/55 px-3 py-2.5">
@@ -1688,238 +1754,294 @@ function SetupTargetCompanyCard({
   return (
     <article
       data-target-company-card
-      className="overflow-hidden rounded-[20px] border border-arcova-navy/10 bg-white/65 shadow-[0_18px_40px_-28px_rgba(13,53,71,0.15)] backdrop-blur-xl"
+      className="overflow-hidden rounded-2xl border border-arcova-navy/10 bg-white/75 shadow-arcova backdrop-blur-xl"
     >
-      <header className="flex items-center gap-2.5 border-b border-arcova-navy/8 px-4 py-3.5">
-        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-arcova-teal/12 text-arcova-teal">
-          <Target className="h-3.5 w-3.5" />
-        </span>
-        <span className="flex-1 font-manrope text-[14.5px] font-semibold tracking-[-0.014em] text-arcova-navy">
-          Target companies
-        </span>
-        {!icpEditMode ? (
-          <button
-            type="button"
-            onClick={onEditIcp}
-            className="flex items-center gap-1.5 rounded-lg border border-arcova-navy/10 bg-white/60 px-2.5 py-1 text-[11.5px] font-medium text-arcova-navy/60 transition-colors hover:bg-white hover:text-arcova-navy"
-          >
-            Edit
-          </button>
+      {/* Card header bar — matches my-icps ICPCard header */}
+      <div className="flex items-center gap-3 border-b border-arcova-navy/8 px-4 py-3">
+        {/* Logo (or fallback initial) */}
+        {e?.logo_url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={e.logo_url}
+            alt={e.company_name ?? ''}
+            className="h-9 w-9 shrink-0 rounded-[10px] border border-arcova-navy/8 bg-white object-contain p-1"
+          />
         ) : (
-          <button
-            type="button"
-            onClick={onCancelIcp}
-            className="flex items-center gap-1.5 rounded-lg border border-arcova-navy/10 bg-white/60 px-2.5 py-1 text-[11.5px] font-medium text-arcova-navy/60 transition-colors hover:bg-white hover:text-arcova-navy"
-          >
-            <X className="h-3 w-3" />
-            Cancel
-          </button>
+          <div className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-[10px] bg-gradient-to-br from-arcova-teal/20 to-arcova-teal/10 font-bold text-arcova-teal">
+            <span className="text-sm">{logoInitial}</span>
+          </div>
         )}
-      </header>
-
-      <div className="flex flex-col gap-3.5 p-4">
-        {/* Identity strip + expandable reference snapshot (parity with SetupProfile TargetCard) */}
-        {(e?.company_name || displayDomain) && (
-          <div className="space-y-2">
-            <div className="grid grid-cols-[40px_1fr] items-center gap-3 rounded-xl border border-arcova-navy/8 bg-white/55 px-3 py-2.5">
-              <div className="grid h-10 w-10 place-items-center overflow-hidden rounded-[10px] bg-gradient-to-br from-arcova-teal/20 to-arcova-teal/10 font-bold text-arcova-teal">
-                <span className="text-base">{logoInitial}</span>
-              </div>
-              <div className="min-w-0">
-                <SetupSubLabel>Reference account</SetupSubLabel>
-                <div className="mt-1 text-[14px] font-semibold text-arcova-navy">{e?.company_name ?? '—'}</div>
-                {displayDomain && (
-                  <a
-                    href={e!.website!}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mt-1 inline-flex items-center gap-1 text-[11.5px] text-arcova-teal hover:underline"
-                  >
-                    {displayDomain}
-                    <ExternalLink className="h-2.5 w-2.5" />
-                  </a>
-                )}
-              </div>
-            </div>
-
-            {e?.company_name && (
-              <>
-                <button
-                  type="button"
-                  disabled={icpEditMode}
-                  onClick={() => !icpEditMode && setModelledOnOpen((v) => !v)}
-                  aria-expanded={modelledOnOpen}
-                  className="group flex w-full items-start gap-2 rounded-xl border border-arcova-navy/10 bg-white/50 px-3 py-2.5 text-left transition-colors hover:bg-white/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-arcova-teal/35 disabled:cursor-not-allowed"
-                >
-                  <ChevronDown
-                    className={cn(
-                      'mt-0.5 h-4 w-4 shrink-0 text-arcova-navy/45 transition-transform duration-200 group-hover:text-arcova-navy/60',
-                      modelledOnOpen ? 'rotate-180' : '',
-                    )}
-                    aria-hidden
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-manrope text-sm font-semibold text-arcova-navy">
-                      Modelled on {e.company_name}
-                    </span>
-                    <span className="mt-0.5 block text-xs leading-snug text-arcova-navy/55">
-                      {icpEditMode
-                        ? 'Reference snapshot is read-only during edit. Cancel to expand.'
-                        : modelledOnOpen
-                          ? 'Click to hide'
-                          : 'Click to see enrichment from this account'}
-                    </span>
-                  </span>
-                </button>
-
-                {modelledOnOpen && (
-                  <div className="space-y-2.5 rounded-xl border border-arcova-navy/8 bg-white/55 px-3 py-2.5">
-                    {e.website && displayDomain && (
+        <div className="flex min-w-0 flex-1 flex-col">
+          {icpEditMode ? (
+            <input
+              type="text"
+              value={savedIcpName}
+              onChange={(ev) => onIcpFieldChange?.('icpName', ev.target.value)}
+              placeholder="Profile name"
+              className="min-w-0 rounded-lg border border-arcova-navy/15 bg-white/80 px-2.5 py-1 text-sm font-semibold text-arcova-navy placeholder-arcova-navy/30 focus:border-arcova-teal/60 focus:outline-none"
+            />
+          ) : (
+            <>
+              <span className="block min-w-0 truncate font-manrope text-[17px] font-semibold tracking-[-0.014em] text-arcova-navy">
+                {savedIcpName || 'Target company profile'}
+              </span>
+              {e?.company_name && (
+                <span className="block min-w-0 truncate text-xs text-arcova-navy/45">
+                  Modelled on {e.company_name}
+                  {displayDomain && (
+                    <>
+                      {' · '}
                       <a
-                        href={e.website}
+                        href={e!.website!}
                         target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-xs text-arcova-teal hover:underline"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-0.5 text-arcova-teal hover:underline"
                       >
                         {displayDomain}
-                        <ExternalLink className="h-2.5 w-2.5 shrink-0" />
+                        <ExternalLink className="h-2.5 w-2.5" />
                       </a>
-                    )}
-                    {e.tagline && (
-                      <p className="m-0 text-xs italic leading-snug text-arcova-navy/50">{e.tagline}</p>
-                    )}
-                    {e.description?.[0] && (
-                      <p className="m-0 text-[12.5px] leading-[1.5] text-arcova-navy/75">{e.description[0]}</p>
-                    )}
+                    </>
+                  )}
+                </span>
+              )}
+            </>
+          )}
+        </div>
+      </div>
 
-                    {hasModelledOnFirmographics && (
-                      <div className="space-y-2 border-t border-arcova-navy/8 pt-2.5">
-                        <SetupSubLabel>Firmographics</SetupSubLabel>
-                        <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
-                          {(e.employee_count || e.employee_range) && (
-                            <SetupTargetModelledStat
-                              label="Employees"
-                              value={e.employee_count ? e.employee_count.toLocaleString() : (e.employee_range ?? '')}
-                            />
-                          )}
-                          {e.hq_city && (
-                            <SetupTargetModelledStat
-                              label="HQ"
-                              value={e.hq_city}
-                              subValue={e.hq_country ?? undefined}
-                            />
-                          )}
-                          {e.follower_count != null && (
-                            <SetupTargetModelledStat
-                              label="LinkedIn followers"
-                              value={e.follower_count.toLocaleString()}
-                            />
-                          )}
-                          {modelledOnFundingStatus && (
-                            <SetupTargetModelledStat label="Funding status" value={modelledOnFundingStatus} />
-                          )}
-                          {e.funding_stage && (
-                            <SetupTargetModelledStat label="Funding stage" value={e.funding_stage} />
-                          )}
-                          {e.total_funding_usd != null && (
-                            <SetupTargetModelledStat label="Total funding" value={formatCurrencyShort(e.total_funding_usd)} />
-                          )}
-                        </div>
-                        {(e.funding_resolution_summary || e.company_status) && (
-                          <div>
-                            <SetupSubLabel>Funding summary</SetupSubLabel>
-                            <p className="mt-1 text-[12px] leading-snug text-arcova-navy/70">
-                              {e.funding_resolution_summary ?? e.company_status}
-                            </p>
-                          </div>
-                        )}
+      {/* Modelled-on full-panel view (matches my-icps ICPCard) — hides criteria when shown */}
+      {modelledOnOpen && e && (
+        <div className="space-y-4 px-4 py-4">
+          {/* Top: name + linkedin link | logo */}
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              {e.website ? (
+                <a
+                  href={e.website}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-sm font-semibold leading-tight text-arcova-navy hover:underline"
+                >
+                  {e.company_name}
+                  <ExternalLink className="h-3 w-3 shrink-0 opacity-60" />
+                </a>
+              ) : (
+                <p className="text-sm font-semibold leading-tight text-arcova-navy">{e.company_name}</p>
+              )}
+              {e.linkedin_url && (
+                <div className="mt-0.5 flex flex-col gap-0.5">
+                  <a
+                    href={e.linkedin_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-xs text-arcova-teal hover:underline"
+                  >
+                    {e.linkedin_url.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')}
+                    <ExternalLink className="h-2.5 w-2.5 shrink-0" />
+                  </a>
+                </div>
+              )}
+            </div>
+            {e.logo_url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={e.logo_url}
+                alt={e.company_name ?? ''}
+                className="h-20 w-20 shrink-0 rounded-xl border border-arcova-navy/8 bg-arcova-navy/5 object-contain p-1"
+              />
+            ) : (
+              <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-xl border border-arcova-navy/8 bg-arcova-navy/5">
+                <Building2 className="h-9 w-9 text-arcova-navy/25" />
+              </div>
+            )}
+          </div>
+
+          {/* Two-column grid */}
+          <div className="grid grid-cols-2 gap-x-6 gap-y-4">
+            {/* Left column */}
+            <div className="space-y-5">
+              {e.description?.[0] && (
+                <div>
+                  <p className="mb-2 text-xs font-semibold text-arcova-navy/80">About {e.company_name ?? 'this company'}</p>
+                  <p className="text-xs leading-snug text-arcova-navy/65">{e.description[0]}</p>
+                </div>
+              )}
+
+              {(e.employee_count != null || e.employee_range || e.hq_city || e.follower_count != null) && (
+                <div>
+                  <p className="mb-2 text-xs font-semibold text-arcova-navy/80">Firmographics</p>
+                  <div className="space-y-1">
+                    {(e.employee_count != null || e.employee_range) && (
+                      <div className="flex items-baseline gap-2">
+                        <span className="w-28 shrink-0 text-xs text-arcova-navy/45">Employees</span>
+                        <span className="text-xs text-arcova-navy">
+                          {e.employee_count != null ? e.employee_count.toLocaleString() : e.employee_range}
+                          {e.employee_count != null && e.employee_range ? ` (${e.employee_range})` : ''}
+                        </span>
                       </div>
                     )}
-
-                    {hasModelledOnNarrative && (
-                      <div className="space-y-2 border-t border-arcova-navy/8 pt-2.5">
-                        {(referenceCustomerSegments.customerOrganizations.length > 0
-                          || referenceCustomerSegments.buyerTypes.length > 0) && (
-                          <div className="space-y-2">
-                            {referenceCustomerSegments.customerOrganizations.length > 0 && (
-                              <div>
-                                <SetupSubLabel>Customer organisations</SetupSubLabel>
-                                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                                  {referenceCustomerSegments.customerOrganizations.map((t) => (
-                                    <span
-                                      key={t}
-                                      className="inline-flex rounded-full border border-arcova-teal/20 bg-arcova-teal/10 px-2.5 py-0.5 text-[11px] font-medium text-arcova-teal"
-                                    >
-                                      {t}
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                            {referenceCustomerSegments.buyerTypes.length > 0 && (
-                              <div>
-                                <SetupSubLabel>Buyer / user types</SetupSubLabel>
-                                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                                  {referenceCustomerSegments.buyerTypes.map((t) => (
-                                    <span
-                                      key={t}
-                                      className="inline-flex rounded-full border border-arcova-teal/20 bg-arcova-teal/10 px-2.5 py-0.5 text-[11px] font-medium text-arcova-teal"
-                                    >
-                                      {t}
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        {(e.value_propositions?.length ?? 0) > 0 && (
-                          <div>
-                            <SetupSubLabel>Value props</SetupSubLabel>
-                            <SetupBullets items={e.value_propositions!.slice(0, 3)} />
-                          </div>
-                        )}
-                        {e.linkedin_url && (
-                          <a
-                            href={e.linkedin_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 break-all text-xs text-arcova-teal hover:underline"
-                          >
-                            {e.linkedin_url.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')}
-                            <ExternalLink className="h-2.5 w-2.5 shrink-0" />
-                          </a>
-                        )}
+                    {e.hq_city && (
+                      <div className="flex items-baseline gap-2">
+                        <span className="w-28 shrink-0 text-xs text-arcova-navy/45">HQ</span>
+                        <span className="text-xs text-arcova-navy">{e.hq_city}{e.hq_country ? `, ${e.hq_country}` : ''}</span>
+                      </div>
+                    )}
+                    {e.follower_count != null && (
+                      <div className="flex items-baseline gap-2">
+                        <span className="w-28 shrink-0 text-xs text-arcova-navy/45">LinkedIn</span>
+                        <span className="text-xs text-arcova-navy">{e.follower_count.toLocaleString()} followers</span>
                       </div>
                     )}
                   </div>
-                )}
-              </>
-            )}
+                </div>
+              )}
+
+              {(modelledOnFundingStatus || e.funding_stage || e.total_funding_usd != null || e.arr_estimate || e.funding_resolution_summary || e.company_status) && (
+                <div>
+                  <p className="mb-2 text-xs font-semibold text-arcova-navy/80">Funding</p>
+                  <div className="space-y-1">
+                    {modelledOnFundingStatus && (
+                      <div className="flex items-baseline gap-2">
+                        <span className="w-28 shrink-0 text-xs text-arcova-navy/45">Status</span>
+                        <span className="text-xs text-arcova-navy">{modelledOnFundingStatus}</span>
+                      </div>
+                    )}
+                    {e.funding_stage && (
+                      <div className="flex items-baseline gap-2">
+                        <span className="w-28 shrink-0 text-xs text-arcova-navy/45">Stage</span>
+                        <span className="text-xs text-arcova-navy">{e.funding_stage}</span>
+                      </div>
+                    )}
+                    {e.total_funding_usd != null && (
+                      <div className="flex items-baseline gap-2">
+                        <span className="w-28 shrink-0 text-xs text-arcova-navy/45">Total raised</span>
+                        <span className="text-xs text-arcova-navy">{formatCurrencyShort(e.total_funding_usd)}</span>
+                      </div>
+                    )}
+                    {e.arr_estimate && (
+                      <div className="flex items-baseline gap-2">
+                        <span className="w-28 shrink-0 text-xs text-arcova-navy/45">ARR</span>
+                        <span className="text-xs text-arcova-navy">{e.arr_estimate}</span>
+                      </div>
+                    )}
+                  </div>
+                  {(e.funding_resolution_summary || e.company_status) && (
+                    <div className="mt-2">
+                      <p className="mb-1 text-xs text-arcova-navy/35">Funding summary</p>
+                      <p className="text-xs leading-snug text-arcova-navy/50">
+                        {e.funding_resolution_summary ?? e.company_status}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {referenceCustomerSegments.customerOrganizations.length > 0 && (
+                <div>
+                  <p className="mb-1 text-xs font-semibold text-arcova-navy/80">Sells to companies like</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {referenceCustomerSegments.customerOrganizations.map((t) => (
+                      <span
+                        key={t}
+                        className="inline-flex rounded-full border border-arcova-teal/20 bg-arcova-teal/10 px-2.5 py-0.5 text-xs font-medium text-arcova-teal"
+                      >
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {referenceCustomerSegments.buyerTypes.length > 0 && (
+                <div>
+                  <p className="mb-1 text-xs font-semibold text-arcova-navy/80">Sells to people like</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {referenceCustomerSegments.buyerTypes.map((t) => (
+                      <span
+                        key={t}
+                        className="inline-flex rounded-full border border-arcova-teal/20 bg-arcova-teal/10 px-2.5 py-0.5 text-xs font-medium text-arcova-teal"
+                      >
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {(e.competitors_enriched?.length ?? 0) > 0 && (
+                <div className="space-y-1">
+                  <p className="text-xs font-semibold text-arcova-navy/80">Competitors</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {e.competitors_enriched!.map((c, i) => {
+                      const href = c.url?.trim() || `https://www.google.com/search?q=${encodeURIComponent(c.name)}`;
+                      return (
+                        <a
+                          key={`${c.name}-${i}`}
+                          href={href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-0.5 rounded-full border border-arcova-teal/20 bg-arcova-teal/10 px-2.5 py-0.5 text-xs font-medium text-arcova-teal hover:underline"
+                        >
+                          <span className="max-w-[14rem] truncate">{c.name}</span>
+                          <ExternalLink className="h-2.5 w-2.5 shrink-0 opacity-70" />
+                        </a>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Right column */}
+            <div className="space-y-5">
+              {(e.products?.length ?? 0) > 0 && (
+                <div>
+                  <p className="mb-2 text-xs font-semibold text-arcova-navy/80">Products</p>
+                  <ul className="space-y-1.5">
+                    {e.products!.map((p, i) => (
+                      <li key={i} className="text-xs leading-snug text-arcova-navy/70">{p}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {(e.services?.length ?? 0) > 0 && (
+                <div>
+                  <p className="mb-2 text-xs font-semibold text-arcova-navy/80">Services</p>
+                  <ul className="space-y-1.5">
+                    {e.services!.map((s, i) => (
+                      <li key={i} className="text-xs leading-snug text-arcova-navy/70">{s}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {(e.technologies?.length ?? 0) > 0 && (
+                <div>
+                  <p className="mb-2 text-xs font-semibold text-arcova-navy/80">Technology</p>
+                  <ul className="space-y-1.5">
+                    {e.technologies!.map((t, i) => (
+                      <li key={i} className="text-xs leading-snug text-arcova-navy/70">{t}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
           </div>
-        )}
+        </div>
+      )}
 
+      {/* Criteria body — hidden when modelled-on view is shown */}
+      {!modelledOnOpen && (
+      <div className="flex flex-col gap-3.5 p-4">
+        {/* Fallback summary when no reference account is available */}
         {!(e?.company_name || displayDomain) && e?.description?.[0] && (
-          <SetupSection label="Summary" defaultOpen>
+          <SetupTargetFieldRow label="Summary">
             <p className="m-0 text-[12.5px] leading-[1.5] text-arcova-navy">{e.description[0]}</p>
-          </SetupSection>
+          </SetupTargetFieldRow>
         )}
-
-        {icpEditMode ? (
-          <input
-            type="text"
-            value={savedIcpName}
-            onChange={(ev) => onIcpFieldChange?.('icpName', ev.target.value)}
-            className={SETUP_SELECT}
-            placeholder="Profile name"
-          />
-        ) : savedIcpName ? (
-          <p className="m-0 font-manrope text-sm font-semibold text-arcova-navy">{savedIcpName}</p>
-        ) : null}
 
         {/* Company type */}
         {(panelCompany.companyType || icpEditMode) && (
-          <SetupSection label="Company type" defaultOpen={!!panelCompany.companyType}>
+          <SetupTargetFieldRow label="Company type">
             {icpEditMode ? (
               <select
                 value={panelCompany.companyType ?? ''}
@@ -1934,11 +2056,11 @@ function SetupTargetCompanyCard({
             ) : (
               panelCompany.companyType && <SetupTagRow items={[panelCompany.companyType]} />
             )}
-          </SetupSection>
+          </SetupTargetFieldRow>
         )}
 
         {isSaasCompanyType(panelCompany.companyType) && (platformCategoryDisplay || icpEditMode) && (
-          <SetupSection label="Platform category" defaultOpen={!!platformCategoryDisplay}>
+          <SetupTargetFieldRow label="Platform category">
             {icpEditMode ? (
               <input
                 type="text"
@@ -1951,11 +2073,11 @@ function SetupTargetCompanyCard({
             ) : (
               platformCategoryDisplay && <SetupTagRow items={[platformCategoryDisplay]} />
             )}
-          </SetupSection>
+          </SetupTargetFieldRow>
         )}
 
         {(panelCompany.therapeuticAreas.length > 0 || icpEditMode) && (
-          <SetupSection label="Therapeutic areas" defaultOpen={panelCompany.therapeuticAreas.length > 0}>
+          <SetupTargetFieldRow label="Therapeutic areas">
             {icpEditMode ? (
               <>
                 {panelCompany.therapeuticAreas.length > 0 && (
@@ -1985,11 +2107,11 @@ function SetupTargetCompanyCard({
             ) : (
               <SetupTagRow items={panelCompany.therapeuticAreas} />
             )}
-          </SetupSection>
+          </SetupTargetFieldRow>
         )}
 
         {(panelCompany.modalities.length > 0 || icpEditMode) && (
-          <SetupSection label="Modalities" defaultOpen={panelCompany.modalities.length > 0}>
+          <SetupTargetFieldRow label="Modalities">
             {icpEditMode ? (
               <>
                 {panelCompany.modalities.length > 0 && (
@@ -2016,11 +2138,11 @@ function SetupTargetCompanyCard({
             ) : (
               <SetupTagRow items={panelCompany.modalities} />
             )}
-          </SetupSection>
+          </SetupTargetFieldRow>
         )}
 
         {(panelCompany.developmentStages.length > 0 || icpEditMode) && (
-          <SetupSection label="Pipeline stage" defaultOpen={panelCompany.developmentStages.length > 0}>
+          <SetupTargetFieldRow label="Pipeline stage">
             {icpEditMode ? (
               <>
                 {panelCompany.developmentStages.length > 0 && (
@@ -2050,11 +2172,11 @@ function SetupTargetCompanyCard({
             ) : (
               <SetupTagRow items={panelCompany.developmentStages} />
             )}
-          </SetupSection>
+          </SetupTargetFieldRow>
         )}
 
         {(panelCompany.companySizes.length > 0 || icpEditMode) && (
-          <SetupSection label="Company size" defaultOpen={panelCompany.companySizes.length > 0}>
+          <SetupTargetFieldRow label="Company size">
             {icpEditMode ? (
               <>
                 {panelCompany.companySizes.length > 0 && (
@@ -2081,11 +2203,11 @@ function SetupTargetCompanyCard({
             ) : (
               <SetupTagRow items={panelCompany.companySizes} />
             )}
-          </SetupSection>
+          </SetupTargetFieldRow>
         )}
 
         {(panelCompany.liFollowerSizes.length > 0 || icpEditMode) && (
-          <SetupSection label="LinkedIn follower base" defaultOpen={panelCompany.liFollowerSizes.length > 0}>
+          <SetupTargetFieldRow label="LinkedIn followers">
             {icpEditMode ? (
               <>
                 {panelCompany.liFollowerSizes.length > 0 && (
@@ -2115,11 +2237,11 @@ function SetupTargetCompanyCard({
             ) : (
               <SetupTagRow items={panelCompany.liFollowerSizes} />
             )}
-          </SetupSection>
+          </SetupTargetFieldRow>
         )}
 
         {(panelCompany.fundingStages.length > 0 || icpEditMode) && (
-          <SetupSection label="Funding stage" defaultOpen={panelCompany.fundingStages.length > 0}>
+          <SetupTargetFieldRow label="Funding">
             {icpEditMode ? (
               <>
                 {panelCompany.fundingStages.length > 0 && (
@@ -2146,110 +2268,78 @@ function SetupTargetCompanyCard({
             ) : (
               <SetupTagRow items={panelCompany.fundingStages} />
             )}
-          </SetupSection>
-        )}
-
-        {showSignalPills && panelCompany.signals.length > 0 && (
-          <SetupSection label="Company signals">
-            <div className="flex flex-wrap gap-1.5">
-              {panelCompany.signals.map((signalId) => (
-                <span
-                  key={signalId}
-                  className="inline-flex rounded-full border border-arcova-teal/20 bg-arcova-teal/10 px-2.5 py-1 text-[11.5px] font-medium text-arcova-teal"
-                >
-                  {getSignalDisplayName(signalId)}
-                </span>
-              ))}
-            </div>
-          </SetupSection>
+          </SetupTargetFieldRow>
         )}
 
         {(panelCompany.targetCustomers.length > 0
           || panelCompany.buyerTypes.length > 0
           || icpEditMode) && (
-          <SetupSection label="Customer segments" defaultOpen={panelCompany.targetCustomers.length + panelCompany.buyerTypes.length > 0}>
+          <SetupTargetFieldRow label="Customer segments">
             {icpEditMode ? (
               <div className="space-y-3">
-                <div>
-                  <p className="mb-1.5 text-[9.5px] font-semibold uppercase tracking-[0.12em] text-arcova-navy/40">
-                    Sells to companies like
-                  </p>
-                  <SetupLightEditableTagList
-                    items={panelCompany.targetCustomers}
-                    onChange={(items) => onIcpFieldChange?.('targetCustomers', items)}
-                    addPlaceholder="Add company segment…"
-                  />
-                </div>
-                <div>
-                  <p className="mb-1.5 text-[9.5px] font-semibold uppercase tracking-[0.12em] text-arcova-navy/40">
-                    Sells to people like
-                  </p>
-                  <SetupLightEditableTagList
-                    items={panelCompany.buyerTypes}
-                    onChange={(items) => onIcpFieldChange?.('customersWeServe', items)}
-                    addPlaceholder="Add buyer or team segment…"
-                  />
-                </div>
+                <SetupLightEditableTagList
+                  items={panelCompany.targetCustomers}
+                  onChange={(items) => onIcpFieldChange?.('targetCustomers', items)}
+                  addPlaceholder="Add company segment…"
+                />
+                <SetupLightEditableTagList
+                  items={panelCompany.buyerTypes}
+                  onChange={(items) => onIcpFieldChange?.('customersWeServe', items)}
+                  addPlaceholder="Add buyer or team segment…"
+                />
               </div>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-3">
                 {panelCompany.targetCustomers.length > 0 && (
-                  <div>
-                    <p className="mb-1.5 text-[9.5px] font-semibold uppercase tracking-[0.12em] text-arcova-navy/40">
-                      Sells to companies like
-                    </p>
-                    <SetupTagRow items={panelCompany.targetCustomers} link />
-                  </div>
+                  <SetupTagRow items={panelCompany.targetCustomers} link />
                 )}
                 {panelCompany.buyerTypes.length > 0 && (
-                  <div>
-                    <p className="mb-1.5 text-[9.5px] font-semibold uppercase tracking-[0.12em] text-arcova-navy/40">
-                      Sells to people like
-                    </p>
-                    <SetupTagRow items={panelCompany.buyerTypes} link />
-                  </div>
+                  <SetupTagRow items={panelCompany.buyerTypes} link />
                 )}
               </div>
             )}
-          </SetupSection>
+          </SetupTargetFieldRow>
         )}
 
         {hasCompetitors && (
-          <SetupSection label="Competitors of theirs" defaultOpen={panelCompany.competitors.length > 0 || icpEditMode}>
-            <div className="space-y-2">
-              {panelCompany.competitors.map((c, i) => (
-                <div key={`${c.name}-${i}`} className="flex items-center gap-1.5">
-                  <div className="flex min-w-0 flex-1 items-center gap-1">
-                    {c.url ? (
-                      <a
-                        href={c.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex min-w-0 items-center gap-1 truncate text-xs font-semibold text-arcova-teal hover:underline"
-                      >
-                        <span className="truncate">{c.name}</span>
-                        <ExternalLink className="h-2.5 w-2.5 shrink-0" />
-                      </a>
-                    ) : (
-                      <p className="m-0 truncate text-xs font-semibold text-arcova-navy">{c.name}</p>
-                    )}
-                  </div>
-                  {icpEditMode && onIcpFieldChange && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onIcpFieldChange(
-                          'competitors',
-                          panelCompany.competitors.filter((_, j) => j !== i),
-                        )}
-                      className="shrink-0 text-arcova-navy/30 transition-colors hover:text-arcova-navy/55"
-                      aria-label={`Remove ${c.name}`}
+          <SetupTargetFieldRow label="Competitors">
+            <div className="flex flex-wrap gap-1.5">
+              {panelCompany.competitors.map((c, i) => {
+                const href = c.url?.trim() || `https://www.google.com/search?q=${encodeURIComponent(c.name)}`;
+                return (
+                  <span
+                    key={`${c.name}-${i}`}
+                    className="inline-flex max-w-full items-center gap-1 rounded-full border border-arcova-teal/20 bg-arcova-teal/10 px-2.5 py-1 text-[11.5px] font-medium text-arcova-teal"
+                  >
+                    <a
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex min-w-0 max-w-[14rem] items-center gap-1 truncate hover:underline"
+                      title={c.name}
                     >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </div>
-              ))}
+                      <span className="truncate">{c.name}</span>
+                      <ExternalLink className="h-3 w-3 shrink-0 opacity-70" />
+                    </a>
+                    {icpEditMode && onIcpFieldChange && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onIcpFieldChange(
+                            'competitors',
+                            panelCompany.competitors.filter((_, j) => j !== i),
+                          )}
+                        className="shrink-0 rounded-full p-0.5 text-arcova-teal/50 transition-colors hover:bg-arcova-teal/20 hover:text-arcova-teal"
+                        aria-label={`Remove ${c.name}`}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    )}
+                  </span>
+                );
+              })}
+            </div>
+            <div className="space-y-2">
               {icpEditMode && onIcpFieldChange && (
                 <div className="flex flex-wrap items-center gap-2 pt-1">
                   <input
@@ -2275,17 +2365,39 @@ function SetupTargetCompanyCard({
                 </div>
               )}
             </div>
-          </SetupSection>
+          </SetupTargetFieldRow>
         )}
+      </div>
+      )}
 
-        {showTargetCardFooter && (
-          <div className="border-t border-arcova-navy/8 pt-3">
-            {confirmingDelete ? (
-              <div className="space-y-2">
-                <p className="m-0 text-xs text-arcova-navy/70">
-                  Delete this target company profile? This can&apos;t be undone.
-                </p>
-                <div className="flex flex-wrap items-center gap-2">
+      {showTargetCardFooter && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-arcova-navy/8 px-4 py-3">
+          {/* Bottom-left: Modelled on toggle (matches my-icps footer) */}
+            <div className="flex items-center gap-3">
+              {!icpEditMode && !confirmingDelete && e?.company_name && (
+                <button
+                  type="button"
+                  onClick={() => setModelledOnOpen((v) => !v)}
+                  aria-expanded={modelledOnOpen}
+                  className="flex items-center gap-1 text-xs text-arcova-navy/45 underline underline-offset-2 transition-colors hover:text-arcova-navy/70"
+                >
+                  <ChevronDown
+                    className={cn('h-3 w-3 transition-transform duration-200', modelledOnOpen ? 'rotate-180' : 'rotate-90')}
+                    aria-hidden
+                  />
+                  {modelledOnOpen ? 'Back to summary' : `Modelled on ${e.company_name}`}
+                </button>
+              )}
+            </div>
+
+          {/* Bottom-right: action buttons (hidden in modelled-on view, matching my-icps) */}
+          {!modelledOnOpen && (
+            <div className="flex flex-wrap items-center gap-2">
+              {confirmingDelete ? (
+                <>
+                  <p className="m-0 mr-1 text-xs text-arcova-navy/70">
+                    Delete this profile?
+                  </p>
                   <button
                     type="button"
                     onClick={() => {
@@ -2305,58 +2417,67 @@ function SetupTargetCompanyCard({
                     <X className="h-3 w-3" />
                     Cancel
                   </button>
-                </div>
-              </div>
-            ) : icpEditMode ? (
-              <div className="flex flex-wrap items-center gap-2">
-                {onSaveIcp && (
-                  <button
-                    type="button"
-                    onClick={() => void onSaveIcp()}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-teal px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-arcova-teal/90"
-                  >
-                    <Save className="h-3 w-3" />
-                    Save changes
-                  </button>
-                )}
-                {onCancelIcp && (
-                  <button
-                    type="button"
-                    onClick={onCancelIcp}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-arcova-navy/12 bg-white/80 px-3 py-1.5 text-xs font-medium text-arcova-navy/60 hover:bg-white"
-                  >
-                    <X className="h-3 w-3" />
-                    Cancel
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div className="flex flex-wrap items-center gap-2">
-                {onReenrichIcp && (
-                  <button
-                    type="button"
-                    onClick={onReenrichIcp}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-arcova-navy/12 bg-white/80 px-3 py-1.5 text-xs font-medium text-arcova-navy/65 transition-colors hover:bg-white"
-                  >
-                    <RefreshCw className="h-3 w-3" />
-                    Re-enrich
-                  </button>
-                )}
-                {onDeleteIcp && (
-                  <button
-                    type="button"
-                    onClick={() => setConfirmingDelete(true)}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/40 bg-red-500/[0.06] px-3 py-1.5 text-xs font-medium text-red-700/90 transition-colors hover:border-red-500/50 hover:bg-red-500/10"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                    Delete
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+                </>
+              ) : icpEditMode ? (
+                <>
+                  {onSaveIcp && (
+                    <button
+                      type="button"
+                      onClick={() => void onSaveIcp()}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-teal px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-arcova-teal/90"
+                    >
+                      <Save className="h-3 w-3" />
+                      Save changes
+                    </button>
+                  )}
+                  {onCancelIcp && (
+                    <button
+                      type="button"
+                      onClick={onCancelIcp}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-arcova-navy/12 bg-white/80 px-3 py-1.5 text-xs font-medium text-arcova-navy/60 hover:bg-white"
+                    >
+                      <X className="h-3 w-3" />
+                      Cancel
+                    </button>
+                  )}
+                </>
+              ) : (
+                <>
+                  {onEditIcp && (
+                    <button
+                      type="button"
+                      onClick={onEditIcp}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-arcova-navy/10 bg-white/60 px-3 py-1.5 text-xs font-medium text-arcova-navy/60 transition-colors hover:bg-white hover:text-arcova-navy"
+                    >
+                      Edit
+                    </button>
+                  )}
+                  {onReenrichIcp && (
+                    <button
+                      type="button"
+                      onClick={onReenrichIcp}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-arcova-navy/12 bg-white/80 px-3 py-1.5 text-xs font-medium text-arcova-navy/65 transition-colors hover:bg-white"
+                    >
+                      <RefreshCw className="h-3 w-3" />
+                      Re-enrich
+                    </button>
+                  )}
+                  {onDeleteIcp && (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmingDelete(true)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-red-400/40 bg-red-500/[0.06] px-3 py-1.5 text-xs font-medium text-red-700/90 transition-colors hover:border-red-500/50 hover:bg-red-500/10"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                      Delete
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </article>
   );
 }
@@ -2558,16 +2679,20 @@ function visibleGreetingStyleMessages(thread: DisplayMsg[], welcomePart1: string
 function SetupGlassAgentMetaStrip({
   clock,
   statusKey,
+  centerSlot,
 }: {
   clock: Date;
   statusKey: 'waiting' | 'thinking' | 'ready';
+  /** Optional centre slot — used to embed the step indicator inline with Arcova status + clock. */
+  centerSlot?: ReactNode;
 }) {
   return (
     <div
-      className="mb-[1cm] flex min-h-[3.5rem] shrink-0 items-center justify-between text-[11px] tracking-[0.04em] text-slate-500"
+      // 3-column grid keeps Arcova · status on the left, step indicator centred, and clock on the right.
+      className="mb-[1cm] grid min-h-[3.5rem] shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-3 text-[11px] tracking-[0.04em] text-slate-500"
       aria-live="polite"
     >
-      <span className="inline-flex items-center gap-2">
+      <span className="inline-flex items-center gap-2 justify-self-start">
         <span
           className="h-1.5 w-1.5 shrink-0 rounded-full bg-arcova-teal"
           style={{
@@ -2578,7 +2703,8 @@ function SetupGlassAgentMetaStrip({
         />
         <span className="font-medium text-slate-500">Arcova · {statusKey}</span>
       </span>
-      <time className="tabular-nums text-[10px] text-slate-400" dateTime={clock.toISOString()}>
+      <span className="justify-self-center">{centerSlot}</span>
+      <time className="justify-self-end tabular-nums text-[10px] text-slate-400" dateTime={clock.toISOString()}>
         {clock.toLocaleTimeString('en-GB', {
           hour: '2-digit',
           minute: '2-digit',
@@ -2670,6 +2796,60 @@ function TypingHeadline({ part1, part2, speed = TYPING_MS }: { part1: string; pa
 }
 
 // ── Setup: breathing orb (default: compact; `welcome` = prototype shell with rings / core / optional busy layer) ──
+
+/**
+ * Auto-advancing checklist used on the orb saving screen.
+ * Cycles through `steps` at a steady pace so the user sees all steps "lighting up" even
+ * when the back-end phase changes are quicker than a single step would take.
+ */
+function SetupOrbProgressList({ steps, intervalMs = 750 }: { steps: string[]; intervalMs?: number }) {
+  const [index, setIndex] = useState(0);
+  useEffect(() => {
+    if (index >= steps.length - 1) return;
+    const t = setTimeout(() => setIndex((i) => Math.min(steps.length - 1, i + 1)), intervalMs);
+    return () => clearTimeout(t);
+  }, [index, steps.length, intervalMs]);
+
+  return (
+    <ul className="mx-auto w-full max-w-[280px] space-y-2.5">
+      {steps.map((label, i) => {
+        const isDone = i < index;
+        const isActive = i === index;
+        return (
+          <li key={i} className="flex items-center gap-2.5 text-[13px] leading-snug">
+            <span className="grid h-4 w-4 shrink-0 place-items-center">
+              {isDone ? (
+                <Check className="h-3.5 w-3.5 text-arcova-teal" strokeWidth={2.6} />
+              ) : isActive ? (
+                <span
+                  className="h-2 w-2 rounded-full bg-arcova-teal"
+                  style={{
+                    animation: 'arcova-dot-pulse 1.4s ease-in-out infinite',
+                    boxShadow: '0 0 0 4px rgba(0, 164, 180, 0.18)',
+                  }}
+                />
+              ) : (
+                <span className="h-1.5 w-1.5 rounded-full bg-arcova-navy/15" />
+              )}
+            </span>
+            <span
+              className={cn(
+                'transition-colors',
+                isDone
+                  ? 'text-arcova-navy/55'
+                  : isActive
+                    ? 'font-medium text-arcova-navy/85'
+                    : 'text-arcova-navy/30',
+              )}
+            >
+              {label}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
 
 function SetupOrb({
   size = 'lg',
@@ -3379,7 +3559,7 @@ function SetupInlineEnrichmentPanel({
 }) {
   return (
     <div
-      className="w-full rounded-2xl rounded-tl-sm bg-gradient-to-br from-slate-50 to-white px-4 py-4 font-manrope text-slate-700 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.9)] ring-1 ring-slate-200/55"
+      className="w-full rounded-2xl rounded-tl-sm bg-gradient-to-br from-arcova-teal/[0.07] to-white px-4 py-4 font-manrope text-slate-700 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.9)] ring-1 ring-arcova-teal/15"
       style={{ animation: 'arcova-msg-in 0.2s ease' }}
     >
       <p className="text-sm leading-snug text-slate-600">{statusLine}</p>
@@ -3578,6 +3758,10 @@ export default function SetupFlow({
     fundingStages: [], signals: [], targetCustomers: [], buyerTypes: [], competitors: [],
   });
   const [panelPersona, setPanelPersona] = useState<PanelPersonaData>({ functions: [], seniority: [], jobTitles: [], signals: [] });
+  // Pending free-text values for "add custom function / seniority" inputs (edit mode only).
+  // Once submitted they're appended to panelPersona.functions / .seniority as regular pills.
+  const [pendingCustomFunction, setPendingCustomFunction] = useState('');
+  const [pendingCustomSeniority, setPendingCustomSeniority] = useState('');
   const [buyingTeamEditMode, setBuyingTeamEditMode] = useState(false);
   const [savedIcpName, setSavedIcpName] = useState('');
   const [savedPersonaName, setSavedPersonaName] = useState('');
@@ -4551,23 +4735,12 @@ export default function SetupFlow({
     }
     if (resolvedSuggestions.length > 0) {
       setIcpSuggestions(resolvedSuggestions);
-      const companyName = (editingFindingsData?.company_name as string | undefined) ?? 'your company';
-      const segmentList = resolvedSuggestions.map((s) => `${s.name} (${s.segmentLabel})`).join(', ');
-      const { displayParts } = await askClaude({
-        mode: 'narration',
-        extra: {
-          role: 'user',
-          content:
-            `[System: the user confirmed their company profile for ${companyName}. No em dashes, no long essay. ` +
-            `Use four separate chat bubbles. Between bubbles, output a line containing only <<< msg >>> (after bubbles 1-3, not after bubble 4). ` +
-            `Bubble 1: brief ack that their profile looks good. ` +
-            `Bubble 2: one line on purpose, we are defining ideal target accounts, real companies they want as customers, so we can build buying group profiles. ` +
-            `Bubble 3: example companies for different buyer types: ${segmentList}. ` +
-            `Bubble 4: they can tap one to start or paste their own URL; if unsure, the suggestions came from their space and picking one or typing is fine. ` +
-            `Each bubble: 1-3 short sentences.]`,
-        },
-      });
-      if (displayParts.length) await sayBeats(displayParts);
+      const suggestionCountLabel = describeSuggestionCount(resolvedSuggestions.length);
+      await sayBeats([
+        'Your company profile looks good.',
+        'Now let’s define ideal target accounts so we can build the right buying group profiles.',
+        `If you’re not sure, we’ve suggested ${suggestionCountLabel} target profile${resolvedSuggestions.length === 1 ? '' : 's'} below based on your company, and you can pick one or keep typing.`,
+      ]);
       setPhase('icp_suggestion');
       setInput(true);
       return;
@@ -4717,6 +4890,73 @@ export default function SetupFlow({
   const handleLeaveArcovaSetup = useCallback(() => {
     router.push(ROUTES.today);
   }, [router]);
+
+  /** Dev-only: load a real saved ICP from the API and jump to target review for manual testing. */
+  const fetchAndApplyDevSeedIcp = useCallback(async () => {
+    try {
+      const res = await fetch('/api/company-criteria');
+      if (!res.ok) return;
+      const payload = (await res.json()) as { data?: TargetCompanyProfile[] };
+      const list = payload.data ?? [];
+      const picked = pickDevSeedIcp(list);
+      if (!picked) return;
+
+      const icp = picked as unknown as Record<string, unknown>;
+      icpIdRef.current = typeof picked.id === 'string' ? picked.id : null;
+      setSavedIcpName(typeof icp.name === 'string' ? icp.name : '');
+
+      const taxonomy = {
+        companyType: typeof icp.company_type === 'string' ? icp.company_type : '',
+        platformCategory: visiblePlatformCategory(
+          typeof icp.company_type === 'string' ? icp.company_type : '',
+          typeof icp.platform_category === 'string' ? icp.platform_category : '',
+        ),
+        companySizes: Array.isArray(icp.company_sizes) ? (icp.company_sizes as string[]) : [],
+        liFollowerSizes: Array.isArray(icp.li_follower_sizes) ? (icp.li_follower_sizes as string[]) : [],
+        therapeuticAreas: Array.isArray(icp.therapeutic_areas) ? (icp.therapeutic_areas as string[]) : [],
+        modalities: Array.isArray(icp.modalities) ? (icp.modalities as string[]) : [],
+        developmentStages: Array.isArray(icp.development_stages) ? (icp.development_stages as string[]) : [],
+        customerTherapeuticAreas: Array.isArray(icp.customer_therapeutic_areas)
+          ? (icp.customer_therapeutic_areas as string[])
+          : [],
+        customerModalities: Array.isArray(icp.customer_modalities) ? (icp.customer_modalities as string[]) : [],
+        customerDevelopmentStages: Array.isArray(icp.customer_development_stages)
+          ? (icp.customer_development_stages as string[])
+          : [],
+        fundingStages: Array.isArray(icp.funding_stages) ? (icp.funding_stages as string[]) : [],
+        signals: normalizeOrderedSignalIds(icp.signals),
+        targetCustomers: Array.isArray(icp.target_customers) ? (icp.target_customers as string[]) : [],
+        buyerTypes: Array.isArray(icp.buyer_types) ? (icp.buyer_types as string[]) : [],
+        competitors: Array.isArray(icp.competitors)
+          ? (icp.competitors as import('@/components/SetupProfilePanel').CompetitorItem[])
+          : [],
+      };
+
+      setPanelCompany(taxonomy);
+      setReviewDraft(taxonomy);
+      companyRef.current = taxonomy;
+      selectedCompanyRef.current = picked;
+
+      const enrichment = icp.example_company_enrichment as TargetCompanyEnrichmentResult | null | undefined;
+      if (enrichment) {
+        setEnrichedTargetCompany(enrichment);
+        setReviewedCompanyName(typeof enrichment.company_name === 'string' ? enrichment.company_name : '');
+        if (typeof enrichment.website === 'string' && enrichment.website.trim()) {
+          lastTargetUrlRef.current = enrichment.website.trim();
+        }
+      } else {
+        setEnrichedTargetCompany(null);
+        setReviewedCompanyName(typeof icp.name === 'string' ? icp.name : '');
+      }
+
+      setIcpEditMode(false);
+      setThinking(false);
+      setInput(false);
+      setPhase('customer_url_review');
+    } catch {
+      /* dev-only */
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- stable setters + refs for dev harness
 
   const handleResumeRestart = useCallback(async () => {
     if (typeof window !== 'undefined' && !window.confirm(START_AGAIN_CONFIRM)) return;
@@ -5417,12 +5657,11 @@ export default function SetupFlow({
     setIcpEditMode(false);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleSaveIcp = useCallback(async () => {
+  const handleSaveIcp = useCallback(() => {
+    // Just exit edit mode — field changes are already in state via onIcpFieldChange.
+    // Advancing to the next phase is reserved for the explicit "Looks good — continue" CTA.
     setIcpEditMode(false);
-    if (phase === 'customer_url_review') {
-      await handleReviewConfirm();
-    }
-  }, [phase]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleIcpFieldChange = useCallback((field: string, value: import('@/components/SetupProfilePanel').IcpChangeValue) => {
     if (field === 'icpName') {
@@ -5841,9 +6080,10 @@ export default function SetupFlow({
         }
         if (remaining.length > 0) {
           setIcpSuggestions(remaining);
+          setThinking(false);
           await sayBeats([
             'Welcome back. Let’s set up another ICP.',
-            'Keep this one focused on a distinct slice of the market so it does not overlap with your existing profiles.',
+            'Aim for a target company or account that feels different from your existing profiles — a different sector, size, or buying team works well.',
             remaining.length > 1
               ? 'Pick one of the suggestions below, or type in your own company.'
               : 'I’ve put a suggested company below, or you can type in your own company.',
@@ -5855,6 +6095,7 @@ export default function SetupFlow({
 
         // All previous suggestions enrolled or none stored — they have one in mind
         setPhase('customer_url_conversation');
+        setThinking(false);
         setInput(true);
         await sayBeats([
           'Welcome back. Let’s set up another ICP.',
@@ -6190,23 +6431,133 @@ export default function SetupFlow({
   const welcomeChatPart1 = `Hi ${firstName || 'there'}, let's get you set up. `;
   const welcomeChatPart2 = `First, what's your company's website?`;
   const canUseDevForward = isDevSetupTestMode && manualForwardHistoryRef.current.length > 0;
+  const hasStoredTargetReview =
+    enrichedTargetCompany != null ||
+    icpIdRef.current != null ||
+    (Boolean(lastTargetUrlRef.current) &&
+      (Boolean(reviewedCompanyName?.trim()) || Boolean(companyRef.current.companyType)));
+  const hasStoredBuyingTeamReview =
+    personaIdRef.current != null ||
+    panelPersona.functions.length > 0 ||
+    panelPersona.seniority.length > 0 ||
+    (panelPersona.jobTitles?.length ?? 0) > 0;
+  const canUseStoredTargetForward =
+    entryPoint === 'target-company' &&
+    !canUseDevForward &&
+    hasStoredTargetReview &&
+    (
+      phase === 'greeting' ||
+      phase === 'customer_url_input' ||
+      phase === 'customer_url_conversation' ||
+      phase === 'icp_suggestion'
+    );
+  const canUseStoredBuyingTeamForward =
+    entryPoint === 'target-company' &&
+    !canUseDevForward &&
+    hasStoredBuyingTeamReview &&
+    phase === 'customer_url_review';
+  const canUseDevSeedIcpPreview =
+    isDevSetupTestMode &&
+    entryPoint === 'target-company' &&
+    (phase === 'greeting' ||
+      phase === 'customer_url_input' ||
+      phase === 'customer_url_conversation' ||
+      phase === 'icp_suggestion');
+  const canUseAnyDevForward =
+    canUseDevForward ||
+    canUseStoredTargetForward ||
+    canUseStoredBuyingTeamForward ||
+    canUseDevSeedIcpPreview;
+  const snapshotMatchesCurrent = (snapshot: NavigationSnapshot) => {
+    const current = captureCurrentNavigationSnapshot();
+    return (
+      snapshot.phase === current.phase &&
+      snapshot.inputEnabled === current.inputEnabled &&
+      snapshot.editingFindings === current.editingFindings &&
+      snapshot.icpEditMode === current.icpEditMode &&
+      snapshot.buyingTeamEditMode === current.buyingTeamEditMode
+    );
+  };
+  const handleDevForwardNavigation = () => {
+    if (isDevSetupTestMode) {
+      while (manualForwardHistoryRef.current.length > 0) {
+        const top = manualForwardHistoryRef.current[manualForwardHistoryRef.current.length - 1];
+        if (snapshotMatchesCurrent(top)) {
+          manualForwardHistoryRef.current.pop();
+          continue;
+        }
+        restoreForwardManualNavigation();
+        return;
+      }
+    }
+    if (
+      isDevSetupTestMode &&
+      entryPoint === 'target-company' &&
+      (phase === 'greeting' ||
+        phase === 'customer_url_input' ||
+        phase === 'customer_url_conversation' ||
+        phase === 'icp_suggestion')
+    ) {
+      void fetchAndApplyDevSeedIcp();
+      return;
+    }
+    if (canUseStoredTargetForward) {
+      setIcpEditMode(false);
+      setPhase('customer_url_review');
+      setInput(false);
+      return;
+    }
+    if (canUseStoredBuyingTeamForward) {
+      setBuyingTeamEditMode(false);
+      setPhase('buying_team_review');
+      setInput(false);
+      return;
+    }
+    if (
+      isDevSetupTestMode &&
+      entryPoint === 'target-company' &&
+      hasStoredTargetReview &&
+      (phase === 'greeting' ||
+        phase === 'customer_url_input' ||
+        phase === 'customer_url_conversation' ||
+        phase === 'icp_suggestion')
+    ) {
+      setIcpEditMode(false);
+      setPhase('customer_url_review');
+      setInput(false);
+      return;
+    }
+    if (
+      isDevSetupTestMode &&
+      entryPoint === 'target-company' &&
+      hasStoredBuyingTeamReview &&
+      phase === 'customer_url_review'
+    ) {
+      setBuyingTeamEditMode(false);
+      setPhase('buying_team_review');
+      setInput(false);
+    }
+  };
   const devForwardButton = isDevSetupTestMode ? (
     <button
       type="button"
-      onClick={() => {
-        if (canUseDevForward) restoreForwardManualNavigation();
-      }}
-      disabled={thinking || !canUseDevForward}
+      onClick={handleDevForwardNavigation}
+      disabled={thinking || !canUseAnyDevForward}
       className={SETUP_TOP_BACK_LIGHT_CLASS}
     >
       Forward <span aria-hidden>→</span>
     </button>
   ) : null;
+  const addIcpStep = (() => {
+    if (phase === 'buying_team_loading' || phase === 'buying_team_review' || phase === 'persona_functions' || phase === 'persona_seniority' || phase === 'persona_saving' || phase === 'done') {
+      return 1 as const;
+    }
+    return 0 as const;
+  })();
+
   const headerCenter = (step: 0 | 1 | 2) =>
     entryPoint === 'target-company' ? (
-      <div className="text-center text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/45">
-        Add Another ICP
-      </div>
+      <AddIcpStepEyebrow step={addIcpStep} />
     ) : (
       <StepEyebrow step={step} />
     );
@@ -6241,26 +6592,6 @@ export default function SetupFlow({
     return (
       <div className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-4 py-16">
         <AppAmbientBackground />
-        <div className="absolute left-0 right-0 top-0 z-20 flex justify-center px-6 pt-6 sm:px-10">
-          <div className="w-full max-w-[1080px]">
-            <SetupLightProgressRow
-              leading={
-                isGlassTargetStep && entryPoint === 'full' ? (
-                  <button
-                    type="button"
-                    onClick={() => void handleBackNavigation(0)}
-                    disabled={thinking}
-                    className={SETUP_TOP_BACK_LIGHT_CLASS}
-                  >
-                    <span aria-hidden>←</span> Back
-                  </button>
-                ) : undefined
-              }
-              center={isAdditionalIcpEntry && !hasUserMsg ? null : headerCenter(isGlassTargetStep ? 1 : 0)}
-              trailing={devForwardButton}
-            />
-          </div>
-        </div>
         <div className="relative z-10 flex w-[460px] flex-col">
           <div
             className={cn(
@@ -6271,123 +6602,35 @@ export default function SetupFlow({
             )}
           >
           {!hasUserMsg ? (
-            <>
-              <SetupGlassAgentMetaStrip
-                clock={setupGreetingChatClock}
-                statusKey={thinking ? 'thinking' : inputEnabled ? 'ready' : 'waiting'}
-              />
-              {/*
-                Fixed-height orb band keeps the orb centered in the same window as before; larger
-                margin-top on the eyebrow moves “Welcome to Arcova” down toward the headline.
-              */}
-              <div className="flex w-full shrink-0 flex-col items-center">
-                <div className="flex h-[13.4375rem] w-full flex-col items-center justify-center">
-                  <SetupOrb variant="welcome" welcomeEnergised={false} />
-                </div>
-                <div className="mt-[1.15cm] shrink-0 text-center text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/45">
-                  {isAdditionalIcpEntry ? 'Add another ICP' : 'Welcome to Arcova'}
-                </div>
-              </div>
-              <div className="flex min-h-0 flex-1 flex-col justify-start">
-                <h1 className="mb-7 mt-[0.75cm] min-h-[5rem] text-center font-manrope text-3xl font-medium leading-snug tracking-tight text-arcova-navy">
-                  {isAdditionalIcpEntry ? (
-                    <span className="block text-arcova-navy/40">Loading your setup.</span>
-                  ) : inputEnabled ? (
-                    <TypingHeadline part1={welcomeChatPart1} part2={welcomeChatPart2} speed={WELCOME_SPEED} />
-                  ) : (
-                    <span className="block text-arcova-navy/40">Getting ready.</span>
-                  )}
-                </h1>
-
-                {isAdditionalIcpEntry ? (
-                  <div className="space-y-3">
-                    <p className="text-center text-sm leading-relaxed text-arcova-navy/45">
-                      Pulling your saved company context and previous ICPs so we can start a fresh target profile.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    <form onSubmit={(e) => void handleSend(e)}>
-                      <div
-                        className={cn(
-                          'flex min-w-0 items-center gap-2 rounded-2xl border bg-white/90 px-3 py-2.5 shadow-[0_8px_32px_-20px_rgba(13,53,71,0.18)] backdrop-blur-md transition-all',
-                          inputEnabled
-                            ? 'border-[rgba(13,53,71,0.12)] focus-within:border-arcova-teal/45 focus-within:shadow-[0_8px_28px_-18px_rgba(0,164,180,0.22)]'
-                            : 'pointer-events-none border-arcova-navy/10 opacity-55',
-                        )}
-                      >
-                        <Sparkles
-                          className={cn(
-                            'h-4 w-4 shrink-0',
-                            inputEnabled ? 'text-arcova-teal/45' : 'text-arcova-navy/25',
-                          )}
-                        />
-                        <input
-                          ref={welcomeInputRef}
-                          value={inputValue.replace(/^https?:\/\//i, '')}
-                          onChange={(e) => setInputVal(e.target.value.replace(/^https?:\/\//i, ''))}
-                          placeholder="Your company name or website"
-                          spellCheck={false}
-                          autoComplete="off"
-                          disabled={!inputEnabled}
-                          aria-disabled={!inputEnabled}
-                          className="min-w-0 flex-1 bg-transparent font-manrope text-[1.0625rem] text-slate-800 outline-none placeholder:text-slate-400 disabled:cursor-not-allowed"
-                        />
-                        <button
-                          type="submit"
-                          disabled={!inputValue.trim() || !inputEnabled}
-                          className="flex shrink-0 items-center gap-1.5 rounded-xl bg-arcova-teal px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/90 disabled:cursor-not-allowed disabled:opacity-30"
-                          aria-label={inputEnabled ? 'Send' : 'Getting ready'}
-                        >
-                          <Send className="h-4 w-4" />
-                          Send
-                        </button>
-                      </div>
-                    </form>
-                    {inputEnabled && isWorkDomain && !inputValue.trim() && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          pushText('user', emailDomain);
-                          void runAnalysis(emailDomain);
-                        }}
-                        className="flex items-center gap-1.5 rounded-full border border-arcova-teal/30 bg-arcova-teal/8 px-3.5 py-1.5 text-xs font-medium text-arcova-teal transition-all hover:bg-arcova-teal/15"
-                      >
-                        Use {emailDomain} from my email
-                      </button>
-                    )}
-                    {analysisError && (
-                      <p className="text-xs text-red-600">{analysisError}</p>
-                    )}
-                  </div>
-                )}
-              </div>
-              {!isAdditionalIcpEntry && (
-                <div className="mt-8 flex items-center justify-center gap-2 text-xs text-arcova-navy/40">
-                  <span className="flex -space-x-1.5">
-                    {['#a3e3df', '#f6d6c1', '#b5d6f0'].map((bg, i) => (
-                      <span
-                        key={i}
-                        className="h-5 w-5 rounded-full border border-white/60"
-                        style={{ background: bg }}
-                      />
-                    ))}
-                  </span>
-                  <span>
-                    Signed in as{' '}
-                    <strong className="font-semibold text-arcova-navy/70">{firstName || 'you'}</strong>
-                    {email && (
-                      <span className="ml-1 text-arcova-navy/35">• {email}</span>
-                    )}
-                  </span>
-                </div>
-              )}
-            </>
+            <SetupBootstrapWaitingCard
+              variant={isAdditionalIcpEntry ? 'add-icp' : 'welcome'}
+              clock={setupGreetingChatClock}
+              statusKey={thinking ? 'thinking' : inputEnabled ? 'ready' : 'waiting'}
+              welcomePart1={welcomeChatPart1}
+              welcomePart2={welcomeChatPart2}
+              welcomeSpeed={WELCOME_SPEED}
+              firstName={firstName}
+              email={email}
+              inputEnabled={inputEnabled}
+              inputValue={inputValue}
+              onInputChange={setInputVal}
+              onSubmit={(e) => void handleSend(e)}
+              inputRef={welcomeInputRef}
+              isWorkDomain={isWorkDomain}
+              emailDomain={emailDomain}
+              onUseEmailDomain={() => {
+                pushText('user', emailDomain);
+                void runAnalysis(emailDomain);
+              }}
+              analysisError={analysisError}
+              centerSlot={isAdditionalIcpEntry ? null : headerCenter(isGlassTargetStep ? 1 : 0)}
+            />
           ) : (
             <>
               <SetupGlassAgentMetaStrip
                 clock={setupGreetingChatClock}
                 statusKey={thinking ? 'thinking' : inputEnabled ? 'ready' : 'waiting'}
+                centerSlot={headerCenter(isGlassTargetStep ? 1 : 0)}
               />
               <div
                 ref={setupGreetingThreadRef}
@@ -6412,8 +6655,7 @@ export default function SetupFlow({
                     <div key={msg.id} className="flex w-full" style={{ animation: 'arcova-msg-in 0.2s ease' }}>
                       <div
                         className={cn(
-                          'max-w-[min(100%,40rem)] rounded-2xl rounded-tl-sm bg-gradient-to-br from-slate-50 to-white px-4 py-4 font-manrope text-[1.1875rem] leading-[1.45] tracking-[-0.018em] text-slate-700 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.9)] ring-1 ring-slate-200/55 transition-opacity',
-                          !isLast ? 'opacity-55' : 'opacity-100',
+                          'max-w-[min(100%,40rem)] rounded-2xl rounded-tl-sm bg-gradient-to-br from-slate-50 to-white px-4 py-4 font-manrope text-[1.1875rem] leading-[1.45] tracking-[-0.018em] text-slate-700 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.9)] ring-1 ring-slate-200/55',
                         )}
                       >
                         <SetupAssistantMessageParagraphs
@@ -6488,15 +6730,45 @@ export default function SetupFlow({
           )}
           </div>
         </div>
+        {/* Nav row sits directly below the agent panel — stable position, paired with content. */}
+        <div className="relative z-10 mt-4 w-[460px]">
+          <SetupLightProgressRow
+            leading={
+              // /company-criteria/new: Cancel exits the new-ICP flow entirely back to the ICP list.
+              // Full arcova-setup: Back walks one step backwards through the flow.
+              entryPoint === 'target-company' ? (
+                <button
+                  type="button"
+                  onClick={() => router.push(resolvedCompletePath)}
+                  disabled={thinking}
+                  className={SETUP_TOP_BACK_LIGHT_CLASS}
+                >
+                  Cancel
+                </button>
+              ) : isGlassTargetStep && entryPoint === 'full' ? (
+                <button
+                  type="button"
+                  onClick={() => void handleBackNavigation(0)}
+                  disabled={thinking}
+                  className={SETUP_TOP_BACK_LIGHT_CLASS}
+                >
+                  <span aria-hidden>←</span> Back
+                </button>
+              ) : undefined
+            }
+            center={null}
+            trailing={devForwardButton}
+          />
+        </div>
       </div>
     );
   }
 
-  // Phases: inline enrichment (own company, target URL, buying team) inside the same glass chat shell
+  // Phases: inline enrichment (own company, target URL) inside the same glass chat shell.
+  // buying_team_loading is handled by the simpler orb-only render below (no active chat to preserve).
   if (
     phase === 'analysis_loading' ||
-    phase === 'customer_url_loading' ||
-    phase === 'buying_team_loading'
+    phase === 'customer_url_loading'
   ) {
     const enrichMessages = visibleGreetingStyleMessages(thread, welcomeChatPart1, welcomeChatPart2);
     const glassOwnStages = buildTieredSnapshotsFromOwn(
@@ -6518,49 +6790,20 @@ export default function SetupFlow({
       ? [{ tier: 'buying-summary', label: '', snapshot: glassBuyingSnapshot }]
       : null;
 
+    const loadingBackHandler =
+      phase === 'analysis_loading' || phase === 'customer_url_loading'
+        ? () => cancelAnalysis()
+        : null;
     return (
       <div className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-4 py-16">
         <AppAmbientBackground />
-        <div className="absolute left-0 right-0 top-0 z-20 flex justify-center px-6 pt-6 sm:px-10">
-          <div className="w-full max-w-[1080px]">
-            <SetupLightProgressRow
-              leading={
-                entryPoint === 'full' && phase === 'analysis_loading' ? (
-                  <button
-                    type="button"
-                    onClick={() => cancelAnalysis()}
-                    disabled={thinking}
-                    className={SETUP_TOP_BACK_LIGHT_CLASS}
-                  >
-                    <span aria-hidden>←</span> Back
-                  </button>
-                ) : entryPoint === 'full' && phase === 'customer_url_loading' ? (
-                  <button
-                    type="button"
-                    onClick={() => cancelAnalysis()}
-                    disabled={thinking}
-                    className={SETUP_TOP_BACK_LIGHT_CLASS}
-                  >
-                    <span aria-hidden>←</span> Back
-                  </button>
-                ) : entryPoint === 'full' && phase === 'buying_team_loading' ? (
-                  <button
-                    type="button"
-                    onClick={() => void handleGoToStep(1)}
-                    disabled={thinking}
-                    className={SETUP_TOP_BACK_LIGHT_CLASS}
-                  >
-                    <span aria-hidden>←</span> Back
-                  </button>
-                ) : undefined
-              }
-              center={<StepEyebrow step={Math.max(0, currentStepIndex) as 0 | 1 | 2} />}
-            />
-          </div>
-        </div>
         <div className="relative z-10 flex w-[460px] flex-col">
           <div className="relative flex h-[min(85vh,52rem)] w-full min-h-[580px] max-h-[85vh] flex-col overflow-hidden rounded-3xl border border-white/55 bg-white/65 px-10 pb-0 pt-0 shadow-arcova backdrop-blur-xl">
-          <SetupGlassAgentMetaStrip clock={setupGreetingChatClock} statusKey="thinking" />
+          <SetupGlassAgentMetaStrip
+            clock={setupGreetingChatClock}
+            statusKey="thinking"
+            centerSlot={headerCenter(Math.max(0, currentStepIndex) as 0 | 1 | 2)}
+          />
           <div
             ref={setupGreetingThreadRef}
             className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-1 py-2 pb-4 [touch-action:pan-y] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
@@ -6584,8 +6827,7 @@ export default function SetupFlow({
                 <div key={msg.id} className="flex w-full" style={{ animation: 'arcova-msg-in 0.2s ease' }}>
                   <div
                     className={cn(
-                      'max-w-[min(100%,40rem)] rounded-2xl rounded-tl-sm bg-gradient-to-br from-slate-50 to-white px-4 py-4 font-manrope text-[1.1875rem] leading-[1.45] tracking-[-0.018em] text-slate-700 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.9)] ring-1 ring-slate-200/55 transition-opacity',
-                      !isLast ? 'opacity-55' : 'opacity-100',
+                      'max-w-[min(100%,40rem)] rounded-2xl rounded-tl-sm bg-gradient-to-br from-slate-50 to-white px-4 py-4 font-manrope text-[1.1875rem] leading-[1.45] tracking-[-0.018em] text-slate-700 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.9)] ring-1 ring-slate-200/55',
                     )}
                   >
                     <SetupAssistantMessageParagraphs
@@ -6624,6 +6866,25 @@ export default function SetupFlow({
             )}
           </div>
           </div>
+        </div>
+        {/* Nav row sits directly below the loading panel — stable position, paired with content. */}
+        <div className="relative z-10 mt-4 w-[460px]">
+          <SetupLightProgressRow
+            leading={
+              entryPoint === 'full' && loadingBackHandler ? (
+                <button
+                  type="button"
+                  onClick={loadingBackHandler}
+                  disabled={thinking}
+                  className={SETUP_TOP_BACK_LIGHT_CLASS}
+                >
+                  <span aria-hidden>←</span> Back
+                </button>
+              ) : undefined
+            }
+            center={null}
+            trailing={devForwardButton}
+          />
         </div>
       </div>
     );
@@ -6688,29 +6949,31 @@ export default function SetupFlow({
       <AppAmbientBackground />
       <div className="relative z-10 flex min-h-full flex-col px-4 pb-16 pt-10 sm:px-6">
         <div className="mx-auto w-full max-w-2xl">
-          {(onBack || eyebrow) && (
-            <div className="mb-4">
-              <SetupLightProgressRow
-                leading={
-                  onBack ? (
-                    <button
-                      type="button"
-                      onClick={onBack}
-                      disabled={thinking}
-                      className={SETUP_TOP_BACK_LIGHT_CLASS}
-                    >
-                      <span aria-hidden>←</span> Back
-                    </button>
-                  ) : undefined
-                }
-                center={eyebrow ?? null}
-              />
-            </div>
-          )}
           <h1 className="text-2xl font-semibold text-arcova-navy sm:text-3xl">{title}</h1>
           {subtitle && <p className="mt-1.5 text-sm text-arcova-ink-soft">{subtitle}</p>}
         </div>
         <div className="mx-auto mt-6 w-full max-w-2xl flex-1">{children}</div>
+        {/* Nav chrome sits BELOW the content, paired with the section it acts on. */}
+        {(onBack || eyebrow) && (
+          <div className="mx-auto mt-6 w-full max-w-2xl">
+            <SetupLightProgressRow
+              leading={
+                onBack ? (
+                  <button
+                    type="button"
+                    onClick={onBack}
+                    disabled={thinking}
+                    className={SETUP_TOP_BACK_LIGHT_CLASS}
+                  >
+                    <span aria-hidden>←</span> Back
+                  </button>
+                ) : undefined
+              }
+              center={eyebrow ?? null}
+              trailing={devForwardButton}
+            />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -6728,24 +6991,7 @@ export default function SetupFlow({
       <div className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col overflow-y-auto">
         <AppAmbientBackground />
         <div className="relative z-10 flex flex-col px-6 py-9 lg:px-10">
-            <div className="mb-6">
-              <SetupLightProgressRow
-                leading={
-                  entryPoint === 'full' ? (
-                    <button
-                      type="button"
-                      onClick={() => handleLeaveArcovaSetup()}
-                      disabled={thinking}
-                      className={SETUP_TOP_BACK_LIGHT_CLASS}
-                    >
-                      <span aria-hidden>←</span> Back
-                    </button>
-                  ) : undefined
-                }
-                center={headerCenter(0)}
-                trailing={devForwardButton}
-              />
-            </div>
+            {/* Top nav chrome is empty on this review page — Back / Forward live in the CTA row below the panel. */}
             {/* Hero */}
             <div className="mb-6 max-w-[820px]">
               <h1 className="mb-3 font-manrope text-[44px] font-medium leading-[1.06] tracking-[-0.032em] text-arcova-navy">
@@ -6812,6 +7058,16 @@ export default function SetupFlow({
               {!editingFindings && (
                 <>
                 <div className="mt-5 flex flex-wrap items-center gap-3 px-1">
+                  {entryPoint === 'full' && (
+                    <button
+                      type="button"
+                      onClick={() => handleLeaveArcovaSetup()}
+                      disabled={thinking}
+                      className={SETUP_TOP_BACK_LIGHT_CLASS}
+                    >
+                      <span aria-hidden>←</span> Back
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => void handleResultsConfirmed()}
@@ -6842,9 +7098,12 @@ export default function SetupFlow({
                     <RefreshCw className="h-3.5 w-3.5" />
                     Re-analyse site
                   </button>
-                  <div className="ml-auto inline-flex items-center gap-1.5 text-[12px] text-arcova-navy/50">
-                    <span>→</span>
-                    Next: <strong className="font-semibold text-arcova-navy/70">Target companies</strong>
+                  <div className="ml-auto inline-flex items-center gap-3">
+                    <div className="inline-flex items-center gap-1.5 text-[12px] text-arcova-navy/50">
+                      <span>→</span>
+                      Next: <strong className="font-semibold text-arcova-navy/70">Target companies</strong>
+                    </div>
+                    {devForwardButton}
                   </div>
                 </div>
                 <p className="mt-4 px-1 text-center text-[12px] leading-relaxed text-arcova-navy/50">
@@ -6948,50 +7207,35 @@ export default function SetupFlow({
     return (
       <div className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col overflow-y-auto">
         <AppAmbientBackground />
-        <div className="relative z-10 flex flex-col px-6 py-9 lg:px-10">
-          <div className="mb-6">
-              <SetupLightProgressRow
-                leading={
-                  <button
-                  type="button"
-                  onClick={() => {
-                    if (restorePreviousManualNavigation()) return;
-                    setIcpEditMode(false);
-                    setPhase('customer_url_conversation');
-                    setInput(true);
-                  }}
-                  disabled={thinking}
-                  className={SETUP_TOP_BACK_LIGHT_CLASS}
-                >
-                    <span aria-hidden>←</span> Back
-                  </button>
-                }
-                center={headerCenter(1)}
-                trailing={devForwardButton}
-              />
-          </div>
-          {/* Hero */}
-          <div className="mb-6 max-w-[820px]">
-            <h1 className="mb-3 font-manrope text-[44px] font-medium leading-[1.06] tracking-[-0.032em] text-arcova-navy">
-              Based on{' '}
-              <span className="bg-gradient-to-br from-arcova-teal to-[#007e8b] bg-clip-text text-transparent">
-                {targetName}
+        <div className="relative z-10 flex flex-col px-6 pb-8 pt-5 lg:px-10">
+          {/*
+            Top nav chrome is empty on this review page — Back / Forward are placed below the
+            card, paired with the CTA row, so navigation lives next to the content it acts on.
+            The hero + eyebrow already convey the step context.
+          */}
+          {/* Hero — canvas layout (matches /today) */}
+          <div className="mb-5">
+            <p className="m-0 font-manrope text-[11px] font-semibold uppercase tracking-[0.14em] text-arcova-teal">
+              Setup &middot; Target companies
+            </p>
+            <h1 className="mt-2 mb-0 font-manrope text-[clamp(1.75rem,3.6vw,2.5rem)] font-semibold leading-[1.05] tracking-[-0.028em] text-arcova-navy">
+              <span className="block">Based on {targetName},</span>
+              <span className="block">
+                here&apos;s a{' '}
+                <span className="bg-gradient-to-br from-arcova-teal to-arcova-mint bg-clip-text text-transparent">
+                  model of your ICP
+                </span>
               </span>
-              , here&apos;s a model of your ICP
             </h1>
-            <p className="m-0 max-w-[640px] text-[15px] leading-[1.6] text-arcova-navy/65">
-              {icpEditMode ? (
-                "Edit any fields below, then save when you're done."
-              ) : (
-                <>
-                  Hit Looks good to save, or edit anything that&apos;s not quite right.
-                </>
-              )}
+            <p className="mt-2.5 mb-0 text-[14px] leading-[1.5] text-arcova-navy/65">
+              {icpEditMode
+                ? "Tweak anything that's not quite right, then jump back when you're done."
+                : "Have a look over the data, and move forward when you're ready."}
             </p>
           </div>
 
           {/* Target company card */}
-          <div className="mx-auto w-full max-w-[760px]">
+          <div className="mx-auto w-full max-w-5xl">
             <SetupTargetCompanyCard
               panelCompany={panelCompany}
               enrichedTargetCompany={enrichedTargetCompany}
@@ -7005,9 +7249,24 @@ export default function SetupFlow({
               onIcpFieldChange={handleIcpFieldChange}
             />
 
-            {/* CTA row — view mode */}
+            {/* CTA row — view mode. Back / Forward are placed here (paired with the card)
+                instead of above the hero, so navigation lives next to the content it acts on. */}
             {!icpEditMode && (
               <div className="mt-5 flex flex-wrap items-center gap-3 px-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (restorePreviousManualNavigation()) return;
+                    manualForwardHistoryRef.current.push(captureCurrentNavigationSnapshot());
+                    setIcpEditMode(false);
+                    setPhase('customer_url_conversation');
+                    setInput(true);
+                  }}
+                  disabled={thinking}
+                  className={SETUP_TOP_BACK_LIGHT_CLASS}
+                >
+                  <span aria-hidden>←</span> Back
+                </button>
                 <button
                   type="button"
                   onClick={() => void handleReviewConfirm()}
@@ -7025,9 +7284,12 @@ export default function SetupFlow({
                 >
                   Try a different company
                 </button>
-                <div className="ml-auto inline-flex items-center gap-1.5 text-[12px] text-arcova-navy/50">
-                  <span>→</span>
-                  Next: <strong className="font-semibold text-arcova-navy/70">Buying teams</strong>
+                <div className="ml-auto inline-flex items-center gap-3">
+                  <div className="inline-flex items-center gap-1.5 text-[12px] text-arcova-navy/50">
+                    <span>→</span>
+                    Next: <strong className="font-semibold text-arcova-navy/70">Buying teams</strong>
+                  </div>
+                  {devForwardButton}
                 </div>
               </div>
             )}
@@ -7039,68 +7301,409 @@ export default function SetupFlow({
 
   // Phase: buying_team_review → light glass review of buying team
   if (phase === 'buying_team_review') {
-    const icpName = savedIcpName || reviewedCompanyName || 'this ICP';
+    // Hero anchor uses the reference company name (concrete, e.g. "Revvity, Inc.").
+    // The ICP category name belongs inside the card header instead.
+    const heroAnchor = reviewedCompanyName || savedIcpName || 'this ICP';
     return (
-      <LightLayout
-        eyebrow={headerCenter(2)}
-        title={`Here's who typically buys from companies like ${icpName}.`}
-        subtitle="Review the roles and seniority — you can adjust before saving."
-        onBack={() => void handleBackNavigation(1)}
-      >
-        <div className="arcova-glass-panel p-6">
-          <SetupProfilePanel
-            {...sharedPanelProps}
-            phase={phase}
-            analysisLoading={false}
-            onConfirmBuyingTeam={() => void savePersona()}
-          />
+      <div className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <AppAmbientBackground />
+        <div className="relative z-10 flex flex-col px-6 pb-8 pt-5 lg:px-10">
+          {/*
+            Top nav chrome is empty on this review page — Back / Forward are placed below the
+            card, paired with the CTA row, so navigation lives next to the content it acts on.
+            The hero + eyebrow already convey the step context.
+          */}
+          {/* Hero — canvas layout (matches customer_url_review / /today). Extra mb-* below
+              so the small buying-team card sits with breathing room rather than crowding the hero. */}
+          <div className="mb-16">
+            <p className="m-0 font-manrope text-[11px] font-semibold uppercase tracking-[0.14em] text-arcova-teal">
+              Setup &middot; Buying teams
+            </p>
+            <h1 className="mt-2 mb-0 font-manrope text-[clamp(1.75rem,3.6vw,2.5rem)] font-semibold leading-[1.05] tracking-[-0.028em] text-arcova-navy">
+              <span className="block">For ICPs like {heroAnchor},</span>
+              <span className="block">
+                here are your{' '}
+                <span className="bg-gradient-to-br from-arcova-teal to-arcova-mint bg-clip-text text-transparent">
+                  buying teams
+                </span>
+              </span>
+            </h1>
+            <p className="mt-2.5 mb-0 text-[14px] leading-[1.5] text-arcova-navy/65">
+              {buyingTeamEditMode
+                ? "Tweak the functions or seniority levels, then jump back when you're done."
+                : "Have a look over the roles and seniority, and move forward when you're ready."}
+            </p>
+          </div>
+
+          {/* Buying team card — light theme, matches SetupTargetCompanyCard chrome.
+              Renders the persona content directly (skips the dark SetupProfilePanel whose
+              white-text CardShells are invisible on this light surface). */}
+          <div className="mx-auto w-full max-w-5xl">
+            <article className="overflow-hidden rounded-2xl border border-arcova-navy/10 bg-white/75 shadow-arcova backdrop-blur-xl">
+              {/* Header bar — uses the reference company's logo (e.g. Revvity) so the card
+                  visually anchors to the same company the buying teams are modelled on. */}
+              <div className="flex items-center gap-3 border-b border-arcova-navy/8 px-4 py-3">
+                {enrichedTargetCompany?.logo_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={enrichedTargetCompany.logo_url}
+                    alt={enrichedTargetCompany.company_name ?? ''}
+                    className="h-9 w-9 shrink-0 rounded-[10px] border border-arcova-navy/8 bg-white object-contain p-1"
+                  />
+                ) : reviewedCompanyName ? (
+                  <div className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-[10px] bg-gradient-to-br from-arcova-teal/20 to-arcova-teal/10 font-bold text-arcova-teal">
+                    <span className="text-sm">{reviewedCompanyName[0]?.toUpperCase() ?? 'T'}</span>
+                  </div>
+                ) : (
+                  <Users className="h-4 w-4 shrink-0 text-arcova-teal" />
+                )}
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span className="block min-w-0 truncate font-manrope text-[17px] font-semibold tracking-[-0.014em] text-arcova-navy">
+                    Buying teams{savedIcpName ? ` for ${savedIcpName}` : ''}
+                  </span>
+                  {reviewedCompanyName && (() => {
+                    const displayDomain = enrichedTargetCompany?.website
+                      ?.replace(/^https?:\/\/(www\.)?/, '')
+                      .replace(/\/$/, '');
+                    return (
+                      <span className="block min-w-0 truncate text-xs text-arcova-navy/45">
+                        Modelled on {reviewedCompanyName}
+                        {displayDomain && enrichedTargetCompany?.website && (
+                          <>
+                            {' · '}
+                            <a
+                              href={enrichedTargetCompany.website}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-0.5 text-arcova-teal hover:underline"
+                            >
+                              {displayDomain}
+                              <ExternalLink className="h-2.5 w-2.5" />
+                            </a>
+                          </>
+                        )}
+                      </span>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-4 p-4">
+                {/* Functions — pill size + style match SetupTag (target companies card).
+                    Wrap containers are capped at max-w-[560px] so longer lists naturally
+                    spill over 2-3 rows. In edit mode we add a free-text input for custom
+                    functions; those get appended as regular pills (taxonomy-unaware but stored). */}
+                {(panelPersona.functions.length > 0 || buyingTeamEditMode) && (
+                  <SetupTargetFieldRow label="Functions">
+                    {buyingTeamEditMode ? (
+                      <div className="max-w-[560px] space-y-2">
+                        <div className="flex flex-wrap gap-1.5">
+                          {/* Standard taxonomy chips (toggleable) */}
+                          {FUNCTION_OPTIONS.map((opt) => {
+                            const selected = panelPersona.functions.includes(opt);
+                            return (
+                              <button
+                                key={opt}
+                                type="button"
+                                onClick={() => {
+                                  const next = selected
+                                    ? panelPersona.functions.filter((x) => x !== opt)
+                                    : [...panelPersona.functions, opt];
+                                  personaRef.current.functions = next;
+                                  setPanelPersona((p) => ({ ...p, functions: next }));
+                                }}
+                                className={cn(
+                                  'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11.5px] font-medium transition-colors',
+                                  selected
+                                    ? 'border-arcova-teal/20 bg-arcova-teal/10 text-arcova-teal'
+                                    : 'border-arcova-navy/10 bg-white/60 text-arcova-navy/55 hover:bg-white hover:text-arcova-navy',
+                                )}
+                              >
+                                {opt}
+                              </button>
+                            );
+                          })}
+                          {/* Custom (user-added, off-taxonomy) functions — render as pills with a remove button */}
+                          {panelPersona.functions
+                            .filter((f) => !FUNCTION_OPTIONS.includes(f))
+                            .map((f) => (
+                              <span
+                                key={f}
+                                className="inline-flex items-center gap-1 rounded-full border border-arcova-teal/20 bg-arcova-teal/10 px-2.5 py-1 text-[11.5px] font-medium text-arcova-teal"
+                              >
+                                {f}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const next = panelPersona.functions.filter((x) => x !== f);
+                                    personaRef.current.functions = next;
+                                    setPanelPersona((p) => ({ ...p, functions: next }));
+                                  }}
+                                  className="text-arcova-teal/50 hover:text-arcova-teal"
+                                  aria-label={`Remove ${f}`}
+                                >
+                                  <X className="h-2.5 w-2.5" />
+                                </button>
+                              </span>
+                            ))}
+                        </div>
+                        {/* Add custom function */}
+                        <input
+                          type="text"
+                          value={pendingCustomFunction}
+                          onChange={(ev) => setPendingCustomFunction(ev.target.value)}
+                          onKeyDown={(ev) => {
+                            if (ev.key !== 'Enter' || !pendingCustomFunction.trim()) return;
+                            ev.preventDefault();
+                            const trimmed = pendingCustomFunction.trim();
+                            if (panelPersona.functions.includes(trimmed)) {
+                              setPendingCustomFunction('');
+                              return;
+                            }
+                            const next = [...panelPersona.functions, trimmed];
+                            personaRef.current.functions = next;
+                            setPanelPersona((p) => ({ ...p, functions: next }));
+                            setPendingCustomFunction('');
+                          }}
+                          placeholder="Add another function… (Enter)"
+                          className="w-full rounded-lg border border-arcova-navy/10 bg-white/60 px-3 py-1.5 text-[12.5px] text-arcova-navy/80 placeholder:text-arcova-navy/30 focus:border-arcova-teal/45 focus:outline-none"
+                        />
+                      </div>
+                    ) : (
+                      <div className="max-w-[560px]">
+                        <SetupTagRow items={panelPersona.functions} />
+                      </div>
+                    )}
+                  </SetupTargetFieldRow>
+                )}
+
+                {/* Seniority — same pattern as Functions, with its own custom-text input. */}
+                {(panelPersona.seniority.length > 0 || buyingTeamEditMode) && (
+                  <SetupTargetFieldRow label="Seniority">
+                    {buyingTeamEditMode ? (
+                      <div className="max-w-[560px] space-y-2">
+                        <div className="flex flex-wrap gap-1.5">
+                          {/* Standard taxonomy chips */}
+                          {SENIORITY_OPTIONS.map((opt) => {
+                            const selected = panelPersona.seniority.includes(opt);
+                            return (
+                              <button
+                                key={opt}
+                                type="button"
+                                onClick={() => {
+                                  const next = selected
+                                    ? panelPersona.seniority.filter((x) => x !== opt)
+                                    : [...panelPersona.seniority, opt];
+                                  personaRef.current.seniority = next;
+                                  setPanelPersona((p) => ({ ...p, seniority: next }));
+                                }}
+                                className={cn(
+                                  'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11.5px] font-medium transition-colors',
+                                  selected
+                                    ? 'border-arcova-teal/20 bg-arcova-teal/10 text-arcova-teal'
+                                    : 'border-arcova-navy/10 bg-white/60 text-arcova-navy/55 hover:bg-white hover:text-arcova-navy',
+                                )}
+                              >
+                                {opt}
+                              </button>
+                            );
+                          })}
+                          {/* Custom (user-added) seniority levels */}
+                          {panelPersona.seniority
+                            .filter((s) => !SENIORITY_OPTIONS.includes(s))
+                            .map((s) => (
+                              <span
+                                key={s}
+                                className="inline-flex items-center gap-1 rounded-full border border-arcova-teal/20 bg-arcova-teal/10 px-2.5 py-1 text-[11.5px] font-medium text-arcova-teal"
+                              >
+                                {s}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const next = panelPersona.seniority.filter((x) => x !== s);
+                                    personaRef.current.seniority = next;
+                                    setPanelPersona((p) => ({ ...p, seniority: next }));
+                                  }}
+                                  className="text-arcova-teal/50 hover:text-arcova-teal"
+                                  aria-label={`Remove ${s}`}
+                                >
+                                  <X className="h-2.5 w-2.5" />
+                                </button>
+                              </span>
+                            ))}
+                        </div>
+                        {/* Add custom seniority */}
+                        <input
+                          type="text"
+                          value={pendingCustomSeniority}
+                          onChange={(ev) => setPendingCustomSeniority(ev.target.value)}
+                          onKeyDown={(ev) => {
+                            if (ev.key !== 'Enter' || !pendingCustomSeniority.trim()) return;
+                            ev.preventDefault();
+                            const trimmed = pendingCustomSeniority.trim();
+                            if (panelPersona.seniority.includes(trimmed)) {
+                              setPendingCustomSeniority('');
+                              return;
+                            }
+                            const next = [...panelPersona.seniority, trimmed];
+                            personaRef.current.seniority = next;
+                            setPanelPersona((p) => ({ ...p, seniority: next }));
+                            setPendingCustomSeniority('');
+                          }}
+                          placeholder="Add another seniority level… (Enter)"
+                          className="w-full rounded-lg border border-arcova-navy/10 bg-white/60 px-3 py-1.5 text-[12.5px] text-arcova-navy/80 placeholder:text-arcova-navy/30 focus:border-arcova-teal/45 focus:outline-none"
+                        />
+                      </div>
+                    ) : (
+                      <div className="max-w-[560px]">
+                        <SetupTagRow items={panelPersona.seniority} />
+                      </div>
+                    )}
+                  </SetupTargetFieldRow>
+                )}
+              </div>
+
+              {/* Footer — Edit (view) / Save + Cancel (edit). Mirrors the SetupTargetCompanyCard
+                  footer layout. Re-enrich and Delete are intentionally omitted for buying teams. */}
+              <div className="flex flex-wrap items-center justify-end gap-2 border-t border-arcova-navy/8 px-4 py-3">
+                {buyingTeamEditMode ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setBuyingTeamEditMode(false)}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-teal px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-arcova-teal/90"
+                    >
+                      <Save className="h-3 w-3" />
+                      Save changes
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBuyingTeamEditMode(false)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-arcova-navy/12 bg-white/80 px-3 py-1.5 text-xs font-medium text-arcova-navy/60 hover:bg-white"
+                    >
+                      <X className="h-3 w-3" />
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setBuyingTeamEditMode(true)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-arcova-navy/10 bg-white/60 px-3 py-1.5 text-xs font-medium text-arcova-navy/60 transition-colors hover:bg-white hover:text-arcova-navy"
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
+            </article>
+
+            {/* CTA row — Back / Forward live here paired with the card, matching customer_url_review */}
+            <div className="mt-5 flex flex-wrap items-center gap-3 px-1">
+              <button
+                type="button"
+                onClick={() => void handleBackNavigation(1)}
+                disabled={thinking}
+                className={SETUP_TOP_BACK_LIGHT_CLASS}
+              >
+                <span aria-hidden>←</span> Back
+              </button>
+              <button
+                type="button"
+                onClick={() => void savePersona()}
+                disabled={thinking}
+                className="inline-flex items-center gap-2 rounded-[14px] bg-gradient-to-br from-arcova-teal to-[#007e8b] px-[22px] py-[13px] text-sm font-semibold text-white shadow-[0_12px_28px_-12px_rgba(0,164,180,0.5)] transition-all hover:-translate-y-px hover:bg-arcova-navy disabled:opacity-50"
+              >
+                <Check className="h-3.5 w-3.5" strokeWidth={2.4} />
+                Looks good — continue
+              </button>
+              <div className="ml-auto inline-flex items-center gap-3">
+                {devForwardButton}
+              </div>
+            </div>
+
+            {inputEnabled && (
+              <div className="mt-3">
+                <SetupEmbedChatInput
+                  value={inputValue}
+                  onChange={(v) => setInputVal(v)}
+                  onSubmit={(e) => void handleSend(e)}
+                  disabled={thinking}
+                  placeholder="Reply to the agent…"
+                />
+              </div>
+            )}
+          </div>
         </div>
-        <div className="mt-5 flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={() => void savePersona()}
-            disabled={thinking}
-            className={ctaPrimary}
-          >
-            Looks right →
-          </button>
-          <button
-            type="button"
-            onClick={() => setBuyingTeamEditMode((prev) => !prev)}
-            disabled={thinking}
-            className={ctaSecondary}
-          >
-            {buyingTeamEditMode ? 'Cancel edits' : "Something's off"}
-          </button>
-        </div>
-        {inputEnabled && (
-          <SetupEmbedChatInput
-            value={inputValue}
-            onChange={(v) => setInputVal(v)}
-            onSubmit={(e) => void handleSend(e)}
-            disabled={thinking}
-            placeholder="Reply to the agent…"
-          />
-        )}
-      </LightLayout>
+      </div>
     );
   }
 
-  // Phase: saving / done → light aurora save splash
-  if (phase === 'company_saving' || phase === 'persona_saving' || phase === 'done') {
-    const savingLabel =
-      phase === 'done' ? 'Redirecting…' : phase === 'persona_saving' ? 'Saving buying team…' : 'Saving profile…';
+  // Phase: saving / loading buying team / done → energised orb inside the agent panel chrome.
+  // Same panel shell as the agent/loading phases (rounded glass card + meta strip), so the
+  // viewport stays visually identical while we wait. The orb carries the "something's happening"
+  // signal; no status text needed. The step indicator shows the final step (Buying teams)
+  // since the target company has already been confirmed by the time we land here.
+  if (
+    phase === 'company_saving' ||
+    phase === 'buying_team_loading' ||
+    phase === 'persona_saving' ||
+    phase === 'done'
+  ) {
+    const orbStepSlot = entryPoint === 'target-company'
+      ? <AddIcpStepEyebrow step={1} />
+      : <StepEyebrow step={2} />;
+    // Two distinct waiting-card "blocks":
+    //   - Block A (after target review): we're saving the ICP and mapping the buying team.
+    //   - Block B (after buying-team review): we're saving the persona, crafting signals, wrapping up.
+    // Each block has its own eyebrow + checklist steps so the user sees relevant progress.
+    const isAfterBuyingTeam = phase === 'persona_saving' || phase === 'done';
+    const orbEyebrow = isAfterBuyingTeam ? 'Wrapping up your setup' : 'Define your buying teams';
+    const progressSteps = isAfterBuyingTeam
+      ? [
+          'Saving your buying team',
+          'Crafting company signals',
+          'Crafting contact signals',
+          'Finalising your setup',
+        ]
+      : [
+          'Saving your target company profile',
+          'Mapping your buying team',
+          'Defining buyer personas',
+          'Almost ready',
+        ];
+    // Visual cycle: orbProgressIndex is driven by a local timer below, not the phase.
+    // The orb screen is on-screen too briefly to walk through all phases naturally, so we
+    // animate the checklist forward at a steady pace to give the impression of progress.
+    // (The phase still controls when we leave the orb screen entirely.)
     return (
-      <div className="relative flex min-h-dvh flex-col overflow-hidden">
+      <div className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-4 py-16">
         <AppAmbientBackground />
-        <div className="absolute left-0 right-0 top-0 z-20 flex justify-center px-6 pt-6 sm:px-10">
-          <div className="w-full max-w-[1080px]">
-            <SetupLightProgressRow center={<StepEyebrow step={Math.max(0, currentStepIndex) as 0 | 1 | 2} />} />
+        <div className="relative z-10 flex w-[460px] flex-col">
+          <div className="relative flex min-h-[580px] w-full flex-col overflow-visible rounded-3xl border border-white/55 bg-white/65 px-10 pb-10 pt-0 shadow-arcova backdrop-blur-xl">
+            <SetupGlassAgentMetaStrip
+              clock={setupGreetingChatClock}
+              statusKey="waiting"
+              centerSlot={orbStepSlot}
+            />
+            {/* Orb + eyebrow + headline — mirrors the welcome card layout, so the screen feels
+                like a natural continuation of the setup flow rather than a separate loader. */}
+            <div className="flex w-full shrink-0 flex-col items-center">
+              <div className="flex h-[13.4375rem] w-full flex-col items-center justify-center">
+                <SetupOrb variant="welcome" welcomeEnergised />
+              </div>
+              <div className="mt-[1.15cm] shrink-0 text-center text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/45">
+                {orbEyebrow}
+              </div>
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col justify-start">
+              <h1 className="mb-5 mt-[0.75cm] text-center font-manrope text-3xl font-medium leading-snug tracking-tight text-arcova-navy">
+                <span className="block text-arcova-navy/40">Getting ready.</span>
+              </h1>
+              {/* Auto-advancing checklist — cycles through steps at 750ms each so the user
+                  sees all of them light up, even though the back-end phases tick faster. */}
+              <SetupOrbProgressList steps={progressSteps} intervalMs={750} />
+            </div>
           </div>
-        </div>
-        <div className="relative z-10 flex min-h-dvh flex-col items-center justify-center gap-5 px-4">
-          <ArcovaLoader size={56} />
-          <p className="text-sm font-medium text-arcova-ink-soft">{savingLabel}</p>
         </div>
       </div>
     );

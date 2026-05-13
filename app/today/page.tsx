@@ -568,10 +568,10 @@ export default function BriefingPage() {
           <header className="bt-hero">
             <p className="bt-hero-eyebrow">Daily briefing · {formatBriefingHeroDate(clock)}</p>
             <h1 className="bt-hero-title font-manrope">
-              {timeOfDayGreeting}, <span className="bt-hero-accent">{displayName}</span>.
+              {timeOfDayGreeting}, <span className="bt-hero-accent">{displayName}</span>
             </h1>
             <p className="bt-hero-sub">
-              The assistant has read overnight. Your priorities are below. Open one, or let the agent walk you through.
+              Here&rsquo;s your day &mdash; work through your priorities, or talk it through with the agent.
             </p>
           </header>
 

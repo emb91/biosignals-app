@@ -1,6 +1,7 @@
 import { after, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { createClient } from '@/lib/supabase-server';
+import { looksLikeEmail } from '@/lib/contact-emails';
 import {
   type NormalisedRow,
   refreshBatchProgress,
@@ -191,6 +192,7 @@ export async function POST(request: Request) {
       .eq('user_id', user.id);
 
     const duplicateIds: string[] = [];
+    const invalidEmailIds: string[] = [];
     const pendingRows = insertedRows.filter((row) => {
       const rawData = row.raw_data as Record<string, unknown>;
       const rowNorm: NormalisedRow = {
@@ -205,6 +207,11 @@ export async function POST(request: Request) {
         location: (rawData.location as string) || '',
         company_linkedin_url: (rawData.company_linkedin_url as string) || '',
       };
+
+      if (rowNorm.email && !looksLikeEmail(rowNorm.email)) {
+        invalidEmailIds.push(row.id as string);
+        return false;
+      }
 
       const isDupe = (existingContacts || []).some((contact) =>
         isExactDuplicate(rowNorm, contact as Record<string, unknown>)
@@ -224,6 +231,13 @@ export async function POST(request: Request) {
       await supabase.from('raw_uploads').update({ status: 'duplicate' }).in('id', duplicateIds);
     }
 
+    if (invalidEmailIds.length > 0) {
+      await supabase
+        .from('raw_uploads')
+        .update({ status: 'failed', enriched_at: new Date().toISOString() })
+        .in('id', invalidEmailIds);
+    }
+
     if (quotaHeldIds.length > 0) {
       await supabase
         .from('raw_uploads')
@@ -238,7 +252,7 @@ export async function POST(request: Request) {
 
     await supabase
       .from('upload_batches')
-      .update({ duplicate_rows: duplicateIds.length, failed_rows: quotaHeldIds.length })
+      .update({ duplicate_rows: duplicateIds.length, failed_rows: quotaHeldIds.length + invalidEmailIds.length })
       .eq('id', batchId);
 
     if (rowsToEnrich.length === 0) {
@@ -276,7 +290,11 @@ export async function POST(request: Request) {
       heldBackByQuota: quotaHeldIds.length,
       beingEnriched: pendingIds.length,
       complete: 0,
-      failed: 0,
+      failed: invalidEmailIds.length,
+      warning:
+        invalidEmailIds.length > 0
+          ? `${invalidEmailIds.length} row${invalidEmailIds.length === 1 ? '' : 's'} were skipped because the email address looked invalid. Fix those emails and re-import to include them.`
+          : null,
     });
   } catch (error) {
     console.error('Error in import-contacts POST:', error);

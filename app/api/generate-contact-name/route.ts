@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { NextResponse } from 'next/server';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 
 export async function POST(request: Request) {
   try {
@@ -122,6 +123,14 @@ Examples of good descriptors:
       temperature: 0.7,
       system: 'You are a naming tool. Output only the descriptor, nothing else. No thinking, no explanation, no quotes.',
       messages: [{ role: 'user', content: prompt }],
+    });
+
+    await recordLlmUsageEvent({
+      provider: 'anthropic',
+      feature: 'generate_contact_name',
+      route: 'app/api/generate-contact-name',
+      model: 'claude-sonnet-4-6',
+      usage: message.usage,
     });
 
     const rawPrefix = (message.content[0] as { type: string; text: string }).text.trim();

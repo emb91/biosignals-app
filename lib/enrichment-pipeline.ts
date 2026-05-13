@@ -1327,7 +1327,9 @@ export async function runContactResolutionPipelineForContact(
         headline: resolved.headline,
         company_name: resolved.currentCompanyName,
         previous_titles: previousTitles.length ? previousTitles : null,
-      }]);
+      }], {
+        userId,
+      });
       if (classification) {
         updatePayload.job_title_standardised = classification.job_title_standardised;
         updatePayload.seniority_level = classification.seniority_level;

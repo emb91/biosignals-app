@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
+import { createAdminClient } from '@/lib/supabase-admin';
 import { insertCompanySignalEvent, insertContactSignalEvent } from '@/lib/signals/write-signal-event';
 import { listLeadEvents } from '@/lib/signals/events';
+import { mirrorSignalEventToReadiness } from '@/lib/signals/readiness-signal-events';
 import {
   persistCompanyIntentForCompanyRow,
   persistContactIntentScore,
@@ -134,7 +136,13 @@ export async function POST(request: Request) {
           console.warn('[POST signal-events] company intent persist skipped', e)
         );
 
-        return NextResponse.json({ data: row });
+        const readinessAdmin = createAdminClient();
+        const readinessMirror = await mirrorSignalEventToReadiness(readinessAdmin, user.id, row).catch((e) => {
+          console.warn('[POST signal-events] readiness mirror skipped', e);
+          return null;
+        });
+
+        return NextResponse.json({ data: row, readiness: readinessMirror });
       } catch (insertErr: unknown) {
         const code =
           insertErr && typeof insertErr === 'object' && 'code' in insertErr
@@ -193,7 +201,13 @@ export async function POST(request: Request) {
           console.warn('[POST signal-events] contact intent persist skipped', e)
         );
 
-        return NextResponse.json({ data: row });
+        const readinessAdmin = createAdminClient();
+        const readinessMirror = await mirrorSignalEventToReadiness(readinessAdmin, user.id, row).catch((e) => {
+          console.warn('[POST signal-events] readiness mirror skipped', e);
+          return null;
+        });
+
+        return NextResponse.json({ data: row, readiness: readinessMirror });
       } catch (insertErr: unknown) {
         const code =
           insertErr && typeof insertErr === 'object' && 'code' in insertErr

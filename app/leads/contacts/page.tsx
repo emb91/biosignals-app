@@ -892,11 +892,12 @@ export default function LeadsPage() {
     setSyncResultExpanded(false);
     try {
       const res = await fetch('/api/hubspot/push-enrichment', { method: 'POST' });
+      const text = await res.text();
+      const data = text ? JSON.parse(text) : null;
       if (res.ok) {
-        const data = await res.json();
-        if (data.contacts) setHubspotSyncResult(data);
+        if (data?.contacts) setHubspotSyncResult(data);
       } else {
-        console.error('HubSpot push failed:', await res.text());
+        console.error('HubSpot push failed:', data?.error || text || 'Unknown error');
       }
     } catch (err) {
       console.error('HubSpot push error:', err);

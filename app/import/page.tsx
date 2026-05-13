@@ -7,6 +7,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel, type AgentPendingMessage } from '@/components/AgentPanel';
+import { PageHeader } from '@/components/PageHeader';
 import Nango from '@nangohq/frontend';
 import { ROUTES } from '@/lib/routes';
 import { getDisplayName } from '@/lib/auth-helpers';
@@ -61,6 +62,8 @@ type HubspotSyncLog = {
   contacts_synced: number | null;
   contacts_errors: number | null;
   contacts_skipped: number | null;
+  skipped_contacts?: Array<{ name?: string; company?: string | null; reason?: string }>;
+  last_error_details: string[];
   last_pull_batch: {
     total_rows: number;
     duplicate_rows: number;
@@ -631,6 +634,10 @@ export default function ImportPage() {
         throw new Error(result.error || 'Failed to start import.');
       }
 
+      if (typeof result.warning === 'string' && result.warning) {
+        setErrorMessage(result.warning);
+      }
+
       persistBatchId(result.batchId);
       setParsedCsv(null);
       setColumnMappings({});
@@ -760,21 +767,17 @@ export default function ImportPage() {
       <AppSidebar />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden min-[1280px]:flex-row">
-        <div className="arcova-scroll-surface flex-1 overflow-auto">
-        <div className="max-w-3xl mx-auto px-6 py-10">
+        <div className="arcova-scroll-surface flex-1 overflow-auto px-6 py-8 lg:px-10">
+        <div className="mx-auto max-w-[1180px]">
 
           {!currentBatchId ? (
             <>
-              <div className="mb-8">
-                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-arcova-teal">
-                  <Upload className="h-3.5 w-3.5" />
-                  Import
-                </div>
-                <h1 className="mt-2 text-2xl font-semibold leading-tight text-slate-950 sm:text-3xl">Import contacts</h1>
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
-                  Connect your CRM or upload a CSV — Arcova will enrich, score against your ICP, and tell you who to prioritise.
-                </p>
-              </div>
+              <PageHeader
+                eyebrow="Import"
+                eyebrowIcon={<Upload className="h-3 w-3" />}
+                title="Import contacts"
+                subtitle="Connect your CRM or upload a CSV — Arcova will enrich, score against your ICP, and tell you who to prioritise."
+              />
 
               {/* Import methods */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
@@ -1017,7 +1020,11 @@ export default function ImportPage() {
 
                           {hubspotConnected && !hubspotHistoryRowHidden && (() => {
                             const skipped = hubspotSyncLog?.contacts_skipped ?? 0;
+                            const skippedDetails = Array.isArray(hubspotSyncLog?.skipped_contacts)
+                              ? hubspotSyncLog!.skipped_contacts
+                              : [];
                             const errs = hubspotSyncLog?.contacts_errors ?? 0;
+                            const errorDetails = hubspotSyncLog?.last_error_details ?? [];
                             const syncedAt = hubspotSyncLog?.synced_at;
                             const isHubspotOpen = expandedHistoryBatchId === HUBSPOT_SYNC_HISTORY_ROW_ID;
                             const pull = hubspotSyncLog?.last_pull_batch;
@@ -1131,6 +1138,25 @@ export default function ImportPage() {
                                           <p className="text-amber-800">
                                             {errs.toLocaleString()} push error{errs !== 1 ? 's' : ''}
                                           </p>
+                                        )}
+                                        {errorDetails.length > 0 && (
+                                          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-900">
+                                            <p className="mb-1 font-medium">Latest HubSpot error</p>
+                                            {errorDetails.slice(0, 3).map((detail, index) => (
+                                              <p key={`${index}-${detail}`}>{detail}</p>
+                                            ))}
+                                          </div>
+                                        )}
+                                        {skippedDetails.length > 0 && (
+                                          <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-[11px] leading-relaxed text-gray-700">
+                                            <p className="mb-1 font-medium text-gray-900">Needs a quick fix</p>
+                                            {skippedDetails.slice(0, 3).map((row, index) => (
+                                              <p key={`${row.name ?? 'contact'}-${index}`}>
+                                                {(row.name || 'A contact')}
+                                                {row.company ? ` at ${row.company}` : ''}: {row.reason || 'Update this contact and try syncing again.'}
+                                              </p>
+                                            ))}
+                                          </div>
                                         )}
                                       </div>
                                     )}
@@ -1269,25 +1295,19 @@ export default function ImportPage() {
             <>
               {importFinished ? (
                 <>
-                  <div className="mb-8 flex items-start justify-between gap-4">
-                    <div>
-                      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-arcova-teal">
-                        <Upload className="h-3.5 w-3.5" />
-                        Import
-                      </div>
-                      <h1 className="mt-2 text-2xl font-semibold leading-tight text-slate-950 sm:text-3xl">
-                        {importCancelled ? 'Import stopped' : 'Import complete'}
-                      </h1>
-                      <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
-                        {importCancelled
-                          ? 'Enriched, scored contacts were added to Leads before stopping.'
-                          : 'All enriched, scored contacts have been added to your Leads view.'}
-                      </p>
-                    </div>
-                    <button type="button" onClick={resetBatchView} className="text-xs text-gray-400 hover:text-gray-600 whitespace-nowrap mt-1">
-                      ← Back
-                    </button>
-                  </div>
+                  <PageHeader
+                    eyebrow="Import"
+                    eyebrowIcon={<Upload className="h-3 w-3" />}
+                    title={importCancelled ? 'Import stopped' : 'Import complete'}
+                    subtitle={importCancelled
+                      ? 'Enriched, scored contacts were added to Leads before stopping.'
+                      : 'All enriched, scored contacts have been added to your Leads view.'}
+                    action={
+                      <button type="button" onClick={resetBatchView} className="text-xs text-arcova-navy/40 hover:text-arcova-navy/70 mt-1">
+                        ← Back
+                      </button>
+                    }
+                  />
 
                   {/* Summary pills */}
                   <div className="flex flex-wrap items-center gap-2 mb-4">

@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { NextResponse } from 'next/server';
 import { BUSINESS_AREA_OPTIONS } from '@/lib/arcova-taxonomy';
 import { resolveCustomerSegments } from '@/lib/split-customer-segments';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 
 export async function POST(request: Request) {
   try {
@@ -71,6 +72,14 @@ Return ONLY a JSON array of business area names from the list above. No explanat
       model: 'claude-sonnet-4-6',
       max_tokens: 200,
       messages: [{ role: 'user', content: prompt }],
+    });
+
+    await recordLlmUsageEvent({
+      provider: 'anthropic',
+      feature: 'suggest_functions',
+      route: 'app/api/suggest-functions',
+      model: 'claude-sonnet-4-6',
+      usage: message.usage,
     });
 
     const responseText = (message.content[0] as { type: string; text: string }).text.trim();

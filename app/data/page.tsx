@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel } from '@/components/AgentPanel';
+import { PageHeader } from '@/components/PageHeader';
 import { toast } from 'sonner';
 import {
   AlertCircle,
@@ -363,20 +364,14 @@ function DataPageContent() {
       <AppSidebar />
 
       {/* Main: centered agent + recent jobs log */}
-      <div className="arcova-scroll-surface min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
-        <div className="mx-auto flex min-h-0 w-full max-w-2xl flex-col gap-4">
-          <div>
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-arcova-teal">
-              <Database className="h-3.5 w-3.5" />
-              Data
-            </div>
-            <h1 className="mt-2 text-2xl font-semibold leading-tight text-slate-950 sm:text-3xl">
-              Source companies and contacts
-            </h1>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-              Tell Arcova what gap to fill, then queue the right acquisition job.
-            </p>
-          </div>
+      <div className="arcova-scroll-surface min-h-0 flex-1 overflow-y-auto px-6 py-8 lg:px-10">
+        <div className="mx-auto flex min-h-0 w-full max-w-[1180px] flex-col gap-4">
+          <PageHeader
+            eyebrow="Data"
+            eyebrowIcon={<Database className="h-3 w-3" />}
+            title="Source companies and contacts"
+            subtitle="Tell Arcova what gap to fill, then queue the right acquisition job."
+          />
 
           <div className="h-[min(70vh,720px)] min-h-[520px]">
             <AgentPanel

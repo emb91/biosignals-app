@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { NextResponse } from 'next/server';
 
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { createClient } from '@/lib/supabase-server';
 import { isMissingColumnError } from '@/lib/supabase-column-compat';
 
@@ -243,6 +244,16 @@ Rules for your reply:
       system:
         'You write concise, accurate explanations for B2B sales users in life sciences. Output only the explanation sentences requested. No preamble or labels.',
       messages: [{ role: 'user', content: userPrompt }],
+    });
+
+    await recordLlmUsageEvent({
+      userId: user.id,
+      userEmail: user.email ?? null,
+      provider: 'anthropic',
+      feature: 'company_fit_summary',
+      route: 'app/api/companies/[id]/fit-summary',
+      model: 'claude-haiku-4-5',
+      usage: message.usage,
     });
 
     const block = message.content[0];

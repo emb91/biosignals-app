@@ -4,6 +4,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
+import { PageHeader } from '@/components/PageHeader';
 import { AgentPanel } from '@/components/AgentPanel';
 import { toast } from 'sonner';
 import {
@@ -1826,28 +1827,24 @@ export default function ICPManagerPage() {
 
       <div className="flex min-h-0 flex-1 overflow-hidden min-[1280px]:flex-row flex-col">
         <div className="arcova-scroll-surface flex-1 overflow-auto px-6 py-8 lg:px-10">
-          <div className="w-full">
+          <div className="w-full max-w-[1180px] mx-auto">
 
-            {/* Page header */}
-            <div className="mb-6">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-[#7d909a] mb-1">Setup · My ICPs</p>
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h1 className="font-manrope text-2xl font-bold text-[#0d3547] tracking-[-0.022em]">My ICPs</h1>
-                  <p className="mt-0.5 text-sm text-[#7d909a]">
-                    The types of accounts you sell to, and who buys within them.
-                    {icps.length > 0 && <> <span className="font-medium text-[#4a6470]">{icps.length} {icps.length === 1 ? 'ICP' : 'ICPs'} defined</span> — click any to inspect or edit.</>}
-                  </p>
-                </div>
+            <PageHeader
+              eyebrow="Setup · ICPs"
+              title="My ICPs"
+              subtitle={icps.length > 0
+                ? `The types of accounts you sell to, and who buys within them. ${icps.length} ${icps.length === 1 ? 'ICP' : 'ICPs'} defined — click any to inspect or edit.`
+                : 'The types of accounts you sell to, and who buys within them.'}
+              action={
                 <button
                   onClick={() => router.push('/company-criteria/new')}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-teal px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/85 shrink-0"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-teal px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/85"
                 >
                   <Plus className="h-4 w-4" />
                   Add new ICP
                 </button>
-              </div>
-            </div>
+              }
+            />
 
             {icps.length === 0 ? (
               /* Empty state */

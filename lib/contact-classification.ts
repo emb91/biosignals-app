@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { BUSINESS_AREA_OPTIONS, SENIORITY_LEVEL_OPTIONS } from '@/lib/arcova-taxonomy';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const MODEL = 'claude-haiku-4-5-20251001';
@@ -19,7 +20,15 @@ export type ClassificationResult = {
   business_area: string | null;
 };
 
-async function classifyBatch(inputs: ClassificationInput[]): Promise<ClassificationResult[]> {
+type UsageContext = {
+  userId?: string | null;
+  userEmail?: string | null;
+};
+
+async function classifyBatch(
+  inputs: ClassificationInput[],
+  usageContext?: UsageContext,
+): Promise<ClassificationResult[]> {
   const prompt = `You classify contacts at life sciences and biopharma companies.
 
 Return ONLY valid JSON as an array with exactly ${inputs.length} objects in order.
@@ -66,6 +75,16 @@ JSON shape:
     messages: [{ role: 'user', content: prompt }],
   });
 
+  await recordLlmUsageEvent({
+    userId: usageContext?.userId ?? null,
+    userEmail: usageContext?.userEmail ?? null,
+    provider: 'anthropic',
+    feature: 'contact_classification',
+    route: 'lib/contact-classification#classifyBatch',
+    model: MODEL,
+    usage: message.usage,
+  });
+
   const text = message.content[0]?.type === 'text' ? message.content[0].text : '';
   const jsonMatch = text.match(/\[[\s\S]*\]/);
   if (!jsonMatch) {
@@ -84,11 +103,14 @@ JSON shape:
   }));
 }
 
-export async function classifyContacts(inputs: ClassificationInput[]): Promise<ClassificationResult[]> {
+export async function classifyContacts(
+  inputs: ClassificationInput[],
+  usageContext?: UsageContext,
+): Promise<ClassificationResult[]> {
   const results: ClassificationResult[] = [];
   for (let index = 0; index < inputs.length; index += BATCH_SIZE) {
     const batch = inputs.slice(index, index + BATCH_SIZE);
-    const batchResults = await classifyBatch(batch);
+    const batchResults = await classifyBatch(batch, usageContext);
     results.push(...batchResults);
   }
   return results;

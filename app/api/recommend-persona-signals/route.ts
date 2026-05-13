@@ -5,6 +5,7 @@ import {
   getDefaultContactSignalSelectionIds,
   isContactSignalComingSoon,
 } from '@/lib/signals/catalog';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 
 const SELECTABLE_CONTACT_SIGNALS = CONTACT_SIGNALS.filter((s) => !isContactSignalComingSoon(s.id));
 const SELECTABLE_CONTACT_ID_SET = new Set(SELECTABLE_CONTACT_SIGNALS.map((s) => s.id));
@@ -52,6 +53,14 @@ Return ONLY the JSON array, nothing else.`;
       model: 'claude-sonnet-4-6',
       max_tokens: 1024,
       messages: [{ role: 'user', content: prompt }],
+    });
+
+    await recordLlmUsageEvent({
+      provider: 'anthropic',
+      feature: 'recommend_persona_signals',
+      route: 'app/api/recommend-persona-signals',
+      model: 'claude-sonnet-4-6',
+      usage: message.usage,
     });
 
     const responseText = (message.content[0] as { type: string; text: string }).text.trim();

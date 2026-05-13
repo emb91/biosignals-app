@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { NextResponse } from 'next/server';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 
 export async function POST(request: Request) {
   try {
@@ -98,13 +99,24 @@ Development stage guidance: ${stageHint}
 
 Goal: Output reads like a real market segment or product category — Title Case, **standard business noun phrase**, not a shuffled bag of keywords. Describe the *category* of company this ICP represents, never the specific example company by name.
 
-If the profile is clearly a **software / SaaS / data / analytics / commercial intelligence / platform** business, end with an appropriate head noun such as Platform, Software, Solution, Intelligence Platform, or Analytics — e.g. "Life Science Commercial Intelligence Platform", not "Commercial Intelligence Life Science".
+**CRITICAL — Respect the Company Type field.** The "Company type" field is the authoritative category for this profile. The head noun (the last 1–2 words) MUST match it. Therapeutic areas and modalities are MODIFIERS describing the markets the company addresses — they do NOT override the category. Never call a tools/instruments/diagnostics/services company a "Biotech" or "Pharma" just because it serves oncology or rare disease.
 
-If the profile is a **service org or drug developer**, use endings like Biotech, Pharma, CDMO, CRO, Diagnostics, Medical Device Manufacturer as appropriate.
+Head-noun rules by Company type:
+- "Biotech" → end in "Biotech" (e.g. "Oncology Cell Therapy Biotech")
+- "Pharma" / "Biopharma" → end in "Pharma" / "Biopharma" (e.g. "Rare Disease Pharma")
+- "CDMO" / "CMO" → end in "CDMO" / "CMO" (e.g. "Multi-modality Manufacturing CDMO")
+- "CRO" → end in "CRO" (e.g. "Preclinical Cell Therapy CRO")
+- "Diagnostics" → end in "Diagnostics" or "Diagnostics Company"
+- "Medical Device" → end in "Medical Device Manufacturer"
+- "Life Science Tools & Instruments" → end in "Tools & Instruments Vendor", "Tools & Diagnostics Vendor", or "Life Sciences Tools Provider" — NEVER "Biotech"
+- SaaS / data / analytics / commercial intelligence / platform → end in "Platform", "Software", "Solution", "Intelligence Platform", or "Analytics" (e.g. "Life Science Commercial Intelligence Platform")
+
+When the company addresses many therapeutic areas or modalities, just use the company type as the name — do not stack qualifiers like "Broad Portfolio" or list every area. Brevity beats padding.
 
 Good examples (mix of shapes):
 - Life Science Commercial Intelligence Platform
 - Digital Health Data Analytics Platform
+- Life Sciences Tools & Instruments Vendor
 - Oncology CDMO
 - Gene Therapy Discovery Biotech
 - Rare Disease Pharma
@@ -114,6 +126,8 @@ Good examples (mix of shapes):
 
 Avoid:
 - Jumbled descriptor stacks ("Commercial Intelligence Life Science")
+- Padding qualifiers like "Broad Portfolio" or "Diversified" — if the company is broad across many areas, just use the bare company type
+- Calling a tools/diagnostics/platform company a "Biotech" because of therapeutic-area modifiers
 
 Rules:
 - 3–10 words; prefer 4–7 when the offering needs a clear head noun (Platform, Software, etc.)
@@ -134,6 +148,14 @@ Rules:
       system:
         'Output only the ICP category title: a natural Title Case noun phrase. No quotes, labels, or explanation.',
       messages: [{ role: 'user', content: prompt }],
+    });
+
+    await recordLlmUsageEvent({
+      provider: 'anthropic',
+      feature: 'generate_icp_name',
+      route: 'app/api/generate-icp-name',
+      model: 'claude-haiku-4-5',
+      usage: message.usage,
     });
 
     const rawName = (message.content[0] as { type: string; text: string }).text.trim();

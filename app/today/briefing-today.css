@@ -20,7 +20,7 @@
 }
 
 .briefing-today .bt-page {
-  max-width: 80rem;
+  max-width: 96rem;
   margin: 0 auto;
   padding: 1.75rem 1.75rem 5rem;
 }
@@ -74,13 +74,13 @@
   font-size: 0.9375rem;
   line-height: 1.55;
   color: var(--bt-ink-soft);
-  max-width: 33.75rem;
+  max-width: none;
 }
 
 /* Bento grid */
 .briefing-today .bt-bento-grid {
   display: grid;
-  grid-template-columns: 1.5fr 1fr;
+  grid-template-columns: minmax(0, 45rem) 1fr;
   /* Row height follows the taller column; page scrolls via main (no inner scroll on Priorities/Pulse) */
   grid-template-rows: auto auto;
   gap: 1.125rem;

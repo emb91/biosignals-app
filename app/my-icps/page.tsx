@@ -1147,32 +1147,32 @@ function ICPCard({
             <div className="space-y-5">
               {(e.products?.length ?? 0) > 0 && (
                 <div>
-                  <p className="mb-1 text-xs font-semibold text-arcova-navy/80">Products</p>
-                  <div className="flex flex-wrap gap-1.5">
+                  <p className="mb-2 text-xs font-semibold text-arcova-navy/80">Products</p>
+                  <ul className="space-y-1.5">
                     {e.products!.map((p, i) => (
-                      <span key={i} className="rounded-full bg-arcova-navy/5 border border-arcova-navy/10 px-2.5 py-0.5 text-xs text-arcova-navy/70">{p}</span>
+                      <li key={i} className="text-xs leading-snug text-arcova-navy/70">{p}</li>
                     ))}
-                  </div>
+                  </ul>
                 </div>
               )}
               {(e.services?.length ?? 0) > 0 && (
                 <div>
-                  <p className="mb-1 text-xs font-semibold text-arcova-navy/80">Services</p>
-                  <div className="flex flex-wrap gap-1.5">
+                  <p className="mb-2 text-xs font-semibold text-arcova-navy/80">Services</p>
+                  <ul className="space-y-1.5">
                     {e.services!.map((s, i) => (
-                      <span key={i} className="rounded-full bg-arcova-navy/5 border border-arcova-navy/10 px-2.5 py-0.5 text-xs text-arcova-navy/70">{s}</span>
+                      <li key={i} className="text-xs leading-snug text-arcova-navy/70">{s}</li>
                     ))}
-                  </div>
+                  </ul>
                 </div>
               )}
               {(e.technologies?.length ?? 0) > 0 && (
                 <div>
-                  <p className="mb-1 text-xs font-semibold text-arcova-navy/80">Technology</p>
-                  <div className="flex flex-wrap gap-1.5">
+                  <p className="mb-2 text-xs font-semibold text-arcova-navy/80">Technology</p>
+                  <ul className="space-y-1.5">
                     {e.technologies!.map((t, i) => (
-                      <span key={i} className="rounded-full bg-arcova-navy/5 border border-arcova-navy/10 px-2.5 py-0.5 text-xs text-arcova-navy/70">{t}</span>
+                      <li key={i} className="text-xs leading-snug text-arcova-navy/70">{t}</li>
                     ))}
-                  </div>
+                  </ul>
                 </div>
               )}
             </div>

@@ -5,6 +5,8 @@
  *   1. PUSH: upsert all scored Arcova contacts back to HubSpot (idempotent).
  *   2. PULL: fetch HubSpot contacts that haven't been enriched yet (arcova_enriched_at
  *      is unset), create an import batch, and kick off background enrichment.
+ *   3. READINESS: poll changed HubSpot deals, mirror them locally, emit CRM
+ *      signal events, and recompute readiness for resolved Arcova companies.
  *
  * Protected by CRON_SECRET — Vercel automatically passes this as
  * `Authorization: Bearer <CRON_SECRET>` when invoking cron routes.
@@ -12,6 +14,7 @@
 import { after, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { nango, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
+import { looksLikeEmail } from '@/lib/contact-emails';
 import {
   ensureArcovaHubSpotProperties,
   batchUpsertContacts,
@@ -22,6 +25,7 @@ import {
 } from '@/lib/hubspot';
 import { processQueuedRowsInBackground, type QueuedRow } from '@/lib/import-queue';
 import { getLeadActionFromFits, formatLeadActionLabel } from '@/lib/lead-action';
+import { syncHubSpotDealsIntoReadiness } from '@/lib/signals/readiness-hubspot-deals';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -58,7 +62,11 @@ async function pushUserToHubSpot(
   userId: string,
   accessToken: string,
   admin: ReturnType<typeof createAdminClient>
-): Promise<{ contacts: { upserted: number; errors: number }; companies: { updated: number; errors: number } }> {
+): Promise<{
+  contacts: { upserted: number; errors: number; errorDetails: string[] };
+  companies: { updated: number; errors: number; errorDetails: string[] };
+  skippedContacts: Array<{ name: string; company: string | null; reason: string }>;
+}> {
   const { data: leads } = await admin
     .from('contacts')
     .select(`
@@ -74,16 +82,37 @@ async function pushUserToHubSpot(
     .eq('user_id', userId)
     .not('overall_fit_score', 'is', null);
 
-  if (!leads?.length) return { contacts: { upserted: 0, errors: 0 }, companies: { updated: 0, errors: 0 } };
+  if (!leads?.length) {
+    return {
+      contacts: { upserted: 0, errors: 0, errorDetails: [] },
+      companies: { updated: 0, errors: 0, errorDetails: [] },
+      skippedContacts: [],
+    };
+  }
 
   await ensureArcovaHubSpotProperties(accessToken);
 
   const enrichedAt = new Date().toISOString().slice(0, 10);
 
   const upserts: Array<{ email: string; properties: Record<string, string> }> = [];
+  const skippedContacts: Array<{ name: string; company: string | null; reason: string }> = [];
 
   for (const lead of leads) {
-    if (!lead.email?.trim()) continue;
+    const trimmedEmail = lead.email?.trim() ?? '';
+    const name = [lead.first_name, lead.last_name].filter(Boolean).join(' ') || 'Unknown';
+    const companyName = (lead.companies as any)?.company_name ?? null;
+    if (!trimmedEmail) {
+      skippedContacts.push({ name, company: companyName, reason: 'No email address' });
+      continue;
+    }
+    if (!looksLikeEmail(trimmedEmail)) {
+      skippedContacts.push({
+        name,
+        company: companyName,
+        reason: 'Email looks invalid. Update it to something like name@company.com.',
+      });
+      continue;
+    }
 
     const co = lead.companies as any;
     const companyFit = co?.company_fit_score ?? null;
@@ -114,7 +143,13 @@ async function pushUserToHubSpot(
     upserts.push({ email: lead.email!.toLowerCase(), properties: props });
   }
 
-  if (!upserts.length) return { contacts: { upserted: 0, errors: 0 }, companies: { updated: 0, errors: 0 } };
+  if (!upserts.length) {
+    return {
+      contacts: { upserted: 0, errors: 0, errorDetails: [] },
+      companies: { updated: 0, errors: 0, errorDetails: [] },
+      skippedContacts,
+    };
+  }
 
   const contactResult = await batchUpsertContacts(accessToken, upserts);
 
@@ -171,9 +206,9 @@ async function pushUserToHubSpot(
 
   const companyResult = companyUpdates.length > 0
     ? await batchUpdateCompanies(accessToken, companyUpdates)
-    : { updated: 0, errors: 0 };
+    : { updated: 0, errors: 0, errorDetails: [] };
 
-  return { contacts: contactResult, companies: companyResult };
+  return { contacts: contactResult, companies: companyResult, skippedContacts };
 }
 
 // ── Pull: HubSpot → Arcova ────────────────────────────────────────────────────
@@ -327,6 +362,14 @@ export async function GET(request: Request) {
     userId: string;
     pushed?: { contacts: number; companies: number };
     pulled?: number;
+    deals?: {
+      fetched: number;
+      mirrored: number;
+      emittedEvents: number;
+      recomputedCompanies: number;
+      skippedUnresolvedCompanies: number;
+      checkpoint: string | null;
+    };
     error?: string;
   }> = [];
 
@@ -343,14 +386,21 @@ export async function GET(request: Request) {
       // 2. Pull new contacts from HubSpot
       const pullResult = await pullNewFromHubSpot(conn.user_id, accessToken, admin);
 
+      // 3. Poll HubSpot deals and emit readiness events
+      const dealResult = await syncHubSpotDealsIntoReadiness(admin, {
+        userId: conn.user_id,
+        nangoConnectionId: conn.nango_connection_id,
+      });
+
       // Update sync log
       await admin.from('hubspot_sync_log').upsert({
         user_id: conn.user_id,
         synced_at: new Date().toISOString(),
         contacts_synced: pushResult.contacts.upserted,
         contacts_errors: pushResult.contacts.errors,
-        contacts_skipped: 0,
-        skipped_contacts: [],
+        contacts_skipped: pushResult.skippedContacts.length,
+        skipped_contacts: pushResult.skippedContacts,
+        last_error_details: pushResult.contacts.errorDetails,
         auto_pull_count: pullResult.pulled,
         auto_pull_at: new Date().toISOString(),
       }, { onConflict: 'user_id' });
@@ -359,9 +409,19 @@ export async function GET(request: Request) {
         userId: conn.user_id,
         pushed: { contacts: pushResult.contacts.upserted, companies: pushResult.companies.updated ?? 0 },
         pulled: pullResult.pulled,
+        deals: {
+          fetched: dealResult.fetchedDeals,
+          mirrored: dealResult.mirroredDeals,
+          emittedEvents: dealResult.emittedEvents,
+          recomputedCompanies: dealResult.recomputedCompanies,
+          skippedUnresolvedCompanies: dealResult.skippedUnresolvedCompanies,
+          checkpoint: dealResult.checkpoint,
+        },
       });
 
-      console.log(`[cron] user=${conn.user_id} pushed=${pushResult.contacts.upserted} pulled=${pullResult.pulled}`);
+      console.log(
+        `[cron] user=${conn.user_id} pushed=${pushResult.contacts.upserted} pulled=${pullResult.pulled} deals_fetched=${dealResult.fetchedDeals} deal_events=${dealResult.emittedEvents}`
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[cron] Failed for user ${conn.user_id}:`, message);

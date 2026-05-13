@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { NextResponse } from 'next/server';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 
 export async function POST(request: Request) {
   try {
@@ -46,6 +47,14 @@ Return ONLY a JSON array of strings. No explanation, no markdown. Do not include
       model: 'claude-sonnet-4-6',
       max_tokens: 200,
       messages: [{ role: 'user', content: prompt }],
+    });
+
+    await recordLlmUsageEvent({
+      provider: 'anthropic',
+      feature: 'suggest_roles',
+      route: 'app/api/suggest-roles',
+      model: 'claude-sonnet-4-6',
+      usage: message.usage,
     });
 
     const responseText = (message.content[0] as { type: string; text: string }).text.trim();

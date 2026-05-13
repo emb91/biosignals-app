@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { NextResponse } from 'next/server';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 
 export async function POST(request: Request) {
   try {
@@ -63,6 +64,15 @@ ${contextLines.join('\n')}
 
 Write exactly 1 sentence that describes the ICP archetype, not the specific reference company.
 
+**CRITICAL — use the right verb for the company type.** Therapeutic areas and modalities describe the field the company plays in (e.g. "oncology", "cell therapy"). The Company type determines what they DO in that field — pick the verb to match:
+- Biotech / Pharma / Biopharma → "developing therapeutics across [areas]"
+- Tools & Instruments / Diagnostics → "providing [reagents/instruments/diagnostics] for [areas] research / care"
+- CRO → "delivering research services for [areas]"
+- CDMO → "manufacturing [modalities] for [areas]"
+- SaaS / platform / data / analytics → "powering [areas] workflows" / "providing [X] software for [areas]"
+
+Never say a tools, services, or platform company "develops therapeutics" — they support the companies that do.
+
 Rules:
 - Start exactly with "This ICP defines"
 - Do not ever mention the reference company
@@ -82,6 +92,14 @@ Rules:
       temperature: 0.3,
       system: 'Output only the requested sentence. Never mention the underlying company. Start exactly with "This ICP defines". Avoid promotional phrasing like "powered by".',
       messages: [{ role: 'user', content: prompt }],
+    });
+
+    await recordLlmUsageEvent({
+      provider: 'anthropic',
+      feature: 'generate_icp_summary',
+      route: 'app/api/generate-icp-summary',
+      model: 'claude-haiku-4-5',
+      usage: message.usage,
     });
 
     const rawSummary = (message.content[0] as { type: string; text: string }).text.trim();

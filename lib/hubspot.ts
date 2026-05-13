@@ -35,6 +35,34 @@ type HubSpotPropertyDefinition = {
   groupName: string;
 };
 
+async function describeHubSpotError(res: Response): Promise<string> {
+  const fallback = `HubSpot request failed (${res.status})`;
+
+  try {
+    const text = await res.text();
+    if (!text) return fallback;
+
+    try {
+      const json = JSON.parse(text) as {
+        message?: string;
+        category?: string;
+        errors?: Array<{ code?: string; message?: string }>;
+      };
+      const nested = Array.isArray(json.errors)
+        ? json.errors
+            .map((item) => [item.code, item.message].filter(Boolean).join(': '))
+            .filter(Boolean)
+            .join(' | ')
+        : '';
+      return [fallback, json.category, json.message, nested].filter(Boolean).join(' — ');
+    } catch {
+      return `${fallback} — ${text.slice(0, 500)}`;
+    }
+  } catch {
+    return fallback;
+  }
+}
+
 const ARCOVA_CONTACT_PROPERTIES: HubSpotPropertyDefinition[] = [
   { name: 'arcova_contact_fit_score', label: 'Arcova: Contact Fit Score', type: 'number', fieldType: 'number', groupName: 'arcova_intelligence' },
   { name: 'arcova_overall_fit_score', label: 'Arcova: Overall Fit Score', type: 'number', fieldType: 'number', groupName: 'arcova_intelligence' },
@@ -70,25 +98,31 @@ const ARCOVA_COMPANY_PROPERTIES: HubSpotPropertyDefinition[] = [
 ];
 
 async function ensurePropertyGroup(accessToken: string, objectType: 'contacts' | 'companies'): Promise<void> {
-  await fetch(`https://api.hubapi.com/crm/v3/properties/${objectType}/groups`, {
+  const res = await fetch(`https://api.hubapi.com/crm/v3/properties/${objectType}/groups`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: 'arcova_intelligence', label: 'Arcova Intelligence', displayOrder: -1 }),
   });
-  // 409 = already exists, both cases are fine
+  if (!res.ok && res.status !== 409) {
+    throw new Error(await describeHubSpotError(res));
+  }
 }
 
 async function ensureProperties(accessToken: string, objectType: 'contacts' | 'companies', properties: HubSpotPropertyDefinition[]): Promise<void> {
   await Promise.all(
-    properties.map((prop) =>
-      fetch(`https://api.hubapi.com/crm/v3/properties/${objectType}`, {
+    properties.map(async (prop) => {
+      const res = await fetch(`https://api.hubapi.com/crm/v3/properties/${objectType}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(prop),
-      })
-    )
+      });
+      if (!res.ok && res.status !== 409) {
+        throw new Error(
+          `Failed to ensure HubSpot property "${prop.name}" on ${objectType}: ${await describeHubSpotError(res)}`
+        );
+      }
+    })
   );
-  // Ignore 409s (already exist)
 }
 
 export async function ensureArcovaHubSpotProperties(accessToken: string): Promise<void> {
@@ -138,9 +172,10 @@ export async function batchReadContactsByEmail(
 export async function batchUpdateContacts(
   accessToken: string,
   updates: Array<{ id: string; properties: Record<string, string> }>
-): Promise<{ updated: number; errors: number }> {
+): Promise<{ updated: number; errors: number; errorDetails: string[] }> {
   let updated = 0;
   let errors = 0;
+  const errorDetails: string[] = [];
   const chunks = chunkArray(updates, 100);
 
   for (const chunk of chunks) {
@@ -153,11 +188,19 @@ export async function batchUpdateContacts(
       const data = await res.json();
       updated += (data.results ?? []).length;
       errors += (data.errors ?? []).length;
+      if (Array.isArray(data.errors)) {
+        errorDetails.push(
+          ...data.errors
+            .map((item: { code?: string; message?: string }) => [item.code, item.message].filter(Boolean).join(': '))
+            .filter(Boolean)
+        );
+      }
     } else {
       errors += chunk.length;
+      errorDetails.push(await describeHubSpotError(res));
     }
   }
-  return { updated, errors };
+  return { updated, errors, errorDetails };
 }
 
 // Upsert contacts by email — creates if not exists, updates if exists.
@@ -165,9 +208,10 @@ export async function batchUpdateContacts(
 export async function batchUpsertContacts(
   accessToken: string,
   upserts: Array<{ email: string; properties: Record<string, string> }>
-): Promise<{ upserted: number; errors: number }> {
+): Promise<{ upserted: number; errors: number; errorDetails: string[] }> {
   let upserted = 0;
   let errors = 0;
+  const errorDetails: string[] = [];
   const chunks = chunkArray(upserts, 100);
 
   for (const chunk of chunks) {
@@ -186,11 +230,19 @@ export async function batchUpsertContacts(
       const data = await res.json();
       upserted += (data.results ?? []).length;
       errors += (data.errors ?? []).length;
+      if (Array.isArray(data.errors)) {
+        errorDetails.push(
+          ...data.errors
+            .map((item: { code?: string; message?: string }) => [item.code, item.message].filter(Boolean).join(': '))
+            .filter(Boolean)
+        );
+      }
     } else {
       errors += chunk.length;
+      errorDetails.push(await describeHubSpotError(res));
     }
   }
-  return { upserted, errors };
+  return { upserted, errors, errorDetails };
 }
 
 export async function getContactAssociatedCompanyIds(
@@ -222,9 +274,10 @@ export async function getContactAssociatedCompanyIds(
 export async function batchUpdateCompanies(
   accessToken: string,
   updates: Array<{ id: string; properties: Record<string, string> }>
-): Promise<{ updated: number; errors: number }> {
+): Promise<{ updated: number; errors: number; errorDetails: string[] }> {
   let updated = 0;
   let errors = 0;
+  const errorDetails: string[] = [];
   const chunks = chunkArray(updates, 100);
 
   for (const chunk of chunks) {
@@ -237,11 +290,19 @@ export async function batchUpdateCompanies(
       const data = await res.json();
       updated += (data.results ?? []).length;
       errors += (data.errors ?? []).length;
+      if (Array.isArray(data.errors)) {
+        errorDetails.push(
+          ...data.errors
+            .map((item: { code?: string; message?: string }) => [item.code, item.message].filter(Boolean).join(': '))
+            .filter(Boolean)
+        );
+      }
     } else {
       errors += chunk.length;
+      errorDetails.push(await describeHubSpotError(res));
     }
   }
-  return { updated, errors };
+  return { updated, errors, errorDetails };
 }
 
 function chunkArray<T>(arr: T[], size: number): T[][] {
@@ -253,7 +314,14 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
 const CLIENT_ID = process.env.HUBSPOT_CLIENT_ID!;
 const CLIENT_SECRET = process.env.HUBSPOT_CLIENT_SECRET!;
 const REDIRECT_URI = `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/hubspot/callback`;
-const SCOPES = 'oauth crm.objects.contacts.read crm.objects.contacts.write';
+const SCOPES = [
+  'oauth',
+  'crm.objects.contacts.read',
+  'crm.objects.contacts.write',
+  'crm.objects.companies.read',
+  'crm.objects.companies.write',
+  'crm.objects.deals.read',
+].join(' ');
 
 export type HubSpotContact = {
   id: string;
