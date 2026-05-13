@@ -5,6 +5,8 @@
  *   1. PUSH: upsert all scored Arcova contacts back to HubSpot (idempotent).
  *   2. PULL: fetch HubSpot contacts that haven't been enriched yet (arcova_enriched_at
  *      is unset), create an import batch, and kick off background enrichment.
+ *   3. READINESS: poll changed HubSpot deals, mirror them locally, emit CRM
+ *      signal events, and recompute readiness for resolved Arcova companies.
  *
  * Protected by CRON_SECRET — Vercel automatically passes this as
  * `Authorization: Bearer <CRON_SECRET>` when invoking cron routes.
@@ -22,6 +24,7 @@ import {
 } from '@/lib/hubspot';
 import { processQueuedRowsInBackground, type QueuedRow } from '@/lib/import-queue';
 import { getLeadActionFromFits, formatLeadActionLabel } from '@/lib/lead-action';
+import { syncHubSpotDealsIntoReadiness } from '@/lib/signals/readiness-hubspot-deals';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -327,6 +330,14 @@ export async function GET(request: Request) {
     userId: string;
     pushed?: { contacts: number; companies: number };
     pulled?: number;
+    deals?: {
+      fetched: number;
+      mirrored: number;
+      emittedEvents: number;
+      recomputedCompanies: number;
+      skippedUnresolvedCompanies: number;
+      checkpoint: string | null;
+    };
     error?: string;
   }> = [];
 
@@ -342,6 +353,12 @@ export async function GET(request: Request) {
 
       // 2. Pull new contacts from HubSpot
       const pullResult = await pullNewFromHubSpot(conn.user_id, accessToken, admin);
+
+      // 3. Poll HubSpot deals and emit readiness events
+      const dealResult = await syncHubSpotDealsIntoReadiness(admin, {
+        userId: conn.user_id,
+        nangoConnectionId: conn.nango_connection_id,
+      });
 
       // Update sync log
       await admin.from('hubspot_sync_log').upsert({
@@ -359,9 +376,19 @@ export async function GET(request: Request) {
         userId: conn.user_id,
         pushed: { contacts: pushResult.contacts.upserted, companies: pushResult.companies.updated ?? 0 },
         pulled: pullResult.pulled,
+        deals: {
+          fetched: dealResult.fetchedDeals,
+          mirrored: dealResult.mirroredDeals,
+          emittedEvents: dealResult.emittedEvents,
+          recomputedCompanies: dealResult.recomputedCompanies,
+          skippedUnresolvedCompanies: dealResult.skippedUnresolvedCompanies,
+          checkpoint: dealResult.checkpoint,
+        },
       });
 
-      console.log(`[cron] user=${conn.user_id} pushed=${pushResult.contacts.upserted} pulled=${pullResult.pulled}`);
+      console.log(
+        `[cron] user=${conn.user_id} pushed=${pushResult.contacts.upserted} pulled=${pullResult.pulled} deals_fetched=${dealResult.fetchedDeals} deal_events=${dealResult.emittedEvents}`
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[cron] Failed for user ${conn.user_id}:`, message);

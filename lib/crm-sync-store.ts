@@ -234,16 +234,16 @@ export async function findArcovaCompaniesByDomains(
   supabase: DatabaseClient,
   userId: string,
   domains: string[]
-): Promise<Array<{ id: string; domain: string | null; website: string | null; company_name: string | null }>> {
+): Promise<Array<{ id: string; domain: string | null; company_website: string | null; company_name: string | null }>> {
   if (!domains.length) return [];
   const { data, error } = await supabase
     .from('companies')
-    .select('id, domain, website, company_name')
+    .select('id, domain, company_website, company_name')
     .eq('user_id', userId)
-    .in('domain', domains);
+    .or(domains.map((domain) => `domain.eq.${domain},company_website.eq.${domain}`).join(','));
 
   if (error) throw error;
-  return (data ?? []) as Array<{ id: string; domain: string | null; website: string | null; company_name: string | null }>;
+  return (data ?? []) as Array<{ id: string; domain: string | null; company_website: string | null; company_name: string | null }>;
 }
 
 export async function findArcovaContactsByEmails(

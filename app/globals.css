@@ -345,6 +345,8 @@ html {
   position: absolute;
   inset: -50%;
   border-radius: 50%;
+  /* Single-hue teal halo. The hue-rotation animation on the parent cycles the whole orb
+     (halo + corona + petals + core) through yellow → mint → teal in unison. */
   background: radial-gradient(circle, rgba(0, 164, 180, 0.35) 0%, transparent 60%);
   filter: blur(18px);
   animation: arcova-halo-pulse 5s ease-in-out infinite;
@@ -397,6 +399,8 @@ html {
   inset: 12px;
   border-radius: 50%;
   overflow: hidden;
+  /* White sheen at top-left, single-hue body. The parent hue-rotation cycles this whole
+     orb between yellow and teal in unison while preserving the white sheen highlight. */
   background: radial-gradient(circle at 30% 28%, #ffffff 0%, #00a4b4 56%, #003344 130%);
   box-shadow:
     0 16px 36px -12px rgba(0, 164, 180, 0.4),
@@ -418,12 +422,13 @@ html {
   position: absolute;
   inset: 0;
   border-radius: 50%;
+  /* Single-hue spinning sheen — no multi-colour stops so the parent hue-rotation can
+     cycle the whole orb in unison without anything looking mixed. */
   background: conic-gradient(
     from 0deg,
     rgba(0, 164, 180, 0) 0deg,
-    rgba(120, 180, 200, 0.55) 70deg,
-    rgba(140, 150, 220, 0.55) 160deg,
-    rgba(100, 180, 150, 0.55) 250deg,
+    rgba(0, 164, 180, 0.55) 140deg,
+    rgba(0, 164, 180, 0.55) 220deg,
     rgba(0, 164, 180, 0) 360deg
   );
   mix-blend-mode: screen;
@@ -463,17 +468,19 @@ html {
   pointer-events: none;
 }
 
+/* Petals all share the same teal hue — they only differ in motion path. The parent
+   hue-rotation animation cycles them in unison with halo / corona / core. */
 .setup-welcome-orb .swo-petal.swo-p1 {
-  background: radial-gradient(circle at 50% 50%, #7fd5d8 0%, transparent 60%);
+  background: radial-gradient(circle at 50% 50%, #00a4b4 0%, transparent 60%);
   animation: setup-welcome-petal-a 7.5s ease-in-out infinite;
 }
 .setup-welcome-orb .swo-petal.swo-p2 {
-  background: radial-gradient(circle at 50% 50%, #8a9be0 0%, transparent 60%);
+  background: radial-gradient(circle at 50% 50%, #00a4b4 0%, transparent 60%);
   animation: setup-welcome-petal-b 9.2s ease-in-out infinite;
   animation-delay: -2.4s;
 }
 .setup-welcome-orb .swo-petal.swo-p3 {
-  background: radial-gradient(circle at 50% 50%, #6fc095 0%, transparent 60%);
+  background: radial-gradient(circle at 50% 50%, #00a4b4 0%, transparent 60%);
   animation: setup-welcome-petal-c 8.4s ease-in-out infinite;
   animation-delay: -5s;
 }
@@ -540,12 +547,15 @@ html {
 }
 
 @keyframes setup-welcome-orb-hue {
+  /* Cool-only palette: teal → blue → dark bluey purple. NEVER swings towards yellow/green.
+     teal #00a4b4 ≈ 186° hue. +60° lands around 246° (blue-purple).
+     Stays strictly inside the cool half of the wheel. */
   0%,
   100% {
-    filter: hue-rotate(-25deg);
+    filter: hue-rotate(0deg);
   }
   50% {
-    filter: hue-rotate(55deg);
+    filter: hue-rotate(60deg);
   }
 }
 

@@ -615,7 +615,7 @@ function SetupBootstrapWaitingCard({
       <SetupGlassAgentMetaStrip clock={clock} statusKey={statusKey} centerSlot={centerSlot} />
       <div className="flex w-full shrink-0 flex-col items-center">
         <div className="flex h-[13.4375rem] w-full flex-col items-center justify-center">
-          <SetupOrb variant="welcome" welcomeEnergised={false} />
+          <SetupOrb variant="welcome" welcomeEnergised />
         </div>
         <div className="mt-[1.15cm] shrink-0 text-center text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/45">
           {isAdditionalIcp ? 'Add another ICP' : 'Welcome to Arcova'}
@@ -2791,6 +2791,60 @@ function TypingHeadline({ part1, part2, speed = TYPING_MS }: { part1: string; pa
 }
 
 // ── Setup: breathing orb (default: compact; `welcome` = prototype shell with rings / core / optional busy layer) ──
+
+/**
+ * Auto-advancing checklist used on the orb saving screen.
+ * Cycles through `steps` at a steady pace so the user sees all steps "lighting up" even
+ * when the back-end phase changes are quicker than a single step would take.
+ */
+function SetupOrbProgressList({ steps, intervalMs = 750 }: { steps: string[]; intervalMs?: number }) {
+  const [index, setIndex] = useState(0);
+  useEffect(() => {
+    if (index >= steps.length - 1) return;
+    const t = setTimeout(() => setIndex((i) => Math.min(steps.length - 1, i + 1)), intervalMs);
+    return () => clearTimeout(t);
+  }, [index, steps.length, intervalMs]);
+
+  return (
+    <ul className="mx-auto w-full max-w-[280px] space-y-2.5">
+      {steps.map((label, i) => {
+        const isDone = i < index;
+        const isActive = i === index;
+        return (
+          <li key={i} className="flex items-center gap-2.5 text-[13px] leading-snug">
+            <span className="grid h-4 w-4 shrink-0 place-items-center">
+              {isDone ? (
+                <Check className="h-3.5 w-3.5 text-arcova-teal" strokeWidth={2.6} />
+              ) : isActive ? (
+                <span
+                  className="h-2 w-2 rounded-full bg-arcova-teal"
+                  style={{
+                    animation: 'arcova-dot-pulse 1.4s ease-in-out infinite',
+                    boxShadow: '0 0 0 4px rgba(0, 164, 180, 0.18)',
+                  }}
+                />
+              ) : (
+                <span className="h-1.5 w-1.5 rounded-full bg-arcova-navy/15" />
+              )}
+            </span>
+            <span
+              className={cn(
+                'transition-colors',
+                isDone
+                  ? 'text-arcova-navy/55'
+                  : isActive
+                    ? 'font-medium text-arcova-navy/85'
+                    : 'text-arcova-navy/30',
+              )}
+            >
+              {label}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
 
 function SetupOrb({
   size = 'lg',
@@ -7288,18 +7342,16 @@ export default function SetupFlow({
     const orbStepSlot = entryPoint === 'target-company'
       ? <AddIcpStepEyebrow step={1} />
       : <StepEyebrow step={2} />;
-    // Map each phase to a checklist position: 0 = profile save, 1 = buying team map, 2 = persona save, 3 = finalising
-    const progressIndex =
-      phase === 'company_saving' ? 0
-      : phase === 'buying_team_loading' ? 1
-      : phase === 'persona_saving' ? 2
-      : 3; // done
     const progressSteps = [
       'Saving your target company profile',
       'Mapping your buying team',
       'Defining buyer personas',
       'Finalising your setup',
     ];
+    // Visual cycle: orbProgressIndex is driven by a local timer below, not the phase.
+    // The orb screen is on-screen too briefly to walk through all phases naturally, so we
+    // animate the checklist forward at a steady pace to give the impression of progress.
+    // (The phase still controls when we leave the orb screen entirely.)
     return (
       <div className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-4 py-16">
         <AppAmbientBackground />
@@ -7324,45 +7376,9 @@ export default function SetupFlow({
               <h1 className="mb-5 mt-[0.75cm] text-center font-manrope text-3xl font-medium leading-snug tracking-tight text-arcova-navy">
                 <span className="block text-arcova-navy/40">Getting ready.</span>
               </h1>
-              {/* Checklist — fills the empty space under "Getting ready" with live progress
-                  through the back-end steps. Each step animates as we walk through phases. */}
-              <ul className="mx-auto w-full max-w-[280px] space-y-2.5">
-                {progressSteps.map((label, i) => {
-                  const isDone = i < progressIndex;
-                  const isActive = i === progressIndex;
-                  return (
-                    <li key={i} className="flex items-center gap-2.5 text-[13px] leading-snug">
-                      <span className="grid h-4 w-4 shrink-0 place-items-center">
-                        {isDone ? (
-                          <Check className="h-3.5 w-3.5 text-arcova-teal" strokeWidth={2.6} />
-                        ) : isActive ? (
-                          <span
-                            className="h-2 w-2 rounded-full bg-arcova-teal"
-                            style={{
-                              animation: 'arcova-dot-pulse 1.4s ease-in-out infinite',
-                              boxShadow: '0 0 0 4px rgba(0, 164, 180, 0.18)',
-                            }}
-                          />
-                        ) : (
-                          <span className="h-1.5 w-1.5 rounded-full bg-arcova-navy/15" />
-                        )}
-                      </span>
-                      <span
-                        className={cn(
-                          'transition-colors',
-                          isDone
-                            ? 'text-arcova-navy/55'
-                            : isActive
-                              ? 'font-medium text-arcova-navy/85'
-                              : 'text-arcova-navy/30',
-                        )}
-                      >
-                        {label}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
+              {/* Auto-advancing checklist — cycles through steps at 750ms each so the user
+                  sees all of them light up, even though the back-end phases tick faster. */}
+              <SetupOrbProgressList steps={progressSteps} intervalMs={750} />
             </div>
           </div>
         </div>

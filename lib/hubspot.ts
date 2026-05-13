@@ -253,7 +253,14 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
 const CLIENT_ID = process.env.HUBSPOT_CLIENT_ID!;
 const CLIENT_SECRET = process.env.HUBSPOT_CLIENT_SECRET!;
 const REDIRECT_URI = `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/hubspot/callback`;
-const SCOPES = 'oauth crm.objects.contacts.read crm.objects.contacts.write';
+const SCOPES = [
+  'oauth',
+  'crm.objects.contacts.read',
+  'crm.objects.contacts.write',
+  'crm.objects.companies.read',
+  'crm.objects.companies.write',
+  'crm.objects.deals.read',
+].join(' ');
 
 export type HubSpotContact = {
   id: string;
