@@ -1,10 +1,10 @@
 import { createAdminClient } from '@/lib/supabase-admin';
 
 type AnthropicUsageShape = {
-  input_tokens?: number;
-  output_tokens?: number;
-  cache_creation_input_tokens?: number;
-  cache_read_input_tokens?: number;
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  cache_creation_input_tokens?: number | null;
+  cache_read_input_tokens?: number | null;
 };
 
 type LlmUsageEventInput = {
@@ -18,14 +18,29 @@ type LlmUsageEventInput = {
   metadata?: Record<string, unknown> | null;
 };
 
-const ANTHROPIC_PRICING_USD_PER_MTOK: Record<
-  string,
-  { input: number; output: number; cacheWrite?: number; cacheRead?: number }
-> = {
-  'claude-sonnet-4-6': { input: 3, output: 15, cacheWrite: 3.75, cacheRead: 0.3 },
-  'claude-sonnet-4-5': { input: 3, output: 15, cacheWrite: 3.75, cacheRead: 0.3 },
-  'claude-haiku-4-5': { input: 1, output: 5, cacheWrite: 1.25, cacheRead: 0.1 },
-  'claude-haiku-4-5-20251001': { input: 1, output: 5, cacheWrite: 1.25, cacheRead: 0.1 },
+type AnthropicPricingTier = {
+  promptThresholdTokens?: number;
+  input: number;
+  output: number;
+  cacheWrite: number;
+  cacheRead: number;
+};
+
+const ANTHROPIC_PRICING_USD_PER_MTOK: Record<string, AnthropicPricingTier[]> = {
+  'claude-sonnet-4-6': [
+    { promptThresholdTokens: 200_000, input: 3, output: 15, cacheWrite: 3.75, cacheRead: 0.3 },
+    { input: 6, output: 22.5, cacheWrite: 7.5, cacheRead: 0.6 },
+  ],
+  'claude-sonnet-4-5': [
+    { promptThresholdTokens: 200_000, input: 3, output: 15, cacheWrite: 3.75, cacheRead: 0.3 },
+    { input: 6, output: 22.5, cacheWrite: 7.5, cacheRead: 0.6 },
+  ],
+  'claude-haiku-4-5': [
+    { input: 0.8, output: 4, cacheWrite: 1, cacheRead: 0.08 },
+  ],
+  'claude-haiku-4-5-20251001': [
+    { input: 0.8, output: 4, cacheWrite: 1, cacheRead: 0.08 },
+  ],
 };
 
 function num(value: unknown): number {
@@ -34,18 +49,22 @@ function num(value: unknown): number {
 
 export function estimateAnthropicUsageCostUsd(model: string, usage?: AnthropicUsageShape | null): number | null {
   if (!usage) return null;
-  const pricing = ANTHROPIC_PRICING_USD_PER_MTOK[model];
-  if (!pricing) return null;
+  const pricingTiers = ANTHROPIC_PRICING_USD_PER_MTOK[model];
+  if (!pricingTiers?.length) return null;
 
   const inputTokens = num(usage.input_tokens);
   const outputTokens = num(usage.output_tokens);
   const cacheWriteTokens = num(usage.cache_creation_input_tokens);
   const cacheReadTokens = num(usage.cache_read_input_tokens);
+  const promptTokens = inputTokens + cacheWriteTokens + cacheReadTokens;
+  const pricing =
+    pricingTiers.find((tier) => tier.promptThresholdTokens && promptTokens <= tier.promptThresholdTokens) ??
+    pricingTiers[pricingTiers.length - 1];
 
   const inputCost = (inputTokens / 1_000_000) * pricing.input;
   const outputCost = (outputTokens / 1_000_000) * pricing.output;
-  const cacheWriteCost = (cacheWriteTokens / 1_000_000) * (pricing.cacheWrite ?? 0);
-  const cacheReadCost = (cacheReadTokens / 1_000_000) * (pricing.cacheRead ?? 0);
+  const cacheWriteCost = (cacheWriteTokens / 1_000_000) * pricing.cacheWrite;
+  const cacheReadCost = (cacheReadTokens / 1_000_000) * pricing.cacheRead;
 
   return Math.round((inputCost + outputCost + cacheWriteCost + cacheReadCost) * 1_000_000) / 1_000_000;
 }
@@ -77,4 +96,3 @@ export async function recordLlmUsageEvent(input: LlmUsageEventInput): Promise<vo
     console.error('[llm-usage] failed to initialize usage recording:', error);
   }
 }
-

@@ -6,6 +6,7 @@ import {
   employeeCountToSizeBucket,
   totalFundingToBracket,
 } from '@/lib/arcova-taxonomy';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 
 const MODEL = 'claude-sonnet-4-6';
 
@@ -242,6 +243,14 @@ Return ONLY valid JSON — no markdown, no explanation:
       model: MODEL,
       max_tokens: 768,
       messages: [{ role: 'user', content: prompt }],
+    });
+
+    await recordLlmUsageEvent({
+      provider: 'anthropic',
+      feature: 'generate_buying_team',
+      route: 'app/api/generate-buying-team',
+      model: MODEL,
+      usage: message.usage,
     });
 
     const text = message.content

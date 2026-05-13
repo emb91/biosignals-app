@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { NextResponse } from 'next/server';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 
 export async function POST(request: Request) {
   try {
@@ -134,6 +135,14 @@ Rules:
       system:
         'Output only the ICP category title: a natural Title Case noun phrase. No quotes, labels, or explanation.',
       messages: [{ role: 'user', content: prompt }],
+    });
+
+    await recordLlmUsageEvent({
+      provider: 'anthropic',
+      feature: 'generate_icp_name',
+      route: 'app/api/generate-icp-name',
+      model: 'claude-haiku-4-5',
+      usage: message.usage,
     });
 
     const rawName = (message.content[0] as { type: string; text: string }).text.trim();

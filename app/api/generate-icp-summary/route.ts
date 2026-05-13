@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { NextResponse } from 'next/server';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 
 export async function POST(request: Request) {
   try {
@@ -82,6 +83,14 @@ Rules:
       temperature: 0.3,
       system: 'Output only the requested sentence. Never mention the underlying company. Start exactly with "This ICP defines". Avoid promotional phrasing like "powered by".',
       messages: [{ role: 'user', content: prompt }],
+    });
+
+    await recordLlmUsageEvent({
+      provider: 'anthropic',
+      feature: 'generate_icp_summary',
+      route: 'app/api/generate-icp-summary',
+      model: 'claude-haiku-4-5',
+      usage: message.usage,
     });
 
     const rawSummary = (message.content[0] as { type: string; text: string }).text.trim();

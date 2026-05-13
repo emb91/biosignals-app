@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel, type AgentPendingMessage } from '@/components/AgentPanel';
+import { PageHeader } from '@/components/PageHeader';
 import { Activity, AlertTriangle, Kanban, Loader2, Plus } from 'lucide-react';
 import {
   healthLabel,
@@ -294,18 +295,14 @@ export default function HealthPage() {
       <AppSidebar />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden min-[1280px]:flex-row">
-        <div className="arcova-scroll-surface flex-1 overflow-auto p-6">
-          <div className="w-full max-w-6xl mx-auto">
-            <div className="mb-6">
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-arcova-teal">
-                <Activity className="h-3.5 w-3.5" />
-                Health
-              </div>
-              <h1 className="mt-2 text-2xl font-semibold leading-tight text-slate-950 sm:text-3xl">Pipeline health</h1>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
-                One row per ICP. Weakest overall health sorts first.
-              </p>
-            </div>
+        <div className="arcova-scroll-surface flex-1 overflow-auto px-6 py-8 lg:px-10">
+          <div className="mx-auto w-full max-w-[1180px]">
+            <PageHeader
+              eyebrow="Pipeline"
+              eyebrowIcon={<Activity className="h-3 w-3" />}
+              title="Pipeline health"
+              subtitle="One row per ICP — weakest overall health sorts first."
+            />
 
             {/* Coverage gap banner */}
             {gapIcps.length > 0 && (

@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { NextResponse } from 'next/server';
 import { COMPANY_SIGNALS } from '@/lib/signals/catalog';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 
 export async function POST(request: Request) {
   try {
@@ -51,6 +52,14 @@ Return ONLY the JSON array, nothing else.`;
       model: 'claude-sonnet-4-6',
       max_tokens: 1024,
       messages: [{ role: 'user', content: prompt }],
+    });
+
+    await recordLlmUsageEvent({
+      provider: 'anthropic',
+      feature: 'recommend_signals',
+      route: 'app/api/recommend-signals',
+      model: 'claude-sonnet-4-6',
+      usage: message.usage,
     });
 
     const responseText = (message.content[0] as { type: string; text: string }).text.trim();

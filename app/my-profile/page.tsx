@@ -6,6 +6,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { normalizePlatformTaxonomyFields } from '@/lib/platform-category';
 import { parseSSEStream } from '@/lib/sse';
 import AppSidebar from '@/components/AppSidebar';
+import { PageHeader } from '@/components/PageHeader';
 import { AppWarningBanner } from '@/components/AppWarningBanner';
 import { ProfileCard, type PanelMyCompanyData, type MyCompanyChangeValue, type CompetitorItem } from '@/components/SetupProfilePanel';
 import { Pencil, RefreshCw, Trash2, Save, X, AlertTriangle, Building2, ArrowRight, ChevronDown, ExternalLink, Check, Loader2 } from 'lucide-react';
@@ -396,20 +397,12 @@ export default function MyProfilePage() {
       <main className="arcova-scroll-surface min-h-0 flex-1 overflow-y-auto px-6 py-8 lg:px-10">
         <div className="mx-auto max-w-[1180px]">
 
-          {/* ── Page header ── */}
-          <div className="mb-6 flex flex-wrap items-start justify-between gap-6 px-0.5">
-            <div>
-              <h1 className="font-manrope text-[28px] font-semibold leading-[1.1] tracking-[-0.024em] text-arcova-navy">
-                Your company profile
-              </h1>
-              <p className="mt-1.5 text-[13px] text-arcova-navy/50">
-                Used to build target criteria, define buying personas, and find the right leads.
-              </p>
-            </div>
-
-            {/* Action buttons */}
-            {analysisData && (
-              <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <PageHeader
+            eyebrow="Setup · My company"
+            title="Your company profile"
+            subtitle="Used to build target criteria, define buying personas, and find the right leads."
+            action={analysisData ? (
+              <div className="flex flex-wrap items-center gap-2">
                 {editMode ? (
                   <>
                     <button
@@ -470,8 +463,8 @@ export default function MyProfilePage() {
                   </>
                 )}
               </div>
-            )}
-          </div>
+            ) : undefined}
+          />
 
           {/* ── Change company inline input ── */}
           {showChangeInput && !isReenriching && (
@@ -536,23 +529,6 @@ export default function MyProfilePage() {
             </article>
           ) : (
           <article className="overflow-hidden rounded-[22px] border border-arcova-navy/10 bg-white/65 backdrop-blur-xl shadow-arcova">
-            {/* Card header */}
-            <header className="flex items-center gap-2.5 border-b border-arcova-navy/8 px-[18px] py-3.5">
-              <span className="grid h-[26px] w-[26px] place-items-center rounded-lg bg-arcova-teal/12 text-arcova-teal">
-                <Building2 className="h-3.5 w-3.5" />
-              </span>
-              <span className="flex-1 font-manrope text-[14.5px] font-semibold tracking-[-0.014em] text-arcova-navy">
-                Your company
-              </span>
-              <span className="grid h-[22px] w-[22px] place-items-center rounded-full bg-arcova-teal text-white">
-                {isReenriching ? (
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                ) : (
-                  <Check className="h-3 w-3" strokeWidth={3} />
-                )}
-              </span>
-            </header>
-
             <div className="flex flex-col gap-[22px] px-[22px] pb-6 pt-[22px]">
               {/* Hero row */}
               <div className="flex items-start gap-3.5 px-1 pb-0.5 pt-1">

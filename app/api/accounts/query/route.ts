@@ -2,6 +2,7 @@ import { TASK_AGENT_OPENING } from '@/lib/prompts/agent-voice';
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@/lib/supabase-server';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import {
   type AccountQueryColumn,
   type AccountQueryFilters,
@@ -172,6 +173,14 @@ async function callClaude(query: string): Promise<{
     temperature: 0,
     system: SYSTEM_PROMPT,
     messages: [{ role: 'user', content: `Query: "${query}"` }],
+  });
+
+  await recordLlmUsageEvent({
+    provider: 'anthropic',
+    feature: 'accounts_query',
+    route: 'app/api/accounts/query',
+    model: 'claude-sonnet-4-6',
+    usage: message.usage,
   });
 
   const text = message.content

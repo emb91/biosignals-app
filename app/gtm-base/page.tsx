@@ -4,6 +4,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
+import { PageHeader } from '@/components/PageHeader';
 import { supabase } from '@/lib/supabase';
 import { Building2, Gauge, Loader2, Target, Users } from 'lucide-react';
 
@@ -165,20 +166,14 @@ export default function DashboardPage() {
     <div className="flex h-screen bg-transparent">
       <AppSidebar />
 
-      <main className="arcova-scroll-surface min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
-        <div className="mx-auto flex min-h-full w-full max-w-6xl flex-col gap-6">
-          <header>
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-arcova-teal">
-              <Gauge className="h-3.5 w-3.5" />
-              Tracking
-            </div>
-            <h1 className="mt-2 text-3xl font-semibold leading-tight text-slate-950 sm:text-4xl">
-              Your go-to-market base
-            </h1>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-              The short version of what Arcova knows about your market right now.
-            </p>
-          </header>
+      <main className="arcova-scroll-surface min-h-0 flex-1 overflow-y-auto px-6 py-8 lg:px-10">
+        <div className="mx-auto flex min-h-full w-full max-w-[1180px] flex-col gap-6">
+          <PageHeader
+            eyebrow="Tracking"
+            eyebrowIcon={<Gauge className="h-3 w-3" />}
+            title="Your go-to-market base"
+            subtitle="The short version of what Arcova knows about your market right now."
+          />
 
           <section className="grid gap-4 md:grid-cols-3">
             {countCards.map(({ label, value, Icon }) => (

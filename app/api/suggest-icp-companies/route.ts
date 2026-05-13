@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 
 const MODEL = 'claude-sonnet-4-6';
 const anthropic = new Anthropic();
@@ -60,6 +61,14 @@ Rules:
       model: MODEL,
       max_tokens: 512,
       messages: [{ role: 'user', content: prompt }],
+    });
+
+    await recordLlmUsageEvent({
+      provider: 'anthropic',
+      feature: 'suggest_icp_companies',
+      route: 'app/api/suggest-icp-companies',
+      model: MODEL,
+      usage: message.usage,
     });
 
     const raw = message.content[0].type === 'text' ? message.content[0].text.trim() : '';
