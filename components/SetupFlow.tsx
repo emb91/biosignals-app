@@ -60,6 +60,7 @@ import {
   ExternalLink,
   Check,
   Building2,
+  Users,
   X,
   Target,
   Pencil,
@@ -633,11 +634,15 @@ function SetupBootstrapWaitingCard({
         </h1>
 
         {isAdditionalIcp ? (
-          <div className="space-y-3">
-            <p className="text-center text-sm leading-relaxed text-arcova-navy/45">
-              Pulling your saved company context and previous ICPs so we can start a fresh target profile.
-            </p>
-          </div>
+          <SetupOrbProgressList
+            steps={[
+              'Pulling your saved company context',
+              'Loading your previous ICPs',
+              'Generating fresh suggestions',
+              'Almost ready',
+            ]}
+            intervalMs={750}
+          />
         ) : (
           <div className="space-y-3">
             <form onSubmit={onSubmit}>
@@ -2304,7 +2309,7 @@ function SetupTargetCompanyCard({
                 return (
                   <span
                     key={`${c.name}-${i}`}
-                    className="inline-flex max-w-full items-center gap-1 rounded-full border border-arcova-teal/20 bg-arcova-teal/10 pl-2.5 pr-1.5 py-0.5 text-[13px] font-medium text-arcova-teal"
+                    className="inline-flex max-w-full items-center gap-1 rounded-full border border-arcova-teal/20 bg-arcova-teal/10 px-2.5 py-1 text-[11.5px] font-medium text-arcova-teal"
                   >
                     <a
                       href={href}
@@ -3753,6 +3758,10 @@ export default function SetupFlow({
     fundingStages: [], signals: [], targetCustomers: [], buyerTypes: [], competitors: [],
   });
   const [panelPersona, setPanelPersona] = useState<PanelPersonaData>({ functions: [], seniority: [], jobTitles: [], signals: [] });
+  // Pending free-text values for "add custom function / seniority" inputs (edit mode only).
+  // Once submitted they're appended to panelPersona.functions / .seniority as regular pills.
+  const [pendingCustomFunction, setPendingCustomFunction] = useState('');
+  const [pendingCustomSeniority, setPendingCustomSeniority] = useState('');
   const [buyingTeamEditMode, setBuyingTeamEditMode] = useState(false);
   const [savedIcpName, setSavedIcpName] = useState('');
   const [savedPersonaName, setSavedPersonaName] = useState('');
@@ -6725,7 +6734,18 @@ export default function SetupFlow({
         <div className="relative z-10 mt-4 w-[460px]">
           <SetupLightProgressRow
             leading={
-              isGlassTargetStep && (entryPoint === 'full' || entryPoint === 'target-company') ? (
+              // /company-criteria/new: Cancel exits the new-ICP flow entirely back to the ICP list.
+              // Full arcova-setup: Back walks one step backwards through the flow.
+              entryPoint === 'target-company' ? (
+                <button
+                  type="button"
+                  onClick={() => router.push(resolvedCompletePath)}
+                  disabled={thinking}
+                  className={SETUP_TOP_BACK_LIGHT_CLASS}
+                >
+                  Cancel
+                </button>
+              ) : isGlassTargetStep && entryPoint === 'full' ? (
                 <button
                   type="button"
                   onClick={() => void handleBackNavigation(0)}
@@ -7281,50 +7301,340 @@ export default function SetupFlow({
 
   // Phase: buying_team_review → light glass review of buying team
   if (phase === 'buying_team_review') {
-    const icpName = savedIcpName || reviewedCompanyName || 'this ICP';
+    // Hero anchor uses the reference company name (concrete, e.g. "Revvity, Inc.").
+    // The ICP category name belongs inside the card header instead.
+    const heroAnchor = reviewedCompanyName || savedIcpName || 'this ICP';
     return (
-      <LightLayout
-        eyebrow={headerCenter(2)}
-        title={`Here's who typically buys from companies like ${icpName}.`}
-        subtitle="Review the roles and seniority — you can adjust before saving."
-        onBack={() => void handleBackNavigation(1)}
-      >
-        <div className="arcova-glass-panel p-6">
-          <SetupProfilePanel
-            {...sharedPanelProps}
-            phase={phase}
-            analysisLoading={false}
-            onConfirmBuyingTeam={() => void savePersona()}
-          />
+      <div className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <AppAmbientBackground />
+        <div className="relative z-10 flex flex-col px-6 pb-8 pt-5 lg:px-10">
+          {/*
+            Top nav chrome is empty on this review page — Back / Forward are placed below the
+            card, paired with the CTA row, so navigation lives next to the content it acts on.
+            The hero + eyebrow already convey the step context.
+          */}
+          {/* Hero — canvas layout (matches customer_url_review / /today). Extra mb-* below
+              so the small buying-team card sits with breathing room rather than crowding the hero. */}
+          <div className="mb-16">
+            <p className="m-0 font-manrope text-[11px] font-semibold uppercase tracking-[0.14em] text-arcova-teal">
+              Setup &middot; Buying teams
+            </p>
+            <h1 className="mt-2 mb-0 font-manrope text-[clamp(1.75rem,3.6vw,2.5rem)] font-semibold leading-[1.05] tracking-[-0.028em] text-arcova-navy">
+              <span className="block">For ICPs like {heroAnchor},</span>
+              <span className="block">
+                here are your{' '}
+                <span className="bg-gradient-to-br from-arcova-teal to-arcova-mint bg-clip-text text-transparent">
+                  buying teams
+                </span>
+              </span>
+            </h1>
+            <p className="mt-2.5 mb-0 text-[14px] leading-[1.5] text-arcova-navy/65">
+              {buyingTeamEditMode
+                ? "Tweak the functions or seniority levels, then jump back when you're done."
+                : "Have a look over the roles and seniority, and move forward when you're ready."}
+            </p>
+          </div>
+
+          {/* Buying team card — light theme, matches SetupTargetCompanyCard chrome.
+              Renders the persona content directly (skips the dark SetupProfilePanel whose
+              white-text CardShells are invisible on this light surface). */}
+          <div className="mx-auto w-full max-w-5xl">
+            <article className="overflow-hidden rounded-2xl border border-arcova-navy/10 bg-white/75 shadow-arcova backdrop-blur-xl">
+              {/* Header bar — uses the reference company's logo (e.g. Revvity) so the card
+                  visually anchors to the same company the buying teams are modelled on. */}
+              <div className="flex items-center gap-3 border-b border-arcova-navy/8 px-4 py-3">
+                {enrichedTargetCompany?.logo_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={enrichedTargetCompany.logo_url}
+                    alt={enrichedTargetCompany.company_name ?? ''}
+                    className="h-9 w-9 shrink-0 rounded-[10px] border border-arcova-navy/8 bg-white object-contain p-1"
+                  />
+                ) : reviewedCompanyName ? (
+                  <div className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-[10px] bg-gradient-to-br from-arcova-teal/20 to-arcova-teal/10 font-bold text-arcova-teal">
+                    <span className="text-sm">{reviewedCompanyName[0]?.toUpperCase() ?? 'T'}</span>
+                  </div>
+                ) : (
+                  <Users className="h-4 w-4 shrink-0 text-arcova-teal" />
+                )}
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span className="block min-w-0 truncate font-manrope text-[17px] font-semibold tracking-[-0.014em] text-arcova-navy">
+                    Buying teams{savedIcpName ? ` for ${savedIcpName}` : ''}
+                  </span>
+                  {reviewedCompanyName && (() => {
+                    const displayDomain = enrichedTargetCompany?.website
+                      ?.replace(/^https?:\/\/(www\.)?/, '')
+                      .replace(/\/$/, '');
+                    return (
+                      <span className="block min-w-0 truncate text-xs text-arcova-navy/45">
+                        Modelled on {reviewedCompanyName}
+                        {displayDomain && enrichedTargetCompany?.website && (
+                          <>
+                            {' · '}
+                            <a
+                              href={enrichedTargetCompany.website}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-0.5 text-arcova-teal hover:underline"
+                            >
+                              {displayDomain}
+                              <ExternalLink className="h-2.5 w-2.5" />
+                            </a>
+                          </>
+                        )}
+                      </span>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-4 p-4">
+                {/* Functions — pill size + style match SetupTag (target companies card).
+                    Wrap containers are capped at max-w-[560px] so longer lists naturally
+                    spill over 2-3 rows. In edit mode we add a free-text input for custom
+                    functions; those get appended as regular pills (taxonomy-unaware but stored). */}
+                {(panelPersona.functions.length > 0 || buyingTeamEditMode) && (
+                  <SetupTargetFieldRow label="Functions">
+                    {buyingTeamEditMode ? (
+                      <div className="max-w-[560px] space-y-2">
+                        <div className="flex flex-wrap gap-1.5">
+                          {/* Standard taxonomy chips (toggleable) */}
+                          {FUNCTION_OPTIONS.map((opt) => {
+                            const selected = panelPersona.functions.includes(opt);
+                            return (
+                              <button
+                                key={opt}
+                                type="button"
+                                onClick={() => {
+                                  const next = selected
+                                    ? panelPersona.functions.filter((x) => x !== opt)
+                                    : [...panelPersona.functions, opt];
+                                  personaRef.current.functions = next;
+                                  setPanelPersona((p) => ({ ...p, functions: next }));
+                                }}
+                                className={cn(
+                                  'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11.5px] font-medium transition-colors',
+                                  selected
+                                    ? 'border-arcova-teal/20 bg-arcova-teal/10 text-arcova-teal'
+                                    : 'border-arcova-navy/10 bg-white/60 text-arcova-navy/55 hover:bg-white hover:text-arcova-navy',
+                                )}
+                              >
+                                {opt}
+                              </button>
+                            );
+                          })}
+                          {/* Custom (user-added, off-taxonomy) functions — render as pills with a remove button */}
+                          {panelPersona.functions
+                            .filter((f) => !FUNCTION_OPTIONS.includes(f))
+                            .map((f) => (
+                              <span
+                                key={f}
+                                className="inline-flex items-center gap-1 rounded-full border border-arcova-teal/20 bg-arcova-teal/10 px-2.5 py-1 text-[11.5px] font-medium text-arcova-teal"
+                              >
+                                {f}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const next = panelPersona.functions.filter((x) => x !== f);
+                                    personaRef.current.functions = next;
+                                    setPanelPersona((p) => ({ ...p, functions: next }));
+                                  }}
+                                  className="text-arcova-teal/50 hover:text-arcova-teal"
+                                  aria-label={`Remove ${f}`}
+                                >
+                                  <X className="h-2.5 w-2.5" />
+                                </button>
+                              </span>
+                            ))}
+                        </div>
+                        {/* Add custom function */}
+                        <input
+                          type="text"
+                          value={pendingCustomFunction}
+                          onChange={(ev) => setPendingCustomFunction(ev.target.value)}
+                          onKeyDown={(ev) => {
+                            if (ev.key !== 'Enter' || !pendingCustomFunction.trim()) return;
+                            ev.preventDefault();
+                            const trimmed = pendingCustomFunction.trim();
+                            if (panelPersona.functions.includes(trimmed)) {
+                              setPendingCustomFunction('');
+                              return;
+                            }
+                            const next = [...panelPersona.functions, trimmed];
+                            personaRef.current.functions = next;
+                            setPanelPersona((p) => ({ ...p, functions: next }));
+                            setPendingCustomFunction('');
+                          }}
+                          placeholder="Add another function… (Enter)"
+                          className="w-full rounded-lg border border-arcova-navy/10 bg-white/60 px-3 py-1.5 text-[12.5px] text-arcova-navy/80 placeholder:text-arcova-navy/30 focus:border-arcova-teal/45 focus:outline-none"
+                        />
+                      </div>
+                    ) : (
+                      <div className="max-w-[560px]">
+                        <SetupTagRow items={panelPersona.functions} />
+                      </div>
+                    )}
+                  </SetupTargetFieldRow>
+                )}
+
+                {/* Seniority — same pattern as Functions, with its own custom-text input. */}
+                {(panelPersona.seniority.length > 0 || buyingTeamEditMode) && (
+                  <SetupTargetFieldRow label="Seniority">
+                    {buyingTeamEditMode ? (
+                      <div className="max-w-[560px] space-y-2">
+                        <div className="flex flex-wrap gap-1.5">
+                          {/* Standard taxonomy chips */}
+                          {SENIORITY_OPTIONS.map((opt) => {
+                            const selected = panelPersona.seniority.includes(opt);
+                            return (
+                              <button
+                                key={opt}
+                                type="button"
+                                onClick={() => {
+                                  const next = selected
+                                    ? panelPersona.seniority.filter((x) => x !== opt)
+                                    : [...panelPersona.seniority, opt];
+                                  personaRef.current.seniority = next;
+                                  setPanelPersona((p) => ({ ...p, seniority: next }));
+                                }}
+                                className={cn(
+                                  'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11.5px] font-medium transition-colors',
+                                  selected
+                                    ? 'border-arcova-teal/20 bg-arcova-teal/10 text-arcova-teal'
+                                    : 'border-arcova-navy/10 bg-white/60 text-arcova-navy/55 hover:bg-white hover:text-arcova-navy',
+                                )}
+                              >
+                                {opt}
+                              </button>
+                            );
+                          })}
+                          {/* Custom (user-added) seniority levels */}
+                          {panelPersona.seniority
+                            .filter((s) => !SENIORITY_OPTIONS.includes(s))
+                            .map((s) => (
+                              <span
+                                key={s}
+                                className="inline-flex items-center gap-1 rounded-full border border-arcova-teal/20 bg-arcova-teal/10 px-2.5 py-1 text-[11.5px] font-medium text-arcova-teal"
+                              >
+                                {s}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const next = panelPersona.seniority.filter((x) => x !== s);
+                                    personaRef.current.seniority = next;
+                                    setPanelPersona((p) => ({ ...p, seniority: next }));
+                                  }}
+                                  className="text-arcova-teal/50 hover:text-arcova-teal"
+                                  aria-label={`Remove ${s}`}
+                                >
+                                  <X className="h-2.5 w-2.5" />
+                                </button>
+                              </span>
+                            ))}
+                        </div>
+                        {/* Add custom seniority */}
+                        <input
+                          type="text"
+                          value={pendingCustomSeniority}
+                          onChange={(ev) => setPendingCustomSeniority(ev.target.value)}
+                          onKeyDown={(ev) => {
+                            if (ev.key !== 'Enter' || !pendingCustomSeniority.trim()) return;
+                            ev.preventDefault();
+                            const trimmed = pendingCustomSeniority.trim();
+                            if (panelPersona.seniority.includes(trimmed)) {
+                              setPendingCustomSeniority('');
+                              return;
+                            }
+                            const next = [...panelPersona.seniority, trimmed];
+                            personaRef.current.seniority = next;
+                            setPanelPersona((p) => ({ ...p, seniority: next }));
+                            setPendingCustomSeniority('');
+                          }}
+                          placeholder="Add another seniority level… (Enter)"
+                          className="w-full rounded-lg border border-arcova-navy/10 bg-white/60 px-3 py-1.5 text-[12.5px] text-arcova-navy/80 placeholder:text-arcova-navy/30 focus:border-arcova-teal/45 focus:outline-none"
+                        />
+                      </div>
+                    ) : (
+                      <div className="max-w-[560px]">
+                        <SetupTagRow items={panelPersona.seniority} />
+                      </div>
+                    )}
+                  </SetupTargetFieldRow>
+                )}
+              </div>
+
+              {/* Footer — Edit (view) / Save + Cancel (edit). Mirrors the SetupTargetCompanyCard
+                  footer layout. Re-enrich and Delete are intentionally omitted for buying teams. */}
+              <div className="flex flex-wrap items-center justify-end gap-2 border-t border-arcova-navy/8 px-4 py-3">
+                {buyingTeamEditMode ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setBuyingTeamEditMode(false)}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-teal px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-arcova-teal/90"
+                    >
+                      <Save className="h-3 w-3" />
+                      Save changes
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBuyingTeamEditMode(false)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-arcova-navy/12 bg-white/80 px-3 py-1.5 text-xs font-medium text-arcova-navy/60 hover:bg-white"
+                    >
+                      <X className="h-3 w-3" />
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setBuyingTeamEditMode(true)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-arcova-navy/10 bg-white/60 px-3 py-1.5 text-xs font-medium text-arcova-navy/60 transition-colors hover:bg-white hover:text-arcova-navy"
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
+            </article>
+
+            {/* CTA row — Back / Forward live here paired with the card, matching customer_url_review */}
+            <div className="mt-5 flex flex-wrap items-center gap-3 px-1">
+              <button
+                type="button"
+                onClick={() => void handleBackNavigation(1)}
+                disabled={thinking}
+                className={SETUP_TOP_BACK_LIGHT_CLASS}
+              >
+                <span aria-hidden>←</span> Back
+              </button>
+              <button
+                type="button"
+                onClick={() => void savePersona()}
+                disabled={thinking}
+                className="inline-flex items-center gap-2 rounded-[14px] bg-gradient-to-br from-arcova-teal to-[#007e8b] px-[22px] py-[13px] text-sm font-semibold text-white shadow-[0_12px_28px_-12px_rgba(0,164,180,0.5)] transition-all hover:-translate-y-px hover:bg-arcova-navy disabled:opacity-50"
+              >
+                <Check className="h-3.5 w-3.5" strokeWidth={2.4} />
+                Looks good — continue
+              </button>
+              <div className="ml-auto inline-flex items-center gap-3">
+                {devForwardButton}
+              </div>
+            </div>
+
+            {inputEnabled && (
+              <div className="mt-3">
+                <SetupEmbedChatInput
+                  value={inputValue}
+                  onChange={(v) => setInputVal(v)}
+                  onSubmit={(e) => void handleSend(e)}
+                  disabled={thinking}
+                  placeholder="Reply to the agent…"
+                />
+              </div>
+            )}
+          </div>
         </div>
-        <div className="mt-5 flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={() => void savePersona()}
-            disabled={thinking}
-            className={ctaPrimary}
-          >
-            Looks right →
-          </button>
-          <button
-            type="button"
-            onClick={() => setBuyingTeamEditMode((prev) => !prev)}
-            disabled={thinking}
-            className={ctaSecondary}
-          >
-            {buyingTeamEditMode ? 'Cancel edits' : "Something's off"}
-          </button>
-        </div>
-        {inputEnabled && (
-          <SetupEmbedChatInput
-            value={inputValue}
-            onChange={(v) => setInputVal(v)}
-            onSubmit={(e) => void handleSend(e)}
-            disabled={thinking}
-            placeholder="Reply to the agent…"
-          />
-        )}
-      </LightLayout>
+      </div>
     );
   }
 
@@ -7342,12 +7652,25 @@ export default function SetupFlow({
     const orbStepSlot = entryPoint === 'target-company'
       ? <AddIcpStepEyebrow step={1} />
       : <StepEyebrow step={2} />;
-    const progressSteps = [
-      'Saving your target company profile',
-      'Mapping your buying team',
-      'Defining buyer personas',
-      'Finalising your setup',
-    ];
+    // Two distinct waiting-card "blocks":
+    //   - Block A (after target review): we're saving the ICP and mapping the buying team.
+    //   - Block B (after buying-team review): we're saving the persona, crafting signals, wrapping up.
+    // Each block has its own eyebrow + checklist steps so the user sees relevant progress.
+    const isAfterBuyingTeam = phase === 'persona_saving' || phase === 'done';
+    const orbEyebrow = isAfterBuyingTeam ? 'Wrapping up your setup' : 'Define your buying teams';
+    const progressSteps = isAfterBuyingTeam
+      ? [
+          'Saving your buying team',
+          'Crafting company signals',
+          'Crafting contact signals',
+          'Finalising your setup',
+        ]
+      : [
+          'Saving your target company profile',
+          'Mapping your buying team',
+          'Defining buyer personas',
+          'Almost ready',
+        ];
     // Visual cycle: orbProgressIndex is driven by a local timer below, not the phase.
     // The orb screen is on-screen too briefly to walk through all phases naturally, so we
     // animate the checklist forward at a steady pace to give the impression of progress.
@@ -7369,7 +7692,7 @@ export default function SetupFlow({
                 <SetupOrb variant="welcome" welcomeEnergised />
               </div>
               <div className="mt-[1.15cm] shrink-0 text-center text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/45">
-                Define your buying teams
+                {orbEyebrow}
               </div>
             </div>
             <div className="flex min-h-0 flex-1 flex-col justify-start">

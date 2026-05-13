@@ -16,6 +16,7 @@ type HubspotSyncLogResponse = {
   contacts_errors: number | null;
   contacts_skipped: number | null;
   skipped_contacts: unknown[];
+  last_error_details: string[];
   last_pull_batch: HubspotSyncLogLastPullBatch | null;
 };
 
@@ -28,7 +29,7 @@ export async function GET() {
     supabase
       .from('hubspot_sync_log')
       .select(
-        'synced_at, auto_pull_at, auto_pull_count, contacts_synced, contacts_errors, contacts_skipped, skipped_contacts',
+        'synced_at, auto_pull_at, auto_pull_count, contacts_synced, contacts_errors, contacts_skipped, skipped_contacts, last_error_details',
       )
       .eq('user_id', user.id)
       .maybeSingle(),
@@ -67,10 +68,15 @@ export async function GET() {
     contacts_errors: null,
     contacts_skipped: null,
     skipped_contacts: null as unknown[] | null,
+    last_error_details: null as unknown[] | null,
   };
 
   const skippedRaw = base.skipped_contacts;
   const skipped_contacts = Array.isArray(skippedRaw) ? skippedRaw : [];
+  const errorRaw = base.last_error_details;
+  const last_error_details = Array.isArray(errorRaw)
+    ? errorRaw.filter((item): item is string => typeof item === 'string')
+    : [];
 
   const payload: HubspotSyncLogResponse = {
     synced_at: base.synced_at ?? null,
@@ -80,6 +86,7 @@ export async function GET() {
     contacts_errors: base.contacts_errors ?? null,
     contacts_skipped: base.contacts_skipped ?? null,
     skipped_contacts,
+    last_error_details,
     last_pull_batch,
   };
 

@@ -14,6 +14,7 @@
 import { after, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { nango, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
+import { looksLikeEmail } from '@/lib/contact-emails';
 import {
   ensureArcovaHubSpotProperties,
   batchUpsertContacts,
@@ -61,7 +62,11 @@ async function pushUserToHubSpot(
   userId: string,
   accessToken: string,
   admin: ReturnType<typeof createAdminClient>
-): Promise<{ contacts: { upserted: number; errors: number }; companies: { updated: number; errors: number } }> {
+): Promise<{
+  contacts: { upserted: number; errors: number; errorDetails: string[] };
+  companies: { updated: number; errors: number; errorDetails: string[] };
+  skippedContacts: Array<{ name: string; company: string | null; reason: string }>;
+}> {
   const { data: leads } = await admin
     .from('contacts')
     .select(`
@@ -77,16 +82,37 @@ async function pushUserToHubSpot(
     .eq('user_id', userId)
     .not('overall_fit_score', 'is', null);
 
-  if (!leads?.length) return { contacts: { upserted: 0, errors: 0 }, companies: { updated: 0, errors: 0 } };
+  if (!leads?.length) {
+    return {
+      contacts: { upserted: 0, errors: 0, errorDetails: [] },
+      companies: { updated: 0, errors: 0, errorDetails: [] },
+      skippedContacts: [],
+    };
+  }
 
   await ensureArcovaHubSpotProperties(accessToken);
 
   const enrichedAt = new Date().toISOString().slice(0, 10);
 
   const upserts: Array<{ email: string; properties: Record<string, string> }> = [];
+  const skippedContacts: Array<{ name: string; company: string | null; reason: string }> = [];
 
   for (const lead of leads) {
-    if (!lead.email?.trim()) continue;
+    const trimmedEmail = lead.email?.trim() ?? '';
+    const name = [lead.first_name, lead.last_name].filter(Boolean).join(' ') || 'Unknown';
+    const companyName = (lead.companies as any)?.company_name ?? null;
+    if (!trimmedEmail) {
+      skippedContacts.push({ name, company: companyName, reason: 'No email address' });
+      continue;
+    }
+    if (!looksLikeEmail(trimmedEmail)) {
+      skippedContacts.push({
+        name,
+        company: companyName,
+        reason: 'Email looks invalid. Update it to something like name@company.com.',
+      });
+      continue;
+    }
 
     const co = lead.companies as any;
     const companyFit = co?.company_fit_score ?? null;
@@ -117,7 +143,13 @@ async function pushUserToHubSpot(
     upserts.push({ email: lead.email!.toLowerCase(), properties: props });
   }
 
-  if (!upserts.length) return { contacts: { upserted: 0, errors: 0 }, companies: { updated: 0, errors: 0 } };
+  if (!upserts.length) {
+    return {
+      contacts: { upserted: 0, errors: 0, errorDetails: [] },
+      companies: { updated: 0, errors: 0, errorDetails: [] },
+      skippedContacts,
+    };
+  }
 
   const contactResult = await batchUpsertContacts(accessToken, upserts);
 
@@ -174,9 +206,9 @@ async function pushUserToHubSpot(
 
   const companyResult = companyUpdates.length > 0
     ? await batchUpdateCompanies(accessToken, companyUpdates)
-    : { updated: 0, errors: 0 };
+    : { updated: 0, errors: 0, errorDetails: [] };
 
-  return { contacts: contactResult, companies: companyResult };
+  return { contacts: contactResult, companies: companyResult, skippedContacts };
 }
 
 // ── Pull: HubSpot → Arcova ────────────────────────────────────────────────────
@@ -366,8 +398,9 @@ export async function GET(request: Request) {
         synced_at: new Date().toISOString(),
         contacts_synced: pushResult.contacts.upserted,
         contacts_errors: pushResult.contacts.errors,
-        contacts_skipped: 0,
-        skipped_contacts: [],
+        contacts_skipped: pushResult.skippedContacts.length,
+        skipped_contacts: pushResult.skippedContacts,
+        last_error_details: pushResult.contacts.errorDetails,
         auto_pull_count: pullResult.pulled,
         auto_pull_at: new Date().toISOString(),
       }, { onConflict: 'user_id' });

@@ -62,6 +62,8 @@ type HubspotSyncLog = {
   contacts_synced: number | null;
   contacts_errors: number | null;
   contacts_skipped: number | null;
+  skipped_contacts?: Array<{ name?: string; company?: string | null; reason?: string }>;
+  last_error_details: string[];
   last_pull_batch: {
     total_rows: number;
     duplicate_rows: number;
@@ -632,6 +634,10 @@ export default function ImportPage() {
         throw new Error(result.error || 'Failed to start import.');
       }
 
+      if (typeof result.warning === 'string' && result.warning) {
+        setErrorMessage(result.warning);
+      }
+
       persistBatchId(result.batchId);
       setParsedCsv(null);
       setColumnMappings({});
@@ -1014,7 +1020,11 @@ export default function ImportPage() {
 
                           {hubspotConnected && !hubspotHistoryRowHidden && (() => {
                             const skipped = hubspotSyncLog?.contacts_skipped ?? 0;
+                            const skippedDetails = Array.isArray(hubspotSyncLog?.skipped_contacts)
+                              ? hubspotSyncLog!.skipped_contacts
+                              : [];
                             const errs = hubspotSyncLog?.contacts_errors ?? 0;
+                            const errorDetails = hubspotSyncLog?.last_error_details ?? [];
                             const syncedAt = hubspotSyncLog?.synced_at;
                             const isHubspotOpen = expandedHistoryBatchId === HUBSPOT_SYNC_HISTORY_ROW_ID;
                             const pull = hubspotSyncLog?.last_pull_batch;
@@ -1128,6 +1138,25 @@ export default function ImportPage() {
                                           <p className="text-amber-800">
                                             {errs.toLocaleString()} push error{errs !== 1 ? 's' : ''}
                                           </p>
+                                        )}
+                                        {errorDetails.length > 0 && (
+                                          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-900">
+                                            <p className="mb-1 font-medium">Latest HubSpot error</p>
+                                            {errorDetails.slice(0, 3).map((detail, index) => (
+                                              <p key={`${index}-${detail}`}>{detail}</p>
+                                            ))}
+                                          </div>
+                                        )}
+                                        {skippedDetails.length > 0 && (
+                                          <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-[11px] leading-relaxed text-gray-700">
+                                            <p className="mb-1 font-medium text-gray-900">Needs a quick fix</p>
+                                            {skippedDetails.slice(0, 3).map((row, index) => (
+                                              <p key={`${row.name ?? 'contact'}-${index}`}>
+                                                {(row.name || 'A contact')}
+                                                {row.company ? ` at ${row.company}` : ''}: {row.reason || 'Update this contact and try syncing again.'}
+                                              </p>
+                                            ))}
+                                          </div>
                                         )}
                                       </div>
                                     )}
