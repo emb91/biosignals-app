@@ -22,6 +22,7 @@ const APP_ROUTES = [
   ROUTES.gtmBase,
   ROUTES.import,
   ROUTES.signals,
+  ROUTES.log,
   ROUTES.settings,
   ROUTES.setup.company,
   ROUTES.setup.icps,
