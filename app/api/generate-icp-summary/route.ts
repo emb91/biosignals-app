@@ -64,6 +64,15 @@ ${contextLines.join('\n')}
 
 Write exactly 1 sentence that describes the ICP archetype, not the specific reference company.
 
+**CRITICAL — use the right verb for the company type.** Therapeutic areas and modalities describe the field the company plays in (e.g. "oncology", "cell therapy"). The Company type determines what they DO in that field — pick the verb to match:
+- Biotech / Pharma / Biopharma → "developing therapeutics across [areas]"
+- Tools & Instruments / Diagnostics → "providing [reagents/instruments/diagnostics] for [areas] research / care"
+- CRO → "delivering research services for [areas]"
+- CDMO → "manufacturing [modalities] for [areas]"
+- SaaS / platform / data / analytics → "powering [areas] workflows" / "providing [X] software for [areas]"
+
+Never say a tools, services, or platform company "develops therapeutics" — they support the companies that do.
+
 Rules:
 - Start exactly with "This ICP defines"
 - Do not ever mention the reference company

@@ -445,53 +445,45 @@ function visiblePlatformCategory(companyType?: string | null, platformCategory?:
 
 // ── Persistent "Step X of 3" eyebrow shown across every setup phase ─────────
 function StepEyebrow({ step }: { step: 0 | 1 | 2 }) {
-  const labels = ['Your company', 'Target companies', 'Buying teams'] as const;
   return (
-    <div className="inline-flex items-center gap-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/50">
+    <div className="inline-flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.12em] text-arcova-navy/55">
       <span className="inline-flex items-center gap-[3px]">
         {[0, 1, 2].map((i) => (
           <span
             key={i}
             className={`h-[3px] rounded-full transition-all ${
               i < step
-                ? 'w-3.5 bg-arcova-teal/55'
+                ? 'w-3 bg-arcova-teal/55'
                 : i === step
-                  ? 'w-5 bg-arcova-teal'
-                  : 'w-3.5 bg-arcova-teal/15'
+                  ? 'w-4 bg-arcova-teal'
+                  : 'w-3 bg-arcova-teal/15'
             }`}
           />
         ))}
       </span>
-      <span>
-        Step {step + 1} of 3
-        <span className="ml-2 normal-case tracking-normal text-arcova-navy/45">· {labels[step]}</span>
-      </span>
+      <span>Step {step + 1} of 3</span>
     </div>
   );
 }
 
 function AddIcpStepEyebrow({ step }: { step: 0 | 1 }) {
-  const labels = ['Target companies', 'Buying teams'] as const;
   return (
-    <div className="inline-flex items-center gap-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/50">
+    <div className="inline-flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.12em] text-arcova-navy/55">
       <span className="inline-flex items-center gap-[3px]">
         {[0, 1].map((i) => (
           <span
             key={i}
             className={`h-[3px] rounded-full transition-all ${
               i < step
-                ? 'w-3.5 bg-arcova-teal/55'
+                ? 'w-3 bg-arcova-teal/55'
                 : i === step
-                  ? 'w-5 bg-arcova-teal'
-                  : 'w-3.5 bg-arcova-teal/15'
+                  ? 'w-4 bg-arcova-teal'
+                  : 'w-3 bg-arcova-teal/15'
             }`}
           />
         ))}
       </span>
-      <span>
-        Step {step + 1} of 2
-        <span className="ml-2 normal-case tracking-normal text-arcova-navy/45">· {labels[step]}</span>
-      </span>
+      <span>Step {step + 1} of 2</span>
     </div>
   );
 }
@@ -510,7 +502,9 @@ function SetupLightProgressRow({
   trailing?: ReactNode;
 }) {
   return (
-    <div className="grid w-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-4 gap-y-2">
+    // min-h reserves a consistent row height across phases (some phases hide center/trailing) so
+    // swapping between agent/review phases doesn't make the page jump vertically.
+    <div className="grid min-h-[2.25rem] w-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-4 gap-y-2">
       <div className="flex min-w-0 items-center justify-start">{leading}</div>
       <div className="flex justify-center">{center}</div>
       <div className="flex min-w-0 items-center justify-end">{trailing}</div>
@@ -592,6 +586,7 @@ function SetupBootstrapWaitingCard({
   emailDomain,
   onUseEmailDomain,
   analysisError,
+  centerSlot,
 }: {
   variant: 'welcome' | 'add-icp';
   clock: Date;
@@ -610,12 +605,14 @@ function SetupBootstrapWaitingCard({
   emailDomain?: string;
   onUseEmailDomain: () => void;
   analysisError: string;
+  /** Step indicator to render centred in the agent meta strip. */
+  centerSlot?: ReactNode;
 }) {
   const isAdditionalIcp = variant === 'add-icp';
 
   return (
     <>
-      <SetupGlassAgentMetaStrip clock={clock} statusKey={statusKey} />
+      <SetupGlassAgentMetaStrip clock={clock} statusKey={statusKey} centerSlot={centerSlot} />
       <div className="flex w-full shrink-0 flex-col items-center">
         <div className="flex h-[13.4375rem] w-full flex-col items-center justify-center">
           <SetupOrb variant="welcome" welcomeEnergised={false} />
@@ -2677,16 +2674,20 @@ function visibleGreetingStyleMessages(thread: DisplayMsg[], welcomePart1: string
 function SetupGlassAgentMetaStrip({
   clock,
   statusKey,
+  centerSlot,
 }: {
   clock: Date;
   statusKey: 'waiting' | 'thinking' | 'ready';
+  /** Optional centre slot — used to embed the step indicator inline with Arcova status + clock. */
+  centerSlot?: ReactNode;
 }) {
   return (
     <div
-      className="mb-[1cm] flex min-h-[3.5rem] shrink-0 items-center justify-between text-[11px] tracking-[0.04em] text-slate-500"
+      // 3-column grid keeps Arcova · status on the left, step indicator centred, and clock on the right.
+      className="mb-[1cm] grid min-h-[3.5rem] shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-3 text-[11px] tracking-[0.04em] text-slate-500"
       aria-live="polite"
     >
-      <span className="inline-flex items-center gap-2">
+      <span className="inline-flex items-center gap-2 justify-self-start">
         <span
           className="h-1.5 w-1.5 shrink-0 rounded-full bg-arcova-teal"
           style={{
@@ -2697,7 +2698,8 @@ function SetupGlassAgentMetaStrip({
         />
         <span className="font-medium text-slate-500">Arcova · {statusKey}</span>
       </span>
-      <time className="tabular-nums text-[10px] text-slate-400" dateTime={clock.toISOString()}>
+      <span className="justify-self-center">{centerSlot}</span>
+      <time className="justify-self-end tabular-nums text-[10px] text-slate-400" dateTime={clock.toISOString()}>
         {clock.toLocaleTimeString('en-GB', {
           hour: '2-digit',
           minute: '2-digit',
@@ -6018,7 +6020,7 @@ export default function SetupFlow({
           setThinking(false);
           await sayBeats([
             'Welcome back. Let’s set up another ICP.',
-            'Keep this one focused on a distinct slice of the market so it does not overlap with your existing profiles.',
+            'Aim for a target company or account that feels different from your existing profiles — a different sector, size, or buying team works well.',
             remaining.length > 1
               ? 'Pick one of the suggestions below, or type in your own company.'
               : 'I’ve put a suggested company below, or you can type in your own company.',
@@ -6527,26 +6529,6 @@ export default function SetupFlow({
     return (
       <div className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-4 py-16">
         <AppAmbientBackground />
-        <div className="absolute left-0 right-0 top-0 z-20 flex justify-center px-6 pt-6 sm:px-10">
-          <div className="w-full max-w-[1080px]">
-            <SetupLightProgressRow
-              leading={
-                isGlassTargetStep && entryPoint === 'full' ? (
-                  <button
-                    type="button"
-                    onClick={() => void handleBackNavigation(0)}
-                    disabled={thinking}
-                    className={SETUP_TOP_BACK_LIGHT_CLASS}
-                  >
-                    <span aria-hidden>←</span> Back
-                  </button>
-                ) : undefined
-              }
-              center={isAdditionalIcpEntry && !hasUserMsg ? null : headerCenter(isGlassTargetStep ? 1 : 0)}
-              trailing={devForwardButton}
-            />
-          </div>
-        </div>
         <div className="relative z-10 flex w-[460px] flex-col">
           <div
             className={cn(
@@ -6578,12 +6560,14 @@ export default function SetupFlow({
                 void runAnalysis(emailDomain);
               }}
               analysisError={analysisError}
+              centerSlot={isAdditionalIcpEntry ? null : headerCenter(isGlassTargetStep ? 1 : 0)}
             />
           ) : (
             <>
               <SetupGlassAgentMetaStrip
                 clock={setupGreetingChatClock}
                 statusKey={thinking ? 'thinking' : inputEnabled ? 'ready' : 'waiting'}
+                centerSlot={headerCenter(isGlassTargetStep ? 1 : 0)}
               />
               <div
                 ref={setupGreetingThreadRef}
@@ -6608,8 +6592,7 @@ export default function SetupFlow({
                     <div key={msg.id} className="flex w-full" style={{ animation: 'arcova-msg-in 0.2s ease' }}>
                       <div
                         className={cn(
-                          'max-w-[min(100%,40rem)] rounded-2xl rounded-tl-sm bg-gradient-to-br from-slate-50 to-white px-4 py-4 font-manrope text-[1.1875rem] leading-[1.45] tracking-[-0.018em] text-slate-700 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.9)] ring-1 ring-slate-200/55 transition-opacity',
-                          !isLast ? 'opacity-55' : 'opacity-100',
+                          'max-w-[min(100%,40rem)] rounded-2xl rounded-tl-sm bg-gradient-to-br from-slate-50 to-white px-4 py-4 font-manrope text-[1.1875rem] leading-[1.45] tracking-[-0.018em] text-slate-700 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.9)] ring-1 ring-slate-200/55',
                         )}
                       >
                         <SetupAssistantMessageParagraphs
@@ -6684,15 +6667,34 @@ export default function SetupFlow({
           )}
           </div>
         </div>
+        {/* Nav row sits directly below the agent panel — stable position, paired with content. */}
+        <div className="relative z-10 mt-4 w-[460px]">
+          <SetupLightProgressRow
+            leading={
+              isGlassTargetStep && (entryPoint === 'full' || entryPoint === 'target-company') ? (
+                <button
+                  type="button"
+                  onClick={() => void handleBackNavigation(0)}
+                  disabled={thinking}
+                  className={SETUP_TOP_BACK_LIGHT_CLASS}
+                >
+                  <span aria-hidden>←</span> Back
+                </button>
+              ) : undefined
+            }
+            center={null}
+            trailing={devForwardButton}
+          />
+        </div>
       </div>
     );
   }
 
-  // Phases: inline enrichment (own company, target URL, buying team) inside the same glass chat shell
+  // Phases: inline enrichment (own company, target URL) inside the same glass chat shell.
+  // buying_team_loading is handled by the simpler orb-only render below (no active chat to preserve).
   if (
     phase === 'analysis_loading' ||
-    phase === 'customer_url_loading' ||
-    phase === 'buying_team_loading'
+    phase === 'customer_url_loading'
   ) {
     const enrichMessages = visibleGreetingStyleMessages(thread, welcomeChatPart1, welcomeChatPart2);
     const glassOwnStages = buildTieredSnapshotsFromOwn(
@@ -6714,49 +6716,20 @@ export default function SetupFlow({
       ? [{ tier: 'buying-summary', label: '', snapshot: glassBuyingSnapshot }]
       : null;
 
+    const loadingBackHandler =
+      phase === 'analysis_loading' || phase === 'customer_url_loading'
+        ? () => cancelAnalysis()
+        : null;
     return (
       <div className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-4 py-16">
         <AppAmbientBackground />
-        <div className="absolute left-0 right-0 top-0 z-20 flex justify-center px-6 pt-6 sm:px-10">
-          <div className="w-full max-w-[1080px]">
-            <SetupLightProgressRow
-              leading={
-                entryPoint === 'full' && phase === 'analysis_loading' ? (
-                  <button
-                    type="button"
-                    onClick={() => cancelAnalysis()}
-                    disabled={thinking}
-                    className={SETUP_TOP_BACK_LIGHT_CLASS}
-                  >
-                    <span aria-hidden>←</span> Back
-                  </button>
-                ) : entryPoint === 'full' && phase === 'customer_url_loading' ? (
-                  <button
-                    type="button"
-                    onClick={() => cancelAnalysis()}
-                    disabled={thinking}
-                    className={SETUP_TOP_BACK_LIGHT_CLASS}
-                  >
-                    <span aria-hidden>←</span> Back
-                  </button>
-                ) : entryPoint === 'full' && phase === 'buying_team_loading' ? (
-                  <button
-                    type="button"
-                    onClick={() => void handleGoToStep(1)}
-                    disabled={thinking}
-                    className={SETUP_TOP_BACK_LIGHT_CLASS}
-                  >
-                    <span aria-hidden>←</span> Back
-                  </button>
-                ) : undefined
-              }
-              center={headerCenter(Math.max(0, currentStepIndex) as 0 | 1 | 2)}
-            />
-          </div>
-        </div>
         <div className="relative z-10 flex w-[460px] flex-col">
           <div className="relative flex h-[min(85vh,52rem)] w-full min-h-[580px] max-h-[85vh] flex-col overflow-hidden rounded-3xl border border-white/55 bg-white/65 px-10 pb-0 pt-0 shadow-arcova backdrop-blur-xl">
-          <SetupGlassAgentMetaStrip clock={setupGreetingChatClock} statusKey="thinking" />
+          <SetupGlassAgentMetaStrip
+            clock={setupGreetingChatClock}
+            statusKey="thinking"
+            centerSlot={headerCenter(Math.max(0, currentStepIndex) as 0 | 1 | 2)}
+          />
           <div
             ref={setupGreetingThreadRef}
             className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-1 py-2 pb-4 [touch-action:pan-y] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
@@ -6780,8 +6753,7 @@ export default function SetupFlow({
                 <div key={msg.id} className="flex w-full" style={{ animation: 'arcova-msg-in 0.2s ease' }}>
                   <div
                     className={cn(
-                      'max-w-[min(100%,40rem)] rounded-2xl rounded-tl-sm bg-gradient-to-br from-slate-50 to-white px-4 py-4 font-manrope text-[1.1875rem] leading-[1.45] tracking-[-0.018em] text-slate-700 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.9)] ring-1 ring-slate-200/55 transition-opacity',
-                      !isLast ? 'opacity-55' : 'opacity-100',
+                      'max-w-[min(100%,40rem)] rounded-2xl rounded-tl-sm bg-gradient-to-br from-slate-50 to-white px-4 py-4 font-manrope text-[1.1875rem] leading-[1.45] tracking-[-0.018em] text-slate-700 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.9)] ring-1 ring-slate-200/55',
                     )}
                   >
                     <SetupAssistantMessageParagraphs
@@ -6820,6 +6792,25 @@ export default function SetupFlow({
             )}
           </div>
           </div>
+        </div>
+        {/* Nav row sits directly below the loading panel — stable position, paired with content. */}
+        <div className="relative z-10 mt-4 w-[460px]">
+          <SetupLightProgressRow
+            leading={
+              entryPoint === 'full' && loadingBackHandler ? (
+                <button
+                  type="button"
+                  onClick={loadingBackHandler}
+                  disabled={thinking}
+                  className={SETUP_TOP_BACK_LIGHT_CLASS}
+                >
+                  <span aria-hidden>←</span> Back
+                </button>
+              ) : undefined
+            }
+            center={null}
+            trailing={devForwardButton}
+          />
         </div>
       </div>
     );
@@ -6884,29 +6875,31 @@ export default function SetupFlow({
       <AppAmbientBackground />
       <div className="relative z-10 flex min-h-full flex-col px-4 pb-16 pt-10 sm:px-6">
         <div className="mx-auto w-full max-w-2xl">
-          {(onBack || eyebrow) && (
-            <div className="mb-4">
-              <SetupLightProgressRow
-                leading={
-                  onBack ? (
-                    <button
-                      type="button"
-                      onClick={onBack}
-                      disabled={thinking}
-                      className={SETUP_TOP_BACK_LIGHT_CLASS}
-                    >
-                      <span aria-hidden>←</span> Back
-                    </button>
-                  ) : undefined
-                }
-                center={eyebrow ?? null}
-              />
-            </div>
-          )}
           <h1 className="text-2xl font-semibold text-arcova-navy sm:text-3xl">{title}</h1>
           {subtitle && <p className="mt-1.5 text-sm text-arcova-ink-soft">{subtitle}</p>}
         </div>
         <div className="mx-auto mt-6 w-full max-w-2xl flex-1">{children}</div>
+        {/* Nav chrome sits BELOW the content, paired with the section it acts on. */}
+        {(onBack || eyebrow) && (
+          <div className="mx-auto mt-6 w-full max-w-2xl">
+            <SetupLightProgressRow
+              leading={
+                onBack ? (
+                  <button
+                    type="button"
+                    onClick={onBack}
+                    disabled={thinking}
+                    className={SETUP_TOP_BACK_LIGHT_CLASS}
+                  >
+                    <span aria-hidden>←</span> Back
+                  </button>
+                ) : undefined
+              }
+              center={eyebrow ?? null}
+              trailing={devForwardButton}
+            />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -6924,24 +6917,7 @@ export default function SetupFlow({
       <div className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col overflow-y-auto">
         <AppAmbientBackground />
         <div className="relative z-10 flex flex-col px-6 py-9 lg:px-10">
-            <div className="mb-6">
-              <SetupLightProgressRow
-                leading={
-                  entryPoint === 'full' ? (
-                    <button
-                      type="button"
-                      onClick={() => handleLeaveArcovaSetup()}
-                      disabled={thinking}
-                      className={SETUP_TOP_BACK_LIGHT_CLASS}
-                    >
-                      <span aria-hidden>←</span> Back
-                    </button>
-                  ) : undefined
-                }
-                center={headerCenter(0)}
-                trailing={devForwardButton}
-              />
-            </div>
+            {/* Top nav chrome is empty on this review page — Back / Forward live in the CTA row below the panel. */}
             {/* Hero */}
             <div className="mb-6 max-w-[820px]">
               <h1 className="mb-3 font-manrope text-[44px] font-medium leading-[1.06] tracking-[-0.032em] text-arcova-navy">
@@ -7008,6 +6984,16 @@ export default function SetupFlow({
               {!editingFindings && (
                 <>
                 <div className="mt-5 flex flex-wrap items-center gap-3 px-1">
+                  {entryPoint === 'full' && (
+                    <button
+                      type="button"
+                      onClick={() => handleLeaveArcovaSetup()}
+                      disabled={thinking}
+                      className={SETUP_TOP_BACK_LIGHT_CLASS}
+                    >
+                      <span aria-hidden>←</span> Back
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => void handleResultsConfirmed()}
@@ -7038,9 +7024,12 @@ export default function SetupFlow({
                     <RefreshCw className="h-3.5 w-3.5" />
                     Re-analyse site
                   </button>
-                  <div className="ml-auto inline-flex items-center gap-1.5 text-[12px] text-arcova-navy/50">
-                    <span>→</span>
-                    Next: <strong className="font-semibold text-arcova-navy/70">Target companies</strong>
+                  <div className="ml-auto inline-flex items-center gap-3">
+                    <div className="inline-flex items-center gap-1.5 text-[12px] text-arcova-navy/50">
+                      <span>→</span>
+                      Next: <strong className="font-semibold text-arcova-navy/70">Target companies</strong>
+                    </div>
+                    {devForwardButton}
                   </div>
                 </div>
                 <p className="mt-4 px-1 text-center text-[12px] leading-relaxed text-arcova-navy/50">
@@ -7144,41 +7133,18 @@ export default function SetupFlow({
     return (
       <div className="arcova-scroll-surface relative flex min-h-0 flex-1 flex-col overflow-y-auto">
         <AppAmbientBackground />
-        <div className="relative z-10 flex flex-col px-6 py-9 lg:px-10">
+        <div className="relative z-10 flex flex-col px-6 pb-8 pt-5 lg:px-10">
           {/*
-            Review page nav chrome: only Back is shown — the hero + eyebrow below already convey
-            the step context, so the centred step indicator + dev forward are hidden here.
-            Step progress is still shown on agent/conversation phases where there's no hero.
-            We keep the row's reserved height so phases swap without the layout jumping.
+            Top nav chrome is empty on this review page — Back / Forward are placed below the
+            card, paired with the CTA row, so navigation lives next to the content it acts on.
+            The hero + eyebrow already convey the step context.
           */}
-          <div className="mb-6">
-              <SetupLightProgressRow
-                leading={
-                  <button
-                  type="button"
-                  onClick={() => {
-                    if (restorePreviousManualNavigation()) return;
-                    manualForwardHistoryRef.current.push(captureCurrentNavigationSnapshot());
-                    setIcpEditMode(false);
-                    setPhase('customer_url_conversation');
-                    setInput(true);
-                  }}
-                  disabled={thinking}
-                  className={SETUP_TOP_BACK_LIGHT_CLASS}
-                >
-                    <span aria-hidden>←</span> Back
-                  </button>
-                }
-                center={null}
-                trailing={null}
-              />
-          </div>
           {/* Hero — canvas layout (matches /today) */}
-          <div className="mb-8">
+          <div className="mb-5">
             <p className="m-0 font-manrope text-[11px] font-semibold uppercase tracking-[0.14em] text-arcova-teal">
               Setup &middot; Target companies
             </p>
-            <h1 className="mt-2.5 mb-0 font-manrope text-[clamp(2rem,4.5vw,3.25rem)] font-semibold leading-[1.04] tracking-[-0.03em] text-arcova-navy">
+            <h1 className="mt-2 mb-0 font-manrope text-[clamp(1.75rem,3.6vw,2.5rem)] font-semibold leading-[1.05] tracking-[-0.028em] text-arcova-navy">
               <span className="block">Based on {targetName},</span>
               <span className="block">
                 here&apos;s a{' '}
@@ -7187,7 +7153,7 @@ export default function SetupFlow({
                 </span>
               </span>
             </h1>
-            <p className="mt-3.5 mb-0 text-[15px] leading-[1.55] text-arcova-navy/65">
+            <p className="mt-2.5 mb-0 text-[14px] leading-[1.5] text-arcova-navy/65">
               {icpEditMode
                 ? "Tweak anything that's not quite right, then jump back when you're done."
                 : "Have a look over the data, and move forward when you're ready."}
@@ -7209,9 +7175,24 @@ export default function SetupFlow({
               onIcpFieldChange={handleIcpFieldChange}
             />
 
-            {/* CTA row — view mode */}
+            {/* CTA row — view mode. Back / Forward are placed here (paired with the card)
+                instead of above the hero, so navigation lives next to the content it acts on. */}
             {!icpEditMode && (
               <div className="mt-5 flex flex-wrap items-center gap-3 px-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (restorePreviousManualNavigation()) return;
+                    manualForwardHistoryRef.current.push(captureCurrentNavigationSnapshot());
+                    setIcpEditMode(false);
+                    setPhase('customer_url_conversation');
+                    setInput(true);
+                  }}
+                  disabled={thinking}
+                  className={SETUP_TOP_BACK_LIGHT_CLASS}
+                >
+                  <span aria-hidden>←</span> Back
+                </button>
                 <button
                   type="button"
                   onClick={() => void handleReviewConfirm()}
@@ -7229,9 +7210,12 @@ export default function SetupFlow({
                 >
                   Try a different company
                 </button>
-                <div className="ml-auto inline-flex items-center gap-1.5 text-[12px] text-arcova-navy/50">
-                  <span>→</span>
-                  Next: <strong className="font-semibold text-arcova-navy/70">Buying teams</strong>
+                <div className="ml-auto inline-flex items-center gap-3">
+                  <div className="inline-flex items-center gap-1.5 text-[12px] text-arcova-navy/50">
+                    <span>→</span>
+                    Next: <strong className="font-semibold text-arcova-navy/70">Buying teams</strong>
+                  </div>
+                  {devForwardButton}
                 </div>
               </div>
             )}
@@ -7290,21 +7274,97 @@ export default function SetupFlow({
     );
   }
 
-  // Phase: saving / done → light aurora save splash
-  if (phase === 'company_saving' || phase === 'persona_saving' || phase === 'done') {
-    const savingLabel =
-      phase === 'done' ? 'Redirecting…' : phase === 'persona_saving' ? 'Saving buying team…' : 'Saving profile…';
+  // Phase: saving / loading buying team / done → energised orb inside the agent panel chrome.
+  // Same panel shell as the agent/loading phases (rounded glass card + meta strip), so the
+  // viewport stays visually identical while we wait. The orb carries the "something's happening"
+  // signal; no status text needed. The step indicator shows the final step (Buying teams)
+  // since the target company has already been confirmed by the time we land here.
+  if (
+    phase === 'company_saving' ||
+    phase === 'buying_team_loading' ||
+    phase === 'persona_saving' ||
+    phase === 'done'
+  ) {
+    const orbStepSlot = entryPoint === 'target-company'
+      ? <AddIcpStepEyebrow step={1} />
+      : <StepEyebrow step={2} />;
+    // Map each phase to a checklist position: 0 = profile save, 1 = buying team map, 2 = persona save, 3 = finalising
+    const progressIndex =
+      phase === 'company_saving' ? 0
+      : phase === 'buying_team_loading' ? 1
+      : phase === 'persona_saving' ? 2
+      : 3; // done
+    const progressSteps = [
+      'Saving your target company profile',
+      'Mapping your buying team',
+      'Defining buyer personas',
+      'Finalising your setup',
+    ];
     return (
-      <div className="relative flex min-h-dvh flex-col overflow-hidden">
+      <div className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-4 py-16">
         <AppAmbientBackground />
-        <div className="absolute left-0 right-0 top-0 z-20 flex justify-center px-6 pt-6 sm:px-10">
-          <div className="w-full max-w-[1080px]">
-            <SetupLightProgressRow center={<StepEyebrow step={Math.max(0, currentStepIndex) as 0 | 1 | 2} />} />
+        <div className="relative z-10 flex w-[460px] flex-col">
+          <div className="relative flex min-h-[580px] w-full flex-col overflow-visible rounded-3xl border border-white/55 bg-white/65 px-10 pb-10 pt-0 shadow-arcova backdrop-blur-xl">
+            <SetupGlassAgentMetaStrip
+              clock={setupGreetingChatClock}
+              statusKey="waiting"
+              centerSlot={orbStepSlot}
+            />
+            {/* Orb + eyebrow + headline — mirrors the welcome card layout, so the screen feels
+                like a natural continuation of the setup flow rather than a separate loader. */}
+            <div className="flex w-full shrink-0 flex-col items-center">
+              <div className="flex h-[13.4375rem] w-full flex-col items-center justify-center">
+                <SetupOrb variant="welcome" welcomeEnergised />
+              </div>
+              <div className="mt-[1.15cm] shrink-0 text-center text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/45">
+                Define your buying teams
+              </div>
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col justify-start">
+              <h1 className="mb-5 mt-[0.75cm] text-center font-manrope text-3xl font-medium leading-snug tracking-tight text-arcova-navy">
+                <span className="block text-arcova-navy/40">Getting ready.</span>
+              </h1>
+              {/* Checklist — fills the empty space under "Getting ready" with live progress
+                  through the back-end steps. Each step animates as we walk through phases. */}
+              <ul className="mx-auto w-full max-w-[280px] space-y-2.5">
+                {progressSteps.map((label, i) => {
+                  const isDone = i < progressIndex;
+                  const isActive = i === progressIndex;
+                  return (
+                    <li key={i} className="flex items-center gap-2.5 text-[13px] leading-snug">
+                      <span className="grid h-4 w-4 shrink-0 place-items-center">
+                        {isDone ? (
+                          <Check className="h-3.5 w-3.5 text-arcova-teal" strokeWidth={2.6} />
+                        ) : isActive ? (
+                          <span
+                            className="h-2 w-2 rounded-full bg-arcova-teal"
+                            style={{
+                              animation: 'arcova-dot-pulse 1.4s ease-in-out infinite',
+                              boxShadow: '0 0 0 4px rgba(0, 164, 180, 0.18)',
+                            }}
+                          />
+                        ) : (
+                          <span className="h-1.5 w-1.5 rounded-full bg-arcova-navy/15" />
+                        )}
+                      </span>
+                      <span
+                        className={cn(
+                          'transition-colors',
+                          isDone
+                            ? 'text-arcova-navy/55'
+                            : isActive
+                              ? 'font-medium text-arcova-navy/85'
+                              : 'text-arcova-navy/30',
+                        )}
+                      >
+                        {label}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
           </div>
-        </div>
-        <div className="relative z-10 flex min-h-dvh flex-col items-center justify-center gap-5 px-4">
-          <ArcovaLoader size={56} />
-          <p className="text-sm font-medium text-arcova-ink-soft">{savingLabel}</p>
         </div>
       </div>
     );

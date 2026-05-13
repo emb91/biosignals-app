@@ -145,7 +145,11 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const isAdminUser = user?.email?.trim().toLowerCase() === ADMIN_EMAIL;
   const bottomItems = isAdminUser
-    ? [...bottomNavigation, { name: 'Admin Dash', href: ROUTES.admin.llmUsage, icon: NavIconSettings }]
+    ? [
+        ...bottomNavigation,
+        { name: 'Admin Dash', href: ROUTES.admin.llmUsage, icon: NavIconSettings },
+        { name: 'Signals TODO', href: ROUTES.admin.signalsTodo, icon: NavIconSignals },
+      ]
     : bottomNavigation;
 
   const isActive = (href: string) => {
