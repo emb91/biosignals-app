@@ -38,10 +38,11 @@ import {
   fillCopilotRoutePlaceholders,
 } from '@/lib/prompts/agent-voice';
 import { ROUTES, withQuery } from '@/lib/routes';
+import { redactInternalIdsFromAgentUserText } from '@/lib/agent-redact';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Page = 'accounts' | 'leads' | 'today' | 'health' | 'signals' | 'imports' | 'data';
+type Page = 'accounts' | 'leads' | 'today' | 'health' | 'signals' | 'imports' | 'data' | 'icps';
 
 const AGENT_PAGES: readonly Page[] = ['accounts', 'leads', 'today', 'health', 'signals', 'imports', 'data'];
 
@@ -91,6 +92,11 @@ interface PageContext {
   acquisitionBatchCompanies?: { id: string; name: string; icpId?: string | null }[];
   todayBrief?: string;
   todayAgenda?: { title?: string; detail?: string; href?: string }[];
+  // ICPs page — server-fetched at request time, not passed from the client.
+  icpAuditData?: {
+    myCompany: Record<string, unknown> | null;
+    icps: Array<Record<string, unknown>>;
+  };
 }
 
 interface TableFilter {
@@ -117,6 +123,13 @@ interface ChatResponse {
   tableLeads?: QueryLead[];
   suggestedNavigation?: { href: string; label: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[] };
   pendingJobStart?: { requestType: string; icpId?: string; companyId?: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[]; quantity: number };
+  /** ICP mutations performed during this turn (icps page). Client should refresh the ICP list. */
+  icpMutations?: Array<{
+    kind: 'updated' | 'deleted';
+    icpId: string;
+    name: string | null;
+    reasoning: string;
+  }>;
 }
 
 // ─── Anthropic client ─────────────────────────────────────────────────────────
@@ -463,6 +476,41 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['columns'],
     },
   },
+  {
+    name: 'update_icp',
+    description:
+      "Modify an existing ICP. Use this when the user accepts a refinement you've proposed (e.g. \"yes, tighten ICP 2 to Series B+\", \"add Cardiology to ICP 1\", \"rename ICP 4\"). Only pass the fields you want to change — fields you omit are left untouched. Always explain WHY you're making the change in the `reasoning` field before calling. NEVER call without explicit user confirmation in the conversation.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        id: { type: 'string', description: 'The ICP id (uuid) to update. Look it up in the ICP audit evidence base.' },
+        reasoning: { type: 'string', description: 'One sentence explaining why this edit makes sense, grounded in the user\'s data. Shown to the user.' },
+        name: { type: 'string', description: 'New ICP name (Title Case noun phrase).' },
+        companyType: { type: 'string', description: 'New company type (e.g. "Biotech / Biopharma", "CDMO", "Life Science Tools & Instruments").' },
+        therapeuticAreas: { type: 'array', items: { type: 'string' }, description: 'Replace the therapeutic areas list. Use the same canonical values that exist in other ICPs.' },
+        modalities: { type: 'array', items: { type: 'string' }, description: 'Replace the modalities list.' },
+        developmentStages: { type: 'array', items: { type: 'string' }, description: 'Replace the development stages list.' },
+        companySizes: { type: 'array', items: { type: 'string' }, description: 'Replace the company-size bands.' },
+        fundingStages: { type: 'array', items: { type: 'string' }, description: 'Replace the funding stages list.' },
+        targetCustomers: { type: 'array', items: { type: 'string' }, description: 'Replace "sells to companies like" segments.' },
+        buyerTypes: { type: 'array', items: { type: 'string' }, description: 'Replace "sells to people like" segments.' },
+      },
+      required: ['id', 'reasoning'],
+    },
+  },
+  {
+    name: 'delete_icp',
+    description:
+      "Delete an existing ICP. Use this when the user explicitly agrees to remove one (e.g. \"yes, delete ICP 4\", \"go ahead and merge them — keep ICP 1\"). NEVER call without explicit user confirmation. For a merge, call update_icp on the ICP you're keeping first, then delete_icp on the one you're dropping.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        id: { type: 'string', description: 'The ICP id (uuid) to delete. Look it up in the ICP audit evidence base.' },
+        reasoning: { type: 'string', description: 'One sentence explaining why this ICP should be removed, grounded in the user\'s data. Shown to the user.' },
+      },
+      required: ['id', 'reasoning'],
+    },
+  },
 ];
 
 // ─── System prompt ─────────────────────────────────────────────────────────────
@@ -524,6 +572,47 @@ ${context.leadsView === 'accounts'
   : 'Use the contacts lens: talk about individual people, contact status, seniority/function fit, and which contacts are Ready, Monitor, Source, or Deprioritised.'}`
     : '';
 
+  // ICP audit context — only injected on the icps page. Provides the full ICP set + company
+  // profile so the agent can audit, find gaps, and propose drafts grounded in real data.
+  const icpAuditContext = page === 'icps' && context?.icpAuditData
+    ? (() => {
+        const { myCompany, icps } = context.icpAuditData!;
+
+        // Pull buyer prerequisites and disqualifiers out of the raw profile and surface
+        // them as an explicit constraint block so the agent treats them as hard rules
+        // when drafting or auditing ICPs — not just background noise in a JSON blob.
+        const prereqs: string[] = Array.isArray(myCompany?.buyer_prerequisites)
+          ? (myCompany!.buyer_prerequisites as string[])
+          : [];
+        const disqualifiers: string[] = Array.isArray(myCompany?.buyer_disqualifiers)
+          ? (myCompany!.buyer_disqualifiers as string[])
+          : [];
+        const buyerConstraintsBlock = (prereqs.length > 0 || disqualifiers.length > 0)
+          ? `### Buyer constraints (hard rules — apply before drafting or approving any ICP)
+${prereqs.length > 0 ? `**Prerequisites — a buyer must already have ALL of these:**\n${prereqs.map((p) => `- ${p}`).join('\n')}` : ''}
+${disqualifiers.length > 0 ? `\n**Disqualifiers — any one of these rules a segment out entirely:**\n${disqualifiers.map((d) => `- ${d}`).join('\n')}` : ''}`
+          : '';
+
+        const myCompanyBlock = myCompany
+          ? `### The user's company profile\n\`\`\`json\n${JSON.stringify(myCompany, null, 2)}\n\`\`\``
+          : '### The user\'s company profile\n_No company profile has been saved yet._';
+        const icpsBlock = icps.length > 0
+          ? `### The user's existing ICPs (${icps.length} total)\n\`\`\`json\n${JSON.stringify(icps, null, 2)}\n\`\`\``
+          : `### The user's existing ICPs\n_The user has no ICPs yet._`;
+        return `
+## ICP audit evidence base
+Use this data as the ground truth when answering. Do not invent fields, customers, modalities, or stages the data doesn't contain. When you spot a gap, ground the claim in something the user's company profile actually says it serves.
+
+Objects in "The user's existing ICPs" are listed in creation order: the first object is "ICP 1", the second is "ICP 2", and so on. Each row includes an \`id\` field solely so you can call update_icp and delete_icp — never repeat those ids or UUIDs when writing to the user; use the ordinal plus the saved name instead.
+
+${buyerConstraintsBlock}
+
+${myCompanyBlock}
+
+${icpsBlock}`;
+      })()
+    : '';
+
   const routePlaceholders = {
     dataHref: ROUTES.data,
     importHref: ROUTES.import,
@@ -540,6 +629,7 @@ ${selectedAccountContext}
 ${dataPageContext}
 ${todayContext}
 ${leadsViewContext}
+${icpAuditContext}
 
 ${COPILOT_JOURNEY_MODEL}
 
@@ -833,6 +923,7 @@ async function toolGetIcpDefinitions(
 
   return JSON.stringify(
     icpsResult.data.map((icp, i) => ({
+      id: icp.id,
       label: icp.name?.trim() ? `ICP ${i + 1}: ${icp.name}` : `ICP ${i + 1}`,
       company_criteria: {
         company_type: icp.company_type,
@@ -1094,6 +1185,118 @@ async function toolGetImportHistory(
   });
 }
 
+// ─── ICP mutation tools (icps page) ──────────────────────────────────────────
+
+type IcpMutationSummary = {
+  kind: 'updated' | 'deleted';
+  icpId: string;
+  name: string | null;
+  reasoning: string;
+  beforeSnapshot?: Record<string, unknown> | null;
+};
+
+/**
+ * Update an existing ICP. Returns a JSON tool-result string for the agent and a structured
+ * mutation record (carried back to the client so the page can re-fetch + show a toast).
+ */
+async function toolUpdateIcp(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  input: Record<string, unknown>,
+): Promise<{ result: string; mutation?: IcpMutationSummary }> {
+  const id = typeof input.id === 'string' ? input.id : '';
+  const reasoning = typeof input.reasoning === 'string' ? input.reasoning : '';
+  if (!id) return { result: JSON.stringify({ success: false, error: 'Missing id field.' }) };
+
+  // Fetch snapshot for undo + ownership check.
+  const { data: before, error: fetchErr } = await supabase
+    .from('icps').select('*').eq('id', id).eq('user_id', userId).maybeSingle();
+  if (fetchErr || !before) {
+    // Help the agent self-correct: list every available ICP id + name so it can pick the right one.
+    const { data: all } = await supabase
+      .from('icps').select('id, name').eq('user_id', userId).order('created_at', { ascending: true });
+    return {
+      result: JSON.stringify({
+        success: false,
+        error: `ICP id "${id}" not found for this user. The id must be a UUID exactly as it appears in the ICP audit evidence base — not a label like "ICP 3".`,
+        availableIcps: (all ?? []).map((r) => ({ id: r.id, name: r.name })),
+      }),
+    };
+  }
+
+  const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  const arr = (v: unknown): string[] | null => (Array.isArray(v) ? (v as string[]) : null);
+  if (typeof input.name === 'string') patch.name = input.name;
+  if (typeof input.companyType === 'string') patch.company_type = input.companyType;
+  if (arr(input.therapeuticAreas)) patch.therapeutic_areas = arr(input.therapeuticAreas);
+  if (arr(input.modalities)) patch.modalities = arr(input.modalities);
+  if (arr(input.developmentStages)) patch.development_stages = arr(input.developmentStages);
+  if (arr(input.companySizes)) patch.company_sizes = arr(input.companySizes);
+  if (arr(input.fundingStages)) patch.funding_stages = arr(input.fundingStages);
+  if (arr(input.targetCustomers)) patch.target_customers = arr(input.targetCustomers);
+  if (arr(input.buyerTypes)) patch.buyer_types = arr(input.buyerTypes);
+
+  const { error: updateErr } = await supabase.from('icps').update(patch).eq('id', id).eq('user_id', userId);
+  if (updateErr) {
+    return { result: JSON.stringify({ success: false, error: updateErr.message }) };
+  }
+
+  return {
+    result: JSON.stringify({ success: true, id, changedFields: Object.keys(patch).filter((k) => k !== 'updated_at') }),
+    mutation: {
+      kind: 'updated',
+      icpId: id,
+      name: (before as { name?: string | null }).name ?? null,
+      reasoning,
+      beforeSnapshot: before as Record<string, unknown>,
+    },
+  };
+}
+
+/**
+ * Delete an ICP. Returns a JSON tool-result string for the agent and a mutation record.
+ * FK cascades in the DB (personas, icp_signal_selections, etc.) clean up automatically.
+ */
+async function toolDeleteIcp(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  input: Record<string, unknown>,
+): Promise<{ result: string; mutation?: IcpMutationSummary }> {
+  const id = typeof input.id === 'string' ? input.id : '';
+  const reasoning = typeof input.reasoning === 'string' ? input.reasoning : '';
+  if (!id) return { result: JSON.stringify({ success: false, error: 'Missing id field.' }) };
+
+  const { data: before, error: fetchErr } = await supabase
+    .from('icps').select('*').eq('id', id).eq('user_id', userId).maybeSingle();
+  if (fetchErr || !before) {
+    const { data: all } = await supabase
+      .from('icps').select('id, name').eq('user_id', userId).order('created_at', { ascending: true });
+    return {
+      result: JSON.stringify({
+        success: false,
+        error: `ICP id "${id}" not found for this user. The id must be a UUID exactly as it appears in the ICP audit evidence base — not a label like "ICP 3".`,
+        availableIcps: (all ?? []).map((r) => ({ id: r.id, name: r.name })),
+      }),
+    };
+  }
+
+  const { error: delErr } = await supabase.from('icps').delete().eq('id', id).eq('user_id', userId);
+  if (delErr) {
+    return { result: JSON.stringify({ success: false, error: delErr.message }) };
+  }
+
+  return {
+    result: JSON.stringify({ success: true, id }),
+    mutation: {
+      kind: 'deleted',
+      icpId: id,
+      name: (before as { name?: string | null }).name ?? null,
+      reasoning,
+      beforeSnapshot: before as Record<string, unknown>,
+    },
+  };
+}
+
 // ─── Agentic loop ─────────────────────────────────────────────────────────────
 
 async function runAgentLoop(
@@ -1103,8 +1306,32 @@ async function runAgentLoop(
   page: Page,
   messages: ChatMessage[],
   pageContext?: PageContext,
-): Promise<{ message: string; toolsUsed: string[]; tableFilter?: TableFilter; tableAccounts?: import('@/lib/accounts-data').QueryAccount[]; leadsFilter?: LeadsTableFilter; tableLeads?: QueryLead[]; suggestedNavigation?: { href: string; label: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[] }; pendingJobStart?: { requestType: string; icpId?: string; companyId?: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[]; quantity: number } }> {
-  const systemPrompt = buildSystemPrompt(page, pageContext);
+): Promise<{ message: string; toolsUsed: string[]; tableFilter?: TableFilter; tableAccounts?: import('@/lib/accounts-data').QueryAccount[]; leadsFilter?: LeadsTableFilter; tableLeads?: QueryLead[]; suggestedNavigation?: { href: string; label: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[] }; pendingJobStart?: { requestType: string; icpId?: string; companyId?: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[]; quantity: number }; icpMutations?: IcpMutationSummary[] }> {
+  // For the ICPs page, fetch the user's full ICP set + company profile server-side so the
+  // agent always reasons over fresh evidence (client doesn't need to pass anything).
+  let resolvedPageContext: PageContext | undefined = pageContext;
+  if (page === 'icps') {
+    const [companyRes, icpsRes] = await Promise.all([
+      supabase
+        .from('user_company')
+        .select('*')
+        .eq('user_id', userId)
+        .maybeSingle(),
+      supabase
+        .from('icps')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: true }),
+    ]);
+    resolvedPageContext = {
+      ...(pageContext ?? {}),
+      icpAuditData: {
+        myCompany: (companyRes.data as Record<string, unknown> | null) ?? null,
+        icps: (icpsRes.data as Array<Record<string, unknown>> | null) ?? [],
+      },
+    };
+  }
+  const systemPrompt = buildSystemPrompt(page, resolvedPageContext);
   const toolsUsed: string[] = [];
   let tableFilter: TableFilter | undefined;
   let tableAccounts: import('@/lib/accounts-data').QueryAccount[] | undefined;
@@ -1112,6 +1339,7 @@ async function runAgentLoop(
   let tableLeads: QueryLead[] | undefined;
   let suggestedNavigation: { href: string; label: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[] } | undefined;
   let pendingJobStart: { requestType: string; icpId?: string; companyId?: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[]; quantity: number } | undefined;
+  const icpMutations: IcpMutationSummary[] = [];
 
   const DATA_PAGE_OPEN_TRIGGER = '__OPEN__';
 
@@ -1131,7 +1359,18 @@ async function runAgentLoop(
     return { role: m.role, content: m.content };
   });
 
-  const MAX_ITERATIONS = 5;
+  // ICPs page workflows (audit → propose → batch update / delete) can chain more tool calls
+  // than other pages. Give the agent more headroom there so it doesn't bail mid-edit.
+  const MAX_ITERATIONS = page === 'icps' ? 10 : 5;
+
+  // Tool filtering per page: on the icps page the full ICP set (with ids) is already
+  // injected into the system prompt, so get_icp_definitions is redundant — and worse,
+  // it returns a different shape without raw ids, which has caused the agent to call
+  // update_icp with non-UUID strings. Strip it from the toolbox here.
+  const availableTools = page === 'icps'
+    ? TOOLS.filter((t) => t.name !== 'get_icp_definitions')
+    : TOOLS;
+
   // Carry text written in the same turn as tool calls — it won't appear in the
   // next turn so we preserve it and prepend to the eventual final message.
   let spilloverText = '';
@@ -1141,7 +1380,7 @@ async function runAgentLoop(
       model: 'claude-sonnet-4-6',
       max_tokens: 1024,
       system: systemPrompt,
-      tools: TOOLS,
+      tools: availableTools,
       messages: anthropicMessages,
     });
     await recordLlmUsageEvent({
@@ -1169,8 +1408,10 @@ async function runAgentLoop(
     // If no tool calls, we're done — combine any spillover with this turn's text
     if (response.stop_reason === 'end_turn' || toolUseBlocks.length === 0) {
       const turnText = textBlocks.map((b) => b.text).join('');
-      const finalMessage = [spilloverText, turnText].filter(Boolean).join(' ');
-      return { message: finalMessage, toolsUsed, tableFilter, tableAccounts, leadsFilter, tableLeads, suggestedNavigation, pendingJobStart };
+      const finalMessage = redactInternalIdsFromAgentUserText(
+        [spilloverText, turnText].filter(Boolean).join(' '),
+      );
+      return { message: finalMessage, toolsUsed, tableFilter, tableAccounts, leadsFilter, tableLeads, suggestedNavigation, pendingJobStart, icpMutations: icpMutations.length > 0 ? icpMutations : undefined };
     }
 
     // The model wrote text alongside tool calls — save it so it isn't lost
@@ -1386,6 +1627,18 @@ async function runAgentLoop(
             }
             break;
           }
+          case 'update_icp': {
+            const { result: r, mutation } = await toolUpdateIcp(supabase, userId, toolInput);
+            result = r;
+            if (mutation) icpMutations.push(mutation);
+            break;
+          }
+          case 'delete_icp': {
+            const { result: r, mutation } = await toolDeleteIcp(supabase, userId, toolInput);
+            result = r;
+            if (mutation) icpMutations.push(mutation);
+            break;
+          }
           default:
             result = JSON.stringify({ error: `Unknown tool: ${toolName}` });
         }
@@ -1432,15 +1685,17 @@ async function runAgentLoop(
     },
   });
 
-  const finalText = [
-    spilloverText,
-    finalResponse.content
-      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-      .map((b) => b.text)
-      .join(''),
-  ].filter(Boolean).join(' ');
+  const finalText = redactInternalIdsFromAgentUserText(
+    [
+      spilloverText,
+      finalResponse.content
+        .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+        .map((b) => b.text)
+        .join(''),
+    ].filter(Boolean).join(' '),
+  );
 
-  return { message: finalText, toolsUsed, tableFilter, tableAccounts, leadsFilter, tableLeads, suggestedNavigation, pendingJobStart };
+  return { message: finalText, toolsUsed, tableFilter, tableAccounts, leadsFilter, tableLeads, suggestedNavigation, pendingJobStart, icpMutations: icpMutations.length > 0 ? icpMutations : undefined };
 }
 
 // ─── Route handler ─────────────────────────────────────────────────────────────

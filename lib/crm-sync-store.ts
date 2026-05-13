@@ -30,6 +30,23 @@ export type CrmSyncCheckpointRecord = {
   metadata: Record<string, unknown>;
 };
 
+export type ArcovaCompanyRecord = {
+  id: string;
+  domain: string | null;
+  website: string | null;
+  company_name: string | null;
+};
+
+export type ArcovaContactRecord = {
+  id: string;
+  email: string | null;
+  company_id: string | null;
+  company_name: string | null;
+  company_domain: string | null;
+  resolved_current_company_name: string | null;
+  resolved_current_company_domain: string | null;
+};
+
 function toRecord<T>(value: unknown): T {
   return value as T;
 }
@@ -234,32 +251,32 @@ export async function findArcovaCompaniesByDomains(
   supabase: DatabaseClient,
   userId: string,
   domains: string[]
-): Promise<Array<{ id: string; domain: string | null; company_website: string | null; company_name: string | null }>> {
+): Promise<ArcovaCompanyRecord[]> {
   if (!domains.length) return [];
   const { data, error } = await supabase
     .from('companies')
-    .select('id, domain, company_website, company_name')
+    .select('id, domain, website, company_name')
     .eq('user_id', userId)
-    .or(domains.map((domain) => `domain.eq.${domain},company_website.eq.${domain}`).join(','));
+    .or(domains.map((domain) => `domain.eq.${domain},website.eq.${domain}`).join(','));
 
   if (error) throw error;
-  return (data ?? []) as Array<{ id: string; domain: string | null; company_website: string | null; company_name: string | null }>;
+  return (data ?? []) as ArcovaCompanyRecord[];
 }
 
 export async function findArcovaContactsByEmails(
   supabase: DatabaseClient,
   userId: string,
   emails: string[]
-): Promise<Array<{ id: string; email: string | null }>> {
+): Promise<ArcovaContactRecord[]> {
   if (!emails.length) return [];
   const { data, error } = await supabase
     .from('contacts')
-    .select('id, email')
+    .select('id, email, company_id, company_name, company_domain, resolved_current_company_name, resolved_current_company_domain')
     .eq('user_id', userId)
     .in('email', emails);
 
   if (error) throw error;
-  return (data ?? []) as Array<{ id: string; email: string | null }>;
+  return (data ?? []) as ArcovaContactRecord[];
 }
 
 export async function sourceEventExists(

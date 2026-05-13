@@ -90,6 +90,8 @@ Return ONLY valid JSON in this exact structure. Every array field must have 2–
   "customer_benefits": ["Concrete benefit a customer gets", "..."],
   "good_fit": ["Characteristic of an ideal customer", "..."],
   "bad_fit": ["Characteristic of a poor-fit customer", "..."],
+  "buyer_prerequisites": ["What a buyer must already have in place for this product to deliver value", "..."],
+  "buyer_disqualifiers": ["Condition that rules a buyer out entirely, regardless of firmographic fit", "..."],
   "company_status": "Public (NASDAQ: GH) — or Private — Series B — or Bootstrapped — one short phrase describing ownership and funding status",
   "arr_estimate": "Best-effort ARR estimate as a short string e.g. '<$1M', '~$5M', '$10M–$20M', '>$100M' — or null if no reliable signal found"
 }
@@ -129,6 +131,20 @@ For bad_fit:
 - Focus on companies, teams, buyer contexts, budgets, maturity levels, or use cases that are a poor fit for the seller.
 - Good examples: "Early pre-product startups with no sales team", "Hospitals needing full EHR replacement", "Teams with no in-house regulatory workflow".
 - Prefer specific exclusion logic over vague negatives like "small companies" unless the source clearly supports it.
+
+For buyer_prerequisites:
+- Return the conditions a buyer must already have in place for this product to deliver any value.
+- Think about what the product fundamentally depends on to function — not nice-to-haves, but hard prerequisites.
+- Write each as a clear positive requirement, 8–15 words. Full phrases, not just labels.
+- Good examples: "Has a defined target market or prospect universe to score against", "Sells a commercial or near-commercial product or service", "Has an active outbound or BD motion in place", "Has secured funding sufficient to invest in commercial tooling".
+- If the product requires a minimum maturity level, headcount, or operational state, capture that here.
+
+For buyer_disqualifiers:
+- Return conditions that rule a buyer out entirely, regardless of how well they match firmographic criteria.
+- These are the flip side of buyer_prerequisites — the absence of each prerequisite is usually a disqualifier.
+- Write each as a clear negative condition, 8–15 words. Full phrases, not just labels.
+- Good examples: "Has no identified customers or target market to sell into", "Product is still in discovery or pre-commercial development stage", "No sales, BD, or commercial function exists yet", "Unfunded or pre-seed with no budget for commercial tools".
+- Prefer specific logic over vague statements like "too early stage" unless that is genuinely the only signal.
 
 Return ONLY the JSON object. No markdown, no explanation.`;
 
@@ -367,13 +383,12 @@ ${JSON.stringify(
   });
   await recordLlmUsageEvent({
     provider: 'anthropic',
-    feature: 'my_company_enrichment_linkedin_resolution',
-    route: 'lib/my-company-enrichment#findLinkedInWithClaude',
+    feature: 'my_company_enrichment_bullet_condense',
+    route: 'lib/my-company-enrichment#condenseBulletArrays',
     model: ANALYSIS_MODEL,
     usage: message.usage,
     metadata: {
-      company_name: companyName,
-      website,
+      company_name: company_name ?? null,
     },
   });
 

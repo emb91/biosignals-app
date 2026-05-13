@@ -72,6 +72,8 @@ export interface PanelMyCompanyData {
   valuePropositions?: string[];
   goodFit?: string[];
   badFit?: string[];
+  buyerPrerequisites?: string[];
+  buyerDisqualifiers?: string[];
   competitorsEnriched?: CompetitorItem[];
   companyStatus?: string;
   companyType?: string;
@@ -615,8 +617,8 @@ export function ProfileCard({
   appearance = 'dark',
   hideCompanyHeader = false,
 }: ProfileCardProps) {
-  const ALL_OPEN = { about: true, customers: true, valueProps: true, firmographics: true, social: true, competitors: true, products: true };
-  const ALL_CLOSED = { about: false, customers: false, valueProps: false, firmographics: false, social: false, competitors: false, products: false };
+  const ALL_OPEN = { about: true, customers: true, buyerRequirements: true, valueProps: true, firmographics: true, social: true, competitors: true, products: true };
+  const ALL_CLOSED = { about: false, customers: false, buyerRequirements: false, valueProps: false, firmographics: false, social: false, competitors: false, products: false };
 
   const [openSections, setOpenSections] = useState<Record<string, boolean>>(
     defaultAllOpen ? ALL_OPEN : ALL_CLOSED
@@ -638,7 +640,7 @@ export function ProfileCard({
 
   const {
     companyName, website, logoUrl, tagline, linkedinUrl,
-    description, customersWeServe, valuePropositions, goodFit, badFit,
+    description, customersWeServe, valuePropositions, goodFit, badFit, buyerPrerequisites, buyerDisqualifiers,
     companyType, companyTypeDisplay, companyStatus, competitorsEnriched,
     platformCategory,
     therapeuticAreas, modalities, developmentStages,
@@ -670,6 +672,7 @@ export function ProfileCard({
     (modalities?.length ?? 0) > 0 ||
     (developmentStages?.length ?? 0) > 0;
   const hasCustomers = (customersWeServe?.length ?? 0) > 0 || (goodFit?.length ?? 0) > 0 || (badFit?.length ?? 0) > 0;
+  const hasBuyerRequirements = (buyerPrerequisites?.length ?? 0) > 0 || (buyerDisqualifiers?.length ?? 0) > 0;
   const hasValueProps = (valuePropositions?.length ?? 0) > 0;
   const hasFirmographics = !!(
     employeeCount ||
@@ -1211,6 +1214,43 @@ export function ProfileCard({
               </SubSection>
             ) : null;
 
+            const buyerRequirementsSection = (hasBuyerRequirements || editMode) ? (
+              <SubSection key="buyerRequirements" label="Buyer requirements" open={openSections.buyerRequirements} onToggle={() => toggleSection('buyerRequirements')} light={isLight}>
+                <div className="space-y-2">
+                  {((buyerPrerequisites?.length ?? 0) > 0 || editMode) && (
+                    <div>
+                      <p className={fieldLabelClass(isLight)}>Prerequisites</p>
+                      {editMode ? (
+                        <EditableBulletList
+                          items={buyerPrerequisites ?? []}
+                          onChange={(v) => onMyCompanyChange?.('buyerPrerequisites', v)}
+                          addPlaceholder="What must a buyer already have in place…"
+                          light={isLight}
+                        />
+                      ) : (
+                        <BulletList items={buyerPrerequisites!} />
+                      )}
+                    </div>
+                  )}
+                  {((buyerDisqualifiers?.length ?? 0) > 0 || editMode) && (
+                    <div>
+                      <p className={fieldLabelClass(isLight)}>Disqualifiers</p>
+                      {editMode ? (
+                        <EditableBulletList
+                          items={buyerDisqualifiers ?? []}
+                          onChange={(v) => onMyCompanyChange?.('buyerDisqualifiers', v)}
+                          addPlaceholder="What rules a buyer out entirely…"
+                          light={isLight}
+                        />
+                      ) : (
+                        <BulletList items={buyerDisqualifiers!} />
+                      )}
+                    </div>
+                  )}
+                </div>
+              </SubSection>
+            ) : null;
+
             const valuePropsSection = (hasValueProps || editMode) ? (
               <SubSection key="valueProps" label="Value props" open={openSections.valueProps} onToggle={() => toggleSection('valueProps')} light={isLight}>
                 {editMode ? (
@@ -1269,7 +1309,7 @@ export function ProfileCard({
             if (columns === 3) {
               const col1 = [aboutSection, firmographicsSection].filter(Boolean);
               const col2 = [customersSection, competitorsSection].filter(Boolean);
-              const col3 = [productsSection, valuePropsSection, socialSection].filter(Boolean);
+              const col3 = [productsSection, buyerRequirementsSection, valuePropsSection, socialSection].filter(Boolean);
               if (!col1.length && !col2.length && !col3.length) return null;
               return (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-start">
@@ -1281,7 +1321,7 @@ export function ProfileCard({
             }
 
             if (columns === 2) {
-              const leftSections = [aboutSection, firmographicsSection, competitorsSection, valuePropsSection].filter(Boolean);
+              const leftSections = [aboutSection, firmographicsSection, competitorsSection, buyerRequirementsSection, valuePropsSection].filter(Boolean);
               const rightSections = [customersSection, productsSection, socialSection].filter(Boolean);
               if (!leftSections.length && !rightSections.length) return null;
               return (
@@ -1299,6 +1339,7 @@ export function ProfileCard({
                 {customersSection}
                 {competitorsSection}
                 {productsSection}
+                {buyerRequirementsSection}
                 {valuePropsSection}
                 {socialSection}
               </>

@@ -47,6 +47,19 @@ function fmtList(arr: string[] | null | undefined): string {
   return arr.join('; ');
 }
 
+function messageFromUnknown(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object') {
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  }
+  return String(error);
+}
+
 // ── Auth guard ────────────────────────────────────────────────────────────────
 
 function isAuthorized(request: Request): boolean {
@@ -423,7 +436,7 @@ export async function GET(request: Request) {
         `[cron] user=${conn.user_id} pushed=${pushResult.contacts.upserted} pulled=${pullResult.pulled} deals_fetched=${dealResult.fetchedDeals} deal_events=${dealResult.emittedEvents}`
       );
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = messageFromUnknown(err);
       console.error(`[cron] Failed for user ${conn.user_id}:`, message);
       results.push({ userId: conn.user_id, error: message });
     }

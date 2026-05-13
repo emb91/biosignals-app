@@ -151,6 +151,9 @@ export function buildUserCompanyMergePayload(args: {
     bad_fit: condensed?.bad_fit?.length
       ? condensed.bad_fit
       : stringArrayOrNull(narrative.bad_fit),
+    // Not condensed — kept at natural phrase length so the agent can reason from them.
+    buyer_prerequisites: stringArrayOrNull(narrative.buyer_prerequisites),
+    buyer_disqualifiers: stringArrayOrNull(narrative.buyer_disqualifiers),
     value_propositions: condensed?.value_propositions?.length
       ? condensed.value_propositions
       : stringArrayOrNull(narrative.value_propositions),

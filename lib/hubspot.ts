@@ -35,6 +35,26 @@ type HubSpotPropertyDefinition = {
   groupName: string;
 };
 
+/** HubSpot v3 rejects bool + booleancheckbox creates unless options include true/false. */
+const HUBSPOT_BOOLEAN_PROPERTY_OPTIONS = [
+  { label: 'Yes', value: 'true', displayOrder: 0 },
+  { label: 'No', value: 'false', displayOrder: 1 },
+] as const;
+
+function hubSpotPropertyCreateBody(prop: HubSpotPropertyDefinition): Record<string, unknown> {
+  if (prop.type === 'bool' && prop.fieldType === 'booleancheckbox') {
+    return {
+      name: prop.name,
+      label: prop.label,
+      type: prop.type,
+      fieldType: prop.fieldType,
+      groupName: prop.groupName,
+      options: [...HUBSPOT_BOOLEAN_PROPERTY_OPTIONS],
+    };
+  }
+  return { ...prop };
+}
+
 async function describeHubSpotError(res: Response): Promise<string> {
   const fallback = `HubSpot request failed (${res.status})`;
 
@@ -114,7 +134,7 @@ async function ensureProperties(accessToken: string, objectType: 'contacts' | 'c
       const res = await fetch(`https://api.hubapi.com/crm/v3/properties/${objectType}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(prop),
+        body: JSON.stringify(hubSpotPropertyCreateBody(prop)),
       });
       if (!res.ok && res.status !== 409) {
         throw new Error(

@@ -17,6 +17,8 @@ import {
   type HubSpotDeal,
 } from '@/lib/hubspot-deals';
 import {
+  type ArcovaCompanyRecord,
+  type ArcovaContactRecord,
   findArcovaCompaniesByDomains,
   findArcovaContactsByEmails,
   getCrmSyncCheckpoint,
@@ -45,6 +47,69 @@ type DealChangeEvent = {
   title: string;
   summary: string;
 };
+
+type ResolutionStatus =
+  | 'direct_company_match'
+  | 'resolved_via_contact_current_company'
+  | 'crm_company_contact_mismatch'
+  | 'personal_or_nonwork_domain'
+  | 'multiple_current_roles'
+  | 'ambiguous_unresolved';
+
+type DealAssociatedCompanyRow = {
+  hubspotCompanyId: string;
+  hubspotCompanyName: string | null;
+  hubspotCompanyDomain: string | null;
+  arcovaCompanyId: string | null;
+  hsLastModifiedDate: string | null;
+  rawPayload: Record<string, unknown>;
+};
+
+type DealAssociatedContactRow = {
+  hubspotContactId: string;
+  hubspotContactEmail: string | null;
+  hubspotContactName: string | null;
+  arcovaContactId: string | null;
+  arcovaContact: ArcovaContactRecord | null;
+  hsLastModifiedDate: string | null;
+  rawPayload: Record<string, unknown>;
+};
+
+type ResolvedDealTarget = {
+  companyId: string;
+  resolutionStatus: ResolutionStatus;
+  resolutionMethod: 'hubspot_company' | 'contact_current_company';
+  matchedArcovaContactIds: string[];
+  arcovaCompanyDomain: string | null;
+  arcovaCompanyName: string | null;
+};
+
+type DealResolutionResult =
+  | {
+      targets: ResolvedDealTarget[];
+      suppressed: false;
+      resolutionStatus: ResolutionStatus;
+      mismatchReason: null;
+    }
+  | {
+      targets: [];
+      suppressed: true;
+      resolutionStatus: ResolutionStatus;
+      mismatchReason: string;
+    };
+
+function errorToMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object') {
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  }
+  return String(error);
+}
 
 export type HubSpotDealReadinessSyncResult = {
   fetchedDeals: number;
@@ -129,6 +194,131 @@ function contactName(contact?: HubSpotContactRecordById | null): string | null {
   return name || null;
 }
 
+function uniqueNonNull<T>(values: Array<T | null | undefined>): T[] {
+  return [...new Set(values.filter((value): value is T => value != null))];
+}
+
+function resolveContactBackedCompany(
+  contact: ArcovaContactRecord,
+  arcovaCompanyByDomain: Map<string, ArcovaCompanyRecord>
+): { companyId: string | null; companyDomain: string | null; companyName: string | null } {
+  if (contact.company_id) {
+    return {
+      companyId: contact.company_id,
+      companyDomain: normalizeDomain(contact.resolved_current_company_domain ?? contact.company_domain ?? null),
+      companyName: contact.resolved_current_company_name ?? contact.company_name ?? null,
+    };
+  }
+
+  const candidateDomain = normalizeDomain(contact.resolved_current_company_domain ?? contact.company_domain ?? null);
+  const matchedCompany = candidateDomain ? arcovaCompanyByDomain.get(candidateDomain) : undefined;
+  return {
+    companyId: matchedCompany?.id ?? null,
+    companyDomain: candidateDomain,
+    companyName: contact.resolved_current_company_name ?? contact.company_name ?? matchedCompany?.company_name ?? null,
+  };
+}
+
+function resolveDealTargets(
+  associatedCompanyRows: DealAssociatedCompanyRow[],
+  associatedContactRows: DealAssociatedContactRow[],
+  arcovaCompanyByDomain: Map<string, ArcovaCompanyRecord>
+): DealResolutionResult {
+  const directTargets = associatedCompanyRows
+    .filter((row): row is DealAssociatedCompanyRow & { arcovaCompanyId: string } => Boolean(row.arcovaCompanyId))
+    .map((row) => {
+      const matchedCompany = row.hubspotCompanyDomain ? arcovaCompanyByDomain.get(row.hubspotCompanyDomain) : undefined;
+      return {
+        companyId: row.arcovaCompanyId,
+        resolutionStatus: 'direct_company_match' as const,
+        resolutionMethod: 'hubspot_company' as const,
+        matchedArcovaContactIds: [],
+        arcovaCompanyDomain: normalizeDomain(matchedCompany?.domain ?? matchedCompany?.website ?? null),
+        arcovaCompanyName: matchedCompany?.company_name ?? null,
+      };
+    });
+
+  if (directTargets.length > 0) {
+    return {
+      targets: directTargets,
+      suppressed: false,
+      resolutionStatus: 'direct_company_match',
+      mismatchReason: null,
+    };
+  }
+
+  const contactCandidates = associatedContactRows
+    .map((row) => {
+      if (!row.arcovaContact) return null;
+      const resolved = resolveContactBackedCompany(row.arcovaContact, arcovaCompanyByDomain);
+      if (!resolved.companyId) return null;
+      return {
+        ...resolved,
+        arcovaContactId: row.arcovaContact.id,
+        email: row.arcovaContact.email ?? row.hubspotContactEmail,
+      };
+    })
+    .filter((value): value is NonNullable<typeof value> => Boolean(value));
+
+  const uniqueCandidateIds = uniqueNonNull(contactCandidates.map((candidate) => candidate.companyId));
+  const hubspotDomains = uniqueNonNull(associatedCompanyRows.map((row) => row.hubspotCompanyDomain));
+
+  if (uniqueCandidateIds.length === 1 && hubspotDomains.length === 0) {
+    const candidate = contactCandidates[0]!;
+    return {
+      targets: [{
+        companyId: candidate.companyId,
+        resolutionStatus: 'resolved_via_contact_current_company',
+        resolutionMethod: 'contact_current_company',
+        matchedArcovaContactIds: uniqueNonNull(contactCandidates.map((item) => item.arcovaContactId)),
+        arcovaCompanyDomain: candidate.companyDomain,
+        arcovaCompanyName: candidate.companyName,
+      }],
+      suppressed: false,
+      resolutionStatus: 'resolved_via_contact_current_company',
+      mismatchReason: null,
+    };
+  }
+
+  if (uniqueCandidateIds.length > 1) {
+    return {
+      targets: [],
+      suppressed: true,
+      resolutionStatus: 'multiple_current_roles',
+      mismatchReason: 'Associated Arcova contacts point to multiple current companies.',
+    };
+  }
+
+  if (uniqueCandidateIds.length === 1 && hubspotDomains.length > 0) {
+    const candidate = contactCandidates[0]!;
+    const candidateDomain = normalizeDomain(candidate.companyDomain);
+    const emailDomains = uniqueNonNull(
+      associatedContactRows.map((row) => normalizeDomain(row.hubspotContactEmail?.split('@')[1] ?? null))
+    );
+    const hasPersonalLikeEmail =
+      emailDomains.length > 0 &&
+      candidateDomain != null &&
+      !emailDomains.includes(candidateDomain) &&
+      !hubspotDomains.includes(candidateDomain);
+
+    return {
+      targets: [],
+      suppressed: true,
+      resolutionStatus: hasPersonalLikeEmail ? 'personal_or_nonwork_domain' : 'crm_company_contact_mismatch',
+      mismatchReason: hasPersonalLikeEmail
+        ? 'Associated contact email/domain does not line up cleanly with either HubSpot company or Arcova current-company truth.'
+        : 'HubSpot company and Arcova current-company truth disagree.',
+    };
+  }
+
+  return {
+    targets: [],
+    suppressed: true,
+    resolutionStatus: 'ambiguous_unresolved',
+    mismatchReason: 'Arcova could not confidently resolve this HubSpot deal to a single company.',
+  };
+}
+
 export async function syncHubSpotDealsIntoReadiness(
   supabase: DatabaseClient,
   input: { userId: string; nangoConnectionId: string }
@@ -195,7 +385,7 @@ export async function syncHubSpotDealsIntoReadiness(
 
     const arcovaCompanyByDomain = new Map(
       arcovaCompanies
-        .map((company) => [normalizeDomain(company.domain ?? company.company_website ?? null), company] as const)
+        .map((company) => [normalizeDomain(company.domain ?? company.website ?? null), company] as const)
         .filter((entry): entry is [string, (typeof arcovaCompanies)[number]] => Boolean(entry[0]))
     );
     const arcovaContactByEmail = new Map(
@@ -203,6 +393,20 @@ export async function syncHubSpotDealsIntoReadiness(
         .map((contact) => [contact.email?.trim().toLowerCase() ?? '', contact] as const)
         .filter((entry): entry is [string, (typeof arcovaContacts)[number]] => Boolean(entry[0]))
     );
+
+    const contactResolvedDomains = [...new Set(
+      arcovaContacts
+        .map((contact) => normalizeDomain(contact.resolved_current_company_domain ?? contact.company_domain ?? null))
+        .filter((value): value is string => Boolean(value))
+    )];
+
+    if (contactResolvedDomains.length > 0) {
+      const extraArcovaCompanies = await findArcovaCompaniesByDomains(supabase, input.userId, contactResolvedDomains);
+      for (const company of extraArcovaCompanies) {
+        const key = normalizeDomain(company.domain ?? company.website ?? null);
+        if (key) arcovaCompanyByDomain.set(key, company);
+      }
+    }
 
     let mirroredDeals = 0;
     let emittedEvents = 0;
@@ -228,7 +432,7 @@ export async function syncHubSpotDealsIntoReadiness(
       });
       mirroredDeals += 1;
 
-      const associatedCompanyRows = (dealCompanyMap.get(deal.id) ?? []).map((hubspotCompanyId) => {
+      const associatedCompanyRows: DealAssociatedCompanyRow[] = (dealCompanyMap.get(deal.id) ?? []).map((hubspotCompanyId) => {
         const company = hubspotCompaniesById.get(hubspotCompanyId) as HubSpotCompanyRecord | undefined;
         const domain = normalizeDomain(company?.properties.domain ?? company?.properties.website ?? null);
         const arcovaCompany = domain ? arcovaCompanyByDomain.get(domain) : undefined;
@@ -242,13 +446,7 @@ export async function syncHubSpotDealsIntoReadiness(
         };
       });
 
-      await replaceCrmDealCompanyLinks(supabase, {
-        userId: input.userId,
-        hubspotDealId: deal.id,
-        rows: associatedCompanyRows,
-      });
-
-      const associatedContactRows = (dealContactMap.get(deal.id) ?? []).map((hubspotContactId) => {
+      const associatedContactRows: DealAssociatedContactRow[] = (dealContactMap.get(deal.id) ?? []).map((hubspotContactId) => {
         const contact = hubspotContactsById.get(hubspotContactId);
         const email = contact?.properties.email?.trim().toLowerCase() ?? null;
         const arcovaContact = email ? arcovaContactByEmail.get(email) : undefined;
@@ -257,6 +455,7 @@ export async function syncHubSpotDealsIntoReadiness(
           hubspotContactEmail: email,
           hubspotContactName: contactName(contact),
           arcovaContactId: arcovaContact?.id ?? null,
+          arcovaContact: arcovaContact ?? null,
           hsLastModifiedDate,
           rawPayload: contact ? (contact as unknown as Record<string, unknown>) : { hubspot_contact_id: hubspotContactId },
         };
@@ -265,19 +464,41 @@ export async function syncHubSpotDealsIntoReadiness(
       await replaceCrmDealContactLinks(supabase, {
         userId: input.userId,
         hubspotDealId: deal.id,
-        rows: associatedContactRows,
+        rows: associatedContactRows.map(({ arcovaContact: _arcovaContact, ...row }) => row),
       });
 
       const changes = buildDealChangeEvents(previous, deal);
+      const resolution = resolveDealTargets(associatedCompanyRows, associatedContactRows, arcovaCompanyByDomain);
+
+      await replaceCrmDealCompanyLinks(supabase, {
+        userId: input.userId,
+        hubspotDealId: deal.id,
+        rows: associatedCompanyRows.map((row) => ({
+          ...row,
+          rawPayload: {
+            ...row.rawPayload,
+            resolution_status: resolution.resolutionStatus,
+            resolution_suppressed: resolution.suppressed,
+            mismatch_reason: resolution.mismatchReason,
+            matched_arcova_contact_ids: resolution.suppressed
+              ? []
+              : uniqueNonNull(resolution.targets.flatMap((target) => target.matchedArcovaContactIds)),
+            matched_arcova_company_ids: resolution.suppressed
+              ? []
+              : uniqueNonNull(resolution.targets.map((target) => target.companyId)),
+          },
+        })),
+      });
+
       if (!changes.length) continue;
 
-      const resolvedCompanyIds = [...new Set(associatedCompanyRows.map((row) => row.arcovaCompanyId).filter((value): value is string => Boolean(value)))];
-      if (!resolvedCompanyIds.length) {
+      if (resolution.suppressed || resolution.targets.length === 0) {
         skippedUnresolvedCompanies += changes.length;
         continue;
       }
 
-      for (const companyId of resolvedCompanyIds) {
+      for (const target of resolution.targets) {
+        const companyId = target.companyId;
         for (const change of changes) {
           const sourceEventId = `hubspot:deal:${deal.id}:company:${companyId}:${change.changeType}:${hsLastModifiedDate ?? 'unknown'}`;
           const alreadyExists = await sourceEventExists(supabase, input.userId, HUBSPOT_SIGNAL_SOURCE, sourceEventId);
@@ -309,6 +530,13 @@ export async function syncHubSpotDealsIntoReadiness(
               associated_hubspot_company_ids: associatedCompanyRows.map((row) => row.hubspotCompanyId),
               associated_hubspot_contact_ids: associatedContactRows.map((row) => row.hubspotContactId),
               diff_rule: change.changeType,
+              resolution_status: target.resolutionStatus,
+              resolution_method: target.resolutionMethod,
+              matched_arcova_contact_ids: target.matchedArcovaContactIds,
+              arcova_company_name: target.arcovaCompanyName,
+              arcova_company_domain: target.arcovaCompanyDomain,
+              hubspot_company_names: associatedCompanyRows.map((row) => row.hubspotCompanyName).filter(Boolean),
+              hubspot_company_domains: associatedCompanyRows.map((row) => row.hubspotCompanyDomain).filter(Boolean),
               remote_updated_at: hsLastModifiedDate,
               crm_label: 'HubSpot CRM',
             },
@@ -333,6 +561,13 @@ export async function syncHubSpotDealsIntoReadiness(
               object_type: 'deal',
               object_id: deal.id,
               diff_rule: change.changeType,
+              resolution_status: target.resolutionStatus,
+              resolution_method: target.resolutionMethod,
+              matched_arcova_contact_ids: target.matchedArcovaContactIds,
+              arcova_company_name: target.arcovaCompanyName,
+              arcova_company_domain: target.arcovaCompanyDomain,
+              hubspot_company_names: associatedCompanyRows.map((row) => row.hubspotCompanyName).filter(Boolean),
+              hubspot_company_domains: associatedCompanyRows.map((row) => row.hubspotCompanyDomain).filter(Boolean),
               crm_label: 'HubSpot CRM',
             },
           } as const;
@@ -380,7 +615,7 @@ export async function syncHubSpotDealsIntoReadiness(
       checkpoint: maxModifiedAt ?? checkpoint?.last_synced_remote_at ?? null,
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorToMessage(error);
     await upsertCrmSyncCheckpoint(supabase, {
       userId: input.userId,
       provider: HUBSPOT_CRM_PROVIDER,
