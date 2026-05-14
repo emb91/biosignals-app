@@ -15,8 +15,16 @@ const HUBSPOT_DEAL_PROPERTIES = [
   'dealtype',
 ] as const;
 
-const HUBSPOT_COMPANY_PROPERTIES = ['name', 'domain', 'website'] as const;
-const HUBSPOT_CONTACT_PROPERTIES = ['firstname', 'lastname', 'email'] as const;
+const HUBSPOT_COMPANY_PROPERTIES = ['name', 'domain', 'website', 'arcova_company_id'] as const;
+const HUBSPOT_CONTACT_PROPERTIES = [
+  'firstname',
+  'lastname',
+  'email',
+  'arcova_contact_id',
+  'arcova_company_id',
+  'arcova_company_name',
+  'arcova_company_domain',
+] as const;
 
 export const HUBSPOT_ACTIVE_DEAL_STAGES = new Set([
   'appointmentscheduled',

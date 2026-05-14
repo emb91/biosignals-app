@@ -24,6 +24,9 @@
 .DS_Store
 *.pem
 
+# Claude local worktree snapshots (not the running app — safe to regenerate)
+.claude/worktrees/
+
 # debug
 npm-debug.log*
 yarn-debug.log*

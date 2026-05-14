@@ -27,7 +27,7 @@ export default function SettingsPage() {
   return (
     <div className="flex h-screen bg-transparent">
       <AppSidebar />
-      <main className="arcova-scroll-surface min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
+      <main className="bg-transparent min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
         <div className="mx-auto max-w-2xl">
           <h1 className="text-2xl font-semibold text-slate-950">Settings</h1>
           <p className="mt-2 text-sm text-slate-500">More options will be available here soon.</p>

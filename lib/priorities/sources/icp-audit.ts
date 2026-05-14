@@ -1,7 +1,7 @@
 /**
  * Shared icp-audit logic. Used by:
  * - `POST /api/agent/icp-priorities` — returns the raw individual priorities for the
- *   agent inbox on /company-criteria
+ *   agent inbox on `/icps`
  * - `GET /api/today/priorities` (aggregator) — collapses the same raw priorities into
  *   a single grouped TodayPriority for /today's agenda
  *
@@ -68,7 +68,7 @@ export async function computeIcpAuditPriorities(
 ): Promise<IcpPriority[]> {
   try {
     // Fetch dismissals alongside the source data so we can filter server-side. Both
-    // /today and /company-criteria call this path, so dismissals stay consistent.
+    // /today and `/icps` call this path, so dismissals stay consistent.
     const [companyRes, icpsRes, dismissalsRes] = await Promise.all([
       supabase.from('user_company').select('*').eq('user_id', userId).maybeSingle(),
       supabase
@@ -110,7 +110,7 @@ Return STRICT JSON ONLY in this exact shape — no prose, no backticks, no pream
       "detail": "1-2 sentences explaining the issue and why it matters, grounded in actual fields you can see",
       "cta": {
         "label": "Short button text (max 22 chars) like 'Merge them', 'Draft an ICP', 'Tighten it'",
-        "seedPrompt": "Natural-language opener for the company-criteria chat. Name ICPs by creation order plus title only, e.g. 'ICP 2 (Preclinical Multi-Modality Drug Discovery CRO) and ICP 3 (…)'. Never include hyphenated UUIDs or '(id: …)' parentheses — the UI must stay free of raw database ids."
+        "seedPrompt": "Natural-language opener for the company-criteria agent chat. Name ICPs by creation order plus title only, e.g. 'ICP 2 (Preclinical Multi-Modality Drug Discovery CRO) and ICP 3 (…)'. Never include hyphenated UUIDs or '(id: …)' parentheses — the UI must stay free of raw database ids."
       },
       "icpIds": ["uuid-of-each-icp-touched-by-this-priority"]
     }
@@ -214,7 +214,7 @@ ${JSON.stringify(icps, null, 2)}`;
  *
  * Deliberately count-free: the row just says "Review your ICPs" regardless of how many
  * findings sit behind it. Avoids the awkwardness of /today saying "3 flagged" when the
- * user has already dismissed two on /company-criteria.
+ * user has already dismissed two on `/icps`.
  */
 export function groupIcpAuditForToday(items: IcpPriority[]): TodayPriority | null {
   if (items.length === 0) return null;

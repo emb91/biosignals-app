@@ -4,6 +4,7 @@ export const ROUTES = {
     signalsTodo: '/admin/signals-todo',
   },
   today: '/today',
+  log: '/log',
   gtmBase: '/gtm-base',
   import: '/import',
   signals: '/signals',
@@ -14,13 +15,18 @@ export const ROUTES = {
   setup: {
     /** Full-screen guided onboarding (company → ICP → buying team). */
     arcova: '/arcova-setup',
-    company: '/my-profile',
-    icps: '/company-criteria',
-    newIcp: '/company-criteria/new',
+    company: '/my-company',
+    icps: '/icps',
+    newIcp: '/icps/new',
   },
   leads: {
     contacts: '/leads/contacts',
     accounts: '/leads/accounts',
+  },
+  /** Same-origin REST paths used by fetch(). */
+  api: {
+    /** List/create/delete ICP definitions (historically `/api/company-criteria`). */
+    icps: '/api/icps',
   },
 } as const;
 

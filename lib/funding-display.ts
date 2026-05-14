@@ -9,7 +9,7 @@
  * extract a short status descriptor and a dollar figure from it. Apollo's
  * structured fields are only shown when Claude returned no `company_status`.
  *
- * Both renderers (the live setup panel and the saved /company-criteria page)
+ * Both renderers (the live setup panel and the saved `/icps` page)
  * import these helpers so the rules stay consistent.
  */
 

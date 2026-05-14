@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 export default function ContactsRedirect() {
   const router = useRouter();
   useEffect(() => {
-    router.replace('/company-criteria');
+    router.replace('/icps');
   }, [router]);
   return null;
 }

@@ -80,7 +80,7 @@ export async function GET() {
         status,
         title: typeof row.name === 'string' && row.name.trim() ? row.name.trim() : 'Untitled ICP',
         subtitle: 'ICP re-enrichment',
-        href: '/company-criteria',
+        href: ROUTES.setup.icps,
         started_at: typeof row.reenrichment_started_at === 'string' ? row.reenrichment_started_at : null,
         finished_at: typeof row.reenrichment_finished_at === 'string' ? row.reenrichment_finished_at : null,
         last_error: typeof row.reenrichment_last_error === 'string' ? row.reenrichment_last_error : null,

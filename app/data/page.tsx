@@ -364,7 +364,7 @@ function DataPageContent() {
       <AppSidebar />
 
       {/* Main: centered agent + recent jobs log */}
-      <div className="arcova-scroll-surface min-h-0 flex-1 overflow-y-auto px-6 py-8 lg:px-10">
+      <div className="bg-transparent min-h-0 flex-1 overflow-y-auto px-6 py-8 lg:px-10">
         <div className="mx-auto flex min-h-0 w-full max-w-[1180px] flex-col gap-4">
           <PageHeader
             eyebrow="Data"

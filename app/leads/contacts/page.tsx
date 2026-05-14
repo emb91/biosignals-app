@@ -223,6 +223,45 @@ interface ContactFitFetchState {
   message: string | null;
 }
 
+interface HubSpotCrmDeal {
+  hubspot_deal_id: string;
+  deal_name: string | null;
+  deal_stage: string | null;
+  amount: number | null;
+  close_date: string | null;
+  hs_lastmodifieddate: string | null;
+  synced_at: string | null;
+  hubspot_company_name: string | null;
+  hubspot_company_domain: string | null;
+  arcova_company_id: string | null;
+  resolution_status: string | null;
+  resolution_suppressed: boolean;
+  mismatch_reason: string | null;
+  matched_arcova_contact_ids: string[];
+  matched_arcova_company_ids: string[];
+  hubspot_contact_id: string | null;
+  hubspot_contact_email: string | null;
+  hubspot_contact_name: string | null;
+  pushed_arcova_contact_id: string | null;
+  pushed_arcova_company_id: string | null;
+  pushed_arcova_company_name: string | null;
+  pushed_arcova_company_domain: string | null;
+}
+
+interface HubSpotCrmContext {
+  contact_id: string;
+  arcova_company_id: string | null;
+  arcova_company_name: string | null;
+  arcova_company_domain: string | null;
+  deals: HubSpotCrmDeal[];
+}
+
+interface HubSpotCrmFetchState {
+  loading: boolean;
+  data: HubSpotCrmContext | null;
+  error: string | null;
+}
+
 interface Lead {
   id: string;
   full_name: string | null;
@@ -278,6 +317,10 @@ interface Lead {
   data_provenance_type?: string | null;
   data_provenance_imported_at?: string | null;
   contact_emails?: ContactEmailRow[] | null;
+  hubspot_lead_state?: 'active' | 'customer' | 'dormant' | 'context_only' | 'none' | null;
+  hubspot_latest_deal_stage?: string | null;
+  hubspot_latest_deal_name?: string | null;
+  hubspot_latest_deal_updated_at?: string | null;
   companies: {
     company_name: string | null;
     domain: string | null;
@@ -353,7 +396,7 @@ type EnrichmentVisualState = {
 
 const PAGE_SIZE = 50;
 const LEADS_TABLE_GRID =
-  'grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,5.25rem)_minmax(9.5rem,1.25fr)] gap-x-5';
+  'grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.15fr)_minmax(7.25rem,0.85fr)_minmax(0,5.25rem)_minmax(9.5rem,1.15fr)] gap-x-5';
 
 function blurInputOnEnter(e: KeyboardEvent<HTMLInputElement>) {
   if (e.key !== 'Enter') return;
@@ -386,6 +429,79 @@ const formatPercentValue = (value: number | null | undefined): string | null => 
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
   return `${Math.round((value <= 1 ? value * 100 : value))}%`;
 };
+
+const formatUsdValue = (value: number | null | undefined): string | null => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  }).format(value);
+};
+
+const formatHubSpotResolutionLabel = (value: string | null | undefined): string | null => {
+  if (!value) return null;
+  return value
+    .split('_')
+    .map((part) => (part ? part[0].toUpperCase() + part.slice(1) : part))
+    .join(' ');
+};
+
+const formatHubSpotStageLabel = (value: string | null | undefined): string | null => {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase();
+  const knownLabels: Record<string, string> = {
+    appointmentscheduled: 'Appt set',
+    qualifiedtobuy: 'Qualified',
+    presentationscheduled: 'Presentation',
+    decisionmakerboughtin: 'Buy-in',
+    contractsent: 'Contract',
+    closedwon: 'Closed won',
+    closedlost: 'Closed lost',
+    dealswon: 'Won',
+  };
+  if (knownLabels[normalized]) return knownLabels[normalized];
+  return value
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .split(/[_\s]+/)
+    .map((part) => (part ? part[0].toUpperCase() + part.slice(1).toLowerCase() : part))
+    .join(' ');
+};
+
+function getHubSpotTableBadge(lead: Lead): {
+  label: string;
+  className: string;
+} {
+  const stageLabel = formatHubSpotStageLabel(lead.hubspot_latest_deal_stage);
+
+  switch (lead.hubspot_lead_state) {
+    case 'customer':
+      return {
+        label: 'Won',
+        className: 'border-[rgba(45,138,138,0.24)] bg-[rgba(45,138,138,0.08)] text-[#2d8a8a]',
+      };
+    case 'dormant':
+      return {
+        label: 'Lost',
+        className: 'border-[rgba(125,144,154,0.24)] bg-[rgba(125,144,154,0.10)] text-[#5f7480]',
+      };
+    case 'context_only':
+      return {
+        label: 'Context only',
+        className: 'border-[rgba(13,53,71,0.12)] bg-[rgba(13,53,71,0.05)] text-[#4a6470]',
+      };
+    case 'active':
+      return {
+        label: stageLabel || 'Active deal',
+        className: 'border-[rgba(245,115,22,0.24)] bg-[rgba(255,122,89,0.08)] text-[#cc5b3f]',
+      };
+    default:
+      return {
+        label: 'No deal',
+        className: 'border-[rgba(13,53,71,0.08)] bg-[rgba(13,53,71,0.03)] text-[#7d909a]',
+      };
+  }
+}
 
 /** Integer 0–100 for progress bars */
 const percentDisplayNumber = (value: number | null | undefined): number | null => {
@@ -801,7 +917,7 @@ export default function LeadsPage() {
   const [stoppingLeadId, setStoppingLeadId] = useState<string | null>(null);
   const [stopEnrichmentError, setStopEnrichmentError] = useState<string | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
-  const [selectedPreview, setSelectedPreview] = useState<'contact' | 'scoring' | 'action'>('contact');
+  const [selectedPreview, setSelectedPreview] = useState<'contact' | 'hubspot' | 'scoring' | 'action'>('contact');
   const [isWorkHistoryExpanded, setIsWorkHistoryExpanded] = useState(false);
   const [contactPanelOpen, setContactPanelOpen] = useState({
     fit: true,
@@ -823,10 +939,13 @@ export default function LeadsPage() {
   });
   const [companyFitByCompanyId, setCompanyFitByCompanyId] = useState<Record<string, CompanyFitFetchState>>({});
   const [contactFitByContactId, setContactFitByContactId] = useState<Record<string, ContactFitFetchState>>({});
+  const [hubspotCrmByContactId, setHubspotCrmByContactId] = useState<Record<string, HubSpotCrmFetchState>>({});
   const companyFitCacheRef = useRef(companyFitByCompanyId);
   companyFitCacheRef.current = companyFitByCompanyId;
   const contactFitCacheRef = useRef(contactFitByContactId);
   contactFitCacheRef.current = contactFitByContactId;
+  const hubspotCrmCacheRef = useRef(hubspotCrmByContactId);
+  hubspotCrmCacheRef.current = hubspotCrmByContactId;
   const [enrichmentVisuals, setEnrichmentVisuals] = useState<Record<string, EnrichmentVisualState>>({});
   const [progressNow, setProgressNow] = useState(() => Date.now());
 
@@ -1488,6 +1607,8 @@ export default function LeadsPage() {
 
   const selectedContactFitState = selectedLeadId ? contactFitByContactId[selectedLeadId] ?? null : null;
   const selectedContactFit = selectedContactFitState?.data ?? null;
+  const selectedHubSpotCrmState = selectedLeadId ? hubspotCrmByContactId[selectedLeadId] ?? null : null;
+  const selectedHubSpotCrm = selectedHubSpotCrmState?.data ?? null;
   const selectedCompanyId = selectedLead?.company_id ?? null;
   const selectedCompanyFitState = selectedCompanyId ? companyFitByCompanyId[selectedCompanyId] ?? null : null;
   const selectedCompanyFit = selectedCompanyFitState?.data ?? null;
@@ -1645,6 +1766,56 @@ export default function LeadsPage() {
             data: null,
             error: error instanceof Error ? error.message : 'Failed to load contact fit details.',
             message: null,
+          },
+        }));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedLeadId, selectedPreview]);
+
+  useEffect(() => {
+    if (!selectedLeadId || selectedPreview !== 'hubspot') return;
+
+    const cached = hubspotCrmCacheRef.current[selectedLeadId];
+    if (cached) return;
+
+    let cancelled = false;
+    setHubspotCrmByContactId((prev) => ({
+      ...prev,
+      [selectedLeadId]: {
+        loading: true,
+        data: null,
+        error: null,
+      },
+    }));
+
+    (async () => {
+      try {
+        const response = await fetch(`/api/contacts/${selectedLeadId}/hubspot-crm`);
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(result.error || 'Failed to load HubSpot CRM context.');
+        }
+        if (cancelled) return;
+        setHubspotCrmByContactId((prev) => ({
+          ...prev,
+          [selectedLeadId]: {
+            loading: false,
+            data: result.data ?? null,
+            error: null,
+          },
+        }));
+      } catch (error) {
+        if (cancelled) return;
+        setHubspotCrmByContactId((prev) => ({
+          ...prev,
+          [selectedLeadId]: {
+            loading: false,
+            data: null,
+            error: error instanceof Error ? error.message : 'Failed to load HubSpot CRM context.',
           },
         }));
       }
@@ -2066,124 +2237,133 @@ export default function LeadsPage() {
 
   if (!user) return null;
 
+  const contactsPageTitleBlock = (
+    <div className="mb-6 shrink-0 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+      <div>
+        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-arcova-teal">
+          <Users className="h-3.5 w-3.5" />
+          Leads
+        </div>
+        <h1 className="font-manrope mt-2 text-3xl font-semibold leading-tight tracking-[-0.028em] text-slate-950 sm:text-[2.25rem]">
+          Contacts
+        </h1>
+        <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
+          {total > 0
+            ? `${total.toLocaleString()} contact${total !== 1 ? 's' : ''} ready to review. Click a row for details, or the company name to open the account.`
+            : 'Your imported contacts will appear here once they are ready to review.'}
+        </p>
+      </div>
+
+      {total > 0 && (
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => router.push('/import')}
+            className="inline-flex items-center gap-1.5 px-4 py-2 bg-arcova-teal text-white rounded-lg text-sm hover:bg-arcova-teal/90 transition-colors"
+          >
+            <Upload className="w-3.5 h-3.5" />
+            Import
+          </button>
+          <button
+            onClick={handleDownloadCsv}
+            className="inline-flex items-center gap-1.5 px-3 py-2 border border-gray-200 bg-white text-gray-700 rounded-lg text-sm hover:bg-gray-50 transition-colors"
+            title="Export leads as CSV"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Export CSV
+          </button>
+          {hubspotConnected && (
+            <button
+              onClick={handlePushToHubspot}
+              disabled={pushingToHubspot}
+              className="inline-flex items-center gap-2 px-3 py-2 bg-[#ff7a59] text-white rounded-lg text-sm font-medium hover:bg-[#e8693f] transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
+              title="Sync enrichment data to HubSpot"
+            >
+              {pushingToHubspot ? (
+                <RotateCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M18.164 7.932V5.085a2.198 2.198 0 0 0 1.268-1.978V3.06A2.199 2.199 0 0 0 17.235.862h-.047a2.199 2.199 0 0 0-2.197 2.197v.047a2.199 2.199 0 0 0 1.268 1.978v2.847a6.232 6.232 0 0 0-2.962 1.302L5.028 3.617a2.44 2.44 0 0 0 .072-.573A2.455 2.455 0 1 0 2.645 5.5a2.43 2.43 0 0 0 1.194-.315l8.122 4.707a6.248 6.248 0 0 0 0 4.208L4.123 18.5a2.432 2.432 0 0 0-1.478-.498 2.455 2.455 0 1 0 2.455 2.455 2.43 2.43 0 0 0-.388-1.337l7.91-4.583a6.266 6.266 0 0 0 8.976-5.628 6.25 6.25 0 0 0-3.434-5.977zm-1.023 9.565a3.59 3.59 0 1 1 0-7.181 3.59 3.59 0 0 1 0 7.181z"/>
+                </svg>
+              )}
+              {pushingToHubspot ? 'Syncing…' : 'HubSpot Sync'}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  const hubspotSyncBanner = hubspotSyncResult ? (
+    <div className="mb-4 shrink-0 rounded-lg border border-gray-200 bg-white pl-4 pr-4 pt-3.5 pb-3.5 flex items-start justify-between gap-4">
+      <div className="flex items-start gap-3 min-w-0">
+        <svg className="w-4 h-4 shrink-0 mt-0.5 text-[#ff7a59]" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M18.164 7.932V5.085a2.198 2.198 0 0 0 1.268-1.978V3.06A2.199 2.199 0 0 0 17.235.862h-.047a2.199 2.199 0 0 0-2.197 2.197v.047a2.199 2.199 0 0 0 1.268 1.978v2.847a6.232 6.232 0 0 0-2.962 1.302L5.028 3.617a2.44 2.44 0 0 0 .072-.573A2.455 2.455 0 1 0 2.645 5.5a2.43 2.43 0 0 0 1.194-.315l8.122 4.707a6.248 6.248 0 0 0 0 4.208L4.123 18.5a2.432 2.432 0 0 0-1.478-.498 2.455 2.455 0 1 0 2.455 2.455 2.43 2.43 0 0 0-.388-1.337l7.91-4.583a6.266 6.266 0 0 0 8.976-5.628 6.25 6.25 0 0 0-3.434-5.977zm-1.023 9.565a3.59 3.59 0 1 1 0-7.181 3.59 3.59 0 0 1 0 7.181z"/>
+        </svg>
+        <div className="min-w-0">
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="text-sm font-semibold text-gray-900">
+              {hubspotSyncResult.contacts.upserted} contact{hubspotSyncResult.contacts.upserted !== 1 ? 's' : ''} synced
+            </span>
+            {hubspotSyncResult.contacts.errors > 0 && (
+              <span className="text-xs font-medium text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full">
+                {hubspotSyncResult.contacts.errors} error{hubspotSyncResult.contacts.errors !== 1 ? 's' : ''}
+              </span>
+            )}
+            {hubspotSyncResult.skipped > 0 && (
+              <button
+                onClick={() => setSyncResultExpanded((v) => !v)}
+                className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full flex items-center gap-1 hover:bg-gray-200 transition-colors"
+              >
+                <svg className={`w-2.5 h-2.5 transition-transform ${syncResultExpanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                {hubspotSyncResult.skipped} skipped
+              </button>
+            )}
+          </div>
+          {syncResultExpanded && hubspotSyncResult.skippedContacts.length > 0 && (
+            <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+              <p className="text-xs font-medium text-gray-900">Not synced yet</p>
+              <ul className="mt-1.5 space-y-1.5">
+              {hubspotSyncResult.skippedContacts.map((c, i) => (
+                <li key={i} className="text-xs text-gray-600">
+                  <span className="font-medium text-gray-800">{c.name}</span>
+                  {c.company && <span className="text-gray-400"> · {c.company}</span>}
+                  <span className="ml-1.5 text-gray-600">: {c.reason.toLowerCase()}</span>
+                </li>
+              ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      </div>
+      <button
+        onClick={() => setHubspotSyncResult(null)}
+        className="shrink-0 text-gray-400 hover:text-gray-600 mt-0.5"
+        aria-label="Dismiss"
+      >
+        <X className="w-4 h-4" />
+      </button>
+    </div>
+  ) : null;
+
   return (
     <div className="flex min-h-0 h-screen bg-transparent">
       <AppSidebar />
 
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-3.5 p-3.5 min-[1280px]:flex-row min-[1280px]:overflow-hidden">
-        <div className="arcova-scroll-surface contacts-leads-main min-h-0 min-w-0 flex-1 overflow-y-auto rounded-[1.75rem] px-3 py-3 sm:px-5 sm:py-4">
-          <div className="w-full max-w-none">
-            <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-              <div>
-                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-arcova-teal">
-                  <Users className="h-3.5 w-3.5" />
-                  Leads
-                </div>
-                <h1 className="font-manrope mt-2 text-3xl font-semibold leading-tight tracking-[-0.028em] text-slate-950 sm:text-[2.25rem]">
-                  Contacts
-                </h1>
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
-                  {total > 0
-                    ? `${total.toLocaleString()} contact${total !== 1 ? 's' : ''} ready to review. Click a row for details, or the company name to open the account.`
-                    : 'Your imported contacts will appear here once they are ready to review.'}
-                </p>
-              </div>
-
-              {total > 0 && (
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => router.push('/import')}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-arcova-teal text-white rounded-lg text-sm hover:bg-arcova-teal/90 transition-colors"
-                  >
-                    <Upload className="w-3.5 h-3.5" />
-                    Import
-                  </button>
-                  <button
-                    onClick={handleDownloadCsv}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 border border-gray-200 bg-white text-gray-700 rounded-lg text-sm hover:bg-gray-50 transition-colors"
-                    title="Export leads as CSV"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    Export CSV
-                  </button>
-                  {hubspotConnected && (
-                    <button
-                      onClick={handlePushToHubspot}
-                      disabled={pushingToHubspot}
-                      className="inline-flex items-center gap-2 px-3 py-2 bg-[#ff7a59] text-white rounded-lg text-sm font-medium hover:bg-[#e8693f] transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
-                      title="Sync enrichment data to HubSpot"
-                    >
-                      {pushingToHubspot ? (
-                        <RotateCw className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M18.164 7.932V5.085a2.198 2.198 0 0 0 1.268-1.978V3.06A2.199 2.199 0 0 0 17.235.862h-.047a2.199 2.199 0 0 0-2.197 2.197v.047a2.199 2.199 0 0 0 1.268 1.978v2.847a6.232 6.232 0 0 0-2.962 1.302L5.028 3.617a2.44 2.44 0 0 0 .072-.573A2.455 2.455 0 1 0 2.645 5.5a2.43 2.43 0 0 0 1.194-.315l8.122 4.707a6.248 6.248 0 0 0 0 4.208L4.123 18.5a2.432 2.432 0 0 0-1.478-.498 2.455 2.455 0 1 0 2.455 2.455 2.43 2.43 0 0 0-.388-1.337l7.91-4.583a6.266 6.266 0 0 0 8.976-5.628 6.25 6.25 0 0 0-3.434-5.977zm-1.023 9.565a3.59 3.59 0 1 1 0-7.181 3.59 3.59 0 0 1 0 7.181z"/>
-                        </svg>
-                      )}
-                      {pushingToHubspot ? 'Syncing…' : 'HubSpot Sync'}
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {hubspotSyncResult && (
-              <div className="mb-4 rounded-lg border border-gray-200 bg-white pl-4 pr-4 pt-3.5 pb-3.5 flex items-start justify-between gap-4">
-                <div className="flex items-start gap-3 min-w-0">
-                  <svg className="w-4 h-4 shrink-0 mt-0.5 text-[#ff7a59]" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M18.164 7.932V5.085a2.198 2.198 0 0 0 1.268-1.978V3.06A2.199 2.199 0 0 0 17.235.862h-.047a2.199 2.199 0 0 0-2.197 2.197v.047a2.199 2.199 0 0 0 1.268 1.978v2.847a6.232 6.232 0 0 0-2.962 1.302L5.028 3.617a2.44 2.44 0 0 0 .072-.573A2.455 2.455 0 1 0 2.645 5.5a2.43 2.43 0 0 0 1.194-.315l8.122 4.707a6.248 6.248 0 0 0 0 4.208L4.123 18.5a2.432 2.432 0 0 0-1.478-.498 2.455 2.455 0 1 0 2.455 2.455 2.43 2.43 0 0 0-.388-1.337l7.91-4.583a6.266 6.266 0 0 0 8.976-5.628 6.25 6.25 0 0 0-3.434-5.977zm-1.023 9.565a3.59 3.59 0 1 1 0-7.181 3.59 3.59 0 0 1 0 7.181z"/>
-                  </svg>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <span className="text-sm font-semibold text-gray-900">
-                        {hubspotSyncResult.contacts.upserted} contact{hubspotSyncResult.contacts.upserted !== 1 ? 's' : ''} synced
-                      </span>
-                      {hubspotSyncResult.contacts.errors > 0 && (
-                        <span className="text-xs font-medium text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full">
-                          {hubspotSyncResult.contacts.errors} error{hubspotSyncResult.contacts.errors !== 1 ? 's' : ''}
-                        </span>
-                      )}
-                      {hubspotSyncResult.skipped > 0 && (
-                        <button
-                          onClick={() => setSyncResultExpanded((v) => !v)}
-                          className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full flex items-center gap-1 hover:bg-gray-200 transition-colors"
-                        >
-                          <svg className={`w-2.5 h-2.5 transition-transform ${syncResultExpanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
-                          {hubspotSyncResult.skipped} skipped
-                        </button>
-                      )}
-                    </div>
-                    {syncResultExpanded && hubspotSyncResult.skippedContacts.length > 0 && (
-                      <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
-                        <p className="text-xs font-medium text-gray-900">Not synced yet</p>
-                        <ul className="mt-1.5 space-y-1.5">
-                        {hubspotSyncResult.skippedContacts.map((c, i) => (
-                          <li key={i} className="text-xs text-gray-600">
-                            <span className="font-medium text-gray-800">{c.name}</span>
-                            {c.company && <span className="text-gray-400"> · {c.company}</span>}
-                            <span className="ml-1.5 text-gray-600">— {c.reason.toLowerCase()}</span>
-                          </li>
-                        ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <button
-                  onClick={() => setHubspotSyncResult(null)}
-                  className="shrink-0 text-gray-400 hover:text-gray-600 mt-0.5"
-                  aria-label="Dismiss"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            )}
-
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-3.5 p-3.5 min-[1280px]:flex-row min-[1280px]:gap-2 min-[1280px]:overflow-hidden">
+        <div className="contacts-leads-main min-h-0 min-w-0 flex-1 rounded-[1.75rem] bg-transparent px-3 py-3 sm:px-5 sm:py-4 min-[1280px]:pr-2 max-[1279px]:overflow-y-auto min-[1280px]:flex min-[1280px]:flex-col min-[1280px]:overflow-hidden">
+          <div className="flex w-full max-w-none min-h-0 min-[1280px]:min-h-0 min-[1280px]:flex-1 min-[1280px]:flex-col">
             {loadingLeads ? (
-              <div className="flex items-center justify-center py-24">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-arcova-teal" />
-              </div>
+              <>
+                {contactsPageTitleBlock}
+                {hubspotSyncBanner}
+                <div className="flex items-center justify-center py-24">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-arcova-teal" />
+                </div>
+              </>
             ) : leads.length === 0 && !search && !agentFilterIds ? (
+              <>
+                {contactsPageTitleBlock}
+                {hubspotSyncBanner}
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-16 text-center">
                 <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                   <Users className="w-8 h-8 text-gray-400" />
@@ -2199,15 +2379,33 @@ export default function LeadsPage() {
                   Import contacts
                 </button>
               </div>
+              </>
             ) : leads.length === 0 && search && !agentFilterIds ? (
+              <>
+                {contactsPageTitleBlock}
+                {hubspotSyncBanner}
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
                 <p className="text-gray-500">No leads matching &ldquo;{search}&rdquo;</p>
               </div>
+              </>
             ) : (
-              <>
-              <div className="flex flex-col gap-4">
+              <div
+                className={cn(
+                  'flex min-h-0 min-w-0 flex-1 flex-col gap-2',
+                  selectedLeadId &&
+                    'min-[1280px]:min-h-0 min-[1280px]:flex-row min-[1280px]:items-stretch min-[1280px]:gap-1',
+                )}
+              >
+              <div
+                className={cn(
+                  'flex min-h-0 min-w-0 flex-col gap-4',
+                  'min-[1280px]:min-h-0 min-[1280px]:flex-1',
+                )}
+              >
+                {contactsPageTitleBlock}
+                {hubspotSyncBanner}
                 {/* ── Leads table ── */}
-                <div className="flex flex-col gap-2">
+                <div className="flex min-h-0 flex-1 flex-col gap-2 min-[1280px]:overflow-y-auto">
 
                 {/* Contact coverage gap banner */}
                 {(() => {
@@ -2285,7 +2483,7 @@ export default function LeadsPage() {
                 <div className="overflow-hidden rounded-[1.5rem] border border-[rgba(13,53,71,0.1)] bg-[rgba(255,255,255,0.52)] shadow-[0_24px_60px_-32px_rgba(13,53,71,0.16),0_2px_6px_-2px_rgba(13,53,71,0.06)] backdrop-blur-2xl backdrop-saturate-150">
                   {/* Table header */}
                   <div
-                    className={`${LEADS_TABLE_GRID} items-start px-4 py-3 border-b border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.4)] text-xs font-semibold uppercase tracking-wide text-[#7d909a]`}
+                    className={`${LEADS_TABLE_GRID} items-start px-4 py-3 border-b border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.4)] text-[13px] font-semibold uppercase tracking-wide text-[#7d909a]`}
                   >
                     {(['name', 'job_title', 'company'] as const).map((col) => (
                       <button
@@ -2318,6 +2516,9 @@ export default function LeadsPage() {
                         <SortArrow col="contact_fit" activeCol={tableSortCol} dir={tableSortDir} />
                       </span>
                     </button>
+                    <div className="flex w-full items-center justify-center">
+                      <span className="normal-case tracking-normal">HubSpot</span>
+                    </div>
                     <button
                       type="button"
                       onClick={() => handleSortCol('status')}
@@ -2385,6 +2586,10 @@ export default function LeadsPage() {
                             </div>
 
                             <div className="min-w-0 flex items-center justify-center">
+                              <span className="text-[11px] text-gray-300 tabular-nums">—</span>
+                            </div>
+
+                            <div className="min-w-0 flex items-center justify-center">
                               <ArcovaLoader size={28} />
                             </div>
                           </div>
@@ -2408,7 +2613,7 @@ export default function LeadsPage() {
                           {/* Full name */}
                           <div className="min-w-0">
                             <div className="flex min-w-0 items-center gap-2">
-                              <p className="font-medium text-gray-900 truncate text-sm">
+                              <p className="truncate text-[12px] font-medium text-gray-900">
                                 {lead.full_name ||
                                   [lead.first_name, lead.last_name].filter(Boolean).join(' ') ||
                                   '—'}
@@ -2418,7 +2623,7 @@ export default function LeadsPage() {
 
                           {/* Job title */}
                           <div className="min-w-0">
-                            <p className="text-xs text-gray-700 truncate leading-snug">
+                            <p className="truncate text-[12px] leading-snug text-gray-700">
                               {((t) => t.length > 30 ? t.slice(0, 30) + '…' : t)(lead.resolved_current_job_title || lead.job_title || '—')}
                             </p>
                           </div>
@@ -2444,7 +2649,7 @@ export default function LeadsPage() {
                                         e.stopPropagation();
                                         router.push(withQuery(ROUTES.leads.accounts, `companyId=${encodeURIComponent(lead.company_id!)}`));
                                       }}
-                                      className="text-sm text-arcova-teal hover:underline truncate max-w-full text-left"
+                                      className="max-w-full truncate text-left text-[12px] font-medium text-arcova-teal hover:underline"
                                     >
                                       {truncated}
                                     </button>
@@ -2455,13 +2660,13 @@ export default function LeadsPage() {
                                 <div className="min-w-0">
                                   <a href={href} target="_blank" rel="noopener noreferrer"
                                     onClick={(e) => e.stopPropagation()}
-                                    className="text-sm text-arcova-teal hover:underline truncate max-w-full inline-block">
+                                    className="inline-block max-w-full truncate text-[12px] font-medium text-arcova-teal hover:underline">
                                     {truncated}
                                   </a>
                                 </div>
                               ) : (
                                 <div className="min-w-0">
-                                  <p className="text-sm text-gray-700 truncate">{truncated}</p>
+                                  <p className="truncate text-[12px] font-medium text-gray-700">{truncated}</p>
                                 </div>
                               );
                             })()}
@@ -2481,9 +2686,77 @@ export default function LeadsPage() {
                             />
                           </div>
 
+                          {/* HubSpot */}
+                          <div className="min-w-0 flex items-center justify-center">
+                            {(() => {
+                              const hubspotState = hubspotCrmByContactId[lead.id];
+                              const badge = hubspotState?.loading
+                                ? {
+                                    label: 'Loading…',
+                                    className:
+                                      'border-[rgba(13,53,71,0.08)] bg-[rgba(13,53,71,0.03)] text-[#7d909a]',
+                                  }
+                                : getHubSpotTableBadge(lead);
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedLeadId(lead.id);
+                                    setSelectedPreview('hubspot');
+                                    cancelEditingLead();
+                                  }}
+                                  className={cn(
+                                    'inline-flex max-w-[7.15rem] items-center rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors hover:brightness-[0.98]',
+                                    badge.className,
+                                  )}
+                                  title={badge.label}
+                                >
+                                  <span className="block min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-left">
+                                    {badge.label}
+                                  </span>
+                                </button>
+                              );
+                            })()}
+                          </div>
+
                           {/* Action */}
                           <div className="min-w-0 flex items-center justify-center">
                             {(() => {
+                              if (lead.hubspot_lead_state === 'customer') {
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedLeadId(lead.id);
+                                      setSelectedPreview('hubspot');
+                                      cancelEditingLead();
+                                    }}
+                                    className="inline-flex items-center rounded-full border border-[rgba(45,138,138,0.24)] bg-[rgba(45,138,138,0.08)] px-2.5 py-1 text-[11px] font-medium text-[#2d8a8a]"
+                                  >
+                                    Customer
+                                  </button>
+                                );
+                              }
+
+                              if (lead.hubspot_lead_state === 'dormant') {
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedLeadId(lead.id);
+                                      setSelectedPreview('hubspot');
+                                      cancelEditingLead();
+                                    }}
+                                    className="inline-flex items-center rounded-full border border-[rgba(125,144,154,0.24)] bg-[rgba(125,144,154,0.10)] px-2.5 py-1 text-[11px] font-medium text-[#5f7480]"
+                                  >
+                                    Dormant
+                                  </button>
+                                );
+                              }
+
                               const action = getLeadAction(lead);
                               const config = LEAD_ACTION_PILL_CLASS[action];
                               return (
@@ -2496,7 +2769,7 @@ export default function LeadsPage() {
                                     cancelEditingLead();
                                   }}
                                   className={cn(
-                                    'inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium cursor-pointer select-none',
+                                    'inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium cursor-pointer select-none',
                                     'transition-colors duration-150 ease-out hover:shadow-sm active:scale-[0.97]',
                                     isSelected && selectedPreview === 'action'
                                       ? config.rowSelectedClassName
@@ -2542,16 +2815,16 @@ export default function LeadsPage() {
                     </div>
                   )}
                 </div>
-                </div>{/* end table + banner wrapper */}
+                </div>
 
-                </div>{/* end flex flex-col gap-4 */}
+              </div>
 
                 {/* ── Detail panel (overlays main column; sits left of agent on wide screens) ── */}
                 {selectedLeadId && (
                   <>
                     <button
                       type="button"
-                      className="fixed inset-0 z-40 bg-[rgba(13,53,71,0.14)] backdrop-blur-[1px] transition-opacity min-[1280px]:pointer-events-none min-[1280px]:opacity-0"
+                      className="fixed inset-0 z-40 bg-[rgba(13,53,71,0.14)] backdrop-blur-[1px] transition-opacity min-[1280px]:hidden"
                       aria-label="Close panel"
                       onClick={() => {
                         setSelectedLeadId(null);
@@ -2560,15 +2833,15 @@ export default function LeadsPage() {
                     />
                     <aside
                       className={cn(
-                        'contacts-leads-drawer fixed z-50 flex max-h-[calc(100vh-1.75rem)] min-h-0 w-[min(22.5rem,calc(100vw-1.75rem))] flex-col overflow-hidden rounded-[1.3125rem] border border-[rgba(255,255,255,0.88)] bg-[rgba(255,255,255,0.55)] shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2)] backdrop-blur-2xl backdrop-saturate-150',
-                        'bottom-3.5 top-3.5 max-[1279px]:left-3.5 max-[1279px]:right-3.5 max-[1279px]:w-auto',
-                        'min-[1280px]:right-[calc(22.5rem+1.75rem)]',
+                        'contacts-leads-drawer flex min-h-0 flex-col overflow-hidden rounded-[1.3125rem] border border-[rgba(255,255,255,0.88)] bg-[rgba(255,255,255,0.55)] shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2)] backdrop-blur-2xl backdrop-saturate-150',
+                        'max-[1279px]:fixed max-[1279px]:bottom-3.5 max-[1279px]:left-3.5 max-[1279px]:right-3.5 max-[1279px]:top-3.5 max-[1279px]:z-50 max-[1279px]:w-auto',
+                        'min-[1280px]:relative min-[1280px]:w-[27rem] min-[1280px]:max-w-[27rem] min-[1280px]:shrink-0 min-[1280px]:min-h-0',
                       )}
                     >
                   {selectedLead ? (
                     <div
                       className={cn(
-                        'flex h-full flex-col',
+                        'flex min-h-0 h-full flex-col',
                         selectedPreview === 'contact' &&
                           'relative z-[1] before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:z-0 before:h-28 before:bg-gradient-to-b before:from-[rgba(227,243,241,0.75)] before:via-[rgba(255,255,255,0.35)] before:to-transparent',
                       )}
@@ -2579,6 +2852,8 @@ export default function LeadsPage() {
                           <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">
                             {selectedPreview === 'contact'
                               ? 'Contact'
+                              : selectedPreview === 'hubspot'
+                                ? 'HubSpot'
                               : selectedPreview === 'scoring'
                                 ? 'Fit'
                                 : 'Action'}
@@ -2643,7 +2918,7 @@ export default function LeadsPage() {
                       </div>
 
                       <div className="relative z-[1] flex border-b border-[rgba(13,53,71,0.08)] px-4">
-                        {(['contact', 'scoring', 'action'] as const).map((mode) => (
+                        {(['contact', 'scoring', 'hubspot', 'action'] as const).map((mode) => (
                           <button
                             key={mode}
                             type="button"
@@ -2655,7 +2930,13 @@ export default function LeadsPage() {
                                 : 'border-transparent text-[#7d909a] hover:text-[#0d3547]',
                             )}
                           >
-                            {mode === 'contact' ? 'Contact' : mode === 'scoring' ? 'Fit' : 'Action'}
+                            {mode === 'contact'
+                              ? 'Contact'
+                              : mode === 'hubspot'
+                                ? 'HubSpot'
+                                : mode === 'scoring'
+                                  ? 'Fit'
+                                  : 'Action'}
                           </button>
                         ))}
                       </div>
@@ -2663,7 +2944,7 @@ export default function LeadsPage() {
                       {/* Panel body */}
                       <div
                         className={cn(
-                          'flex-1 overflow-auto',
+                          'min-h-0 flex-1 overflow-auto',
                           selectedPreview === 'contact' ? 'space-y-4 px-4 py-4' : 'space-y-5 px-5 py-4',
                         )}
                       >
@@ -3170,6 +3451,7 @@ export default function LeadsPage() {
                                     type="button"
                                     onClick={() => rerunEnrichment(selectedLead.id)}
                                     disabled={
+                                      selectedLead.hubspot_lead_state === 'customer' ||
                                       isRefreshingSelected ||
                                       isStoppingSelected ||
                                       isEditingSelected ||
@@ -3184,15 +3466,212 @@ export default function LeadsPage() {
                                       ? 'Starting enrichment…'
                                       : isSelectedLeadRefreshRunning
                                         ? 'Enrichment running…'
-                                        : 'Refresh enrichment'}
+                                        : selectedLead.hubspot_lead_state === 'customer'
+                                          ? 'Customer in HubSpot'
+                                          : 'Refresh enrichment'}
                                   </button>
+                                  {selectedLead.hubspot_lead_state === 'customer' ? (
+                                    <p className="text-xs leading-snug text-[#7d909a]">
+                                      Closed-won contacts should move through customer workflows instead of paid lead enrichment.
+                                    </p>
+                                  ) : null}
                                 </div>
                               </div>
                             </div>
                           )
+                        ) : selectedPreview === 'hubspot' ? (
+                          <div className="space-y-4">
+                            <div className="space-y-2">
+                              <div className="flex items-center gap-2">
+                                <span className="inline-flex h-2.5 w-2.5 rounded-full bg-[#ff7a59]" />
+                                <h2 className="text-lg font-semibold leading-tight text-gray-900">HubSpot CRM</h2>
+                              </div>
+                              <p className="text-[13.5px] leading-[1.55] text-[#4a6470]">
+                                Arcova company truth stays primary here. HubSpot shows the CRM account and deal motion alongside it.
+                              </p>
+                            </div>
+
+                            {selectedHubSpotCrmState?.loading ? (
+                              <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-white/80 px-4 py-4">
+                                <p className="text-sm leading-snug text-[#4a6470]">Loading HubSpot CRM…</p>
+                              </div>
+                            ) : selectedHubSpotCrmState?.error ? (
+                              <div className="rounded-xl border border-[#ffd8c7] bg-[#fff7f3] px-4 py-4">
+                                <p className="text-sm leading-snug text-[#b45309]">{selectedHubSpotCrmState.error}</p>
+                              </div>
+                            ) : selectedHubSpotCrm?.deals?.length ? (
+                              <div className="space-y-3">
+                                {selectedHubSpotCrm.deals.map((deal) => {
+                                  const arcovaCompanyName =
+                                    selectedHubSpotCrm.arcova_company_name ??
+                                    selectedLead.companies?.company_name ??
+                                    selectedLead.resolved_current_company_name ??
+                                    null;
+                                  const arcovaCompanyDomain =
+                                    selectedHubSpotCrm.arcova_company_domain ??
+                                    selectedLead.companies?.domain ??
+                                    selectedLead.resolved_current_company_domain ??
+                                    null;
+                                  const hasMismatch =
+                                    Boolean(deal.hubspot_company_domain) &&
+                                    Boolean(arcovaCompanyDomain) &&
+                                    deal.hubspot_company_domain !== arcovaCompanyDomain;
+
+                                  return (
+                                    <div
+                                      key={deal.hubspot_deal_id}
+                                      className="rounded-2xl border border-[rgba(13,53,71,0.08)] bg-white/90 px-4 py-4 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]"
+                                    >
+                                      <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                          <p className="text-base font-semibold text-[#0d3547]">
+                                            {deal.deal_name || 'HubSpot deal'}
+                                          </p>
+                                          <p className="mt-1 text-xs text-[#7d909a]">
+                                            HubSpot account:{' '}
+                                            <span className="font-medium text-[#4a6470]">
+                                              {deal.hubspot_company_name || deal.hubspot_company_domain || '—'}
+                                            </span>
+                                          </p>
+                                        </div>
+                                        {deal.deal_stage ? (
+                                          <span className="inline-flex items-center rounded-full bg-[#fff1ec] px-2.5 py-1 text-[11px] font-medium text-[#cc5b3f]">
+                                            {deal.deal_stage}
+                                          </span>
+                                        ) : null}
+                                      </div>
+
+                                      <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3">
+                                        <div>
+                                          <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                            Arcova company
+                                          </p>
+                                          <p className="mt-1 text-sm leading-snug text-[#0d3547]">
+                                            {arcovaCompanyName || '—'}
+                                          </p>
+                                        </div>
+                                        <div>
+                                          <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                            Arcova domain
+                                          </p>
+                                          <p className="mt-1 break-all text-sm leading-snug text-[#0d3547]">
+                                            {arcovaCompanyDomain || '—'}
+                                          </p>
+                                        </div>
+                                        <div>
+                                          <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                            Amount
+                                          </p>
+                                          <p className="mt-1 text-sm leading-snug text-[#0d3547]">
+                                            {formatUsdValue(deal.amount) || '—'}
+                                          </p>
+                                        </div>
+                                        <div>
+                                          <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                            Last synced
+                                          </p>
+                                          <p className="mt-1 text-sm leading-snug text-[#0d3547]">
+                                            {formatLastUpdated(deal.synced_at)}
+                                          </p>
+                                        </div>
+                                      </div>
+
+                                      <div className="mt-4 space-y-2">
+                                        {deal.close_date ? (
+                                          <p className="text-xs leading-snug text-[#4a6470]">
+                                            Close date:{' '}
+                                            <span className="font-medium text-[#0d3547]">
+                                              {formatLastUpdated(deal.close_date)}
+                                            </span>
+                                          </p>
+                                        ) : null}
+                                        {hasMismatch ? (
+                                          <div className="rounded-lg border border-[#ffd8c7] bg-[#fff7f3] px-3 py-2">
+                                            <p className="text-xs font-medium text-[#b45309]">
+                                              Arcova and HubSpot disagree on the company
+                                            </p>
+                                            <p className="mt-1 text-xs leading-snug text-[#7c5a4b]">
+                                              Arcova is using {arcovaCompanyName || arcovaCompanyDomain || 'its matched account'} as
+                                              the primary truth, while HubSpot is still attached to{' '}
+                                              {deal.hubspot_company_name || deal.hubspot_company_domain || 'another CRM account'}.
+                                            </p>
+                                          </div>
+                                        ) : null}
+                                        {deal.resolution_suppressed && !hasMismatch ? (
+                                          <div className="rounded-lg border border-[rgba(13,53,71,0.08)] bg-[rgba(246,250,252,0.9)] px-3 py-2">
+                                            <p className="text-xs font-medium text-[#0d3547]">
+                                              Stored as HubSpot CRM context only
+                                            </p>
+                                            <p className="mt-1 text-xs leading-snug text-[#4a6470]">
+                                              We kept this deal for CRM visibility, but did not use it to move an Arcova account yet.
+                                            </p>
+                                          </div>
+                                        ) : null}
+                                        {deal.resolution_status ? (
+                                          <p className="text-xs leading-snug text-[#4a6470]">
+                                            Resolution:{' '}
+                                            <span className="font-medium text-[#0d3547]">
+                                              {formatHubSpotResolutionLabel(deal.resolution_status)}
+                                            </span>
+                                          </p>
+                                        ) : null}
+                                        {deal.mismatch_reason ? (
+                                          <p className="text-xs leading-snug text-[#7d909a]">
+                                            {deal.mismatch_reason}
+                                          </p>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-white/80 px-4 py-4">
+                                <p className="text-sm leading-snug text-[#4a6470]">
+                                  No mirrored HubSpot deal activity on this contact yet.
+                                </p>
+                              </div>
+                            )}
+                          </div>
                         ) : selectedPreview === 'action' ? (
                           /* ── Action view ── */
                           (() => {
+                            if (selectedLead.hubspot_lead_state === 'customer') {
+                              return (
+                                <div className="space-y-3">
+                                  <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
+                                    This contact is already part of a closed-won customer account in HubSpot, so it
+                                    should not be worked as an active lead here.
+                                  </p>
+                                  <div className="rounded-xl border border-[rgba(45,138,138,0.22)] bg-[rgba(45,138,138,0.07)] p-4">
+                                    <p className="text-sm font-semibold text-[#2d8a8a]">Customer state</p>
+                                    <p className="mt-1 text-sm leading-snug text-[#4a6470]">
+                                      Keep the CRM history for attribution and future customer workflows, but avoid
+                                      spending more lead-enrichment budget on it from this queue.
+                                    </p>
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            if (selectedLead.hubspot_lead_state === 'dormant') {
+                              return (
+                                <div className="space-y-3">
+                                  <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
+                                    This contact is tied to a closed-lost CRM motion, so it should stay dormant until a
+                                    new signal changes the picture.
+                                  </p>
+                                  <div className="rounded-xl border border-[rgba(125,144,154,0.2)] bg-[rgba(125,144,154,0.08)] p-4">
+                                    <p className="text-sm font-semibold text-[#5f7480]">Dormant for now</p>
+                                    <p className="mt-1 text-sm leading-snug text-[#4a6470]">
+                                      Let fresh budget, a new decision-maker, or a strategic shift reactivate this
+                                      lead later.
+                                    </p>
+                                  </div>
+                                </div>
+                              );
+                            }
+
                             const action = getLeadAction(selectedLead);
                             const contactName =
                               [selectedLead.first_name, selectedLead.last_name].filter(Boolean).join(' ') ||
@@ -3417,6 +3896,7 @@ export default function LeadsPage() {
                               type="button"
                               onClick={() => rerunEnrichment(selectedLead.id)}
                               disabled={
+                                selectedLead.hubspot_lead_state === 'customer' ||
                                 isRefreshingSelected ||
                                 isStoppingSelected ||
                                 isEditingSelected ||
@@ -3431,8 +3911,15 @@ export default function LeadsPage() {
                                 ? 'Starting enrichment…'
                                 : isSelectedLeadRefreshRunning
                                   ? 'Enrichment running…'
-                                  : 'Refresh enrichment'}
+                                  : selectedLead.hubspot_lead_state === 'customer'
+                                    ? 'Customer in HubSpot'
+                                    : 'Refresh enrichment'}
                             </button>
+                            {selectedLead.hubspot_lead_state === 'customer' ? (
+                              <p className="text-xs leading-snug text-[#7d909a]">
+                                Closed-won contacts should move through customer workflows instead of paid lead enrichment.
+                              </p>
+                            ) : null}
                           </div>
                         )}
 
@@ -3483,23 +3970,36 @@ export default function LeadsPage() {
                     </aside>
                   </>
                 )}
-              </>
+              </div>
             )}
           </div>
         </div>
 
-        <div className="flex min-h-0 w-full shrink-0 flex-col min-[1280px]:w-[22.5rem] min-[1280px]:self-start">
-          <AgentPanel
-            wide
-            page="leads"
-            pageContext={{ leadsView: 'contacts' }}
-            pendingMessage={agentTrigger}
-            onLeadsFilter={handleLeadsFilter}
-            onTableClear={handleQueryClear}
-            surfaceClassName="relative w-full rounded-[inherit] border border-[rgba(13,53,71,0.1)] bg-[rgba(255,255,255,0.52)] shadow-[0_24px_60px_-32px_rgba(13,53,71,0.18),0_2px_6px_-2px_rgba(13,53,71,0.06)] ring-1 ring-white/80 backdrop-blur-2xl backdrop-saturate-150"
-            className="min-h-0 min-[1280px]:sticky min-[1280px]:top-3.5 min-[1280px]:h-[calc(100vh-1.75rem)] max-[1279px]:h-80 max-[1279px]:shrink-0"
-          />
-        </div>
+        <AgentPanel
+          className="min-[1280px]:pl-1.5"
+          page="leads"
+          pageContext={{
+            leadsView: 'contacts',
+            ...(selectedLead ? {
+              selectedLead: {
+                id: selectedLead.id,
+                first_name: selectedLead.first_name,
+                last_name: selectedLead.last_name,
+                job_title: selectedLead.job_title,
+                seniority_level: selectedLead.seniority_level,
+                business_area: selectedLead.business_area,
+                fit_score: selectedLead.fit_score ?? selectedLead.overall_fit_score,
+                company_name: selectedLead.company_name ?? selectedLead.companies?.company_name,
+                company_domain: selectedLead.company_domain ?? selectedLead.companies?.domain,
+                company_id: selectedLead.company_id,
+                matched_icp_id: selectedLead.companies?.matched_icp_id,
+              },
+            } : {}),
+          }}
+          pendingMessage={agentTrigger}
+          onLeadsFilter={handleLeadsFilter}
+          onTableClear={handleQueryClear}
+        />
       </div>
     </div>
   );

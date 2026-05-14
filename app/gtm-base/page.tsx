@@ -166,7 +166,7 @@ export default function DashboardPage() {
     <div className="flex h-screen bg-transparent">
       <AppSidebar />
 
-      <main className="arcova-scroll-surface min-h-0 flex-1 overflow-y-auto px-6 py-8 lg:px-10">
+      <main className="bg-transparent min-h-0 flex-1 overflow-y-auto px-6 py-8 lg:px-10">
         <div className="mx-auto flex min-h-full w-full max-w-[1180px] flex-col gap-6">
           <PageHeader
             eyebrow="Tracking"

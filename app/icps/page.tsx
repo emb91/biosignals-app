@@ -29,6 +29,7 @@ import {
   formatCurrencyShort,
 } from '@/lib/funding-display';
 import { resolveCustomerSegments } from '@/lib/split-customer-segments';
+import { ROUTES } from '@/lib/routes';
 import {
   COMPANY_SIGNALS,
   CONTACT_SIGNALS,
@@ -798,7 +799,7 @@ function ICPCard({
         ? await summaryRes.json() as { summary: string }
         : { summary: icp.icp_summary ?? null as string | null };
 
-      const icpRes = await fetch(`/api/company-criteria/${icp.id}`, {
+      const icpRes = await fetch(`${ROUTES.api.icps}/${icp.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1608,7 +1609,7 @@ export default function ICPManagerPage() {
 
   const refreshPageData = async () => {
     const [icpRes, personaRes] = await Promise.all([
-      fetch('/api/company-criteria'),
+      fetch(ROUTES.api.icps),
       fetch('/api/contacts'),
     ]);
 
@@ -1702,7 +1703,7 @@ export default function ICPManagerPage() {
           const icpSummary = summary?.trim();
           if (!icpSummary) return;
 
-          const updateRes = await fetch(`/api/company-criteria/${icp.id}`, {
+          const updateRes = await fetch(`${ROUTES.api.icps}/${icp.id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1745,7 +1746,7 @@ export default function ICPManagerPage() {
         setPersonas((prev) => prev.filter((p) => p.id !== linkedPersona.id));
       }
 
-      const res = await fetch(`/api/company-criteria/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${ROUTES.api.icps}/${id}`, { method: 'DELETE' });
       if (res.ok) {
         setIcps((prev) => prev.filter((icp) => icp.id !== id));
         setExpandedIds((prev) => { const next = new Set(prev); next.delete(id); return next; });
@@ -1781,7 +1782,7 @@ export default function ICPManagerPage() {
 
     const toastId = `reenrich-${icp.id}`;
     try {
-      const response = await fetch(`/api/company-criteria/${icp.id}/reenrich`, {
+      const response = await fetch(`${ROUTES.api.icps}/${icp.id}/reenrich`, {
         method: 'POST',
       });
       const payload = (await response.json().catch(() => ({}))) as {
@@ -1826,7 +1827,7 @@ export default function ICPManagerPage() {
       <AppSidebar />
 
       <div className="flex min-h-0 flex-1 overflow-hidden min-[1280px]:flex-row flex-col">
-        <div className="arcova-scroll-surface flex-1 overflow-auto px-6 py-8 lg:px-10">
+        <div className="flex-1 overflow-auto bg-transparent px-6 py-8 lg:px-10">
           <div className="w-full max-w-[1180px] mx-auto">
 
             <PageHeader
@@ -1837,7 +1838,7 @@ export default function ICPManagerPage() {
                 : 'The types of accounts you sell to, and who buys within them.'}
               action={
                 <button
-                  onClick={() => router.push('/company-criteria/new')}
+                  onClick={() => router.push('/icps/new')}
                   className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-teal px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/85"
                 >
                   <Plus className="h-4 w-4" />
@@ -1857,7 +1858,7 @@ export default function ICPManagerPage() {
                   Add your first target company to define who you sell to and who buys.
                 </p>
                 <button
-                  onClick={() => router.push('/company-criteria/new')}
+                  onClick={() => router.push('/icps/new')}
                   className="inline-flex items-center gap-2 px-5 py-2.5 bg-arcova-teal text-white text-sm font-semibold rounded-lg hover:bg-arcova-teal/85 transition-colors"
                 >
                   <Plus className="w-4 h-4" />

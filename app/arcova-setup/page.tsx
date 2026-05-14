@@ -22,7 +22,7 @@ export default function ArcovaSetupPage() {
     }
   }, [loading, user, router]);
 
-  /** Company or ICP still missing: stay on this page (SetupFlow). Otherwise continue to import. */
+  /** Company or ICP still missing: stay on this page (SetupFlow). Otherwise send them to Today (already fully onboarded). */
   useEffect(() => {
     if (setupLoading) return;
     const next = getNextSetupPath({ step1Complete, step2Complete });

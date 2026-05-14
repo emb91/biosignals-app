@@ -19,6 +19,8 @@ import {
 import {
   type ArcovaCompanyRecord,
   type ArcovaContactRecord,
+  findArcovaCompaniesByIds,
+  findArcovaContactsByIds,
   findArcovaCompaniesByDomains,
   findArcovaContactsByEmails,
   getCrmSyncCheckpoint,
@@ -78,7 +80,7 @@ type DealAssociatedContactRow = {
 type ResolvedDealTarget = {
   companyId: string;
   resolutionStatus: ResolutionStatus;
-  resolutionMethod: 'hubspot_company' | 'contact_current_company';
+  resolutionMethod: 'hubspot_company' | 'contact_current_company' | 'arcova_contact_id';
   matchedArcovaContactIds: string[];
   arcovaCompanyDomain: string | null;
   arcovaCompanyName: string | null;
@@ -224,6 +226,32 @@ function resolveDealTargets(
   associatedContactRows: DealAssociatedContactRow[],
   arcovaCompanyByDomain: Map<string, ArcovaCompanyRecord>
 ): DealResolutionResult {
+  const idAnchoredContacts = associatedContactRows
+    .filter((row): row is DealAssociatedContactRow & { arcovaContact: ArcovaContactRecord } => Boolean(row.arcovaContact))
+    .map((row) => ({
+      row,
+      resolved: resolveContactBackedCompany(row.arcovaContact, arcovaCompanyByDomain),
+    }))
+    .filter((item) => Boolean(item.row.arcovaContactId) && Boolean(item.resolved.companyId));
+
+  const uniqueIdAnchoredCompanyIds = uniqueNonNull(idAnchoredContacts.map((item) => item.resolved.companyId));
+  if (uniqueIdAnchoredCompanyIds.length === 1) {
+    const anchor = idAnchoredContacts[0]!;
+    return {
+      targets: [{
+        companyId: anchor.resolved.companyId!,
+        resolutionStatus: 'resolved_via_contact_current_company',
+        resolutionMethod: 'arcova_contact_id',
+        matchedArcovaContactIds: uniqueNonNull(idAnchoredContacts.map((item) => item.row.arcovaContactId)),
+        arcovaCompanyDomain: anchor.resolved.companyDomain,
+        arcovaCompanyName: anchor.resolved.companyName,
+      }],
+      suppressed: false,
+      resolutionStatus: 'resolved_via_contact_current_company',
+      mismatchReason: null,
+    };
+  }
+
   const directTargets = associatedCompanyRows
     .filter((row): row is DealAssociatedCompanyRow & { arcovaCompanyId: string } => Boolean(row.arcovaCompanyId))
     .map((row) => {
@@ -377,10 +405,23 @@ export async function syncHubSpotDealsIntoReadiness(
         .map((contact) => contact.properties.email?.trim().toLowerCase() ?? '')
         .filter(Boolean)
     )];
+    const hubspotArcovaContactIds = [...new Set(
+      hubspotContacts
+        .map((contact) => contact.properties.arcova_contact_id?.trim() ?? '')
+        .filter(Boolean)
+    )];
+    const hubspotArcovaCompanyIds = [...new Set(
+      [
+        ...hubspotContacts.map((contact) => contact.properties.arcova_company_id?.trim() ?? ''),
+        ...hubspotCompanies.map((company) => company.properties.arcova_company_id?.trim() ?? ''),
+      ].filter(Boolean)
+    )];
 
-    const [arcovaCompanies, arcovaContacts] = await Promise.all([
+    const [arcovaCompanies, arcovaContacts, arcovaCompaniesByIdRows, arcovaContactsByIdRows] = await Promise.all([
       findArcovaCompaniesByDomains(supabase, input.userId, uniqueDomains),
       findArcovaContactsByEmails(supabase, input.userId, uniqueEmails),
+      findArcovaCompaniesByIds(supabase, input.userId, hubspotArcovaCompanyIds),
+      findArcovaContactsByIds(supabase, input.userId, hubspotArcovaContactIds),
     ]);
 
     const arcovaCompanyByDomain = new Map(
@@ -393,6 +434,8 @@ export async function syncHubSpotDealsIntoReadiness(
         .map((contact) => [contact.email?.trim().toLowerCase() ?? '', contact] as const)
         .filter((entry): entry is [string, (typeof arcovaContacts)[number]] => Boolean(entry[0]))
     );
+    const arcovaContactById = new Map(arcovaContactsByIdRows.map((contact) => [contact.id, contact] as const));
+    const arcovaCompanyById = new Map(arcovaCompaniesByIdRows.map((company) => [company.id, company] as const));
 
     const contactResolvedDomains = [...new Set(
       arcovaContacts
@@ -435,7 +478,10 @@ export async function syncHubSpotDealsIntoReadiness(
       const associatedCompanyRows: DealAssociatedCompanyRow[] = (dealCompanyMap.get(deal.id) ?? []).map((hubspotCompanyId) => {
         const company = hubspotCompaniesById.get(hubspotCompanyId) as HubSpotCompanyRecord | undefined;
         const domain = normalizeDomain(company?.properties.domain ?? company?.properties.website ?? null);
-        const arcovaCompany = domain ? arcovaCompanyByDomain.get(domain) : undefined;
+        const storedArcovaCompanyId = company?.properties.arcova_company_id?.trim() ?? null;
+        const arcovaCompany =
+          (storedArcovaCompanyId ? arcovaCompanyById.get(storedArcovaCompanyId) : undefined) ??
+          (domain ? arcovaCompanyByDomain.get(domain) : undefined);
         return {
           hubspotCompanyId,
           hubspotCompanyName: company?.properties.name ?? null,
@@ -449,7 +495,10 @@ export async function syncHubSpotDealsIntoReadiness(
       const associatedContactRows: DealAssociatedContactRow[] = (dealContactMap.get(deal.id) ?? []).map((hubspotContactId) => {
         const contact = hubspotContactsById.get(hubspotContactId);
         const email = contact?.properties.email?.trim().toLowerCase() ?? null;
-        const arcovaContact = email ? arcovaContactByEmail.get(email) : undefined;
+        const storedArcovaContactId = contact?.properties.arcova_contact_id?.trim() ?? null;
+        const arcovaContact =
+          (storedArcovaContactId ? arcovaContactById.get(storedArcovaContactId) : undefined) ??
+          (email ? arcovaContactByEmail.get(email) : undefined);
         return {
           hubspotContactId,
           hubspotContactEmail: email,

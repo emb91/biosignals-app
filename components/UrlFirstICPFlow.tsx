@@ -15,6 +15,7 @@ import {
 } from '@/lib/arcova-taxonomy';
 import type { TargetCompanyEnrichmentResult } from '@/lib/target-company-enrichment';
 import { resolveCustomerSegments } from '@/lib/split-customer-segments';
+import { ROUTES } from '@/lib/routes';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -293,7 +294,7 @@ export default function UrlFirstICPFlow({ onComplete }: Props) {
       customersWeServe: enrichmentSnapshot.customers_we_serve,
       fallbackItems: enrichmentSnapshot.customers_we_serve,
     });
-    const saveRes = await fetch('/api/company-criteria', {
+    const saveRes = await fetch(ROUTES.api.icps, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

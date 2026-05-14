@@ -891,7 +891,7 @@ export default function AccountsPage() {
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden min-[1280px]:flex-row">
         {/* ── Main scrollable content ── */}
-        <div className="arcova-scroll-surface flex-1 overflow-auto p-4 min-w-0 sm:p-6">
+        <div className="bg-transparent flex-1 overflow-auto p-4 min-w-0 sm:p-6">
           <div className="w-full max-w-none">
 
             <div className="mb-6">

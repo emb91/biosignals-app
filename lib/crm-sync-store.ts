@@ -279,6 +279,38 @@ export async function findArcovaContactsByEmails(
   return (data ?? []) as ArcovaContactRecord[];
 }
 
+export async function findArcovaCompaniesByIds(
+  supabase: DatabaseClient,
+  userId: string,
+  ids: string[]
+): Promise<ArcovaCompanyRecord[]> {
+  if (!ids.length) return [];
+  const { data, error } = await supabase
+    .from('companies')
+    .select('id, domain, website, company_name')
+    .eq('user_id', userId)
+    .in('id', ids);
+
+  if (error) throw error;
+  return (data ?? []) as ArcovaCompanyRecord[];
+}
+
+export async function findArcovaContactsByIds(
+  supabase: DatabaseClient,
+  userId: string,
+  ids: string[]
+): Promise<ArcovaContactRecord[]> {
+  if (!ids.length) return [];
+  const { data, error } = await supabase
+    .from('contacts')
+    .select('id, email, company_id, company_name, company_domain, resolved_current_company_name, resolved_current_company_domain')
+    .eq('user_id', userId)
+    .in('id', ids);
+
+  if (error) throw error;
+  return (data ?? []) as ArcovaContactRecord[];
+}
+
 export async function sourceEventExists(
   supabase: DatabaseClient,
   userId: string,

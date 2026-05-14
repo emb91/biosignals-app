@@ -1,4 +1,8 @@
 export type ArcovaContactProperties = {
+  arcova_contact_id: string;
+  arcova_company_id: string;
+  arcova_company_name: string;
+  arcova_company_domain: string;
   arcova_contact_fit_score: string;
   arcova_overall_fit_score: string;
   arcova_action: string;
@@ -12,6 +16,7 @@ export type ArcovaContactProperties = {
 };
 
 export type ArcovaCompanyProperties = {
+  arcova_company_id: string;
   arcova_company_fit_score: string;
   arcova_modalities: string;
   arcova_therapeutic_areas: string;
@@ -84,6 +89,10 @@ async function describeHubSpotError(res: Response): Promise<string> {
 }
 
 const ARCOVA_CONTACT_PROPERTIES: HubSpotPropertyDefinition[] = [
+  { name: 'arcova_contact_id', label: 'Arcova: Contact ID', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
+  { name: 'arcova_company_id', label: 'Arcova: Company ID', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
+  { name: 'arcova_company_name', label: 'Arcova: Company Name', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
+  { name: 'arcova_company_domain', label: 'Arcova: Company Domain', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
   { name: 'arcova_contact_fit_score', label: 'Arcova: Contact Fit Score', type: 'number', fieldType: 'number', groupName: 'arcova_intelligence' },
   { name: 'arcova_overall_fit_score', label: 'Arcova: Overall Fit Score', type: 'number', fieldType: 'number', groupName: 'arcova_intelligence' },
   { name: 'arcova_action', label: 'Arcova: Recommended Action', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
@@ -98,6 +107,7 @@ const ARCOVA_CONTACT_PROPERTIES: HubSpotPropertyDefinition[] = [
 ];
 
 const ARCOVA_COMPANY_PROPERTIES: HubSpotPropertyDefinition[] = [
+  { name: 'arcova_company_id', label: 'Arcova: Company ID', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
   { name: 'arcova_company_fit_score', label: 'Arcova: Company Fit Score', type: 'number', fieldType: 'number', groupName: 'arcova_intelligence' },
   { name: 'arcova_modalities', label: 'Arcova: Modalities', type: 'string', fieldType: 'textarea', groupName: 'arcova_intelligence' },
   { name: 'arcova_therapeutic_areas', label: 'Arcova: Therapeutic Areas', type: 'string', fieldType: 'textarea', groupName: 'arcova_intelligence' },

@@ -14,6 +14,7 @@ import {
   NavIconLeads,
   NavIconMyCompany,
   NavIconMyIcps,
+  NavIconLog,
   NavIconSettings,
   NavIconSetup,
   NavIconSignals,
@@ -54,6 +55,7 @@ const topNavigation: NavItem[] = [
 ];
 
 const bottomNavigation: NavItem[] = [
+  { name: 'Log', href: ROUTES.log, icon: NavIconLog },
   { name: 'Settings', href: ROUTES.settings, icon: NavIconSettings },
 ];
 
@@ -245,7 +247,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
     const loadCompletionStatus = async () => {
       try {
         const [companiesRes, profileRes, importRes, dataJobsRes, healthRes, signalsRes] = await Promise.all([
-          fetch('/api/company-criteria'),
+          fetch(ROUTES.api.icps),
           fetch('/api/user-company-profile'),
           fetch('/api/import-ready'),
           fetch('/api/data-acquisition/jobs'),

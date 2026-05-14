@@ -15,6 +15,7 @@ import {
   formatDataProvenanceTypeOnly,
   resolveContactDataProvenance,
 } from '@/lib/data-provenance';
+import { HUBSPOT_CLOSED_DEAL_STAGES } from '@/lib/hubspot-deals';
 
 function isMissingColumnError(error: unknown): boolean {
   const message =
@@ -30,6 +31,7 @@ type SupabaseClientLike = {
 };
 
 type LeadRow = Record<string, unknown>;
+type HubSpotLeadState = 'active' | 'customer' | 'dormant' | 'context_only' | 'none';
 
 function attachDataProvenance(rows: LeadRow[]): LeadRow[] {
   return rows.map((row) => {
@@ -319,6 +321,180 @@ async function attachEnrichmentMetadataBestEffort(
   });
 }
 
+async function attachHubSpotLeadStateBestEffort(
+  supabase: SupabaseClientLike,
+  rows: LeadRow[],
+): Promise<LeadRow[]> {
+  const contactIds = dedupe(
+    rows
+      .map((row) => (typeof row.id === 'string' ? row.id : null))
+      .filter((value): value is string => Boolean(value)),
+  );
+  const emails = dedupe(
+    rows
+      .map((row) => (typeof row.email === 'string' ? row.email.trim().toLowerCase() : null))
+      .filter((value): value is string => Boolean(value)),
+  );
+
+  if (contactIds.length === 0 && emails.length === 0) {
+    return rows.map((row) => ({
+      ...row,
+      hubspot_lead_state: 'none' satisfies HubSpotLeadState,
+      hubspot_latest_deal_stage: null,
+      hubspot_latest_deal_name: null,
+      hubspot_latest_deal_updated_at: null,
+    }));
+  }
+
+  try {
+    const [contactIdLinksResult, emailLinksResult] = await Promise.all([
+      contactIds.length
+        ? supabase
+            .from('crm_deal_contact_links')
+            .select('arcova_contact_id, hubspot_deal_id, hubspot_contact_email, raw_payload')
+            .in('arcova_contact_id', contactIds)
+        : Promise.resolve({ data: [], error: null }),
+      emails.length
+        ? supabase
+            .from('crm_deal_contact_links')
+            .select('arcova_contact_id, hubspot_deal_id, hubspot_contact_email, raw_payload')
+            .in('hubspot_contact_email', emails)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+
+    if (contactIdLinksResult.error || emailLinksResult.error) {
+      console.warn('Best-effort HubSpot lead-state link fetch failed:', contactIdLinksResult.error || emailLinksResult.error);
+      return rows;
+    }
+
+    const allLinks = [...((contactIdLinksResult.data || []) as LeadRow[]), ...((emailLinksResult.data || []) as LeadRow[])];
+    const dealIds = dedupe(
+      allLinks
+        .map((row) => (row.hubspot_deal_id != null ? String(row.hubspot_deal_id) : null))
+        .filter((value): value is string => Boolean(value)),
+    );
+
+    if (dealIds.length === 0) {
+      return rows.map((row) => ({
+        ...row,
+        hubspot_lead_state: 'none' satisfies HubSpotLeadState,
+        hubspot_latest_deal_stage: null,
+        hubspot_latest_deal_name: null,
+        hubspot_latest_deal_updated_at: null,
+      }));
+    }
+
+    const [dealsResult, companyLinksResult] = await Promise.all([
+      supabase
+        .from('crm_deals')
+        .select('hubspot_deal_id, deal_name, deal_stage, hs_lastmodifieddate, synced_at')
+        .in('hubspot_deal_id', dealIds),
+      supabase
+        .from('crm_deal_company_links')
+        .select('hubspot_deal_id, raw_payload')
+        .in('hubspot_deal_id', dealIds),
+    ]);
+
+    if (dealsResult.error || companyLinksResult.error) {
+      console.warn('Best-effort HubSpot lead-state deal fetch failed:', dealsResult.error || companyLinksResult.error);
+      return rows;
+    }
+
+    const dealsById = new Map(
+      (((dealsResult.data || []) as LeadRow[]).map((row) => [String(row.hubspot_deal_id), row])),
+    );
+    const companyLinksByDealId = new Map(
+      (((companyLinksResult.data || []) as LeadRow[]).map((row) => [String(row.hubspot_deal_id), row])),
+    );
+
+    const linksByContactId = new Map<string, LeadRow[]>();
+    const linksByEmail = new Map<string, LeadRow[]>();
+
+    for (const row of allLinks) {
+      const byId = typeof row.arcova_contact_id === 'string' ? row.arcova_contact_id : null;
+      const byEmail = typeof row.hubspot_contact_email === 'string' ? row.hubspot_contact_email.trim().toLowerCase() : null;
+      if (byId) {
+        const current = linksByContactId.get(byId) ?? [];
+        current.push(row);
+        linksByContactId.set(byId, current);
+      }
+      if (byEmail) {
+        const current = linksByEmail.get(byEmail) ?? [];
+        current.push(row);
+        linksByEmail.set(byEmail, current);
+      }
+    }
+
+    const toState = (stage: string | null, suppressed: boolean): HubSpotLeadState => {
+      const normalized = (stage || '').trim().toLowerCase();
+      if (!normalized) return suppressed ? 'context_only' : 'none';
+      if (normalized === 'closedwon') return 'customer';
+      if (normalized === 'closedlost') return 'dormant';
+      if (suppressed) return 'context_only';
+      if (HUBSPOT_CLOSED_DEAL_STAGES.has(normalized)) return 'context_only';
+      return 'active';
+    };
+
+    return rows.map((row) => {
+      const rowId = typeof row.id === 'string' ? row.id : null;
+      const rowEmail = typeof row.email === 'string' ? row.email.trim().toLowerCase() : null;
+      const candidateLinks = [
+        ...(rowId ? linksByContactId.get(rowId) ?? [] : []),
+        ...(rowEmail ? linksByEmail.get(rowEmail) ?? [] : []),
+      ];
+      const dedupedLinks = Array.from(
+        new Map(
+          candidateLinks
+            .map((link) => [String(link.hubspot_deal_id), link])
+            .filter(([dealId]) => Boolean(dealId)),
+        ).values(),
+      );
+
+      const rankedDeals = dedupedLinks
+        .map((link) => {
+          const dealId = String(link.hubspot_deal_id);
+          const deal = dealsById.get(dealId);
+          if (!deal) return null;
+          const companyPayload = (companyLinksByDealId.get(dealId)?.raw_payload ?? {}) as Record<string, unknown>;
+          const suppressed =
+            companyPayload.resolution_suppressed === true || companyPayload.resolution_suppressed === 'true';
+          const modifiedAt =
+            typeof deal.hs_lastmodifieddate === 'string'
+              ? deal.hs_lastmodifieddate
+              : typeof deal.synced_at === 'string'
+                ? deal.synced_at
+                : null;
+
+          return {
+            dealStage: typeof deal.deal_stage === 'string' ? deal.deal_stage : null,
+            dealName: typeof deal.deal_name === 'string' ? deal.deal_name : null,
+            modifiedAt,
+            state: toState(typeof deal.deal_stage === 'string' ? deal.deal_stage : null, suppressed),
+          };
+        })
+        .filter((deal): deal is NonNullable<typeof deal> => Boolean(deal))
+        .sort((a, b) => {
+          const aTime = a.modifiedAt ? new Date(a.modifiedAt).getTime() : 0;
+          const bTime = b.modifiedAt ? new Date(b.modifiedAt).getTime() : 0;
+          return bTime - aTime;
+        });
+
+      const latest = rankedDeals[0] ?? null;
+
+      return {
+        ...row,
+        hubspot_lead_state: latest?.state ?? ('none' satisfies HubSpotLeadState),
+        hubspot_latest_deal_stage: latest?.dealStage ?? null,
+        hubspot_latest_deal_name: latest?.dealName ?? null,
+        hubspot_latest_deal_updated_at: latest?.modifiedAt ?? null,
+      };
+    });
+  } catch (error) {
+    console.warn('Best-effort HubSpot lead-state attachment failed:', error);
+    return rows;
+  }
+}
+
 function dedupe(values: string[]): string[] {
   return [...new Set(values)];
 }
@@ -573,9 +749,10 @@ export async function GET(request: Request) {
     );
 
     const withEmails = await attachContactEmailsBestEffort(supabase, enrichedRows);
+    const withHubSpotLeadState = await attachHubSpotLeadStateBestEffort(supabase, withEmails);
 
     return NextResponse.json({
-      data: withEmails,
+      data: withHubSpotLeadState,
       total: count ?? 0,
       page,
       pageSize,

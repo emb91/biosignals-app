@@ -375,7 +375,7 @@ export default function MyProfilePage() {
 
   if (loading || loadingData) {
     return (
-      <div className="min-h-screen flex items-center justify-center arcova-scroll-surface">
+      <div className="min-h-screen flex items-center justify-center bg-transparent">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-arcova-teal" />
       </div>
     );
@@ -388,7 +388,7 @@ export default function MyProfilePage() {
   return (
     <div className="flex h-screen min-h-0 bg-transparent font-jakarta">
       <AppSidebar />
-      <main className="arcova-scroll-surface min-h-0 flex-1 overflow-y-auto px-6 py-8 lg:px-10">
+      <main className="bg-transparent min-h-0 flex-1 overflow-y-auto px-6 py-8 lg:px-10">
         <div className="mx-auto max-w-[1180px]">
 
           <PageHeader

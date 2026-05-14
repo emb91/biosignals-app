@@ -295,7 +295,7 @@ export default function HealthPage() {
       <AppSidebar />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden min-[1280px]:flex-row">
-        <div className="arcova-scroll-surface flex-1 overflow-auto px-6 py-8 lg:px-10">
+        <div className="bg-transparent flex-1 overflow-auto px-6 py-8 lg:px-10">
           <div className="mx-auto w-full max-w-[1180px]">
             <PageHeader
               eyebrow="Pipeline"
@@ -349,7 +349,7 @@ export default function HealthPage() {
                 </p>
                 <button
                   type="button"
-                  onClick={() => router.push('/company-criteria/new')}
+                  onClick={() => router.push(ROUTES.setup.newIcp)}
                   className="inline-flex items-center gap-2 px-4 py-2 bg-arcova-teal text-white text-sm font-semibold rounded-lg hover:bg-arcova-teal/90 transition-colors"
                 >
                   <Plus className="w-4 h-4" />

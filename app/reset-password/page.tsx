@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Eye, EyeOff } from 'lucide-react';
+import { ROUTES } from '@/lib/routes';
 
 export default function ResetPasswordPage() {
   const [password, setPassword] = useState('');
@@ -42,7 +43,7 @@ export default function ResetPasswordPage() {
       await updatePassword(password);
       setSuccess(true);
       setTimeout(() => {
-        router.push('/company-criteria');
+        router.push(ROUTES.setup.icps);
       }, 2000);
     } catch (error: any) {
       setError(error.message || 'An error occurred. Please try again.');

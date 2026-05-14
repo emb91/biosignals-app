@@ -55,6 +55,8 @@ export async function POST() {
         contact_fit_score, intent_score, overall_fit_score, contact_bio, linkedin_url,
         upload_batches(filename, created_at),
         companies(
+          id,
+          domain,
           company_name,
           company_fit_score, modalities, therapeutic_areas, development_stages,
           company_type, platform_category, bio_summary,
@@ -119,6 +121,7 @@ export async function POST() {
         arcova_action: action,
         arcova_enriched: 'true',
         arcova_enriched_at: enrichedAt,
+        arcova_contact_id: lead.id,
       };
       const provenance = resolveContactDataProvenance({
         upload_batches: (lead as any).upload_batches,
@@ -140,6 +143,10 @@ export async function POST() {
       if (lead.linkedin_url) props.arcova_linkedin_url = lead.linkedin_url;
       if (lead.linkedin_url) props.hs_linkedin_url = lead.linkedin_url;
       if (lead.job_title) props.jobtitle = lead.job_title;
+      const company = lead.companies as any;
+      if (company?.id) props.arcova_company_id = company.id;
+      if (company?.company_name) props.arcova_company_name = company.company_name;
+      if (company?.domain) props.arcova_company_domain = company.domain;
 
       upserts.push({ email: lead.email!.toLowerCase(), properties: props });
     }
@@ -211,17 +218,29 @@ export async function POST() {
       .eq('user_id', user.id)
       .maybeSingle();
 
-    await supabase.from('hubspot_sync_log').upsert({
-      user_id: user.id,
-      synced_at: new Date().toISOString(),
-      contacts_synced: contactResult.upserted,
-      contacts_errors: contactResult.errors,
-      contacts_skipped: skippedContacts.length,
-      skipped_contacts: skippedContacts,
-      last_error_details: contactResult.errorDetails,
-      auto_pull_at: existingLog?.auto_pull_at ?? null,
-      auto_pull_count: existingLog?.auto_pull_count ?? null,
-    }, { onConflict: 'user_id' });
+    await Promise.all([
+      supabase.from('hubspot_sync_log').upsert({
+        user_id: user.id,
+        synced_at: new Date().toISOString(),
+        contacts_synced: contactResult.upserted,
+        contacts_errors: contactResult.errors,
+        contacts_skipped: skippedContacts.length,
+        skipped_contacts: skippedContacts,
+        last_error_details: contactResult.errorDetails,
+        auto_pull_at: existingLog?.auto_pull_at ?? null,
+        auto_pull_count: existingLog?.auto_pull_count ?? null,
+      }, { onConflict: 'user_id' }),
+      supabase.from('hubspot_sync_events').insert({
+        user_id: user.id,
+        event_type: 'push',
+        contacts_synced: contactResult.upserted,
+        contacts_errors: contactResult.errors,
+        contacts_skipped: skippedContacts.length,
+        skipped_contacts: skippedContacts,
+        error_details: contactResult.errorDetails,
+        companies_updated: companyResult.updated,
+      }),
+    ]);
 
     return NextResponse.json({
       contacts: contactResult,
