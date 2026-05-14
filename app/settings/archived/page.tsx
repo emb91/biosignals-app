@@ -137,7 +137,7 @@ function ArchivedRecordCard({
               className="inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-[11px] font-semibold border border-[rgba(45,138,138,0.18)] bg-[rgba(45,138,138,0.08)] text-[#2d8a8a] disabled:opacity-60"
             >
               <ArchiveRestore className="h-3 w-3" />
-              {restoring ? 'Restoring…' : group.account ? 'Restore account + contacts' : 'Restore contact'}
+              {restoring ? 'Restoring…' : 'Restore'}
             </button>
           </div>
 
@@ -157,14 +157,16 @@ function ArchivedRecordCard({
                     </span>
                     {contact.email && <span className="text-[#7d909a]"> · {contact.email}</span>}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => onRestoreContact(contact, group)}
-                    disabled={restoring}
-                    className="shrink-0 rounded px-2 py-1 text-[10.5px] font-semibold text-[#2d8a8a] transition hover:bg-[rgba(45,138,138,0.08)] disabled:opacity-60"
-                  >
-                    {group.account ? 'Restore' : 'Restore'}
-                  </button>
+                  {!group.account && (
+                    <button
+                      type="button"
+                      onClick={() => onRestoreContact(contact, group)}
+                      disabled={restoring}
+                      className="shrink-0 rounded px-2 py-1 text-[10.5px] font-semibold text-[#2d8a8a] transition hover:bg-[rgba(45,138,138,0.08)] disabled:opacity-60"
+                    >
+                      Restore
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>
