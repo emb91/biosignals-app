@@ -31,10 +31,15 @@ type SignalFeedItem = {
   readiness: {
     overallScore: number | null;
     overallLabel: string | null;
+    newBudgetScore: number | null;
     newBudgetLabel: string | null;
+    newNeedsScore: number | null;
     newNeedsLabel: string | null;
+    newPeopleScore: number | null;
     newPeopleLabel: string | null;
+    newStrategyScore: number | null;
     newStrategyLabel: string | null;
+    cautionScore: number | null;
     cautionLabel: string | null;
   } | null;
   reason: {
@@ -139,7 +144,7 @@ export async function GET(request: Request) {
         ? supabase
             .from('account_readiness_snapshots')
             .select(
-              'company_id,overall_score,overall_label,new_budget_label,new_needs_label,new_people_label,new_strategy_label,caution_label'
+              'company_id,overall_score,overall_label,new_budget_score,new_budget_label,new_needs_score,new_needs_label,new_people_score,new_people_label,new_strategy_score,new_strategy_label,caution_score,caution_label'
             )
             .eq('user_id', user.id)
             .in('company_id', companyIds)
@@ -202,10 +207,15 @@ export async function GET(request: Request) {
           ? {
               overallScore: normalizeNullableNumber(readiness.overall_score),
               overallLabel: normalizeString(readiness.overall_label),
+              newBudgetScore: normalizeNullableNumber(readiness.new_budget_score),
               newBudgetLabel: normalizeString(readiness.new_budget_label),
+              newNeedsScore: normalizeNullableNumber(readiness.new_needs_score),
               newNeedsLabel: normalizeString(readiness.new_needs_label),
+              newPeopleScore: normalizeNullableNumber(readiness.new_people_score),
               newPeopleLabel: normalizeString(readiness.new_people_label),
+              newStrategyScore: normalizeNullableNumber(readiness.new_strategy_score),
               newStrategyLabel: normalizeString(readiness.new_strategy_label),
+              cautionScore: normalizeNullableNumber(readiness.caution_score),
               cautionLabel: normalizeString(readiness.caution_label),
             }
           : null,

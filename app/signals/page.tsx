@@ -65,10 +65,15 @@ type SignalFeedRow = {
   readiness: {
     overallScore: number | null;
     overallLabel: string | null;
+    newBudgetScore: number | null;
     newBudgetLabel: string | null;
+    newNeedsScore: number | null;
     newNeedsLabel: string | null;
+    newPeopleScore: number | null;
     newPeopleLabel: string | null;
+    newStrategyScore: number | null;
     newStrategyLabel: string | null;
+    cautionScore: number | null;
     cautionLabel: string | null;
   } | null;
   reason: {
@@ -199,6 +204,11 @@ function impactScore(row: SignalFeedRow) {
   return getSignalBaseImpactScore(row.signalKey as SignalKey);
 }
 
+function signedImpactScore(row: SignalFeedRow) {
+  const base = impactScore(row);
+  return row.dimensions.includes('caution') ? -base : base;
+}
+
 function sourceLabel(row: SignalFeedRow) {
   if (row.source === 'external_contact_change' || row.source === 'apify_linkedin_people_monitor') {
     const provider = normalizeString(row.sourceMetadata.source_provider);
@@ -244,15 +254,23 @@ function readinessToneClass(label?: string | null) {
   }
 }
 
+function overallScoreDisplay(score?: number | null) {
+  if (typeof score !== 'number' || !Number.isFinite(score)) return '—';
+  return Math.round(score * 100);
+}
+
+function categoryScoreDisplay(score?: number | null) {
+  if (typeof score !== 'number' || !Number.isFinite(score)) return '—';
+  return Math.round(score * 100);
+}
+
 function targetName(row: SignalFeedRow) {
   return row.contactName || row.companyName || 'Unknown target';
 }
 
 function secondaryLine(row: SignalFeedRow) {
-  if (row.contactName) {
-    return row.contactJobTitle || row.contactEmail || 'Contact signal';
-  }
-  return row.companyDomain || 'Company signal';
+  if (row.contactName) return 'Contact signal';
+  return 'Company signal';
 }
 
 function changeRows(row: SignalFeedRow) {
@@ -598,7 +616,7 @@ export default function SignalsPage() {
                           Signal <SortArrow active={tableSortCol === 'signal'} />
                         </button>
                         <div>Readiness</div>
-                        <div>Effect</div>
+                        <div>Overall</div>
                       </div>
 
                       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -645,7 +663,6 @@ export default function SignalsPage() {
                                 ) : (
                                   <div className="truncate text-[12px] text-slate-500">—</div>
                                 )}
-                                <div className="mt-1 truncate text-[12px] text-slate-500">{row.companyDomain || '—'}</div>
                               </div>
 
                               <div className="min-w-0">
@@ -671,9 +688,26 @@ export default function SignalsPage() {
                               </div>
 
                               <div className="min-w-0">
-                                <span className={cn('inline-flex max-w-full items-center rounded-full border px-2.5 py-1 text-[11px] font-medium', effectPillClass(row))}>
-                                  <span className="truncate">{effectLabel(row)}</span>
-                                </span>
+                                {row.readiness ? (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedSignalId(row.id);
+                                      setSelectedPreview('context');
+                                    }}
+                                    className={cn(
+                                      'inline-flex max-w-full items-center rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors hover:opacity-85',
+                                      readinessToneClass(row.readiness.overallLabel),
+                                    )}
+                                  >
+                                    <span className="truncate">
+                                      {overallScoreDisplay(row.readiness.overallScore)}
+                                    </span>
+                                  </button>
+                                ) : (
+                                  <span className="text-[12px] text-slate-400">—</span>
+                                )}
                               </div>
                             </div>
                           );
@@ -846,12 +880,20 @@ export default function SignalsPage() {
                                       </div>
                                       <div className="text-right">
                                         <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">
-                                          Strength
+                                          Impact
                                         </p>
                                         <p className="mt-1 text-sm font-medium text-[#0d3547]">
-                                          {strengthLabel(selectedSignal.defaultStrength)}
+                                          {signedImpactScore(selectedSignal)}
                                         </p>
                                       </div>
+                                    </div>
+                                    <div className="mt-3 flex items-center justify-between gap-4 border-t border-[rgba(13,53,71,0.08)] pt-3">
+                                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">
+                                        Strength band
+                                      </p>
+                                      <p className="text-sm font-medium text-[#0d3547]">
+                                        {strengthLabel(selectedSignal.defaultStrength)}
+                                      </p>
                                     </div>
                                   </div>
                                 </div>
