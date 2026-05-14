@@ -2,7 +2,7 @@
 
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Image from 'next/image';
-import { Send, Sparkles, RotateCcw, ArrowRight } from 'lucide-react';
+import { Send, Sparkles, RotateCcw, ArrowRight, Plus, RefreshCw } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { ArcovaLoader } from '@/components/ArcovaLoader';
@@ -255,6 +255,8 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastPendingNonceRef = useRef<number | null>(null);
+  // Lets the `⟳` Refresh button cancel the in-flight chat request when the agent looks stuck.
+  const inFlightAbortRef = useRef<AbortController | null>(null);
   // Tracks which ICP priority card triggered the current conversation so we can
   // dismiss it after the agent responds (regardless of verdict).
   const activePriorityIdRef = useRef<string | null>(null);
@@ -344,10 +346,14 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
         { role: 'user', content: trimmed },
       ];
 
+      // Track the request so the Refresh button can abort it if the agent gets stuck.
+      const abortController = new AbortController();
+      inFlightAbortRef.current = abortController;
       const res = await fetch('/api/agent/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: history, page, pageContext }),
+        signal: abortController.signal,
       });
 
       if (!res.ok) throw new Error('Agent request failed');
