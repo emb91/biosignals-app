@@ -1262,7 +1262,7 @@ export default function AccountsPage() {
                                   <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
                                     <button
                                       type="button"
-                                      onClick={() => router.push(ROUTES.signals)}
+                                      onClick={() => router.push(ROUTES.accountSignals)}
                                       className="inline-flex items-center gap-1.5 text-sm font-semibold text-arcova-teal hover:text-arcova-teal/85 transition-colors"
                                     >
                                       View Signals
@@ -1364,7 +1364,7 @@ export default function AccountsPage() {
                                 </p>
                                 <button
                                   type="button"
-                                  onClick={() => router.push(ROUTES.signals)}
+                                  onClick={() => router.push(ROUTES.accountSignals)}
                                   className="inline-flex items-center gap-1.5 text-sm font-semibold text-arcova-teal hover:text-arcova-teal/85 transition-colors"
                                 >
                                   Review signals
@@ -1684,7 +1684,7 @@ export default function AccountsPage() {
                                           <>
                                             <button
                                               type="button"
-                                              onClick={() => router.push(withQuery(ROUTES.leads.contacts, `search=${encodeURIComponent(contact.full_name || contact.email || '')}`))}
+                                              onClick={() => router.push(withQuery(ROUTES.contacts, `search=${encodeURIComponent(contact.full_name || contact.email || '')}`))}
                                               className="inline-flex items-center gap-1 rounded-full border border-arcova-teal/30 bg-white px-2.5 py-1 text-xs font-semibold text-arcova-teal hover:border-arcova-teal hover:bg-arcova-teal/10 transition-colors"
                                             >
                                               View contact

@@ -84,8 +84,10 @@ export async function GET(request: Request) {
     const page = Math.max(1, Number.parseInt(searchParams.get('page') || '1', 10));
     const pageSize = Math.min(100, Math.max(1, Number.parseInt(searchParams.get('pageSize') || '25', 10)));
     const search = (searchParams.get('search') || '').trim().toLowerCase();
+    const scopeParam = searchParams.get('scope');
+    const scope = scopeParam === 'contact' || scopeParam === 'company' ? scopeParam : null;
 
-    const { data, error } = await supabase
+    let query = supabase
       .from('normalized_signals')
       .select(`
         id,
@@ -129,6 +131,12 @@ export async function GET(request: Request) {
       .eq('user_id', user.id)
       .order('observed_at', { ascending: false })
       .limit(400);
+
+    if (scope) {
+      query = query.eq('signal_scope', scope);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       console.error('[GET /api/signals/feed] query error', error);

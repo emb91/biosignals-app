@@ -12,7 +12,6 @@ import {
   NavIconGtmBase,
   NavIconHealth,
   NavIconImport,
-  NavIconLeads,
   NavIconMyCompany,
   NavIconMyIcps,
   NavIconLog,
@@ -41,18 +40,12 @@ const setupItems: NavItem[] = [
   { name: 'My ICPs', href: ROUTES.setup.icps, icon: NavIconMyIcps },
 ];
 
-const leadsItems: NavItem[] = [
-  { name: 'Contacts', href: ROUTES.leads.contacts, icon: NavIconContact },
-  { name: 'Accounts', href: ROUTES.leads.accounts, icon: NavIconAccount },
-];
-
 const topNavigation: NavItem[] = [
   { name: 'Today', href: ROUTES.today, icon: NavIconToday },
   { name: 'GTM base', href: ROUTES.gtmBase, icon: NavIconGtmBase },
   { name: 'Import', href: ROUTES.import, icon: NavIconImport },
   { name: 'Health', href: ROUTES.health, icon: NavIconHealth },
   { name: 'Data', href: ROUTES.data, icon: NavIconData },
-  { name: 'Signals', href: ROUTES.signals, icon: NavIconSignals },
 ];
 
 const bottomNavigation: NavItem[] = [
@@ -205,9 +198,11 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
             : []),
         ];
 
-  const leadsActive = leadsItems.some((item) => isActive(item.href));
+  const contactsActive = pathname === ROUTES.contacts || pathname === ROUTES.contactSignals;
+  const accountsActive = pathname === ROUTES.accounts || pathname === ROUTES.accountSignals;
 
-  const [leadsOpen, setLeadsOpen] = useState(leadsActive);
+  const [contactsOpen, setContactsOpen] = useState(contactsActive);
+  const [accountsOpen, setAccountsOpen] = useState(accountsActive);
   const [setupOpen, setSetupOpen] = useState(setupActive);
 
   useEffect(() => {
@@ -257,8 +252,12 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
   const effectiveCollapsed = sidebarCollapsed;
 
   useEffect(() => {
-    if (leadsActive) setLeadsOpen(true);
-  }, [leadsActive]);
+    if (contactsActive) setContactsOpen(true);
+  }, [contactsActive]);
+
+  useEffect(() => {
+    if (accountsActive) setAccountsOpen(true);
+  }, [accountsActive]);
 
   useEffect(() => {
     if (setupActive) setSetupOpen(true);
@@ -304,16 +303,8 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
           const importReady = Boolean(result.ready);
           const importSignature = importReady ? `import-ready:${result.completeCount ?? 'ready'}` : null;
           importNeedsAttention = dismissibleDotVisible('import', importSignature, pathname === ROUTES.import);
-          contactsNeedAttention = dismissibleDotVisible(
-            'contacts',
-            importSignature,
-            pathname === ROUTES.leads.contacts,
-          );
-          accountsNeedAttention = dismissibleDotVisible(
-            'accounts',
-            importSignature,
-            pathname === ROUTES.leads.accounts,
-          );
+          contactsNeedAttention = dismissibleDotVisible('contacts', importSignature, pathname === ROUTES.contacts);
+          accountsNeedAttention = dismissibleDotVisible('accounts', importSignature, pathname === ROUTES.accounts);
           setShowImportDot(importNeedsAttention);
           setShowContactsDot(contactsNeedAttention);
           setShowAccountsDot(accountsNeedAttention);
@@ -355,7 +346,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
           signalsNeedAttention = dismissibleDotVisible(
             'signals',
             signalSignature,
-            pathname === ROUTES.signals,
+            pathname === ROUTES.contactSignals || pathname === ROUTES.accountSignals,
           );
           setShowSignalsDot(signalsNeedAttention);
         }
@@ -385,10 +376,11 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
     if (itemName === 'Import') return showImportDot;
     if (itemName === 'Contacts') return showContactsDot;
     if (itemName === 'Accounts') return showAccountsDot;
+    if (itemName === 'Contact signals') return showSignalsDot;
+    if (itemName === 'Account signals') return showSignalsDot;
     if (itemName === 'Customers') return false;
     if (itemName === 'Health') return showHealthDot;
     if (itemName === 'Data') return showDataDot;
-    if (itemName === 'Signals') return showSignalsDot;
     if (itemName === 'My Company' || itemName === 'My company') return showMyProfileDot;
     if (itemName === 'My ICPs') return showCompaniesDot;
     if (itemName === 'Guided setup') return setupDotVisible;
@@ -516,11 +508,17 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
             dot: shouldShowDot(item.name),
           }),
         )}
-        {railIconButton('leads', NavIconLeads, {
-          onClick: () => guardedNavigate(ROUTES.leads.contacts),
-          active: leadsActive,
-          title: 'Leads',
-          dot: showContactsDot || showAccountsDot,
+        {railIconButton('contacts', NavIconContact, {
+          onClick: () => guardedNavigate(ROUTES.contacts),
+          active: contactsActive,
+          title: 'Contacts',
+          dot: showContactsDot || showSignalsDot,
+        })}
+        {railIconButton('accounts', NavIconAccount, {
+          onClick: () => guardedNavigate(ROUTES.accounts),
+          active: accountsActive,
+          title: 'Accounts',
+          dot: showAccountsDot || showSignalsDot,
         })}
         {railIconButton('customers', NavIconCustomers, {
           onClick: () => guardedNavigate(ROUTES.customers),
@@ -699,18 +697,32 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
                   {renderNavItem({ name: 'GTM base', href: ROUTES.gtmBase, icon: NavIconGtmBase })}
                   {renderNavItem({ name: 'Import', href: ROUTES.import, icon: NavIconImport })}
                   {renderAccordion({
-                    label: 'Leads',
-                    icon: NavIconLeads,
-                    items: leadsItems,
-                    open: leadsOpen,
-                    onToggle: () => setLeadsOpen((o) => !o),
-                    active: leadsActive && !leadsOpen,
-                    dotVisible: showContactsDot || showAccountsDot,
+                    label: 'Contacts',
+                    icon: NavIconContact,
+                    items: [
+                      { name: 'Contacts', href: ROUTES.contacts, icon: NavIconContact, active: pathname === ROUTES.contacts },
+                      { name: 'Contact signals', href: ROUTES.contactSignals, icon: NavIconSignals, active: pathname === ROUTES.contactSignals },
+                    ],
+                    open: contactsOpen,
+                    onToggle: () => setContactsOpen((o) => !o),
+                    active: contactsActive && !contactsOpen,
+                    dotVisible: showContactsDot || showSignalsDot,
+                  })}
+                  {renderAccordion({
+                    label: 'Accounts',
+                    icon: NavIconAccount,
+                    items: [
+                      { name: 'Accounts', href: ROUTES.accounts, icon: NavIconAccount, active: pathname === ROUTES.accounts },
+                      { name: 'Account signals', href: ROUTES.accountSignals, icon: NavIconSignals, active: pathname === ROUTES.accountSignals },
+                    ],
+                    open: accountsOpen,
+                    onToggle: () => setAccountsOpen((o) => !o),
+                    active: accountsActive && !accountsOpen,
+                    dotVisible: showAccountsDot || showSignalsDot,
                   })}
                   {renderNavItem({ name: 'Customers', href: ROUTES.customers, icon: NavIconCustomers })}
                   {renderNavItem({ name: 'Health', href: ROUTES.health, icon: NavIconHealth })}
                   {renderNavItem({ name: 'Data', href: ROUTES.data, icon: NavIconData })}
-                  {renderNavItem({ name: 'Signals', href: ROUTES.signals, icon: NavIconSignals })}
                   {renderAccordion({
                     label: 'About you',
                     icon: NavIconSetup,

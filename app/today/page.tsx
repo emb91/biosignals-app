@@ -289,7 +289,7 @@ export default function BriefingPage() {
                 id,
                 name,
                 priorityScore: pct(lead.overall_fit_score),
-                href: withQuery(ROUTES.leads.contacts, `lead=${encodeURIComponent(id)}`),
+                href: withQuery(ROUTES.contacts, `lead=${encodeURIComponent(id)}`),
               };
             }),
           );
@@ -478,7 +478,7 @@ export default function BriefingPage() {
           label: nextStep ? '2' : '1',
           title: 'Review new contacts',
           detail: 'The import has finished, so Leads can now show what is Ready, Monitor, Source, or Deprioritised.',
-          href: withQuery(ROUTES.leads.contacts, 'agentTask=new_contacts'),
+          href: withQuery(ROUTES.contacts, 'agentTask=new_contacts'),
           cta: 'Open leads',
         }]
       : []),
@@ -515,7 +515,7 @@ export default function BriefingPage() {
           label: '4',
           title: 'Work the best leads',
           detail: `${topLeads.length} high-fit contacts are ready to review.`,
-          href: withQuery(ROUTES.leads.contacts, 'agentTask=best_leads'),
+          href: withQuery(ROUTES.contacts, 'agentTask=best_leads'),
           cta: 'Review',
         }]
       : []),

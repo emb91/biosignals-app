@@ -2950,7 +2950,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                                       type="button"
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        router.push(withQuery(ROUTES.leads.accounts, `companyId=${encodeURIComponent(lead.company_id!)}`));
+                                        router.push(withQuery(ROUTES.accounts, `companyId=${encodeURIComponent(lead.company_id!)}`));
                                       }}
                                       className="max-w-full truncate text-left text-[12px] font-medium text-arcova-teal hover:underline"
                                     >
@@ -4112,7 +4112,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                                       <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
                                         <button
                                           type="button"
-                                          onClick={() => router.push(ROUTES.signals)}
+                                          onClick={() => router.push(ROUTES.contactSignals)}
                                           className="inline-flex items-center gap-1.5 text-sm font-semibold text-arcova-teal hover:text-arcova-teal/85 transition-colors"
                                         >
                                           View Signals

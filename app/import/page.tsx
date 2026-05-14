@@ -1010,7 +1010,7 @@ export default function ImportPage() {
 
                   {/* CTA */}
                   <div className="rounded-xl border border-gray-200 bg-white p-5">
-                    <Link href={ROUTES.leads.contacts} className="inline-flex px-4 py-2 rounded-lg bg-arcova-teal text-white text-sm font-medium hover:bg-arcova-teal/90 transition-colors">
+                    <Link href={ROUTES.contacts} className="inline-flex px-4 py-2 rounded-lg bg-arcova-teal text-white text-sm font-medium hover:bg-arcova-teal/90 transition-colors">
                       View Leads
                     </Link>
                   </div>

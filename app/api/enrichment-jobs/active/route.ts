@@ -97,7 +97,7 @@ export async function GET() {
         status,
         title: getContactName(row),
         subtitle: getCompanyName(row),
-        href: withQuery(ROUTES.leads.contacts, `lead=${encodeURIComponent(id)}`),
+        href: withQuery(ROUTES.contacts, `lead=${encodeURIComponent(id)}`),
         started_at: typeof row.enrichment_refresh_started_at === 'string' ? row.enrichment_refresh_started_at : null,
         finished_at: typeof row.enrichment_refresh_finished_at === 'string' ? row.enrichment_refresh_finished_at : null,
         last_error: typeof row.enrichment_refresh_last_error === 'string' ? row.enrichment_refresh_last_error : null,
