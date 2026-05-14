@@ -253,12 +253,13 @@ function TaxonomyPills({ items }: { items: string[] | null | undefined }) {
 }
 
 const DEFAULT_COLUMNS: AccountQueryColumn[] = ['company', 'company_type', 'fit', 'contacts', 'action'];
-// Below 1280px the sidebar is collapsed and the table column is space-constrained
-// (~500px). Cramming all 5 columns turns the header into overlapping word soup — so
-// we keep just the essentials: Company (name), Company type, Fit. Matches the
-// contacts table's narrow-view rule (retain Name, Job title, Company, Fit).
+// Below 1280px the table is space-constrained (sidebar collapses to hamburger at
+// <1280, agent panel is still ~380px until <768). Cramming all 5 columns turns the
+// header into overlapping word soup — so below 1280 we keep just the essentials:
+// Company (name), Company type, Fit. Same three columns hold at phone size — the
+// agent is hidden at <768 so the table has plenty of room for Company type to stay.
 const MEDIUM_COLUMNS: AccountQueryColumn[] = ['company', 'company_type', 'fit'];
-const SMALL_COLUMNS: AccountQueryColumn[] = ['company', 'fit'];
+const SMALL_COLUMNS: AccountQueryColumn[] = ['company', 'company_type', 'fit'];
 
 const ACCOUNT_QUERY_COL_DEFS: Record<AccountQueryColumn, { label: string; width: string }> = {
   company: { label: 'Company', width: 'minmax(0,1.05fr)' },
@@ -280,22 +281,22 @@ function accountQueryGridCols(columns: AccountQueryColumn[]): string {
   return columns.map((column) => ACCOUNT_QUERY_COL_DEFS[column].width).join(' ');
 }
 
+function pickAccountColumns(width: number): AccountQueryColumn[] {
+  if (width >= 1280) return DEFAULT_COLUMNS;
+  if (width < 640) return SMALL_COLUMNS;
+  return MEDIUM_COLUMNS;
+}
+
 function useResponsiveAccountColumns(): AccountQueryColumn[] {
-  const [columns, setColumns] = useState<AccountQueryColumn[]>(DEFAULT_COLUMNS);
+  // Initialize synchronously from `window.innerWidth` so there's no flash of the
+  // wrong (default 5-col) template on first render — that flash caused the data
+  // rows to render cells in the wrong column slots on initial paint at narrow widths.
+  const [columns, setColumns] = useState<AccountQueryColumn[]>(() =>
+    typeof window === 'undefined' ? DEFAULT_COLUMNS : pickAccountColumns(window.innerWidth),
+  );
 
   useEffect(() => {
-    const updateColumns = () => {
-      // Phone — minimum viable (just Company + Fit).
-      if (window.innerWidth < 640) {
-        setColumns(SMALL_COLUMNS);
-      // Below the sidebar-collapse breakpoint (≤1279px) the table is space-constrained
-      // — drop Contacts + Action to keep the header readable.
-      } else if (window.innerWidth < 1280) {
-        setColumns(MEDIUM_COLUMNS);
-      } else {
-        setColumns(DEFAULT_COLUMNS);
-      }
-    };
+    const updateColumns = () => setColumns(pickAccountColumns(window.innerWidth));
 
     updateColumns();
     window.addEventListener('resize', updateColumns);
@@ -416,6 +417,13 @@ export default function AccountsPage() {
     if (!el) return;
     const update = () => {
       const r = el.getBoundingClientRect();
+      // Below 768px the AgentPanel is `display: none` — its bounding rect is 0×0.
+      // Null out the rect in that case so the company card / floating chat bar fall
+      // back to their CSS-class positioning (full-bleed glass card from the right).
+      if (r.width === 0 || r.height === 0) {
+        setAgentRect(null);
+        return;
+      }
       setAgentRect({ top: r.top, left: r.left, width: r.width, height: r.height });
     };
     update();
@@ -1007,7 +1015,7 @@ export default function AccountsPage() {
                           accountsScrollRef.current.scrollTop += e.deltaY;
                         }
                       }}
-                      className="grid w-full shrink-0 min-w-0 px-4 py-3 bg-[rgba(255,255,255,0.4)] border-b border-[rgba(13,53,71,0.08)] text-[13px] font-semibold text-[#7d909a] uppercase tracking-wide gap-x-5"
+                      className="grid w-full shrink-0 min-w-0 pl-9 pr-4 py-3 bg-[rgba(255,255,255,0.4)] border-b border-[rgba(13,53,71,0.08)] text-[13px] font-semibold text-[#7d909a] uppercase tracking-wide gap-x-5"
                       style={{ gridTemplateColumns: accountQueryGridCols(tableColumns) }}
                     >
                       {tableColumns.map((col) => (
@@ -1039,8 +1047,9 @@ export default function AccountsPage() {
                           : undefined
                       }
                     >
-                      {sortedAccounts.map((account) => {
+                      {sortedAccounts.map((account, index) => {
                         const isSelected = selectedAccountId === account.id;
+                        const rowNumber = (page - 1) * PAGE_SIZE + index + 1;
 
                         return (
                           <div
@@ -1052,13 +1061,16 @@ export default function AccountsPage() {
                               if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetails(account.id); }
                             }}
                             className={cn(
-                              "relative grid w-full min-w-0 px-4 py-3 gap-x-5 items-center cursor-pointer transition-all duration-150 before:pointer-events-none before:absolute before:left-0 before:top-2 before:bottom-2 before:w-[3px] before:rounded-sm before:content-[''] before:transition-colors",
+                              "relative grid w-full min-w-0 pl-9 pr-4 py-3 gap-x-5 items-center cursor-pointer transition-all duration-150 before:pointer-events-none before:absolute before:left-0 before:top-2 before:bottom-2 before:w-[3px] before:rounded-sm before:content-[''] before:transition-colors",
                               isSelected
                                 ? 'bg-arcova-teal/10 before:bg-arcova-teal'
                                 : 'before:bg-transparent hover:bg-arcova-teal/5 hover:before:bg-arcova-teal/35',
                             )}
                             style={{ gridTemplateColumns: accountQueryGridCols(tableColumns) }}
                           >
+                            <span aria-hidden className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-medium tabular-nums text-gray-400 select-none">
+                              {rowNumber}
+                            </span>
                             {tableColumns.map((col) => (
                               <div
                                 key={col}

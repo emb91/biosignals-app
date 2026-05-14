@@ -661,7 +661,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
               embedGlass && 'h-full min-h-0 overflow-hidden',
               embedGlass ? 'px-0 py-0' : cn('px-4', lightSetupChat ? 'py-3' : 'py-4'),
             )
-          : 'shrink-0 self-stretch py-3 pr-3 pl-2 max-[767px]:h-80 max-[767px]:self-auto max-[767px]:px-4 max-[767px]:pb-4 max-[767px]:pt-0 sm:max-[767px]:px-6',
+          : 'shrink-0 self-stretch py-3 pr-3 pl-2 max-[767px]:hidden',
         className,
       )}
     >

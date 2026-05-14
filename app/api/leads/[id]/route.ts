@@ -256,8 +256,7 @@ export async function DELETE(
         updated_at: now,
       })
       .eq('user_id', user.id)
-      .eq('id', id)
-      .is('archived_at', null);
+      .eq('id', id);
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });

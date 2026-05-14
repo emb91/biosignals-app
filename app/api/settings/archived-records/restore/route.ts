@@ -40,7 +40,7 @@ export async function POST(request: Request) {
     } else {
       const { data: contact, error: contactError } = await supabase
         .from('contacts')
-        .select('id, company_id')
+        .select('id, company_id, archived_reason')
         .eq('user_id', user.id)
         .eq('id', body.id)
         .maybeSingle();
@@ -73,6 +73,49 @@ export async function POST(request: Request) {
 
         return NextResponse.json({ success: true, restored: { type: 'contact', id: body.id } });
       }
+
+      const { data: company, error: companyLookupError } = await supabase
+        .from('companies')
+        .select('id, archived_at')
+        .eq('user_id', user.id)
+        .eq('id', companyIdToRestore)
+        .maybeSingle();
+
+      if (companyLookupError) {
+        return NextResponse.json({ error: companyLookupError.message }, { status: 500 });
+      }
+
+      if (company?.archived_at) {
+        return NextResponse.json(
+          { error: 'Restore the account first before restoring this contact.' },
+          { status: 409 },
+        );
+      }
+
+      if (contact.archived_reason === 'company_archived') {
+        return NextResponse.json(
+          { error: 'This contact is still inherited from an archived account state. Restore the account first.' },
+          { status: 409 },
+        );
+      }
+
+      const { error: directRestoreError } = await supabase
+        .from('contacts')
+        .update({
+          archived_at: null,
+          archived_by: null,
+          archived_reason: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('user_id', user.id)
+        .eq('id', body.id)
+        .neq('archived_reason', 'company_archived');
+
+      if (directRestoreError) {
+        return NextResponse.json({ error: directRestoreError.message }, { status: 500 });
+      }
+
+      return NextResponse.json({ success: true, restored: { type: 'contact', id: body.id } });
     }
 
     const now = new Date().toISOString();
@@ -92,19 +135,33 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: companyError.message }, { status: 500 });
     }
 
-    const { error: contactsError } = await supabase
+    const { data: archivedContacts, error: archivedContactsError } = await supabase
       .from('contacts')
-      .update({
-        archived_at: null,
-        archived_by: null,
-        archived_reason: null,
-        updated_at: now,
-      })
+      .select('id')
       .eq('user_id', user.id)
-      .eq('company_id', companyIdToRestore);
+      .eq('company_id', companyIdToRestore)
+      .eq('archived_reason', 'company_archived');
 
-    if (contactsError) {
-      return NextResponse.json({ error: contactsError.message }, { status: 500 });
+    if (archivedContactsError) {
+      return NextResponse.json({ error: archivedContactsError.message }, { status: 500 });
+    }
+
+    const archivedContactRows = (archivedContacts ?? []) as Array<{ id: string }>;
+    for (const contact of archivedContactRows) {
+      const { error: contactUpdateError } = await supabase
+        .from('contacts')
+        .update({
+          archived_at: null,
+          archived_by: null,
+          archived_reason: null,
+          updated_at: now,
+        })
+        .eq('user_id', user.id)
+        .eq('id', contact.id);
+
+      if (contactUpdateError) {
+        return NextResponse.json({ error: contactUpdateError.message }, { status: 500 });
+      }
     }
 
     return NextResponse.json({

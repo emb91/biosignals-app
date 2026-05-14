@@ -402,24 +402,22 @@ type EnrichmentVisualState = {
 
 const PAGE_SIZE = 50;
 /**
- * Responsive table grid — four tiers based on how much horizontal room the table has
- * after sidebar + agent panel get their share. The grid TEMPLATE is set inline via
- * the `style` attribute (using `useLeadsTableGridCols` below) so Tailwind doesn't
- * have to compile a giant chain of `min-[1280px]:grid-cols-[minmax(0,...)_...]`
- * arbitrary classes (it choked on the longest variant — HubSpot + Action ended up
- * wrapping to a second row at full width). Visibility of cells stays on Tailwind
- * via `hidden sm:flex` / `hidden lg:flex` / `hidden min-[1280px]:flex` etc.
+ * Responsive table grid — three tiers based on how much horizontal room the table
+ * has after sidebar + agent panel get their share. The grid TEMPLATE is set inline
+ * via the `style` attribute (using `useLeadsTableGridCols` below) so Tailwind
+ * doesn't have to compile a giant chain of `min-[1280px]:grid-cols-[...]`
+ * arbitrary classes (it dropped the longest variant and HubSpot + Action wrapped
+ * onto a second row at full width). Visibility stays on Tailwind via
+ * `hidden lg:flex` / `hidden min-[1280px]:flex`.
  *
  * Tiers:
- * - <640px (phone): 2 columns — Name / Contact fit.
- * - 640–1023px: 3 columns — adds Company.
+ * - <1024px: 3 columns — Name / Company / Contact fit. (Agent panel is hidden at
+ *   <768px, so the table has plenty of room for Company even on phones.)
  * - 1024–1279px: 4 columns — adds Job title.
  * - ≥1280px: 6 columns — adds HubSpot + Action.
  */
 const LEADS_TABLE_GRID = 'grid gap-x-5';
 
-const LEADS_GRID_COLS_PHONE =
-  'minmax(0,1fr) minmax(4.5rem,0.55fr)';
 const LEADS_GRID_COLS_SM =
   'minmax(0,1.15fr) minmax(0,1.15fr) minmax(5.5rem,0.7fr)';
 const LEADS_GRID_COLS_LG =
@@ -427,18 +425,23 @@ const LEADS_GRID_COLS_LG =
 const LEADS_GRID_COLS_FULL =
   'minmax(0,0.85fr) minmax(0,1fr) minmax(0,1.15fr) minmax(7.25rem,0.85fr) minmax(0,5.25rem) minmax(9.5rem,1.15fr)';
 
+function pickLeadsGridCols(width: number): string {
+  if (width >= 1280) return LEADS_GRID_COLS_FULL;
+  if (width >= 1024) return LEADS_GRID_COLS_LG;
+  return LEADS_GRID_COLS_SM;
+}
+
 /** Returns the right `grid-template-columns` value for the current viewport. */
 function useLeadsTableGridCols(): string {
-  const [cols, setCols] = useState<string>(LEADS_GRID_COLS_FULL);
+  // Initialize synchronously from `window.innerWidth` so there's no flash of the
+  // wrong (default 6-col) template on first render — that flash caused the data
+  // rows to render with cells in the wrong column slots before the effect ran.
+  const [cols, setCols] = useState<string>(() =>
+    typeof window === 'undefined' ? LEADS_GRID_COLS_FULL : pickLeadsGridCols(window.innerWidth),
+  );
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const update = () => {
-      const w = window.innerWidth;
-      if (w >= 1280) setCols(LEADS_GRID_COLS_FULL);
-      else if (w >= 1024) setCols(LEADS_GRID_COLS_LG);
-      else if (w >= 640) setCols(LEADS_GRID_COLS_SM);
-      else setCols(LEADS_GRID_COLS_PHONE);
-    };
+    const update = () => setCols(pickLeadsGridCols(window.innerWidth));
     update();
     window.addEventListener('resize', update);
     return () => window.removeEventListener('resize', update);
@@ -1044,6 +1047,13 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
     if (!el) return;
     const update = () => {
       const r = el.getBoundingClientRect();
+      // Below 768px the AgentPanel is `display: none` — its bounding rect is 0×0.
+      // Null out the rect in that case so the contact card / floating chat bar fall
+      // back to their CSS-class positioning (full-bleed glass card from the right).
+      if (r.width === 0 || r.height === 0) {
+        setAgentRect(null);
+        return;
+      }
       setAgentRect({ top: r.top, left: r.left, width: r.width, height: r.height });
     };
     update();
@@ -2725,7 +2735,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                         leadsScrollRef.current.scrollTop += e.deltaY;
                       }
                     }}
-                    className={`${LEADS_TABLE_GRID} shrink-0 items-start px-4 py-3 border-b border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.4)] text-[13px] font-semibold uppercase tracking-wide text-[#7d909a]`}
+                    className={`${LEADS_TABLE_GRID} shrink-0 items-start pl-9 pr-4 py-3 border-b border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.4)] text-[13px] font-semibold uppercase tracking-wide text-[#7d909a]`}
                     style={{ gridTemplateColumns: leadsGridCols }}
                   >
                     {(['name', 'job_title', 'company'] as const).map((col) => (
@@ -2736,8 +2746,9 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                           col === 'company'
                             ? 'flex flex-col items-start gap-0.5'
                             : 'flex items-start gap-1',
-                          // Drop columns out below breakpoints to keep the header readable.
-                          col === 'company' && 'hidden sm:flex',
+                          // Job title drops out below lg. Company stays visible at
+                          // all sizes — once the agent is hidden (<768px) the table
+                          // has plenty of room to keep it.
                           col === 'job_title' && 'hidden lg:flex',
                           'hover:text-gray-800 transition-colors text-left',
                         )}
@@ -2789,10 +2800,11 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                     }
                   >
                     {/* Single render path — agent filter narrows sortedLeads in-place */}
-                    {sortedLeads.map((lead) => {
+                    {sortedLeads.map((lead, index) => {
                       const isSelected = selectedLeadId === lead.id;
                       const enriching = isEnriching(lead);
                       const enrichmentProgress = getEnrichmentProgress(lead);
+                      const rowNumber = (page - 1) * PAGE_SIZE + index + 1;
 
                       if (enriching) {
                         return (
@@ -2813,13 +2825,16 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                                 cancelEditingLead();
                               }
                             }}
-                            className={`${LEADS_TABLE_GRID} relative px-4 py-3 items-center cursor-pointer transition-all duration-150 border-b border-gray-50 last:border-0 before:pointer-events-none before:absolute before:left-0 before:top-2 before:bottom-2 before:w-[3px] before:rounded-sm before:content-[''] before:transition-colors ${
+                            className={`${LEADS_TABLE_GRID} relative pl-9 pr-4 py-3 items-center cursor-pointer transition-all duration-150 border-b border-gray-50 last:border-0 before:pointer-events-none before:absolute before:left-0 before:top-2 before:bottom-2 before:w-[3px] before:rounded-sm before:content-[''] before:transition-colors ${
                               isSelected
                                 ? 'bg-arcova-teal/10 before:bg-arcova-teal'
                                 : 'before:bg-transparent hover:bg-arcova-teal/5 hover:before:bg-arcova-teal/35'
                             }`}
                             style={{ gridTemplateColumns: leadsGridCols }}
                           >
+                            <span aria-hidden className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-medium tabular-nums text-gray-400 select-none">
+                              {rowNumber}
+                            </span>
                             <div className="min-w-0">
                               <p className="text-sm font-medium text-gray-400 truncate">
                                 {lead.full_name ||
@@ -2834,7 +2849,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                               </p>
                             </div>
 
-                            <div className="hidden min-w-0 pr-3 sm:block">
+                            <div className="min-w-0 pr-3">
                               <div className="flex items-center gap-3">
                                 <div className="relative h-2.5 flex-1 overflow-hidden rounded-full bg-slate-200/80">
                                   <div
@@ -2883,13 +2898,16 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                               cancelEditingLead();
                             }
                           }}
-                          className={`${LEADS_TABLE_GRID} relative px-4 py-3 items-center cursor-pointer transition-all duration-150 opacity-100 before:pointer-events-none before:absolute before:left-0 before:top-2 before:bottom-2 before:w-[3px] before:rounded-sm before:content-[''] before:transition-colors ${
+                          className={`${LEADS_TABLE_GRID} relative pl-9 pr-4 py-3 items-center cursor-pointer transition-all duration-150 opacity-100 before:pointer-events-none before:absolute before:left-0 before:top-2 before:bottom-2 before:w-[3px] before:rounded-sm before:content-[''] before:transition-colors ${
                             isSelected
                               ? 'bg-arcova-teal/10 before:bg-arcova-teal'
                               : 'before:bg-transparent hover:bg-arcova-teal/5 hover:before:bg-arcova-teal/35'
                           }`}
                           style={{ gridTemplateColumns: leadsGridCols }}
                         >
+                          <span aria-hidden className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-medium tabular-nums text-gray-400 select-none">
+                            {rowNumber}
+                          </span>
                           {/* Full name */}
                           <div className="min-w-0">
                             <div className="flex min-w-0 items-center gap-2">
@@ -2908,8 +2926,9 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                             </p>
                           </div>
 
-                          {/* Company name — hidden below sm (phone) */}
-                          <div className="hidden min-w-0 sm:block">
+                          {/* Company name — always visible (agent panel is hidden
+                              below 768px so the table has plenty of room for it). */}
+                          <div className="min-w-0">
                             {(() => {
                               const companyFirmographics = getDisplayedCompanyFirmographics(lead);
                               const name =

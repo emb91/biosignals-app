@@ -56,13 +56,15 @@ function ArchivedRecordCard({
   group,
   collapsed,
   onToggle,
-  onRestore,
+  onRestoreGroup,
+  onRestoreContact,
   restoring,
 }: {
   group: ArchivedGroup;
   collapsed: boolean;
   onToggle: () => void;
-  onRestore: () => void;
+  onRestoreGroup: () => void;
+  onRestoreContact: (contactId: string) => void;
   restoring: boolean;
 }) {
   const accountLabel =
@@ -113,7 +115,7 @@ function ArchivedRecordCard({
 
         <button
           type="button"
-          onClick={onRestore}
+          onClick={onRestoreGroup}
           disabled={restoring}
           className="shrink-0 inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-[11px] font-semibold border border-[rgba(45,138,138,0.18)] bg-[rgba(45,138,138,0.08)] text-[#2d8a8a] disabled:opacity-60"
         >
@@ -139,22 +141,35 @@ function ArchivedRecordCard({
 
           <div>
             <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">
-              Archived contacts
+              Contacts in this account
             </p>
-            <ul className="space-y-0.5">
+            <ul className="space-y-1.5">
               {group.contacts.map((contact) => (
-                <li key={contact.id} className="text-[12px] text-[#4a6470]">
-                  <span className="font-medium text-[#0d3547]">
-                    {contact.full_name || contact.email || 'Unnamed contact'}
-                  </span>
-                  {contact.email && <span className="text-[#7d909a]"> · {contact.email}</span>}
+                <li
+                  key={contact.id}
+                  className="flex items-center justify-between gap-3 rounded-md border border-[rgba(13,53,71,0.06)] bg-[rgba(255,255,255,0.6)] px-2.5 py-2"
+                >
+                  <div className="min-w-0 text-[12px] text-[#4a6470]">
+                    <span className="font-medium text-[#0d3547]">
+                      {contact.full_name || contact.email || 'Unnamed contact'}
+                    </span>
+                    {contact.email && <span className="text-[#7d909a]"> · {contact.email}</span>}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onRestoreContact(contact.id)}
+                    disabled={restoring || !!group.account}
+                    className="shrink-0 rounded px-2 py-1 text-[10.5px] font-semibold text-[#2d8a8a] transition hover:bg-[rgba(45,138,138,0.08)] disabled:opacity-60"
+                  >
+                    {group.account ? 'Restore account first' : 'Restore'}
+                  </button>
                 </li>
               ))}
             </ul>
           </div>
 
           <div className="flex items-center gap-1.5 text-[11.5px] text-[#7d909a]">
-            Restoring from either the account or contact entry restores the whole account group.
+            Account archive wins over contact restore. Restore the account first, then bring back only the contacts you want.
           </div>
         </div>
       )}
@@ -244,12 +259,10 @@ export default function ArchivedRecordsPage() {
     });
   }, []);
 
-  const restoreGroup = useCallback(async (group: ArchivedGroup) => {
-    const restoreType: 'account' | 'contact' = group.account ? 'account' : 'contact';
-    const restoreId = group.account?.id ?? group.contacts[0]?.id;
+  const restoreRecord = useCallback(async (restoreType: 'account' | 'contact', restoreId: string, restoreKey: string) => {
     if (!restoreId) return;
 
-    setRestoringKey(group.key);
+    setRestoringKey(restoreKey);
     try {
       const response = await fetch('/api/settings/archived-records/restore', {
         method: 'POST',
@@ -326,7 +339,10 @@ export default function ArchivedRecordsPage() {
                     group={group}
                     collapsed={!expandedKeys.has(group.key)}
                     onToggle={() => toggle(group.key)}
-                    onRestore={() => void restoreGroup(group)}
+                    onRestoreGroup={() =>
+                      void restoreRecord(group.account ? 'account' : 'contact', group.account?.id ?? group.contacts[0]?.id ?? '', group.key)
+                    }
+                    onRestoreContact={(contactId) => void restoreRecord('contact', contactId, group.key)}
                     restoring={restoringKey === group.key}
                   />
                 ))}
