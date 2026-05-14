@@ -39,13 +39,21 @@ import {
   normalizeSignalSourceEvent,
   recomputeAccountReadiness,
 } from '@/lib/signals/readiness-service';
+import type { SignalKey } from '@/lib/signals/readiness-types';
 
 const HUBSPOT_SIGNAL_SOURCE = 'hubspot_crm_deals';
 
-type DealChangeType = 'deal_created' | 'deal_reopened' | 'deal_stage_advanced' | 'deal_amount_added';
+type DealChangeType =
+  | 'deal_created'
+  | 'deal_reopened'
+  | 'deal_stage_advanced'
+  | 'deal_amount_added'
+  | 'deal_closed_lost';
 
 type DealChangeEvent = {
   changeType: DealChangeType;
+  sourceEventType: SignalKey;
+  signalKeys: SignalKey[];
   title: string;
   summary: string;
 };
@@ -144,6 +152,8 @@ function buildDealChangeEvents(previous: CrmDealMirrorRecord | null, current: Hu
   if (!previous) {
     return [{
       changeType: 'deal_created',
+      sourceEventType: 'open_opportunity_in_crm',
+      signalKeys: ['open_opportunity_in_crm'],
       title: 'HubSpot deal created',
       summary: 'A new HubSpot deal was created for this account.',
     }];
@@ -156,6 +166,8 @@ function buildDealChangeEvents(previous: CrmDealMirrorRecord | null, current: Hu
   if (isClosedStage(prevStage) && isActiveStage(nextStage)) {
     events.push({
       changeType: 'deal_reopened',
+      sourceEventType: 'open_opportunity_in_crm',
+      signalKeys: ['open_opportunity_in_crm'],
       title: 'HubSpot deal reopened',
       summary: 'A previously closed HubSpot deal moved back into an active stage.',
     });
@@ -164,6 +176,8 @@ function buildDealChangeEvents(previous: CrmDealMirrorRecord | null, current: Hu
   if (!isActiveStage(prevStage) && isActiveStage(nextStage) && prevStage !== nextStage) {
     events.push({
       changeType: 'deal_stage_advanced',
+      sourceEventType: 'open_opportunity_in_crm',
+      signalKeys: ['open_opportunity_in_crm'],
       title: 'HubSpot deal entered active stage',
       summary: 'A HubSpot deal advanced into an active buying stage.',
     });
@@ -172,8 +186,20 @@ function buildDealChangeEvents(previous: CrmDealMirrorRecord | null, current: Hu
   if ((prevAmount == null || prevAmount <= 0) && nextAmount != null && nextAmount > 0) {
     events.push({
       changeType: 'deal_amount_added',
+      sourceEventType: 'open_opportunity_in_crm',
+      signalKeys: ['open_opportunity_in_crm'],
       title: 'HubSpot deal amount added',
       summary: 'A HubSpot deal amount was added where no amount previously existed.',
+    });
+  }
+
+  if (normalizeStage(prevStage) !== 'closedlost' && normalizeStage(nextStage) === 'closedlost') {
+    events.push({
+      changeType: 'deal_closed_lost',
+      sourceEventType: 'closed_lost_in_crm',
+      signalKeys: ['closed_lost_in_crm'],
+      title: 'HubSpot deal closed lost',
+      summary: 'A HubSpot deal moved to closed lost, so this account should stay dormant until something changes.',
     });
   }
 
@@ -349,12 +375,21 @@ function resolveDealTargets(
 
 export async function syncHubSpotDealsIntoReadiness(
   supabase: DatabaseClient,
-  input: { userId: string; nangoConnectionId: string }
+  input: { userId: string; nangoConnectionId?: string; accessToken?: string }
 ): Promise<HubSpotDealReadinessSyncResult> {
   const checkpoint = await getCrmSyncCheckpoint(supabase, input.userId, HUBSPOT_CRM_PROVIDER, HUBSPOT_DEAL_OBJECT_TYPE);
 
   try {
-    const accessToken = await getHubSpotAccessTokenForConnection(input.nangoConnectionId);
+    const accessToken =
+      input.accessToken ??
+      (input.nangoConnectionId
+        ? await getHubSpotAccessTokenForConnection(input.nangoConnectionId)
+        : null);
+
+    if (!accessToken) {
+      throw new Error('Missing HubSpot access token for CRM deal sync.');
+    }
+
     const deals = await fetchModifiedHubSpotDeals(accessToken, checkpoint?.last_synced_remote_at ?? null);
 
     if (!deals.length) {
@@ -558,7 +593,7 @@ export async function syncHubSpotDealsIntoReadiness(
             entityScope: 'company',
             companyId,
             source: HUBSPOT_SIGNAL_SOURCE,
-            sourceEventType: 'open_opportunity_in_crm',
+            sourceEventType: change.sourceEventType,
             sourceEventId,
             title: change.title,
             summary: change.summary,
@@ -598,7 +633,7 @@ export async function syncHubSpotDealsIntoReadiness(
             entityScope: 'company' as const,
             source: HUBSPOT_SIGNAL_SOURCE,
             sourceUrl: null,
-            sourceEventType: 'open_opportunity_in_crm',
+            sourceEventType: change.sourceEventType,
             sourceEventId,
             title: change.title,
             summary: change.summary,
@@ -624,7 +659,7 @@ export async function syncHubSpotDealsIntoReadiness(
           await normalizeSignalSourceEvent(supabase, {
             userId: input.userId,
             rawEvent,
-            signalKeys: ['open_opportunity_in_crm'],
+            signalKeys: change.signalKeys,
             companyId,
           });
 

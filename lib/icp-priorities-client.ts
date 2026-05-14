@@ -21,6 +21,7 @@ export interface IcpPriority {
   detail: string;
   cta: { label: string; seedPrompt: string };
   icpIds: string[];
+  icpLabels: string[];
 }
 
 const CACHE_KEY = 'arcova:icp-priorities';

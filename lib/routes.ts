@@ -7,6 +7,7 @@ export const ROUTES = {
   log: '/log',
   gtmBase: '/gtm-base',
   import: '/import',
+  customers: '/customers',
   signals: '/signals',
   settings: '/settings',
   health: '/health',

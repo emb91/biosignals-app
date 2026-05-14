@@ -623,7 +623,7 @@ function SetupBootstrapWaitingCard({
         </div>
       </div>
       <div className="flex min-h-0 flex-1 flex-col justify-start">
-        <h1 className="mb-7 mt-[0.75cm] min-h-[5rem] text-center font-manrope text-3xl font-medium leading-snug tracking-tight text-arcova-navy">
+        <h1 className={cn('mt-[0.75cm] text-center font-manrope text-3xl font-medium leading-snug tracking-tight text-arcova-navy', isAdditionalIcp ? 'mb-5' : 'mb-7 min-h-[5rem]')}>
           {isAdditionalIcp ? (
             <span className="block text-arcova-navy/40">Loading your setup.</span>
           ) : inputEnabled ? (

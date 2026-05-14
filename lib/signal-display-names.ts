@@ -33,6 +33,7 @@ export const SIGNAL_DISPLAY_NAMES: Record<string, string> = {
   lapsed_customer: 'Lapsed customer',
   renewal_coming_up: 'Renewal due',
   meeting_previously_booked: 'Meeting booked',
+  closed_lost_in_crm: 'Closed lost in CRM',
   went_dark_after_engagement: 'Went dark after engagement',
   met_at_conference_or_tradeshow: 'Met at conference or tradeshow',
   followed_your_company: 'Followed your company',
