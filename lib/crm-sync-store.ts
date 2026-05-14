@@ -40,11 +40,31 @@ export type ArcovaCompanyRecord = {
 export type ArcovaContactRecord = {
   id: string;
   email: string | null;
+  job_title?: string | null;
+  seniority_level?: string | null;
+  business_area?: string | null;
   company_id: string | null;
   company_name: string | null;
   company_domain: string | null;
   resolved_current_company_name: string | null;
   resolved_current_company_domain: string | null;
+};
+
+export type CrmContactMirrorRecord = {
+  id: string;
+  user_id: string;
+  hubspot_contact_id: string;
+  full_name: string | null;
+  email: string | null;
+  job_title: string | null;
+  hubspot_owner_id: string | null;
+  arcova_contact_id: string | null;
+  arcova_company_id: string | null;
+  arcova_company_name: string | null;
+  arcova_company_domain: string | null;
+  hs_lastmodifieddate: string | null;
+  raw_payload: Record<string, unknown>;
+  synced_at: string;
 };
 
 function toRecord<T>(value: unknown): T {
@@ -163,6 +183,68 @@ export async function upsertCrmDeal(
   return toRecord<CrmDealMirrorRecord>(data);
 }
 
+export async function listCrmContactsByHubSpotIds(
+  supabase: DatabaseClient,
+  userId: string,
+  hubspotContactIds: string[]
+): Promise<Map<string, CrmContactMirrorRecord>> {
+  if (!hubspotContactIds.length) return new Map();
+
+  const { data, error } = await supabase
+    .from('crm_contacts')
+    .select('*')
+    .eq('user_id', userId)
+    .in('hubspot_contact_id', hubspotContactIds);
+
+  if (error) throw error;
+
+  return new Map((data ?? []).map((row) => [String(row.hubspot_contact_id), toRecord<CrmContactMirrorRecord>(row)]));
+}
+
+export async function upsertCrmContact(
+  supabase: DatabaseClient,
+  input: {
+    userId: string;
+    hubspotContactId: string;
+    fullName: string | null;
+    email: string | null;
+    jobTitle: string | null;
+    hubspotOwnerId: string | null;
+    arcovaContactId: string | null;
+    arcovaCompanyId: string | null;
+    arcovaCompanyName: string | null;
+    arcovaCompanyDomain: string | null;
+    hsLastModifiedDate: string | null;
+    rawPayload: Record<string, unknown>;
+  }
+): Promise<CrmContactMirrorRecord> {
+  const { data, error } = await supabase
+    .from('crm_contacts')
+    .upsert(
+      {
+        user_id: input.userId,
+        hubspot_contact_id: input.hubspotContactId,
+        full_name: input.fullName,
+        email: input.email,
+        job_title: input.jobTitle,
+        hubspot_owner_id: input.hubspotOwnerId,
+        arcova_contact_id: input.arcovaContactId,
+        arcova_company_id: input.arcovaCompanyId,
+        arcova_company_name: input.arcovaCompanyName,
+        arcova_company_domain: input.arcovaCompanyDomain,
+        hs_lastmodifieddate: input.hsLastModifiedDate,
+        raw_payload: input.rawPayload,
+        synced_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_id,hubspot_contact_id' }
+    )
+    .select()
+    .single();
+
+  if (error) throw error;
+  return toRecord<CrmContactMirrorRecord>(data);
+}
+
 export async function replaceCrmDealCompanyLinks(
   supabase: DatabaseClient,
   input: {
@@ -247,6 +329,48 @@ export async function replaceCrmDealContactLinks(
   if (insertError) throw insertError;
 }
 
+export async function replaceCrmContactCompanyLinks(
+  supabase: DatabaseClient,
+  input: {
+    userId: string;
+    hubspotContactId: string;
+    rows: Array<{
+      hubspotCompanyId: string;
+      hubspotCompanyName: string | null;
+      hubspotCompanyDomain: string | null;
+      arcovaCompanyId: string | null;
+      hsLastModifiedDate: string | null;
+      rawPayload: Record<string, unknown>;
+    }>;
+  }
+): Promise<void> {
+  const { error: deleteError } = await supabase
+    .from('crm_contact_company_links')
+    .delete()
+    .eq('user_id', input.userId)
+    .eq('hubspot_contact_id', input.hubspotContactId);
+
+  if (deleteError) throw deleteError;
+
+  if (!input.rows.length) return;
+
+  const { error: insertError } = await supabase.from('crm_contact_company_links').insert(
+    input.rows.map((row) => ({
+      user_id: input.userId,
+      hubspot_contact_id: input.hubspotContactId,
+      hubspot_company_id: row.hubspotCompanyId,
+      hubspot_company_name: row.hubspotCompanyName,
+      hubspot_company_domain: row.hubspotCompanyDomain,
+      arcova_company_id: row.arcovaCompanyId,
+      hs_lastmodifieddate: row.hsLastModifiedDate,
+      raw_payload: row.rawPayload,
+      synced_at: new Date().toISOString(),
+    }))
+  );
+
+  if (insertError) throw insertError;
+}
+
 export async function findArcovaCompaniesByDomains(
   supabase: DatabaseClient,
   userId: string,
@@ -271,7 +395,7 @@ export async function findArcovaContactsByEmails(
   if (!emails.length) return [];
   const { data, error } = await supabase
     .from('contacts')
-    .select('id, email, company_id, company_name, company_domain, resolved_current_company_name, resolved_current_company_domain')
+    .select('id, email, job_title, seniority_level, business_area, company_id, company_name, company_domain, resolved_current_company_name, resolved_current_company_domain')
     .eq('user_id', userId)
     .in('email', emails);
 
@@ -303,7 +427,7 @@ export async function findArcovaContactsByIds(
   if (!ids.length) return [];
   const { data, error } = await supabase
     .from('contacts')
-    .select('id, email, company_id, company_name, company_domain, resolved_current_company_name, resolved_current_company_domain')
+    .select('id, email, job_title, seniority_level, business_area, company_id, company_name, company_domain, resolved_current_company_name, resolved_current_company_domain')
     .eq('user_id', userId)
     .in('id', ids);
 

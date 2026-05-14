@@ -1,11 +1,12 @@
 'use client';
 
 import { useAuth } from '@/context/AuthContext';
-import { useEnrichmentGuard } from '@/context/EnrichmentGuardContext';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState, useCallback, type KeyboardEvent } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel, type AgentLeadsFilter, type AgentPendingMessage } from '@/components/AgentPanel';
+import { AgentChatBar } from '@/components/AgentChatBar';
+import { useScrollMask } from '@/hooks/use-scroll-mask';
 import { ArcovaLoader } from '@/components/ArcovaLoader';
 import type { QueryLead } from '@/lib/leads-data';
 import {
@@ -28,6 +29,13 @@ import {
 } from '@/lib/contact-profile-display';
 import { cn } from '@/lib/utils';
 import { TableFitGaugeButton } from '@/components/TableFitGaugeButton';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu';
 import '@/app/leads/contacts-layout.css';
 import {
   Users,
@@ -393,8 +401,53 @@ type EnrichmentVisualState = {
 };
 
 const PAGE_SIZE = 50;
-const LEADS_TABLE_GRID =
-  'grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.15fr)_minmax(7.25rem,0.85fr)_minmax(0,5.25rem)_minmax(9.5rem,1.15fr)] gap-x-5';
+/**
+ * Responsive table grid — three tiers based on how much horizontal room the table
+ * has after sidebar + agent panel get their share. The grid TEMPLATE is set inline
+ * via the `style` attribute (using `useLeadsTableGridCols` below) so Tailwind
+ * doesn't have to compile a giant chain of `min-[1280px]:grid-cols-[...]`
+ * arbitrary classes (it dropped the longest variant and HubSpot + Action wrapped
+ * onto a second row at full width). Visibility stays on Tailwind via
+ * `hidden lg:flex` / `hidden min-[1280px]:flex`.
+ *
+ * Tiers:
+ * - <1024px: 3 columns — Name / Company / Contact fit. (Agent panel is hidden at
+ *   <768px, so the table has plenty of room for Company even on phones.)
+ * - 1024–1279px: 4 columns — adds Job title.
+ * - ≥1280px: 6 columns — adds HubSpot + Action.
+ */
+const LEADS_TABLE_GRID = 'grid gap-x-5';
+
+const LEADS_GRID_COLS_SM =
+  'minmax(0,1.15fr) minmax(0,1.15fr) minmax(5.5rem,0.7fr)';
+const LEADS_GRID_COLS_LG =
+  'minmax(0,1fr) minmax(0,1fr) minmax(0,1.15fr) minmax(5.5rem,0.7fr)';
+const LEADS_GRID_COLS_FULL =
+  'minmax(0,0.85fr) minmax(0,1fr) minmax(0,1.15fr) minmax(7.25rem,0.85fr) minmax(0,5.25rem) minmax(9.5rem,1.15fr)';
+
+function pickLeadsGridCols(width: number): string {
+  if (width >= 1280) return LEADS_GRID_COLS_FULL;
+  if (width >= 1024) return LEADS_GRID_COLS_LG;
+  return LEADS_GRID_COLS_SM;
+}
+
+/** Returns the right `grid-template-columns` value for the current viewport. */
+function useLeadsTableGridCols(): string {
+  // Initialize synchronously from `window.innerWidth` so there's no flash of the
+  // wrong (default 6-col) template on first render — that flash caused the data
+  // rows to render with cells in the wrong column slots before the effect ran.
+  const [cols, setCols] = useState<string>(() =>
+    typeof window === 'undefined' ? LEADS_GRID_COLS_FULL : pickLeadsGridCols(window.innerWidth),
+  );
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const update = () => setCols(pickLeadsGridCols(window.innerWidth));
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+  return cols;
+}
 
 function blurInputOnEnter(e: KeyboardEvent<HTMLInputElement>) {
   if (e.key !== 'Enter') return;
@@ -922,11 +975,14 @@ function SortArrow({ col, activeCol, dir }: { col: string; activeCol: string | n
 export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' | 'customers' }) {
   const { user, loading } = useAuth();
   const router = useRouter();
-  const { guardedNavigate } = useEnrichmentGuard();
   const searchParams = useSearchParams();
   const isCustomersPage = viewMode === 'customers';
 
   const [agentTrigger, setAgentTrigger] = useState<AgentPendingMessage | undefined>();
+  // Value of the floating "Intercom-style" chat bar shown while a contact card is open.
+  // On submit we dismiss the contact card and forward the text to AgentPanel as a
+  // pending message — the agent expands back into view and answers immediately.
+  const [agentChatBarValue, setAgentChatBarValue] = useState('');
   const fireAgent = (text: string, threadPreview?: string) =>
     setAgentTrigger((prev) => ({
       text,
@@ -935,6 +991,12 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
     }));
   const dashboardAgentTaskFiredRef = useRef<string | null>(null);
   const leadsScrollRef = useRef<HTMLDivElement | null>(null);
+
+  // Inline `grid-template-columns` value — driven by viewport width. See the const
+  // declarations above for the four tiers. We set this via `style` rather than long
+  // chained Tailwind arbitrary classes because the JIT compiler dropped the longest
+  // variant and the columns broke at full width.
+  const leadsGridCols = useLeadsTableGridCols();
 
   const [leads, setLeads] = useState<Lead[]>([]);
   const [total, setTotal] = useState(0);
@@ -957,6 +1019,12 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
     skippedContacts: { name: string; company: string | null; reason: string }[];
   } | null>(null);
   const [hubspotPullResult, setHubspotPullResult] = useState<{
+    fetchedContacts: number;
+    mirroredContacts: number;
+    contactEventsEmitted: number;
+    contactContextOnlyEvents: number;
+    contactRecomputedCompanies: number;
+    contactSkippedUnresolvedCompanies: number;
     fetchedDeals: number;
     mirroredDeals: number;
     emittedEvents: number;
@@ -968,6 +1036,37 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
   const [stopEnrichmentError, setStopEnrichmentError] = useState<string | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [selectedPreview, setSelectedPreview] = useState<'contact' | 'hubspot' | 'scoring' | 'action'>('contact');
+  // Mirror the AgentPanel column's bounding rect so the contact drawer can
+  // overlay it pixel-for-pixel regardless of viewport width or padding maths.
+  // The AgentPanel renders its outermost div with the marker class
+  // `.contacts-leads-agent-col` (passed via the `className` prop below).
+  const [agentRect, setAgentRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const el = document.querySelector<HTMLElement>('.contacts-leads-agent-col');
+    if (!el) return;
+    const update = () => {
+      const r = el.getBoundingClientRect();
+      // Below 768px the AgentPanel is `display: none` — its bounding rect is 0×0.
+      // Null out the rect in that case so the contact card / floating chat bar fall
+      // back to their CSS-class positioning (full-bleed glass card from the right).
+      if (r.width === 0 || r.height === 0) {
+        setAgentRect(null);
+        return;
+      }
+      setAgentRect({ top: r.top, left: r.left, width: r.width, height: r.height });
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  }, []);
   const [isWorkHistoryExpanded, setIsWorkHistoryExpanded] = useState(false);
   const [contactPanelOpen, setContactPanelOpen] = useState({
     fit: true,
@@ -1032,9 +1131,12 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
         setLeads(nextLeads);
         setTotal(result.total || 0);
 
+        // Preserve the user's current selection if it's still present, but otherwise
+        // keep nothing selected so the agent shows as the full card by default.
+        // (Used to auto-select the first lead; that hid the agent on every page load.)
         setSelectedLeadId((current) => {
           if (current && nextLeads.some((lead: Lead) => lead.id === current)) return current;
-          return nextLeads[0]?.id ?? null;
+          return null;
         });
       }
     } catch (err) {
@@ -1433,7 +1535,11 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
   };
 
   const deleteLead = async (leadId: string) => {
-    const confirmed = window.confirm('Remove this contact from Leads?');
+    const lead = leads.find((item) => item.id === leadId) ?? null;
+    const label = lead?.full_name || lead?.email || 'this contact';
+    const confirmed = window.confirm(
+      `Are you sure you want to archive ${label}? It will be hidden from active views and will not be re-imported or re-enriched automatically.`,
+    );
     if (!confirmed) return;
 
     setDeletingLeadId(leadId);
@@ -1444,7 +1550,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
 
       const result = await response.json();
       if (!response.ok) {
-        throw new Error(result.error || 'Failed to delete lead.');
+        throw new Error(result.error || 'Failed to archive lead.');
       }
 
       setLeads((prev) => prev.filter((lead) => lead.id !== leadId));
@@ -1455,7 +1561,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
         setSelectedLeadId(null);
       }
     } catch (error) {
-      console.error('Error deleting lead:', error);
+      console.error('Error archiving lead:', error);
     } finally {
       setDeletingLeadId(null);
     }
@@ -1663,6 +1769,11 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
     tableSortDir,
   );
   const selectedLead = leads.find((lead) => lead.id === selectedLeadId) ?? null;
+
+  // Only fade the bottom of the list while there's more content below the viewport;
+  // when scrolled to the end the last rows render in full without the mask clipping
+  // them. Re-measures whenever the row count changes (agent filter / fetch / etc.).
+  const { hasMore: hasMoreBelow } = useScrollMask(leadsScrollRef, [sortedLeads.length]);
 
   const openContactAcquisitionFromLead = useCallback(() => {
     if (!selectedLead?.company_id) return;
@@ -2329,7 +2440,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
   if (!user) return null;
 
   const contactsPageTitleBlock = (
-    <div className="mb-6 shrink-0 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+    <div className="mb-6 shrink-0 flex flex-col gap-4 max-[767px]:pl-14 lg:flex-row lg:items-end lg:justify-between">
       <div>
         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-arcova-teal">
           <Users className="h-3.5 w-3.5" />
@@ -2351,57 +2462,60 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
 
       {total > 0 && (
         <div className="flex items-center gap-2">
-          {!isCustomersPage && (
-            <button
-              onClick={() => router.push('/import')}
-              className="inline-flex items-center gap-1.5 px-4 py-2 bg-arcova-teal text-white rounded-lg text-sm hover:bg-arcova-teal/90 transition-colors"
-            >
-              <Upload className="w-3.5 h-3.5" />
-              Import
-            </button>
-          )}
-          <button
-            onClick={handleDownloadCsv}
-            className="inline-flex items-center gap-1.5 px-3 py-2 border border-gray-200 bg-white text-gray-700 rounded-lg text-sm hover:bg-gray-50 transition-colors"
-            title={isCustomersPage ? 'Export customers as CSV' : 'Export leads as CSV'}
-          >
-            <Download className="w-3.5 h-3.5" />
-            Export CSV
-          </button>
-          {!isCustomersPage && hubspotConnected && (
-            <button
-              onClick={handlePullHubspotCrm}
-              disabled={pullingHubspotCrm}
-              className="inline-flex items-center gap-2 px-3 py-2 border border-[#ff7a59]/25 bg-white text-[#cc5b3f] rounded-lg text-sm font-medium hover:bg-[#fff5f1] transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
-              title="Pull changed HubSpot CRM deals into Arcova"
-            >
-              {pullingHubspotCrm ? (
-                <RotateCw className="w-4 h-4 animate-spin" />
-              ) : (
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M18.164 7.932V5.085a2.198 2.198 0 0 0 1.268-1.978V3.06A2.199 2.199 0 0 0 17.235.862h-.047a2.199 2.199 0 0 0-2.197 2.197v.047a2.199 2.199 0 0 0 1.268 1.978v2.847a6.232 6.232 0 0 0-2.962 1.302L5.028 3.617a2.44 2.44 0 0 0 .072-.573A2.455 2.455 0 1 0 2.645 5.5a2.43 2.43 0 0 0 1.194-.315l8.122 4.707a6.248 6.248 0 0 0 0 4.208L4.123 18.5a2.432 2.432 0 0 0-1.478-.498 2.455 2.455 0 1 0 2.455 2.455 2.43 2.43 0 0 0-.388-1.337l7.91-4.583a6.266 6.266 0 0 0 8.976-5.628 6.25 6.25 0 0 0-3.434-5.977zm-1.023 9.565a3.59 3.59 0 1 1 0-7.181 3.59 3.59 0 0 1 0 7.181z"/>
-                </svg>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                className="inline-flex items-center gap-2 px-3 py-2 bg-arcova-teal text-white rounded-lg text-sm font-medium hover:bg-arcova-teal/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
+                title="Actions"
+              >
+                {pullingHubspotCrm || pushingToHubspot ? (
+                  <RotateCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <ChevronDown className="w-4 h-4" />
+                )}
+                Actions
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" sideOffset={6} className="min-w-[14rem]">
+              {!isCustomersPage && (
+                <DropdownMenuItem onSelect={() => router.push('/import')}>
+                  <Upload className="w-3.5 h-3.5" />
+                  Import
+                </DropdownMenuItem>
               )}
-              {pullingHubspotCrm ? 'Pulling…' : 'Pull HubSpot CRM'}
-            </button>
-          )}
-          {!isCustomersPage && hubspotConnected && (
-            <button
-              onClick={handlePushToHubspot}
-              disabled={pushingToHubspot}
-              className="inline-flex items-center gap-2 px-3 py-2 bg-[#ff7a59] text-white rounded-lg text-sm font-medium hover:bg-[#e8693f] transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
-              title="Sync enrichment data to HubSpot"
-            >
-              {pushingToHubspot ? (
-                <RotateCw className="w-4 h-4 animate-spin" />
-              ) : (
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M18.164 7.932V5.085a2.198 2.198 0 0 0 1.268-1.978V3.06A2.199 2.199 0 0 0 17.235.862h-.047a2.199 2.199 0 0 0-2.197 2.197v.047a2.199 2.199 0 0 0 1.268 1.978v2.847a6.232 6.232 0 0 0-2.962 1.302L5.028 3.617a2.44 2.44 0 0 0 .072-.573A2.455 2.455 0 1 0 2.645 5.5a2.43 2.43 0 0 0 1.194-.315l8.122 4.707a6.248 6.248 0 0 0 0 4.208L4.123 18.5a2.432 2.432 0 0 0-1.478-.498 2.455 2.455 0 1 0 2.455 2.455 2.43 2.43 0 0 0-.388-1.337l7.91-4.583a6.266 6.266 0 0 0 8.976-5.628 6.25 6.25 0 0 0-3.434-5.977zm-1.023 9.565a3.59 3.59 0 1 1 0-7.181 3.59 3.59 0 0 1 0 7.181z"/>
-                </svg>
+              <DropdownMenuItem onSelect={handleDownloadCsv}>
+                <Download className="w-3.5 h-3.5" />
+                Export CSV
+              </DropdownMenuItem>
+              {!isCustomersPage && hubspotConnected && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onSelect={handlePullHubspotCrm}
+                    disabled={pullingHubspotCrm}
+                  >
+                    {pullingHubspotCrm ? (
+                      <RotateCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Download className="w-3.5 h-3.5" />
+                    )}
+                    {pullingHubspotCrm ? 'Pulling…' : 'Pull HubSpot CRM'}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={handlePushToHubspot}
+                    disabled={pushingToHubspot}
+                  >
+                    {pushingToHubspot ? (
+                      <RotateCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Upload className="w-3.5 h-3.5" />
+                    )}
+                    {pushingToHubspot ? 'Syncing…' : 'Push to HubSpot'}
+                  </DropdownMenuItem>
+                </>
               )}
-              {pushingToHubspot ? 'Syncing…' : 'HubSpot Sync'}
-            </button>
-          )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       )}
     </div>
@@ -2467,20 +2581,26 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
             HubSpot CRM pulled
           </span>
           <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
-            {hubspotPullResult.fetchedDeals} fetched
+            {hubspotPullResult.fetchedContacts} contacts fetched
           </span>
           <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
-            {hubspotPullResult.mirroredDeals} mirrored
+            {hubspotPullResult.contactEventsEmitted} contact signals
           </span>
           <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
-            {hubspotPullResult.emittedEvents} signals
+            {hubspotPullResult.fetchedDeals} deals fetched
           </span>
           <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
-            {hubspotPullResult.recomputedCompanies} accounts updated
+            {hubspotPullResult.mirroredDeals} deals mirrored
           </span>
-          {hubspotPullResult.skippedUnresolvedCompanies > 0 && (
+          <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
+            {hubspotPullResult.emittedEvents} deal signals
+          </span>
+          <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
+            {hubspotPullResult.contactRecomputedCompanies + hubspotPullResult.recomputedCompanies} accounts updated
+          </span>
+          {(hubspotPullResult.contactContextOnlyEvents > 0 || hubspotPullResult.contactSkippedUnresolvedCompanies > 0 || hubspotPullResult.skippedUnresolvedCompanies > 0) && (
             <span className="text-xs font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">
-              {hubspotPullResult.skippedUnresolvedCompanies} unresolved
+              {hubspotPullResult.contactContextOnlyEvents} context-only · {hubspotPullResult.contactSkippedUnresolvedCompanies + hubspotPullResult.skippedUnresolvedCompanies} unresolved
             </span>
           )}
         </div>
@@ -2529,7 +2649,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
     <div className="flex min-h-0 h-screen bg-transparent">
       <AppSidebar />
 
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-3.5 overflow-hidden p-3.5 min-[1280px]:flex-row min-[1280px]:gap-2">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-3.5 overflow-hidden p-3.5 md:flex-row md:gap-2">
         <div className="contacts-leads-main flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[1.75rem] bg-transparent px-3 py-3 sm:px-5 sm:py-4 min-[1280px]:pr-2">
           <div className="flex min-h-0 w-full max-w-none flex-1 flex-col">
             {loadingLeads ? (
@@ -2619,17 +2739,23 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                         leadsScrollRef.current.scrollTop += e.deltaY;
                       }
                     }}
-                    className={`${LEADS_TABLE_GRID} shrink-0 items-start px-4 py-3 border-b border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.4)] text-[13px] font-semibold uppercase tracking-wide text-[#7d909a]`}
+                    className={`${LEADS_TABLE_GRID} shrink-0 items-start pl-9 pr-4 py-3 border-b border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.4)] text-[13px] font-semibold uppercase tracking-wide text-[#7d909a]`}
+                    style={{ gridTemplateColumns: leadsGridCols }}
                   >
                     {(['name', 'job_title', 'company'] as const).map((col) => (
                       <button
                         key={col}
                         onClick={() => handleSortCol(col)}
-                        className={`${
+                        className={cn(
                           col === 'company'
                             ? 'flex flex-col items-start gap-0.5'
-                            : 'flex items-start gap-1'
-                        } hover:text-gray-800 transition-colors text-left`}
+                            : 'flex items-start gap-1',
+                          // Job title drops out below lg. Company stays visible at
+                          // all sizes — once the agent is hidden (<768px) the table
+                          // has plenty of room to keep it.
+                          col === 'job_title' && 'hidden lg:flex',
+                          'hover:text-gray-800 transition-colors text-left',
+                        )}
                       >
                         <span className="flex items-start gap-1">
                           {col === 'name' ? 'Name' : col === 'job_title' ? 'Job title' : 'Company name'}
@@ -2652,41 +2778,67 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                         <SortArrow col="contact_fit" activeCol={tableSortCol} dir={tableSortDir} />
                       </span>
                     </button>
-                    <div className="flex w-full items-center justify-center">
+                    <div className="hidden w-full items-center justify-center min-[1280px]:flex">
                       <span className="normal-case tracking-normal">HubSpot</span>
                     </div>
                     <button
                       type="button"
                       onClick={() => handleSortCol('status')}
-                      className="flex w-full items-start justify-center gap-1 hover:text-gray-800 transition-colors"
+                      className="hidden w-full items-start justify-center gap-1 hover:text-gray-800 transition-colors min-[1280px]:flex"
                     >
                       Action
                       <SortArrow col="status" activeCol={tableSortCol} dir={tableSortDir} />
                     </button>
                   </div>
 
-                  <div ref={leadsScrollRef} className="min-h-0 flex-1 divide-y divide-[rgba(13,53,71,0.06)] overflow-y-auto">
+                  <div
+                    ref={leadsScrollRef}
+                    className="min-h-0 flex-1 divide-y divide-[rgba(13,53,71,0.06)] overflow-y-auto"
+                    style={
+                      hasMoreBelow
+                        ? {
+                            maskImage: 'linear-gradient(to bottom, black calc(100% - 9rem), transparent)',
+                            WebkitMaskImage: 'linear-gradient(to bottom, black calc(100% - 9rem), transparent)',
+                          }
+                        : undefined
+                    }
+                  >
                     {/* Single render path — agent filter narrows sortedLeads in-place */}
-                    {sortedLeads.map((lead) => {
+                    {sortedLeads.map((lead, index) => {
                       const isSelected = selectedLeadId === lead.id;
                       const enriching = isEnriching(lead);
                       const enrichmentProgress = getEnrichmentProgress(lead);
+                      const rowNumber = (page - 1) * PAGE_SIZE + index + 1;
 
                       if (enriching) {
                         return (
                           <div
                             key={lead.id}
+                            role="button"
+                            tabIndex={0}
                             onClick={() => {
                               setSelectedLeadId(lead.id);
                               setSelectedPreview('contact');
                               cancelEditingLead();
                             }}
-                            className={`${LEADS_TABLE_GRID} relative px-4 py-3 items-center cursor-pointer transition-all duration-150 border-b border-gray-50 last:border-0 before:pointer-events-none before:absolute before:left-0 before:top-2 before:bottom-2 before:w-[3px] before:rounded-sm before:content-[''] before:transition-colors ${
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                setSelectedLeadId(lead.id);
+                                setSelectedPreview('contact');
+                                cancelEditingLead();
+                              }
+                            }}
+                            className={`${LEADS_TABLE_GRID} relative pl-9 pr-4 py-3 items-center cursor-pointer transition-all duration-150 border-b border-gray-50 last:border-0 before:pointer-events-none before:absolute before:left-0 before:top-2 before:bottom-2 before:w-[3px] before:rounded-sm before:content-[''] before:transition-colors ${
                               isSelected
                                 ? 'bg-arcova-teal/10 before:bg-arcova-teal'
                                 : 'before:bg-transparent hover:bg-arcova-teal/5 hover:before:bg-arcova-teal/35'
                             }`}
+                            style={{ gridTemplateColumns: leadsGridCols }}
                           >
+                            <span aria-hidden className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-medium tabular-nums text-gray-400 select-none">
+                              {rowNumber}
+                            </span>
                             <div className="min-w-0">
                               <p className="text-sm font-medium text-gray-400 truncate">
                                 {lead.full_name ||
@@ -2695,7 +2847,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                               </p>
                             </div>
 
-                            <div className="min-w-0">
+                            <div className="hidden min-w-0 lg:block">
                               <p className="text-xs text-gray-400 truncate leading-snug">
                                 {enrichmentProgress.label}...
                               </p>
@@ -2721,11 +2873,11 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                               <span className="text-[11px] text-gray-300 tabular-nums">—</span>
                             </div>
 
-                            <div className="min-w-0 flex items-center justify-center">
+                            <div className="hidden min-w-0 items-center justify-center min-[1280px]:flex">
                               <span className="text-[11px] text-gray-300 tabular-nums">—</span>
                             </div>
 
-                            <div className="min-w-0 flex items-center justify-center">
+                            <div className="hidden min-w-0 items-center justify-center min-[1280px]:flex">
                               <ArcovaLoader size={28} />
                             </div>
                           </div>
@@ -2735,17 +2887,31 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                       return (
                         <div
                           key={lead.id}
+                          role="button"
+                          tabIndex={0}
                           onClick={() => {
                             setSelectedLeadId(lead.id);
                             setSelectedPreview('contact');
                             cancelEditingLead();
                           }}
-                          className={`${LEADS_TABLE_GRID} relative px-4 py-3 items-center cursor-pointer transition-all duration-150 opacity-100 before:pointer-events-none before:absolute before:left-0 before:top-2 before:bottom-2 before:w-[3px] before:rounded-sm before:content-[''] before:transition-colors ${
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              setSelectedLeadId(lead.id);
+                              setSelectedPreview('contact');
+                              cancelEditingLead();
+                            }
+                          }}
+                          className={`${LEADS_TABLE_GRID} relative pl-9 pr-4 py-3 items-center cursor-pointer transition-all duration-150 opacity-100 before:pointer-events-none before:absolute before:left-0 before:top-2 before:bottom-2 before:w-[3px] before:rounded-sm before:content-[''] before:transition-colors ${
                             isSelected
                               ? 'bg-arcova-teal/10 before:bg-arcova-teal'
                               : 'before:bg-transparent hover:bg-arcova-teal/5 hover:before:bg-arcova-teal/35'
                           }`}
+                          style={{ gridTemplateColumns: leadsGridCols }}
                         >
+                          <span aria-hidden className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-medium tabular-nums text-gray-400 select-none">
+                            {rowNumber}
+                          </span>
                           {/* Full name */}
                           <div className="min-w-0">
                             <div className="flex min-w-0 items-center gap-2">
@@ -2757,14 +2923,15 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                             </div>
                           </div>
 
-                          {/* Job title */}
-                          <div className="min-w-0">
+                          {/* Job title — hidden below lg (table is too cramped) */}
+                          <div className="hidden min-w-0 lg:block">
                             <p className="truncate text-[12px] leading-snug text-gray-700">
                               {((t) => t.length > 30 ? t.slice(0, 30) + '…' : t)(lead.resolved_current_job_title || lead.job_title || '—')}
                             </p>
                           </div>
 
-                          {/* Company name */}
+                          {/* Company name — always visible (agent panel is hidden
+                              below 768px so the table has plenty of room for it). */}
                           <div className="min-w-0">
                             {(() => {
                               const companyFirmographics = getDisplayedCompanyFirmographics(lead);
@@ -2822,8 +2989,8 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                             />
                           </div>
 
-                          {/* HubSpot */}
-                          <div className="min-w-0 flex items-center justify-center">
+                          {/* HubSpot — hidden below 1280px (narrow viewport) */}
+                          <div className="hidden min-w-0 items-center justify-center min-[1280px]:flex">
                             {(() => {
                               const hubspotState = hubspotCrmByContactId[lead.id];
                               const badge = hubspotState?.loading
@@ -2856,8 +3023,8 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                             })()}
                           </div>
 
-                          {/* Action */}
-                          <div className="min-w-0 flex items-center justify-center">
+                          {/* Action — hidden below 1280px (narrow viewport) */}
+                          <div className="hidden min-w-0 items-center justify-center min-[1280px]:flex">
                             {(() => {
                               if (lead.hubspot_lead_state === 'customer') {
                                 return (
@@ -2960,20 +3127,78 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                   <>
                     <button
                       type="button"
-                      className="fixed inset-0 z-40 bg-[rgba(13,53,71,0.14)] backdrop-blur-[1px] transition-opacity min-[1280px]:hidden"
+                      className="fixed inset-0 z-40 transition-opacity min-[1280px]:hidden"
                       aria-label="Close panel"
                       onClick={() => {
                         setSelectedLeadId(null);
                         cancelEditingLead();
                       }}
                     />
+                    {/* Floating agent chat bar — sits at the bottom of the AgentPanel column
+                        while the user reviews a contact. The agent column itself is
+                        `invisible` in this state, so this bar is the agent's only visible
+                        surface. Uses the shared `AgentChatBar` so it matches the side-panel
+                        agent's input exactly. Submit dismisses the contact card and
+                        forwards the text to the agent, which expands back into view. */}
+                    {agentRect && (
+                      <div
+                        className={cn(
+                          // Glass card wrapper — same surface treatment as the contact
+                          // card above it (rounded, white-translucent, soft border,
+                          // backdrop blur) so the two read as one stacked column.
+                          'fixed z-[51] flex items-center rounded-[1.3125rem] border border-[rgba(255,255,255,0.88)] bg-[rgba(255,255,255,0.55)] px-3 py-2.5 shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2)] backdrop-blur-2xl backdrop-saturate-150',
+                        )}
+                        style={{
+                          top: agentRect.top + agentRect.height - 58,
+                          // Width-aligned to the contact card (which uses agentRect.width).
+                          left: agentRect.left,
+                          width: agentRect.width,
+                        }}
+                      >
+                        <AgentChatBar
+                          value={agentChatBarValue}
+                          onChange={setAgentChatBarValue}
+                          onSubmit={() => {
+                            const text = agentChatBarValue.trim();
+                            if (!text) return;
+                            fireAgent(text);
+                            setAgentChatBarValue('');
+                            setSelectedLeadId(null);
+                            cancelEditingLead();
+                          }}
+                          placeholder={
+                            isCustomersPage
+                              ? 'Ask anything about your customers…'
+                              : 'Ask anything about your contacts…'
+                          }
+                          className="w-full"
+                        />
+                      </div>
+                    )}
                     <aside
                       className={cn(
+                        // Position + size mirror the AgentPanel column's actual bounding rect
+                        // (see agentRect state above), so the drawer fully covers the agent
+                        // regardless of viewport width or padding. Glass surface (translucent
+                        // white + backdrop-blur) matches the rest of the page; the Contact /
+                        // Agent bookmark tabs let users switch between the two cards.
                         'contacts-leads-drawer flex min-h-0 flex-col overflow-hidden rounded-[1.3125rem] border border-[rgba(255,255,255,0.88)] bg-[rgba(255,255,255,0.55)] shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2)] backdrop-blur-2xl backdrop-saturate-150',
-                        'fixed z-30',
-                        'max-[1279px]:bottom-3.5 max-[1279px]:top-3.5 max-[1279px]:right-3.5 max-[1279px]:w-[min(calc(100vw-1.75rem),26rem)]',
-                        'min-[1280px]:top-[26px] min-[1280px]:bottom-[26px] min-[1280px]:right-[26px] min-[1280px]:w-[26rem]',
+                        'fixed z-50',
+                        // Fallback for the first paint, before the rect is measured.
+                        !agentRect && 'max-md:bottom-3.5 max-md:top-3.5 max-md:right-3.5 max-md:w-[min(calc(100vw-1.75rem),22.5rem)] md:top-[14px] md:bottom-[14px] md:right-[1.625rem] md:w-[22.5rem]',
                       )}
+                      style={
+                        agentRect
+                          ? {
+                              top: agentRect.top,
+                              left: agentRect.left,
+                              width: agentRect.width,
+                              // Leaves ~60px at the bottom so the floating agent chat bar
+                              // sits below the contact card rather than being covered by it.
+                              height: Math.max(0, agentRect.height - 64),
+                            }
+                          : undefined
+                      }
                     >
                   {selectedLead ? (
                     <div
@@ -3887,7 +4112,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                                       <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
                                         <button
                                           type="button"
-                                          onClick={() => guardedNavigate(ROUTES.signals)}
+                                          onClick={() => router.push(ROUTES.signals)}
                                           className="inline-flex items-center gap-1.5 text-sm font-semibold text-arcova-teal hover:text-arcova-teal/85 transition-colors"
                                         >
                                           View Signals
@@ -4144,7 +4369,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                                 className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition-colors"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
-                                {isDeletingSelected ? 'Deleting…' : 'Delete contact'}
+                                {isDeletingSelected ? 'Archiving…' : 'Archive contact'}
                               </button>
                             </div>
                           )
@@ -4161,7 +4386,14 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
         </div>
 
         <AgentPanel
-          className="min-[1280px]:pl-1.5"
+          className={cn(
+            'contacts-leads-agent-col min-[1280px]:pl-1.5',
+            // Folds the agent away while the user is reviewing a contact —
+            // the contact card overlays this slot and the floating chat bar
+            // takes over at the bottom. `invisible` keeps the column in
+            // layout so agentRect continues to track its footprint.
+            selectedLeadId && 'invisible',
+          )}
           page="leads"
           headerSubtitle={isCustomersPage ? 'Ask me about your customers' : undefined}
           pageContext={{

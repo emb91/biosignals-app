@@ -282,6 +282,7 @@ export async function fetchAggregatedAccounts(
     `,
     )
     .eq('user_id', userId)
+    .is('archived_at', null)
     .not('company_id', 'is', null);
 
   if (error) return { accounts: [], error: error.message };

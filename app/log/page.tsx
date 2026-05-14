@@ -29,6 +29,15 @@ interface SyncEvent {
   error_details: string[];
   companies_updated: number | null;
   pull_count: number | null;
+  crm_contacts_fetched: number | null;
+  crm_contacts_mirrored: number | null;
+  contact_events_emitted: number | null;
+  contact_context_only_events: number | null;
+  crm_recomputed_companies: number | null;
+  crm_unresolved_count: number | null;
+  contact_signal_types: string[];
+  contact_context_signal_types: string[];
+  deal_signal_types: string[];
   deals_fetched: number | null;
   deals_mirrored: number | null;
   deal_events_emitted: number | null;
@@ -95,12 +104,22 @@ function eventSublabel(event: SyncEvent): string {
   }
   if (event.event_type === 'pull' || event.event_type === 'full') {
     if (event.pull_count != null) parts.push(`${event.pull_count} contacts pulled`);
+    if (event.contact_events_emitted != null && event.contact_events_emitted > 0)
+      parts.push(`${event.contact_events_emitted} CRM contact signals`);
   }
-  if (event.event_type === 'full') {
+  if (event.event_type === 'pull' || event.event_type === 'full') {
     if (event.deals_mirrored != null && event.deals_mirrored > 0)
       parts.push(`${event.deals_mirrored} deals synced`);
   }
   return parts.join(' · ') || 'No data';
+}
+
+function formatSignalTypeLabel(value: string): string {
+  return value
+    .replace(/_/g, ' ')
+    .replace(/\bcrm\b/gi, 'CRM')
+    .replace(/\bhs\b/gi, 'HS')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 type StatusLevel = 'done' | 'warning' | 'failed';
@@ -241,9 +260,17 @@ function SyncEventCard({
               </>
             )}
             {(event.event_type === 'pull' || event.event_type === 'full') && (
-              <InlineStat label="Pulled" value={event.pull_count} />
+              <>
+                <InlineStat label="Pulled" value={event.pull_count} />
+                <InlineStat label="CRM fetched" value={event.crm_contacts_fetched} />
+                <InlineStat label="CRM mirrored" value={event.crm_contacts_mirrored} />
+                <InlineStat label="Contact signals" value={event.contact_events_emitted} />
+                <InlineStat label="Context-only" value={event.contact_context_only_events} />
+                <InlineStat label="Accounts updated" value={event.crm_recomputed_companies} />
+                <InlineStat label="Unresolved" value={event.crm_unresolved_count} />
+              </>
             )}
-            {event.event_type === 'full' && (
+            {(event.event_type === 'pull' || event.event_type === 'full') && (
               <>
                 <InlineStat label="Deals fetched" value={event.deals_fetched} />
                 <InlineStat label="Deals mirrored" value={event.deals_mirrored} />
@@ -282,6 +309,54 @@ function SyncEventCard({
                   <li key={i} className="text-[11.5px] text-red-600 font-mono break-all">{e}</li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {event.contact_signal_types.length > 0 && (
+            <div>
+              <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">Contact signals</p>
+              <div className="flex flex-wrap gap-1.5">
+                {event.contact_signal_types.map((signalType) => (
+                  <span
+                    key={signalType}
+                    className="rounded-full border border-[rgba(45,138,138,0.18)] bg-[rgba(45,138,138,0.08)] px-2 py-0.5 text-[11px] font-medium text-[#2d8a8a]"
+                  >
+                    {formatSignalTypeLabel(signalType)}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {event.contact_context_signal_types.length > 0 && (
+            <div>
+              <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">Context only</p>
+              <div className="flex flex-wrap gap-1.5">
+                {event.contact_context_signal_types.map((signalType) => (
+                  <span
+                    key={signalType}
+                    className="rounded-full border border-[rgba(13,53,71,0.12)] bg-[rgba(13,53,71,0.04)] px-2 py-0.5 text-[11px] font-medium text-[#4a6470]"
+                  >
+                    {formatSignalTypeLabel(signalType)}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {event.deal_signal_types.length > 0 && (
+            <div>
+              <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">Deal signals</p>
+              <div className="flex flex-wrap gap-1.5">
+                {event.deal_signal_types.map((signalType) => (
+                  <span
+                    key={signalType}
+                    className="rounded-full border border-[rgba(240,127,90,0.22)] bg-[rgba(240,127,90,0.08)] px-2 py-0.5 text-[11px] font-medium text-[#f07f5a]"
+                  >
+                    {formatSignalTypeLabel(signalType)}
+                  </span>
+                ))}
+              </div>
             </div>
           )}
 
@@ -372,6 +447,15 @@ export default function LogPage() {
         error_details: Array.isArray(e.error_details)
           ? (e.error_details as unknown[]).filter((x): x is string => typeof x === 'string')
           : [],
+        contact_signal_types: Array.isArray((e as { contact_signal_types?: unknown[] }).contact_signal_types)
+          ? ((e as { contact_signal_types?: unknown[] }).contact_signal_types as unknown[]).filter((x): x is string => typeof x === 'string')
+          : [],
+        contact_context_signal_types: Array.isArray((e as { contact_context_signal_types?: unknown[] }).contact_context_signal_types)
+          ? ((e as { contact_context_signal_types?: unknown[] }).contact_context_signal_types as unknown[]).filter((x): x is string => typeof x === 'string')
+          : [],
+        deal_signal_types: Array.isArray((e as { deal_signal_types?: unknown[] }).deal_signal_types)
+          ? ((e as { deal_signal_types?: unknown[] }).deal_signal_types as unknown[]).filter((x): x is string => typeof x === 'string')
+          : [],
       }));
 
       const importEvents: SyncEvent[] = (importJson.batches ?? []).map((b) => ({
@@ -385,6 +469,15 @@ export default function LogPage() {
         error_details: [],
         companies_updated: null,
         pull_count: b.filename?.startsWith('hubspot-auto-') ? (b.processed_rows ?? null) : null,
+        crm_contacts_fetched: null,
+        crm_contacts_mirrored: null,
+        contact_events_emitted: null,
+        contact_context_only_events: null,
+        crm_recomputed_companies: null,
+        crm_unresolved_count: null,
+        contact_signal_types: [],
+        contact_context_signal_types: [],
+        deal_signal_types: [],
         deals_fetched: null,
         deals_mirrored: null,
         deal_events_emitted: null,
@@ -413,6 +506,15 @@ export default function LogPage() {
             error_details: Array.isArray(log.last_error_details) ? log.last_error_details : [],
             companies_updated: null,
             pull_count: null,
+            crm_contacts_fetched: null,
+            crm_contacts_mirrored: null,
+            contact_events_emitted: null,
+            contact_context_only_events: null,
+            crm_recomputed_companies: null,
+            crm_unresolved_count: null,
+            contact_signal_types: [],
+            contact_context_signal_types: [],
+            deal_signal_types: [],
             deals_fetched: null,
             deals_mirrored: null,
             deal_events_emitted: null,
@@ -463,7 +565,7 @@ export default function LogPage() {
     <div className="flex h-screen bg-transparent">
       <AppSidebar />
 
-      <div className="flex min-h-0 flex-1 overflow-hidden min-[1280px]:flex-row flex-col">
+      <div className="flex min-h-0 flex-1 overflow-hidden md:flex-row flex-col">
         <div className="bg-transparent flex-1 overflow-auto px-6 py-8 lg:px-10">
           <div className="w-full max-w-[1180px] mx-auto">
             <PageHeader

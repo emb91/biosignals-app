@@ -436,8 +436,8 @@ async function attachHubSpotLeadStateBestEffort(
       const dedupedLinks = Array.from(
         new Map(
           candidateLinks
-            .map((link) => [String(link.hubspot_deal_id), link])
-            .filter(([dealId]) => Boolean(dealId)),
+            .map((link) => [String(link.hubspot_deal_id), link] as const)
+            .filter((entry): entry is readonly [string, (typeof candidateLinks)[number]] => Boolean(entry[0])),
         ).values(),
       );
 
@@ -655,10 +655,11 @@ export async function GET(request: Request) {
     }
 
     const runQuery = (selectClause: string) => {
-      let query = supabase
-        .from('contacts')
-        .select(selectClause, { count: 'exact' })
-        .eq('user_id', user.id);
+    let query = supabase
+      .from('contacts')
+      .select(selectClause, { count: 'exact' })
+      .eq('user_id', user.id)
+      .is('archived_at', null);
 
       if (lifecycle === 'customers') {
         query = query.in('id', customerContactIds);

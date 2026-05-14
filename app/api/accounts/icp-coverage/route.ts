@@ -28,6 +28,7 @@ export async function GET() {
         'company_id, contact_fit_score, fit_score, intent_score, companies(id, company_fit_score, matched_icp_id)',
       )
       .eq('user_id', user.id)
+      .is('archived_at', null)
       .not('company_id', 'is', null);
 
     if (error) {

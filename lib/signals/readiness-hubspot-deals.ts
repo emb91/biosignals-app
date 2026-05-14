@@ -128,6 +128,7 @@ export type HubSpotDealReadinessSyncResult = {
   recomputedCompanies: number;
   skippedUnresolvedCompanies: number;
   checkpoint: string | null;
+  emittedSignalTypes: string[];
 };
 
 function normalizeStage(value?: string | null): string | null {
@@ -319,6 +320,14 @@ function resolveDealTargets(
 
   if (uniqueCandidateIds.length === 1 && hubspotDomains.length === 0) {
     const candidate = contactCandidates[0]!;
+    if (!candidate.companyId) {
+      return {
+        targets: [],
+        suppressed: true,
+        resolutionStatus: 'ambiguous_unresolved',
+        mismatchReason: 'missing_contact_company_id',
+      };
+    }
     return {
       targets: [{
         companyId: candidate.companyId,
@@ -409,6 +418,7 @@ export async function syncHubSpotDealsIntoReadiness(
         recomputedCompanies: 0,
         skippedUnresolvedCompanies: 0,
         checkpoint: checkpoint?.last_synced_remote_at ?? null,
+        emittedSignalTypes: [],
       };
     }
 
@@ -490,6 +500,7 @@ export async function syncHubSpotDealsIntoReadiness(
     let emittedEvents = 0;
     let skippedUnresolvedCompanies = 0;
     const affectedCompanyIds = new Set<string>();
+    const emittedSignalTypes = new Set<string>();
 
     for (const deal of deals) {
       const previous = existingDeals.get(deal.id) ?? null;
@@ -665,6 +676,7 @@ export async function syncHubSpotDealsIntoReadiness(
 
           affectedCompanyIds.add(companyId);
           emittedEvents += 1;
+          emittedSignalTypes.add(change.sourceEventType);
         }
       }
     }
@@ -697,6 +709,7 @@ export async function syncHubSpotDealsIntoReadiness(
       recomputedCompanies: affectedCompanyIds.size,
       skippedUnresolvedCompanies,
       checkpoint: maxModifiedAt ?? checkpoint?.last_synced_remote_at ?? null,
+      emittedSignalTypes: [...emittedSignalTypes],
     };
   } catch (error) {
     const message = errorToMessage(error);

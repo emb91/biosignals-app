@@ -25,12 +25,17 @@ export interface IcpPriority {
 }
 
 const CACHE_KEY = 'arcova:icp-priorities';
-const TTL_MS = 15 * 60 * 1000; // 15 minutes
+// Long TTL — the server-side hash check is the real source of freshness. The TTL just
+// catches edge cases (prompt changes, app updates, manual sessionStorage rot).
+const TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const DISMISSED_KEY = 'arcova:icp-dismissed-priorities';
 
 interface CachedEntry {
   fetchedAt: number;
   priorities: IcpPriority[];
+  /** Server-returned hash of the ICP set + company + dismissals. Sent back on the next
+      fetch so the server can short-circuit the Claude call when nothing has changed. */
+  hash: string;
 }
 
 function readCache(): CachedEntry | null {
@@ -47,10 +52,10 @@ function readCache(): CachedEntry | null {
   }
 }
 
-function writeCache(priorities: IcpPriority[]): void {
+function writeCache(priorities: IcpPriority[], hash: string): void {
   if (typeof window === 'undefined') return;
   try {
-    const entry: CachedEntry = { fetchedAt: Date.now(), priorities };
+    const entry: CachedEntry = { fetchedAt: Date.now(), priorities, hash };
     sessionStorage.setItem(CACHE_KEY, JSON.stringify(entry));
   } catch {
     // sessionStorage may be unavailable (Safari private, etc.) — ignore.
@@ -60,7 +65,7 @@ function writeCache(priorities: IcpPriority[]): void {
 export function getDismissedPriorityIds(): Set<string> {
   if (typeof window === 'undefined') return new Set();
   try {
-    const raw = localStorage.getItem(DISMISSED_KEY);
+    const raw = sessionStorage.getItem(DISMISSED_KEY);
     if (!raw) return new Set();
     const parsed = JSON.parse(raw) as string[];
     return new Set(Array.isArray(parsed) ? parsed : []);
@@ -70,37 +75,38 @@ export function getDismissedPriorityIds(): Set<string> {
 }
 
 /**
- * Dismiss a priority. Writes locally (immediate UI feedback) AND posts to the server so
- * /today and other tabs/devices see the same state. Also busts the caches so the next
- * fetch round-trip pulls the new server-side filtered list.
+ * Dismiss a priority. Hides it in the UI immediately (sessionStorage) and writes to the
+ * server so /today stays in sync — dismissed items won't appear on /today either.
  */
 export function dismissPriority(id: string): void {
   if (typeof window === 'undefined') return;
   try {
     const current = getDismissedPriorityIds();
     current.add(id);
-    localStorage.setItem(DISMISSED_KEY, JSON.stringify([...current]));
+    sessionStorage.setItem(DISMISSED_KEY, JSON.stringify([...current]));
   } catch {
     // ignore
   }
-  // Fire-and-forget server write. If it fails the local store still hides the card; the
-  // server filter just won't apply until the next successful dismissal.
-  try {
-    void fetch('/api/agent/dismiss-priority', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, source: 'icp-audit' }),
-    }).catch(() => {});
-  } catch {
-    // ignore network errors — local hide still works
+  void fetch('/api/agent/dismiss-priority', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, source: 'icp-audit' }),
+  }).catch(() => {});
+  clearIcpPrioritiesCache();
+}
+
+/**
+ * Clear all dismissals (session + DB) and bust the cache so the next fetch re-surfaces
+ * all findings. Called by the Re-audit button — resets /today alignment too.
+ */
+export async function clearIcpAuditDismissals(): Promise<void> {
+  if (typeof window !== 'undefined') {
+    try { sessionStorage.removeItem(DISMISSED_KEY); } catch { /* ignore */ }
   }
-  // Bust both caches so /today and `/icps` refetch the filtered list next time.
   try {
-    sessionStorage.removeItem(CACHE_KEY);
-    sessionStorage.removeItem('arcova:today-priorities');
-  } catch {
-    // ignore
-  }
+    await fetch('/api/agent/dismiss-priority?source=icp-audit', { method: 'DELETE' });
+  } catch { /* ignore */ }
+  clearIcpPrioritiesCache();
 }
 
 export function clearIcpPrioritiesCache(): void {
@@ -114,20 +120,50 @@ export function clearIcpPrioritiesCache(): void {
   }
 }
 
-/** Fetches the raw individual ICP-audit items used by the agent inbox on `/icps`. */
+/**
+ * Fetches the raw individual ICP-audit items used by the agent inbox on `/icps`.
+ *
+ * Sends the cached `hash` so the server can short-circuit the Claude call when the ICP
+ * set / company profile / dismissals haven't changed. Three flows:
+ *
+ *   1. No cache locally → server runs the audit, returns priorities + new hash.
+ *   2. Cache + matching hash → server responds `{ unchanged: true }`, we keep the cache.
+ *   3. Cache + different hash → server runs the audit, returns priorities + new hash, we overwrite.
+ *
+ * `forceRefresh: true` bypasses the hash check (e.g. the Re-audit this page button).
+ */
 export async function fetchIcpPriorities(opts?: { forceRefresh?: boolean }): Promise<IcpPriority[]> {
-  if (!opts?.forceRefresh) {
-    const cached = readCache();
-    if (cached) return cached.priorities;
+  const cached = readCache();
+  if (!opts?.forceRefresh && cached) {
+    // Optimistically return cached value; concurrently ask the server whether the inputs
+    // have changed. If they have, the next call will pick up the fresh result.
+    // (For simplicity we await the round-trip here — the server response is fast when
+    // it's just a hash check; only the cache-miss path runs Claude.)
   }
   try {
-    const res = await fetch('/api/agent/icp-priorities', { method: 'POST' });
-    if (!res.ok) return [];
-    const data = await res.json() as { priorities?: IcpPriority[] };
+    const res = await fetch('/api/agent/icp-priorities', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        knownHash: cached?.hash ?? '',
+        forceRefresh: opts?.forceRefresh === true,
+      }),
+    });
+    if (!res.ok) return cached?.priorities ?? [];
+    const data = await res.json() as {
+      priorities?: IcpPriority[];
+      unchanged?: boolean;
+      hash?: string;
+    };
+    if (data.unchanged && cached) {
+      // Inputs haven't changed; keep our cached priorities (and refresh the TTL).
+      writeCache(cached.priorities, cached.hash);
+      return cached.priorities;
+    }
     const priorities = Array.isArray(data.priorities) ? data.priorities : [];
-    writeCache(priorities);
+    if (typeof data.hash === 'string') writeCache(priorities, data.hash);
     return priorities;
   } catch {
-    return [];
+    return cached?.priorities ?? [];
   }
 }

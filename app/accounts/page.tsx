@@ -5,13 +5,13 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel, type AgentPendingMessage, type AgentTableFilter } from '@/components/AgentPanel';
+import { AgentChatBar } from '@/components/AgentChatBar';
+import { useScrollMask } from '@/hooks/use-scroll-mask';
 import type {
   AccountQueryColumn,
   QueryAccount,
 } from '@/lib/accounts-data';
 import {
-  Activity,
-  AlertTriangle,
   Building2,
   ChevronDown,
   ChevronLeft,
@@ -19,7 +19,9 @@ import {
   ChevronUp,
   ChevronsUpDown,
   ExternalLink,
+  Pencil,
   RotateCw,
+  Trash2,
   Users,
   X,
 } from 'lucide-react';
@@ -251,8 +253,13 @@ function TaxonomyPills({ items }: { items: string[] | null | undefined }) {
 }
 
 const DEFAULT_COLUMNS: AccountQueryColumn[] = ['company', 'company_type', 'fit', 'contacts', 'action'];
-const MEDIUM_COLUMNS: AccountQueryColumn[] = ['company', 'fit', 'contacts', 'action'];
-const SMALL_COLUMNS: AccountQueryColumn[] = ['company', 'fit', 'action'];
+// Below 1280px the table is space-constrained (sidebar collapses to hamburger at
+// <1280, agent panel is still ~380px until <768). Cramming all 5 columns turns the
+// header into overlapping word soup — so below 1280 we keep just the essentials:
+// Company (name), Company type, Fit. Same three columns hold at phone size — the
+// agent is hidden at <768 so the table has plenty of room for Company type to stay.
+const MEDIUM_COLUMNS: AccountQueryColumn[] = ['company', 'company_type', 'fit'];
+const SMALL_COLUMNS: AccountQueryColumn[] = ['company', 'company_type', 'fit'];
 
 const ACCOUNT_QUERY_COL_DEFS: Record<AccountQueryColumn, { label: string; width: string }> = {
   company: { label: 'Company', width: 'minmax(0,1.05fr)' },
@@ -274,19 +281,22 @@ function accountQueryGridCols(columns: AccountQueryColumn[]): string {
   return columns.map((column) => ACCOUNT_QUERY_COL_DEFS[column].width).join(' ');
 }
 
+function pickAccountColumns(width: number): AccountQueryColumn[] {
+  if (width >= 1280) return DEFAULT_COLUMNS;
+  if (width < 640) return SMALL_COLUMNS;
+  return MEDIUM_COLUMNS;
+}
+
 function useResponsiveAccountColumns(): AccountQueryColumn[] {
-  const [columns, setColumns] = useState<AccountQueryColumn[]>(DEFAULT_COLUMNS);
+  // Initialize synchronously from `window.innerWidth` so there's no flash of the
+  // wrong (default 5-col) template on first render — that flash caused the data
+  // rows to render cells in the wrong column slots on initial paint at narrow widths.
+  const [columns, setColumns] = useState<AccountQueryColumn[]>(() =>
+    typeof window === 'undefined' ? DEFAULT_COLUMNS : pickAccountColumns(window.innerWidth),
+  );
 
   useEffect(() => {
-    const updateColumns = () => {
-      if (window.innerWidth < 640) {
-        setColumns(SMALL_COLUMNS);
-      } else if (window.innerWidth < 900) {
-        setColumns(MEDIUM_COLUMNS);
-      } else {
-        setColumns(DEFAULT_COLUMNS);
-      }
-    };
+    const updateColumns = () => setColumns(pickAccountColumns(window.innerWidth));
 
     updateColumns();
     window.addEventListener('resize', updateColumns);
@@ -368,6 +378,7 @@ export default function AccountsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const accountsDeepLinkCompanyIdRef = useRef<string | null>(null);
+  const accountsScrollRef = useRef<HTMLDivElement | null>(null);
   const tableColumns = useResponsiveAccountColumns();
 
   const [accounts, setAccounts] = useState<AccountRow[]>([]);
@@ -390,6 +401,42 @@ export default function AccountsPage() {
   // Panel state
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [panelMode, setPanelMode] = useState<PanelMode>('details');
+
+  // Floating chat-bar value — shown while a company card is open (same pattern as
+  // /leads/contacts). On submit we dismiss the company card and forward the text
+  // to AgentPanel as a pending message; the agent expands back into view.
+  const [agentChatBarValue, setAgentChatBarValue] = useState('');
+
+  // Mirror the AgentPanel column's bounding rect so the company card and floating
+  // chat bar can overlay it pixel-for-pixel. AgentPanel renders its outermost div
+  // with the marker class `.accounts-agent-col` (passed via the className prop).
+  const [agentRect, setAgentRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const el = document.querySelector<HTMLElement>('.accounts-agent-col');
+    if (!el) return;
+    const update = () => {
+      const r = el.getBoundingClientRect();
+      // Below 768px the AgentPanel is `display: none` — its bounding rect is 0×0.
+      // Null out the rect in that case so the company card / floating chat bar fall
+      // back to their CSS-class positioning (full-bleed glass card from the right).
+      if (r.width === 0 || r.height === 0) {
+        setAgentRect(null);
+        return;
+      }
+      setAgentRect({ top: r.top, left: r.left, width: r.width, height: r.height });
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  }, []);
 
   // Contacts panel
   const [contacts, setContacts] = useState<ContactAtCompany[]>([]);
@@ -496,10 +543,14 @@ export default function AccountsPage() {
         if (typeof result.page === 'number' && result.page >= 1) {
           setPage(result.page);
         }
+        // Preserve the user's current selection / deep-link focus if still present,
+        // but otherwise keep nothing selected so the agent shows as the full card by
+        // default. (Used to auto-select the first account; that hid the agent on every
+        // page load — same pattern as /leads/contacts.)
         setSelectedAccountId((current) => {
           if (focusId && next.some((a) => a.id === focusId)) return focusId;
           if (current && next.some((a) => a.id === current)) return current;
-          return next[0]?.id ?? null;
+          return null;
         });
       }
     } catch (err) {
@@ -881,27 +932,37 @@ export default function AccountsPage() {
     tableSortCol,
     tableSortDir,
   );
+
+  // Only fade the bottom of the list while there's more content below the viewport;
+  // when scrolled to the end the last rows render in full without the mask clipping
+  // them. Re-measures whenever the row count changes (agent filter / fetch / etc.).
+  const { hasMore: hasMoreBelow } = useScrollMask(accountsScrollRef, [sortedAccounts.length]);
+
   const selectedAccount = selectedAccountId
     ? accounts.find((a) => a.id === selectedAccountId) ?? null
     : null;
 
   return (
-    <div className="flex h-screen bg-transparent">
+    <div className="flex min-h-0 h-screen bg-transparent">
       <AppSidebar />
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden min-[1280px]:flex-row">
-        {/* ── Main scrollable content ── */}
-        <div className="bg-transparent flex-1 overflow-auto p-4 min-w-0 sm:p-6">
-          <div className="w-full max-w-none">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-3.5 overflow-hidden p-3.5 md:flex-row md:gap-2">
+        {/* ── Main content (table) ── */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[1.75rem] bg-transparent px-3 py-3 sm:px-5 sm:py-4 min-[1280px]:pr-2">
+          <div className="flex min-h-0 w-full max-w-none flex-1 flex-col">
 
-            <div className="mb-6">
+            <div className="mb-6 shrink-0 max-[767px]:pl-14">
               <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-arcova-teal">
                 <Building2 className="h-3.5 w-3.5" />
                 Leads
               </div>
-              <h1 className="mt-2 text-2xl font-semibold leading-tight text-slate-950 sm:text-3xl">Accounts</h1>
+              <h1 className="font-manrope mt-2 text-3xl font-bold leading-tight tracking-[-0.028em] text-[rgb(13,53,71)] sm:text-[2.25rem]">
+                Accounts
+              </h1>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
-                One row per company, with firmographics and ICP fit at a glance.
+                {total > 0
+                  ? `${total.toLocaleString()} account${total === 1 ? '' : 's'}. Click a row to open the company card.`
+                  : 'One row per company, with firmographics and ICP fit at a glance.'}
               </p>
             </div>
 
@@ -928,46 +989,7 @@ export default function AccountsPage() {
                 </button>
               </div>
             ) : (
-              <div className={cn('grid min-w-0 gap-4', selectedAccountId ? 'min-[1700px]:grid-cols-[minmax(0,1fr)_360px]' : '')}>
-
-                {/* ── Table ── */}
-                <div className="min-w-0 flex flex-col gap-2">
-
-                {/* Contact coverage gap banner */}
-                {(() => {
-                  const opportunityAccounts = accounts.filter(
-                    (a) => getCoverageStatus(a) === 'opportunity',
-                  );
-                  if (opportunityAccounts.length === 0) return null;
-                  const names = opportunityAccounts
-                    .slice(0, 5)
-                    .map((a) => a.company_name || a.domain || 'Unknown')
-                    .join(', ');
-                  const more = opportunityAccounts.length > 5
-                    ? ` and ${opportunityAccounts.length - 5} more`
-                    : '';
-                  return (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        fireAgent(
-                          `${opportunityAccounts.length === 1 ? 'One account is' : `${opportunityAccounts.length} accounts are`} missing strong contact coverage: ${names}${more}. Explain what is going on and what I should do next.`,
-                          'What should I do about contact coverage gaps?',
-                        )
-                      }
-                      className="w-full flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-left transition-colors hover:bg-amber-100"
-                    >
-                      <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
-                      <p className="text-sm font-medium text-amber-800">
-                        {opportunityAccounts.length === 1
-                          ? '1 account is missing strong contact coverage.'
-                          : `${opportunityAccounts.length} accounts are missing strong contact coverage.`}
-                        <span className="ml-1.5 font-normal text-amber-600">Click to learn more.</span>
-                      </p>
-                      <Activity className="ml-auto h-4 w-4 shrink-0 text-amber-400" />
-                    </button>
-                  );
-                })()}
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden">
 
                 {/* Agent filter banner */}
                 {agentFilterIds && (
@@ -985,11 +1007,15 @@ export default function AccountsPage() {
                   </div>
                 )}
 
-                <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-                  <div className="min-w-0">
+                <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.5rem] border border-[rgba(13,53,71,0.1)] bg-[rgba(255,255,255,0.52)] shadow-[0_24px_60px_-32px_rgba(13,53,71,0.16),0_2px_6px_-2px_rgba(13,53,71,0.06)] backdrop-blur-2xl backdrop-saturate-150">
                     {/* Header */}
                     <div
-                      className="grid w-full min-w-0 px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide gap-x-5"
+                      onWheel={(e) => {
+                        if (accountsScrollRef.current) {
+                          accountsScrollRef.current.scrollTop += e.deltaY;
+                        }
+                      }}
+                      className="grid w-full shrink-0 min-w-0 pl-9 pr-4 py-3 bg-[rgba(255,255,255,0.4)] border-b border-[rgba(13,53,71,0.08)] text-[13px] font-semibold text-[#7d909a] uppercase tracking-wide gap-x-5"
                       style={{ gridTemplateColumns: accountQueryGridCols(tableColumns) }}
                     >
                       {tableColumns.map((col) => (
@@ -1009,9 +1035,21 @@ export default function AccountsPage() {
                     </div>
 
                     {/* Rows — single render path; agent filter narrows sortedAccounts in-place */}
-                    <div className="divide-y divide-gray-100">
-                      {sortedAccounts.map((account) => {
+                    <div
+                      ref={accountsScrollRef}
+                      className="min-h-0 flex-1 divide-y divide-[rgba(13,53,71,0.06)] overflow-y-auto"
+                      style={
+                        hasMoreBelow
+                          ? {
+                              maskImage: 'linear-gradient(to bottom, black calc(100% - 9rem), transparent)',
+                              WebkitMaskImage: 'linear-gradient(to bottom, black calc(100% - 9rem), transparent)',
+                            }
+                          : undefined
+                      }
+                    >
+                      {sortedAccounts.map((account, index) => {
                         const isSelected = selectedAccountId === account.id;
+                        const rowNumber = (page - 1) * PAGE_SIZE + index + 1;
 
                         return (
                           <div
@@ -1023,13 +1061,16 @@ export default function AccountsPage() {
                               if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetails(account.id); }
                             }}
                             className={cn(
-                              "relative grid w-full min-w-0 px-4 py-3 gap-x-5 items-center cursor-pointer transition-all duration-150 before:pointer-events-none before:absolute before:left-0 before:top-2 before:bottom-2 before:w-[3px] before:rounded-sm before:content-[''] before:transition-colors",
+                              "relative grid w-full min-w-0 pl-9 pr-4 py-3 gap-x-5 items-center cursor-pointer transition-all duration-150 before:pointer-events-none before:absolute before:left-0 before:top-2 before:bottom-2 before:w-[3px] before:rounded-sm before:content-[''] before:transition-colors",
                               isSelected
                                 ? 'bg-arcova-teal/10 before:bg-arcova-teal'
                                 : 'before:bg-transparent hover:bg-arcova-teal/5 hover:before:bg-arcova-teal/35',
                             )}
                             style={{ gridTemplateColumns: accountQueryGridCols(tableColumns) }}
                           >
+                            <span aria-hidden className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-medium tabular-nums text-gray-400 select-none">
+                              {rowNumber}
+                            </span>
                             {tableColumns.map((col) => (
                               <div
                                 key={col}
@@ -1046,10 +1087,9 @@ export default function AccountsPage() {
                         );
                       })}
                     </div>
-                  </div>
 
                   {!agentFilterIds && totalPages > 1 && (
-                    <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200 bg-gray-50">
+                    <div className="flex shrink-0 items-center justify-between px-4 py-3 border-t border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.35)]">
                       <p className="text-xs text-gray-500">
                         {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of {total.toLocaleString()}
                       </p>
@@ -1066,18 +1106,58 @@ export default function AccountsPage() {
                       </div>
                     </div>
                   )}
-                </div>
-                </div>{/* end table + banner wrapper */}
+                </div>{/* end table card */}
 
-                {/* ── Side panel ── */}
+                {/* Mobile dismiss backdrop (<1280px) — matches /leads/contacts */}
                 {selectedAccountId && selectedAccount && (
-                  <aside className="bg-white rounded-lg shadow-sm border border-gray-200 min-h-[520px] flex flex-col">
-                    {/* Panel header */}
-                    <div className="flex items-start gap-3 px-5 py-4 border-b border-gray-200">
+                  <button
+                    type="button"
+                    className="fixed inset-0 z-40 transition-opacity min-[1280px]:hidden"
+                    aria-label="Close panel"
+                    onClick={closePanel}
+                  />
+                )}
+
+                {/* ── Company card — overlays the AgentPanel column while open.
+                    Visual style matches the contact card on /leads/contacts (glass
+                    surface, dimensions, blur). Position + size mirror the
+                    AgentPanel's actual bounding rect so it fully covers the agent
+                    column; the agent itself is `invisible` in this state and the
+                    floating chat bar below acts as the agent's surface. ── */}
+                {selectedAccountId && selectedAccount && (
+                  <aside
+                    className={cn(
+                      'flex min-h-0 flex-col overflow-hidden rounded-[1.3125rem] border border-[rgba(255,255,255,0.88)] bg-[rgba(255,255,255,0.55)] shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2)] backdrop-blur-2xl backdrop-saturate-150',
+                      'fixed z-50',
+                      // Fallback for the first paint, before the rect is measured.
+                      !agentRect && 'max-md:bottom-3.5 max-md:top-3.5 max-md:right-3.5 max-md:w-[min(calc(100vw-1.75rem),22.5rem)] md:top-[14px] md:bottom-[14px] md:right-[1.625rem] md:w-[22.5rem]',
+                    )}
+                    style={
+                      agentRect
+                        ? {
+                            top: agentRect.top,
+                            left: agentRect.left,
+                            width: agentRect.width,
+                            // Leaves ~64px at the bottom for the floating chat bar.
+                            height: Math.max(0, agentRect.height - 64),
+                          }
+                        : undefined
+                    }
+                  >
+                    {/* Panel header — matches the contact-card header on /leads/contacts */}
+                    <div className="flex shrink-0 items-start gap-3 px-4 pb-3 pt-5 border-b border-[rgba(13,53,71,0.08)]">
                       {/* Name / links (left) */}
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium uppercase tracking-wide text-arcova-teal">Company details</p>
-                        <h2 className="text-lg font-semibold text-gray-900 mt-1 leading-tight break-words">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">
+                          {panelMode === 'fit'
+                            ? 'Fit'
+                            : panelMode === 'action'
+                              ? 'Action'
+                              : panelMode === 'contacts'
+                                ? 'Contacts'
+                                : 'Company'}
+                        </p>
+                        <h2 className="font-manrope mt-1.5 break-words text-xl font-bold leading-tight tracking-[-0.024em] text-[rgb(13,53,71)] sm:text-2xl">
                           {selectedAccount.company_name || selectedAccount.domain || 'Company'}
                         </h2>
                         {(() => {
@@ -1117,7 +1197,7 @@ export default function AccountsPage() {
                       </div>
                     </div>
 
-                    <div className="flex border-b border-gray-200 px-5">
+                    <div className="flex shrink-0 border-b border-[rgba(13,53,71,0.08)] px-5">
                       {(['details', 'fit', 'action', 'contacts'] as PanelMode[]).map((mode) => (
                         <button
                           key={mode}
@@ -1142,7 +1222,7 @@ export default function AccountsPage() {
                     </div>
 
                     {/* Panel body */}
-                    <div className="flex-1 overflow-auto px-5 py-4">
+                    <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
 
                       {panelMode === 'fit' && (
                         <CompanyIcpFitDetailPanel
@@ -1292,19 +1372,42 @@ export default function AccountsPage() {
                                 </button>
                               </div>
                             )}
-                            <div className="rounded-xl border border-gray-100 bg-gray-50/70 px-3 py-3">
-                              <p className="text-xs font-semibold text-gray-700 mb-2">Data source</p>
-                              <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-                                <div>
-                                  <p className="text-gray-400 text-xs">Type</p>
-                                  <p className="text-gray-900 mt-0.5">{selectedAccount.data_provenance_type}</p>
+                            {/* Data source — matches the contact card's Data source card.
+                                Holds the Type/Imported metadata + the Refresh enrichment
+                                action inside the same segment (no separate footer button). */}
+                            <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-3 py-3 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
+                              <p className="mb-3 font-manrope text-xs font-semibold text-[#0d3547]">Data source</p>
+                              <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+                                <div className="min-w-0">
+                                  <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">Type</p>
+                                  <p className="mt-2 text-sm leading-snug text-[#0d3547]">{selectedAccount.data_provenance_type}</p>
                                 </div>
-                                <div>
-                                  <p className="text-gray-400 text-xs">Imported</p>
-                                  <p className="text-gray-900 mt-0.5">
+                                <div className="min-w-0">
+                                  <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">Imported</p>
+                                  <p className="mt-2 text-sm leading-snug text-[#0d3547]">
                                     {formatProvenanceImportedAt(selectedAccount.data_provenance_imported_at)}
                                   </p>
                                 </div>
+                              </div>
+
+                              <div className="mt-4 space-y-3 border-t border-[rgba(13,53,71,0.06)] pt-4">
+                                {selectedAccount.last_enriched_at && (
+                                  <p className="text-xs leading-snug text-[#4a6470]">
+                                    Last updated {formatDate(selectedAccount.last_enriched_at)}
+                                  </p>
+                                )}
+                                <p className="text-xs leading-relaxed text-[#6B7280]">
+                                  You can refresh this enrichment again whenever you need updated data.
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => rerunCompanyEnrichment(selectedAccount.id)}
+                                  disabled={refreshingCompanyId === selectedAccount.id}
+                                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#1F2937] transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  <RotateCw className={cn('w-4 h-4 text-[#1F2937]', refreshingCompanyId === selectedAccount.id ? 'animate-spin' : '')} />
+                                  {refreshingCompanyId === selectedAccount.id ? 'Refreshing…' : 'Refresh enrichment'}
+                                </button>
                               </div>
                             </div>
 
@@ -1648,35 +1751,104 @@ export default function AccountsPage() {
                       )}
                     </div>
 
-                    {/* Panel footer */}
-                    <div className="px-5 py-4 border-t border-gray-100 space-y-2">
-                      {selectedAccount.last_enriched_at && (
-                        <p className="text-xs text-gray-400">
-                          Last updated {formatDate(selectedAccount.last_enriched_at)}
-                        </p>
-                      )}
-                      <p className="text-xs text-gray-500">
-                        You can refresh this enrichment again whenever you need updated data.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => rerunCompanyEnrichment(selectedAccount.id)}
-                        disabled={refreshingCompanyId === selectedAccount.id}
-                        className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-arcova-teal/5 px-4 py-2 text-sm font-medium text-arcova-teal hover:bg-arcova-teal/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                      >
-                        <RotateCw className={cn('w-4 h-4', refreshingCompanyId === selectedAccount.id ? 'animate-spin' : '')} />
-                        {refreshingCompanyId === selectedAccount.id ? 'Refreshing…' : 'Refresh enrichment'}
-                      </button>
-                    </div>
+                    {/* Panel footer — Edit / Archive account, mirrors the contact card.
+                        Only rendered on the Details tab (matches contacts' Contact tab). */}
+                    {panelMode === 'details' && (
+                      <div className="px-4 py-4 border-t border-[rgba(13,53,71,0.08)]">
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              // TODO: wire up inline edit mode for accounts when the
+                              // backend supports it. For now, surface a friendly hint.
+                              window.alert('Account editing is coming soon — for now, refresh the enrichment to refresh data.');
+                            }}
+                            className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                            Edit account
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const label = selectedAccount.company_name || selectedAccount.domain || 'this account';
+                              const ok = window.confirm(
+                                `Are you sure you want to archive ${label}? It and its contacts will be hidden from active views and will not be re-imported or re-enriched automatically.`,
+                              );
+                              if (!ok) return;
+
+                              try {
+                                const response = await fetch(`/api/accounts/${selectedAccount.id}`, {
+                                  method: 'DELETE',
+                                });
+                                const result = await response.json();
+                                if (!response.ok) {
+                                  throw new Error(result.error || 'Failed to archive account.');
+                                }
+
+                                setAccounts((prev) => prev.filter((account) => account.id !== selectedAccount.id));
+                                setSelectedAccountId(null);
+                              } catch (error) {
+                                console.error('Error archiving account:', error);
+                                window.alert(error instanceof Error ? error.message : 'Could not archive account.');
+                              }
+                            }}
+                            className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            Archive account
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </aside>
+                )}
+
+                {/* Floating agent chat bar — sits at the bottom of the AgentPanel
+                    column while a company card is open. Uses the shared `AgentChatBar`
+                    so it matches the side-panel agent input. Submit dismisses the
+                    company card and forwards the text to the agent. */}
+                {selectedAccountId && agentRect && (
+                  <div
+                    className={cn(
+                      'fixed z-[51] flex items-center rounded-[1.3125rem] border border-[rgba(255,255,255,0.88)] bg-[rgba(255,255,255,0.55)] px-3 py-2.5 shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2)] backdrop-blur-2xl backdrop-saturate-150',
+                    )}
+                    style={{
+                      top: agentRect.top + agentRect.height - 58,
+                      left: agentRect.left,
+                      width: agentRect.width,
+                    }}
+                  >
+                    <AgentChatBar
+                      value={agentChatBarValue}
+                      onChange={setAgentChatBarValue}
+                      onSubmit={() => {
+                        const text = agentChatBarValue.trim();
+                        if (!text) return;
+                        fireAgent(text);
+                        setAgentChatBarValue('');
+                        setSelectedAccountId(null);
+                      }}
+                      placeholder="Ask anything about your accounts…"
+                      className="w-full"
+                    />
+                  </div>
                 )}
               </div>
             )}
           </div>
         </div>
 
-        {/* ── Agent panel (far right) ── */}
+        {/* ── Agent panel (far right) ──
+            Folds away (`invisible`) while a company card is open — the card
+            overlays this column and the floating chat bar at the bottom takes
+            over as the agent's surface. `invisible` keeps the column in layout
+            so the agentRect tracker continues to measure its footprint. */}
         <AgentPanel
+          className={cn(
+            'accounts-agent-col min-[1280px]:pl-1.5',
+            selectedAccountId && 'invisible',
+          )}
           page="accounts"
           pendingMessage={agentTrigger}
           pageContext={

@@ -246,9 +246,15 @@ export async function DELETE(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const now = new Date().toISOString();
     const { error } = await supabase
       .from('contacts')
-      .delete()
+      .update({
+        archived_at: now,
+        archived_by: user.id,
+        archived_reason: 'user_archived',
+        updated_at: now,
+      })
       .eq('user_id', user.id)
       .eq('id', id);
 
@@ -256,7 +262,7 @@ export async function DELETE(
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true, id });
+    return NextResponse.json({ success: true, id, archived: true });
   } catch (error) {
     console.error('Error in leads/[id] DELETE:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

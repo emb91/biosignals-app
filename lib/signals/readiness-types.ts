@@ -53,6 +53,7 @@ export type SignalKey =
   | 'demo_requested'
   | 'inbound_enquiry'
   | 'open_opportunity_in_crm'
+  | 'new_contact_added_in_crm'
   | 'closed_lost_in_crm'
   | 'clinical_trial_registered'
   | 'phase_transition'

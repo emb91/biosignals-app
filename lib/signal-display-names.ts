@@ -30,6 +30,7 @@ export const SIGNAL_DISPLAY_NAMES: Record<string, string> = {
   previously_contacted_by_your_team: 'Previously contacted',
   open_opportunity_in_your_pipeline: 'Open opportunity',
   open_opportunity_in_crm: 'Open opportunity in CRM',
+  new_contact_added_in_crm: 'New contact added in CRM',
   lapsed_customer: 'Lapsed customer',
   renewal_coming_up: 'Renewal due',
   meeting_previously_booked: 'Meeting booked',

@@ -1,22 +1,26 @@
 /**
  * Client-side fetcher for the /today priorities aggregator.
  *
- * Same caching pattern as `icp-priorities-client.ts` — sessionStorage keyed entry with a
- * short TTL — so re-renders and navigation between pages don't re-run the server-side
- * aggregator (which may invoke Claude for the icp-audit source).
+ * Hash-based short-circuit: sends the cached hash on every call; server returns
+ * `{ unchanged: true }` when the underlying inputs haven't moved, so the Claude audit is
+ * skipped. The Claude call only fires when something has actually changed (a saved ICP,
+ * a dismissal, an updated company profile).
  *
- * Cache is busted from `clearIcpPrioritiesCache()` (in `icp-priorities-client.ts`) when an
- * agent mutation lands, so /today doesn't show stale "Review your ICPs" rows after an edit.
+ * Cache is also busted by `clearIcpPrioritiesCache()` (in `icp-priorities-client.ts`)
+ * when an agent mutation lands, so /today never shows stale "Review your ICPs" rows.
  */
 
 import type { TodayPriority } from '@/lib/priorities/types';
 
 const CACHE_KEY = 'arcova:today-priorities';
-const TTL_MS = 15 * 60 * 1000;
+// Long TTL — the server-side hash check is the real freshness signal. TTL is the safety
+// net for prompt changes / app updates / sessionStorage rot.
+const TTL_MS = 24 * 60 * 60 * 1000;
 
 interface CachedEntry {
   fetchedAt: number;
   priorities: TodayPriority[];
+  hash: string;
 }
 
 function readCache(): CachedEntry | null {
@@ -33,10 +37,10 @@ function readCache(): CachedEntry | null {
   }
 }
 
-function writeCache(priorities: TodayPriority[]): void {
+function writeCache(priorities: TodayPriority[], hash: string): void {
   if (typeof window === 'undefined') return;
   try {
-    const entry: CachedEntry = { fetchedAt: Date.now(), priorities };
+    const entry: CachedEntry = { fetchedAt: Date.now(), priorities, hash };
     sessionStorage.setItem(CACHE_KEY, JSON.stringify(entry));
   } catch {
     // ignore
@@ -44,18 +48,25 @@ function writeCache(priorities: TodayPriority[]): void {
 }
 
 export async function fetchTodayPriorities(opts?: { forceRefresh?: boolean }): Promise<TodayPriority[]> {
-  if (!opts?.forceRefresh) {
-    const cached = readCache();
-    if (cached) return cached.priorities;
-  }
+  const cached = readCache();
   try {
-    const res = await fetch('/api/today/priorities', { method: 'GET' });
-    if (!res.ok) return [];
-    const data = await res.json() as { priorities?: TodayPriority[] };
+    const url = new URL('/api/today/priorities', window.location.origin);
+    if (!opts?.forceRefresh && cached?.hash) url.searchParams.set('h', cached.hash);
+    const res = await fetch(url.toString(), { method: 'GET' });
+    if (!res.ok) return cached?.priorities ?? [];
+    const data = await res.json() as {
+      priorities?: TodayPriority[];
+      unchanged?: boolean;
+      hash?: string;
+    };
+    if (data.unchanged && cached) {
+      writeCache(cached.priorities, cached.hash);
+      return cached.priorities;
+    }
     const priorities = Array.isArray(data.priorities) ? data.priorities : [];
-    writeCache(priorities);
+    if (typeof data.hash === 'string') writeCache(priorities, data.hash);
     return priorities;
   } catch {
-    return [];
+    return cached?.priorities ?? [];
   }
 }

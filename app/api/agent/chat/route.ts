@@ -1102,6 +1102,7 @@ async function toolQueryContacts(
       )
     `)
     .eq('user_id', userId)
+    .is('archived_at', null)
     .order('contact_fit_score', { ascending: false })
     .limit(limit * 5); // fetch more to allow client-side filtering
 
@@ -1400,9 +1401,22 @@ async function runAgentLoop(
   // next turn so we preserve it and prepend to the eventual final message.
   let spilloverText = '';
 
+  // Option B hybrid routing: default each turn to Haiku 4.5 to keep costs low.
+  // When the previous turn invoked a write tool (`update_icp` / `delete_icp`), the
+  // *next* turn — where the model reasons about the mutation result and writes the
+  // user-facing follow-up — escalates to Sonnet 4.6 so the reasoning is careful.
+  // See memory/llm_cost_concerns.md for the policy. Read-only tool turns stay on Haiku.
+  const WRITE_TOOLS = new Set(['update_icp', 'delete_icp']);
+  const HAIKU_MODEL = 'claude-haiku-4-5';
+  const SONNET_MODEL = 'claude-sonnet-4-6';
+  let escalateNextTurn = false;
+
   for (let i = 0; i < MAX_ITERATIONS; i++) {
+    const turnModel = escalateNextTurn ? SONNET_MODEL : HAIKU_MODEL;
+    escalateNextTurn = false;
+
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: turnModel,
       max_tokens: 1024,
       system: systemPrompt,
       tools: availableTools,
@@ -1414,7 +1428,7 @@ async function runAgentLoop(
       provider: 'anthropic',
       feature: 'page_agent',
       route: '/api/agent/chat',
-      model: 'claude-sonnet-4-6',
+      model: turnModel,
       usage: response.usage,
       metadata: {
         page,
@@ -1681,16 +1695,23 @@ async function runAgentLoop(
 
     // Add tool results turn
     anthropicMessages.push({ role: 'user', content: toolResults });
+
+    // If a write tool ran this turn, escalate the *next* iteration to Sonnet so the
+    // follow-up reasoning over the mutation result is careful (Option B routing).
+    if (toolUseBlocks.some((b) => WRITE_TOOLS.has(b.name))) {
+      escalateNextTurn = true;
+    }
   }
 
-  // Exceeded max iterations — ask for a final text response
+  // Exceeded max iterations — ask for a final text response. Stick with Haiku here
+  // (read-only summarization of the conversation so far).
   anthropicMessages.push({
     role: 'user',
     content: 'Please give your final response now.',
   });
 
   const finalResponse = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
+    model: HAIKU_MODEL,
     max_tokens: 512,
     system: systemPrompt,
     messages: anthropicMessages,
@@ -1701,7 +1722,7 @@ async function runAgentLoop(
     provider: 'anthropic',
     feature: 'page_agent',
     route: '/api/agent/chat',
-    model: 'claude-sonnet-4-6',
+    model: HAIKU_MODEL,
     usage: finalResponse.usage,
     metadata: {
       page,

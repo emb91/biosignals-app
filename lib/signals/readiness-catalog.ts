@@ -104,6 +104,17 @@ export const READINESS_SIGNAL_CATALOG: readonly SignalCatalogEntry[] = [
     notes: 'First-party CRM state, not public signal.',
   },
   {
+    signalKey: 'new_contact_added_in_crm',
+    scope: 'company',
+    dimensions: ['new_people'],
+    defaultStrength: 'medium',
+    defaultConfidence: 'high',
+    decayDays: 75,
+    buyerFunctions: [],
+    intentMechanisms: ['team_buildout', 'leadership_change'],
+    notes: 'HubSpot CRM shows a new stakeholder or relevant contact added to an account.',
+  },
+  {
     signalKey: 'closed_lost_in_crm',
     scope: 'company',
     dimensions: ['caution'],

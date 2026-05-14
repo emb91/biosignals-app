@@ -10,13 +10,22 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 
 const STORAGE_KEY = 'arcova_admin_signals_todo_v1';
-const AUTO_COMPLETED_SIGNALS = new Set<SignalKey>(['open_opportunity_in_crm', 'closed_lost_in_crm']);
+const AUTO_COMPLETED_SIGNALS = new Set<SignalKey>([
+  'open_opportunity_in_crm',
+  'new_contact_added_in_crm',
+  'title_change',
+  'recently_promoted',
+  'new_internal_role',
+  'recently_changed_company',
+  'closed_lost_in_crm',
+]);
 
 type SignalFamily =
   | 'external_company_change'
   | 'external_contact_change'
   | 'first_party_engagement'
   | 'crm_deal_activity'
+  | 'crm_contact_change'
   | 'crm_relationship_state'
   | 'suppression_signals';
 
@@ -63,7 +72,7 @@ const FAMILY_META: Record<SignalFamily, { label: string; description: string }> 
   },
   external_contact_change: {
     label: 'External contact change',
-    description: 'Org movement and people change like hires, promotions, and role changes.',
+    description: 'Org movement and people change from external enrichment like hires, promotions, company moves, and role changes.',
   },
   first_party_engagement: {
     label: 'First-party engagement',
@@ -72,6 +81,10 @@ const FAMILY_META: Record<SignalFamily, { label: string; description: string }> 
   crm_deal_activity: {
     label: 'CRM deal activity',
     description: 'Buying-process evidence from HubSpot/CRM like opportunities, budget notes, and deal progression.',
+  },
+  crm_contact_change: {
+    label: 'CRM contact change',
+    description: 'HubSpot people and stakeholder changes like new contacts, promotions, title changes, and changed company context.',
   },
   crm_relationship_state: {
     label: 'CRM relationship state',
@@ -88,6 +101,7 @@ const FAMILY_ORDER: SignalFamily[] = [
   'external_contact_change',
   'first_party_engagement',
   'crm_deal_activity',
+  'crm_contact_change',
   'crm_relationship_state',
   'suppression_signals',
 ];
@@ -102,6 +116,7 @@ const SIGNAL_FAMILY_MAP: Record<SignalKey, SignalFamily[]> = {
   demo_requested: ['first_party_engagement'],
   inbound_enquiry: ['first_party_engagement'],
   open_opportunity_in_crm: ['crm_deal_activity'],
+  new_contact_added_in_crm: ['crm_contact_change'],
   closed_lost_in_crm: ['crm_deal_activity', 'suppression_signals'],
   clinical_trial_registered: ['external_company_change'],
   phase_transition: ['external_company_change'],
@@ -124,11 +139,11 @@ const SIGNAL_FAMILY_MAP: Record<SignalKey, SignalFamily[]> = {
   bd_hiring: ['external_company_change'],
   commercial_hiring: ['external_company_change'],
   job_surge: ['external_company_change'],
-  new_to_role: ['external_contact_change'],
-  recently_promoted: ['external_contact_change'],
-  recently_changed_company: ['external_contact_change'],
-  new_internal_role: ['external_contact_change'],
-  title_change: ['external_contact_change'],
+  new_to_role: ['external_contact_change', 'crm_contact_change'],
+  recently_promoted: ['external_contact_change', 'crm_contact_change'],
+  recently_changed_company: ['external_contact_change', 'crm_contact_change'],
+  new_internal_role: ['external_contact_change', 'crm_contact_change'],
+  title_change: ['external_contact_change', 'crm_contact_change'],
   board_or_advisory_role: ['external_contact_change'],
   partnership_deal: ['external_company_change'],
   licensing_deal: ['external_company_change'],

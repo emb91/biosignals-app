@@ -16,6 +16,7 @@ import { resolveLinkedinUrl, type LinkedinResolutionResult } from '@/lib/linkedi
 import { classifyContacts } from '@/lib/contact-classification';
 import { runCompanyMonitor } from '@/lib/company-monitor';
 import { employeeCountToSizeBucket } from '@/lib/arcova-taxonomy';
+import { emitExternalContactSignalsFromEnrichment } from '@/lib/signals/readiness-external-contacts';
 
 type MinimalSupabase = {
   from: (table: string) => any;
@@ -37,6 +38,14 @@ type ContactRow = {
   location: string | null;
   company_name: string | null;
   company_domain: string | null;
+  company_id?: string | null;
+  job_title?: string | null;
+  seniority_level?: string | null;
+  business_area?: string | null;
+  resolved_current_company_name?: string | null;
+  resolved_current_company_domain?: string | null;
+  resolved_current_job_title?: string | null;
+  profile_enrichment_status?: string | null;
   apollo_person_raw: Record<string, unknown> | null;
   apollo_organization_raw: Record<string, unknown> | null;
 };
@@ -547,8 +556,10 @@ async function summariseCompanyBio(description: string): Promise<string | null> 
 
   try {
     const client = new Anthropic({ apiKey });
+    // Synthesizes a short factual sentence from external (Apollo / Apify) data —
+    // Haiku is plenty for this. See memory/llm_cost_concerns.md.
     const message = await client.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: 'claude-haiku-4-5',
       max_tokens: 100,
       messages: [
         {
@@ -561,7 +572,7 @@ async function summariseCompanyBio(description: string): Promise<string | null> 
       provider: 'anthropic',
       feature: 'company_bio_summarization',
       route: 'lib/enrichment-pipeline#summariseCompanyBio',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-haiku-4-5',
       usage: message.usage,
       metadata: {
         description_length: description.length,
@@ -609,8 +620,10 @@ ${historyText || '— No history available'}`;
 
   try {
     const client = new Anthropic({ apiKey });
+    // Synthesizes a short factual sentence from Apollo + Apify employment data —
+    // Haiku is plenty for this. See memory/llm_cost_concerns.md.
     const message = await client.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: 'claude-haiku-4-5',
       max_tokens: 100,
       messages: [{ role: 'user', content: `${instruction}\n\n${sourceBlock}` }],
     });
@@ -618,7 +631,7 @@ ${historyText || '— No history available'}`;
       provider: 'anthropic',
       feature: 'contact_bio_generation',
       route: 'lib/enrichment-pipeline#generateContactBio',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-haiku-4-5',
       usage: message.usage,
       metadata: {
         full_name: fullName,
@@ -896,7 +909,7 @@ export async function runContactResolutionPipelineForContact(
   const { data: contact, error: contactError } = await supabase
     .from('contacts')
     .select(
-      'id, user_id, raw_upload_id, full_name, first_name, last_name, email, linkedin_url, location, company_name, company_domain, apollo_person_raw, apollo_organization_raw'
+      'id, user_id, raw_upload_id, full_name, first_name, last_name, email, linkedin_url, location, company_name, company_domain, company_id, job_title, seniority_level, business_area, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, profile_enrichment_status, apollo_person_raw, apollo_organization_raw'
     )
     .eq('user_id', userId)
     .eq('id', contactId)
@@ -1348,6 +1361,44 @@ export async function runContactResolutionPipelineForContact(
     await syncContactFitForContact(supabase, userId, contactId).catch((error) => {
       console.error('[enrichment-pipeline] Failed syncing contact fit score:', error);
     });
+
+    try {
+      await emitExternalContactSignalsFromEnrichment(supabase as any, {
+        previous: {
+          userId,
+          contactId,
+          companyId: typedContact.company_id ?? null,
+          fullName: typedContact.full_name,
+          linkedinUrl: typedContact.linkedin_url,
+          email: typedContact.email,
+          companyName: typedContact.resolved_current_company_name ?? typedContact.company_name ?? null,
+          companyDomain: typedContact.resolved_current_company_domain ?? typedContact.company_domain ?? null,
+          jobTitle: typedContact.resolved_current_job_title ?? typedContact.job_title ?? null,
+          seniorityLevel: typedContact.seniority_level ?? null,
+          businessArea: typedContact.business_area ?? null,
+          previouslyEnriched:
+            (typedContact.profile_enrichment_status ?? '') === 'completed' ||
+            (typedContact.profile_enrichment_status ?? '') === 'ambiguous',
+        },
+        current: {
+          companyId: companyId ?? null,
+          fullName: typedContact.full_name,
+          linkedinUrl: resolvedLinkedin.linkedin_url,
+          email: typedContact.email,
+          companyName: resolved.currentCompanyName,
+          companyDomain: resolvedDomainFromCompany ?? resolved.resolvedCompanyDomainForEmailCheck ?? null,
+          jobTitle: resolved.currentJobTitle,
+          seniorityLevel:
+            typeof updatePayload.seniority_level === 'string' ? updatePayload.seniority_level : typedContact.seniority_level ?? null,
+          businessArea:
+            typeof updatePayload.business_area === 'string' ? updatePayload.business_area : typedContact.business_area ?? null,
+          sourceProvider: 'harvestapi',
+          eventAt: completedAt,
+        },
+      });
+    } catch (error) {
+      console.error('[enrichment-pipeline] Failed emitting external contact signals:', error);
+    }
 
     return {
       status: profileEnrichmentStatus,
