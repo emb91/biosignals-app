@@ -436,8 +436,8 @@ async function attachHubSpotLeadStateBestEffort(
       const dedupedLinks = Array.from(
         new Map(
           candidateLinks
-            .map((link) => [String(link.hubspot_deal_id), link])
-            .filter(([dealId]) => Boolean(dealId)),
+            .map((link) => [String(link.hubspot_deal_id), link] as const)
+            .filter((entry): entry is readonly [string, (typeof candidateLinks)[number]] => Boolean(entry[0])),
         ).values(),
       );
 

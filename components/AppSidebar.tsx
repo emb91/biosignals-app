@@ -3,7 +3,7 @@
 import { useEffect, useState, Suspense, useMemo } from 'react';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
-import { ChevronDown, ChevronLeft } from 'lucide-react';
+import { ChevronDown, ChevronLeft, Menu, X } from 'lucide-react';
 import {
   NavIconAccount,
   NavIconCustomers,
@@ -146,6 +146,9 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
   const [showDataDot, setShowDataDot] = useState(false);
   const [showSignalsDot, setShowSignalsDot] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [forceCollapsed, setForceCollapsed] = useState(false);
+  const [mobileHidden, setMobileHidden] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const isAdminUser = user?.email?.trim().toLowerCase() === ADMIN_EMAIL;
   const bottomItems = isAdminUser
     ? [
@@ -235,6 +238,28 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
       /* ignore */
     }
   };
+
+  // Responsive auto-behavior:
+  //   <1280px           → force collapsed icon rail
+  //   <768px  (tablet)  → hide sidebar entirely; show hamburger that opens slide-in overlay
+  useEffect(() => {
+    const xlMq = window.matchMedia('(max-width: 1279px)');
+    const mdMq = window.matchMedia('(max-width: 767px)');
+    const update = () => {
+      setForceCollapsed(xlMq.matches);
+      setMobileHidden(mdMq.matches);
+      if (!mdMq.matches) setMobileOpen(false);
+    };
+    update();
+    xlMq.addEventListener('change', update);
+    mdMq.addEventListener('change', update);
+    return () => {
+      xlMq.removeEventListener('change', update);
+      mdMq.removeEventListener('change', update);
+    };
+  }, []);
+
+  const effectiveCollapsed = sidebarCollapsed || forceCollapsed;
 
   useEffect(() => {
     if (leadsActive) setLeadsOpen(true);
@@ -527,17 +552,69 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
   };
 
   return (
-    <div className="flex h-full min-h-0 shrink-0 bg-transparent pl-3">
+    <>
+      {/* Hamburger button — visible only at <768px when the sidebar is hidden */}
+      {mobileHidden && !mobileOpen && (
+        <button
+          type="button"
+          onClick={() => setMobileOpen(true)}
+          className={cn(
+            'fixed left-3.5 top-3.5 z-40 flex h-10 w-10 items-center justify-center rounded-xl',
+            'border border-[rgba(13,53,71,0.1)] bg-white/85 shadow-[0_8px_24px_-12px_rgba(13,53,71,0.3)] backdrop-blur-md',
+            'text-[#0d3547] transition-colors hover:bg-white',
+          )}
+          aria-label="Open menu"
+          title="Open menu"
+        >
+          <Menu className="h-5 w-5" strokeWidth={2.2} />
+        </button>
+      )}
+
+      {/* Backdrop for mobile slide-in */}
+      {mobileHidden && mobileOpen && (
+        <button
+          type="button"
+          onClick={() => setMobileOpen(false)}
+          className="fixed inset-0 z-40 bg-[rgba(13,53,71,0.32)] backdrop-blur-[2px]"
+          aria-label="Close menu"
+        />
+      )}
+
+      <div
+        className={cn(
+          'flex h-full min-h-0 bg-transparent',
+          mobileHidden
+            ? cn(
+                'fixed left-0 top-0 z-50 pl-3 py-3 transition-transform duration-200 ease-out',
+                mobileOpen ? 'translate-x-0' : '-translate-x-full',
+              )
+            : 'shrink-0 pl-3',
+        )}
+      >
       <div
         className={cn(
           'flex h-full min-h-0 flex-col overflow-hidden transition-[width] duration-200 ease-out',
           railGlass,
-          sidebarCollapsed ? 'w-[6rem]' : 'w-[18.25rem]',
+          effectiveCollapsed && !mobileHidden ? 'w-[6rem]' : 'w-[18.25rem]',
           'rounded-[1.75rem]',
         )}
       >
+        {/* Close button — only at mobile slide-in */}
+        {mobileHidden && (
+          <div className="flex shrink-0 justify-end border-b border-[rgba(13,53,71,0.08)] px-3 pt-3">
+            <button
+              type="button"
+              onClick={() => setMobileOpen(false)}
+              className={cn(sidebarChromeToggleClass, 'h-9 w-9')}
+              aria-label="Close menu"
+              title="Close menu"
+            >
+              <X className="h-[1.125rem] w-[1.125rem]" strokeWidth={2.2} />
+            </button>
+          </div>
+        )}
         {/* Header */}
-        {sidebarCollapsed ? (
+        {effectiveCollapsed && !mobileHidden ? (
           <div className="flex flex-col items-center border-b border-[rgba(13,53,71,0.08)] px-2.5 py-5">
             <button
               type="button"
@@ -573,19 +650,21 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
               />
               <span className="truncate text-xl font-semibold font-manrope text-arcova-navy">arcova</span>
             </button>
-            <button
-              type="button"
-              onClick={() => setCollapsed(true)}
-              className={cn(sidebarChromeToggleClass, 'h-9 w-9')}
-              aria-label="Collapse sidebar"
-              title="Collapse sidebar"
-            >
-              <ChevronLeft className="h-[1.125rem] w-[1.125rem]" strokeWidth={2.2} />
-            </button>
+            {!forceCollapsed && !mobileHidden && (
+              <button
+                type="button"
+                onClick={() => setCollapsed(true)}
+                className={cn(sidebarChromeToggleClass, 'h-9 w-9')}
+                aria-label="Collapse sidebar"
+                title="Collapse sidebar"
+              >
+                <ChevronLeft className="h-[1.125rem] w-[1.125rem]" strokeWidth={2.2} />
+              </button>
+            )}
           </div>
         )}
 
-        {sidebarCollapsed ? (
+        {effectiveCollapsed && !mobileHidden ? (
           <nav className="flex min-h-0 flex-1 flex-col">
             <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden px-2 py-4">
               {renderCollapsedRail()}
@@ -656,6 +735,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
         )}
       </div>
     </div>
+    </>
   );
 }
 

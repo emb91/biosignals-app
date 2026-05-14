@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { createClient } from '@/lib/supabase-server';
 import { nango, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
+import { syncHubSpotContactsIntoReadiness } from '@/lib/signals/readiness-hubspot-contacts';
 import { syncHubSpotDealsIntoReadiness } from '@/lib/signals/readiness-hubspot-deals';
 
 export async function POST() {
@@ -34,6 +35,10 @@ export async function POST() {
 
   try {
     const admin = createAdminClient();
+    const contactResult = await syncHubSpotContactsIntoReadiness(admin, {
+      userId: user.id,
+      accessToken,
+    });
     const result = await syncHubSpotDealsIntoReadiness(admin, {
       userId: user.id,
       nangoConnectionId: conn.nango_connection_id,
@@ -43,6 +48,13 @@ export async function POST() {
     return NextResponse.json({
       ok: true,
       result: {
+        fetchedContacts: contactResult.fetchedContacts,
+        mirroredContacts: contactResult.mirroredContacts,
+        contactEventsEmitted: contactResult.emittedEvents,
+        contactContextOnlyEvents: contactResult.contextOnlyEvents,
+        contactRecomputedCompanies: contactResult.recomputedCompanies,
+        contactSkippedUnresolvedCompanies: contactResult.skippedUnresolvedCompanies,
+        contactCheckpoint: contactResult.checkpoint,
         fetchedDeals: result.fetchedDeals,
         mirroredDeals: result.mirroredDeals,
         emittedEvents: result.emittedEvents,

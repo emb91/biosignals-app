@@ -957,6 +957,12 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
     skippedContacts: { name: string; company: string | null; reason: string }[];
   } | null>(null);
   const [hubspotPullResult, setHubspotPullResult] = useState<{
+    fetchedContacts: number;
+    mirroredContacts: number;
+    contactEventsEmitted: number;
+    contactContextOnlyEvents: number;
+    contactRecomputedCompanies: number;
+    contactSkippedUnresolvedCompanies: number;
     fetchedDeals: number;
     mirroredDeals: number;
     emittedEvents: number;
@@ -2329,7 +2335,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
   if (!user) return null;
 
   const contactsPageTitleBlock = (
-    <div className="mb-6 shrink-0 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+    <div className="mb-6 shrink-0 flex flex-col gap-4 max-[767px]:pl-14 lg:flex-row lg:items-end lg:justify-between">
       <div>
         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-arcova-teal">
           <Users className="h-3.5 w-3.5" />
@@ -2467,20 +2473,26 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
             HubSpot CRM pulled
           </span>
           <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
-            {hubspotPullResult.fetchedDeals} fetched
+            {hubspotPullResult.fetchedContacts} contacts fetched
           </span>
           <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
-            {hubspotPullResult.mirroredDeals} mirrored
+            {hubspotPullResult.contactEventsEmitted} contact signals
           </span>
           <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
-            {hubspotPullResult.emittedEvents} signals
+            {hubspotPullResult.fetchedDeals} deals fetched
           </span>
           <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
-            {hubspotPullResult.recomputedCompanies} accounts updated
+            {hubspotPullResult.mirroredDeals} deals mirrored
           </span>
-          {hubspotPullResult.skippedUnresolvedCompanies > 0 && (
+          <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
+            {hubspotPullResult.emittedEvents} deal signals
+          </span>
+          <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
+            {hubspotPullResult.contactRecomputedCompanies + hubspotPullResult.recomputedCompanies} accounts updated
+          </span>
+          {(hubspotPullResult.contactContextOnlyEvents > 0 || hubspotPullResult.contactSkippedUnresolvedCompanies > 0 || hubspotPullResult.skippedUnresolvedCompanies > 0) && (
             <span className="text-xs font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">
-              {hubspotPullResult.skippedUnresolvedCompanies} unresolved
+              {hubspotPullResult.contactContextOnlyEvents} context-only · {hubspotPullResult.contactSkippedUnresolvedCompanies + hubspotPullResult.skippedUnresolvedCompanies} unresolved
             </span>
           )}
         </div>
@@ -2529,7 +2541,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
     <div className="flex min-h-0 h-screen bg-transparent">
       <AppSidebar />
 
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-3.5 overflow-hidden p-3.5 min-[1280px]:flex-row min-[1280px]:gap-2">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-3.5 overflow-hidden p-3.5 md:flex-row md:gap-2">
         <div className="contacts-leads-main flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[1.75rem] bg-transparent px-3 py-3 sm:px-5 sm:py-4 min-[1280px]:pr-2">
           <div className="flex min-h-0 w-full max-w-none flex-1 flex-col">
             {loadingLeads ? (
@@ -2665,7 +2677,14 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                     </button>
                   </div>
 
-                  <div ref={leadsScrollRef} className="min-h-0 flex-1 divide-y divide-[rgba(13,53,71,0.06)] overflow-y-auto">
+                  <div
+                    ref={leadsScrollRef}
+                    className="min-h-0 flex-1 divide-y divide-[rgba(13,53,71,0.06)] overflow-y-auto"
+                    style={{
+                      maskImage: 'linear-gradient(to bottom, black calc(100% - 9rem), transparent)',
+                      WebkitMaskImage: 'linear-gradient(to bottom, black calc(100% - 9rem), transparent)',
+                    }}
+                  >
                     {/* Single render path — agent filter narrows sortedLeads in-place */}
                     {sortedLeads.map((lead) => {
                       const isSelected = selectedLeadId === lead.id;
@@ -2971,8 +2990,8 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                       className={cn(
                         'contacts-leads-drawer flex min-h-0 flex-col overflow-hidden rounded-[1.3125rem] border border-[rgba(255,255,255,0.88)] bg-[rgba(255,255,255,0.55)] shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2)] backdrop-blur-2xl backdrop-saturate-150',
                         'fixed z-30',
-                        'max-[1279px]:bottom-3.5 max-[1279px]:top-3.5 max-[1279px]:right-3.5 max-[1279px]:w-[min(calc(100vw-1.75rem),26rem)]',
-                        'min-[1280px]:top-[26px] min-[1280px]:bottom-[26px] min-[1280px]:right-[26px] min-[1280px]:w-[26rem]',
+                        'max-md:bottom-3.5 max-md:top-3.5 max-md:right-3.5 max-md:w-[min(calc(100vw-1.75rem),22.5rem)]',
+                        'md:top-[26px] md:bottom-[26px] md:right-[26px] md:w-[22.5rem]',
                       )}
                     >
                   {selectedLead ? (

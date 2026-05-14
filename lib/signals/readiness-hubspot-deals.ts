@@ -319,6 +319,14 @@ function resolveDealTargets(
 
   if (uniqueCandidateIds.length === 1 && hubspotDomains.length === 0) {
     const candidate = contactCandidates[0]!;
+    if (!candidate.companyId) {
+      return {
+        targets: [],
+        suppressed: true,
+        resolutionStatus: 'ambiguous_unresolved',
+        mismatchReason: 'missing_contact_company_id',
+      };
+    }
     return {
       targets: [{
         companyId: candidate.companyId,

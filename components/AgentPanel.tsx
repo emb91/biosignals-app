@@ -10,7 +10,7 @@ import { BorderBeam } from '@/components/ui/border-beam';
 import { BriefingAgentOrb } from '@/components/briefing/BriefingAgentOrb';
 import type { AccountQueryColumn, AccountQueryFilters, AccountSortBy, QueryAccount } from '@/lib/accounts-data';
 import type { QueryColumn as LeadQueryColumn, LeadQueryFilters, LeadSortBy, QueryLead } from '@/lib/leads-data';
-import { fetchIcpPriorities, clearIcpPrioritiesCache, getDismissedPriorityIds, dismissPriority } from '@/lib/icp-priorities-client';
+import { fetchIcpPriorities, clearIcpPrioritiesCache, getDismissedPriorityIds, dismissPriority, clearIcpAuditDismissals } from '@/lib/icp-priorities-client';
 import { BATCH_CONTACTS_KEY } from '@/lib/batch-contacts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -458,6 +458,31 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
     inputRef.current?.focus();
   }
 
+  /**
+   * Refresh / unstick the agent without losing the conversation.
+   * - Aborts any in-flight `/api/agent/chat` request so a hung tool call doesn't keep
+   *   the panel locked in "thinking…" forever.
+   * - Drops any pending placeholder message so the thread doesn't show a stale spinner.
+   * - Resets isLoading + notifies the parent via onBusyChange.
+   * - On the icps page also force-refreshes the audit priorities so a fresh "Worth attention"
+   *   set is fetched. On other pages there are no priorities to refresh, so we just unstick.
+   */
+  function handleRefreshAgent() {
+    try {
+      inFlightAbortRef.current?.abort();
+    } catch {
+      // ignore
+    }
+    inFlightAbortRef.current = null;
+    setMessages((prev) => prev.filter((m) => !m.isPending));
+    setIsLoading(false);
+    onBusyChange?.(false);
+    if (page === 'icps') {
+      setPriorityRefreshKey((k) => k + 1);
+    }
+    inputRef.current?.focus();
+  }
+
   const showPrompts = !suppressPrompts && messages.length === 0 && !isLoading;
   const lightSetupChat = page === 'data' && variant !== 'central';
   /** Briefing-style / central layout: wide light chat surface. Triggered by Today (`page=today`) or the 'central' variant. */
@@ -635,7 +660,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
               embedGlass && 'h-full min-h-0 overflow-hidden',
               embedGlass ? 'px-0 py-0' : cn('px-4', lightSetupChat ? 'py-3' : 'py-4'),
             )
-          : 'shrink-0 self-stretch py-3 pr-3 pl-2 max-[1279px]:h-80 max-[1279px]:self-auto max-[1279px]:px-4 max-[1279px]:pb-4 max-[1279px]:pt-0 sm:max-[1279px]:px-6',
+          : 'shrink-0 self-stretch py-3 pr-3 pl-2 max-[767px]:h-80 max-[767px]:self-auto max-[767px]:px-4 max-[767px]:pb-4 max-[767px]:pt-0 sm:max-[767px]:px-6',
         className,
       )}
     >
@@ -643,7 +668,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
         className={cn(
           'flex min-h-0 flex-1 flex-col overflow-hidden',
           embedGlass && 'h-full min-h-0',
-          wide ? 'w-full' : 'w-[360px] max-[1279px]:w-full',
+          wide ? 'w-full' : 'w-[360px] max-[767px]:w-full',
           embedGlass
             ? 'relative border-0 bg-transparent shadow-none ring-0'
             : surfaceClassName
@@ -674,6 +699,10 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
       <div
         className={cn(
           'flex shrink-0 items-center border-b',
+          // Distinct chrome per surface — see memory: agent_surfaces_distinct.md
+          // - lightSetupChat: /data sourcing flow (intentionally different)
+          // - todayChat:      /today briefing or central variant (intentionally different)
+          // - default:        side-panel agent on icps/accounts/leads/health/signals/imports/log
           lightSetupChat
             ? 'gap-3 border-slate-200 bg-white px-5 py-4'
             : todayChat
@@ -682,7 +711,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
         )}
       >
         {(!lightSetupChat && !todayChat) ? (
-          /* 44×44 breathing orb — glows + speeds up when thinking */
+          /* 44×44 breathing orb — glows + speeds up when thinking (side-panel surface only) */
           <div className="relative h-11 w-11 shrink-0" aria-hidden>
             <span className="absolute rounded-full" style={{
               inset: '-25%',
@@ -732,29 +761,56 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
             </p>
           )}
         </div>
-        {messages.length > 0 && (
+        {/*
+          Header actions (right cluster):
+            +  Start new chat  → clears the message thread, restores the empty state
+            ⟳  Refresh agent   → aborts any stuck request, drops pending placeholders,
+                                  re-fetches priorities on the icps page
+
+          Shown across all pages (the component is shared). The + is hidden when there's
+          no conversation to clear; the ⟳ is always visible since stuck states can also
+          happen on an idle panel mid-fetch.
+        */}
+        <div className="flex shrink-0 items-center gap-0.5">
+          {messages.length > 0 && (
+            <button
+              onClick={handleClearConversation}
+              className={cn(
+                'transition-colors',
+                lightSetupChat
+                  ? 'rounded-lg p-2 text-gray-400 hover:bg-slate-50 hover:text-gray-600'
+                  : todayChat
+                    ? 'rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700'
+                    : 'rounded-lg p-1.5 text-gray-400 hover:bg-[#0d3547]/5 hover:text-gray-600',
+              )}
+              aria-label="Start new chat"
+              title="Start new chat"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+          )}
           <button
-            onClick={handleClearConversation}
+            onClick={handleRefreshAgent}
             className={cn(
-              'shrink-0 transition-colors',
+              'transition-colors',
               lightSetupChat
-                ? 'text-gray-400 hover:text-gray-600 rounded-lg p-2 hover:bg-slate-50'
+                ? 'rounded-lg p-2 text-gray-400 hover:bg-slate-50 hover:text-gray-600'
                 : todayChat
-                  ? 'text-slate-400 hover:text-slate-700 rounded-lg p-2 hover:bg-slate-100'
-                  : 'text-gray-400 hover:text-gray-600',
+                  ? 'rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700'
+                  : 'rounded-lg p-1.5 text-gray-400 hover:bg-[#0d3547]/5 hover:text-gray-600',
             )}
-            aria-label="Clear conversation"
-            title="Clear conversation"
+            aria-label="Refresh agent"
+            title="Refresh agent (recover from stuck state)"
           >
-            <RotateCcw className="w-3.5 h-3.5" />
+            <RefreshCw className={cn('h-3.5 w-3.5', isLoading && 'animate-spin')} />
           </button>
-        )}
+        </div>
       </div>
       )}
 
       {/* ── ICP priorities loading state: ghost suggestion pills ── */}
       {showPrompts && page === 'icps' && icpPrioritiesLoading && (
-        <div className={cn('shrink-0 px-[18px] pb-2 pt-3', !wide && 'max-[1279px]:hidden')} aria-hidden>
+        <div className={cn('shrink-0 px-[18px] pb-2 pt-3', !wide && 'max-[767px]:hidden')} aria-hidden>
           <p className="mb-2.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#b6c2c8]">
             Auditing your ICPs
           </p>
@@ -797,7 +853,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
 
       {/* ── ICP priorities all-clear (icps page, audit done, nothing flagged) ── */}
       {showPrompts && page === 'icps' && !icpPrioritiesLoading && icpPriorities.length === 0 && (
-        <div className={cn('shrink-0 px-[18px] pb-2 pt-1', !wide && 'max-[1279px]:hidden')}>
+        <div className={cn('shrink-0 px-[18px] pb-2 pt-1', !wide && 'max-[767px]:hidden')}>
           <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#b6c2c8]">ICP definitions</p>
           <div className="rounded-[12px] border border-[rgba(13,53,71,0.07)] bg-white/55 px-3 py-2.5">
             <div className="flex items-center gap-2">
@@ -811,7 +867,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
 
       {/* ── ICP priorities inbox (icps page only, idle state) ── */}
       {showPrompts && page === 'icps' && !icpPrioritiesLoading && icpPriorities.length > 0 && (
-        <div className={cn('shrink-0 px-[18px] pb-2 pt-1', !wide && 'max-[1279px]:hidden')}>
+        <div className={cn('shrink-0 px-[18px] pb-2 pt-1', !wide && 'max-[767px]:hidden')}>
           <div className="mb-2 flex items-center gap-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-orange-400" />
             <span className="text-[11px] font-semibold text-[#0d3547]">Worth attention</span>
@@ -866,11 +922,34 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
         </div>
       )}
 
+      {/*
+        Re-audit this page (icps page only, idle state).
+        Always visible — whether the inbox has priorities or is all-clear — so the user
+        can force a fresh Claude audit after making changes outside the agent (e.g.
+        editing an ICP card directly). Different from the header `⟳` Refresh which
+        unsticks the agent; this re-runs the audit content end-to-end.
+      */}
+      {showPrompts && page === 'icps' && !icpPrioritiesLoading && (
+        <div className={cn('shrink-0 px-[18px] pb-2', !wide && 'max-[767px]:hidden')}>
+          <button
+            type="button"
+            onClick={() => {
+              try { sessionStorage.removeItem('arcova:icp-priorities'); sessionStorage.removeItem('arcova:today-priorities'); } catch { /* ignore */ }
+              setPriorityRefreshKey((k) => k + 1);
+            }}
+            className="inline-flex items-center gap-1.5 rounded-full border border-[rgba(13,53,71,0.12)] bg-white/55 px-3 py-1 text-[11px] font-medium text-[#0d3547]/60 transition-colors hover:bg-white hover:text-[#0d3547]"
+          >
+            <RefreshCw className="h-3 w-3" />
+            Re-audit this page
+          </button>
+        </div>
+      )}
+
       {/* ── Suggested prompts ──
           Hidden on /icps when priorities are showing — the inbox + chat input are enough,
           duplicating with chips makes the panel feel cramped. */}
       {showPrompts && page !== 'icps' && (
-        <div className={cn('shrink-0', lightSetupChat ? 'px-5 pt-5 pb-3' : todayChat ? 'px-4 pt-4 pb-2' : 'px-[18px] pb-2 pt-1', !wide && 'max-[1279px]:hidden')}>
+        <div className={cn('shrink-0', lightSetupChat ? 'px-5 pt-5 pb-3' : todayChat ? 'px-4 pt-4 pb-2' : 'px-[18px] pb-2 pt-1', !wide && 'max-[767px]:hidden')}>
           <p className={cn('font-semibold uppercase tracking-[0.16em]', lightSetupChat ? 'mb-3 text-[10px] text-slate-400' : todayChat ? 'mb-2 text-[11px] text-slate-400' : 'mb-2 text-[10px] text-[#b6c2c8]')}>
             Try asking
           </p>

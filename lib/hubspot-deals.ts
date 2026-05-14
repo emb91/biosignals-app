@@ -20,6 +20,9 @@ const HUBSPOT_CONTACT_PROPERTIES = [
   'firstname',
   'lastname',
   'email',
+  'jobtitle',
+  'hubspot_owner_id',
+  'hs_lastmodifieddate',
   'arcova_contact_id',
   'arcova_company_id',
   'arcova_company_name',
@@ -121,9 +124,42 @@ export async function fetchModifiedHubSpotDeals(accessToken: string, since?: str
   return deals;
 }
 
+export async function fetchModifiedHubSpotContacts(accessToken: string, since?: string | null): Promise<HubSpotContactRecordById[]> {
+  const contacts: HubSpotContactRecordById[] = [];
+  let after: string | undefined;
+
+  do {
+    const body: Record<string, unknown> = {
+      properties: [...HUBSPOT_CONTACT_PROPERTIES],
+      limit: 100,
+      sorts: [{ propertyName: 'hs_lastmodifieddate', direction: 'ASCENDING' }],
+    };
+
+    if (since) {
+      body.filterGroups = [{ filters: [{ propertyName: 'hs_lastmodifieddate', operator: 'GTE', value: String(new Date(since).getTime()) }] }];
+    }
+
+    if (after) body.after = after;
+
+    const res = await fetch('https://api.hubapi.com/crm/v3/objects/contacts/search', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) throw new Error(`HubSpot contact search failed: ${res.status}`);
+
+    const data = await res.json();
+    contacts.push(...(data.results ?? []));
+    after = data.paging?.next?.after;
+  } while (after);
+
+  return contacts;
+}
+
 async function batchReadAssociations(
   accessToken: string,
-  fromObjectType: 'deals',
+  fromObjectType: 'deals' | 'contacts',
   toObjectType: 'companies' | 'contacts',
   ids: string[]
 ): Promise<Map<string, string[]>> {
@@ -159,6 +195,10 @@ export async function batchReadDealCompanyAssociations(accessToken: string, deal
 
 export async function batchReadDealContactAssociations(accessToken: string, dealIds: string[]): Promise<Map<string, string[]>> {
   return batchReadAssociations(accessToken, 'deals', 'contacts', dealIds);
+}
+
+export async function batchReadContactCompanyAssociations(accessToken: string, contactIds: string[]): Promise<Map<string, string[]>> {
+  return batchReadAssociations(accessToken, 'contacts', 'companies', contactIds);
 }
 
 export async function batchReadCompaniesById(accessToken: string, companyIds: string[]): Promise<HubSpotCompanyRecord[]> {

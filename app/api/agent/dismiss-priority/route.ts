@@ -46,3 +46,37 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
+
+/**
+ * DELETE /api/agent/dismiss-priority?source=icp-audit
+ *
+ * Clears all dismissals for the given source. Called by Re-audit so both /icps and /today
+ * re-surface previously dismissed findings on the next fetch.
+ */
+export async function DELETE(request: Request) {
+  try {
+    const supabase = await createClient();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    const { searchParams } = new URL(request.url);
+    const source = searchParams.get('source')?.trim() ?? '';
+    if (!source) return NextResponse.json({ error: 'source is required' }, { status: 400 });
+
+    const { error } = await supabase
+      .from('agent_priority_dismissals')
+      .delete()
+      .eq('user_id', user.id)
+      .eq('source', source);
+
+    if (error) {
+      console.error('[dismiss-priority] delete failed:', error);
+      return NextResponse.json({ error: 'Failed to clear dismissals' }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (err) {
+    console.error('[dismiss-priority] error:', err);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+}

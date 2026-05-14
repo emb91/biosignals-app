@@ -15,7 +15,10 @@ import { redactInternalIdsFromAgentUserText } from '@/lib/agent-redact';
 import { ROUTES } from '@/lib/routes';
 import type { TodayPriority } from '@/lib/priorities/types';
 
-const MODEL = 'claude-sonnet-4-6';
+// Haiku is plenty for a structured-output audit — we're asking for JSON, not deep reasoning.
+// Roughly 10× cheaper per call than Sonnet, which matters because the audit fires whenever
+// an inbox loads with no fresh cache.
+const MODEL = 'claude-haiku-4-5';
 
 export type IcpPriorityKind =
   | 'overlap'
@@ -58,6 +61,65 @@ function hashPriority(kind: string, icpIds: string[]): string {
 }
 
 /**
+ * Stable hash of the user's full ICP set + their company profile + dismissed-priority ids.
+ * Used to skip the Claude call when nothing relevant has changed since the last audit —
+ * the cache holds the hash that produced its priorities, and we only re-run when the
+ * current data hashes to something different.
+ *
+ * Includes `updated_at` so even an in-place edit to one ICP busts the hash, but ignores
+ * fields that change without affecting the audit (e.g. reenrichment status).
+ */
+function hashAuditInputs(args: {
+  myCompany: Record<string, unknown> | null;
+  icps: Array<Record<string, unknown>>;
+  dismissedIds: string[];
+}): string {
+  const companyKey =
+    args.myCompany
+      ? [
+          args.myCompany['id'],
+          args.myCompany['updated_at'] ?? args.myCompany['created_at'],
+        ].join(':')
+      : 'none';
+  const icpKeys = args.icps
+    .map((row) => [row['id'], row['updated_at'] ?? row['created_at']].join(':'))
+    .sort()
+    .join('|');
+  const dismissals = [...args.dismissedIds].sort().join(',');
+  const input = `c=${companyKey};i=${icpKeys};d=${dismissals}`;
+  let h = 0;
+  for (let i = 0; i < input.length; i += 1) {
+    h = (h * 31 + input.charCodeAt(i)) | 0;
+  }
+  return `audit_${Math.abs(h).toString(36)}`;
+}
+
+/** Cheap heuristic: compute just the inputs-hash without running Claude. */
+export async function getIcpAuditHash(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<string> {
+  const [companyRes, icpsRes, dismissalsRes] = await Promise.all([
+    supabase.from('user_company').select('id, updated_at, created_at').eq('user_id', userId).maybeSingle(),
+    supabase
+      .from('icps')
+      .select('id, updated_at, created_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: true }),
+    supabase
+      .from('agent_priority_dismissals')
+      .select('priority_id')
+      .eq('user_id', userId)
+      .eq('source', 'icp-audit'),
+  ]);
+  return hashAuditInputs({
+    myCompany: (companyRes.data as Record<string, unknown> | null) ?? null,
+    icps: (icpsRes.data as Array<Record<string, unknown>> | null) ?? [],
+    dismissedIds: ((dismissalsRes.data ?? []) as Array<{ priority_id: string }>).map((r) => r.priority_id),
+  });
+}
+
+/**
  * Compute the raw icp-audit priorities for the given user. Returns an empty array when
  * the user has no ICPs or the audit yields nothing notable. Never throws — failures
  * (network, Claude, JSON) resolve to []. Caller does its own caching.
@@ -68,8 +130,6 @@ export async function computeIcpAuditPriorities(
   userEmail: string | null | undefined,
 ): Promise<IcpPriority[]> {
   try {
-    // Fetch dismissals alongside the source data so we can filter server-side. Both
-    // /today and `/icps` call this path, so dismissals stay consistent.
     const [companyRes, icpsRes, dismissalsRes] = await Promise.all([
       supabase.from('user_company').select('*').eq('user_id', userId).maybeSingle(),
       supabase
@@ -218,8 +278,6 @@ ${JSON.stringify(icps, null, 2)}`;
           icpLabels,
         };
       })
-      // Filter out priorities the user has explicitly dismissed. Dismissed ids that no
-      // longer match anything (because the underlying ICPs changed) are silently ignored.
       .filter((p): p is IcpPriority => p !== null && !dismissedIds.has(p.id))
       .slice(0, 3);
 

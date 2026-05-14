@@ -5,8 +5,8 @@
  *   1. PUSH: upsert all scored Arcova contacts back to HubSpot (idempotent).
  *   2. PULL: fetch HubSpot contacts that haven't been enriched yet (arcova_enriched_at
  *      is unset), create an import batch, and kick off background enrichment.
- *   3. READINESS: poll changed HubSpot deals, mirror them locally, emit CRM
- *      signal events, and recompute readiness for resolved Arcova companies.
+ *   3. READINESS: poll changed HubSpot contacts and deals, mirror them locally,
+ *      emit CRM signal events, and recompute readiness for resolved Arcova companies.
  *
  * Protected by CRON_SECRET — Vercel automatically passes this as
  * `Authorization: Bearer <CRON_SECRET>` when invoking cron routes.
@@ -25,6 +25,7 @@ import {
 } from '@/lib/hubspot';
 import { processQueuedRowsInBackground, type QueuedRow } from '@/lib/import-queue';
 import { getLeadActionFromFits, formatLeadActionLabel } from '@/lib/lead-action';
+import { syncHubSpotContactsIntoReadiness } from '@/lib/signals/readiness-hubspot-contacts';
 import { syncHubSpotDealsIntoReadiness } from '@/lib/signals/readiness-hubspot-deals';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -388,6 +389,15 @@ export async function GET(request: Request) {
       skippedUnresolvedCompanies: number;
       checkpoint: string | null;
     };
+    contactSignals?: {
+      fetched: number;
+      mirrored: number;
+      emittedEvents: number;
+      recomputedCompanies: number;
+      contextOnlyEvents: number;
+      skippedUnresolvedCompanies: number;
+      checkpoint: string | null;
+    };
     error?: string;
   }> = [];
 
@@ -404,7 +414,13 @@ export async function GET(request: Request) {
       // 2. Pull new contacts from HubSpot
       const pullResult = await pullNewFromHubSpot(conn.user_id, accessToken, admin);
 
-      // 3. Poll HubSpot deals and emit readiness events
+      // 3. Poll HubSpot contacts and emit readiness events
+      const contactSignalResult = await syncHubSpotContactsIntoReadiness(admin, {
+        userId: conn.user_id,
+        accessToken,
+      });
+
+      // 4. Poll HubSpot deals and emit readiness events
       const dealResult = await syncHubSpotDealsIntoReadiness(admin, {
         userId: conn.user_id,
         nangoConnectionId: conn.nango_connection_id,
@@ -444,6 +460,15 @@ export async function GET(request: Request) {
         userId: conn.user_id,
         pushed: { contacts: pushResult.contacts.upserted, companies: pushResult.companies.updated ?? 0 },
         pulled: pullResult.pulled,
+        contactSignals: {
+          fetched: contactSignalResult.fetchedContacts,
+          mirrored: contactSignalResult.mirroredContacts,
+          emittedEvents: contactSignalResult.emittedEvents,
+          recomputedCompanies: contactSignalResult.recomputedCompanies,
+          contextOnlyEvents: contactSignalResult.contextOnlyEvents,
+          skippedUnresolvedCompanies: contactSignalResult.skippedUnresolvedCompanies,
+          checkpoint: contactSignalResult.checkpoint,
+        },
         deals: {
           fetched: dealResult.fetchedDeals,
           mirrored: dealResult.mirroredDeals,
@@ -455,7 +480,7 @@ export async function GET(request: Request) {
       });
 
       console.log(
-        `[cron] user=${conn.user_id} pushed=${pushResult.contacts.upserted} pulled=${pullResult.pulled} deals_fetched=${dealResult.fetchedDeals} deal_events=${dealResult.emittedEvents}`
+        `[cron] user=${conn.user_id} pushed=${pushResult.contacts.upserted} pulled=${pullResult.pulled} crm_contacts=${contactSignalResult.fetchedContacts}/${contactSignalResult.emittedEvents} deals_fetched=${dealResult.fetchedDeals} deal_events=${dealResult.emittedEvents}`
       );
     } catch (err) {
       const message = messageFromUnknown(err);
