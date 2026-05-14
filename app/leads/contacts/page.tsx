@@ -1535,7 +1535,11 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
   };
 
   const deleteLead = async (leadId: string) => {
-    const confirmed = window.confirm('Archive this contact? It will be hidden from active views and will not be re-imported or re-enriched automatically.');
+    const lead = leads.find((item) => item.id === leadId) ?? null;
+    const label = lead?.full_name || lead?.email || 'this contact';
+    const confirmed = window.confirm(
+      `Are you sure you want to archive ${label}? It will be hidden from active views and will not be re-imported or re-enriched automatically.`,
+    );
     if (!confirmed) return;
 
     setDeletingLeadId(leadId);

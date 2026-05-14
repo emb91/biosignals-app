@@ -63,8 +63,8 @@ function ArchivedRecordCard({
   group: ArchivedGroup;
   collapsed: boolean;
   onToggle: () => void;
-  onRestoreGroup: () => void;
-  onRestoreContact: (contactId: string) => void;
+  onRestoreGroup: (group: ArchivedGroup) => void;
+  onRestoreContact: (contact: ArchivedContact, group: ArchivedGroup) => void;
   restoring: boolean;
 }) {
   const accountLabel =
@@ -112,16 +112,6 @@ function ArchivedRecordCard({
             className={`h-3 w-3 shrink-0 text-[#b6c2c8] transition-transform duration-200 ${!collapsed ? 'rotate-180' : ''}`}
           />
         </button>
-
-        <button
-          type="button"
-          onClick={onRestoreGroup}
-          disabled={restoring}
-          className="shrink-0 inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-[11px] font-semibold border border-[rgba(45,138,138,0.18)] bg-[rgba(45,138,138,0.08)] text-[#2d8a8a] disabled:opacity-60"
-        >
-          <ArchiveRestore className="h-3 w-3" />
-          {restoring ? 'Restoring…' : 'Restore'}
-        </button>
       </div>
 
       {!collapsed && (
@@ -138,6 +128,18 @@ function ArchivedRecordCard({
           </div>
 
           <p className="text-[11px] text-[#b6c2c8]">{absoluteTime(group.archivedAt)}</p>
+
+          <div className="flex items-center justify-end">
+            <button
+              type="button"
+              onClick={() => onRestoreGroup(group)}
+              disabled={restoring}
+              className="inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-[11px] font-semibold border border-[rgba(45,138,138,0.18)] bg-[rgba(45,138,138,0.08)] text-[#2d8a8a] disabled:opacity-60"
+            >
+              <ArchiveRestore className="h-3 w-3" />
+              {restoring ? 'Restoring…' : group.account ? 'Restore account + contacts' : 'Restore contact'}
+            </button>
+          </div>
 
           <div>
             <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">
@@ -157,11 +159,11 @@ function ArchivedRecordCard({
                   </div>
                   <button
                     type="button"
-                    onClick={() => onRestoreContact(contact.id)}
-                    disabled={restoring || !!group.account}
+                    onClick={() => onRestoreContact(contact, group)}
+                    disabled={restoring}
                     className="shrink-0 rounded px-2 py-1 text-[10.5px] font-semibold text-[#2d8a8a] transition hover:bg-[rgba(45,138,138,0.08)] disabled:opacity-60"
                   >
-                    {group.account ? 'Restore account first' : 'Restore'}
+                    {group.account ? 'Restore' : 'Restore'}
                   </button>
                 </li>
               ))}
@@ -169,7 +171,9 @@ function ArchivedRecordCard({
           </div>
 
           <div className="flex items-center gap-1.5 text-[11.5px] text-[#7d909a]">
-            Account archive wins over contact restore. Restore the account first, then bring back only the contacts you want.
+            {group.account
+              ? 'Restoring any contact here will also restore the archived account group.'
+              : 'This account is already active. Restore individual contacts below if you want them back.'}
           </div>
         </div>
       )}
@@ -259,6 +263,20 @@ export default function ArchivedRecordsPage() {
     });
   }, []);
 
+  const confirmRestoreGroup = useCallback((group: ArchivedGroup): boolean => {
+    const label =
+      group.account?.company_name ||
+      group.account?.domain ||
+      group.contacts[0]?.company_name ||
+      'this account';
+    return window.confirm(`Are you sure you want to restore ${label}?`);
+  }, []);
+
+  const confirmRestoreContact = useCallback((contact: ArchivedContact): boolean => {
+    const label = contact.full_name || contact.email || 'this contact';
+    return window.confirm(`Are you sure you want to restore ${label}?`);
+  }, []);
+
   const restoreRecord = useCallback(async (restoreType: 'account' | 'contact', restoreId: string, restoreKey: string) => {
     if (!restoreId) return;
 
@@ -339,10 +357,22 @@ export default function ArchivedRecordsPage() {
                     group={group}
                     collapsed={!expandedKeys.has(group.key)}
                     onToggle={() => toggle(group.key)}
-                    onRestoreGroup={() =>
-                      void restoreRecord(group.account ? 'account' : 'contact', group.account?.id ?? group.contacts[0]?.id ?? '', group.key)
-                    }
-                    onRestoreContact={(contactId) => void restoreRecord('contact', contactId, group.key)}
+                    onRestoreGroup={(selectedGroup) => {
+                      if (!confirmRestoreGroup(selectedGroup)) return;
+                      void restoreRecord(
+                        selectedGroup.account ? 'account' : 'contact',
+                        selectedGroup.account?.id ?? selectedGroup.contacts[0]?.id ?? '',
+                        selectedGroup.key,
+                      );
+                    }}
+                    onRestoreContact={(contact, selectedGroup) => {
+                      if (!confirmRestoreContact(contact)) return;
+                      void restoreRecord(
+                        selectedGroup.account ? 'account' : 'contact',
+                        selectedGroup.account?.id ?? contact.id,
+                        selectedGroup.key,
+                      );
+                    }}
                     restoring={restoringKey === group.key}
                   />
                 ))}

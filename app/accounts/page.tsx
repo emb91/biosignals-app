@@ -1773,7 +1773,7 @@ export default function AccountsPage() {
                             onClick={async () => {
                               const label = selectedAccount.company_name || selectedAccount.domain || 'this account';
                               const ok = window.confirm(
-                                `Archive ${label}? It and its contacts will be hidden from active views and will not be re-imported or re-enriched automatically.`,
+                                `Are you sure you want to archive ${label}? It and its contacts will be hidden from active views and will not be re-imported or re-enriched automatically.`,
                               );
                               if (!ok) return;
 
