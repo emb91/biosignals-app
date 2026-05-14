@@ -146,7 +146,6 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
   const [showDataDot, setShowDataDot] = useState(false);
   const [showSignalsDot, setShowSignalsDot] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [forceCollapsed, setForceCollapsed] = useState(false);
   const [mobileHidden, setMobileHidden] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const isAdminUser = user?.email?.trim().toLowerCase() === ADMIN_EMAIL;
@@ -254,7 +253,8 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
     return () => mobileMq.removeEventListener('change', update);
   }, []);
 
-  const effectiveCollapsed = sidebarCollapsed || forceCollapsed;
+  // The user-controlled toggle is the only thing that collapses the sidebar now.
+  const effectiveCollapsed = sidebarCollapsed;
 
   useEffect(() => {
     if (leadsActive) setLeadsOpen(true);
@@ -645,7 +645,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
               />
               <span className="truncate text-xl font-semibold font-manrope text-arcova-navy">arcova</span>
             </button>
-            {!forceCollapsed && !mobileHidden && (
+            {!mobileHidden && (
               <button
                 type="button"
                 onClick={() => setCollapsed(true)}
