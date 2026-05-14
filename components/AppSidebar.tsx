@@ -239,24 +239,19 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
     }
   };
 
-  // Responsive auto-behavior:
-  //   <1280px           → force collapsed icon rail
-  //   <768px  (tablet)  → hide sidebar entirely; show hamburger that opens slide-in overlay
+  // Responsive auto-behaviour (no intermediate icon-rail tier — go straight from
+  // full sidebar to hamburger at 1280px):
+  //   ≥1280px → full sidebar (user can manually collapse via the toggle)
+  //   <1280px → hide sidebar entirely; show hamburger that opens slide-in overlay
   useEffect(() => {
-    const xlMq = window.matchMedia('(max-width: 1279px)');
-    const mdMq = window.matchMedia('(max-width: 767px)');
+    const mobileMq = window.matchMedia('(max-width: 1279px)');
     const update = () => {
-      setForceCollapsed(xlMq.matches);
-      setMobileHidden(mdMq.matches);
-      if (!mdMq.matches) setMobileOpen(false);
+      setMobileHidden(mobileMq.matches);
+      if (!mobileMq.matches) setMobileOpen(false);
     };
     update();
-    xlMq.addEventListener('change', update);
-    mdMq.addEventListener('change', update);
-    return () => {
-      xlMq.removeEventListener('change', update);
-      mdMq.removeEventListener('change', update);
-    };
+    mobileMq.addEventListener('change', update);
+    return () => mobileMq.removeEventListener('change', update);
   }, []);
 
   const effectiveCollapsed = sidebarCollapsed || forceCollapsed;

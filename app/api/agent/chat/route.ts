@@ -1102,6 +1102,7 @@ async function toolQueryContacts(
       )
     `)
     .eq('user_id', userId)
+    .is('archived_at', null)
     .order('contact_fit_score', { ascending: false })
     .limit(limit * 5); // fetch more to allow client-side filtering
 

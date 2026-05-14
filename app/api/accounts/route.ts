@@ -199,6 +199,7 @@ export async function GET(request: Request) {
       `,
       )
       .eq('user_id', user.id)
+      .is('archived_at', null)
       .not('company_id', 'is', null);
 
     if (error) {

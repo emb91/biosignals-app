@@ -655,10 +655,11 @@ export async function GET(request: Request) {
     }
 
     const runQuery = (selectClause: string) => {
-      let query = supabase
-        .from('contacts')
-        .select(selectClause, { count: 'exact' })
-        .eq('user_id', user.id);
+    let query = supabase
+      .from('contacts')
+      .select(selectClause, { count: 'exact' })
+      .eq('user_id', user.id)
+      .is('archived_at', null);
 
       if (lifecycle === 'customers') {
         query = query.in('id', customerContactIds);

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel, type AgentPendingMessage, type AgentTableFilter } from '@/components/AgentPanel';
 import { AgentChatBar } from '@/components/AgentChatBar';
+import { useScrollMask } from '@/hooks/use-scroll-mask';
 import type {
   AccountQueryColumn,
   QueryAccount,
@@ -252,8 +253,12 @@ function TaxonomyPills({ items }: { items: string[] | null | undefined }) {
 }
 
 const DEFAULT_COLUMNS: AccountQueryColumn[] = ['company', 'company_type', 'fit', 'contacts', 'action'];
-const MEDIUM_COLUMNS: AccountQueryColumn[] = ['company', 'fit', 'contacts', 'action'];
-const SMALL_COLUMNS: AccountQueryColumn[] = ['company', 'fit', 'action'];
+// Below 1280px the sidebar is collapsed and the table column is space-constrained
+// (~500px). Cramming all 5 columns turns the header into overlapping word soup — so
+// we keep just the essentials: Company (name), Company type, Fit. Matches the
+// contacts table's narrow-view rule (retain Name, Job title, Company, Fit).
+const MEDIUM_COLUMNS: AccountQueryColumn[] = ['company', 'company_type', 'fit'];
+const SMALL_COLUMNS: AccountQueryColumn[] = ['company', 'fit'];
 
 const ACCOUNT_QUERY_COL_DEFS: Record<AccountQueryColumn, { label: string; width: string }> = {
   company: { label: 'Company', width: 'minmax(0,1.05fr)' },
@@ -280,9 +285,12 @@ function useResponsiveAccountColumns(): AccountQueryColumn[] {
 
   useEffect(() => {
     const updateColumns = () => {
+      // Phone — minimum viable (just Company + Fit).
       if (window.innerWidth < 640) {
         setColumns(SMALL_COLUMNS);
-      } else if (window.innerWidth < 900) {
+      // Below the sidebar-collapse breakpoint (≤1279px) the table is space-constrained
+      // — drop Contacts + Action to keep the header readable.
+      } else if (window.innerWidth < 1280) {
         setColumns(MEDIUM_COLUMNS);
       } else {
         setColumns(DEFAULT_COLUMNS);
@@ -916,6 +924,12 @@ export default function AccountsPage() {
     tableSortCol,
     tableSortDir,
   );
+
+  // Only fade the bottom of the list while there's more content below the viewport;
+  // when scrolled to the end the last rows render in full without the mask clipping
+  // them. Re-measures whenever the row count changes (agent filter / fetch / etc.).
+  const { hasMore: hasMoreBelow } = useScrollMask(accountsScrollRef, [sortedAccounts.length]);
+
   const selectedAccount = selectedAccountId
     ? accounts.find((a) => a.id === selectedAccountId) ?? null
     : null;
@@ -1016,10 +1030,14 @@ export default function AccountsPage() {
                     <div
                       ref={accountsScrollRef}
                       className="min-h-0 flex-1 divide-y divide-[rgba(13,53,71,0.06)] overflow-y-auto"
-                      style={{
-                        maskImage: 'linear-gradient(to bottom, black calc(100% - 9rem), transparent)',
-                        WebkitMaskImage: 'linear-gradient(to bottom, black calc(100% - 9rem), transparent)',
-                      }}
+                      style={
+                        hasMoreBelow
+                          ? {
+                              maskImage: 'linear-gradient(to bottom, black calc(100% - 9rem), transparent)',
+                              WebkitMaskImage: 'linear-gradient(to bottom, black calc(100% - 9rem), transparent)',
+                            }
+                          : undefined
+                      }
                     >
                       {sortedAccounts.map((account) => {
                         const isSelected = selectedAccountId === account.id;
@@ -1740,15 +1758,28 @@ export default function AccountsPage() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => {
-                              // Deleting an account would cascade to its contacts.
-                              // No backend yet — surface a confirm message until the
-                              // /api/companies/[id] DELETE handler exists.
+                            onClick={async () => {
+                              const label = selectedAccount.company_name || selectedAccount.domain || 'this account';
                               const ok = window.confirm(
-                                `Delete ${selectedAccount.company_name || selectedAccount.domain || 'this account'}? Any contacts attached to it will be detached. (Not yet wired — this is a stub.)`,
+                                `Archive ${label}? It and its contacts will be hidden from active views and will not be re-imported or re-enriched automatically.`,
                               );
                               if (!ok) return;
-                              window.alert('Account deletion is not yet available. Coming soon.');
+
+                              try {
+                                const response = await fetch(`/api/accounts/${selectedAccount.id}`, {
+                                  method: 'DELETE',
+                                });
+                                const result = await response.json();
+                                if (!response.ok) {
+                                  throw new Error(result.error || 'Failed to archive account.');
+                                }
+
+                                setAccounts((prev) => prev.filter((account) => account.id !== selectedAccount.id));
+                                setSelectedAccountId(null);
+                              } catch (error) {
+                                console.error('Error archiving account:', error);
+                                window.alert(error instanceof Error ? error.message : 'Could not archive account.');
+                              }
                             }}
                             className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
                           >

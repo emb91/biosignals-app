@@ -1,12 +1,12 @@
 'use client';
 
 import { useAuth } from '@/context/AuthContext';
-import { useEnrichmentGuard } from '@/context/EnrichmentGuardContext';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState, useCallback, type KeyboardEvent } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel, type AgentLeadsFilter, type AgentPendingMessage } from '@/components/AgentPanel';
 import { AgentChatBar } from '@/components/AgentChatBar';
+import { useScrollMask } from '@/hooks/use-scroll-mask';
 import { ArcovaLoader } from '@/components/ArcovaLoader';
 import type { QueryLead } from '@/lib/leads-data';
 import {
@@ -29,6 +29,13 @@ import {
 } from '@/lib/contact-profile-display';
 import { cn } from '@/lib/utils';
 import { TableFitGaugeButton } from '@/components/TableFitGaugeButton';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu';
 import '@/app/leads/contacts-layout.css';
 import {
   Users,
@@ -394,8 +401,50 @@ type EnrichmentVisualState = {
 };
 
 const PAGE_SIZE = 50;
-const LEADS_TABLE_GRID =
-  'grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_minmax(0,1.15fr)_minmax(7.25rem,0.85fr)_minmax(0,5.25rem)_minmax(9.5rem,1.15fr)] gap-x-5';
+/**
+ * Responsive table grid — four tiers based on how much horizontal room the table has
+ * after sidebar + agent panel get their share. The grid TEMPLATE is set inline via
+ * the `style` attribute (using `useLeadsTableGridCols` below) so Tailwind doesn't
+ * have to compile a giant chain of `min-[1280px]:grid-cols-[minmax(0,...)_...]`
+ * arbitrary classes (it choked on the longest variant — HubSpot + Action ended up
+ * wrapping to a second row at full width). Visibility of cells stays on Tailwind
+ * via `hidden sm:flex` / `hidden lg:flex` / `hidden min-[1280px]:flex` etc.
+ *
+ * Tiers:
+ * - <640px (phone): 2 columns — Name / Contact fit.
+ * - 640–1023px: 3 columns — adds Company.
+ * - 1024–1279px: 4 columns — adds Job title.
+ * - ≥1280px: 6 columns — adds HubSpot + Action.
+ */
+const LEADS_TABLE_GRID = 'grid gap-x-5';
+
+const LEADS_GRID_COLS_PHONE =
+  'minmax(0,1fr) minmax(4.5rem,0.55fr)';
+const LEADS_GRID_COLS_SM =
+  'minmax(0,1.15fr) minmax(0,1.15fr) minmax(5.5rem,0.7fr)';
+const LEADS_GRID_COLS_LG =
+  'minmax(0,1fr) minmax(0,1fr) minmax(0,1.15fr) minmax(5.5rem,0.7fr)';
+const LEADS_GRID_COLS_FULL =
+  'minmax(0,0.85fr) minmax(0,1fr) minmax(0,1.15fr) minmax(7.25rem,0.85fr) minmax(0,5.25rem) minmax(9.5rem,1.15fr)';
+
+/** Returns the right `grid-template-columns` value for the current viewport. */
+function useLeadsTableGridCols(): string {
+  const [cols, setCols] = useState<string>(LEADS_GRID_COLS_FULL);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const update = () => {
+      const w = window.innerWidth;
+      if (w >= 1280) setCols(LEADS_GRID_COLS_FULL);
+      else if (w >= 1024) setCols(LEADS_GRID_COLS_LG);
+      else if (w >= 640) setCols(LEADS_GRID_COLS_SM);
+      else setCols(LEADS_GRID_COLS_PHONE);
+    };
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+  return cols;
+}
 
 function blurInputOnEnter(e: KeyboardEvent<HTMLInputElement>) {
   if (e.key !== 'Enter') return;
@@ -923,7 +972,6 @@ function SortArrow({ col, activeCol, dir }: { col: string; activeCol: string | n
 export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' | 'customers' }) {
   const { user, loading } = useAuth();
   const router = useRouter();
-  const { guardedNavigate } = useEnrichmentGuard();
   const searchParams = useSearchParams();
   const isCustomersPage = viewMode === 'customers';
 
@@ -940,6 +988,12 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
     }));
   const dashboardAgentTaskFiredRef = useRef<string | null>(null);
   const leadsScrollRef = useRef<HTMLDivElement | null>(null);
+
+  // Inline `grid-template-columns` value — driven by viewport width. See the const
+  // declarations above for the four tiers. We set this via `style` rather than long
+  // chained Tailwind arbitrary classes because the JIT compiler dropped the longest
+  // variant and the columns broke at full width.
+  const leadsGridCols = useLeadsTableGridCols();
 
   const [leads, setLeads] = useState<Lead[]>([]);
   const [total, setTotal] = useState(0);
@@ -1471,7 +1525,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
   };
 
   const deleteLead = async (leadId: string) => {
-    const confirmed = window.confirm('Remove this contact from Leads?');
+    const confirmed = window.confirm('Archive this contact? It will be hidden from active views and will not be re-imported or re-enriched automatically.');
     if (!confirmed) return;
 
     setDeletingLeadId(leadId);
@@ -1482,7 +1536,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
 
       const result = await response.json();
       if (!response.ok) {
-        throw new Error(result.error || 'Failed to delete lead.');
+        throw new Error(result.error || 'Failed to archive lead.');
       }
 
       setLeads((prev) => prev.filter((lead) => lead.id !== leadId));
@@ -1493,7 +1547,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
         setSelectedLeadId(null);
       }
     } catch (error) {
-      console.error('Error deleting lead:', error);
+      console.error('Error archiving lead:', error);
     } finally {
       setDeletingLeadId(null);
     }
@@ -1701,6 +1755,11 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
     tableSortDir,
   );
   const selectedLead = leads.find((lead) => lead.id === selectedLeadId) ?? null;
+
+  // Only fade the bottom of the list while there's more content below the viewport;
+  // when scrolled to the end the last rows render in full without the mask clipping
+  // them. Re-measures whenever the row count changes (agent filter / fetch / etc.).
+  const { hasMore: hasMoreBelow } = useScrollMask(leadsScrollRef, [sortedLeads.length]);
 
   const openContactAcquisitionFromLead = useCallback(() => {
     if (!selectedLead?.company_id) return;
@@ -2389,57 +2448,60 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
 
       {total > 0 && (
         <div className="flex items-center gap-2">
-          {!isCustomersPage && (
-            <button
-              onClick={() => router.push('/import')}
-              className="inline-flex items-center gap-1.5 px-4 py-2 bg-arcova-teal text-white rounded-lg text-sm hover:bg-arcova-teal/90 transition-colors"
-            >
-              <Upload className="w-3.5 h-3.5" />
-              Import
-            </button>
-          )}
-          <button
-            onClick={handleDownloadCsv}
-            className="inline-flex items-center gap-1.5 px-3 py-2 border border-gray-200 bg-white text-gray-700 rounded-lg text-sm hover:bg-gray-50 transition-colors"
-            title={isCustomersPage ? 'Export customers as CSV' : 'Export leads as CSV'}
-          >
-            <Download className="w-3.5 h-3.5" />
-            Export CSV
-          </button>
-          {!isCustomersPage && hubspotConnected && (
-            <button
-              onClick={handlePullHubspotCrm}
-              disabled={pullingHubspotCrm}
-              className="inline-flex items-center gap-2 px-3 py-2 border border-[#ff7a59]/25 bg-white text-[#cc5b3f] rounded-lg text-sm font-medium hover:bg-[#fff5f1] transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
-              title="Pull changed HubSpot CRM deals into Arcova"
-            >
-              {pullingHubspotCrm ? (
-                <RotateCw className="w-4 h-4 animate-spin" />
-              ) : (
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M18.164 7.932V5.085a2.198 2.198 0 0 0 1.268-1.978V3.06A2.199 2.199 0 0 0 17.235.862h-.047a2.199 2.199 0 0 0-2.197 2.197v.047a2.199 2.199 0 0 0 1.268 1.978v2.847a6.232 6.232 0 0 0-2.962 1.302L5.028 3.617a2.44 2.44 0 0 0 .072-.573A2.455 2.455 0 1 0 2.645 5.5a2.43 2.43 0 0 0 1.194-.315l8.122 4.707a6.248 6.248 0 0 0 0 4.208L4.123 18.5a2.432 2.432 0 0 0-1.478-.498 2.455 2.455 0 1 0 2.455 2.455 2.43 2.43 0 0 0-.388-1.337l7.91-4.583a6.266 6.266 0 0 0 8.976-5.628 6.25 6.25 0 0 0-3.434-5.977zm-1.023 9.565a3.59 3.59 0 1 1 0-7.181 3.59 3.59 0 0 1 0 7.181z"/>
-                </svg>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                className="inline-flex items-center gap-2 px-3 py-2 bg-arcova-teal text-white rounded-lg text-sm font-medium hover:bg-arcova-teal/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
+                title="Actions"
+              >
+                {pullingHubspotCrm || pushingToHubspot ? (
+                  <RotateCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <ChevronDown className="w-4 h-4" />
+                )}
+                Actions
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" sideOffset={6} className="min-w-[14rem]">
+              {!isCustomersPage && (
+                <DropdownMenuItem onSelect={() => router.push('/import')}>
+                  <Upload className="w-3.5 h-3.5" />
+                  Import
+                </DropdownMenuItem>
               )}
-              {pullingHubspotCrm ? 'Pulling…' : 'Pull HubSpot CRM'}
-            </button>
-          )}
-          {!isCustomersPage && hubspotConnected && (
-            <button
-              onClick={handlePushToHubspot}
-              disabled={pushingToHubspot}
-              className="inline-flex items-center gap-2 px-3 py-2 bg-[#ff7a59] text-white rounded-lg text-sm font-medium hover:bg-[#e8693f] transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
-              title="Sync enrichment data to HubSpot"
-            >
-              {pushingToHubspot ? (
-                <RotateCw className="w-4 h-4 animate-spin" />
-              ) : (
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M18.164 7.932V5.085a2.198 2.198 0 0 0 1.268-1.978V3.06A2.199 2.199 0 0 0 17.235.862h-.047a2.199 2.199 0 0 0-2.197 2.197v.047a2.199 2.199 0 0 0 1.268 1.978v2.847a6.232 6.232 0 0 0-2.962 1.302L5.028 3.617a2.44 2.44 0 0 0 .072-.573A2.455 2.455 0 1 0 2.645 5.5a2.43 2.43 0 0 0 1.194-.315l8.122 4.707a6.248 6.248 0 0 0 0 4.208L4.123 18.5a2.432 2.432 0 0 0-1.478-.498 2.455 2.455 0 1 0 2.455 2.455 2.43 2.43 0 0 0-.388-1.337l7.91-4.583a6.266 6.266 0 0 0 8.976-5.628 6.25 6.25 0 0 0-3.434-5.977zm-1.023 9.565a3.59 3.59 0 1 1 0-7.181 3.59 3.59 0 0 1 0 7.181z"/>
-                </svg>
+              <DropdownMenuItem onSelect={handleDownloadCsv}>
+                <Download className="w-3.5 h-3.5" />
+                Export CSV
+              </DropdownMenuItem>
+              {!isCustomersPage && hubspotConnected && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onSelect={handlePullHubspotCrm}
+                    disabled={pullingHubspotCrm}
+                  >
+                    {pullingHubspotCrm ? (
+                      <RotateCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Download className="w-3.5 h-3.5" />
+                    )}
+                    {pullingHubspotCrm ? 'Pulling…' : 'Pull HubSpot CRM'}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={handlePushToHubspot}
+                    disabled={pushingToHubspot}
+                  >
+                    {pushingToHubspot ? (
+                      <RotateCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Upload className="w-3.5 h-3.5" />
+                    )}
+                    {pushingToHubspot ? 'Syncing…' : 'Push to HubSpot'}
+                  </DropdownMenuItem>
+                </>
               )}
-              {pushingToHubspot ? 'Syncing…' : 'HubSpot Sync'}
-            </button>
-          )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       )}
     </div>
@@ -2664,16 +2726,21 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                       }
                     }}
                     className={`${LEADS_TABLE_GRID} shrink-0 items-start px-4 py-3 border-b border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.4)] text-[13px] font-semibold uppercase tracking-wide text-[#7d909a]`}
+                    style={{ gridTemplateColumns: leadsGridCols }}
                   >
                     {(['name', 'job_title', 'company'] as const).map((col) => (
                       <button
                         key={col}
                         onClick={() => handleSortCol(col)}
-                        className={`${
+                        className={cn(
                           col === 'company'
                             ? 'flex flex-col items-start gap-0.5'
-                            : 'flex items-start gap-1'
-                        } hover:text-gray-800 transition-colors text-left`}
+                            : 'flex items-start gap-1',
+                          // Drop columns out below breakpoints to keep the header readable.
+                          col === 'company' && 'hidden sm:flex',
+                          col === 'job_title' && 'hidden lg:flex',
+                          'hover:text-gray-800 transition-colors text-left',
+                        )}
                       >
                         <span className="flex items-start gap-1">
                           {col === 'name' ? 'Name' : col === 'job_title' ? 'Job title' : 'Company name'}
@@ -2696,13 +2763,13 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                         <SortArrow col="contact_fit" activeCol={tableSortCol} dir={tableSortDir} />
                       </span>
                     </button>
-                    <div className="flex w-full items-center justify-center">
+                    <div className="hidden w-full items-center justify-center min-[1280px]:flex">
                       <span className="normal-case tracking-normal">HubSpot</span>
                     </div>
                     <button
                       type="button"
                       onClick={() => handleSortCol('status')}
-                      className="flex w-full items-start justify-center gap-1 hover:text-gray-800 transition-colors"
+                      className="hidden w-full items-start justify-center gap-1 hover:text-gray-800 transition-colors min-[1280px]:flex"
                     >
                       Action
                       <SortArrow col="status" activeCol={tableSortCol} dir={tableSortDir} />
@@ -2712,10 +2779,14 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                   <div
                     ref={leadsScrollRef}
                     className="min-h-0 flex-1 divide-y divide-[rgba(13,53,71,0.06)] overflow-y-auto"
-                    style={{
-                      maskImage: 'linear-gradient(to bottom, black calc(100% - 9rem), transparent)',
-                      WebkitMaskImage: 'linear-gradient(to bottom, black calc(100% - 9rem), transparent)',
-                    }}
+                    style={
+                      hasMoreBelow
+                        ? {
+                            maskImage: 'linear-gradient(to bottom, black calc(100% - 9rem), transparent)',
+                            WebkitMaskImage: 'linear-gradient(to bottom, black calc(100% - 9rem), transparent)',
+                          }
+                        : undefined
+                    }
                   >
                     {/* Single render path — agent filter narrows sortedLeads in-place */}
                     {sortedLeads.map((lead) => {
@@ -2727,16 +2798,27 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                         return (
                           <div
                             key={lead.id}
+                            role="button"
+                            tabIndex={0}
                             onClick={() => {
                               setSelectedLeadId(lead.id);
                               setSelectedPreview('contact');
                               cancelEditingLead();
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                setSelectedLeadId(lead.id);
+                                setSelectedPreview('contact');
+                                cancelEditingLead();
+                              }
                             }}
                             className={`${LEADS_TABLE_GRID} relative px-4 py-3 items-center cursor-pointer transition-all duration-150 border-b border-gray-50 last:border-0 before:pointer-events-none before:absolute before:left-0 before:top-2 before:bottom-2 before:w-[3px] before:rounded-sm before:content-[''] before:transition-colors ${
                               isSelected
                                 ? 'bg-arcova-teal/10 before:bg-arcova-teal'
                                 : 'before:bg-transparent hover:bg-arcova-teal/5 hover:before:bg-arcova-teal/35'
                             }`}
+                            style={{ gridTemplateColumns: leadsGridCols }}
                           >
                             <div className="min-w-0">
                               <p className="text-sm font-medium text-gray-400 truncate">
@@ -2746,13 +2828,13 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                               </p>
                             </div>
 
-                            <div className="min-w-0">
+                            <div className="hidden min-w-0 lg:block">
                               <p className="text-xs text-gray-400 truncate leading-snug">
                                 {enrichmentProgress.label}...
                               </p>
                             </div>
 
-                            <div className="min-w-0 pr-3">
+                            <div className="hidden min-w-0 pr-3 sm:block">
                               <div className="flex items-center gap-3">
                                 <div className="relative h-2.5 flex-1 overflow-hidden rounded-full bg-slate-200/80">
                                   <div
@@ -2772,11 +2854,11 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                               <span className="text-[11px] text-gray-300 tabular-nums">—</span>
                             </div>
 
-                            <div className="min-w-0 flex items-center justify-center">
+                            <div className="hidden min-w-0 items-center justify-center min-[1280px]:flex">
                               <span className="text-[11px] text-gray-300 tabular-nums">—</span>
                             </div>
 
-                            <div className="min-w-0 flex items-center justify-center">
+                            <div className="hidden min-w-0 items-center justify-center min-[1280px]:flex">
                               <ArcovaLoader size={28} />
                             </div>
                           </div>
@@ -2786,16 +2868,27 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                       return (
                         <div
                           key={lead.id}
+                          role="button"
+                          tabIndex={0}
                           onClick={() => {
                             setSelectedLeadId(lead.id);
                             setSelectedPreview('contact');
                             cancelEditingLead();
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              setSelectedLeadId(lead.id);
+                              setSelectedPreview('contact');
+                              cancelEditingLead();
+                            }
                           }}
                           className={`${LEADS_TABLE_GRID} relative px-4 py-3 items-center cursor-pointer transition-all duration-150 opacity-100 before:pointer-events-none before:absolute before:left-0 before:top-2 before:bottom-2 before:w-[3px] before:rounded-sm before:content-[''] before:transition-colors ${
                             isSelected
                               ? 'bg-arcova-teal/10 before:bg-arcova-teal'
                               : 'before:bg-transparent hover:bg-arcova-teal/5 hover:before:bg-arcova-teal/35'
                           }`}
+                          style={{ gridTemplateColumns: leadsGridCols }}
                         >
                           {/* Full name */}
                           <div className="min-w-0">
@@ -2808,15 +2901,15 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                             </div>
                           </div>
 
-                          {/* Job title */}
-                          <div className="min-w-0">
+                          {/* Job title — hidden below lg (table is too cramped) */}
+                          <div className="hidden min-w-0 lg:block">
                             <p className="truncate text-[12px] leading-snug text-gray-700">
                               {((t) => t.length > 30 ? t.slice(0, 30) + '…' : t)(lead.resolved_current_job_title || lead.job_title || '—')}
                             </p>
                           </div>
 
-                          {/* Company name */}
-                          <div className="min-w-0">
+                          {/* Company name — hidden below sm (phone) */}
+                          <div className="hidden min-w-0 sm:block">
                             {(() => {
                               const companyFirmographics = getDisplayedCompanyFirmographics(lead);
                               const name =
@@ -2873,8 +2966,8 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                             />
                           </div>
 
-                          {/* HubSpot */}
-                          <div className="min-w-0 flex items-center justify-center">
+                          {/* HubSpot — hidden below 1280px (narrow viewport) */}
+                          <div className="hidden min-w-0 items-center justify-center min-[1280px]:flex">
                             {(() => {
                               const hubspotState = hubspotCrmByContactId[lead.id];
                               const badge = hubspotState?.loading
@@ -2907,8 +3000,8 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                             })()}
                           </div>
 
-                          {/* Action */}
-                          <div className="min-w-0 flex items-center justify-center">
+                          {/* Action — hidden below 1280px (narrow viewport) */}
+                          <div className="hidden min-w-0 items-center justify-center min-[1280px]:flex">
                             {(() => {
                               if (lead.hubspot_lead_state === 'customer') {
                                 return (
@@ -3996,7 +4089,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                                       <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
                                         <button
                                           type="button"
-                                          onClick={() => guardedNavigate(ROUTES.signals)}
+                                          onClick={() => router.push(ROUTES.signals)}
                                           className="inline-flex items-center gap-1.5 text-sm font-semibold text-arcova-teal hover:text-arcova-teal/85 transition-colors"
                                         >
                                           View Signals
