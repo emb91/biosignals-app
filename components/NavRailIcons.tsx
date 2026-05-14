@@ -125,6 +125,26 @@ export function NavIconAccount({ className }: IconProps) {
   );
 }
 
+export function NavIconCustomers({ className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={stroke.width}
+      strokeLinecap={stroke.cap}
+      strokeLinejoin={stroke.join}
+      className={cn('shrink-0', className)}
+      aria-hidden
+    >
+      <rect x="3" y="4" width="14" height="16" rx="2" />
+      <path d="M7 8h6M7 12h6M7 16h4" />
+      <circle cx="18" cy="17" r="3" />
+      <path d="m16.9 17 0.8 0.8 1.5-1.6" />
+    </svg>
+  );
+}
+
 export function NavIconHealth({ className }: IconProps) {
   return (
     <svg

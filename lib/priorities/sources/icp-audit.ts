@@ -35,6 +35,7 @@ export interface IcpPriority {
   detail: string;
   cta: { label: string; seedPrompt: string };
   icpIds: string[];
+  icpLabels: string[];
 }
 
 const anthropic = new Anthropic();
@@ -107,7 +108,7 @@ Return STRICT JSON ONLY in this exact shape — no prose, no backticks, no pream
       "kind": "overlap" | "gap" | "too_broad" | "too_narrow" | "rename" | "other",
       "severity": "high" | "medium" | "low",
       "headline": "One short line (max 70 chars) the user reads first",
-      "detail": "1-2 sentences explaining the issue and why it matters, grounded in actual fields you can see",
+      "detail": "ONE short sentence — max 25 words, max 150 characters. State the issue plainly. NEVER list every field or write paragraphs. The user already sees the cards; explain just why this matters.",
       "cta": {
         "label": "Short button text (max 22 chars) like 'Merge them', 'Draft an ICP', 'Tighten it'",
         "seedPrompt": "Natural-language opener for the company-criteria agent chat. Name ICPs by creation order plus title only, e.g. 'ICP 2 (Preclinical Multi-Modality Drug Discovery CRO) and ICP 3 (…)'. Never include hyphenated UUIDs or '(id: …)' parentheses — the UI must stay free of raw database ids."
@@ -173,10 +174,23 @@ ${JSON.stringify(icps, null, 2)}`;
           typeof e.headline === 'string'
             ? redactInternalIdsFromAgentUserText(e.headline.trim())
             : '';
-        const detail =
+        // Hard cap on detail length so even if the model overshoots the prompt we don't
+        // render a paragraph. Cuts to the end of the previous sentence/word if possible
+        // so the trim doesn't look mid-thought.
+        const rawDetail =
           typeof e.detail === 'string'
             ? redactInternalIdsFromAgentUserText(e.detail.trim())
             : '';
+        const detail = (() => {
+          const MAX = 150;
+          if (rawDetail.length <= MAX) return rawDetail;
+          // Prefer cutting at the end of the first sentence.
+          const sentenceEnd = rawDetail.slice(0, MAX).search(/[.!?](?:\s|$)/);
+          if (sentenceEnd > 60) return rawDetail.slice(0, sentenceEnd + 1).trim();
+          // Otherwise cut at the last word boundary inside the limit and add an ellipsis.
+          const wordCut = rawDetail.slice(0, MAX).replace(/\s+\S*$/, '').trim();
+          return `${wordCut}…`;
+        })();
         const ctaRaw = e.cta && typeof e.cta === 'object' ? (e.cta as Record<string, unknown>) : {};
         const ctaLabel = typeof ctaRaw.label === 'string' ? ctaRaw.label.trim() : '';
         const ctaSeed =
@@ -185,6 +199,13 @@ ${JSON.stringify(icps, null, 2)}`;
             : '';
         const icpIdsRaw = Array.isArray(e.icpIds) ? (e.icpIds as unknown[]) : [];
         const icpIds = icpIdsRaw.filter((v): v is string => typeof v === 'string' && validIcpIds.has(v));
+        // Pills always show position labels ("ICP 1", "ICP 5"). Short, unambiguous, and the
+        // full names are already mentioned in the headline. Falls back to "ICP ?" if the id
+        // somehow doesn't resolve (shouldn't happen because of the validIcpIds filter above).
+        const icpLabels = icpIds.map((id) => {
+          const idx = (icps as Array<{ id: string }>).findIndex((icp) => icp.id === id);
+          return idx >= 0 ? `ICP ${idx + 1}` : 'ICP ?';
+        });
         if (!headline || !ctaLabel || !ctaSeed) return null;
         return {
           id: hashPriority(kind, icpIds),
@@ -194,6 +215,7 @@ ${JSON.stringify(icps, null, 2)}`;
           detail,
           cta: { label: ctaLabel, seedPrompt: ctaSeed },
           icpIds,
+          icpLabels,
         };
       })
       // Filter out priorities the user has explicitly dismissed. Dismissed ids that no

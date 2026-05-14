@@ -879,11 +879,12 @@ function SortArrow({ col, activeCol, dir }: { col: string; activeCol: string | n
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function LeadsPage() {
+export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' | 'customers' }) {
   const { user, loading } = useAuth();
   const router = useRouter();
   const { guardedNavigate } = useEnrichmentGuard();
   const searchParams = useSearchParams();
+  const isCustomersPage = viewMode === 'customers';
 
   const [agentTrigger, setAgentTrigger] = useState<AgentPendingMessage | undefined>();
   const fireAgent = (text: string, threadPreview?: string) =>
@@ -908,10 +909,18 @@ export default function LeadsPage() {
   const [refreshingLeadId, setRefreshingLeadId] = useState<string | null>(null);
   const [hubspotConnected, setHubspotConnected] = useState(false);
   const [pushingToHubspot, setPushingToHubspot] = useState(false);
+  const [pullingHubspotCrm, setPullingHubspotCrm] = useState(false);
   const [hubspotSyncResult, setHubspotSyncResult] = useState<{
     contacts: { upserted: number; errors: number };
     skipped: number;
     skippedContacts: { name: string; company: string | null; reason: string }[];
+  } | null>(null);
+  const [hubspotPullResult, setHubspotPullResult] = useState<{
+    fetchedDeals: number;
+    mirroredDeals: number;
+    emittedEvents: number;
+    recomputedCompanies: number;
+    skippedUnresolvedCompanies: number;
   } | null>(null);
   const [syncResultExpanded, setSyncResultExpanded] = useState(false);
   const [stoppingLeadId, setStoppingLeadId] = useState<string | null>(null);
@@ -967,6 +976,7 @@ export default function LeadsPage() {
       const params = new URLSearchParams({
         page: String(page),
         pageSize: String(PAGE_SIZE),
+        lifecycle: isCustomersPage ? 'customers' : 'leads',
       });
       if (search) params.set('search', search);
 
@@ -991,7 +1001,7 @@ export default function LeadsPage() {
     } finally {
       if (!silent) setLoadingLeads(false);
     }
-  }, [user, page, search]);
+  }, [user, page, search, isCustomersPage]);
 
   useEffect(() => {
     fetchLeads();
@@ -1025,12 +1035,39 @@ export default function LeadsPage() {
     }
   }, [pushingToHubspot]);
 
+  const handlePullHubspotCrm = useCallback(async () => {
+    if (pullingHubspotCrm) return;
+    setPullingHubspotCrm(true);
+    setHubspotPullResult(null);
+    try {
+      const res = await fetch('/api/hubspot/pull-crm', { method: 'POST' });
+      const text = await res.text();
+      const data = text ? JSON.parse(text) : null;
+      if (!res.ok) {
+        console.error('HubSpot CRM pull failed:', data?.error || text || 'Unknown error');
+        return;
+      }
+      if (data?.result) {
+        setHubspotPullResult(data.result);
+        await fetchLeads(true);
+      }
+    } catch (err) {
+      console.error('HubSpot CRM pull error:', err);
+    } finally {
+      setPullingHubspotCrm(false);
+    }
+  }, [pullingHubspotCrm, fetchLeads]);
+
   const handleDownloadCsv = useCallback(async () => {
     // Fetch all leads (loop pages)
     const allLeads: Lead[] = [];
     let p = 1;
     while (true) {
-      const params = new URLSearchParams({ page: String(p), pageSize: '100' });
+      const params = new URLSearchParams({
+        page: String(p),
+        pageSize: '100',
+        lifecycle: isCustomersPage ? 'customers' : 'leads',
+      });
       if (search) params.set('search', search);
       const res = await fetch(`/api/leads?${params}`);
       if (!res.ok) break;
@@ -1100,10 +1137,10 @@ export default function LeadsPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `leads-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `${isCustomersPage ? 'customers' : 'leads'}-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [search]);
+  }, [search, isCustomersPage]);
 
 
   useEffect(() => {
@@ -2242,36 +2279,59 @@ export default function LeadsPage() {
       <div>
         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-arcova-teal">
           <Users className="h-3.5 w-3.5" />
-          Leads
+          {isCustomersPage ? 'Customers' : 'Leads'}
         </div>
         <h1 className="font-manrope mt-2 text-3xl font-semibold leading-tight tracking-[-0.028em] text-slate-950 sm:text-[2.25rem]">
-          Contacts
+          {isCustomersPage ? 'Customer contacts' : 'Contacts'}
         </h1>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
-          {total > 0
-            ? `${total.toLocaleString()} contact${total !== 1 ? 's' : ''} ready to review. Click a row for details, or the company name to open the account.`
-            : 'Your imported contacts will appear here once they are ready to review.'}
+          {isCustomersPage
+            ? total > 0
+              ? `${total.toLocaleString()} customer contact${total !== 1 ? 's' : ''} tracked here. Click a row for details, or the company name to open the account.`
+              : 'Won contacts from HubSpot will appear here once they move into your customer lifecycle.'
+            : total > 0
+              ? `${total.toLocaleString()} contact${total !== 1 ? 's' : ''} ready to review. Click a row for details, or the company name to open the account.`
+              : 'Your imported contacts will appear here once they are ready to review.'}
         </p>
       </div>
 
       {total > 0 && (
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => router.push('/import')}
-            className="inline-flex items-center gap-1.5 px-4 py-2 bg-arcova-teal text-white rounded-lg text-sm hover:bg-arcova-teal/90 transition-colors"
-          >
-            <Upload className="w-3.5 h-3.5" />
-            Import
-          </button>
+          {!isCustomersPage && (
+            <button
+              onClick={() => router.push('/import')}
+              className="inline-flex items-center gap-1.5 px-4 py-2 bg-arcova-teal text-white rounded-lg text-sm hover:bg-arcova-teal/90 transition-colors"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              Import
+            </button>
+          )}
           <button
             onClick={handleDownloadCsv}
             className="inline-flex items-center gap-1.5 px-3 py-2 border border-gray-200 bg-white text-gray-700 rounded-lg text-sm hover:bg-gray-50 transition-colors"
-            title="Export leads as CSV"
+            title={isCustomersPage ? 'Export customers as CSV' : 'Export leads as CSV'}
           >
             <Download className="w-3.5 h-3.5" />
             Export CSV
           </button>
-          {hubspotConnected && (
+          {!isCustomersPage && hubspotConnected && (
+            <button
+              onClick={handlePullHubspotCrm}
+              disabled={pullingHubspotCrm}
+              className="inline-flex items-center gap-2 px-3 py-2 border border-[#ff7a59]/25 bg-white text-[#cc5b3f] rounded-lg text-sm font-medium hover:bg-[#fff5f1] transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
+              title="Pull changed HubSpot CRM deals into Arcova"
+            >
+              {pullingHubspotCrm ? (
+                <RotateCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M18.164 7.932V5.085a2.198 2.198 0 0 0 1.268-1.978V3.06A2.199 2.199 0 0 0 17.235.862h-.047a2.199 2.199 0 0 0-2.197 2.197v.047a2.199 2.199 0 0 0 1.268 1.978v2.847a6.232 6.232 0 0 0-2.962 1.302L5.028 3.617a2.44 2.44 0 0 0 .072-.573A2.455 2.455 0 1 0 2.645 5.5a2.43 2.43 0 0 0 1.194-.315l8.122 4.707a6.248 6.248 0 0 0 0 4.208L4.123 18.5a2.432 2.432 0 0 0-1.478-.498 2.455 2.455 0 1 0 2.455 2.455 2.43 2.43 0 0 0-.388-1.337l7.91-4.583a6.266 6.266 0 0 0 8.976-5.628 6.25 6.25 0 0 0-3.434-5.977zm-1.023 9.565a3.59 3.59 0 1 1 0-7.181 3.59 3.59 0 0 1 0 7.181z"/>
+                </svg>
+              )}
+              {pullingHubspotCrm ? 'Pulling…' : 'Pull HubSpot CRM'}
+            </button>
+          )}
+          {!isCustomersPage && hubspotConnected && (
             <button
               onClick={handlePushToHubspot}
               disabled={pushingToHubspot}
@@ -2345,6 +2405,59 @@ export default function LeadsPage() {
     </div>
   ) : null;
 
+  const hubspotPullBanner = hubspotPullResult ? (
+    <div className="mb-4 shrink-0 rounded-lg border border-gray-200 bg-white px-4 py-3.5 flex items-start justify-between gap-4">
+      <div className="min-w-0">
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="text-sm font-semibold text-gray-900">
+            HubSpot CRM pulled
+          </span>
+          <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
+            {hubspotPullResult.fetchedDeals} fetched
+          </span>
+          <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
+            {hubspotPullResult.mirroredDeals} mirrored
+          </span>
+          <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
+            {hubspotPullResult.emittedEvents} signals
+          </span>
+          <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
+            {hubspotPullResult.recomputedCompanies} accounts updated
+          </span>
+          {hubspotPullResult.skippedUnresolvedCompanies > 0 && (
+            <span className="text-xs font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">
+              {hubspotPullResult.skippedUnresolvedCompanies} unresolved
+            </span>
+          )}
+        </div>
+      </div>
+      <button
+        onClick={() => setHubspotPullResult(null)}
+        className="shrink-0 text-gray-400 hover:text-gray-600 mt-0.5"
+        aria-label="Dismiss"
+      >
+        <X className="w-4 h-4" />
+      </button>
+    </div>
+  ) : null;
+
+  const customerModeBanner = isCustomersPage ? (
+    <div className="mb-4 shrink-0 rounded-2xl border border-[rgba(45,138,138,0.18)] bg-[rgba(45,138,138,0.07)] px-4 py-3">
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-full bg-[rgba(45,138,138,0.12)] text-[#2d8a8a]">
+          <Users className="h-3.5 w-3.5" />
+        </div>
+        <div>
+          <p className="text-sm font-semibold text-[#0d3547]">Customer workflow</p>
+          <p className="mt-1 text-sm leading-6 text-[#4a6470]">
+            Closed-won HubSpot contacts live here so we can keep the CRM history, attribution, and relationship context
+            without sending them back through paid lead enrichment.
+          </p>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   return (
     <div className="flex min-h-0 h-screen bg-transparent">
       <AppSidebar />
@@ -2355,6 +2468,8 @@ export default function LeadsPage() {
             {loadingLeads ? (
               <>
                 {contactsPageTitleBlock}
+                {customerModeBanner}
+                {hubspotPullBanner}
                 {hubspotSyncBanner}
                 <div className="flex items-center justify-center py-24">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-arcova-teal" />
@@ -2363,29 +2478,41 @@ export default function LeadsPage() {
             ) : leads.length === 0 && !search && !agentFilterIds ? (
               <>
                 {contactsPageTitleBlock}
+                {customerModeBanner}
+                {hubspotPullBanner}
                 {hubspotSyncBanner}
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-16 text-center">
                 <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                   <Users className="w-8 h-8 text-gray-400" />
                 </div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">No leads yet</h3>
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                  {isCustomersPage ? 'No customers yet' : 'No leads yet'}
+                </h3>
                 <p className="text-gray-500 mb-6 max-w-sm mx-auto">
-                  Import a CSV of contacts to start reviewing enriched leads.
+                  {isCustomersPage
+                    ? 'Closed-won HubSpot contacts will appear here once they move into your customer lifecycle.'
+                    : 'Import a CSV of contacts to start reviewing enriched leads.'}
                 </p>
-                <button
-                  onClick={() => router.push('/import')}
-                  className="px-6 py-3 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors"
-                >
-                  Import contacts
-                </button>
+                {!isCustomersPage ? (
+                  <button
+                    onClick={() => router.push('/import')}
+                    className="px-6 py-3 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors"
+                  >
+                    Import contacts
+                  </button>
+                ) : null}
               </div>
               </>
             ) : leads.length === 0 && search && !agentFilterIds ? (
               <>
                 {contactsPageTitleBlock}
+                {customerModeBanner}
+                {hubspotPullBanner}
                 {hubspotSyncBanner}
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-                <p className="text-gray-500">No leads matching &ldquo;{search}&rdquo;</p>
+                <p className="text-gray-500">
+                  No {isCustomersPage ? 'customers' : 'leads'} matching &ldquo;{search}&rdquo;
+                </p>
               </div>
               </>
             ) : (
@@ -2403,6 +2530,8 @@ export default function LeadsPage() {
                 )}
               >
                 {contactsPageTitleBlock}
+                {customerModeBanner}
+                {hubspotPullBanner}
                 {hubspotSyncBanner}
                 {/* ── Leads table ── */}
                 <div className="flex min-h-0 flex-1 flex-col gap-2 min-[1280px]:overflow-y-auto">
@@ -2856,7 +2985,9 @@ export default function LeadsPage() {
                                 ? 'HubSpot'
                               : selectedPreview === 'scoring'
                                 ? 'Fit'
-                                : 'Action'}
+                                : isCustomersPage
+                                  ? 'Customer'
+                                  : 'Action'}
                           </p>
                           <h2 className="font-manrope mt-1.5 break-words text-xl font-bold leading-tight tracking-[-0.024em] text-[rgb(13,53,71)] sm:text-2xl">
                             {[selectedLead.first_name, selectedLead.last_name].filter(Boolean).join(' ') ||
@@ -2936,7 +3067,9 @@ export default function LeadsPage() {
                                 ? 'HubSpot'
                                 : mode === 'scoring'
                                   ? 'Fit'
-                                  : 'Action'}
+                                  : isCustomersPage
+                                    ? 'Customer'
+                                    : 'Action'}
                           </button>
                         ))}
                       </div>
@@ -2995,7 +3128,9 @@ export default function LeadsPage() {
                                 />
                               </div>
                               <div className="space-y-1">
-                                <label className="text-xs text-gray-400">Primary email (Leads / sync)</label>
+                                <label className="text-xs text-gray-400">
+                                  Primary email ({isCustomersPage ? 'Customers / sync' : 'Leads / sync'})
+                                </label>
                                 <input
                                   type="email"
                                   autoComplete="off"
@@ -3978,8 +4113,9 @@ export default function LeadsPage() {
         <AgentPanel
           className="min-[1280px]:pl-1.5"
           page="leads"
+          headerSubtitle={isCustomersPage ? 'Ask me about your customers' : undefined}
           pageContext={{
-            leadsView: 'contacts',
+            leadsView: isCustomersPage ? 'customers' : 'contacts',
             ...(selectedLead ? {
               selectedLead: {
                 id: selectedLead.id,
@@ -4003,4 +4139,8 @@ export default function LeadsPage() {
       </div>
     </div>
   );
+}
+
+export default function LeadsPage() {
+  return <ContactsWorkspace viewMode="leads" />;
 }

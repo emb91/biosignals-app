@@ -247,6 +247,8 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
     detail: string;
     cta: { label: string; seedPrompt: string };
     icpIds: string[];
+    /** Position labels like "ICP 1", "ICP 5" — server-derived from icps.created_at order. */
+    icpLabels: string[];
   };
   const [icpPriorities, setIcpPriorities] = useState<IcpPriority[]>([]);
   const [icpPrioritiesLoading, setIcpPrioritiesLoading] = useState(page === 'icps');
@@ -804,29 +806,54 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
       {/* ── ICP priorities inbox (icps page only, idle state) ── */}
       {showPrompts && page === 'icps' && !icpPrioritiesLoading && icpPriorities.length > 0 && (
         <div className={cn('shrink-0 px-[18px] pb-2 pt-1', !wide && 'max-[1279px]:hidden')}>
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#4a6470]">
-            Worth your attention
-          </p>
+          <div className="mb-2 flex items-center gap-1.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-orange-400" />
+            <span className="text-[11px] font-semibold text-[#0d3547]">Worth attention</span>
+            <span className="rounded-full bg-[#0d3547]/8 px-1.5 py-px text-[10px] font-semibold text-[#0d3547]/60">
+              {icpPriorities.length}
+            </span>
+          </div>
           <div className="flex flex-col gap-2">
             {icpPriorities.map((p) => (
               <div
                 key={p.id}
-                className="rounded-[12px] border border-[rgba(13,53,71,0.08)] bg-white/65 px-3 py-2.5"
+                className="rounded-[12px] border border-[rgba(13,53,71,0.08)] bg-white/65 px-3 py-3"
               >
-                <p className="m-0 text-[12.5px] font-semibold leading-snug text-[#0d3547]">
+                {p.icpLabels.length > 0 && (
+                  <div className="mb-2 flex flex-wrap gap-1">
+                    {p.icpLabels.map((label) => (
+                      <span
+                        key={label}
+                        className="inline-block rounded-full bg-[#0d3547]/8 px-2 py-0.5 text-[10.5px] font-medium text-[#0d3547]/70"
+                      >
+                        {label}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <p className="m-0 text-[13px] font-semibold leading-snug text-[#0d3547]">
                   {p.headline}
                 </p>
                 {p.detail && (
-                  <p className="m-0 mt-1 text-[11.5px] leading-snug text-[#0d3547]">{p.detail}</p>
+                  <p className="m-0 mt-1.5 text-[11.5px] leading-snug text-[#0d3547]/70">{p.detail}</p>
                 )}
-                <button
-                  type="button"
-                  onClick={() => { activePriorityIdRef.current = p.id; sendMessage(p.cta.seedPrompt, false, p.cta.label); }}
-                  className="mt-2 inline-flex items-center gap-1 rounded-full border border-arcova-teal/30 bg-arcova-teal/10 px-2.5 py-0.5 text-[11px] font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/15"
-                >
-                  <Sparkles className="h-3 w-3" />
-                  {p.cta.label}
-                </button>
+                <div className="mt-3 flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => { activePriorityIdRef.current = p.id; sendMessage(p.cta.seedPrompt, false, p.cta.label); }}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-[#0d3547] px-3 py-1.5 text-[11.5px] font-semibold text-white transition-colors hover:bg-[#0d3547]/85"
+                  >
+                    {p.cta.label}
+                    <ArrowRight className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { dismissPriority(p.id); setIcpPriorities((prev) => prev.filter((x) => x.id !== p.id)); }}
+                    className="text-[11px] text-[#0d3547]/45 transition-colors hover:text-[#0d3547]/70"
+                  >
+                    Dismiss
+                  </button>
+                </div>
               </div>
             ))}
           </div>

@@ -10,6 +10,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 
 const STORAGE_KEY = 'arcova_admin_signals_todo_v1';
+const AUTO_COMPLETED_SIGNALS = new Set<SignalKey>(['open_opportunity_in_crm', 'closed_lost_in_crm']);
 
 type SignalFamily =
   | 'external_company_change'
@@ -101,6 +102,7 @@ const SIGNAL_FAMILY_MAP: Record<SignalKey, SignalFamily[]> = {
   demo_requested: ['first_party_engagement'],
   inbound_enquiry: ['first_party_engagement'],
   open_opportunity_in_crm: ['crm_deal_activity'],
+  closed_lost_in_crm: ['crm_deal_activity', 'suppression_signals'],
   clinical_trial_registered: ['external_company_change'],
   phase_transition: ['external_company_change'],
   trial_site_expansion: ['external_company_change'],
@@ -177,6 +179,10 @@ function saveChecklistState(state: ChecklistState) {
   }
 }
 
+function isSignalCompleted(signalKey: SignalKey, checks: ChecklistState): boolean {
+  return AUTO_COMPLETED_SIGNALS.has(signalKey) || Boolean(checks[signalKey]);
+}
+
 function scopeLabel(entry: SignalCatalogEntry): string {
   return entry.scope === 'company' ? 'Company' : 'Contact';
 }
@@ -242,7 +248,7 @@ export default function AdminSignalsTodoPage() {
   );
 
   const uniqueSignalCount = READINESS_SIGNAL_CATALOG.length;
-  const completedSignalCount = READINESS_SIGNAL_CATALOG.filter((entry) => checks[entry.signalKey]).length;
+  const completedSignalCount = READINESS_SIGNAL_CATALOG.filter((entry) => isSignalCompleted(entry.signalKey, checks)).length;
 
   function toggleSignal(signalKey: SignalKey) {
     setChecks((current) => {
@@ -352,7 +358,7 @@ export default function AdminSignalsTodoPage() {
             />
             {DIMENSION_ORDER.map((dimension) => {
               const signals = groupedSignals[dimension];
-              const done = signals.filter((entry) => checks[entry.signalKey]).length;
+              const done = signals.filter((entry) => isSignalCompleted(entry.signalKey, checks)).length;
               return (
                 <SummaryCard
                   key={dimension}
@@ -377,7 +383,7 @@ export default function AdminSignalsTodoPage() {
             <div className="mt-4 grid gap-3 lg:grid-cols-3">
               {FAMILY_ORDER.map((family) => {
                 const signals = familyCounts[family];
-                const done = signals.filter((entry) => checks[entry.signalKey]).length;
+                const done = signals.filter((entry) => isSignalCompleted(entry.signalKey, checks)).length;
                 return (
                   <div key={family} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
                     <div className="text-sm font-medium text-slate-900">{FAMILY_META[family].label}</div>
@@ -403,7 +409,7 @@ export default function AdminSignalsTodoPage() {
                     </p>
                   </div>
                   <div className="text-sm text-slate-500">
-                    {signals.filter((entry) => checks[entry.signalKey]).length} of {signals.length} checked
+                    {signals.filter((entry) => isSignalCompleted(entry.signalKey, checks)).length} of {signals.length} checked
                   </div>
                 </div>
 
@@ -419,7 +425,7 @@ export default function AdminSignalsTodoPage() {
                             <p className="text-xs text-slate-500">{FAMILY_META[family].description}</p>
                           </div>
                           <div className="text-xs text-slate-500">
-                            {familySignals.filter((entry) => checks[entry.signalKey]).length} of {familySignals.length} checked
+                            {familySignals.filter((entry) => isSignalCompleted(entry.signalKey, checks)).length} of {familySignals.length} checked
                           </div>
                         </div>
 
@@ -439,18 +445,20 @@ export default function AdminSignalsTodoPage() {
                             </thead>
                             <tbody>
                               {familySignals.map((entry) => {
-                                const checked = Boolean(checks[entry.signalKey]);
+                                const checked = isSignalCompleted(entry.signalKey, checks);
+                                const autoCompleted = AUTO_COMPLETED_SIGNALS.has(entry.signalKey);
                                 return (
                                   <tr key={`${dimension}:${family}:${entry.signalKey}`} className="border-t border-slate-100">
                                     <td className="px-3 py-3 align-top">
                                       <button
                                         type="button"
                                         onClick={() => toggleSignal(entry.signalKey)}
+                                        disabled={autoCompleted}
                                         className={`inline-flex h-6 w-6 items-center justify-center rounded-md border transition-colors ${
                                           checked
                                             ? 'border-arcova-teal bg-arcova-teal text-white'
                                             : 'border-slate-300 bg-white text-transparent hover:border-slate-400'
-                                        }`}
+                                        } ${autoCompleted ? 'cursor-default opacity-100' : ''}`}
                                         aria-pressed={checked}
                                         aria-label={`Mark ${entry.signalKey} as ${checked ? 'not done' : 'done'}`}
                                       >
@@ -460,6 +468,11 @@ export default function AdminSignalsTodoPage() {
                                     <td className="px-3 py-3 align-top">
                                       <div className="font-medium text-slate-950">{titleCaseSignalKey(entry.signalKey)}</div>
                                       <div className="mt-1 font-mono text-xs text-slate-500">{entry.signalKey}</div>
+                                      {autoCompleted ? (
+                                        <div className="mt-2 inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                                          Shipped
+                                        </div>
+                                      ) : null}
                                     </td>
                                     <td className="px-3 py-3 align-top text-slate-600">{scopeLabel(entry)}</td>
                                     <td className="px-3 py-3 align-top text-slate-600">{familyLabels(entry.signalKey)}</td>

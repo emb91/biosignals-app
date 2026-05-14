@@ -13,6 +13,8 @@ export function redactInternalIdsFromAgentUserText(text: string): string {
   s = s.replace(/\(\s*id\s*:\s*\)/gi, '').replace(/\s*\(\s*\)/g, '');
   s = s.replace(/\(\s*\)/g, '');
   s = s.replace(/\s+,/g, ',').replace(/,\s*,+/g, ',');
-  s = s.replace(/\s{2,}/g, ' ').replace(/\s+\./g, '.').trim();
+  s = s.replace(/\n{3,}/g, '\n\n');          // collapse 3+ newlines to a paragraph break
+  s = s.replace(/[^\S\n]{2,}/g, ' ');        // collapse non-newline whitespace runs
+  s = s.replace(/[^\S\n]+\./g, '.').trim();  // fix spaces before periods
   return s;
 }

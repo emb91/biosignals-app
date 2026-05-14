@@ -203,6 +203,60 @@ export default function SignalsPage() {
           {/* <div className="absolute inset-0 bg-gradient-to-t from-white/80 via-transparent to-white/40 pointer-events-none" /> */}
         </div>
 
+        <AnimatedSection className="w-full bg-white py-12 md:py-16">
+          <div className="container mx-auto px-4 md:px-6 max-w-6xl">
+            <div className="mx-auto max-w-3xl text-center">
+              <div className="inline-flex items-center gap-2 rounded-full border border-[#f6c6b4] bg-[#fff5ef] px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-[#dc6b3d]">
+                <Handshake className="h-3.5 w-3.5" />
+                HubSpot CRM Signals
+              </div>
+              <h2 className="mt-5 text-3xl font-bold text-arcova-darkblue md:text-4xl">
+                Arcova now treats CRM movement as real timing evidence
+              </h2>
+              <p className="mt-4 text-base leading-7 text-arcova-darkblue/70 md:text-lg">
+                Open deals raise readiness. Closed-lost deals suppress it until something meaningful changes. Arcova keeps
+                your company truth primary, while still showing the older HubSpot account context alongside it.
+              </p>
+            </div>
+
+            <div className="mt-10 grid gap-4 md:grid-cols-3">
+              <div className="rounded-[28px] border border-[#d7f0ee] bg-white p-6 shadow-[0_22px_60px_-40px_rgba(0,164,180,0.35)]">
+                <div className="inline-flex rounded-full border border-[#bce9e4] bg-[#eefbfa] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-arcova-teal">
+                  Positive motion
+                </div>
+                <h3 className="mt-4 text-xl font-semibold text-arcova-darkblue">Open opportunity in CRM</h3>
+                <p className="mt-3 text-sm leading-6 text-arcova-darkblue/70">
+                  When a deal is created, reopened, or pushed into an active buying stage, Arcova lifts readiness and
+                  preserves the HubSpot deal as first-party commercial evidence.
+                </p>
+              </div>
+
+              <div className="rounded-[28px] border border-[#f6d8ce] bg-white p-6 shadow-[0_22px_60px_-40px_rgba(220,107,61,0.35)]">
+                <div className="inline-flex rounded-full border border-[#f4c4b6] bg-[#fff4ee] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#dc6b3d]">
+                  Suppression
+                </div>
+                <h3 className="mt-4 text-xl font-semibold text-arcova-darkblue">Closed lost in CRM</h3>
+                <p className="mt-3 text-sm leading-6 text-arcova-darkblue/70">
+                  A closed-lost deal now feeds directly into <span className="font-medium text-arcova-darkblue">caution</span>,
+                  pushing that account into a dormant state until new people, new needs, or fresh budget signals re-open the window.
+                </p>
+              </div>
+
+              <div className="rounded-[28px] border border-[#dfe8f6] bg-white p-6 shadow-[0_22px_60px_-40px_rgba(34,84,148,0.25)]">
+                <div className="inline-flex rounded-full border border-[#d6e0f4] bg-[#f5f8fe] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#496f9d]">
+                  Identity guardrail
+                </div>
+                <h3 className="mt-4 text-xl font-semibold text-arcova-darkblue">Arcova truth, HubSpot context</h3>
+                <p className="mt-3 text-sm leading-6 text-arcova-darkblue/70">
+                  If HubSpot says <span className="font-medium text-arcova-darkblue">Radar Ventures</span> but Arcova knows the
+                  current company is <span className="font-medium text-arcova-darkblue">Acumino</span>, we preserve both without letting
+                  the CRM overwrite the better identity.
+                </p>
+              </div>
+            </div>
+          </div>
+        </AnimatedSection>
+
         <AnimatedSection className="w-full pt-20 pb-12 bg-slate-50">
           <div className="container mx-auto px-4 md:px-6 max-w-7xl">
             <div className="text-center mb-6">

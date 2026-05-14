@@ -104,6 +104,17 @@ export const READINESS_SIGNAL_CATALOG: readonly SignalCatalogEntry[] = [
     notes: 'First-party CRM state, not public signal.',
   },
   {
+    signalKey: 'closed_lost_in_crm',
+    scope: 'company',
+    dimensions: ['caution'],
+    defaultStrength: 'strong',
+    defaultConfidence: 'high',
+    decayDays: 120,
+    buyerFunctions: ['commercial', 'sales_operations'],
+    intentMechanisms: ['suppression'],
+    notes: 'First-party CRM caution state. Keeps closed-lost accounts dormant until something materially changes.',
+  },
+  {
     signalKey: 'clinical_trial_registered',
     scope: 'company',
     dimensions: ['new_needs'],
@@ -624,4 +635,3 @@ export function getReadinessSignal(signalKey: SignalKey): SignalCatalogEntry {
 export function getSignalsForDimension(dimension: SignalCatalogEntry['dimensions'][number]): SignalCatalogEntry[] {
   return READINESS_SIGNAL_CATALOG.filter((entry) => entry.dimensions.includes(dimension));
 }
-

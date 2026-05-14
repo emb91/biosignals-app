@@ -16,6 +16,7 @@ import { ROUTES } from "@/lib/routes"
 const APP_ROUTES = [
   ROUTES.leads.accounts,
   ROUTES.leads.contacts,
+  ROUTES.customers,
   ROUTES.data,
   ROUTES.health,
   ROUTES.today,
