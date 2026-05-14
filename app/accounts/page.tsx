@@ -10,8 +10,6 @@ import type {
   QueryAccount,
 } from '@/lib/accounts-data';
 import {
-  Activity,
-  AlertTriangle,
   Building2,
   ChevronDown,
   ChevronLeft,
@@ -368,6 +366,7 @@ export default function AccountsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const accountsDeepLinkCompanyIdRef = useRef<string | null>(null);
+  const accountsScrollRef = useRef<HTMLDivElement | null>(null);
   const tableColumns = useResponsiveAccountColumns();
 
   const [accounts, setAccounts] = useState<AccountRow[]>([]);
@@ -889,12 +888,12 @@ export default function AccountsPage() {
     <div className="flex h-screen bg-transparent">
       <AppSidebar />
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden min-[1280px]:flex-row">
-        {/* ── Main scrollable content ── */}
-        <div className="bg-transparent flex-1 overflow-auto p-4 min-w-0 sm:p-6">
-          <div className="w-full max-w-none">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-3.5 overflow-hidden p-3.5 md:flex-row md:gap-2">
+        {/* ── Main content (table) ── */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-transparent px-3 py-3 sm:px-5 sm:py-4">
+          <div className="flex min-h-0 w-full max-w-none flex-1 flex-col">
 
-            <div className="mb-6">
+            <div className="mb-6 shrink-0 max-[767px]:pl-14">
               <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-arcova-teal">
                 <Building2 className="h-3.5 w-3.5" />
                 Leads
@@ -928,46 +927,7 @@ export default function AccountsPage() {
                 </button>
               </div>
             ) : (
-              <div className={cn('grid min-w-0 gap-4', selectedAccountId ? 'min-[1700px]:grid-cols-[minmax(0,1fr)_360px]' : '')}>
-
-                {/* ── Table ── */}
-                <div className="min-w-0 flex flex-col gap-2">
-
-                {/* Contact coverage gap banner */}
-                {(() => {
-                  const opportunityAccounts = accounts.filter(
-                    (a) => getCoverageStatus(a) === 'opportunity',
-                  );
-                  if (opportunityAccounts.length === 0) return null;
-                  const names = opportunityAccounts
-                    .slice(0, 5)
-                    .map((a) => a.company_name || a.domain || 'Unknown')
-                    .join(', ');
-                  const more = opportunityAccounts.length > 5
-                    ? ` and ${opportunityAccounts.length - 5} more`
-                    : '';
-                  return (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        fireAgent(
-                          `${opportunityAccounts.length === 1 ? 'One account is' : `${opportunityAccounts.length} accounts are`} missing strong contact coverage: ${names}${more}. Explain what is going on and what I should do next.`,
-                          'What should I do about contact coverage gaps?',
-                        )
-                      }
-                      className="w-full flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-left transition-colors hover:bg-amber-100"
-                    >
-                      <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
-                      <p className="text-sm font-medium text-amber-800">
-                        {opportunityAccounts.length === 1
-                          ? '1 account is missing strong contact coverage.'
-                          : `${opportunityAccounts.length} accounts are missing strong contact coverage.`}
-                        <span className="ml-1.5 font-normal text-amber-600">Click to learn more.</span>
-                      </p>
-                      <Activity className="ml-auto h-4 w-4 shrink-0 text-amber-400" />
-                    </button>
-                  );
-                })()}
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden">
 
                 {/* Agent filter banner */}
                 {agentFilterIds && (
@@ -985,11 +945,15 @@ export default function AccountsPage() {
                   </div>
                 )}
 
-                <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-                  <div className="min-w-0">
+                <div className="relative flex min-h-0 flex-1 flex-col bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
                     {/* Header */}
                     <div
-                      className="grid w-full min-w-0 px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide gap-x-5"
+                      onWheel={(e) => {
+                        if (accountsScrollRef.current) {
+                          accountsScrollRef.current.scrollTop += e.deltaY;
+                        }
+                      }}
+                      className="grid w-full shrink-0 min-w-0 px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide gap-x-5"
                       style={{ gridTemplateColumns: accountQueryGridCols(tableColumns) }}
                     >
                       {tableColumns.map((col) => (
@@ -1009,7 +973,14 @@ export default function AccountsPage() {
                     </div>
 
                     {/* Rows — single render path; agent filter narrows sortedAccounts in-place */}
-                    <div className="divide-y divide-gray-100">
+                    <div
+                      ref={accountsScrollRef}
+                      className="min-h-0 flex-1 divide-y divide-gray-100 overflow-y-auto"
+                      style={{
+                        maskImage: 'linear-gradient(to bottom, black calc(100% - 9rem), transparent)',
+                        WebkitMaskImage: 'linear-gradient(to bottom, black calc(100% - 9rem), transparent)',
+                      }}
+                    >
                       {sortedAccounts.map((account) => {
                         const isSelected = selectedAccountId === account.id;
 
@@ -1046,10 +1017,9 @@ export default function AccountsPage() {
                         );
                       })}
                     </div>
-                  </div>
 
                   {!agentFilterIds && totalPages > 1 && (
-                    <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200 bg-gray-50">
+                    <div className="flex shrink-0 items-center justify-between px-4 py-3 border-t border-gray-200 bg-gray-50">
                       <p className="text-xs text-gray-500">
                         {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of {total.toLocaleString()}
                       </p>
@@ -1066,14 +1036,19 @@ export default function AccountsPage() {
                       </div>
                     </div>
                   )}
-                </div>
-                </div>{/* end table + banner wrapper */}
+                </div>{/* end table card */}
 
-                {/* ── Side panel ── */}
+                {/* ── Side panel — fixed overlay on top of the AgentPanel ── */}
                 {selectedAccountId && selectedAccount && (
-                  <aside className="bg-white rounded-lg shadow-sm border border-gray-200 min-h-[520px] flex flex-col">
+                  <aside
+                    className={cn(
+                      'fixed z-30 flex min-h-0 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2)]',
+                      'max-md:bottom-3.5 max-md:top-3.5 max-md:right-3.5 max-md:w-[min(calc(100vw-1.75rem),23.75rem)]',
+                      'md:top-[14px] md:bottom-[14px] md:right-[14px] md:w-[23.75rem]',
+                    )}
+                  >
                     {/* Panel header */}
-                    <div className="flex items-start gap-3 px-5 py-4 border-b border-gray-200">
+                    <div className="flex shrink-0 items-start gap-3 px-5 py-4 border-b border-gray-200">
                       {/* Name / links (left) */}
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-medium uppercase tracking-wide text-arcova-teal">Company details</p>
@@ -1117,7 +1092,7 @@ export default function AccountsPage() {
                       </div>
                     </div>
 
-                    <div className="flex border-b border-gray-200 px-5">
+                    <div className="flex shrink-0 border-b border-gray-200 px-5">
                       {(['details', 'fit', 'action', 'contacts'] as PanelMode[]).map((mode) => (
                         <button
                           key={mode}
@@ -1142,7 +1117,7 @@ export default function AccountsPage() {
                     </div>
 
                     {/* Panel body */}
-                    <div className="flex-1 overflow-auto px-5 py-4">
+                    <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
 
                       {panelMode === 'fit' && (
                         <CompanyIcpFitDetailPanel
