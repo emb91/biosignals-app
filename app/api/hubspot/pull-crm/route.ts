@@ -44,6 +44,28 @@ export async function POST() {
       nangoConnectionId: conn.nango_connection_id,
       accessToken,
     });
+    const now = new Date().toISOString();
+
+    await admin.from('hubspot_sync_events').insert({
+      user_id: user.id,
+      event_type: 'pull',
+      created_at: now,
+      pull_count: contactResult.fetchedContacts,
+      deals_fetched: result.fetchedDeals,
+      deals_mirrored: result.mirroredDeals,
+      deal_events_emitted: result.emittedEvents,
+      crm_contacts_fetched: contactResult.fetchedContacts,
+      crm_contacts_mirrored: contactResult.mirroredContacts,
+      contact_events_emitted: contactResult.emittedEvents,
+      contact_context_only_events: contactResult.contextOnlyEvents,
+      crm_recomputed_companies: contactResult.recomputedCompanies + result.recomputedCompanies,
+      crm_unresolved_count: contactResult.skippedUnresolvedCompanies + result.skippedUnresolvedCompanies,
+      contact_signal_types: contactResult.emittedSignalTypes,
+      contact_context_signal_types: contactResult.contextOnlySignalTypes,
+      deal_signal_types: result.emittedSignalTypes,
+      skipped_contacts: [],
+      error_details: [],
+    });
 
     return NextResponse.json({
       ok: true,
@@ -55,12 +77,15 @@ export async function POST() {
         contactRecomputedCompanies: contactResult.recomputedCompanies,
         contactSkippedUnresolvedCompanies: contactResult.skippedUnresolvedCompanies,
         contactCheckpoint: contactResult.checkpoint,
+        contactSignalTypes: contactResult.emittedSignalTypes,
+        contactContextSignalTypes: contactResult.contextOnlySignalTypes,
         fetchedDeals: result.fetchedDeals,
         mirroredDeals: result.mirroredDeals,
         emittedEvents: result.emittedEvents,
         recomputedCompanies: result.recomputedCompanies,
         skippedUnresolvedCompanies: result.skippedUnresolvedCompanies,
         checkpoint: result.checkpoint,
+        dealSignalTypes: result.emittedSignalTypes,
       },
     });
   } catch (error) {

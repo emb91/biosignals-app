@@ -272,8 +272,10 @@ Return ONLY a JSON array of signal IDs (the part before the colon), ordered by r
 Do not include em dashes in your response.
 Return ONLY the JSON array, nothing else.`;
 
+  // Structured JSON output (signal-id selection) — Haiku handles this fine.
+  // See memory/llm_cost_concerns.md.
   const message = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
+    model: 'claude-haiku-4-5',
     max_tokens: 1024,
     messages: [{ role: 'user', content: prompt }],
   });
@@ -281,7 +283,7 @@ Return ONLY the JSON array, nothing else.`;
     provider: 'anthropic',
     feature: 'icp_signal_recommendation',
     route: 'lib/icp-reenrichment#recommendCompanySignals',
-    model: 'claude-sonnet-4-6',
+    model: 'claude-haiku-4-5',
     usage: message.usage,
     metadata: {
       company_type: input.companyType,

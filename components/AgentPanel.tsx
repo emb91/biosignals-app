@@ -3,6 +3,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import { Send, Sparkles, RotateCcw, ArrowRight, Plus, RefreshCw } from 'lucide-react';
+import { AgentChatBar } from '@/components/AgentChatBar';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { ArcovaLoader } from '@/components/ArcovaLoader';
@@ -1081,90 +1082,103 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
               <RotateCcw className="h-3.5 w-3.5" />
             </button>
           )}
-          <div
-            className={cn(
-              'flex min-w-0 flex-1 items-center gap-2 transition-all',
-              !(todayChat && embedGlass) && 'focus-within:ring-2 focus-within:ring-arcova-teal/20',
-              lightSetupChat
-                ? 'rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm focus-within:border-arcova-teal/40'
-                : todayChat
-                  ? embedGlass
-                    ? 'rounded-2xl border border-[rgba(13,53,71,0.12)] bg-white/90 px-3 py-2.5 shadow-[0_8px_32px_-20px_rgba(13,53,71,0.18)] backdrop-blur-md focus-within:border-arcova-teal/45 focus-within:shadow-[0_8px_28px_-18px_rgba(0,164,180,0.22)]'
-                    : 'rounded-2xl bg-slate-100/85 px-3 py-2 ring-1 ring-slate-200/70 focus-within:ring-arcova-teal/25'
-                  : 'rounded-[14px] border border-[rgba(13,53,71,0.07)] bg-white/70 pl-3 pr-[6px] py-[6px] focus-within:border-arcova-teal focus-within:bg-white focus-within:shadow-[0_0_0_4px_rgba(0,164,180,0.12)]',
-            )}
-          >
-            {(!todayChat && !lightSetupChat) ? (
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-arcova-teal" aria-hidden>
-                <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/>
-              </svg>
-            ) : (
-              <Sparkles className={cn('shrink-0', todayChat || lightSetupChat ? 'h-4 w-4 text-arcova-teal/45' : 'h-3.5 w-3.5 text-arcova-teal')} />
-            )}
-            <input
+          {/* Side-panel agent (default variant) uses the shared `AgentChatBar` component
+              so other surfaces (e.g. the floating chat bar on /leads/contacts) stay
+              visually consistent. The bespoke `todayChat` and `lightSetupChat` variants
+              keep their inline JSX — different shapes/sizes, intentionally distinct. */}
+          {!todayChat && !lightSetupChat ? (
+            <AgentChatBar
               ref={inputRef}
-              type="text"
               value={input}
-              onChange={(e) => {
-                const v = e.target.value;
+              onChange={(v) => {
                 setInput(v);
                 if (embedGlass && v.trim()) setBriefingSurfaceEngaged(true);
               }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') sendMessage(input);
-              }}
+              onSubmit={() => sendMessage(input)}
               placeholder={
-                embedGlass
-                  ? messages.length > 0
-                    ? 'Ask a follow-up…'
-                    : 'Ask anything…'
-                  : messages.length > 0
-                    ? 'Ask a follow-up…'
-                    : page === 'leads'
-                      ? 'Ask anything about your contacts…'
-                      : 'Ask anything about your accounts…'
+                messages.length > 0
+                  ? 'Ask a follow-up…'
+                  : page === 'leads'
+                    ? 'Ask anything about your contacts…'
+                    : 'Ask anything about your accounts…'
               }
-              className={cn(
-                'min-w-0 flex-1 bg-transparent focus:outline-none',
-                embedGlass
-                  ? 'font-manrope text-[1.0625rem] text-slate-800 placeholder:text-slate-400'
-                  : lightSetupChat || todayChat
-                    ? 'text-base text-slate-800 placeholder:text-slate-400'
-                    : 'text-[13px] text-[#0d3547] placeholder:text-[#7d909a]',
-              )}
-              disabled={isLoading}
+              isLoading={isLoading}
+              className="flex-1"
             />
-            <button
-              type="button"
-              onClick={() => sendMessage(input)}
-              disabled={!input.trim() || isLoading}
+          ) : (
+            <div
               className={cn(
-                'shrink-0 text-white transition-colors disabled:cursor-not-allowed',
-                todayChat
-                  ? 'rounded-xl bg-arcova-teal px-4 py-2.5 text-sm font-semibold hover:bg-arcova-teal/90 disabled:opacity-30'
-                  : lightSetupChat
-                    ? 'rounded-xl bg-arcova-teal p-2 hover:bg-arcova-teal/90 disabled:opacity-30'
-                    : 'grid h-[30px] w-[30px] place-items-center rounded-[10px] bg-[#0d3547] hover:bg-arcova-teal disabled:bg-[rgba(13,53,71,0.18)]',
+                'flex min-w-0 flex-1 items-center gap-2 transition-all',
+                !(todayChat && embedGlass) && 'focus-within:ring-2 focus-within:ring-arcova-teal/20',
+                lightSetupChat
+                  ? 'rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm focus-within:border-arcova-teal/40'
+                  : embedGlass
+                    ? 'rounded-2xl border border-[rgba(13,53,71,0.12)] bg-white/90 px-3 py-2.5 shadow-[0_8px_32px_-20px_rgba(13,53,71,0.18)] backdrop-blur-md focus-within:border-arcova-teal/45 focus-within:shadow-[0_8px_28px_-18px_rgba(0,164,180,0.22)]'
+                    : 'rounded-2xl bg-slate-100/85 px-3 py-2 ring-1 ring-slate-200/70 focus-within:ring-arcova-teal/25',
               )}
-              aria-label={todayChat ? 'Send message' : 'Send'}
             >
-              {isLoading ? (
-                <div
-                  className={cn(
-                    'rounded-full border-2 border-white/30 border-t-white animate-spin',
-                    todayChat ? 'h-4 w-4' : 'h-3.5 w-3.5',
-                  )}
-                />
-              ) : todayChat ? (
-                <span className="flex items-center gap-1.5">
-                  <Send className="h-4 w-4" />
-                  Send
-                </span>
-              ) : (
-                <Send className="h-3.5 w-3.5" />
-              )}
-            </button>
-          </div>
+              <Sparkles className={cn('shrink-0 h-4 w-4 text-arcova-teal/45')} />
+              <input
+                ref={inputRef}
+                type="text"
+                value={input}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setInput(v);
+                  if (embedGlass && v.trim()) setBriefingSurfaceEngaged(true);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') sendMessage(input);
+                }}
+                placeholder={
+                  embedGlass
+                    ? messages.length > 0
+                      ? 'Ask a follow-up…'
+                      : 'Ask anything…'
+                    : messages.length > 0
+                      ? 'Ask a follow-up…'
+                      : page === 'leads'
+                        ? 'Ask anything about your contacts…'
+                        : 'Ask anything about your accounts…'
+                }
+                className={cn(
+                  'min-w-0 flex-1 bg-transparent focus:outline-none',
+                  embedGlass
+                    ? 'font-manrope text-[1.0625rem] text-slate-800 placeholder:text-slate-400'
+                    : 'text-base text-slate-800 placeholder:text-slate-400',
+                )}
+                disabled={isLoading}
+              />
+              <button
+                type="button"
+                onClick={() => sendMessage(input)}
+                disabled={!input.trim() || isLoading}
+                className={cn(
+                  'shrink-0 text-white transition-colors disabled:cursor-not-allowed',
+                  todayChat
+                    ? 'rounded-xl bg-arcova-teal px-4 py-2.5 text-sm font-semibold hover:bg-arcova-teal/90 disabled:opacity-30'
+                    : 'rounded-xl bg-arcova-teal p-2 hover:bg-arcova-teal/90 disabled:opacity-30',
+                )}
+                aria-label={todayChat ? 'Send message' : 'Send'}
+              >
+                {isLoading ? (
+                  <div
+                    className={cn(
+                      'rounded-full border-2 border-white/30 border-t-white animate-spin',
+                      todayChat ? 'h-4 w-4' : 'h-3.5 w-3.5',
+                    )}
+                  />
+                ) : todayChat ? (
+                  <span className="flex items-center gap-1.5">
+                    <Send className="h-4 w-4" />
+                    Send
+                  </span>
+                ) : (
+                  <Send className="h-3.5 w-3.5" />
+                )}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

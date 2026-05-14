@@ -547,8 +547,10 @@ async function summariseCompanyBio(description: string): Promise<string | null> 
 
   try {
     const client = new Anthropic({ apiKey });
+    // Synthesizes a short factual sentence from external (Apollo / Apify) data —
+    // Haiku is plenty for this. See memory/llm_cost_concerns.md.
     const message = await client.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: 'claude-haiku-4-5',
       max_tokens: 100,
       messages: [
         {
@@ -561,7 +563,7 @@ async function summariseCompanyBio(description: string): Promise<string | null> 
       provider: 'anthropic',
       feature: 'company_bio_summarization',
       route: 'lib/enrichment-pipeline#summariseCompanyBio',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-haiku-4-5',
       usage: message.usage,
       metadata: {
         description_length: description.length,
@@ -609,8 +611,10 @@ ${historyText || '— No history available'}`;
 
   try {
     const client = new Anthropic({ apiKey });
+    // Synthesizes a short factual sentence from Apollo + Apify employment data —
+    // Haiku is plenty for this. See memory/llm_cost_concerns.md.
     const message = await client.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: 'claude-haiku-4-5',
       max_tokens: 100,
       messages: [{ role: 'user', content: `${instruction}\n\n${sourceBlock}` }],
     });
@@ -618,7 +622,7 @@ ${historyText || '— No history available'}`;
       provider: 'anthropic',
       feature: 'contact_bio_generation',
       route: 'lib/enrichment-pipeline#generateContactBio',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-haiku-4-5',
       usage: message.usage,
       metadata: {
         full_name: fullName,

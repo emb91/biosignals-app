@@ -134,6 +134,7 @@ function seniorityRank(title?: string | null): number {
 function roleFamily(title?: string | null): string | null {
   if (!title) return null;
   const normalized = title.toLowerCase();
+  if (/(scientific|science|research|r&d|discovery|translational|preclinical)/i.test(normalized)) return 'research_and_development';
   if (/(business development|bd|partnership|alliances|licensing)/i.test(normalized)) return 'business_development';
   if (/(commercial|sales|revenue|account manager|market access)/i.test(normalized)) return 'commercial';
   if (/(clinical|trial|site)/i.test(normalized)) return 'clinical_operations';
@@ -159,6 +160,8 @@ function inferBuyerFunctions(title?: string | null, matchedContact?: ArcovaConta
       return ['commercial'];
     case 'clinical_operations':
       return ['clinical_operations'];
+    case 'research_and_development':
+      return ['research_and_development'];
     case 'regulatory_affairs':
       return ['regulatory_affairs', 'quality_and_compliance'];
     case 'manufacturing_and_cmc':
@@ -319,25 +322,29 @@ function buildContactChangeEvents(
   previous: CrmContactMirrorRecord | null,
   current: HubSpotContactRecordById,
   resolution: ContactResolution,
+  associatedCompanyRows: ContactAssociatedCompanyRow[],
   previousAssociatedCompanyIds: string[],
   nextAssociatedCompanyIds: string[],
   matchedArcovaContact: ArcovaContactRecord | null
 ): ContactChangeEvent[] {
   const events: ContactChangeEvent[] = [];
   const nextTitle = titleCaseWords(current.properties.jobtitle ?? null);
-  const prevTitle = titleCaseWords(previous?.job_title ?? null);
+  const prevTitle = titleCaseWords(previous?.job_title ?? matchedArcovaContact?.job_title ?? null);
   const nextOwner = normalizeText(current.properties.hubspot_owner_id ?? null);
   const prevOwner = normalizeText(previous?.hubspot_owner_id ?? null);
   const nextEmail = normalizeText(current.properties.email ?? null);
-  const prevEmail = normalizeText(previous?.email ?? null);
-  const nextArcovaCompanyId = resolution.companyId;
-  const prevArcovaCompanyId = previous?.arcova_company_id ?? null;
+  const prevEmail = normalizeText(previous?.email ?? matchedArcovaContact?.email ?? null);
+  const directAssociatedArcovaCompanyIds = uniqueNonNull(associatedCompanyRows.map((row) => row.arcovaCompanyId));
+  const nextArcovaCompanyId =
+    directAssociatedArcovaCompanyIds.length === 1 ? directAssociatedArcovaCompanyIds[0] : resolution.companyId;
+  const prevArcovaCompanyId = previous?.arcova_company_id ?? matchedArcovaContact?.company_id ?? null;
   const addedAssociation = nextAssociatedCompanyIds.some((id) => !previousAssociatedCompanyIds.includes(id));
   const removedAssociation = previousAssociatedCompanyIds.some((id) => !nextAssociatedCompanyIds.includes(id));
   const buyerFunctionsOverride = inferBuyerFunctions(nextTitle, matchedArcovaContact);
   const relevantNewContact = isMateriallyRelevantContact(current);
+  const hasArcovaBaseline = !previous && Boolean(matchedArcovaContact);
 
-  if (!previous) {
+  if (!previous && !hasArcovaBaseline) {
     if (!resolution.suppressed && resolution.companyId && relevantNewContact) {
       events.push({
         changeType: 'new_contact_added',
@@ -462,6 +469,20 @@ function buildContactChangeEvents(
     }
   }
 
+  if (!previous && !events.length && !resolution.suppressed && resolution.companyId && relevantNewContact) {
+    events.push({
+      changeType: 'new_contact_added',
+      sourceEventType: 'new_contact_added_in_crm',
+      signalKeys: ['new_contact_added_in_crm'],
+      title: 'New HubSpot contact added',
+      summary: 'A new relevant contact was added to a tracked HubSpot account.',
+      entityScope: 'company',
+      companyId: resolution.companyId,
+      contactId: resolution.arcovaContactId,
+      buyerFunctionsOverride,
+    });
+  }
+
   return events;
 }
 
@@ -478,6 +499,8 @@ export type HubSpotContactReadinessSyncResult = {
   contextOnlyEvents: number;
   skippedUnresolvedCompanies: number;
   checkpoint: string | null;
+  emittedSignalTypes: string[];
+  contextOnlySignalTypes: string[];
 };
 
 export async function syncHubSpotContactsIntoReadiness(
@@ -522,6 +545,8 @@ export async function syncHubSpotContactsIntoReadiness(
         contextOnlyEvents: 0,
         skippedUnresolvedCompanies: 0,
         checkpoint: checkpointRecord.last_synced_remote_at,
+        emittedSignalTypes: [],
+        contextOnlySignalTypes: [],
       };
     }
 
@@ -573,6 +598,8 @@ export async function syncHubSpotContactsIntoReadiness(
     let contextOnlyEvents = 0;
     let skippedUnresolvedCompanies = 0;
     const affectedCompanyIds = new Set<string>();
+    const emittedSignalTypes = new Set<string>();
+    const contextOnlySignalTypes = new Set<string>();
 
     for (const contact of contacts) {
       const hubspotContactId = String(contact.id);
@@ -644,6 +671,7 @@ export async function syncHubSpotContactsIntoReadiness(
         previous,
         contact,
         resolution,
+        associatedCompanyRows,
         previousAssociatedCompanyIds(previous),
         associatedCompanyRows.map((row) => row.hubspotCompanyId),
         matchedArcovaContact
@@ -755,8 +783,10 @@ export async function syncHubSpotContactsIntoReadiness(
 
           affectedCompanyIds.add(effectiveCompanyId);
           emittedEvents += 1;
+          emittedSignalTypes.add(change.sourceEventType);
         } else {
           contextOnlyEvents += 1;
+          contextOnlySignalTypes.add(change.sourceEventType);
         }
       }
     }
@@ -796,6 +826,8 @@ export async function syncHubSpotContactsIntoReadiness(
       contextOnlyEvents,
       skippedUnresolvedCompanies,
       checkpoint: checkpointRecord.last_synced_remote_at,
+      emittedSignalTypes: [...emittedSignalTypes],
+      contextOnlySignalTypes: [...contextOnlySignalTypes],
     };
   } catch (error) {
     await upsertCrmSyncCheckpoint(supabase, {

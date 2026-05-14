@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState, useCallback, type KeyboardEvent } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel, type AgentLeadsFilter, type AgentPendingMessage } from '@/components/AgentPanel';
+import { AgentChatBar } from '@/components/AgentChatBar';
 import { ArcovaLoader } from '@/components/ArcovaLoader';
 import type { QueryLead } from '@/lib/leads-data';
 import {
@@ -927,6 +928,10 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
   const isCustomersPage = viewMode === 'customers';
 
   const [agentTrigger, setAgentTrigger] = useState<AgentPendingMessage | undefined>();
+  // Value of the floating "Intercom-style" chat bar shown while a contact card is open.
+  // On submit we dismiss the contact card and forward the text to AgentPanel as a
+  // pending message — the agent expands back into view and answers immediately.
+  const [agentChatBarValue, setAgentChatBarValue] = useState('');
   const fireAgent = (text: string, threadPreview?: string) =>
     setAgentTrigger((prev) => ({
       text,
@@ -974,6 +979,30 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
   const [stopEnrichmentError, setStopEnrichmentError] = useState<string | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [selectedPreview, setSelectedPreview] = useState<'contact' | 'hubspot' | 'scoring' | 'action'>('contact');
+  // Mirror the AgentPanel column's bounding rect so the contact drawer can
+  // overlay it pixel-for-pixel regardless of viewport width or padding maths.
+  // The AgentPanel renders its outermost div with the marker class
+  // `.contacts-leads-agent-col` (passed via the `className` prop below).
+  const [agentRect, setAgentRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const el = document.querySelector<HTMLElement>('.contacts-leads-agent-col');
+    if (!el) return;
+    const update = () => {
+      const r = el.getBoundingClientRect();
+      setAgentRect({ top: r.top, left: r.left, width: r.width, height: r.height });
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  }, []);
   const [isWorkHistoryExpanded, setIsWorkHistoryExpanded] = useState(false);
   const [contactPanelOpen, setContactPanelOpen] = useState({
     fit: true,
@@ -1038,9 +1067,12 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
         setLeads(nextLeads);
         setTotal(result.total || 0);
 
+        // Preserve the user's current selection if it's still present, but otherwise
+        // keep nothing selected so the agent shows as the full card by default.
+        // (Used to auto-select the first lead; that hid the agent on every page load.)
         setSelectedLeadId((current) => {
           if (current && nextLeads.some((lead: Lead) => lead.id === current)) return current;
-          return nextLeads[0]?.id ?? null;
+          return null;
         });
       }
     } catch (err) {
@@ -2979,20 +3011,78 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                   <>
                     <button
                       type="button"
-                      className="fixed inset-0 z-40 bg-[rgba(13,53,71,0.14)] backdrop-blur-[1px] transition-opacity min-[1280px]:hidden"
+                      className="fixed inset-0 z-40 transition-opacity min-[1280px]:hidden"
                       aria-label="Close panel"
                       onClick={() => {
                         setSelectedLeadId(null);
                         cancelEditingLead();
                       }}
                     />
+                    {/* Floating agent chat bar — sits at the bottom of the AgentPanel column
+                        while the user reviews a contact. The agent column itself is
+                        `invisible` in this state, so this bar is the agent's only visible
+                        surface. Uses the shared `AgentChatBar` so it matches the side-panel
+                        agent's input exactly. Submit dismisses the contact card and
+                        forwards the text to the agent, which expands back into view. */}
+                    {agentRect && (
+                      <div
+                        className={cn(
+                          // Glass card wrapper — same surface treatment as the contact
+                          // card above it (rounded, white-translucent, soft border,
+                          // backdrop blur) so the two read as one stacked column.
+                          'fixed z-[51] flex items-center rounded-[1.3125rem] border border-[rgba(255,255,255,0.88)] bg-[rgba(255,255,255,0.55)] px-3 py-2.5 shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2)] backdrop-blur-2xl backdrop-saturate-150',
+                        )}
+                        style={{
+                          top: agentRect.top + agentRect.height - 58,
+                          // Width-aligned to the contact card (which uses agentRect.width).
+                          left: agentRect.left,
+                          width: agentRect.width,
+                        }}
+                      >
+                        <AgentChatBar
+                          value={agentChatBarValue}
+                          onChange={setAgentChatBarValue}
+                          onSubmit={() => {
+                            const text = agentChatBarValue.trim();
+                            if (!text) return;
+                            fireAgent(text);
+                            setAgentChatBarValue('');
+                            setSelectedLeadId(null);
+                            cancelEditingLead();
+                          }}
+                          placeholder={
+                            isCustomersPage
+                              ? 'Ask anything about your customers…'
+                              : 'Ask anything about your contacts…'
+                          }
+                          className="w-full"
+                        />
+                      </div>
+                    )}
                     <aside
                       className={cn(
+                        // Position + size mirror the AgentPanel column's actual bounding rect
+                        // (see agentRect state above), so the drawer fully covers the agent
+                        // regardless of viewport width or padding. Glass surface (translucent
+                        // white + backdrop-blur) matches the rest of the page; the Contact /
+                        // Agent bookmark tabs let users switch between the two cards.
                         'contacts-leads-drawer flex min-h-0 flex-col overflow-hidden rounded-[1.3125rem] border border-[rgba(255,255,255,0.88)] bg-[rgba(255,255,255,0.55)] shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2)] backdrop-blur-2xl backdrop-saturate-150',
-                        'fixed z-30',
-                        'max-md:bottom-3.5 max-md:top-3.5 max-md:right-3.5 max-md:w-[min(calc(100vw-1.75rem),22.5rem)]',
-                        'md:top-[26px] md:bottom-[26px] md:right-[26px] md:w-[22.5rem]',
+                        'fixed z-50',
+                        // Fallback for the first paint, before the rect is measured.
+                        !agentRect && 'max-md:bottom-3.5 max-md:top-3.5 max-md:right-3.5 max-md:w-[min(calc(100vw-1.75rem),22.5rem)] md:top-[14px] md:bottom-[14px] md:right-[1.625rem] md:w-[22.5rem]',
                       )}
+                      style={
+                        agentRect
+                          ? {
+                              top: agentRect.top,
+                              left: agentRect.left,
+                              width: agentRect.width,
+                              // Leaves ~60px at the bottom so the floating agent chat bar
+                              // sits below the contact card rather than being covered by it.
+                              height: Math.max(0, agentRect.height - 64),
+                            }
+                          : undefined
+                      }
                     >
                   {selectedLead ? (
                     <div
@@ -4180,7 +4270,14 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
         </div>
 
         <AgentPanel
-          className="min-[1280px]:pl-1.5"
+          className={cn(
+            'contacts-leads-agent-col min-[1280px]:pl-1.5',
+            // Folds the agent away while the user is reviewing a contact —
+            // the contact card overlays this slot and the floating chat bar
+            // takes over at the bottom. `invisible` keeps the column in
+            // layout so agentRect continues to track its footprint.
+            selectedLeadId && 'invisible',
+          )}
           page="leads"
           headerSubtitle={isCustomersPage ? 'Ask me about your customers' : undefined}
           pageContext={{

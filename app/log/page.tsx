@@ -29,6 +29,12 @@ interface SyncEvent {
   error_details: string[];
   companies_updated: number | null;
   pull_count: number | null;
+  crm_contacts_fetched: number | null;
+  crm_contacts_mirrored: number | null;
+  contact_events_emitted: number | null;
+  contact_context_only_events: number | null;
+  crm_recomputed_companies: number | null;
+  crm_unresolved_count: number | null;
   deals_fetched: number | null;
   deals_mirrored: number | null;
   deal_events_emitted: number | null;
@@ -95,8 +101,10 @@ function eventSublabel(event: SyncEvent): string {
   }
   if (event.event_type === 'pull' || event.event_type === 'full') {
     if (event.pull_count != null) parts.push(`${event.pull_count} contacts pulled`);
+    if (event.contact_events_emitted != null && event.contact_events_emitted > 0)
+      parts.push(`${event.contact_events_emitted} CRM contact signals`);
   }
-  if (event.event_type === 'full') {
+  if (event.event_type === 'pull' || event.event_type === 'full') {
     if (event.deals_mirrored != null && event.deals_mirrored > 0)
       parts.push(`${event.deals_mirrored} deals synced`);
   }
@@ -241,9 +249,17 @@ function SyncEventCard({
               </>
             )}
             {(event.event_type === 'pull' || event.event_type === 'full') && (
-              <InlineStat label="Pulled" value={event.pull_count} />
+              <>
+                <InlineStat label="Pulled" value={event.pull_count} />
+                <InlineStat label="CRM fetched" value={event.crm_contacts_fetched} />
+                <InlineStat label="CRM mirrored" value={event.crm_contacts_mirrored} />
+                <InlineStat label="Contact signals" value={event.contact_events_emitted} />
+                <InlineStat label="Context-only" value={event.contact_context_only_events} />
+                <InlineStat label="Accounts updated" value={event.crm_recomputed_companies} />
+                <InlineStat label="Unresolved" value={event.crm_unresolved_count} />
+              </>
             )}
-            {event.event_type === 'full' && (
+            {(event.event_type === 'pull' || event.event_type === 'full') && (
               <>
                 <InlineStat label="Deals fetched" value={event.deals_fetched} />
                 <InlineStat label="Deals mirrored" value={event.deals_mirrored} />
@@ -385,6 +401,12 @@ export default function LogPage() {
         error_details: [],
         companies_updated: null,
         pull_count: b.filename?.startsWith('hubspot-auto-') ? (b.processed_rows ?? null) : null,
+        crm_contacts_fetched: null,
+        crm_contacts_mirrored: null,
+        contact_events_emitted: null,
+        contact_context_only_events: null,
+        crm_recomputed_companies: null,
+        crm_unresolved_count: null,
         deals_fetched: null,
         deals_mirrored: null,
         deal_events_emitted: null,
@@ -413,6 +435,12 @@ export default function LogPage() {
             error_details: Array.isArray(log.last_error_details) ? log.last_error_details : [],
             companies_updated: null,
             pull_count: null,
+            crm_contacts_fetched: null,
+            crm_contacts_mirrored: null,
+            contact_events_emitted: null,
+            contact_context_only_events: null,
+            crm_recomputed_companies: null,
+            crm_unresolved_count: null,
             deals_fetched: null,
             deals_mirrored: null,
             deal_events_emitted: null,
