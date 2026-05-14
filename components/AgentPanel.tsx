@@ -654,14 +654,19 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
   return (
     <div
       className={cn(
-        'flex min-h-0 flex-col',
+        'min-h-0 flex-col',
+        // `flex` is split into the per-variant branches so the side-rail variant
+        // can start as `hidden` (never paints at <768px) instead of `flex + max-[767px]:hidden`
+        // (paints `display:flex` first, then drops to `display:none` once that media-query
+        // rule wins). That race showed up as a one-frame flash of the agent stacked below
+        // content on /import et al at viewports just under 768px.
         wide
           ? cn(
-              'min-h-0 flex-1',
+              'flex min-h-0 flex-1',
               embedGlass && 'h-full min-h-0 overflow-hidden',
               embedGlass ? 'px-0 py-0' : cn('px-4', lightSetupChat ? 'py-3' : 'py-4'),
             )
-          : 'shrink-0 self-stretch py-3 pr-3 pl-2 max-[767px]:hidden',
+          : 'hidden md:flex shrink-0 self-stretch py-3 pr-3 pl-2',
         className,
       )}
     >

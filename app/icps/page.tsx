@@ -1826,7 +1826,7 @@ export default function ICPManagerPage() {
     <div className="flex h-screen bg-transparent">
       <AppSidebar />
 
-      <div className="flex min-h-0 flex-1 overflow-hidden min-[1280px]:flex-row flex-col">
+      <div className="flex min-h-0 flex-1 overflow-hidden md:flex-row flex-col">
         <div className="flex-1 overflow-auto bg-transparent px-6 py-8 lg:px-10">
           <div className="w-full max-w-[1180px] mx-auto">
 

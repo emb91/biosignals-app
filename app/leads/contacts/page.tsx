@@ -4369,7 +4369,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                                 className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition-colors"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
-                                {isDeletingSelected ? 'Deleting…' : 'Delete contact'}
+                                {isDeletingSelected ? 'Archiving…' : 'Archive contact'}
                               </button>
                             </div>
                           )

@@ -1751,7 +1751,7 @@ export default function AccountsPage() {
                       )}
                     </div>
 
-                    {/* Panel footer — Edit / Delete account, mirrors the contact card.
+                    {/* Panel footer — Edit / Archive account, mirrors the contact card.
                         Only rendered on the Details tab (matches contacts' Contact tab). */}
                     {panelMode === 'details' && (
                       <div className="px-4 py-4 border-t border-[rgba(13,53,71,0.08)]">
@@ -1796,7 +1796,7 @@ export default function AccountsPage() {
                             className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
-                            Delete account
+                            Archive account
                           </button>
                         </div>
                       </div>

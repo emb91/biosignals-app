@@ -315,7 +315,7 @@ export default function ArchivedRecordsPage() {
   return (
     <div className="flex h-screen bg-transparent">
       <AppSidebar />
-      <div className="flex min-h-0 flex-1 overflow-hidden min-[1280px]:flex-row flex-col">
+      <div className="flex min-h-0 flex-1 overflow-hidden md:flex-row flex-col">
         <div className="bg-transparent flex-1 overflow-auto px-6 py-8 lg:px-10">
           <div className="mx-auto w-full max-w-[1180px]">
             <div className="mb-6 flex items-center justify-between gap-4">

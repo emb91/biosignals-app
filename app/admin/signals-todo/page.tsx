@@ -72,7 +72,7 @@ const FAMILY_META: Record<SignalFamily, { label: string; description: string }> 
   },
   external_contact_change: {
     label: 'External contact change',
-    description: 'Org movement and people change like hires, promotions, and role changes.',
+    description: 'Org movement and people change from external enrichment like hires, promotions, company moves, and role changes.',
   },
   first_party_engagement: {
     label: 'First-party engagement',
