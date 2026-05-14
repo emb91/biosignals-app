@@ -30,8 +30,6 @@ import { cn } from '@/lib/utils';
 import { TableFitGaugeButton } from '@/components/TableFitGaugeButton';
 import '@/app/leads/contacts-layout.css';
 import {
-  Activity,
-  AlertTriangle,
   Users,
   Search,
   ChevronLeft,
@@ -763,6 +761,48 @@ const getEnrichmentErrorMessage = (lead: Lead): string | null => {
   return null;
 };
 
+function parseIsoTime(value?: string | null): number | null {
+  if (!value) return null;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
+function isArcovaSourcedLead(lead: Lead): boolean {
+  const provenance = (lead.data_provenance_type || '').trim().toLowerCase();
+  const source = (lead.source || '').trim().toLowerCase();
+  return provenance === 'arcova' || source === 'arcova';
+}
+
+function isArcovaEnrichedLead(lead: Lead): boolean {
+  if (lead.enrichment_refresh_status === 'succeeded') return true;
+  if (lead.enrichment_refresh_finished_at) return true;
+  if (lead.profile_enrichment_completed_at) return true;
+  return ['completed', 'ambiguous'].includes((lead.profile_enrichment_status || '').trim().toLowerCase());
+}
+
+function getLatestArcovaTouchIso(lead: Lead): string | null {
+  const candidates = [
+    lead.enrichment_refresh_finished_at,
+    lead.profile_enrichment_completed_at,
+    lead.data_provenance_imported_at,
+    lead.updated_at,
+    lead.created_at,
+  ]
+    .map((value) => ({ value, time: parseIsoTime(value) }))
+    .filter((entry): entry is { value: string; time: number } => Boolean(entry.value) && entry.time != null)
+    .sort((a, b) => b.time - a.time);
+
+  return candidates[0]?.value ?? null;
+}
+
+function isWonAfterArcovaTouch(lead: Lead): boolean {
+  if (lead.hubspot_lead_state !== 'customer') return false;
+  const wonAt = parseIsoTime(lead.hubspot_latest_deal_updated_at);
+  const touchedAt = parseIsoTime(getLatestArcovaTouchIso(lead));
+  if (wonAt == null || touchedAt == null) return false;
+  return touchedAt <= wonAt;
+}
+
 const normalizeLeadRefreshStatus = (
   status?: Lead['enrichment_refresh_status'],
 ): LeadRefreshStatus => {
@@ -894,6 +934,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
       ...(threadPreview ? { threadPreview } : {}),
     }));
   const dashboardAgentTaskFiredRef = useRef<string | null>(null);
+  const leadsScrollRef = useRef<HTMLDivElement | null>(null);
 
   const [leads, setLeads] = useState<Lead[]>([]);
   const [total, setTotal] = useState(0);
@@ -1683,9 +1724,22 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
     selectedLeadRefreshStatus !== 'running' &&
     selectedLeadRefreshStatus !== 'failed' &&
     selectedLeadRefreshStatus !== 'cancelled' &&
-    (selectedLeadRefreshStatus === 'succeeded' ||
+      (selectedLeadRefreshStatus === 'succeeded' ||
       (selectedLeadRefreshStatus === 'idle' &&
         ['completed', 'ambiguous'].includes(selectedLead.profile_enrichment_status || '')));
+
+  const customerAttributionSummary = isCustomersPage
+    ? {
+        sourced: leads.filter(isArcovaSourcedLead).length,
+        enriched: leads.filter(isArcovaEnrichedLead).length,
+        wonAfterTouch: leads.filter(isWonAfterArcovaTouch).length,
+      }
+    : null;
+
+  const selectedLeadArcovaSourced = selectedLead ? isArcovaSourcedLead(selectedLead) : false;
+  const selectedLeadArcovaEnriched = selectedLead ? isArcovaEnrichedLead(selectedLead) : false;
+  const selectedLeadWonAfterArcovaTouch = selectedLead ? isWonAfterArcovaTouch(selectedLead) : false;
+  const selectedLeadLatestArcovaTouchIso = selectedLead ? getLatestArcovaTouchIso(selectedLead) : null;
 
   useEffect(() => {
     if ((selectedPreview !== 'scoring' && selectedPreview !== 'action') || !selectedCompanyId) return;
@@ -2453,6 +2507,19 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
             Closed-won HubSpot contacts live here so we can keep the CRM history, attribution, and relationship context
             without sending them back through paid lead enrichment.
           </p>
+          {customerAttributionSummary ? (
+            <div className="mt-3 flex flex-wrap gap-2">
+              <span className="inline-flex items-center rounded-full border border-[rgba(45,138,138,0.2)] bg-white/70 px-2.5 py-1 text-[11px] font-medium text-[#2d8a8a]">
+                {customerAttributionSummary.sourced} Arcova-sourced
+              </span>
+              <span className="inline-flex items-center rounded-full border border-[rgba(45,138,138,0.2)] bg-white/70 px-2.5 py-1 text-[11px] font-medium text-[#2d8a8a]">
+                {customerAttributionSummary.enriched} Arcova-enriched
+              </span>
+              <span className="inline-flex items-center rounded-full border border-[rgba(45,138,138,0.2)] bg-white/70 px-2.5 py-1 text-[11px] font-medium text-[#2d8a8a]">
+                {customerAttributionSummary.wonAfterTouch} won after Arcova touch
+              </span>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
@@ -2462,9 +2529,9 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
     <div className="flex min-h-0 h-screen bg-transparent">
       <AppSidebar />
 
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-3.5 p-3.5 min-[1280px]:flex-row min-[1280px]:gap-2 min-[1280px]:overflow-hidden">
-        <div className="contacts-leads-main min-h-0 min-w-0 flex-1 rounded-[1.75rem] bg-transparent px-3 py-3 sm:px-5 sm:py-4 min-[1280px]:pr-2 max-[1279px]:overflow-y-auto min-[1280px]:flex min-[1280px]:flex-col min-[1280px]:overflow-hidden">
-          <div className="flex w-full max-w-none min-h-0 min-[1280px]:min-h-0 min-[1280px]:flex-1 min-[1280px]:flex-col">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-3.5 overflow-hidden p-3.5 min-[1280px]:flex-row min-[1280px]:gap-2">
+        <div className="contacts-leads-main flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[1.75rem] bg-transparent px-3 py-3 sm:px-5 sm:py-4 min-[1280px]:pr-2">
+          <div className="flex min-h-0 w-full max-w-none flex-1 flex-col">
             {loadingLeads ? (
               <>
                 {contactsPageTitleBlock}
@@ -2516,17 +2583,10 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
               </div>
               </>
             ) : (
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden">
               <div
                 className={cn(
-                  'flex min-h-0 min-w-0 flex-1 flex-col gap-2',
-                  selectedLeadId &&
-                    'min-[1280px]:min-h-0 min-[1280px]:flex-row min-[1280px]:items-stretch min-[1280px]:gap-1',
-                )}
-              >
-              <div
-                className={cn(
-                  'flex min-h-0 min-w-0 flex-col gap-4',
-                  'min-[1280px]:min-h-0 min-[1280px]:flex-1',
+                  'flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-hidden',
                 )}
               >
                 {contactsPageTitleBlock}
@@ -2534,65 +2594,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                 {hubspotPullBanner}
                 {hubspotSyncBanner}
                 {/* ── Leads table ── */}
-                <div className="flex min-h-0 flex-1 flex-col gap-2 min-[1280px]:overflow-y-auto">
-
-                {/* Contact coverage gap banner */}
-                {(() => {
-                  // Group leads by company_id; find companies with good fit but no perfect contact
-                  const byCompany = new Map<string, { name: string; bestContactFit: number }>();
-                  for (const lead of leads) {
-                    if (!lead.company_id) continue;
-                    const companyFit =
-                      lead.company_fit_score ??
-                      lead.companies?.company_fit_score ??
-                      0;
-                    if (companyFit < 0.6) continue;
-                    const contactFit = lead.contact_fit_score ?? 0;
-                    const existing = byCompany.get(lead.company_id);
-                    if (existing) {
-                      existing.bestContactFit = Math.max(existing.bestContactFit, contactFit);
-                    } else {
-                      byCompany.set(lead.company_id, {
-                        name:
-                          lead.resolved_current_company_name ??
-                          lead.company_name ??
-                          lead.companies?.company_name ??
-                          'Unknown',
-                        bestContactFit: contactFit,
-                      });
-                    }
-                  }
-                  const gapCompanies = Array.from(byCompany.values()).filter(
-                    (c) => c.bestContactFit < 1,
-                  );
-                  if (gapCompanies.length === 0) return null;
-                  const names = gapCompanies
-                    .slice(0, 5)
-                    .map((c) => c.name)
-                    .join(', ');
-                  const more = gapCompanies.length > 5 ? ` and ${gapCompanies.length - 5} more` : '';
-                  return (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        fireAgent(
-                          `${gapCompanies.length === 1 ? 'One company in my leads is' : `${gapCompanies.length} companies in my leads are`} missing strong contact coverage: ${names}${more}. Explain what is going on and what I should do next.`,
-                          'What should I do about contact coverage gaps?',
-                        )
-                      }
-                      className="w-full flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-left transition-colors hover:bg-amber-100"
-                    >
-                      <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
-                      <p className="text-sm font-medium text-amber-800">
-                        {gapCompanies.length === 1
-                          ? '1 company is missing strong contact coverage.'
-                          : `${gapCompanies.length} companies are missing strong contact coverage.`}{' '}
-                        <span className="font-normal text-amber-600">Click to learn more.</span>
-                      </p>
-                      <Activity className="ml-auto h-4 w-4 shrink-0 text-amber-400" />
-                    </button>
-                  );
-                })()}
+                <div className="flex min-h-0 flex-1 flex-col gap-2">
 
                 {/* Agent filter banner */}
                 {agentFilterIds && (
@@ -2609,10 +2611,15 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                   </div>
                 )}
 
-                <div className="overflow-hidden rounded-[1.5rem] border border-[rgba(13,53,71,0.1)] bg-[rgba(255,255,255,0.52)] shadow-[0_24px_60px_-32px_rgba(13,53,71,0.16),0_2px_6px_-2px_rgba(13,53,71,0.06)] backdrop-blur-2xl backdrop-saturate-150">
+                <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.5rem] border border-[rgba(13,53,71,0.1)] bg-[rgba(255,255,255,0.52)] shadow-[0_24px_60px_-32px_rgba(13,53,71,0.16),0_2px_6px_-2px_rgba(13,53,71,0.06)] backdrop-blur-2xl backdrop-saturate-150">
                   {/* Table header */}
                   <div
-                    className={`${LEADS_TABLE_GRID} items-start px-4 py-3 border-b border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.4)] text-[13px] font-semibold uppercase tracking-wide text-[#7d909a]`}
+                    onWheel={(e) => {
+                      if (leadsScrollRef.current) {
+                        leadsScrollRef.current.scrollTop += e.deltaY;
+                      }
+                    }}
+                    className={`${LEADS_TABLE_GRID} shrink-0 items-start px-4 py-3 border-b border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.4)] text-[13px] font-semibold uppercase tracking-wide text-[#7d909a]`}
                   >
                     {(['name', 'job_title', 'company'] as const).map((col) => (
                       <button
@@ -2658,7 +2665,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                     </button>
                   </div>
 
-                  <div className="divide-y divide-[rgba(13,53,71,0.06)]">
+                  <div ref={leadsScrollRef} className="min-h-0 flex-1 divide-y divide-[rgba(13,53,71,0.06)] overflow-y-auto">
                     {/* Single render path — agent filter narrows sortedLeads in-place */}
                     {sortedLeads.map((lead) => {
                       const isSelected = selectedLeadId === lead.id;
@@ -2963,8 +2970,9 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                     <aside
                       className={cn(
                         'contacts-leads-drawer flex min-h-0 flex-col overflow-hidden rounded-[1.3125rem] border border-[rgba(255,255,255,0.88)] bg-[rgba(255,255,255,0.55)] shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2)] backdrop-blur-2xl backdrop-saturate-150',
-                        'max-[1279px]:fixed max-[1279px]:bottom-3.5 max-[1279px]:left-3.5 max-[1279px]:right-3.5 max-[1279px]:top-3.5 max-[1279px]:z-50 max-[1279px]:w-auto',
-                        'min-[1280px]:relative min-[1280px]:w-[27rem] min-[1280px]:max-w-[27rem] min-[1280px]:shrink-0 min-[1280px]:min-h-0',
+                        'fixed z-30',
+                        'max-[1279px]:bottom-3.5 max-[1279px]:top-3.5 max-[1279px]:right-3.5 max-[1279px]:w-[min(calc(100vw-1.75rem),26rem)]',
+                        'min-[1280px]:top-[26px] min-[1280px]:bottom-[26px] min-[1280px]:right-[26px] min-[1280px]:w-[26rem]',
                       )}
                     >
                   {selectedLead ? (
@@ -3784,6 +3792,48 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                                       Keep the CRM history for attribution and future customer workflows, but avoid
                                       spending more lead-enrichment budget on it from this queue.
                                     </p>
+                                  </div>
+                                  <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-4 py-4 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
+                                    <p className="text-sm font-semibold text-[#0d3547]">Arcova attribution</p>
+                                    <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                      <div className="rounded-lg border border-[rgba(13,53,71,0.08)] bg-white/80 px-3 py-3">
+                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          Sourced
+                                        </p>
+                                        <p className="mt-2 text-sm font-medium text-[#0d3547]">
+                                          {selectedLeadArcovaSourced ? 'By Arcova' : 'Not by Arcova'}
+                                        </p>
+                                        <p className="mt-1 text-xs leading-snug text-[#6b7f8a]">
+                                          {selectedLeadDataSourceTypeLabel}
+                                        </p>
+                                      </div>
+                                      <div className="rounded-lg border border-[rgba(13,53,71,0.08)] bg-white/80 px-3 py-3">
+                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          Enriched
+                                        </p>
+                                        <p className="mt-2 text-sm font-medium text-[#0d3547]">
+                                          {selectedLeadArcovaEnriched ? 'By Arcova' : 'Not yet'}
+                                        </p>
+                                        <p className="mt-1 text-xs leading-snug text-[#6b7f8a]">
+                                          {selectedLeadLatestArcovaTouchIso
+                                            ? `Last touch ${actionDrawerRelativeTime(selectedLeadLatestArcovaTouchIso)}`
+                                            : 'No Arcova touch recorded'}
+                                        </p>
+                                      </div>
+                                      <div className="rounded-lg border border-[rgba(13,53,71,0.08)] bg-white/80 px-3 py-3">
+                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          Outcome
+                                        </p>
+                                        <p className="mt-2 text-sm font-medium text-[#0d3547]">
+                                          {selectedLeadWonAfterArcovaTouch ? 'Won after Arcova touch' : 'Won in CRM'}
+                                        </p>
+                                        <p className="mt-1 text-xs leading-snug text-[#6b7f8a]">
+                                          {selectedLead.hubspot_latest_deal_updated_at
+                                            ? `Closed won ${actionDrawerRelativeTime(selectedLead.hubspot_latest_deal_updated_at)}`
+                                            : 'Closed-won timing not yet available'}
+                                        </p>
+                                      </div>
+                                    </div>
                                   </div>
                                 </div>
                               );
