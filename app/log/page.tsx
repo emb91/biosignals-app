@@ -35,6 +35,9 @@ interface SyncEvent {
   contact_context_only_events: number | null;
   crm_recomputed_companies: number | null;
   crm_unresolved_count: number | null;
+  contact_signal_types: string[];
+  contact_context_signal_types: string[];
+  deal_signal_types: string[];
   deals_fetched: number | null;
   deals_mirrored: number | null;
   deal_events_emitted: number | null;
@@ -109,6 +112,14 @@ function eventSublabel(event: SyncEvent): string {
       parts.push(`${event.deals_mirrored} deals synced`);
   }
   return parts.join(' · ') || 'No data';
+}
+
+function formatSignalTypeLabel(value: string): string {
+  return value
+    .replace(/_/g, ' ')
+    .replace(/\bcrm\b/gi, 'CRM')
+    .replace(/\bhs\b/gi, 'HS')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 type StatusLevel = 'done' | 'warning' | 'failed';
@@ -301,6 +312,54 @@ function SyncEventCard({
             </div>
           )}
 
+          {event.contact_signal_types.length > 0 && (
+            <div>
+              <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">Contact signals</p>
+              <div className="flex flex-wrap gap-1.5">
+                {event.contact_signal_types.map((signalType) => (
+                  <span
+                    key={signalType}
+                    className="rounded-full border border-[rgba(45,138,138,0.18)] bg-[rgba(45,138,138,0.08)] px-2 py-0.5 text-[11px] font-medium text-[#2d8a8a]"
+                  >
+                    {formatSignalTypeLabel(signalType)}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {event.contact_context_signal_types.length > 0 && (
+            <div>
+              <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">Context only</p>
+              <div className="flex flex-wrap gap-1.5">
+                {event.contact_context_signal_types.map((signalType) => (
+                  <span
+                    key={signalType}
+                    className="rounded-full border border-[rgba(13,53,71,0.12)] bg-[rgba(13,53,71,0.04)] px-2 py-0.5 text-[11px] font-medium text-[#4a6470]"
+                  >
+                    {formatSignalTypeLabel(signalType)}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {event.deal_signal_types.length > 0 && (
+            <div>
+              <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">Deal signals</p>
+              <div className="flex flex-wrap gap-1.5">
+                {event.deal_signal_types.map((signalType) => (
+                  <span
+                    key={signalType}
+                    className="rounded-full border border-[rgba(240,127,90,0.22)] bg-[rgba(240,127,90,0.08)] px-2 py-0.5 text-[11px] font-medium text-[#f07f5a]"
+                  >
+                    {formatSignalTypeLabel(signalType)}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Clean */}
           {status === 'done' && event.event_type !== 'csv_import' &&
             !(Array.isArray(event.skipped_contacts) && event.skipped_contacts.length > 0) && (
@@ -388,6 +447,15 @@ export default function LogPage() {
         error_details: Array.isArray(e.error_details)
           ? (e.error_details as unknown[]).filter((x): x is string => typeof x === 'string')
           : [],
+        contact_signal_types: Array.isArray((e as { contact_signal_types?: unknown[] }).contact_signal_types)
+          ? ((e as { contact_signal_types?: unknown[] }).contact_signal_types as unknown[]).filter((x): x is string => typeof x === 'string')
+          : [],
+        contact_context_signal_types: Array.isArray((e as { contact_context_signal_types?: unknown[] }).contact_context_signal_types)
+          ? ((e as { contact_context_signal_types?: unknown[] }).contact_context_signal_types as unknown[]).filter((x): x is string => typeof x === 'string')
+          : [],
+        deal_signal_types: Array.isArray((e as { deal_signal_types?: unknown[] }).deal_signal_types)
+          ? ((e as { deal_signal_types?: unknown[] }).deal_signal_types as unknown[]).filter((x): x is string => typeof x === 'string')
+          : [],
       }));
 
       const importEvents: SyncEvent[] = (importJson.batches ?? []).map((b) => ({
@@ -407,6 +475,9 @@ export default function LogPage() {
         contact_context_only_events: null,
         crm_recomputed_companies: null,
         crm_unresolved_count: null,
+        contact_signal_types: [],
+        contact_context_signal_types: [],
+        deal_signal_types: [],
         deals_fetched: null,
         deals_mirrored: null,
         deal_events_emitted: null,
@@ -441,6 +512,9 @@ export default function LogPage() {
             contact_context_only_events: null,
             crm_recomputed_companies: null,
             crm_unresolved_count: null,
+            contact_signal_types: [],
+            contact_context_signal_types: [],
+            deal_signal_types: [],
             deals_fetched: null,
             deals_mirrored: null,
             deal_events_emitted: null,
