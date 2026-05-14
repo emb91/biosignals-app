@@ -592,7 +592,7 @@ export default function BriefingPage() {
     <div className="flex h-screen min-h-0 bg-transparent font-jakarta">
       <AppSidebar />
 
-      <main className="briefing-today arcova-scroll-surface relative min-h-0 flex-1 overflow-y-auto">
+      <main className="briefing-today relative min-h-0 flex-1 overflow-y-auto bg-transparent">
         <div className="relative z-10 bt-page pb-24">
           <header className="bt-hero">
             <p className="bt-hero-eyebrow">Daily briefing · {formatBriefingHeroDate(clock)}</p>

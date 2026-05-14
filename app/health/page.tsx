@@ -295,7 +295,7 @@ export default function HealthPage() {
       <AppSidebar />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden min-[1280px]:flex-row">
-        <div className="arcova-scroll-surface flex-1 overflow-auto px-6 py-8 lg:px-10">
+        <div className="bg-transparent flex-1 overflow-auto px-6 py-8 lg:px-10">
           <div className="mx-auto w-full max-w-[1180px]">
             <PageHeader
               eyebrow="Pipeline"

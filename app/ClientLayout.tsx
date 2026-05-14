@@ -33,7 +33,10 @@ const APP_ROUTES = [
 
 // Routes that are part of the setup flow — the guard does NOT redirect away from these.
 // Settings is allowed so users can manage account preferences without leaving onboarding.
-const SETUP_ROUTES = ['/arcova-setup', ROUTES.setup.company, ROUTES.setup.newIcp, '/contacts/new', ROUTES.settings]
+// Include `/icps` (not just `/icps/new`): the ICP list is setup-shaped; omitting it made `/icps`
+// a "generic app" route so SetupGuard could bounce Signals → `/arcova-setup` → Today during
+// brief stale setup reads or Supabase retries.
+const SETUP_ROUTES = ['/arcova-setup', ROUTES.setup.company, ROUTES.setup.icps, ROUTES.setup.newIcp, '/contacts/new', ROUTES.settings]
 
 function matchesRoutePrefix(pathname: string, route: string) {
   return pathname === route || pathname.startsWith(`${route}/`);
