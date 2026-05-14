@@ -4395,7 +4395,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
             selectedLeadId && 'invisible',
           )}
           page="leads"
-          headerSubtitle={isCustomersPage ? 'Ask me about your customers' : undefined}
+          headerSubtitle={isCustomersPage ? 'Working on your customers' : undefined}
           pageContext={{
             leadsView: isCustomersPage ? 'customers' : 'contacts',
             ...(selectedLead ? {

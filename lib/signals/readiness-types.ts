@@ -107,6 +107,8 @@ export type SignalCatalogEntry = {
   scope: SignalScope;
   dimensions: ReadinessDimension[];
   defaultStrength: SignalStrength;
+  /** Base category impact out of 100 before confidence, recency, and relevance adjustments. */
+  baseImpactScore: number;
   defaultConfidence: ConfidenceLabel;
   decayDays: number;
   buyerFunctions: BuyerFunction[];
