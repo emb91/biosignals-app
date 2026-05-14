@@ -7,23 +7,21 @@ import AppSidebar from '@/components/AppSidebar';
 import { PageHeader } from '@/components/PageHeader';
 import { AgentPanel } from '@/components/AgentPanel';
 import {
-  ArrowDownToLine,
-  ArrowUpFromLine,
   RefreshCw,
   ChevronDown,
   AlertTriangle,
   CheckCircle2,
-  Clock,
 } from 'lucide-react';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-type EventType = 'push' | 'pull' | 'full';
+type EventType = 'push' | 'pull' | 'full' | 'csv_import';
 
 interface SyncEvent {
   id: string;
   created_at: string;
   event_type: EventType;
+  // hubspot_sync_events fields
   contacts_synced: number | null;
   contacts_errors: number | null;
   contacts_skipped: number | null;
@@ -34,6 +32,24 @@ interface SyncEvent {
   deals_fetched: number | null;
   deals_mirrored: number | null;
   deal_events_emitted: number | null;
+  // upload_batches fields
+  filename: string | null;
+  total_rows: number | null;
+  processed_rows: number | null;
+  duplicate_rows: number | null;
+  failed_rows: number | null;
+  batch_status: string | null;
+}
+
+interface ImportBatch {
+  id: string;
+  filename: string;
+  total_rows: number | null;
+  processed_rows: number | null;
+  duplicate_rows: number | null;
+  failed_rows: number | null;
+  status: string | null;
+  created_at: string;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -56,14 +72,22 @@ function absoluteTime(iso: string): string {
   });
 }
 
-function eventLabel(type: EventType): string {
-  if (type === 'push') return 'Push to HubSpot';
-  if (type === 'pull') return 'Pull from HubSpot';
+function eventLabel(event: SyncEvent): string {
+  if (event.event_type === 'push') return 'Push to HubSpot';
+  if (event.event_type === 'pull') return 'Pull from HubSpot';
+  if (event.event_type === 'csv_import') return event.filename ?? 'CSV upload';
   return 'Full sync';
 }
 
 function eventSublabel(event: SyncEvent): string {
   const parts: string[] = [];
+  if (event.event_type === 'csv_import') {
+    if (event.total_rows != null) parts.push(`${event.total_rows} rows`);
+    if (event.processed_rows != null) parts.push(`${event.processed_rows} imported`);
+    if (event.duplicate_rows != null && event.duplicate_rows > 0) parts.push(`${event.duplicate_rows} duplicates`);
+    if (event.failed_rows != null && event.failed_rows > 0) parts.push(`${event.failed_rows} failed`);
+    return parts.join(' · ') || 'No data';
+  }
   if (event.event_type === 'push' || event.event_type === 'full') {
     if (event.contacts_synced != null) parts.push(`${event.contacts_synced} contacts pushed`);
     if (event.companies_updated != null && event.companies_updated > 0)
@@ -79,162 +103,193 @@ function eventSublabel(event: SyncEvent): string {
   return parts.join(' · ') || 'No data';
 }
 
-function hasErrors(event: SyncEvent): boolean {
-  return (event.contacts_errors ?? 0) > 0 || event.error_details.length > 0;
+type StatusLevel = 'done' | 'warning' | 'failed';
+
+function eventStatus(event: SyncEvent): StatusLevel {
+  if (event.event_type === 'csv_import') {
+    const failed = event.failed_rows ?? 0;
+    const processed = event.processed_rows ?? 0;
+    if (failed === 0) return 'done';
+    if (processed > 0) return 'warning';
+    return 'failed';
+  }
+  const errors = event.contacts_errors ?? 0;
+  const skipped = event.contacts_skipped ?? 0;
+  const synced = event.contacts_synced ?? 0;
+  const hasErrorDetails = event.error_details.length > 0;
+  if (errors === 0 && !hasErrorDetails) return skipped > 0 ? 'warning' : 'done';
+  if (synced > 0 && errors < synced) return 'warning';
+  return 'failed';
 }
+
+const STATUS_PILL: Record<StatusLevel, string> = {
+  done:    'bg-emerald-50 text-emerald-600 border border-emerald-200',
+  warning: 'bg-amber-50 text-amber-600 border border-amber-200',
+  failed:  'bg-red-50 text-red-500 border border-red-200',
+};
+
+const STATUS_LABEL: Record<StatusLevel, string> = {
+  done:    'Done',
+  warning: 'Warning',
+  failed:  'Failed',
+};
+
+// ── Type pill ──────────────────────────────────────────────────────────────
+
+// Direction pill — what kind of operation
+const DIRECTION_STYLE: Record<EventType, string> = {
+  push:       'bg-arcova-teal/10 text-arcova-teal border border-arcova-teal/20',
+  pull:       'bg-[#0d3547]/8 text-[#0d3547] border border-[#0d3547]/12',
+  full:       'bg-violet-50 text-violet-600 border border-violet-200',
+  csv_import: 'bg-[#0d3547]/8 text-[#0d3547] border border-[#0d3547]/12',
+};
+
+const DIRECTION_LABEL: Record<EventType, string> = {
+  push:       'Export',
+  pull:       'Import',
+  full:       'Sync',
+  csv_import: 'Import',
+};
+
+// Method pill — how it happened
+const METHOD_LABEL: Record<EventType, string> = {
+  push:       'HubSpot',
+  pull:       'HubSpot',
+  full:       'HubSpot',
+  csv_import: 'CSV',
+};
+
+const METHOD_STYLE = 'bg-white/60 text-[#7d909a] border border-[rgba(13,53,71,0.1)]';
 
 // ── SyncEventCard ──────────────────────────────────────────────────────────
 
 function SyncEventCard({
   event,
-  index,
   collapsed,
   onToggle,
 }: {
   event: SyncEvent;
-  index: number;
   collapsed: boolean;
   onToggle: () => void;
 }) {
-  const errored = hasErrors(event);
-
-  const TypeIcon =
-    event.event_type === 'push'
-      ? ArrowUpFromLine
-      : event.event_type === 'pull'
-      ? ArrowDownToLine
-      : RefreshCw;
+  const status = eventStatus(event);
 
   return (
-    <div
-      className={`rounded-[1.25rem] border border-white/80 bg-white/55 backdrop-blur-xl transition-shadow ${
-        collapsed
-          ? 'shadow-[0_18px_40px_-28px_rgba(13,53,71,0.15),0_1px_3px_rgba(13,53,71,0.04)]'
-          : 'shadow-[0_32px_80px_-36px_rgba(13,53,71,0.22),0_1px_3px_rgba(13,53,71,0.05)]'
-      }`}
-    >
-      {/* Header */}
+    <div className={`rounded-lg border border-white/80 bg-white/55 backdrop-blur-xl ${
+      collapsed ? 'shadow-[0_2px_8px_-4px_rgba(13,53,71,0.1)]' : 'shadow-[0_8px_24px_-12px_rgba(13,53,71,0.15)]'
+    }`}>
+      {/* Header row — very compact */}
       <div
-        className={`flex items-center gap-3.5 px-5 py-4 cursor-pointer transition-colors hover:bg-white/35 ${
+        className={`flex items-center gap-2.5 px-3.5 py-1.5 cursor-pointer transition-colors hover:bg-white/40 ${
           !collapsed ? 'border-b border-[rgba(13,53,71,0.07)]' : ''
         }`}
         onClick={onToggle}
       >
-        {/* Numbered badge */}
-        <div
-          className={`w-9 h-9 shrink-0 rounded-[10px] grid place-items-center font-manrope text-xs font-bold tracking-[0.04em] transition-all ${
-            !collapsed
-              ? 'bg-gradient-to-br from-arcova-teal to-[#007e8b] text-white shadow-[0_6px_18px_-8px_rgba(0,164,180,0.5)]'
-              : 'bg-gradient-to-br from-arcova-teal/18 to-arcova-teal/8 border border-arcova-teal/22 text-arcova-teal'
-          }`}
-        >
-          #{index}
-        </div>
+        {/* Direction pill */}
+        <span className={`shrink-0 rounded px-1.5 py-px text-[10px] font-semibold tracking-wide ${DIRECTION_STYLE[event.event_type]}`}>
+          {DIRECTION_LABEL[event.event_type]}
+        </span>
 
-        {/* Title + sublabel */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 min-w-0">
-            <TypeIcon className="h-3.5 w-3.5 shrink-0 text-[#4a6470]" />
-            <span className="block min-w-0 truncate font-manrope text-[15.5px] font-semibold text-[#0d3547] tracking-[-0.018em]">
-              {eventLabel(event.event_type)}
-            </span>
-            {errored && (
-              <span className="shrink-0 rounded border border-red-200 bg-red-50 px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-[0.12em] text-red-600">
-                Errors
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-1.5 mt-0.5">
-            <Clock className="h-[11px] w-[11px] shrink-0 text-[#7d909a]" />
-            <span className="text-[11.5px] text-[#7d909a]">
-              {absoluteTime(event.created_at)}
-              <span className="text-[#b6c2c8]"> · </span>
-              {relativeTime(event.created_at)}
-            </span>
-          </div>
-        </div>
+        {/* Method pill */}
+        <span className={`shrink-0 rounded px-1.5 py-px text-[10px] font-semibold ${METHOD_STYLE}`}>
+          {METHOD_LABEL[event.event_type]}
+        </span>
 
-        {/* Summary pill (collapsed only) */}
+        {/* Title */}
+        <span className="flex-1 min-w-0 truncate text-[12.5px] font-medium text-[#0d3547]">
+          {eventLabel(event)}
+        </span>
+
+        {/* Stats summary (collapsed) */}
         {collapsed && (
-          <span className="hidden sm:inline-flex shrink-0 items-center text-[11px] px-2.5 py-1 rounded-full bg-white/60 border border-[rgba(13,53,71,0.07)] text-[#4a6470]">
+          <span className="hidden sm:block shrink-0 text-[11px] text-[#7d909a]">
             {eventSublabel(event)}
           </span>
         )}
 
-        {/* Caret */}
-        <span
-          className={`w-7 h-7 shrink-0 grid place-items-center rounded-[8px] border transition-all ${
-            !collapsed
-              ? 'bg-[#0d3547] border-[#0d3547] text-white'
-              : 'bg-white/60 border-[rgba(13,53,71,0.07)] text-[#7d909a] hover:text-[#0d3547]'
-          }`}
-        >
-          <ChevronDown
-            className={`h-3.5 w-3.5 transition-transform duration-200 ${!collapsed ? 'rotate-180' : ''}`}
-          />
+        {/* Timestamp + status pill */}
+        <span className="shrink-0 text-[10.5px] text-[#b6c2c8]">{relativeTime(event.created_at)}</span>
+        <span className={`shrink-0 rounded px-1.5 py-px text-[10px] font-semibold ${STATUS_PILL[status]}`}>
+          {STATUS_LABEL[status]}
         </span>
+
+        {/* Caret */}
+        <ChevronDown
+          className={`h-3 w-3 shrink-0 text-[#b6c2c8] transition-transform duration-200 ${!collapsed ? 'rotate-180' : ''}`}
+        />
       </div>
 
       {/* Expanded body */}
       {!collapsed && (
-        <div className="px-5 py-5 space-y-4">
-          {/* Stats grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <div className="px-3.5 py-2.5 space-y-2">
+          {/* Inline stat row */}
+          <div className="flex flex-wrap gap-x-5 gap-y-1">
+            {event.event_type === 'csv_import' && (
+              <>
+                <InlineStat label="Total" value={event.total_rows} />
+                <InlineStat label="Imported" value={event.processed_rows} />
+                <InlineStat label="Duplicates" value={event.duplicate_rows} />
+                <InlineStat label="Failed" value={event.failed_rows} highlight={status !== 'done'} />
+              </>
+            )}
             {(event.event_type === 'push' || event.event_type === 'full') && (
               <>
-                <Stat label="Contacts pushed" value={event.contacts_synced} />
-                <Stat label="Companies updated" value={event.companies_updated} />
-                <Stat label="Contacts skipped" value={event.contacts_skipped} />
-                <Stat label="Push errors" value={event.contacts_errors} highlight={errored} />
+                <InlineStat label="Pushed" value={event.contacts_synced} />
+                <InlineStat label="Companies" value={event.companies_updated} />
+                <InlineStat label="Skipped" value={event.contacts_skipped} />
+                <InlineStat label="Errors" value={event.contacts_errors} highlight={status !== 'done'} />
               </>
             )}
             {(event.event_type === 'pull' || event.event_type === 'full') && (
-              <Stat label="Contacts pulled" value={event.pull_count} />
+              <InlineStat label="Pulled" value={event.pull_count} />
             )}
             {event.event_type === 'full' && (
               <>
-                <Stat label="Deals fetched" value={event.deals_fetched} />
-                <Stat label="Deals mirrored" value={event.deals_mirrored} />
-                <Stat label="Deal events" value={event.deal_events_emitted} />
+                <InlineStat label="Deals fetched" value={event.deals_fetched} />
+                <InlineStat label="Deals mirrored" value={event.deals_mirrored} />
+                <InlineStat label="Deal events" value={event.deal_events_emitted} />
               </>
             )}
           </div>
 
+          {/* Timestamp full */}
+          <p className="text-[11px] text-[#b6c2c8]">{absoluteTime(event.created_at)}</p>
+
           {/* Skipped contacts */}
           {Array.isArray(event.skipped_contacts) && event.skipped_contacts.length > 0 && (
-            <Section title="Skipped contacts">
-              <ul className="space-y-1">
-                {(event.skipped_contacts as { name?: string; company?: string; reason?: string }[]).map(
-                  (c, i) => (
-                    <li key={i} className="text-[12.5px] text-[#4a6470]">
-                      <span className="font-medium text-[#0d3547]">{c.name || 'Unknown'}</span>
-                      {c.company && <span className="text-[#7d909a]"> · {c.company}</span>}
-                      {c.reason && <span className="text-[#b6c2c8]"> — {c.reason}</span>}
-                    </li>
-                  ),
-                )}
+            <div>
+              <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">Skipped</p>
+              <ul className="space-y-0.5">
+                {(event.skipped_contacts as { name?: string; company?: string; reason?: string }[]).map((c, i) => (
+                  <li key={i} className="text-[12px] text-[#4a6470]">
+                    <span className="font-medium text-[#0d3547]">{c.name || 'Unknown'}</span>
+                    {c.company && <span className="text-[#7d909a]"> · {c.company}</span>}
+                    {c.reason && <span className="text-[#b6c2c8]"> — {c.reason}</span>}
+                  </li>
+                ))}
               </ul>
-            </Section>
+            </div>
           )}
 
           {/* Error details */}
           {event.error_details.length > 0 && (
-            <Section title="Errors" icon={<AlertTriangle className="h-3 w-3 text-red-400" />}>
-              <ul className="space-y-1">
+            <div>
+              <p className="mb-1 flex items-center gap-1 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-red-400">
+                <AlertTriangle className="h-3 w-3" /> Errors
+              </p>
+              <ul className="space-y-0.5">
                 {event.error_details.map((e, i) => (
-                  <li key={i} className="text-[12.5px] text-red-600 font-mono break-all">
-                    {e}
-                  </li>
+                  <li key={i} className="text-[11.5px] text-red-600 font-mono break-all">{e}</li>
                 ))}
               </ul>
-            </Section>
+            </div>
           )}
 
-          {/* Clean state */}
-          {!errored &&
+          {/* Clean */}
+          {status === 'done' && event.event_type !== 'csv_import' &&
             !(Array.isArray(event.skipped_contacts) && event.skipped_contacts.length > 0) && (
-              <div className="flex items-center gap-2 text-[12.5px] text-[#7d909a]">
-                <CheckCircle2 className="h-3.5 w-3.5 text-arcova-teal shrink-0" />
+              <div className="flex items-center gap-1.5 text-[11.5px] text-[#7d909a]">
+                <CheckCircle2 className="h-3 w-3 text-arcova-teal shrink-0" />
                 No errors or skipped contacts
               </div>
             )}
@@ -244,7 +299,7 @@ function SyncEventCard({
   );
 }
 
-function Stat({
+function InlineStat({
   label,
   value,
   highlight,
@@ -254,42 +309,31 @@ function Stat({
   highlight?: boolean;
 }) {
   return (
-    <div className="rounded-xl bg-white/50 border border-[rgba(13,53,71,0.06)] px-3.5 py-3">
-      <div
-        className={`font-manrope text-xl font-bold tracking-tight ${
-          highlight && (value ?? 0) > 0 ? 'text-red-500' : 'text-[#0d3547]'
-        }`}
-      >
+    <span className="text-[12px] text-[#7d909a]">
+      <span className={`font-semibold ${highlight && (value ?? 0) > 0 ? 'text-red-500' : 'text-[#0d3547]'}`}>
         {value ?? 0}
-      </div>
-      <div className="mt-0.5 text-[11px] text-[#7d909a]">{label}</div>
-    </div>
-  );
-}
-
-function Section({
-  title,
-  icon,
-  children,
-}: {
-  title: string;
-  icon?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <div className="flex items-center gap-1.5 mb-2">
-        {icon}
-        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">
-          {title}
-        </span>
-      </div>
-      {children}
-    </div>
+      </span>{' '}
+      {label}
+    </span>
   );
 }
 
 // ── Page ───────────────────────────────────────────────────────────────────
+
+type FilterType = 'all' | 'import' | 'push' | 'full';
+
+const FILTERS: { value: FilterType; label: string }[] = [
+  { value: 'all',    label: 'All' },
+  { value: 'import', label: 'Import' },
+  { value: 'push',   label: 'Export' },
+  { value: 'full',   label: 'Sync' },
+];
+
+function matchesFilter(event: SyncEvent, filter: FilterType): boolean {
+  if (filter === 'all') return true;
+  if (filter === 'import') return event.event_type === 'pull' || event.event_type === 'csv_import';
+  return event.event_type === filter;
+}
 
 export default function LogPage() {
   const { user, loading } = useAuth();
@@ -297,6 +341,8 @@ export default function LogPage() {
   const [events, setEvents] = useState<SyncEvent[]>([]);
   const [loadingData, setLoadingData] = useState(true);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [filter, setFilter] = useState<FilterType>('all');
+  const filteredEvents = events.filter((e) => matchesFilter(e, filter));
 
   useEffect(() => {
     if (!loading && !user) router.push('/login');
@@ -304,18 +350,88 @@ export default function LogPage() {
 
   const fetchEvents = useCallback(async () => {
     try {
-      const res = await fetch('/api/hubspot/sync-events');
-      if (!res.ok) return;
-      const json = await res.json() as { data: SyncEvent[] };
-      setEvents(
-        (json.data ?? []).map((e) => ({
-          ...e,
-          skipped_contacts: Array.isArray(e.skipped_contacts) ? e.skipped_contacts : [],
-          error_details: Array.isArray(e.error_details)
-            ? (e.error_details as unknown[]).filter((x): x is string => typeof x === 'string')
-            : [],
-        })),
+      const [syncRes, importRes, logRes] = await Promise.all([
+        fetch('/api/hubspot/sync-events'),
+        fetch('/api/import-history'),
+        fetch('/api/hubspot/sync-log'),
+      ]);
+
+      const syncJson = syncRes.ok ? (await syncRes.json() as { data: SyncEvent[] }) : { data: [] };
+      const importJson = importRes.ok ? (await importRes.json() as { batches: ImportBatch[] }) : { batches: [] };
+      const logJson = logRes.ok ? (await logRes.json() as { data: { synced_at: string | null; contacts_synced: number | null; contacts_errors: number | null; contacts_skipped: number | null; skipped_contacts: unknown[]; last_error_details: string[]; last_pull_batch: { processed_rows: number } | null } | null }) : { data: null };
+
+      const syncEvents: SyncEvent[] = (syncJson.data ?? []).map((e) => ({
+        ...e,
+        filename: null,
+        total_rows: null,
+        processed_rows: null,
+        duplicate_rows: null,
+        failed_rows: null,
+        batch_status: null,
+        skipped_contacts: Array.isArray(e.skipped_contacts) ? e.skipped_contacts : [],
+        error_details: Array.isArray(e.error_details)
+          ? (e.error_details as unknown[]).filter((x): x is string => typeof x === 'string')
+          : [],
+      }));
+
+      const importEvents: SyncEvent[] = (importJson.batches ?? []).map((b) => ({
+        id: b.id,
+        created_at: b.created_at,
+        event_type: b.filename?.startsWith('hubspot-auto-') ? 'pull' : 'csv_import',
+        contacts_synced: null,
+        contacts_errors: null,
+        contacts_skipped: null,
+        skipped_contacts: [],
+        error_details: [],
+        companies_updated: null,
+        pull_count: b.filename?.startsWith('hubspot-auto-') ? (b.processed_rows ?? null) : null,
+        deals_fetched: null,
+        deals_mirrored: null,
+        deal_events_emitted: null,
+        filename: b.filename,
+        total_rows: b.total_rows ?? null,
+        processed_rows: b.processed_rows ?? null,
+        duplicate_rows: b.duplicate_rows ?? null,
+        failed_rows: b.failed_rows ?? null,
+        batch_status: b.status ?? null,
+      }));
+
+      // Surface the legacy push from hubspot_sync_log if it predates the new events table
+      const legacyPushEvents: SyncEvent[] = [];
+      const log = logJson.data;
+      if (log?.synced_at) {
+        const alreadyCovered = syncEvents.some((e) => e.event_type === 'push' || e.event_type === 'full');
+        if (!alreadyCovered) {
+          legacyPushEvents.push({
+            id: 'legacy-push',
+            created_at: log.synced_at,
+            event_type: 'push',
+            contacts_synced: log.contacts_synced,
+            contacts_errors: log.contacts_errors,
+            contacts_skipped: log.contacts_skipped,
+            skipped_contacts: Array.isArray(log.skipped_contacts) ? log.skipped_contacts : [],
+            error_details: Array.isArray(log.last_error_details) ? log.last_error_details : [],
+            companies_updated: null,
+            pull_count: null,
+            deals_fetched: null,
+            deals_mirrored: null,
+            deal_events_emitted: null,
+            filename: null,
+            total_rows: null,
+            processed_rows: null,
+            duplicate_rows: null,
+            failed_rows: null,
+            batch_status: null,
+          });
+        }
+      }
+
+      const merged = [...syncEvents, ...importEvents, ...legacyPushEvents].sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
       );
+
+      const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+      setEvents(merged.filter((e) => new Date(e.created_at).getTime() >= cutoff));
     } finally {
       setLoadingData(false);
     }
@@ -365,30 +481,76 @@ export default function LogPage() {
                 <div className="w-16 h-16 rounded-full bg-[rgba(13,53,71,0.05)] flex items-center justify-center mb-4">
                   <RefreshCw className="w-8 h-8 text-[#b6c2c8]" />
                 </div>
-                <h3 className="font-manrope text-lg font-semibold text-[#0d3547] mb-2">
-                  No sync events yet
-                </h3>
-                <p className="text-[#7d909a] text-sm max-w-xs">
-                  Push or pull data to HubSpot and events will appear here.
-                </p>
+                <h3 className="font-manrope text-lg font-semibold text-[#0d3547] mb-2">No sync events yet</h3>
+                <p className="text-[#7d909a] text-sm max-w-xs">Push or pull data to HubSpot and events will appear here.</p>
               </div>
             ) : (
-              <div className="space-y-4">
-                {events.map((event, i) => (
-                  <SyncEventCard
-                    key={event.id}
-                    event={event}
-                    index={events.length - i}
-                    collapsed={!expandedIds.has(event.id)}
-                    onToggle={() => toggle(event.id)}
-                  />
-                ))}
-              </div>
+              <>
+                {/* Filter pills */}
+                <div className="mb-4 flex flex-wrap gap-2">
+                  {FILTERS.map((f) => {
+                    const count = events.filter((e) => matchesFilter(e, f.value)).length;
+                    if (count === 0 && f.value !== 'all') return null;
+                    return (
+                      <button
+                        key={f.value}
+                        type="button"
+                        onClick={() => setFilter(f.value)}
+                        className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-medium transition-colors ${
+                          filter === f.value
+                            ? 'bg-arcova-navy text-white'
+                            : 'bg-white/70 border border-[rgba(13,53,71,0.1)] text-[#4a6470] hover:bg-white hover:text-[#0d3547]'
+                        }`}
+                      >
+                        {f.label}
+                        <span className={`text-[10px] ${filter === f.value ? 'text-white/70' : 'text-[#b6c2c8]'}`}>{count}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="space-y-2">
+                  {events
+                    .filter((e) => matchesFilter(e, filter))
+                    .map((event) => (
+                      <SyncEventCard
+                        key={event.id}
+                        event={event}
+                        collapsed={!expandedIds.has(event.id)}
+                        onToggle={() => toggle(event.id)}
+                      />
+                    ))}
+                </div>
+              </>
             )}
           </div>
         </div>
 
-        <AgentPanel page="log" pageContext={{}} />
+        <AgentPanel
+          page="log"
+          pageContext={{
+            syncEvents: events.slice(0, 20).map((e) => ({
+              id: e.id,
+              created_at: e.created_at,
+              event_type: e.event_type,
+              contacts_synced: e.contacts_synced,
+              contacts_errors: e.contacts_errors,
+              contacts_skipped: e.contacts_skipped,
+              error_details: e.error_details,
+              companies_updated: e.companies_updated,
+              pull_count: e.pull_count,
+              deals_fetched: e.deals_fetched,
+              deals_mirrored: e.deals_mirrored,
+              deal_events_emitted: e.deal_events_emitted,
+              filename: e.filename,
+              total_rows: e.total_rows,
+              processed_rows: e.processed_rows,
+              duplicate_rows: e.duplicate_rows,
+              failed_rows: e.failed_rows,
+              batch_status: e.batch_status,
+            })),
+          }}
+        />
       </div>
     </div>
   );

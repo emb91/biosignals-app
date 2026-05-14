@@ -2,7 +2,7 @@
 
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Image from 'next/image';
-import { Send, Sparkles, X, ArrowRight } from 'lucide-react';
+import { Send, Sparkles, RotateCcw, ArrowRight } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { ArcovaLoader } from '@/components/ArcovaLoader';
@@ -15,7 +15,7 @@ import { BATCH_CONTACTS_KEY } from '@/lib/batch-contacts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type AgentPage = 'accounts' | 'leads' | 'today' | 'health' | 'signals' | 'imports' | 'data' | 'icps';
+export type AgentPage = 'accounts' | 'leads' | 'today' | 'health' | 'signals' | 'imports' | 'data' | 'icps' | 'log';
 
 export interface AgentTableFilter {
   columns: AccountQueryColumn[];
@@ -141,6 +141,23 @@ const PROMPTS: Record<AgentPage, string[]> = {
     'Compare ICP 1 and ICP 3',
     'Draft a new ICP for me to consider',
   ],
+  log: [
+    'Why did my last sync fail?',
+    'How many contacts were imported this week?',
+    'Were there any errors in my last push?',
+    'Show me a summary of recent activity',
+  ],
+};
+
+const PAGE_SUBTITLE: Partial<Record<AgentPage, string>> = {
+  accounts: 'Ask me about your accounts',
+  leads: 'Ask me about your contacts',
+  icps: 'Ask me about your ICPs',
+  health: 'Ask me about coverage',
+  signals: 'Ask me about recent signals',
+  imports: 'Ask me about your imports',
+  data: 'Run sourcing jobs and track the queue',
+  log: 'Ask me about your sync history',
 };
 
 const DEFAULT_BRIEFING_IDLE_CHIPS: { label: string; prompt: string; threadPreview?: string }[] = [
@@ -250,7 +267,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
       if (Date.now() - handoff.timestamp < 5 * 60 * 1000) {
         setMessages(handoff.messages);
         const normalizedFromPage: AgentPage =
-          handoff.fromPage === 'dashboard' ? 'today' : handoff.fromPage;
+          (handoff.fromPage as string) === 'dashboard' ? 'today' : (handoff.fromPage as AgentPage);
         setHandoffFrom(normalizedFromPage);
         if (embedInBriefingBento && page === 'today') {
           setBriefingSurfaceEngaged(true);
@@ -522,7 +539,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                 className={cn(
                   'flex min-w-0 flex-col',
                   embedGlass ? 'w-full max-w-[min(100%,40rem)]' : '',
-                  lightSetupChat ? 'max-w-[min(100%,28rem)] gap-2' : todayChat ? 'max-w-[min(100%,40rem)] gap-3' : 'w-full gap-1.5',
+                  lightSetupChat ? 'max-w-[min(100%,28rem)] gap-2' : todayChat ? 'max-w-[min(100%,40rem)] gap-3' : 'max-w-[90%] gap-1.5',
                 )}
               >
                 {msg.isPending ? (
@@ -696,14 +713,14 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
           <p className={cn('font-semibold leading-none', lightSetupChat ? 'text-sm text-gray-900' : todayChat ? 'text-sm text-slate-900' : 'font-manrope text-[15px] text-[#0d3547]')}>Arcova Agent</p>
           {(!lightSetupChat && !todayChat) ? (
             <div className="mt-[3px] flex items-center gap-1.5">
-              <span className="h-[6px] w-[6px] shrink-0 rounded-full bg-arcova-teal" style={{ animation: 'arcova-dot-pulse 2.6s ease-in-out infinite', boxShadow: '0 0 0 0 rgba(0,164,180,0.5)' }} />
+              <span className="h-[6px] w-[6px] shrink-0 rounded-full bg-arcova-teal" style={{ animation: 'arcova-sidedot-pulse 2.6s ease-in-out infinite' }} />
               <span className="text-[11px] leading-tight text-[#7d909a]">
-                {headerSubtitle ?? 'Ask me anything about your accounts'}
+                {headerSubtitle ?? PAGE_SUBTITLE[page] ?? 'Ask me anything'}
               </span>
             </div>
           ) : (
             <p className={cn('mt-1 leading-tight', lightSetupChat ? 'text-xs text-gray-500' : 'text-xs text-slate-500')}>
-              {headerSubtitle ? String(headerSubtitle) : page === 'data' ? 'Run sourcing jobs and watch the queue on the right' : 'Ask me anything about your accounts'}
+              {headerSubtitle ? String(headerSubtitle) : PAGE_SUBTITLE[page] ?? 'Ask me anything'}
             </p>
           )}
         </div>
@@ -721,29 +738,52 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
             aria-label="Clear conversation"
             title="Clear conversation"
           >
-            <X className="w-4 h-4" />
+            <RotateCcw className="w-3.5 h-3.5" />
           </button>
         )}
       </div>
       )}
 
-      {/* ── ICP priorities loading state ── */}
+      {/* ── ICP priorities loading state: ghost suggestion pills ── */}
       {showPrompts && page === 'icps' && icpPrioritiesLoading && (
-        <div className={cn('shrink-0 flex flex-col items-center justify-center gap-3 px-[18px] py-8', !wide && 'max-[1279px]:hidden')}>
-          <div className="relative h-14 w-14 shrink-0" aria-hidden>
-            <span className="absolute rounded-full" style={{
-              inset: '-25%',
-              background: 'radial-gradient(circle, rgba(0,164,180,0.45) 0%, transparent 65%)',
-              filter: 'blur(10px)',
-              animation: 'arcova-halo-pulse 2s ease-in-out infinite',
-            }} />
-            <span className="absolute inset-0 rounded-full" style={{
-              background: 'radial-gradient(circle at 30% 28%, #ffffff 0%, #00c8dc 45%, #005f80 130%)',
-              boxShadow: 'inset 0 -4px 8px rgba(13,53,71,0.18), inset 0 2px 6px rgba(255,255,255,0.5), 0 0 18px 4px rgba(0,164,180,0.35)',
-              animation: 'arcova-orb-breathe 2s ease-in-out infinite',
-            }} />
+        <div className={cn('shrink-0 px-[18px] pb-2 pt-3', !wide && 'max-[1279px]:hidden')} aria-hidden>
+          <p className="mb-2.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#b6c2c8]">
+            Auditing your ICPs
+          </p>
+          <div className="flex flex-col gap-2">
+            {([100, 76, 54] as const).map((pct, i) => (
+              <div
+                key={i}
+                className="flex items-center gap-2 rounded-full px-3"
+                style={{
+                  height: 34,
+                  width: `${pct}%`,
+                  border: '1px dashed rgba(13,53,71,0.08)',
+                  background: 'rgba(255,255,255,0.45)',
+                  animation: `arcova-ghost-fadein 0.4s cubic-bezier(.16,1,.3,1) both`,
+                  animationDelay: `${i * 0.12}s`,
+                }}
+              >
+                {/* spark dot */}
+                <span
+                  className="shrink-0 rounded-full"
+                  style={{ width: 16, height: 16, background: 'rgba(0,164,180,0.13)' }}
+                />
+                {/* shimmer bar */}
+                <span
+                  className="flex-1 rounded-full"
+                  style={{
+                    height: 7,
+                    backgroundImage: 'linear-gradient(90deg, rgba(13,53,71,0.05) 0%, rgba(13,53,71,0.13) 40%, rgba(13,53,71,0.05) 100%)',
+                    backgroundSize: '200% 100%',
+                    animation: `arcova-ghost-shimmer 1.7s ease-in-out infinite`,
+                    animationDelay: `${i * 0.22}s`,
+                  }}
+                />
+              </div>
+            ))}
           </div>
-          <p className="text-[11px] font-medium text-[#7d909a]">Reviewing your ICPs…</p>
+          <p className="mt-2.5 text-[11px] text-[#a4b6c2]">Reading your ICPs in the background…</p>
         </div>
       )}
 
@@ -807,7 +847,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                 key={prompt}
                 onClick={() => sendMessage(prompt)}
                 className={cn(
-                  'flex items-start gap-2 text-left transition-all',
+                  'flex items-center gap-2 text-left transition-all',
                   lightSetupChat
                     ? 'rounded-xl border border-slate-200 bg-slate-50/80 px-3.5 py-2.5 text-sm text-slate-600 hover:border-arcova-teal/30 hover:bg-white hover:text-slate-900'
                     : todayChat
@@ -926,7 +966,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
               aria-label="Clear conversation"
               title="Clear conversation"
             >
-              <X className="h-4 w-4" />
+              <RotateCcw className="h-3.5 w-3.5" />
             </button>
           )}
           <div
@@ -942,12 +982,13 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
                   : 'rounded-[14px] border border-[rgba(13,53,71,0.07)] bg-white/70 pl-3 pr-[6px] py-[6px] focus-within:border-arcova-teal focus-within:bg-white focus-within:shadow-[0_0_0_4px_rgba(0,164,180,0.12)]',
             )}
           >
-            <Sparkles
-              className={cn(
-                'shrink-0',
-                todayChat || lightSetupChat ? 'h-4 w-4 text-arcova-teal/45' : 'h-3.5 w-3.5 text-arcova-teal',
-              )}
-            />
+            {(!todayChat && !lightSetupChat) ? (
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-arcova-teal" aria-hidden>
+                <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/>
+              </svg>
+            ) : (
+              <Sparkles className={cn('shrink-0', todayChat || lightSetupChat ? 'h-4 w-4 text-arcova-teal/45' : 'h-3.5 w-3.5 text-arcova-teal')} />
+            )}
             <input
               ref={inputRef}
               type="text"

@@ -42,7 +42,7 @@ import { redactInternalIdsFromAgentUserText } from '@/lib/agent-redact';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Page = 'accounts' | 'leads' | 'today' | 'health' | 'signals' | 'imports' | 'data' | 'icps';
+type Page = 'accounts' | 'leads' | 'today' | 'health' | 'signals' | 'imports' | 'data' | 'icps' | 'log';
 
 const AGENT_PAGES: readonly Page[] = ['accounts', 'leads', 'today', 'health', 'signals', 'imports', 'data'];
 
@@ -97,6 +97,10 @@ interface PageContext {
     myCompany: Record<string, unknown> | null;
     icps: Array<Record<string, unknown>>;
   };
+  // Log page — recent sync events passed from the client.
+  syncEvents?: Array<Record<string, unknown>>;
+  // Leads page — selected contact passed from the client.
+  selectedLead?: Record<string, unknown> | null;
 }
 
 interface TableFilter {
@@ -572,6 +576,25 @@ ${context.leadsView === 'accounts'
   : 'Use the contacts lens: talk about individual people, contact status, seniority/function fit, and which contacts are Ready, Monitor, Source, or Deprioritised.'}`
     : '';
 
+  const selectedLeadContext = context?.selectedLead
+    ? `
+## Selected contact
+The user is viewing this contact:
+\`\`\`json
+${JSON.stringify(context.selectedLead, null, 2)}
+\`\`\`
+Use this when the user asks about this person's fit, seniority, company, or next steps.`
+    : '';
+
+  const logContext = page === 'log' && Array.isArray(context?.syncEvents) && context!.syncEvents!.length > 0
+    ? `
+## Recent sync events (newest first)
+\`\`\`json
+${JSON.stringify(context!.syncEvents, null, 2)}
+\`\`\`
+Use the above to answer questions about sync history. For each event: event_type is one of push (Arcova→HubSpot), pull (HubSpot→Arcova), full (bidirectional), or csv_import. Errors are in error_details[]. For CSV uploads look at filename, total_rows, processed_rows, duplicate_rows, failed_rows, batch_status.`
+    : '';
+
   // ICP audit context — only injected on the icps page. Provides the full ICP set + company
   // profile so the agent can audit, find gaps, and propose drafts grounded in real data.
   const icpAuditContext = page === 'icps' && context?.icpAuditData
@@ -629,6 +652,8 @@ ${selectedAccountContext}
 ${dataPageContext}
 ${todayContext}
 ${leadsViewContext}
+${selectedLeadContext}
+${logContext}
 ${icpAuditContext}
 
 ${COPILOT_JOURNEY_MODEL}
