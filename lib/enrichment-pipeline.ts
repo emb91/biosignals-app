@@ -55,6 +55,8 @@ type Pass2Result = {
   linkedinResolution?: LinkedinResolutionResult;
   alignment?: Record<string, unknown> | null;
   apifyProfile?: Record<string, unknown> | null;
+  emittedSignalTypes?: string[];
+  recomputedCompanyIds?: string[];
 };
 
 type NormalizedEmployment = {
@@ -901,7 +903,7 @@ function assessEmailStatus(params: {
 
 export async function runContactResolutionPipelineForContact(
   supabase: MinimalSupabase,
-  params: { contactId: string; userId: string }
+  params: { contactId: string; userId: string; emitExternalSignals?: boolean }
 ): Promise<Pass2Result> {
   const { contactId, userId } = params;
   const now = new Date().toISOString();
@@ -1362,42 +1364,45 @@ export async function runContactResolutionPipelineForContact(
       console.error('[enrichment-pipeline] Failed syncing contact fit score:', error);
     });
 
-    try {
-      await emitExternalContactSignalsFromEnrichment(supabase as any, {
-        previous: {
-          userId,
-          contactId,
-          companyId: typedContact.company_id ?? null,
-          fullName: typedContact.full_name,
-          linkedinUrl: typedContact.linkedin_url,
-          email: typedContact.email,
-          companyName: typedContact.resolved_current_company_name ?? typedContact.company_name ?? null,
-          companyDomain: typedContact.resolved_current_company_domain ?? typedContact.company_domain ?? null,
-          jobTitle: typedContact.resolved_current_job_title ?? typedContact.job_title ?? null,
-          seniorityLevel: typedContact.seniority_level ?? null,
-          businessArea: typedContact.business_area ?? null,
-          previouslyEnriched:
-            (typedContact.profile_enrichment_status ?? '') === 'completed' ||
-            (typedContact.profile_enrichment_status ?? '') === 'ambiguous',
-        },
-        current: {
-          companyId: companyId ?? null,
-          fullName: typedContact.full_name,
-          linkedinUrl: resolvedLinkedin.linkedin_url,
-          email: typedContact.email,
-          companyName: resolved.currentCompanyName,
-          companyDomain: resolvedDomainFromCompany ?? resolved.resolvedCompanyDomainForEmailCheck ?? null,
-          jobTitle: resolved.currentJobTitle,
-          seniorityLevel:
-            typeof updatePayload.seniority_level === 'string' ? updatePayload.seniority_level : typedContact.seniority_level ?? null,
-          businessArea:
-            typeof updatePayload.business_area === 'string' ? updatePayload.business_area : typedContact.business_area ?? null,
-          sourceProvider: 'harvestapi',
-          eventAt: completedAt,
-        },
-      });
-    } catch (error) {
-      console.error('[enrichment-pipeline] Failed emitting external contact signals:', error);
+    let externalSignalResult: { emittedSignalTypes: string[]; recomputedCompanies: string[] } | null = null;
+    if (params.emitExternalSignals) {
+      try {
+        externalSignalResult = await emitExternalContactSignalsFromEnrichment(supabase as any, {
+          previous: {
+            userId,
+            contactId,
+            companyId: typedContact.company_id ?? null,
+            fullName: typedContact.full_name,
+            linkedinUrl: typedContact.linkedin_url,
+            email: typedContact.email,
+            companyName: typedContact.resolved_current_company_name ?? typedContact.company_name ?? null,
+            companyDomain: typedContact.resolved_current_company_domain ?? typedContact.company_domain ?? null,
+            jobTitle: typedContact.resolved_current_job_title ?? typedContact.job_title ?? null,
+            seniorityLevel: typedContact.seniority_level ?? null,
+            businessArea: typedContact.business_area ?? null,
+            previouslyEnriched:
+              (typedContact.profile_enrichment_status ?? '') === 'completed' ||
+              (typedContact.profile_enrichment_status ?? '') === 'ambiguous',
+          },
+          current: {
+            companyId: companyId ?? null,
+            fullName: typedContact.full_name,
+            linkedinUrl: resolvedLinkedin.linkedin_url,
+            email: typedContact.email,
+            companyName: resolved.currentCompanyName,
+            companyDomain: resolvedDomainFromCompany ?? resolved.resolvedCompanyDomainForEmailCheck ?? null,
+            jobTitle: resolved.currentJobTitle,
+            seniorityLevel:
+              typeof updatePayload.seniority_level === 'string' ? updatePayload.seniority_level : typedContact.seniority_level ?? null,
+            businessArea:
+              typeof updatePayload.business_area === 'string' ? updatePayload.business_area : typedContact.business_area ?? null,
+            sourceProvider: 'apify / linkedin scrape',
+            eventAt: completedAt,
+          },
+        });
+      } catch (error) {
+        console.error('[enrichment-pipeline] Failed emitting external contact signals:', error);
+      }
     }
 
     return {
@@ -1405,6 +1410,8 @@ export async function runContactResolutionPipelineForContact(
       linkedinResolution: resolvedLinkedin,
       alignment,
       apifyProfile,
+      emittedSignalTypes: externalSignalResult?.emittedSignalTypes ?? [],
+      recomputedCompanyIds: externalSignalResult?.recomputedCompanies ?? [],
     };
   } catch (error) {
     if (error instanceof LeadEnrichmentCancelledError) {

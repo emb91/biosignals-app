@@ -9,7 +9,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 type DatabaseClient = SupabaseClient<any, 'public', any>;
 
-const EXTERNAL_CONTACT_SIGNAL_SOURCE = 'external_contact_change';
+const EXTERNAL_CONTACT_SIGNAL_SOURCE = 'apify_linkedin_people_monitor';
 
 type ExternalContactBaseline = {
   userId: string;
@@ -174,14 +174,19 @@ function buildDecision(
     return {
       sourceEventType: 'recently_changed_company',
       signalKeys: ['recently_changed_company'],
-      title: 'External company change detected',
-      summary: 'Arcova detected that this contact appears to have moved to a different company.',
+      title: 'Apify / LinkedIn company change detected',
+      summary:
+        'Arcova detected through Apify / LinkedIn monitoring that this contact appears to have moved to a different company.',
       buyerFunctionsOverride,
       metadata: {
         previous_company_name: previous.companyName,
         previous_company_domain: previous.companyDomain,
         current_company_name: current.companyName,
         current_company_domain: current.companyDomain,
+        previous_role_family: prevRole,
+        current_role_family: nextRole,
+        previous_seniority_level: previous.seniorityLevel,
+        current_seniority_level: current.seniorityLevel,
       },
     };
   }
@@ -196,12 +201,17 @@ function buildDecision(
       return {
         sourceEventType: 'recently_promoted',
         signalKeys: ['recently_promoted'],
-        title: 'External promotion detected',
-        summary: 'Arcova detected that this contact appears to have been promoted.',
+        title: 'Apify / LinkedIn promotion detected',
+        summary:
+          'Arcova detected through Apify / LinkedIn monitoring that this contact appears to have been promoted.',
         buyerFunctionsOverride,
         metadata: {
           previous_job_title: previous.jobTitle,
           current_job_title: current.jobTitle,
+          previous_seniority_level: previous.seniorityLevel,
+          current_seniority_level: current.seniorityLevel,
+          previous_role_family: prevRole,
+          current_role_family: nextRole,
         },
       };
     }
@@ -210,27 +220,35 @@ function buildDecision(
       return {
         sourceEventType: 'new_internal_role',
         signalKeys: ['new_internal_role'],
-        title: 'External internal role change detected',
-        summary: 'Arcova detected that this contact appears to have moved into a different internal function.',
+        title: 'Apify / LinkedIn internal role change detected',
+        summary:
+          'Arcova detected through Apify / LinkedIn monitoring that this contact appears to have moved into a different internal function.',
         buyerFunctionsOverride,
-        metadata: {
-          previous_job_title: previous.jobTitle,
-          current_job_title: current.jobTitle,
-          previous_role_family: prevRole,
-          current_role_family: nextRole,
-        },
-      };
+      metadata: {
+        previous_job_title: previous.jobTitle,
+        current_job_title: current.jobTitle,
+        previous_role_family: prevRole,
+        current_role_family: nextRole,
+        previous_seniority_level: previous.seniorityLevel,
+        current_seniority_level: current.seniorityLevel,
+      },
+    };
     }
 
     return {
       sourceEventType: 'title_change',
       signalKeys: ['title_change'],
-      title: 'External title change detected',
-      summary: 'Arcova detected a materially different title for this contact.',
+      title: 'Apify / LinkedIn title change detected',
+      summary:
+        'Arcova detected a materially different title for this contact through Apify / LinkedIn monitoring.',
       buyerFunctionsOverride,
       metadata: {
         previous_job_title: previous.jobTitle,
         current_job_title: current.jobTitle,
+        previous_seniority_level: previous.seniorityLevel,
+        current_seniority_level: current.seniorityLevel,
+        previous_role_family: prevRole,
+        current_role_family: nextRole,
       },
     };
   }
@@ -243,13 +261,15 @@ function buildDecision(
     return {
       sourceEventType: 'new_to_role',
       signalKeys: ['new_to_role'],
-      title: 'New externally detected stakeholder',
-      summary: 'Arcova surfaced a newly relevant contact from external enrichment.',
+      title: 'New Apify / LinkedIn stakeholder detected',
+      summary: 'Arcova surfaced a newly relevant contact from Apify / LinkedIn monitoring.',
       buyerFunctionsOverride,
       metadata: {
         current_company_name: current.companyName,
         current_company_domain: current.companyDomain,
         current_job_title: current.jobTitle,
+        current_seniority_level: current.seniorityLevel,
+        current_role_family: nextRole,
       },
     };
   }
@@ -292,6 +312,10 @@ export async function emitExternalContactSignalsFromEnrichment(
       current_company_domain: input.current.companyDomain,
       previous_job_title: input.previous.jobTitle,
       current_job_title: input.current.jobTitle,
+      previous_seniority_level: input.previous.seniorityLevel,
+      current_seniority_level: input.current.seniorityLevel,
+      previous_role_family: roleFamily(input.previous.jobTitle, input.previous.businessArea),
+      current_role_family: roleFamily(input.current.jobTitle, input.current.businessArea),
       ...decision.metadata,
     },
   });
@@ -319,6 +343,10 @@ export async function emitExternalContactSignalsFromEnrichment(
       current_company_domain: input.current.companyDomain,
       previous_job_title: input.previous.jobTitle,
       current_job_title: input.current.jobTitle,
+      previous_seniority_level: input.previous.seniorityLevel,
+      current_seniority_level: input.current.seniorityLevel,
+      previous_role_family: roleFamily(input.previous.jobTitle, input.previous.businessArea),
+      current_role_family: roleFamily(input.current.jobTitle, input.current.businessArea),
       ...decision.metadata,
     },
   };

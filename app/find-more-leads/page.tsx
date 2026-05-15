@@ -23,7 +23,7 @@ export default function FindMoreLeadsPage() {
 
           <div className="mt-8 flex flex-wrap gap-3">
             <Link
-              href={ROUTES.leads.contacts}
+              href={ROUTES.contacts}
               className="px-4 py-2 rounded-lg bg-arcova-teal text-white text-sm font-medium hover:bg-arcova-teal/90 transition-colors"
             >
               View Leads

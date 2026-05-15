@@ -151,14 +151,26 @@ const PROMPTS: Record<AgentPage, string[]> = {
 };
 
 const PAGE_SUBTITLE: Partial<Record<AgentPage, string>> = {
-  accounts: 'Ask me about your accounts',
-  leads: 'Ask me about your contacts',
-  icps: 'Ask me about your ICPs',
-  health: 'Ask me about coverage',
-  signals: 'Ask me about recent signals',
-  imports: 'Ask me about your imports',
+  accounts: 'Working on your accounts',
+  leads: 'Working on your contacts',
+  icps: 'Working on your ICPs',
+  health: 'Working on coverage',
+  signals: 'Working on recent signals',
+  imports: 'Working on your imports',
   data: 'Run sourcing jobs and track the queue',
-  log: 'Ask me about your sync history',
+  log: 'Working on your sync history',
+};
+
+/** Input placeholder for the side-panel agent's chat bar, one per page. */
+const PAGE_INPUT_PLACEHOLDER: Partial<Record<AgentPage, string>> = {
+  accounts: 'Ask anything about your accounts…',
+  leads: 'Ask anything about your contacts…',
+  icps: 'Ask anything about your ICPs…',
+  health: 'Ask anything about coverage…',
+  signals: 'Ask anything about recent signals…',
+  imports: 'Ask anything about your imports…',
+  data: 'Ask anything about your data jobs…',
+  log: 'Ask anything about your sync history…',
 };
 
 const DEFAULT_BRIEFING_IDLE_CHIPS: { label: string; prompt: string; threadPreview?: string }[] = [
@@ -717,26 +729,39 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
         )}
       >
         {(!lightSetupChat && !todayChat) ? (
-          /* 44×44 breathing orb — glows + speeds up when thinking (side-panel surface only) */
+          /* 44×44 breathing orb — softer / glowier than the previous "football" look:
+             bigger and more diffuse halo, lighter core that doesn't go to near-black at
+             the edge. Three stacked layers (outer halo, main body, top sheen). */
           <div className="relative h-11 w-11 shrink-0" aria-hidden>
+            {/* Outer halo — bigger, blurrier, brighter so the orb feels emissive.
+                Throbs ~3.4s at rest (visible heartbeat, like it's waiting/thinking)
+                and ~1.8s when actively loading. */}
             <span className="absolute rounded-full" style={{
-              inset: '-25%',
+              inset: '-55%',
               background: isLoading
-                ? 'radial-gradient(circle, rgba(0,164,180,0.55) 0%, transparent 65%)'
-                : 'radial-gradient(circle, rgba(0,164,180,0.32) 0%, transparent 65%)',
-              filter: isLoading ? 'blur(10px)' : 'blur(8px)',
-              animation: isLoading ? 'arcova-halo-pulse 2s ease-in-out infinite' : 'arcova-halo-pulse 6s ease-in-out infinite',
+                ? 'radial-gradient(circle, rgba(0,164,180,0.7) 0%, rgba(0,164,180,0.25) 35%, transparent 70%)'
+                : 'radial-gradient(circle, rgba(0,164,180,0.45) 0%, rgba(0,164,180,0.18) 35%, transparent 70%)',
+              filter: isLoading ? 'blur(14px)' : 'blur(12px)',
+              animation: isLoading ? 'arcova-halo-pulse 1.8s ease-in-out infinite' : 'arcova-halo-pulse 5.2s ease-in-out infinite',
             }} />
+            {/* Inner halo — tighter glow ring that hugs the orb. */}
+            <span className="absolute rounded-full" style={{
+              inset: '-15%',
+              background: 'radial-gradient(circle, rgba(0,200,220,0.5) 0%, rgba(0,164,180,0.18) 45%, transparent 70%)',
+              filter: 'blur(6px)',
+            }} />
+            {/* Main body — lighter teal that fades to a soft mid-tone, not near-black. */}
             <span className="absolute inset-0 rounded-full" style={{
               background: isLoading
-                ? 'radial-gradient(circle at 30% 28%, #ffffff 0%, #00c8dc 45%, #005f80 130%)'
-                : 'radial-gradient(circle at 30% 28%, #ffffff 0%, #00A4B4 56%, #003344 130%)',
+                ? 'radial-gradient(circle at 32% 28%, rgba(255,255,255,0.95) 0%, #1fd0e0 38%, rgba(0,164,180,0.85) 80%, rgba(0,95,128,0.55) 115%)'
+                : 'radial-gradient(circle at 32% 28%, rgba(255,255,255,0.9) 0%, #2fc6d4 42%, rgba(0,164,180,0.75) 82%, rgba(0,95,128,0.45) 115%)',
               boxShadow: isLoading
-                ? 'inset 0 -4px 8px rgba(13,53,71,0.18), inset 0 2px 6px rgba(255,255,255,0.5), 0 0 18px 4px rgba(0,164,180,0.45)'
-                : 'inset 0 -4px 8px rgba(13,53,71,0.18), inset 0 2px 6px rgba(255,255,255,0.5)',
-              animation: isLoading ? 'arcova-orb-breathe 2s ease-in-out infinite' : 'arcova-orb-breathe 5.4s ease-in-out infinite',
+                ? 'inset 0 -3px 7px rgba(0,80,100,0.18), inset 0 2px 6px rgba(255,255,255,0.65), 0 0 24px 6px rgba(0,200,220,0.5)'
+                : 'inset 0 -3px 7px rgba(0,80,100,0.14), inset 0 2px 6px rgba(255,255,255,0.55), 0 0 18px 4px rgba(0,200,220,0.32)',
+              animation: isLoading ? 'arcova-orb-breathe 1.8s ease-in-out infinite' : 'arcova-orb-breathe 5.2s ease-in-out infinite',
             }} />
-            <span className="absolute inset-0 rounded-full" style={{ background: 'radial-gradient(ellipse 60% 30% at 36% 26%, rgba(255,255,255,0.7), transparent 60%)' }} />
+            {/* Top sheen — soft white highlight to keep the surface feeling spherical. */}
+            <span className="absolute inset-0 rounded-full" style={{ background: 'radial-gradient(ellipse 65% 35% at 36% 24%, rgba(255,255,255,0.85), transparent 60%)' }} />
           </div>
         ) : (
           <Image
@@ -753,18 +778,21 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
           />
         )}
         <div className="flex-1 min-w-0">
-          <p className={cn('font-semibold leading-none', lightSetupChat ? 'text-sm text-gray-900' : todayChat ? 'text-sm text-slate-900' : 'font-manrope text-[15px] text-[#0d3547]')}>Arcova Agent</p>
           {(!lightSetupChat && !todayChat) ? (
-            <div className="mt-[3px] flex items-center gap-1.5">
-              <span className="h-[6px] w-[6px] shrink-0 rounded-full bg-arcova-teal" style={{ animation: 'arcova-sidedot-pulse 2.6s ease-in-out infinite' }} />
-              <span className="text-[11px] leading-tight text-[#7d909a]">
-                {headerSubtitle ?? PAGE_SUBTITLE[page] ?? 'Ask me anything'}
-              </span>
-            </div>
-          ) : (
-            <p className={cn('mt-1 leading-tight', lightSetupChat ? 'text-xs text-gray-500' : 'text-xs text-slate-500')}>
-              {headerSubtitle ? String(headerSubtitle) : PAGE_SUBTITLE[page] ?? 'Ask me anything'}
+            /* Side-rail variant: single-line page-specific prompt. Lighter
+               weight + cool grey so the header reads as quietly present
+               rather than a heavy navy slab; the orb on the left identifies
+               this as the agent. */
+            <p className="font-manrope text-[13px] font-medium leading-snug tracking-[0.005em] text-[#7d909a]">
+              {headerSubtitle ?? PAGE_SUBTITLE[page] ?? 'Ask me anything'}
             </p>
+          ) : (
+            <>
+              <p className={cn('font-semibold leading-none', lightSetupChat ? 'text-sm text-gray-900' : 'text-sm text-slate-900')}>Arcova Agent</p>
+              <p className={cn('mt-1 leading-tight', lightSetupChat ? 'text-xs text-gray-500' : 'text-xs text-slate-500')}>
+                {headerSubtitle ? String(headerSubtitle) : PAGE_SUBTITLE[page] ?? 'Ask me anything'}
+              </p>
+            </>
           )}
         </div>
         {/*
@@ -1103,9 +1131,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
               placeholder={
                 messages.length > 0
                   ? 'Ask a follow-up…'
-                  : page === 'leads'
-                    ? 'Ask anything about your contacts…'
-                    : 'Ask anything about your accounts…'
+                  : PAGE_INPUT_PLACEHOLDER[page] ?? 'Ask anything…'
               }
               isLoading={isLoading}
               className="flex-1"

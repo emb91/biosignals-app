@@ -316,12 +316,16 @@ html {
 
 /* ── Arcova agent orb animations ── */
 @keyframes arcova-halo-pulse {
-  0%, 100% { transform: scale(1); opacity: 0.8; }
-  50%       { transform: scale(1.08); opacity: 1; }
+  /* Pronounced throb — scale + opacity swing so the halo visibly pulses like
+     a heartbeat rather than a static glow. */
+  0%, 100% { transform: scale(1); opacity: 0.55; }
+  50%       { transform: scale(1.18); opacity: 1; }
 }
 @keyframes arcova-orb-breathe {
-  0%, 100% { transform: scale(1); }
-  50%       { transform: scale(1.04); }
+  /* The orb body itself swells visibly on the inhale — bigger scale swing so
+     it reads as a slow breath rather than a static disc. */
+  0%, 100% { transform: scale(0.92); }
+  50%       { transform: scale(1.08); }
 }
 @keyframes arcova-dot-pulse {
   0%, 100% { opacity: 0.65; box-shadow: 0 0 0 0 rgba(0,164,180,0.55); }

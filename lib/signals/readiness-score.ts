@@ -1,4 +1,4 @@
-import { READINESS_SIGNAL_CATALOG_BY_KEY } from '@/lib/signals/readiness-catalog';
+import { READINESS_SIGNAL_CATALOG_BY_KEY, getSignalBaseImpactScore } from '@/lib/signals/readiness-catalog';
 import type {
   BuyerFunction,
   ConfidenceLabel,
@@ -7,7 +7,6 @@ import type {
   NormalizedSignal,
   ReadinessDimension,
   ReadinessLabel,
-  SignalStrength,
 } from '@/lib/signals/readiness-types';
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
@@ -19,12 +18,6 @@ const DIMENSIONS: ReadinessDimension[] = [
   'new_strategy',
   'caution',
 ];
-
-const STRENGTH_WEIGHT: Record<SignalStrength, number> = {
-  weak: 0.25,
-  medium: 0.55,
-  strong: 0.85,
-};
 
 const CONFIDENCE_MULTIPLIER: Record<ConfidenceLabel, number> = {
   low: 0.65,
@@ -198,7 +191,7 @@ export function scoreAccountReadiness(
   const compoundWindowDays = options.compoundWindowDays ?? 90;
 
   const contributions: DimensionContribution[] = signals.flatMap((signal) => {
-    const strengthWeight = STRENGTH_WEIGHT[signal.defaultStrength];
+    const strengthWeight = getSignalBaseImpactScore(signal.signalKey) / 100;
     const confidenceMultiplier = CONFIDENCE_MULTIPLIER[signal.defaultConfidence];
     const recency = recencyMultiplier(signal, asOf);
     const relevance = relevanceMultiplier(signal, options.targetBuyerFunctions);
@@ -240,4 +233,3 @@ export function scoreAccountReadiness(
     contributions,
   };
 }
-

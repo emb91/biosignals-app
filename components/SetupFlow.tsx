@@ -4709,7 +4709,7 @@ export default function SetupFlow({
       });
       if (displayParts.length) await sayBeats(displayParts);
       setPhase('done');
-      setTimeout(() => router.push(ROUTES.leads.accounts), 1800);
+      setTimeout(() => router.push(ROUTES.accounts), 1800);
       return;
     }
 

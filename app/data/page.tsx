@@ -189,7 +189,7 @@ function DataPageContent() {
     if (pendingRoute.kind === 'companies_for_icp') {
       router.push(
         withQuery(
-          ROUTES.leads.accounts,
+          ROUTES.accounts,
           `agentTask=arcova_companies_for_icp&icpId=${encodeURIComponent(pendingRoute.icpId)}`,
         ),
       );
@@ -199,14 +199,14 @@ function DataPageContent() {
     if (pendingRoute.kind === 'contacts_at_company') {
       router.push(
         withQuery(
-          ROUTES.leads.contacts,
+          ROUTES.contacts,
           `agentTask=arcova_contacts_at_company&companyId=${encodeURIComponent(pendingRoute.companyId)}`,
         ),
       );
       return;
     }
 
-    router.push(withQuery(ROUTES.leads.contacts, 'agentTask=arcova_contacts_today'));
+    router.push(withQuery(ROUTES.contacts, 'agentTask=arcova_contacts_today'));
   }, [jobs, pendingRoute, router]);
 
   // ── Read URL/sessionStorage context and fire agent opener ─────────────────

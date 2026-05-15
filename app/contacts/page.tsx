@@ -1,11 +1,7 @@
 'use client';
-import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
 
-export default function ContactsRedirect() {
-  const router = useRouter();
-  useEffect(() => {
-    router.replace('/icps');
-  }, [router]);
-  return null;
+import { ContactsWorkspace } from '@/app/leads/contacts/page';
+
+export default function ContactsPage() {
+  return <ContactsWorkspace viewMode="leads" />;
 }

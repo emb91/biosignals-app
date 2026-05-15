@@ -3,7 +3,84 @@ import type {
   SignalKey,
 } from '@/lib/signals/readiness-types';
 
-export const READINESS_SIGNAL_CATALOG: readonly SignalCatalogEntry[] = [
+type RawSignalCatalogEntry = Omit<SignalCatalogEntry, 'baseImpactScore'>;
+
+const BASE_IMPACT_BY_STRENGTH = {
+  weak: 24,
+  medium: 52,
+  strong: 78,
+} as const;
+
+const SIGNAL_IMPACT_OVERRIDES: Partial<Record<SignalKey, number>> = {
+  funding_round: 74,
+  grant_award: 48,
+  ipo_or_follow_on: 84,
+  milestone_payment: 72,
+  partnership_with_upfront_economics: 76,
+  ma_event: 44,
+  demo_requested: 88,
+  inbound_enquiry: 82,
+  open_opportunity_in_crm: 72,
+  new_contact_added_in_crm: 34,
+  closed_lost_in_crm: 46,
+  clinical_trial_registered: 46,
+  phase_transition: 82,
+  trial_site_expansion: 68,
+  indication_expansion: 56,
+  breakthrough_designation: 49,
+  fda_approval: 86,
+  new_facility: 78,
+  facility_expansion: 72,
+  cmc_scale_up: 74,
+  cdmo_partnership: 58,
+  quality_compliance_buildout: 51,
+  visited_your_website: 28,
+  attended_your_webinar_or_event: 34,
+  downloaded_your_content: 26,
+  responded_to_previous_outreach: 62,
+  cmc_hiring: 44,
+  clinical_ops_hiring: 46,
+  regulatory_hiring: 43,
+  bd_hiring: 41,
+  commercial_hiring: 39,
+  job_surge: 36,
+  new_to_role: 47,
+  recently_promoted: 53,
+  recently_changed_company: 57,
+  new_internal_role: 49,
+  title_change: 32,
+  board_or_advisory_role: 31,
+  partnership_deal: 63,
+  licensing_deal: 67,
+  co_development_deal: 66,
+  regional_expansion: 58,
+  commercialization_move: 64,
+  platform_repositioning: 52,
+  conference_presentation: 29,
+  conference_speaker: 34,
+  publication: 27,
+  new_paper_published: 25,
+  patent_filed_or_granted: 33,
+  layoffs: 58,
+  trial_failure_or_halt: 92,
+  program_discontinuation: 88,
+  restructuring: 63,
+  distressed_financing: 95,
+  acquisition_distraction: 54,
+  leadership_churn: 57,
+  lapsed_customer: 52,
+};
+
+function withImpact(entry: RawSignalCatalogEntry): SignalCatalogEntry {
+  return {
+    ...entry,
+    baseImpactScore:
+      SIGNAL_IMPACT_OVERRIDES[entry.signalKey] ??
+      BASE_IMPACT_BY_STRENGTH[entry.defaultStrength],
+  };
+}
+
+const RAW_READINESS_SIGNAL_CATALOG: readonly RawSignalCatalogEntry[] = [
   {
     signalKey: 'funding_round',
     scope: 'company',
@@ -633,6 +710,9 @@ export const READINESS_SIGNAL_CATALOG: readonly SignalCatalogEntry[] = [
   },
 ] as const;
 
+export const READINESS_SIGNAL_CATALOG: readonly SignalCatalogEntry[] =
+  RAW_READINESS_SIGNAL_CATALOG.map(withImpact);
+
 export const READINESS_SIGNAL_CATALOG_BY_KEY: Readonly<Record<SignalKey, SignalCatalogEntry>> =
   READINESS_SIGNAL_CATALOG.reduce((acc, entry) => {
     acc[entry.signalKey] = entry;
@@ -641,6 +721,10 @@ export const READINESS_SIGNAL_CATALOG_BY_KEY: Readonly<Record<SignalKey, SignalC
 
 export function getReadinessSignal(signalKey: SignalKey): SignalCatalogEntry {
   return READINESS_SIGNAL_CATALOG_BY_KEY[signalKey];
+}
+
+export function getSignalBaseImpactScore(signalKey: SignalKey): number {
+  return READINESS_SIGNAL_CATALOG_BY_KEY[signalKey]?.baseImpactScore ?? 0;
 }
 
 export function getSignalsForDimension(dimension: SignalCatalogEntry['dimensions'][number]): SignalCatalogEntry[] {
