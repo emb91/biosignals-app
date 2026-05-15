@@ -85,12 +85,15 @@ type SignalFeedRow = {
 };
 
 type MonitorRunResult = {
+  contact_processed: number;
+  contact_skipped_running: number;
+  company_processed: number;
   processed: number;
   skipped_running: number;
   failed: number;
   emitted_signal_types: string[];
   recomputed_companies: string[];
-  failures: { contactId: string; error: string }[];
+  failures: { entity_type: 'contact' | 'company'; entity_id: string; error: string }[];
 };
 
 type SignalsScope = 'all' | 'contact' | 'company';
@@ -280,6 +283,10 @@ function targetName(row: SignalFeedRow) {
   return row.contactName || row.companyName || 'Unknown target';
 }
 
+function signalScopeLabel(row: SignalFeedRow) {
+  return row.signalScope === 'company' ? 'Account signal' : 'Contact signal';
+}
+
 function displayMetadataLabel(value: unknown): string | null {
   if (typeof value !== 'string' || !value.trim()) return null;
   return value
@@ -314,6 +321,10 @@ function changeRows(row: SignalFeedRow) {
   const currentTitle = normalizeString(meta.current_job_title);
   const previousCompany = normalizeString(meta.previous_company_name);
   const currentCompany = normalizeString(meta.current_company_name);
+  const previousFundingStage = displayMetadataLabel(meta.previous_funding_stage);
+  const currentFundingStage = displayMetadataLabel(meta.current_funding_stage);
+  const previousFundingStatus = normalizeString(meta.previous_funding_status_label);
+  const currentFundingStatus = normalizeString(meta.current_funding_status_label);
   const previousSeniority = displayMetadataLabel(meta.previous_seniority_level);
   const currentSeniority = displayMetadataLabel(meta.current_seniority_level);
   const previousRoleFamily = displayMetadataLabel(meta.previous_role_family);
@@ -331,6 +342,12 @@ function changeRows(row: SignalFeedRow) {
   }
   if (previousCompany || currentCompany) {
     out.push({ label: 'Company', before: previousCompany, after: currentCompany });
+  }
+  if ((previousFundingStage || currentFundingStage) && previousFundingStage !== currentFundingStage) {
+    out.push({ label: 'Funding stage', before: previousFundingStage, after: currentFundingStage });
+  }
+  if ((previousFundingStatus || currentFundingStatus) && previousFundingStatus !== currentFundingStatus) {
+    out.push({ label: 'Funding status', before: previousFundingStatus, after: currentFundingStatus });
   }
   return out;
 }
@@ -553,7 +570,10 @@ export function SignalsWorkspace({
         <div className="flex items-center gap-3 flex-wrap">
           <span className="text-sm font-semibold text-gray-900">Signals monitor ran</span>
           <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700">
-            {runSignalsResult.processed} contacts checked
+            {runSignalsResult.contact_processed} contacts checked
+          </span>
+          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700">
+            {runSignalsResult.company_processed} accounts checked
           </span>
           <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700">
             {runSignalsResult.emitted_signal_types.length} signal{runSignalsResult.emitted_signal_types.length !== 1 ? 's' : ''}
@@ -561,9 +581,9 @@ export function SignalsWorkspace({
           <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700">
             {runSignalsResult.recomputed_companies.length} account{runSignalsResult.recomputed_companies.length !== 1 ? 's' : ''} updated
           </span>
-          {runSignalsResult.skipped_running > 0 ? (
+          {runSignalsResult.contact_skipped_running > 0 ? (
             <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
-              {runSignalsResult.skipped_running} skipped running
+              {runSignalsResult.contact_skipped_running} skipped running
             </span>
           ) : null}
           {runSignalsResult.failed > 0 ? (
@@ -880,7 +900,7 @@ export function SignalsWorkspace({
                             <div className="flex items-start gap-3">
                               <div className="min-w-0 flex-1">
                                 <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">
-                                  {sourceLabel(selectedSignal)}
+                                  {signalScopeLabel(selectedSignal)}
                                 </p>
                                 <h2 className="mt-2 text-[1.35rem] font-semibold leading-tight text-[#0d3547]">
                                   {getSignalDisplayName(selectedSignal.signalKey)}
@@ -933,6 +953,9 @@ export function SignalsWorkspace({
                                   </span>
                                   <span className={cn('inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-medium', readinessCategoryPillClass(primaryDimension(selectedSignal)))}>
                                     {dimensionLabel(primaryDimension(selectedSignal))}
+                                  </span>
+                                  <span className="inline-flex items-center rounded-full border border-[rgba(13,53,71,0.1)] bg-white/80 px-2.5 py-1 text-[11px] font-medium text-[#4a6470]">
+                                    Source: {sourceLabel(selectedSignal)}
                                   </span>
                                 </div>
 
