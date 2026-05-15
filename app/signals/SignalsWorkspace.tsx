@@ -280,6 +280,24 @@ function targetName(row: SignalFeedRow) {
   return row.contactName || row.companyName || 'Unknown target';
 }
 
+function primaryDimensionScore(row: SignalFeedRow) {
+  if (!row.readiness) return -1;
+  switch (primaryDimension(row)) {
+    case 'new_budget':
+      return row.readiness.newBudgetScore ?? -1;
+    case 'new_needs':
+      return row.readiness.newNeedsScore ?? -1;
+    case 'new_people':
+      return row.readiness.newPeopleScore ?? -1;
+    case 'new_strategy':
+      return row.readiness.newStrategyScore ?? -1;
+    case 'caution':
+      return row.readiness.cautionScore ?? -1;
+    default:
+      return -1;
+  }
+}
+
 function changeRows(row: SignalFeedRow) {
   const meta = row.sourceMetadata || {};
   const previousTitle = normalizeString(meta.previous_job_title);
@@ -332,7 +350,7 @@ export function SignalsWorkspace({
   const [selectedPreview, setSelectedPreview] = useState<SignalPreviewTab>('signal');
   const [runningSignals, setRunningSignals] = useState(false);
   const [runSignalsResult, setRunSignalsResult] = useState<MonitorRunResult | null>(null);
-  const [tableSortCol, setTableSortCol] = useState<'detected' | 'signal' | 'name' | 'company'>('detected');
+  const [tableSortCol, setTableSortCol] = useState<'detected' | 'signal' | 'name' | 'company' | 'readiness' | 'overall'>('detected');
   const [tableSortDir, setTableSortDir] = useState<'asc' | 'desc'>('desc');
   const [agentRect, setAgentRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
 
@@ -445,6 +463,10 @@ export function SignalsWorkspace({
           return (a.companyName || '').localeCompare(b.companyName || '');
         case 'signal':
           return getSignalDisplayName(a.signalKey).localeCompare(getSignalDisplayName(b.signalKey));
+        case 'readiness':
+          return primaryDimensionScore(a) - primaryDimensionScore(b);
+        case 'overall':
+          return (a.readiness?.overallScore ?? -1) - (b.readiness?.overallScore ?? -1);
         case 'detected':
         default:
           return new Date(a.eventAt || a.observedAt).getTime() - new Date(b.eventAt || b.observedAt).getTime();
@@ -455,6 +477,10 @@ export function SignalsWorkspace({
   }, [signals, tableSortCol, tableSortDir]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const tableGridClass =
+    scope === 'contact'
+      ? 'grid-cols-[minmax(0,1fr)_minmax(0,0.95fr)_minmax(0,0.95fr)_minmax(0,1.05fr)_minmax(0,0.92fr)_minmax(0,0.62fr)]'
+      : 'grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,0.9fr)]';
 
   const signalTitleBlock = (
     <div className="mb-6 shrink-0 flex flex-col gap-4 max-[767px]:pl-14 lg:flex-row lg:items-end lg:justify-between">
@@ -531,7 +557,7 @@ export function SignalsWorkspace({
             {runSignalsResult.emitted_signal_types.map((signal) => (
               <span
                 key={signal}
-                className="inline-flex items-center rounded-full border border-[rgba(45,138,138,0.2)] bg-[rgba(238,251,250,0.92)] px-2.5 py-1 text-[11px] font-medium text-[#2d8a8a]"
+                className="inline-flex items-center rounded-full border border-[rgba(45,138,138,0.2)] bg-[rgba(238,251,250,0.92)] px-2 py-0.5 text-[10px] font-medium text-[#2d8a8a]"
               >
                 {getSignalDisplayName(signal)}
               </span>
@@ -605,21 +631,14 @@ export function SignalsWorkspace({
 
                   <div className="flex min-h-0 flex-1 flex-col gap-2">
                     <div className="rounded-[1.5rem] border border-[rgba(13,53,71,0.1)] bg-[rgba(255,255,255,0.52)] shadow-[0_24px_60px_-32px_rgba(13,53,71,0.16),0_2px_6px_-2px_rgba(13,53,71,0.06)] backdrop-blur-2xl backdrop-saturate-150 overflow-hidden flex min-h-0 flex-1 flex-col">
-                      <div className="border-b border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.32)] px-4 py-3">
-                        <div className="flex items-center justify-between gap-3">
-                        <div className="shrink-0 text-xs text-slate-500">
-                          {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of {total.toLocaleString()}
-                        </div>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1.15fr)_minmax(0,1fr)_minmax(0,0.95fr)] gap-4 border-b border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.35)] px-4 py-3 text-[13px] font-medium text-slate-500">
+                      <div className={cn('grid gap-4 border-b border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.35)] pl-9 pr-4 py-3 text-[11px] font-medium text-slate-500', tableGridClass)}>
                         <button type="button" onClick={() => {
                           setTableSortCol('name');
                           setTableSortDir((current) => (tableSortCol === 'name' && current === 'asc' ? 'desc' : 'asc'));
                         }} className="flex items-center gap-1.5 text-left">
                           {scope === 'company' ? 'Account' : 'Name'} <SortArrow active={tableSortCol === 'name'} />
                         </button>
+                        {scope === 'contact' ? <div>Job title</div> : null}
                         <button type="button" onClick={() => {
                           setTableSortCol('company');
                           setTableSortDir((current) => (tableSortCol === 'company' && current === 'asc' ? 'desc' : 'asc'));
@@ -632,13 +651,24 @@ export function SignalsWorkspace({
                         }} className="flex items-center gap-1.5 text-left">
                           Signal <SortArrow active={tableSortCol === 'signal'} />
                         </button>
-                        <div>Readiness</div>
-                        <div>Overall</div>
+                        <button type="button" onClick={() => {
+                          setTableSortCol('readiness');
+                          setTableSortDir((current) => (tableSortCol === 'readiness' && current === 'asc' ? 'desc' : 'asc'));
+                        }} className="flex items-center gap-1.5 text-left">
+                          Readiness <SortArrow active={tableSortCol === 'readiness'} />
+                        </button>
+                        <button type="button" onClick={() => {
+                          setTableSortCol('overall');
+                          setTableSortDir((current) => (tableSortCol === 'overall' && current === 'asc' ? 'desc' : 'asc'));
+                        }} className="flex items-center gap-1.5 text-left">
+                          Overall <SortArrow active={tableSortCol === 'overall'} />
+                        </button>
                       </div>
 
                       <div className="min-h-0 flex-1 overflow-y-auto">
-                        {sortedSignals.map((row) => {
+                        {sortedSignals.map((row, index) => {
                           const isSelected = row.id === selectedSignalId;
+                          const rowNumber = (page - 1) * PAGE_SIZE + index + 1;
                           return (
                             <div
                               key={row.id}
@@ -656,17 +686,32 @@ export function SignalsWorkspace({
                                 }
                               }}
                               className={cn(
-                                'grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1.15fr)_minmax(0,1fr)_minmax(0,0.95fr)] gap-4 border-b border-[rgba(13,53,71,0.06)] px-4 py-3.5 transition-colors cursor-pointer',
-                                isSelected ? 'bg-[rgba(45,138,138,0.08)]' : 'hover:bg-[rgba(245,248,254,0.8)]',
+                                "grid relative items-center gap-4 pl-9 pr-4 py-3 transition-all duration-150 cursor-pointer before:pointer-events-none before:absolute before:left-0 before:top-2 before:bottom-2 before:w-[3px] before:rounded-sm before:content-[''] before:transition-colors",
+                                tableGridClass,
+                                isSelected
+                                  ? 'bg-arcova-teal/10 before:bg-arcova-teal'
+                                  : 'before:bg-transparent hover:bg-arcova-teal/5 hover:before:bg-arcova-teal/35',
                               )}
                             >
+                              <span
+                                aria-hidden
+                                className="absolute left-2 top-1/2 -translate-y-1/2 select-none text-[10px] font-medium tabular-nums text-gray-400"
+                              >
+                                {rowNumber}
+                              </span>
                               <div className="min-w-0">
-                                <div className="truncate text-[12px] font-medium text-slate-900">{targetName(row)}</div>
+                                <div className="truncate text-[11px] font-medium text-slate-900">{targetName(row)}</div>
                               </div>
+
+                              {scope === 'contact' ? (
+                                <div className="min-w-0">
+                                  <div className="truncate text-[11px] leading-snug text-slate-700">{row.contactJobTitle || '—'}</div>
+                                </div>
+                              ) : null}
 
                               <div className="min-w-0">
                                 {scope === 'company' ? (
-                                  <div className="truncate text-[12px] text-slate-500">{row.companyDomain || '—'}</div>
+                                  <div className="truncate text-[11px] text-slate-500">{row.companyDomain || '—'}</div>
                                 ) : row.companyId && row.companyName ? (
                                   <button
                                     type="button"
@@ -674,18 +719,18 @@ export function SignalsWorkspace({
                                       e.stopPropagation();
                                       router.push(withQuery(ROUTES.accounts, `companyId=${encodeURIComponent(row.companyId!)}`));
                                     }}
-                                    className="truncate text-left text-[12px] font-medium text-arcova-teal hover:text-arcova-teal/85"
+                                    className="block w-full truncate text-left text-[11px] font-medium text-arcova-teal hover:text-arcova-teal/85"
                                   >
                                     {row.companyName}
                                   </button>
                                 ) : (
-                                  <div className="truncate text-[12px] text-slate-500">—</div>
+                                  <div className="truncate text-[11px] text-slate-500">—</div>
                                 )}
                               </div>
 
                               <div className="min-w-0">
-                                <div className="truncate text-[12px] font-medium text-slate-900">{getSignalDisplayName(row.signalKey)}</div>
-                                <div className="mt-1 truncate text-[12px] text-slate-500">{sourceLabel(row)}</div>
+                                <div className="truncate text-[11px] font-medium text-slate-900">{getSignalDisplayName(row.signalKey)}</div>
+                                <div className="mt-1 truncate text-[10px] text-slate-500">{sourceLabel(row)}</div>
                               </div>
 
                               <div className="min-w-0">
@@ -697,7 +742,7 @@ export function SignalsWorkspace({
                                     setSelectedPreview('signal');
                                   }}
                                   className={cn(
-                                    'inline-flex max-w-full items-center rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors hover:opacity-85',
+                                    'inline-flex max-w-full items-center rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors hover:opacity-85',
                                     readinessCategoryPillClass(primaryDimension(row)),
                                   )}
                                 >
@@ -715,7 +760,7 @@ export function SignalsWorkspace({
                                       setSelectedPreview('context');
                                     }}
                                     className={cn(
-                                      'inline-flex max-w-full items-center rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors hover:opacity-85',
+                                      'inline-flex max-w-full items-center rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors hover:opacity-85',
                                       readinessToneClass(row.readiness.overallLabel),
                                     )}
                                   >
@@ -724,7 +769,7 @@ export function SignalsWorkspace({
                                     </span>
                                   </button>
                                 ) : (
-                                  <span className="text-[12px] text-slate-400">—</span>
+                                  <span className="text-[11px] text-slate-400">—</span>
                                 )}
                               </div>
                             </div>
