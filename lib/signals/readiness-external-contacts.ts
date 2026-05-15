@@ -183,6 +183,10 @@ function buildDecision(
         previous_company_domain: previous.companyDomain,
         current_company_name: current.companyName,
         current_company_domain: current.companyDomain,
+        previous_role_family: prevRole,
+        current_role_family: nextRole,
+        previous_seniority_level: previous.seniorityLevel,
+        current_seniority_level: current.seniorityLevel,
       },
     };
   }
@@ -204,6 +208,10 @@ function buildDecision(
         metadata: {
           previous_job_title: previous.jobTitle,
           current_job_title: current.jobTitle,
+          previous_seniority_level: previous.seniorityLevel,
+          current_seniority_level: current.seniorityLevel,
+          previous_role_family: prevRole,
+          current_role_family: nextRole,
         },
       };
     }
@@ -216,13 +224,15 @@ function buildDecision(
         summary:
           'Arcova detected through Apify / LinkedIn monitoring that this contact appears to have moved into a different internal function.',
         buyerFunctionsOverride,
-        metadata: {
-          previous_job_title: previous.jobTitle,
-          current_job_title: current.jobTitle,
-          previous_role_family: prevRole,
-          current_role_family: nextRole,
-        },
-      };
+      metadata: {
+        previous_job_title: previous.jobTitle,
+        current_job_title: current.jobTitle,
+        previous_role_family: prevRole,
+        current_role_family: nextRole,
+        previous_seniority_level: previous.seniorityLevel,
+        current_seniority_level: current.seniorityLevel,
+      },
+    };
     }
 
     return {
@@ -235,6 +245,10 @@ function buildDecision(
       metadata: {
         previous_job_title: previous.jobTitle,
         current_job_title: current.jobTitle,
+        previous_seniority_level: previous.seniorityLevel,
+        current_seniority_level: current.seniorityLevel,
+        previous_role_family: prevRole,
+        current_role_family: nextRole,
       },
     };
   }
@@ -254,6 +268,8 @@ function buildDecision(
         current_company_name: current.companyName,
         current_company_domain: current.companyDomain,
         current_job_title: current.jobTitle,
+        current_seniority_level: current.seniorityLevel,
+        current_role_family: nextRole,
       },
     };
   }
@@ -296,6 +312,10 @@ export async function emitExternalContactSignalsFromEnrichment(
       current_company_domain: input.current.companyDomain,
       previous_job_title: input.previous.jobTitle,
       current_job_title: input.current.jobTitle,
+      previous_seniority_level: input.previous.seniorityLevel,
+      current_seniority_level: input.current.seniorityLevel,
+      previous_role_family: roleFamily(input.previous.jobTitle, input.previous.businessArea),
+      current_role_family: roleFamily(input.current.jobTitle, input.current.businessArea),
       ...decision.metadata,
     },
   });
@@ -323,6 +343,10 @@ export async function emitExternalContactSignalsFromEnrichment(
       current_company_domain: input.current.companyDomain,
       previous_job_title: input.previous.jobTitle,
       current_job_title: input.current.jobTitle,
+      previous_seniority_level: input.previous.seniorityLevel,
+      current_seniority_level: input.current.seniorityLevel,
+      previous_role_family: roleFamily(input.previous.jobTitle, input.previous.businessArea),
+      current_role_family: roleFamily(input.current.jobTitle, input.current.businessArea),
       ...decision.metadata,
     },
   };

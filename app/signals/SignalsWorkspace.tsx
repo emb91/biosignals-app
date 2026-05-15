@@ -280,6 +280,16 @@ function targetName(row: SignalFeedRow) {
   return row.contactName || row.companyName || 'Unknown target';
 }
 
+function displayMetadataLabel(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  return value
+    .trim()
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 function primaryDimensionScore(row: SignalFeedRow) {
   if (!row.readiness) return -1;
   switch (primaryDimension(row)) {
@@ -304,10 +314,20 @@ function changeRows(row: SignalFeedRow) {
   const currentTitle = normalizeString(meta.current_job_title);
   const previousCompany = normalizeString(meta.previous_company_name);
   const currentCompany = normalizeString(meta.current_company_name);
+  const previousSeniority = displayMetadataLabel(meta.previous_seniority_level);
+  const currentSeniority = displayMetadataLabel(meta.current_seniority_level);
+  const previousRoleFamily = displayMetadataLabel(meta.previous_role_family);
+  const currentRoleFamily = displayMetadataLabel(meta.current_role_family);
   const out: Array<{ label: string; before: string | null; after: string | null }> = [];
 
   if (previousTitle || currentTitle) {
     out.push({ label: 'Role', before: previousTitle, after: currentTitle });
+  }
+  if ((previousSeniority || currentSeniority) && previousSeniority !== currentSeniority) {
+    out.push({ label: 'Seniority', before: previousSeniority, after: currentSeniority });
+  }
+  if ((previousRoleFamily || currentRoleFamily) && previousRoleFamily !== currentRoleFamily) {
+    out.push({ label: 'Role family', before: previousRoleFamily, after: currentRoleFamily });
   }
   if (previousCompany || currentCompany) {
     out.push({ label: 'Company', before: previousCompany, after: currentCompany });
