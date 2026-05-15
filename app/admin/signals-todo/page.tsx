@@ -11,6 +11,10 @@ import { useEffect, useMemo, useState } from 'react';
 
 const STORAGE_KEY = 'arcova_admin_signals_todo_v1';
 const AUTO_COMPLETED_SIGNALS = new Set<SignalKey>([
+  'funding_round',
+  'grant_award',
+  'ipo_or_follow_on',
+  'distressed_financing',
   'open_opportunity_in_crm',
   'new_contact_added_in_crm',
   'title_change',
