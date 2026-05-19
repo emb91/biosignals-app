@@ -512,3 +512,113 @@ Build sources in the order that best supports readiness, not in the order that s
 - Arcova can generate a clear, agent-readable `reason` explaining why a high-fit account is worth working now.
 - Agents can consume a stable structured payload for outreach, prioritization, and explanation.
 - The CRO can see not just that an account is high-fit, but why it is timely now and what angle to use.
+
+## Signals doctrine (non-negotiable)
+
+Arcova answers two separate sales questions:
+
+1. Fit: is this the kind of company we should care about at all?
+2. Readiness: if it is a good-fit company, is something happening now that makes them more likely to buy?
+
+Signals exist to answer the readiness question.
+
+### Canonical model
+
+- World change happens.
+- Arcova captures raw event evidence.
+- Arcova normalizes to a standard signal type.
+- Signal evidence maps to readiness conditions.
+- Arcova computes readiness.
+- Arcova computes reason (explanation of why now).
+
+### Readiness conditions
+
+- `new_budget`
+- `new_needs`
+- `new_people`
+- `new_strategy`
+- `caution`
+
+### Guardrail for all implementation work
+
+Do not optimize for integrations or event volume by themselves.
+Optimize for readiness judgment quality and sales timing insight quality.
+
+Litmus test:
+
+- Signal = evidence something changed.
+- Readiness = judgment whether that change increases buy-likelihood now.
+
+## Readiness mapping table (signal -> condition -> precursor/outcome -> priority)
+
+Priority tier definitions:
+
+- `P1`: core precursor signals for this phase (strongest readiness value).
+- `P2`: useful precursor support signals (secondary build priority).
+- `P3`: weak/contextual precursor signals (later).
+- `OUT`: downstream outcome/state signals; do not drive readiness in this phase.
+- `CS-LATER`: customer-success/retention signals; out of scope for this phase.
+
+| Signal key | Readiness conditions | Type | Tier |
+|---|---|---|---|
+| `phase_transition` | `new_needs`, `new_strategy` | Precursor | `P1` |
+| `clinical_trial_registered` | `new_needs` | Precursor | `P1` |
+| `trial_site_expansion` | `new_needs` | Precursor | `P1` |
+| `indication_expansion` | `new_needs`, `new_strategy` | Precursor | `P1` |
+| `fda_approval` | `new_needs`, `new_strategy` | Precursor | `P1` |
+| `trial_failure_or_halt` | `caution` | Precursor | `P1` |
+| `program_discontinuation` | `caution` | Precursor | `P1` |
+| `cmc_hiring` | `new_people`, `new_needs` | Precursor | `P1` |
+| `clinical_ops_hiring` | `new_people`, `new_needs` | Precursor | `P1` |
+| `regulatory_hiring` | `new_people`, `new_needs` | Precursor | `P1` |
+| `job_surge` | `new_people`, `new_needs` | Precursor | `P1` |
+| `new_facility` | `new_needs` | Precursor | `P1` |
+| `facility_expansion` | `new_needs` | Precursor | `P1` |
+| `cmc_scale_up` | `new_needs` | Precursor | `P1` |
+| `funding_round` | `new_budget` | Precursor | `P1` |
+| `grant_award` | `new_budget` | Precursor | `P1` |
+| `ipo_or_follow_on` | `new_budget` | Precursor | `P1` |
+| `distressed_financing` | `caution` | Precursor | `P1` |
+| `milestone_payment` | `new_budget` | Precursor | `P2` |
+| `partnership_with_upfront_economics` | `new_budget`, `new_strategy` | Precursor | `P2` |
+| `partnership_deal` | `new_strategy` | Precursor | `P2` |
+| `licensing_deal` | `new_strategy`, `new_budget` | Precursor | `P2` |
+| `co_development_deal` | `new_strategy`, `new_needs` | Precursor | `P2` |
+| `bd_hiring` | `new_people`, `new_strategy` | Precursor | `P2` |
+| `commercial_hiring` | `new_people`, `new_strategy` | Precursor | `P2` |
+| `quality_compliance_buildout` | `new_needs` | Precursor | `P2` |
+| `cdmo_partnership` | `new_needs`, `new_strategy` | Precursor | `P2` |
+| `breakthrough_designation` | `new_needs` | Precursor | `P2` |
+| `regional_expansion` | `new_strategy` | Precursor | `P2` |
+| `commercialization_move` | `new_strategy`, `new_needs` | Precursor | `P2` |
+| `restructuring` | `caution` | Precursor | `P2` |
+| `acquisition_distraction` | `caution` | Precursor | `P2` |
+| `leadership_churn` | `caution`, `new_people` | Precursor | `P2` |
+| `layoffs` | `caution` | Precursor | `P2` |
+| `new_to_role` | `new_people` | Precursor | `P2` |
+| `recently_promoted` | `new_people` | Precursor | `P2` |
+| `recently_changed_company` | `new_people` | Precursor | `P2` |
+| `new_internal_role` | `new_people` | Precursor | `P2` |
+| `title_change` | `new_people` | Precursor | `P2` |
+| `board_or_advisory_role` | `new_people`, `new_strategy` | Precursor | `P3` |
+| `conference_presentation` | `new_strategy` | Precursor | `P3` |
+| `conference_speaker` | `new_strategy`, `new_people` | Precursor | `P3` |
+| `publication` | `new_strategy` | Precursor | `P3` |
+| `new_paper_published` | `new_strategy` | Precursor | `P3` |
+| `patent_filed_or_granted` | `new_strategy` | Precursor | `P3` |
+| `platform_repositioning` | `new_strategy` | Precursor | `P3` |
+| `demo_requested` | `new_budget`, `new_needs` | Precursor | `P3` |
+| `inbound_enquiry` | `new_budget`, `new_needs` | Precursor | `P3` |
+| `visited_your_website` | `new_needs` | Precursor | `P3` |
+| `attended_your_webinar_or_event` | `new_needs` | Precursor | `P3` |
+| `downloaded_your_content` | `new_needs` | Precursor | `P3` |
+| `responded_to_previous_outreach` | `new_needs` | Outcome | `OUT` |
+| `open_opportunity_in_crm` | `new_budget` | Outcome | `OUT` |
+| `new_contact_added_in_crm` | `new_people` | Outcome | `OUT` |
+| `closed_lost_in_crm` | `caution` | Outcome | `OUT` |
+| `lapsed_customer` | `caution` | Customer-state | `CS-LATER` |
+
+Phase rule:
+
+- In this phase, readiness scoring should be driven by `P1/P2/P3` precursor signals only.
+- `OUT` and `CS-LATER` may be stored for context/reporting, but should not increase account readiness.

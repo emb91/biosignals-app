@@ -1,7 +1,6 @@
-'use client';
-
-import { ContactsWorkspace } from '@/app/leads/contacts/page';
+import { redirect } from 'next/navigation';
+import { ROUTES } from '@/lib/routes';
 
 export default function CustomersPage() {
-  return <ContactsWorkspace viewMode="customers" />;
+  redirect(ROUTES.gtmBase);
 }

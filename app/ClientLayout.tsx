@@ -20,7 +20,6 @@ const APP_ROUTES = [
   ROUTES.contactSignals,
   ROUTES.leads.accounts,
   ROUTES.leads.contacts,
-  ROUTES.customers,
   ROUTES.data,
   ROUTES.health,
   ROUTES.today,

@@ -325,6 +325,8 @@ function changeRows(row: SignalFeedRow) {
   const currentFundingStage = displayMetadataLabel(meta.current_funding_stage);
   const previousFundingStatus = normalizeString(meta.previous_funding_status_label);
   const currentFundingStatus = normalizeString(meta.current_funding_status_label);
+  const previousClinicalStage = displayMetadataLabel(meta.previous_clinical_stage);
+  const currentClinicalStage = displayMetadataLabel(meta.current_clinical_stage);
   const previousSeniority = displayMetadataLabel(meta.previous_seniority_level);
   const currentSeniority = displayMetadataLabel(meta.current_seniority_level);
   const previousRoleFamily = displayMetadataLabel(meta.previous_role_family);
@@ -348,6 +350,9 @@ function changeRows(row: SignalFeedRow) {
   }
   if ((previousFundingStatus || currentFundingStatus) && previousFundingStatus !== currentFundingStatus) {
     out.push({ label: 'Funding status', before: previousFundingStatus, after: currentFundingStatus });
+  }
+  if ((previousClinicalStage || currentClinicalStage) && previousClinicalStage !== currentClinicalStage) {
+    out.push({ label: 'Clinical stage', before: previousClinicalStage, after: currentClinicalStage });
   }
   return out;
 }

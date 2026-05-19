@@ -6,7 +6,6 @@ import { usePathname } from 'next/navigation';
 import { ChevronDown, ChevronLeft, Menu, X } from 'lucide-react';
 import {
   NavIconAccount,
-  NavIconCustomers,
   NavIconContact,
   NavIconData,
   NavIconGtmBase,
@@ -147,6 +146,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
         ...bottomNavigation,
         { name: 'Admin Dash', href: ROUTES.admin.llmUsage, icon: NavIconSettings },
         { name: 'Signals TODO', href: ROUTES.admin.signalsTodo, icon: NavIconSignals },
+        { name: 'Signals Test', href: ROUTES.admin.signalsTest, icon: NavIconSignals },
       ]
     : bottomNavigation;
 
@@ -520,11 +520,6 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
           title: 'Accounts',
           dot: showAccountsDot || showSignalsDot,
         })}
-        {railIconButton('customers', NavIconCustomers, {
-          onClick: () => guardedNavigate(ROUTES.customers),
-          active: isActive(ROUTES.customers),
-          title: 'Customers',
-        })}
         {topNavigation.slice(3).map((item) =>
           railIconButton(item.href, item.icon, {
             onClick: () => guardedNavigate(item.href),
@@ -720,7 +715,6 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
                     active: accountsActive && !accountsOpen,
                     dotVisible: showAccountsDot || showSignalsDot,
                   })}
-                  {renderNavItem({ name: 'Customers', href: ROUTES.customers, icon: NavIconCustomers })}
                   {renderNavItem({ name: 'Health', href: ROUTES.health, icon: NavIconHealth })}
                   {renderNavItem({ name: 'Data', href: ROUTES.data, icon: NavIconData })}
                   {renderAccordion({

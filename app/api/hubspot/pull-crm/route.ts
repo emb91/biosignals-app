@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
+import { recomputeContactAttributionSnapshots } from '@/lib/contact-attribution';
 import { createClient } from '@/lib/supabase-server';
 import { nango, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
 import { syncHubSpotContactsIntoReadiness } from '@/lib/signals/readiness-hubspot-contacts';
@@ -44,6 +45,9 @@ export async function POST() {
       nangoConnectionId: conn.nango_connection_id,
       accessToken,
     });
+    const attributionResult = await recomputeContactAttributionSnapshots(admin, {
+      userId: user.id,
+    });
     const now = new Date().toISOString();
 
     await admin.from('hubspot_sync_events').insert({
@@ -65,6 +69,9 @@ export async function POST() {
       deal_signal_types: result.emittedSignalTypes,
       skipped_contacts: [],
       error_details: [],
+      metadata: {
+        contact_attribution_snapshots_recomputed: attributionResult.recomputedContacts,
+      },
     });
 
     return NextResponse.json({
@@ -84,6 +91,7 @@ export async function POST() {
         emittedEvents: result.emittedEvents,
         recomputedCompanies: result.recomputedCompanies,
         skippedUnresolvedCompanies: result.skippedUnresolvedCompanies,
+        attributionSnapshotsRecomputed: attributionResult.recomputedContacts,
         checkpoint: result.checkpoint,
         dealSignalTypes: result.emittedSignalTypes,
       },

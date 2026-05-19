@@ -67,12 +67,15 @@ export type CompanyMonitorResult = {
   funding?: {
     updated: boolean;
     previous: string | null;
+    previous_status_label: string | null;
     current: string | null;
     status_label: string | null;
     source: string | null;
     confidence: string;
     summary: string | null;
+    previous_total_funding_usd: number | null;
     total_funding_usd: number | null;
+    previous_latest_funding_date: string | null;
     latest_funding_date: string | null;
   };
   taxonomy?: {
@@ -81,6 +84,8 @@ export type CompanyMonitorResult = {
     platform_category: string | null;
     therapeutic_areas: string[];
     modalities: string[];
+    previous_development_stages: string[];
+    development_stages: string[];
     confidence: string;
     summary: string | null;
   };
@@ -191,12 +196,15 @@ export async function runCompanyMonitor(
     result.funding = {
       updated: changed && !!funding.funding_stage,
       previous: previousStage,
+      previous_status_label: current?.funding_status_label ?? null,
       current: nextFundingStage,
       status_label: nextFundingStatusLabel,
       source: funding.source,
       confidence: funding.confidence,
       summary: funding.raw_finding,
+      previous_total_funding_usd: current?.total_funding_usd ?? null,
       total_funding_usd: nextTotalFundingUsd,
+      previous_latest_funding_date: current?.latest_funding_date ?? null,
       latest_funding_date: nextLatestFundingDate,
     };
   } catch (err) {
@@ -346,6 +354,8 @@ export async function runCompanyMonitor(
       platform_category: nextPlatformCategory,
       therapeutic_areas: nextTherapeuticAreas,
       modalities: nextModalities,
+      previous_development_stages: previousDevelopmentStages,
+      development_stages: nextDevelopmentStages,
       confidence: taxonomy.confidence,
       summary: taxonomy.evidence_summary,
     };
