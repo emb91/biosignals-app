@@ -16,6 +16,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@emotion/is-prop-valid": "latest",
+    "@google-cloud/bigquery": "^8.3.1",
     "@hookform/resolvers": "^3.9.1",
     "@nangohq/frontend": "^0.70.1",
     "@nangohq/node": "^0.70.1",

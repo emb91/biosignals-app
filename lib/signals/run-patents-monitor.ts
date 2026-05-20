@@ -46,7 +46,7 @@ type PatentRow = {
   }>;
 };
 
-const SOURCE = 'patentsview';
+const SOURCE = 'uspto_public_search';
 
 const THERAPEUTIC_AREA_KEYWORDS: Record<string, string[]> = {
   oncology: ['oncology', 'cancer', 'tumor', 'neoplasm'],
@@ -120,60 +120,77 @@ function detectTherapeuticArea(row: PatentRow): string | null {
   return null;
 }
 
-async function fetchPatentsForCompany(companyName: string, limit = 50): Promise<PatentRow[]> {
-  const url = 'https://api.patentsview.org/patents/query';
-  const perPage = Math.min(Math.max(limit, 1), 200);
-  const fields = [
-    'patent_id',
-    'patent_title',
-    'patent_date',
-    'patent_kind',
-    'patent_type',
-    'patent_abstract',
-    'patent_num_claims',
-    'patent_processing_time',
-    'app_number',
-    'app_date',
-  ];
+async function fetchPatentsForCompaniesFromLocal(
+  admin: ReturnType<typeof createAdminClient>,
+  companies: Array<{ id: string; name: string }>,
+  limitPerCompany = 100,
+): Promise<Map<string, PatentRow[]>> {
+  const result = new Map<string, PatentRow[]>();
+  if (companies.length === 0) return result;
 
-  const variants = buildCompanyQueryVariants(companyName);
-  const rowsById = new Map<string, PatentRow>();
-
-  for (const variant of variants) {
-    const body = {
-      q: {
-        _and: [
-          { _text_any: { assignee_organization: variant } },
-          { _gte: { patent_date: '2019-01-01' } },
-        ],
-      },
-      f: fields,
-      o: { per_page: perPage },
-    };
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!response.ok) continue;
-    const contentType = (response.headers.get('content-type') || '').toLowerCase();
-    if (!contentType.includes('application/json')) continue;
-    try {
-      const payload = (await response.json()) as { patents?: PatentRow[] };
-      const patents = Array.isArray(payload.patents) ? payload.patents : [];
-      for (const patent of patents) {
-        const patentId = patent.patent_id || '';
-        if (!patentId) continue;
-        if (!rowsById.has(patentId)) rowsById.set(patentId, patent);
-      }
-      // Stop early if strict/early variants already gave us enough rows.
-      if (rowsById.size >= perPage) break;
-    } catch {
-      // Ignore malformed responses per-variant.
+  for (const company of companies) {
+    const rawName = company.name?.trim();
+    if (!rawName) {
+      result.set(company.id, []);
       continue;
     }
+    const normalized = normalizeCompanyForMatching(rawName);
+    if (normalized.length < 4) {
+      result.set(company.id, []);
+      continue;
+    }
+
+    const { data: assigneeRows, error: assigneeErr } = await admin
+      .from('patent_event_assignees')
+      .select('publication_number')
+      .ilike('assignee_name_normalized', `%${normalized}%`)
+      .limit(Math.max(limitPerCompany * 3, 200));
+
+    if (assigneeErr) {
+      throw new Error(`patent_event_assignees query failed for "${rawName}": ${assigneeErr.message}`);
+    }
+
+    const publicationNumbers = [
+      ...new Set(
+        (assigneeRows ?? [])
+          .map((r) => (typeof (r as { publication_number?: unknown }).publication_number === 'string'
+            ? (r as { publication_number: string }).publication_number
+            : null))
+          .filter((v): v is string => Boolean(v)),
+      ),
+    ];
+    if (publicationNumbers.length === 0) {
+      result.set(company.id, []);
+      continue;
+    }
+
+    const { data: patents, error: patentsErr } = await admin
+      .from('patent_events')
+      .select('publication_number, kind_code, country_code, publication_date, filing_date, title, abstract')
+      .in('publication_number', publicationNumbers)
+      .order('publication_date', { ascending: false })
+      .limit(limitPerCompany);
+
+    if (patentsErr) {
+      throw new Error(`patent_events query failed for "${rawName}": ${patentsErr.message}`);
+    }
+
+    const patentRows: PatentRow[] = (patents ?? []).map((p) => {
+      const row = p as Record<string, unknown>;
+      return {
+        patent_id: typeof row.publication_number === 'string' ? row.publication_number : undefined,
+        patent_title: typeof row.title === 'string' ? row.title : undefined,
+        patent_abstract: typeof row.abstract === 'string' ? row.abstract : undefined,
+        patent_date: typeof row.publication_date === 'string' ? row.publication_date : undefined,
+        patent_kind: typeof row.kind_code === 'string' ? row.kind_code : undefined,
+        patent_type: undefined,
+        patent_num_claims: undefined,
+        patent_processing_time: undefined,
+      };
+    });
+    result.set(company.id, patentRows);
   }
-  return [...rowsById.values()];
+  return result;
 }
 
 async function sourceEventExists(
@@ -193,6 +210,32 @@ async function sourceEventExists(
   return Boolean(data?.id);
 }
 
+async function fetchExistingSourceEventIds(
+  admin: ReturnType<typeof createAdminClient>,
+  userId: string,
+  sourceEventIds: string[],
+): Promise<Set<string>> {
+  const uniqueIds = [...new Set(sourceEventIds.filter(Boolean))];
+  if (uniqueIds.length === 0) return new Set<string>();
+
+  const found = new Set<string>();
+  for (let i = 0; i < uniqueIds.length; i += 200) {
+    const slice = uniqueIds.slice(i, i + 200);
+    const { data, error } = await admin
+      .from('signal_source_events')
+      .select('source_event_id')
+      .eq('user_id', userId)
+      .eq('source', SOURCE)
+      .in('source_event_id', slice);
+    if (error) throw error;
+    for (const row of data ?? []) {
+      const id = (row as { source_event_id?: unknown }).source_event_id;
+      if (typeof id === 'string' && id) found.add(id);
+    }
+  }
+  return found;
+}
+
 async function emitCompanySignal(
   admin: ReturnType<typeof createAdminClient>,
   input: {
@@ -205,9 +248,14 @@ async function emitCompanySignal(
     summary: string;
     eventAt: string | null;
     metadata: Record<string, unknown>;
+    existingSourceEventIds: Set<string>;
   },
 ): Promise<'emitted' | 'duplicate'> {
-  if (await sourceEventExists(admin, input.userId, input.sourceEventId)) return 'duplicate';
+  if (input.existingSourceEventIds.has(input.sourceEventId)) return 'duplicate';
+  if (await sourceEventExists(admin, input.userId, input.sourceEventId)) {
+    input.existingSourceEventIds.add(input.sourceEventId);
+    return 'duplicate';
+  }
 
   const ingest = await ingestSignalSourceEvent(admin, {
     userId: input.userId,
@@ -246,6 +294,7 @@ async function emitCompanySignal(
     companyId: input.companyId,
   });
 
+  input.existingSourceEventIds.add(input.sourceEventId);
   return 'emitted';
 }
 
@@ -277,24 +326,54 @@ export async function runPatentsMonitor(input: PatentsMonitorInput): Promise<Pat
   const recomputedCompanyIds = new Set<string>();
   const failures: Array<{ company_id: string; error: string }> = [];
 
+  // Reads from the local patent_events mirror (populated by the daily
+  // /api/cron/patents-delta cron and the one-time backfill). Per-user scans
+  // now do zero BigQuery work — just indexed Supabase queries.
+  const companiesForFetch = ((companies ?? []) as CompanyRow[]).flatMap((row) => {
+    const name = row.company_name?.trim();
+    return name ? [{ id: row.id, name }] : [];
+  });
+  const patentsByCompany = await fetchPatentsForCompaniesFromLocal(admin, companiesForFetch, 100);
+
   for (const row of (companies ?? []) as CompanyRow[]) {
     const companyName = row.company_name?.trim();
     if (!companyName) continue;
 
     try {
-      const records = await fetchPatentsForCompany(companyName, 100);
+      const records = patentsByCompany.get(row.id) ?? [];
       const onlySignal = input.onlySignalKey;
       const shouldEmit = (signalKey: SignalKey) => !onlySignal || onlySignal === signalKey;
       let emittedAny = false;
       let recentPatentCount = 0;
+      const candidateSourceEventIds: string[] = [];
+
+      for (const patent of records) {
+        const patentId = patent.patent_id || 'unknown_patent';
+        if (shouldEmit('patent_application_published') && isPublishedApplication(patent)) {
+          candidateSourceEventIds.push(`${SOURCE}:${row.id}:${patentId}:patent_application_published`);
+        }
+        if (shouldEmit('patent_granted') && isGrantedPatent(patent)) {
+          candidateSourceEventIds.push(`${SOURCE}:${row.id}:${patentId}:patent_granted`);
+        }
+        if (shouldEmit('patent_filed_or_granted') && (isGrantedPatent(patent) || isPublishedApplication(patent))) {
+          candidateSourceEventIds.push(`${SOURCE}:${row.id}:${patentId}:patent_filed_or_granted`);
+        }
+        const area = detectTherapeuticArea(patent);
+        if (area && shouldEmit('new_therapeutic_area_patent')) {
+          candidateSourceEventIds.push(`${SOURCE}:${row.id}:${area}:new_therapeutic_area_patent`);
+        }
+      }
+      if (shouldEmit('assignee_portfolio_acceleration')) {
+        const period = new Date().toISOString().slice(0, 7);
+        candidateSourceEventIds.push(`${SOURCE}:${row.id}:${period}:assignee_portfolio_acceleration`);
+      }
+      const existingSourceEventIds = await fetchExistingSourceEventIds(admin, input.userId, candidateSourceEventIds);
 
       for (const patent of records) {
         recordsScanned += 1;
         const patentId = patent.patent_id || 'unknown_patent';
         const eventAt = toIsoDate(patent.patent_date);
-        const sourceUrl = `https://api.patentsview.org/patents/query?q=${encodeURIComponent(
-          JSON.stringify({ _eq: { patent_id: patentId } }),
-        )}`;
+        const sourceUrl = `https://patents.google.com/patent/${patentId.replace(/-/g, '')}`;
         const metadata = {
           patent_id: patentId,
           patent_title: patent.patent_title ?? null,
@@ -322,6 +401,7 @@ export async function runPatentsMonitor(input: PatentsMonitorInput): Promise<Pat
             eventAt,
             summary: `Published patent application detected for ${companyName}: ${patent.patent_title ?? patentId}.`,
             metadata,
+            existingSourceEventIds,
           });
           if (emitted === 'emitted') {
             emittedAny = true;
@@ -344,6 +424,7 @@ export async function runPatentsMonitor(input: PatentsMonitorInput): Promise<Pat
             eventAt,
             summary: `Granted patent detected for ${companyName}: ${patent.patent_title ?? patentId}.`,
             metadata,
+            existingSourceEventIds,
           });
           if (emitted === 'emitted') {
             emittedAny = true;
@@ -366,6 +447,7 @@ export async function runPatentsMonitor(input: PatentsMonitorInput): Promise<Pat
             eventAt,
             summary: `Patent filing/grant activity detected for ${companyName}: ${patent.patent_title ?? patentId}.`,
             metadata,
+            existingSourceEventIds,
           });
           if (emitted === 'emitted') {
             emittedAny = true;
@@ -389,6 +471,7 @@ export async function runPatentsMonitor(input: PatentsMonitorInput): Promise<Pat
             eventAt,
             summary: `Patent activity indicates therapeutic-area expansion (${area}) for ${companyName}.`,
             metadata: { ...metadata, therapeutic_area: area },
+            existingSourceEventIds,
           });
           if (emitted === 'emitted') {
             emittedAny = true;
@@ -409,10 +492,11 @@ export async function runPatentsMonitor(input: PatentsMonitorInput): Promise<Pat
           signalKey: 'assignee_portfolio_acceleration',
           sourceEventType: 'assignee_portfolio_acceleration',
           sourceEventId,
-          sourceUrl: 'https://api.patentsview.org/patents/query',
+          sourceUrl: `https://patents.google.com/?assignee=${encodeURIComponent(companyName)}`,
           eventAt: new Date().toISOString(),
           summary: `${companyName} shows elevated recent patent velocity (${recentPatentCount} patents in the last 90 days).`,
           metadata: { recent_patents_90d: recentPatentCount },
+          existingSourceEventIds,
         });
         if (emitted === 'emitted') {
           emittedAny = true;

@@ -30,6 +30,7 @@ const APP_ROUTES = [
   ROUTES.settings,
   ROUTES.setup.company,
   ROUTES.setup.icps,
+  '/admin',
   '/arcova-setup',
   '/find-more-leads',
 ]

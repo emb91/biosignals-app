@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
+import { createAdminClient } from '@/lib/supabase-admin';
 import { runPatentsMonitor } from '@/lib/signals/run-patents-monitor';
+import { syncPatentsDelta, type SyncPatentsDeltaResult } from '@/lib/signals/sync-patents-delta';
 import type { SignalKey } from '@/lib/signals/readiness-types';
 
 type RunPatentsBody = {
@@ -9,6 +11,14 @@ type RunPatentsBody = {
   only_signal_key?: string;
   run_all?: boolean;
   batch_size?: number;
+  sync_first?: boolean;
+};
+
+type SyncSummary = {
+  ran: boolean;
+  ok: boolean;
+  result: SyncPatentsDeltaResult | null;
+  error: string | null;
 };
 
 type PersistRunHistoryInput = {
@@ -82,11 +92,29 @@ export async function POST(request: Request) {
 
     const body = (await request.json().catch(() => ({}))) as RunPatentsBody;
     const runAll = body.run_all === true;
-    const batchSize = Math.min(500, Math.max(1, Number(body.batch_size) || 200));
+    const batchSize = Math.min(500, Math.max(1, Number(body.batch_size) || 500));
     const onlySignalKey = typeof body.only_signal_key === 'string' ? (body.only_signal_key as SignalKey) : undefined;
     const requestedCompanyIds = Array.isArray(body.company_ids)
       ? body.company_ids.filter((value): value is string => typeof value === 'string' && Boolean(value))
       : [];
+
+    // Optional: pull fresh patents from BigQuery into the local mirror before
+    // matching. Used by the admin "patents-all" button so manual testing
+    // doesn't have to wait for tomorrow's cron. Failure to sync is logged but
+    // doesn't abort the run — monitor still emits signals from whatever's in
+    // the local table.
+    const syncSummary: SyncSummary = { ran: false, ok: false, result: null, error: null };
+    if (body.sync_first === true) {
+      syncSummary.ran = true;
+      try {
+        syncSummary.result = await syncPatentsDelta({ admin: createAdminClient() });
+        syncSummary.ok = true;
+      } catch (error) {
+        syncSummary.ok = false;
+        syncSummary.error = messageFromUnknown(error);
+        console.error('[signals/run/patents] sync_first failed (continuing with stale data):', error);
+      }
+    }
 
     let result: Awaited<ReturnType<typeof runPatentsMonitor>>;
     let executedCompanyIds: string[] = requestedCompanyIds;
@@ -118,19 +146,27 @@ export async function POST(request: Request) {
 
       for (let i = 0; i < allIds.length; i += batchSize) {
         const chunk = allIds.slice(i, i + batchSize);
-        const chunkResult = await runPatentsMonitor({
-          userId: user.id,
-          companyIds: chunk,
-          onlySignalKey: onlySignalKey && PATENT_ONLY_KEYS.has(onlySignalKey) ? onlySignalKey : undefined,
-        });
-        totalProcessed += chunkResult.processed;
-        totalFailed += chunkResult.failed;
-        totalRecordsScanned += chunkResult.records_scanned;
-        totalCandidateEventsMatched += chunkResult.candidate_events_matched_before_dedupe;
-        totalSkippedAsDuplicates += chunkResult.events_skipped_as_duplicates;
-        for (const signalType of chunkResult.emitted_signal_types) emittedSignalTypes.add(signalType);
-        for (const companyId of chunkResult.recomputed_companies) recomputedCompanies.add(companyId);
-        failures.push(...chunkResult.failures);
+        try {
+          const chunkResult = await runPatentsMonitor({
+            userId: user.id,
+            companyIds: chunk,
+            onlySignalKey: onlySignalKey && PATENT_ONLY_KEYS.has(onlySignalKey) ? onlySignalKey : undefined,
+          });
+          totalProcessed += chunkResult.processed;
+          totalFailed += chunkResult.failed;
+          totalRecordsScanned += chunkResult.records_scanned;
+          totalCandidateEventsMatched += chunkResult.candidate_events_matched_before_dedupe;
+          totalSkippedAsDuplicates += chunkResult.events_skipped_as_duplicates;
+          for (const signalType of chunkResult.emitted_signal_types) emittedSignalTypes.add(signalType);
+          for (const companyId of chunkResult.recomputed_companies) recomputedCompanies.add(companyId);
+          failures.push(...chunkResult.failures);
+        } catch (error) {
+          totalFailed += chunk.length;
+          const message = error instanceof Error ? error.message : 'Chunk run failed';
+          failures.push(
+            ...chunk.map((companyId) => ({ company_id: companyId, error: message })),
+          );
+        }
       }
 
       result = {
@@ -175,6 +211,7 @@ export async function POST(request: Request) {
       success: true,
       run_all: runAll,
       batch_size: runAll ? batchSize : null,
+      sync: syncSummary,
       result: {
         patents_processed: result.processed,
         processed: result.processed,

@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/hubspot-daily",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/patents-delta",
+      "schedule": "0 7 * * 1"
     }
   ]
 }

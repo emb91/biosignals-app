@@ -7,7 +7,7 @@ import { READINESS_SIGNAL_CATALOG, READINESS_SIGNAL_CATALOG_BY_KEY } from '@/lib
 import type { SignalCatalogEntry, SignalKey } from '@/lib/signals/readiness-types';
 import { Loader2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 type CompanyRow = {
   id: string;
@@ -106,6 +106,7 @@ export default function AdminSignalsTestPage() {
   >([]);
   const [statusBySignal, setStatusBySignal] = useState<Partial<Record<SignalKey, ExecutionStatus>>>({});
   const [progressLog, setProgressLog] = useState<string[]>([]);
+  const activeRunAbortRef = useRef<AbortController | null>(null);
 
   const isAdminUser = isAdminEmail(user?.email);
 
@@ -197,6 +198,8 @@ export default function AdminSignalsTestPage() {
     }
 
     setBusySignal(signalKey);
+    const abortController = new AbortController();
+    activeRunAbortRef.current = abortController;
     setStatus(`Running real ingestion for ${signalKey}...`);
     appendLog(`Starting run for ${signalKey}`);
     try {
@@ -238,6 +241,7 @@ export default function AdminSignalsTestPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal: abortController.signal,
       });
       const json = await res.json();
       appendLog(`Run completed with HTTP ${res.status}`);
@@ -290,9 +294,15 @@ export default function AdminSignalsTestPage() {
       await refreshSignalStatuses();
       appendLog('Signal status refresh complete.');
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        appendLog('Run cancelled by user.');
+        setStatus(`${signalKey} cancelled.`);
+        return;
+      }
       appendLog(`Run errored: ${error instanceof Error ? error.message : 'Unknown error'}`);
       setStatus(`${signalKey} failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
+      activeRunAbortRef.current = null;
       appendLog(`Run finished for ${signalKey}`);
       setBusySignal(null);
     }
@@ -307,9 +317,13 @@ export default function AdminSignalsTestPage() {
     }
 
     setBusySignal(runKey);
+    const abortController = new AbortController();
+    activeRunAbortRef.current = abortController;
     setStatus('Running full clinical trials bundle...');
     appendLog('Starting run for clinical_trials_all');
+    let heartbeat: ReturnType<typeof setInterval> | null = null;
     try {
+      const startedAt = Date.now();
       const body: Record<string, unknown> = {
         limit: batchCompanyMode ? batchLimit : 25,
       };
@@ -327,11 +341,18 @@ export default function AdminSignalsTestPage() {
       }
 
       appendLog('Calling /api/signals/run/clinical-trials...');
+      heartbeat = setInterval(() => {
+        const elapsedSec = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
+        appendLog(`Run in progress... ${elapsedSec}s elapsed`);
+      }, 5000);
       const res = await fetch('/api/signals/run/clinical-trials', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal: abortController.signal,
       });
+      clearInterval(heartbeat);
+      heartbeat = null;
       const json = await res.json();
       appendLog(`Run completed with HTTP ${res.status}`);
 
@@ -367,9 +388,16 @@ export default function AdminSignalsTestPage() {
       await refreshSignalStatuses();
       appendLog('Signal status refresh complete.');
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        appendLog('Run cancelled by user.');
+        setStatus('clinical_trials_all cancelled.');
+        return;
+      }
       appendLog(`Run errored: ${error instanceof Error ? error.message : 'Unknown error'}`);
       setStatus(`clinical_trials_all failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
+      activeRunAbortRef.current = null;
+      if (heartbeat) clearInterval(heartbeat);
       appendLog('Run finished for clinical_trials_all');
       setBusySignal(null);
     }
@@ -384,9 +412,13 @@ export default function AdminSignalsTestPage() {
     }
 
     setBusySignal(runKey);
+    const abortController = new AbortController();
+    activeRunAbortRef.current = abortController;
     setStatus('Running full FDA regulatory bundle...');
     appendLog('Starting run for fda_regulatory_all');
+    let heartbeat: ReturnType<typeof setInterval> | null = null;
     try {
+      const startedAt = Date.now();
       const body: Record<string, unknown> = {
         limit: batchCompanyMode ? batchLimit : 25,
       };
@@ -404,11 +436,18 @@ export default function AdminSignalsTestPage() {
       }
 
       appendLog('Calling /api/signals/run/fda-regulatory...');
+      heartbeat = setInterval(() => {
+        const elapsedSec = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
+        appendLog(`Run in progress... ${elapsedSec}s elapsed`);
+      }, 5000);
       const res = await fetch('/api/signals/run/fda-regulatory', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal: abortController.signal,
       });
+      clearInterval(heartbeat);
+      heartbeat = null;
       const json = await res.json();
       appendLog(`Run completed with HTTP ${res.status}`);
 
@@ -444,9 +483,16 @@ export default function AdminSignalsTestPage() {
       await refreshSignalStatuses();
       appendLog('Signal status refresh complete.');
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        appendLog('Run cancelled by user.');
+        setStatus('fda_regulatory_all cancelled.');
+        return;
+      }
       appendLog(`Run errored: ${error instanceof Error ? error.message : 'Unknown error'}`);
       setStatus(`fda_regulatory_all failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
+      activeRunAbortRef.current = null;
+      if (heartbeat) clearInterval(heartbeat);
       appendLog('Run finished for fda_regulatory_all');
       setBusySignal(null);
     }
@@ -461,31 +507,39 @@ export default function AdminSignalsTestPage() {
     }
 
     setBusySignal(runKey);
+    const abortController = new AbortController();
+    activeRunAbortRef.current = abortController;
     setStatus('Running full patents bundle...');
     appendLog('Starting run for patents_all');
+    let heartbeat: ReturnType<typeof setInterval> | null = null;
     try {
+      const startedAt = Date.now();
       const body: Record<string, unknown> = {
         limit: batchCompanyMode ? batchLimit : 25,
       };
-      if (!batchCompanyMode && selectedCompanyId) {
-        body.company_ids = [selectedCompanyId];
-        appendLog(`Target company scope set: ${selectedCompanyId}`);
+      body.run_all = true;
+      body.batch_size = Math.min(500, Math.max(1, batchCompanyMode ? batchLimit : 2));
+      body.sync_first = true;
+      if (batchCompanyMode) {
+        appendLog(`Batch company mode enabled (run_all=true, batch_size=${body.batch_size}, limit=${batchLimit}).`);
       } else {
-        body.run_all = true;
-        body.batch_size = Math.min(500, Math.max(1, batchCompanyMode ? batchLimit : 200));
-        if (batchCompanyMode) {
-          appendLog(`Batch company mode enabled (run_all=true, batch_size=${body.batch_size}, limit=${batchLimit}).`);
-        } else {
-          appendLog(`No company selected; running all companies (run_all=true, batch_size=${body.batch_size}).`);
-        }
+        appendLog(`Running all companies (run_all=true, batch_size=${body.batch_size}).`);
       }
+      appendLog('sync_first=true → will pull fresh patents from BigQuery before running monitor.');
 
       appendLog('Calling /api/signals/run/patents...');
+      heartbeat = setInterval(() => {
+        const elapsedSec = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
+        appendLog(`Run in progress... ${elapsedSec}s elapsed`);
+      }, 5000);
       const res = await fetch('/api/signals/run/patents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal: abortController.signal,
       });
+      clearInterval(heartbeat);
+      heartbeat = null;
       const json = await res.json();
       appendLog(`Run completed with HTTP ${res.status}`);
 
@@ -510,6 +564,20 @@ export default function AdminSignalsTestPage() {
         appendLog(`Run failed: ${json?.error || 'Unknown error'}`);
         setStatus(`patents_all failed: ${json?.error || 'Unknown error'}`);
       } else {
+        const sync = (json as { sync?: { ran?: boolean; ok?: boolean; result?: Record<string, unknown> | null; error?: string | null } })?.sync;
+        if (sync?.ran) {
+          if (sync.ok && sync.result) {
+            const r = sync.result;
+            const scanGb = typeof r.estimated_scan_gb === 'number' ? r.estimated_scan_gb.toFixed(3) : '?';
+            appendLog(
+              `Sync OK: ${String(r.publications_upserted ?? 0)} pubs + ${String(
+                r.assignees_upserted ?? 0,
+              )} assignees upserted (cutoff ${String(r.cutoff_date ?? '?')}, ${scanGb} GB scanned)`,
+            );
+          } else if (sync.error) {
+            appendLog(`Sync FAILED (continuing with stale data): ${sync.error}`);
+          }
+        }
         const result = (json as { result?: Record<string, unknown> })?.result;
         if (result) {
           appendLog(`Processed=${String(result.processed ?? 0)} failed=${String(result.failed ?? 0)}`);
@@ -521,10 +589,106 @@ export default function AdminSignalsTestPage() {
       await refreshSignalStatuses();
       appendLog('Signal status refresh complete.');
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        appendLog('Run cancelled by user.');
+        setStatus('patents_all cancelled.');
+        return;
+      }
       appendLog(`Run errored: ${error instanceof Error ? error.message : 'Unknown error'}`);
       setStatus(`patents_all failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
+      activeRunAbortRef.current = null;
+      if (heartbeat) clearInterval(heartbeat);
       appendLog('Run finished for patents_all');
+      setBusySignal(null);
+    }
+  }
+
+  async function runPatentsSelectedCompany() {
+    const runKey = 'patents_selected_company';
+    if (!selectedCompanyId) {
+      appendLog('No company selected; cannot run selected-company patents test.');
+      setStatus('Please select a company first.');
+      return;
+    }
+    if (busySignal) {
+      appendLog(`Run skipped: ${busySignal} is already in progress.`);
+      setStatus(`A run is already in progress: ${busySignal}`);
+      return;
+    }
+
+    setBusySignal(runKey);
+    const abortController = new AbortController();
+    activeRunAbortRef.current = abortController;
+    setStatus('Running patents bundle for selected company...');
+    appendLog('Starting run for patents_selected_company');
+    let heartbeat: ReturnType<typeof setInterval> | null = null;
+    try {
+      const startedAt = Date.now();
+      const body: Record<string, unknown> = {
+        limit: 25,
+        company_ids: [selectedCompanyId],
+      };
+      appendLog(`Target company scope set: ${selectedCompanyId}`);
+      appendLog('Calling /api/signals/run/patents...');
+      heartbeat = setInterval(() => {
+        const elapsedSec = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
+        appendLog(`Run in progress... ${elapsedSec}s elapsed`);
+      }, 5000);
+      const res = await fetch('/api/signals/run/patents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: abortController.signal,
+      });
+      clearInterval(heartbeat);
+      heartbeat = null;
+      const json = await res.json();
+      appendLog(`Run completed with HTTP ${res.status}`);
+
+      setLastResponse({
+        signalKey: runKey,
+        ok: res.ok,
+        httpStatus: res.status,
+        payload: json,
+        at: new Date().toISOString(),
+      });
+      setHistory((prev) => [
+        {
+          signalKey: runKey,
+          ok: res.ok,
+          httpStatus: res.status,
+          at: new Date().toISOString(),
+        },
+        ...prev.slice(0, 11),
+      ]);
+
+      if (!res.ok) {
+        appendLog(`Run failed: ${json?.error || 'Unknown error'}`);
+        setStatus(`patents_selected_company failed: ${json?.error || 'Unknown error'}`);
+      } else {
+        const result = (json as { result?: Record<string, unknown> })?.result;
+        if (result) {
+          appendLog(`Processed=${String(result.processed ?? 0)} failed=${String(result.failed ?? 0)}`);
+          appendOptionalRunDiagnostics(result);
+        }
+        appendLog('Refreshing signal status colors...');
+        setStatus('patents_selected_company ingestion complete. Signal statuses refreshed.');
+      }
+      await refreshSignalStatuses();
+      appendLog('Signal status refresh complete.');
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        appendLog('Run cancelled by user.');
+        setStatus('patents_selected_company cancelled.');
+        return;
+      }
+      appendLog(`Run errored: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setStatus(`patents_selected_company failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      activeRunAbortRef.current = null;
+      if (heartbeat) clearInterval(heartbeat);
+      appendLog('Run finished for patents_selected_company');
       setBusySignal(null);
     }
   }
@@ -555,13 +719,6 @@ export default function AdminSignalsTestPage() {
       <AppSidebar />
       <main className="arcova-scroll-surface min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
         <div className="mx-auto max-w-7xl space-y-6">
-          <div>
-            <h1 className="text-2xl font-semibold text-slate-950">Signals Test Page (Temp)</h1>
-            <p className="mt-2 text-sm text-slate-500">
-              Real-source signal runs with backend response inspection.
-            </p>
-          </div>
-
           <div className="rounded-xl border border-slate-200 bg-white p-4">
             <div className="flex flex-wrap items-center gap-3">
               <button
@@ -571,6 +728,20 @@ export default function AdminSignalsTestPage() {
               >
                 Refresh Status Colors
               </button>
+              {busySignal !== null && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    activeRunAbortRef.current?.abort();
+                    activeRunAbortRef.current = null;
+                    setBusySignal(null);
+                    appendLog('Cancel requested by user.');
+                  }}
+                  className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 hover:bg-red-100"
+                >
+                  Cancel Current Run
+                </button>
+              )}
               <p className="text-xs text-slate-500">
                 Green = real source-backed events. Yellow = partial/source-limited. Grey = no execution.
               </p>
@@ -621,6 +792,17 @@ export default function AdminSignalsTestPage() {
                   </option>
                 ))}
               </select>
+              <button
+                type="button"
+                onClick={() => {
+                  setBatchCompanyMode(false);
+                  void runPatentsSelectedCompany();
+                }}
+                disabled={!selectedCompanyId || busySignal !== null}
+                className="mt-3 rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Test Patents On Selected Company
+              </button>
             </div>
 
             <div className="rounded-xl border border-slate-200 bg-white p-4">
