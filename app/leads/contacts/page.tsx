@@ -327,6 +327,18 @@ interface Lead {
   hubspot_latest_deal_stage?: string | null;
   hubspot_latest_deal_name?: string | null;
   hubspot_latest_deal_updated_at?: string | null;
+  attribution_is_arcova_sourced?: boolean | null;
+  attribution_is_arcova_enriched?: boolean | null;
+  attribution_arcova_touchpoint_count?: number | null;
+  attribution_arcova_touchpoints?: Array<{ type?: string; at?: string }> | null;
+  attribution_first_arcova_touch_at?: string | null;
+  attribution_latest_arcova_touch_at?: string | null;
+  attribution_latest_arcova_touch_type?: string | null;
+  attribution_latest_closed_won_deal_id?: string | null;
+  attribution_latest_closed_won_deal_name?: string | null;
+  attribution_latest_closed_won_at?: string | null;
+  attribution_won_after_arcova_touch?: boolean | null;
+  attribution_computed_at?: string | null;
   companies: {
     company_name: string | null;
     domain: string | null;
@@ -821,12 +833,18 @@ function parseIsoTime(value?: string | null): number | null {
 }
 
 function isArcovaSourcedLead(lead: Lead): boolean {
+  if (typeof lead.attribution_is_arcova_sourced === 'boolean') {
+    return lead.attribution_is_arcova_sourced;
+  }
   const provenance = (lead.data_provenance_type || '').trim().toLowerCase();
   const source = (lead.source || '').trim().toLowerCase();
   return provenance === 'arcova' || source === 'arcova';
 }
 
 function isArcovaEnrichedLead(lead: Lead): boolean {
+  if (typeof lead.attribution_is_arcova_enriched === 'boolean') {
+    return lead.attribution_is_arcova_enriched;
+  }
   if (lead.enrichment_refresh_status === 'succeeded') return true;
   if (lead.enrichment_refresh_finished_at) return true;
   if (lead.profile_enrichment_completed_at) return true;
@@ -834,6 +852,9 @@ function isArcovaEnrichedLead(lead: Lead): boolean {
 }
 
 function getLatestArcovaTouchIso(lead: Lead): string | null {
+  if (lead.attribution_latest_arcova_touch_at) {
+    return lead.attribution_latest_arcova_touch_at;
+  }
   const candidates = [
     lead.enrichment_refresh_finished_at,
     lead.profile_enrichment_completed_at,
@@ -849,6 +870,9 @@ function getLatestArcovaTouchIso(lead: Lead): string | null {
 }
 
 function isWonAfterArcovaTouch(lead: Lead): boolean {
+  if (typeof lead.attribution_won_after_arcova_touch === 'boolean') {
+    return lead.attribution_won_after_arcova_touch;
+  }
   if (lead.hubspot_lead_state !== 'customer') return false;
   const wonAt = parseIsoTime(lead.hubspot_latest_deal_updated_at);
   const touchedAt = parseIsoTime(getLatestArcovaTouchIso(lead));

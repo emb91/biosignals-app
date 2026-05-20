@@ -489,6 +489,103 @@ async function attachHubSpotLeadStateBestEffort(
   }
 }
 
+async function attachContactAttributionBestEffort(
+  supabase: SupabaseClientLike,
+  rows: LeadRow[],
+): Promise<LeadRow[]> {
+  const contactIds = dedupe(
+    rows
+      .map((row) => (typeof row.id === 'string' ? row.id : null))
+      .filter((value): value is string => Boolean(value)),
+  );
+
+  if (contactIds.length === 0) return rows;
+
+  const result = await supabase
+    .from('contact_attribution_snapshots')
+    .select(
+      'contact_id, is_arcova_sourced, is_arcova_enriched, arcova_touchpoint_count, arcova_touchpoints, first_arcova_touch_at, latest_arcova_touch_at, latest_arcova_touch_type, latest_closed_won_deal_id, latest_closed_won_deal_name, latest_closed_won_at, won_after_arcova_touch, computed_at',
+    )
+    .in('contact_id', contactIds);
+
+  if (result.error && isMissingColumnError(result.error)) {
+    return rows.map((row) => ({
+      ...row,
+      attribution_is_arcova_sourced: null,
+      attribution_is_arcova_enriched: null,
+      attribution_arcova_touchpoint_count: null,
+      attribution_arcova_touchpoints: [],
+      attribution_first_arcova_touch_at: null,
+      attribution_latest_arcova_touch_at: null,
+      attribution_latest_arcova_touch_type: null,
+      attribution_latest_closed_won_deal_id: null,
+      attribution_latest_closed_won_deal_name: null,
+      attribution_latest_closed_won_at: null,
+      attribution_won_after_arcova_touch: null,
+      attribution_computed_at: null,
+    }));
+  }
+
+  if (result.error) {
+    console.warn('Best-effort contact attribution fetch failed:', result.error);
+    return rows.map((row) => ({
+      ...row,
+      attribution_is_arcova_sourced: null,
+      attribution_is_arcova_enriched: null,
+      attribution_arcova_touchpoint_count: null,
+      attribution_arcova_touchpoints: [],
+      attribution_first_arcova_touch_at: null,
+      attribution_latest_arcova_touch_at: null,
+      attribution_latest_arcova_touch_type: null,
+      attribution_latest_closed_won_deal_id: null,
+      attribution_latest_closed_won_deal_name: null,
+      attribution_latest_closed_won_at: null,
+      attribution_won_after_arcova_touch: null,
+      attribution_computed_at: null,
+    }));
+  }
+
+  const attributionByContactId = new Map(
+    ((result.data || []) as Array<Record<string, unknown>>)
+      .filter((row) => typeof row.contact_id === 'string')
+      .map((row) => [row.contact_id as string, row] as const),
+  );
+
+  return rows.map((row) => {
+    const attribution =
+      typeof row.id === 'string' ? attributionByContactId.get(row.id) ?? null : null;
+
+    return {
+      ...row,
+      attribution_is_arcova_sourced:
+        typeof attribution?.is_arcova_sourced === 'boolean' ? attribution.is_arcova_sourced : null,
+      attribution_is_arcova_enriched:
+        typeof attribution?.is_arcova_enriched === 'boolean' ? attribution.is_arcova_enriched : null,
+      attribution_arcova_touchpoint_count:
+        typeof attribution?.arcova_touchpoint_count === 'number' ? attribution.arcova_touchpoint_count : null,
+      attribution_arcova_touchpoints: Array.isArray(attribution?.arcova_touchpoints)
+        ? attribution.arcova_touchpoints
+        : [],
+      attribution_first_arcova_touch_at:
+        typeof attribution?.first_arcova_touch_at === 'string' ? attribution.first_arcova_touch_at : null,
+      attribution_latest_arcova_touch_at:
+        typeof attribution?.latest_arcova_touch_at === 'string' ? attribution.latest_arcova_touch_at : null,
+      attribution_latest_arcova_touch_type:
+        typeof attribution?.latest_arcova_touch_type === 'string' ? attribution.latest_arcova_touch_type : null,
+      attribution_latest_closed_won_deal_id:
+        typeof attribution?.latest_closed_won_deal_id === 'string' ? attribution.latest_closed_won_deal_id : null,
+      attribution_latest_closed_won_deal_name:
+        typeof attribution?.latest_closed_won_deal_name === 'string' ? attribution.latest_closed_won_deal_name : null,
+      attribution_latest_closed_won_at:
+        typeof attribution?.latest_closed_won_at === 'string' ? attribution.latest_closed_won_at : null,
+      attribution_won_after_arcova_touch:
+        typeof attribution?.won_after_arcova_touch === 'boolean' ? attribution.won_after_arcova_touch : null,
+      attribution_computed_at:
+        typeof attribution?.computed_at === 'string' ? attribution.computed_at : null,
+    };
+  });
+}
+
 function hubSpotLeadStateForStage(stage: string | null, suppressed: boolean): HubSpotLeadState {
   const normalized = (stage || '').trim().toLowerCase();
   if (!normalized) return suppressed ? 'context_only' : 'none';
@@ -859,9 +956,10 @@ export async function GET(request: Request) {
 
     const withEmails = await attachContactEmailsBestEffort(supabase, enrichedRows);
     const withHubSpotLeadState = await attachHubSpotLeadStateBestEffort(supabase, withEmails);
+    const withAttribution = await attachContactAttributionBestEffort(supabase, withHubSpotLeadState);
 
     return NextResponse.json({
-      data: withHubSpotLeadState,
+      data: withAttribution,
       total: count ?? 0,
       page,
       pageSize,

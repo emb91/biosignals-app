@@ -20,7 +20,6 @@ const APP_ROUTES = [
   ROUTES.contactSignals,
   ROUTES.leads.accounts,
   ROUTES.leads.contacts,
-  ROUTES.customers,
   ROUTES.data,
   ROUTES.health,
   ROUTES.today,
@@ -31,6 +30,7 @@ const APP_ROUTES = [
   ROUTES.settings,
   ROUTES.setup.company,
   ROUTES.setup.icps,
+  '/admin',
   '/arcova-setup',
   '/find-more-leads',
 ]

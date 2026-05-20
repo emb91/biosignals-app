@@ -39,7 +39,7 @@ const SetupStateContext = createContext<SetupState | undefined>(undefined);
  * Supabase errors/races and triggered SetupGuard → `/arcova-setup` → `/import` ping-pong.
  */
 export function SetupStateProvider({ children }: { children: ReactNode }) {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [state, setState] = useState<SetupState>({
     step1Complete: false,
     step2Complete: false,
@@ -48,6 +48,11 @@ export function SetupStateProvider({ children }: { children: ReactNode }) {
   });
 
   useEffect(() => {
+    // While auth is still resolving, keep setup loading too. This prevents a
+    // one-render window where authLoading=false + setupLoading=false + setupComplete=false
+    // causes SetupGuard to redirect even for fully-onboarded users.
+    if (authLoading) return;
+
     if (!user) {
       setState({
         step1Complete: false,
@@ -101,7 +106,7 @@ export function SetupStateProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [user]);
+  }, [user, authLoading]);
 
   return <SetupStateContext.Provider value={state}>{children}</SetupStateContext.Provider>;
 }
