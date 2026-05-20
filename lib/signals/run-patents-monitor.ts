@@ -292,21 +292,47 @@ async function emitCompanySignal(
 
 export async function runPatentsMonitor(input: PatentsMonitorInput): Promise<PatentsMonitorResult> {
   const admin = createAdminClient();
-  const query = admin
-    .from('companies')
-    .select('id, user_id, company_name, aliases')
+
+  // Ownership + archive state live in user_companies (the per-user link table).
+  // First find the active company ids for this user, then load shared metadata
+  // from companies. Both lookups are indexed.
+  const { data: linkRows, error: linkError } = await admin
+    .from('user_companies')
+    .select('company_id')
     .eq('user_id', input.userId)
-    .is('archived_at', null)
-    .order('updated_at', { ascending: false });
+    .is('archived_at', null);
+  if (linkError) throw new Error(`user_companies query: ${linkError.message}`);
+  let ownedIds = (linkRows ?? [])
+    .map((r) => (r as { company_id?: unknown }).company_id)
+    .filter((v): v is string => typeof v === 'string' && Boolean(v));
 
   const companyIds = Array.isArray(input.companyIds)
     ? input.companyIds.filter((value): value is string => typeof value === 'string' && Boolean(value))
     : [];
+  if (companyIds.length > 0) {
+    const requestedSet = new Set(companyIds);
+    ownedIds = ownedIds.filter((id) => requestedSet.has(id));
+  } else {
+    ownedIds = ownedIds.slice(0, Math.min(Math.max(input.limit ?? 25, 1), 500));
+  }
 
-  if (companyIds.length > 0) query.in('id', companyIds);
-  else query.limit(Math.min(Math.max(input.limit ?? 25, 1), 500));
+  if (ownedIds.length === 0) {
+    return {
+      processed: 0,
+      failed: 0,
+      records_scanned: 0,
+      candidate_events_matched_before_dedupe: 0,
+      events_skipped_as_duplicates: 0,
+      emitted_signal_types: [],
+      recomputed_companies: [],
+      failures: [],
+    };
+  }
 
-  const { data: companies, error: companiesError } = await query;
+  const { data: companies, error: companiesError } = await admin
+    .from('companies')
+    .select('id, user_id, company_name, aliases')
+    .in('id', ownedIds);
   if (companiesError) throw new Error(companiesError.message);
 
   let processed = 0;

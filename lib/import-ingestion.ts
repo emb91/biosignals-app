@@ -1,7 +1,10 @@
 import { employeeCountToSizeBucket, SENIORITY_LEVEL_OPTIONS, BUSINESS_AREA_OPTIONS } from '@/lib/arcova-taxonomy';
 import { ensureImportEmailEntry } from '@/lib/contact-emails';
+import { ensureImportPhoneEntry } from '@/lib/contact-phones';
 import { syncContactFitForContacts } from '@/lib/contact-fit';
 import { syncCompanyFitForCompanies } from '@/lib/company-fit';
+import { createAdminClient } from '@/lib/supabase-admin';
+import { ensureCompanyAliases } from '@/lib/signals/company-aliases';
 
 export type EnrichedImportRecord = {
   raw_upload_id: string;
@@ -12,6 +15,10 @@ export type EnrichedImportRecord = {
   first_name?: string;
   last_name?: string;
   email?: string;
+  /** Phone(s) found in the import row. Stacks into contact_phones (category='import'). */
+  phone?: string;
+  mobile_phone?: string;
+  work_phone?: string;
   linkedin_url?: string;
   profile_photo_url?: string;
   job_title?: string;
@@ -253,6 +260,19 @@ async function upsertCompany(
       );
     }
 
+    // Dual-write user_companies (idempotent — upsert).
+    await supabase
+      .from('user_companies')
+      .upsert(
+        {
+          user_id: userId,
+          company_id: existingCompany.id,
+          source: companyPayload.source,
+          updated_at: now,
+        },
+        { onConflict: 'user_id,company_id' },
+      );
+
     return existingCompany.id;
   }
 
@@ -267,7 +287,28 @@ async function upsertCompany(
     throw new Error(`[import-ingestion] Failed to insert canonical company row (${context}): ${insertError}`);
   }
 
-  return (insertResult.data?.id as string) ?? null;
+  const insertedId = (insertResult.data?.id as string) ?? null;
+  if (insertedId) {
+    // Dual-write user_companies.
+    await supabase
+      .from('user_companies')
+      .upsert(
+        {
+          user_id: userId,
+          company_id: insertedId,
+          source: companyPayload.source,
+          archived_at: null,
+          updated_at: now,
+        },
+        { onConflict: 'user_id,company_id' },
+      );
+
+    // Eager: populate aliases in the background. Doesn't block the import.
+    void ensureCompanyAliases(createAdminClient(), insertedId).catch((err) => {
+      console.error(`[import-ingestion] eager ensureCompanyAliases failed for ${insertedId} (${context}):`, err);
+    });
+  }
+  return insertedId;
 }
 
 export async function ingestEnrichedRecords(
@@ -410,6 +451,33 @@ export async function ingestEnrichedRecords(
             userId,
             email: record.email,
           });
+          // Phone capture — same idempotent pattern. Three potential fields
+          // because providers categorise differently; we record each one with
+          // its category so reads can surface them as mobile / work / generic.
+          if (record.phone) {
+            await ensureImportPhoneEntry(supabase, {
+              userId,
+              contactId: row.id,
+              phone: record.phone,
+              label: 'import',
+            });
+          }
+          if (record.mobile_phone) {
+            await ensureImportPhoneEntry(supabase, {
+              userId,
+              contactId: row.id,
+              phone: record.mobile_phone,
+              label: 'mobile',
+            });
+          }
+          if (record.work_phone) {
+            await ensureImportPhoneEntry(supabase, {
+              userId,
+              contactId: row.id,
+              phone: record.work_phone,
+              label: 'work',
+            });
+          }
         }
       }
 

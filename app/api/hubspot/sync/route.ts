@@ -38,6 +38,11 @@ export async function POST() {
     'company_domain',
     'linkedin_url',
     'location',
+    // Phone fields — import-ingestion.ts captures these into contact_phones
+    // via ensureImportPhoneEntry. `phone` is the generic line, `mobile_phone`
+    // is HubSpot's dedicated mobile field. Empty values are skipped at write.
+    'phone',
+    'mobile_phone',
   ];
 
   const rows = contacts.map((c) => {
@@ -52,6 +57,8 @@ export async function POST() {
       p.website ?? '',
       p.hs_linkedin_url ?? '',
       location,
+      p.phone ?? '',
+      p.mobilephone ?? '',
     ];
   });
 

@@ -10,6 +10,11 @@ import {
   type ApolloLookupInput,
 } from '@/lib/apollo';
 import { trimEmail as trimContactEmail, ensureEnrichedEmailEntry, emailsEqual } from '@/lib/contact-emails';
+import {
+  writeApolloPhonesToContact,
+  attemptApolloPhoneRevealForContact,
+} from '@/lib/contact-phone-enrichment';
+import type { ApolloPhoneEntry } from '@/lib/apollo';
 import { syncContactFitForContact } from '@/lib/contact-fit';
 import { syncCompanyFitForCompany } from '@/lib/company-fit';
 import { resolveLinkedinUrl, type LinkedinResolutionResult } from '@/lib/linkedin-url-resolver';
@@ -1414,6 +1419,60 @@ export async function runContactResolutionPipelineForContact(
     await syncContactFitForContact(supabase, userId, contactId).catch((error) => {
       console.error('[enrichment-pipeline] Failed syncing contact fit score:', error);
     });
+
+    // Phone enrichment — runs AFTER fit scoring so the gate sees fresh
+    // contact_fit_score and company_fit_score. Two passes:
+    //   1. Cheap pass: write phones the initial Apollo match already returned
+    //   2. Expensive pass (only if (1) returned 0 phones): Apollo
+    //      reveal_phone_number=true. Costs extra credits — gated by fit.
+    try {
+      const apolloPhones = Array.isArray((apolloPerson as Record<string, unknown> | null)?.phone_numbers)
+        ? ((apolloPerson as Record<string, unknown>).phone_numbers as ApolloPhoneEntry[])
+        : [];
+      let initialWritten = 0;
+      let initialGateAllowed = false;
+      if (apolloPhones.length > 0) {
+        const phoneResult = await writeApolloPhonesToContact(supabase, {
+          userId,
+          contactId,
+          phones: apolloPhones,
+        });
+        initialWritten = phoneResult.written;
+        initialGateAllowed = phoneResult.gateAllowed;
+        if (!phoneResult.gateAllowed) {
+          console.log(`[enrichment-pipeline] phone fit gate denied for ${contactId}`);
+        }
+      }
+      // If the initial match returned no phones, pay the extra credit cost
+      // to ask Apollo to reveal mobile/personal numbers. Same fit gate
+      // applies — only fires for high-fit contacts.
+      if (initialWritten === 0) {
+        const lookupInput: ApolloLookupInput = {
+          full_name: typedContact.full_name ?? undefined,
+          first_name: typedContact.first_name ?? undefined,
+          last_name: typedContact.last_name ?? undefined,
+          company_name: resolved.currentCompanyName ?? typedContact.company_name ?? undefined,
+          company_domain: resolvedDomainFromCompany || typedContact.company_domain || undefined,
+          email: trimContactEmail(typedContact.email) ?? undefined,
+          linkedin_url: resolvedLinkedin.linkedin_url ?? undefined,
+          location: resolved.location || typedContact.location || undefined,
+        };
+        const revealResult = await attemptApolloPhoneRevealForContact(supabase, {
+          userId,
+          contactId,
+          lookupInput,
+        });
+        if (revealResult.revealed > 0) {
+          console.log(
+            `[enrichment-pipeline] Apollo phone reveal recovered ${revealResult.revealed} phone(s) for ${contactId}`,
+          );
+        } else if (!revealResult.gateAllowed && initialGateAllowed === false) {
+          // No log: gate already denied at first pass.
+        }
+      }
+    } catch (err) {
+      console.error('[enrichment-pipeline] phone enrichment failed (non-fatal):', err);
+    }
 
     let externalSignalResult: { emittedSignalTypes: string[]; recomputedCompanies: string[] } | null = null;
     if (params.emitExternalSignals) {

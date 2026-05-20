@@ -32,6 +32,7 @@ import {
   type CompanyFitDetails,
 } from '@/components/company-icp-fit-detail-panel';
 import { TableFitGaugeButton } from '@/components/TableFitGaugeButton';
+import { AccountEditDialog } from '@/components/AccountEditDialog';
 import { formatProvenanceImportedAt } from '@/lib/data-provenance';
 import {
   getAccountRowAction,
@@ -397,6 +398,7 @@ export default function AccountsPage() {
   const [agentFilterIds, setAgentFilterIds] = useState<Set<string> | null>(null);
   const [tableSortCol, setTableSortCol] = useState<string | null>(null);
   const [tableSortDir, setTableSortDir] = useState<'asc' | 'desc'>('asc');
+  const [editAccountOpen, setEditAccountOpen] = useState(false);
 
   // Panel state
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
@@ -1758,11 +1760,7 @@ export default function AccountsPage() {
                         <div className="flex gap-2">
                           <button
                             type="button"
-                            onClick={() => {
-                              // TODO: wire up inline edit mode for accounts when the
-                              // backend supports it. For now, surface a friendly hint.
-                              window.alert('Account editing is coming soon — for now, refresh the enrichment to refresh data.');
-                            }}
+                            onClick={() => setEditAccountOpen(true)}
                             className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
                           >
                             <Pencil className="w-3.5 h-3.5" />
@@ -1802,6 +1800,20 @@ export default function AccountsPage() {
                       </div>
                     )}
                   </aside>
+                )}
+
+                {selectedAccount && (
+                  <AccountEditDialog
+                    account={selectedAccount as Parameters<typeof AccountEditDialog>[0]['account']}
+                    open={editAccountOpen}
+                    onClose={() => setEditAccountOpen(false)}
+                    onSaved={() => {
+                      // Refetch to pick up the new override values via accounts_view's
+                      // COALESCE. Simplest correct behavior; could be optimized to a
+                      // local merge later if list refetch becomes expensive.
+                      fetchAccounts();
+                    }}
+                  />
                 )}
 
                 {/* Floating agent chat bar — sits at the bottom of the AgentPanel

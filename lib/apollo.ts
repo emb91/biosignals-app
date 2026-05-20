@@ -60,6 +60,16 @@ type ApolloOrganizationSearchResponse = {
   pagination?: ApolloSearchPagination | null;
 };
 
+export type ApolloPhoneEntry = {
+  raw_number?: string | null;
+  sanitized_number?: string | null;
+  type?: string | null; // 'mobile' / 'work_direct' / 'home' / etc. per Apollo
+  position?: number | null;
+  status?: string | null;
+  dnc_status?: string | null;
+  dnc_other_info?: string | null;
+};
+
 export type ApolloPerson = {
   id?: string;
   first_name?: string | null;
@@ -78,6 +88,10 @@ export type ApolloPerson = {
   seniority?: string | null;
   employment_history?: ApolloEmployment[] | null;
   organization?: ApolloOrganization | null;
+  // Apollo's people/match endpoint returns phones when available. The
+  // higher-cost mobile reveal is gated by the reveal_phone_number request
+  // param (not yet wired — only consume what comes back naturally for now).
+  phone_numbers?: ApolloPhoneEntry[] | null;
 };
 
 type ApolloMatchResponse = {
@@ -347,6 +361,12 @@ function getLookupRoute(input: ApolloLookupInput): ApolloLookupRoute {
 
 type MatchPersonOptions = {
   revealPersonalEmails?: boolean;
+  /**
+   * Pass true to ask Apollo for mobile/personal phone numbers it would
+   * otherwise withhold. This costs additional Apollo credits per match —
+   * only flip on for high-fit contacts (see lib/contact-phone-enrichment.ts).
+   */
+  revealPhoneNumber?: boolean;
 };
 
 async function matchPerson(input: ApolloLookupInput, options: MatchPersonOptions = {}) {
@@ -361,6 +381,9 @@ async function matchPerson(input: ApolloLookupInput, options: MatchPersonOptions
 
   if (options.revealPersonalEmails) {
     params.set('reveal_personal_emails', 'true');
+  }
+  if (options.revealPhoneNumber) {
+    params.set('reveal_phone_number', 'true');
   }
 
   const url = `https://api.apollo.io/api/v1/people/match?${params.toString()}`;
@@ -579,6 +602,22 @@ async function runApolloPeopleMatchTwoStep(
  * supplied for matching), optionally a second match with reveal_personal_emails. Returns only
  * addresses on Apollo’s merged person record (never echoes `input.email` alone).
  */
+/**
+ * Run people/match with reveal_phone_number=true. Used for high-fit contacts
+ * only (see fit gate in lib/contact-phone-enrichment.ts). Returns the merged
+ * person record so the caller can read phone_numbers + any newly revealed
+ * fields. Apollo charges extra credits per call — call sparingly.
+ */
+export async function tryApolloPhoneRevealForLookup(
+  input: ApolloLookupInput,
+): Promise<{
+  person: ApolloPerson | null;
+  payload: ApolloMatchResponse | null;
+}> {
+  const match = await matchPerson(input, { revealPhoneNumber: true });
+  return { person: match.person, payload: match.payload };
+}
+
 export async function tryApolloPersonalEmailRevealForLookup(input: ApolloLookupInput): Promise<{
   apolloEmail: string | null;
   emailStatus: string | null;

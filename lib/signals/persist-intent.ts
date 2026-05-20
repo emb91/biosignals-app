@@ -127,9 +127,10 @@ export async function persistCompanyIntentForCompanyRow(
 
   const score = computeCompanyIntent01(icpSelections, slim);
 
+  const scoreValue = typeof score === 'number' ? score : 1;
   const { error } = await supabase
     .from('companies')
-    .update({ company_intent_score: typeof score === 'number' ? score : 1 })
+    .update({ intent_score: scoreValue })
     .eq('id', cid)
     .eq('user_id', userId);
 
@@ -137,6 +138,14 @@ export async function persistCompanyIntentForCompanyRow(
     console.error('[persistCompanyIntent]', error);
     throw error;
   }
+
+  // Dual-write to user_companies (the per-user source of truth going forward).
+  await supabase
+    .from('user_companies')
+    .upsert(
+      { user_id: userId, company_id: cid, intent_score: scoreValue, updated_at: new Date().toISOString() },
+      { onConflict: 'user_id,company_id' },
+    );
   return score;
 }
 

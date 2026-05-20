@@ -366,6 +366,7 @@ export type HubSpotContact = {
     city: string | null;
     country: string | null;
     phone: string | null;
+    mobilephone: string | null;
   };
 };
 
@@ -455,7 +456,7 @@ export async function getValidAccessToken(userId: string, supabase: any): Promis
  * Uses the search API to filter contacts where arcova_enriched_at is not set.
  */
 export async function fetchUnenrichedHubSpotContacts(accessToken: string): Promise<HubSpotContact[]> {
-  const properties = ['firstname', 'lastname', 'email', 'jobtitle', 'company', 'website', 'hs_linkedin_url', 'city', 'country'];
+  const properties = ['firstname', 'lastname', 'email', 'jobtitle', 'company', 'website', 'hs_linkedin_url', 'city', 'country', 'phone', 'mobilephone'];
   const contacts: HubSpotContact[] = [];
   let after: string | undefined;
 
@@ -483,7 +484,7 @@ export async function fetchUnenrichedHubSpotContacts(accessToken: string): Promi
 }
 
 export async function fetchHubSpotContacts(accessToken: string): Promise<HubSpotContact[]> {
-  const properties = 'firstname,lastname,email,jobtitle,company,website,hs_linkedin_url,city,country,phone';
+  const properties = 'firstname,lastname,email,jobtitle,company,website,hs_linkedin_url,city,country,phone,mobilephone';
   const contacts: HubSpotContact[] = [];
   let after: string | undefined;
 

@@ -12,6 +12,10 @@ import {
   type ContactEmailRow,
 } from '@/lib/contact-emails';
 import {
+  fetchContactPhonesForContacts,
+  type ContactPhoneRow,
+} from '@/lib/contact-phones';
+import {
   formatDataProvenanceTypeOnly,
   resolveContactDataProvenance,
 } from '@/lib/data-provenance';
@@ -140,6 +144,29 @@ async function attachContactEmailsBestEffort(
     }
     console.warn('[leads GET] attachContactEmailsBestEffort failed:', e);
     return rows.map((row) => ({ ...row, contact_emails: [] }));
+  }
+}
+
+async function attachContactPhonesBestEffort(
+  supabase: SupabaseClientLike,
+  rows: LeadRow[],
+): Promise<LeadRow[]> {
+  const ids = rows.map((row) => row.id).filter((id): id is string => typeof id === 'string');
+  if (ids.length === 0) return rows;
+  try {
+    const grouped = await fetchContactPhonesForContacts(supabase, ids);
+    return rows.map((row) =>
+      typeof row.id === 'string'
+        ? { ...row, contact_phones: (grouped.get(row.id) ?? []) as ContactPhoneRow[] }
+        : row,
+    );
+  } catch (e: unknown) {
+    const msg = e && typeof e === 'object' && 'message' in e ? String((e as { message: unknown }).message) : '';
+    if (msg.includes('contact_phones') || msg.includes('does not exist')) {
+      return rows.map((row) => ({ ...row, contact_phones: [] }));
+    }
+    console.warn('[leads GET] attachContactPhonesBestEffort failed:', e);
+    return rows.map((row) => ({ ...row, contact_phones: [] }));
   }
 }
 
@@ -955,7 +982,8 @@ export async function GET(request: Request) {
     );
 
     const withEmails = await attachContactEmailsBestEffort(supabase, enrichedRows);
-    const withHubSpotLeadState = await attachHubSpotLeadStateBestEffort(supabase, withEmails);
+    const withPhones = await attachContactPhonesBestEffort(supabase, withEmails);
+    const withHubSpotLeadState = await attachHubSpotLeadStateBestEffort(supabase, withPhones);
     const withAttribution = await attachContactAttributionBestEffort(supabase, withHubSpotLeadState);
 
     return NextResponse.json({
