@@ -22,6 +22,7 @@ type DashboardStats = {
   arcovaSourcedCustomers: number;
   arcovaEnrichedCustomers: number;
   wonAfterArcovaTouch: number;
+  lostAfterArcovaTouch: number;
   arcovaEnrichedContacts: number;
   capturedSignals: number;
   contactSignalsCaptured: number;
@@ -41,7 +42,7 @@ const emptyStats: DashboardStats = {
   companies: 0, contacts: 0, icps: 0,
   averageCompanyFit: 0, averageContactFit: 0,
   customerContacts: 0, arcovaSourcedCustomers: 0,
-  arcovaEnrichedCustomers: 0, wonAfterArcovaTouch: 0,
+  arcovaEnrichedCustomers: 0, wonAfterArcovaTouch: 0, lostAfterArcovaTouch: 0,
   arcovaEnrichedContacts: 0, capturedSignals: 0,
   contactSignalsCaptured: 0, signalsPerEnrichedContact: 0,
   enrichedContactsWithSignals: 0, signalBackedConversationContacts: 0,
@@ -209,141 +210,182 @@ type SankeyStage = {
 };
 
 function SankeyFlow({ stages }: { stages: SankeyStage[] }) {
-  const W = 1280, H = 470, padL = 40, padR = 180, padT = 70;
+  const W = 1280, H = 500;
+  const padL = 40, padR = 180, padT = 80;
   const innerW = W - padL - padR;
-  const nodeW = 14;
+  const nodeW = 16;
   const MAX = Math.max(...stages.map(s => s.value), 1);
   const scale = 200 / MAX;
+
   const xs = stages.map((_, i) => padL + (i * innerW / (stages.length - 1)));
   const hs = stages.map(s => s.value * scale);
-  const stageW = stages.length > 1 ? innerW / (stages.length - 1) : innerW;
-  const tagBandH = 12;
-  const baseTagY = padT + 200 + 24; // 294
-  const tagStep = 28;
 
-  // Main ribbons
-  const mains = stages.slice(0, -1).map((_, i) => {
+  // Centre every bar on a shared midline — smaller bars sit lower symmetrically,
+  // so the main ribbon visibly narrows toward the right and drops peel off the bottom.
+  const centerY = padT + 100;
+  const topYs = stages.map((_, i) => centerY - hs[i] / 2);
+
+  const baseTagY = padT + 200 + 24; // 304 — drop destination y-start
+
+  const mains: React.ReactNode[] = [];
+  const dropPaths: React.ReactNode[] = [];
+  const dropLabels: React.ReactNode[] = [];
+
+  // Main ribbons — taper from source top/bottom-of-continuing to dest top/bottom
+  for (let i = 0; i < stages.length - 1; i++) {
     const x1 = xs[i] + nodeW;
     const x2 = xs[i + 1];
     const cpx = (x1 + x2) / 2;
     const hNext = hs[i + 1];
-    const d = `M ${x1},${padT} C ${cpx},${padT} ${cpx},${padT} ${x2},${padT} L ${x2},${padT + hNext} C ${cpx},${padT + hNext} ${cpx},${padT + hNext} ${x1},${padT + hNext} Z`;
-    return <path key={i} d={d} fill="url(#sankeyMain)" />;
-  });
+    const srcTop = topYs[i];
+    const srcBot = topYs[i] + hNext;   // bottom of the continuing-flow slice
+    const dstTop = topYs[i + 1];
+    const dstBot = topYs[i + 1] + hNext;
+    const d = [
+      `M ${x1},${srcTop}`,
+      `C ${cpx},${srcTop} ${cpx},${dstTop} ${x2},${dstTop}`,
+      `L ${x2},${dstBot}`,
+      `C ${cpx},${dstBot} ${cpx},${srcBot} ${x1},${srcBot} Z`,
+    ].join(' ');
+    mains.push(<path key={i} d={d} fill="url(#sankeyMain)" />);
+  }
 
-  // Drop bands — dropRow advances only when a band is actually rendered,
-  // so Y positions stay packed regardless of skipped zero-count drops.
-  const dropPaths: React.ReactNode[] = [];
-  const dropLabels: React.ReactNode[] = [];
-  let dropRow = 0;
-
+  // Intermediate drop ribbons — smooth alluvial curve landing on a thin vertical bar
   for (let i = 1; i < stages.length - 1; i++) {
     const stage = stages[i];
     if (!stage.drop) continue;
     const dropCount = stages[i - 1].value - stages[i].value;
-    if (dropCount <= 0) continue; // nothing fell off — skip band and don't advance row
+    if (dropCount <= 0) continue;
+
     const xPrev = xs[i - 1] + nodeW;
     const xThis = xs[i];
-    const hMain = hs[i];
-    const hPrev = hs[i - 1];
-    const srcTop = padT + hMain;
-    const srcBot = padT + hPrev;
-    const tagW = 68;
-    // Tag lands just past the destination bar; cpx is the natural midpoint for a smooth S-curve
-    const tagX = xThis + nodeW + 4;
-    const cpx = (xPrev + tagX) / 2;
-    // Label text is one full stage-width to the right of the tag box
-    const labelX = tagX + tagW + stageW;
-    const tagTop = baseTagY + dropRow * tagStep;
-    const tagBot = tagTop + tagBandH;
-    dropRow++;
-    const d = `M ${xPrev},${srcTop} C ${cpx},${srcTop} ${cpx},${tagTop} ${tagX},${tagTop} L ${tagX + tagW},${tagTop} L ${tagX + tagW},${tagBot} L ${tagX},${tagBot} C ${cpx},${tagBot} ${cpx},${srcBot} ${xPrev},${srcBot} Z`;
+    const hMain  = hs[i];
+    const hPrev  = hs[i - 1];
+
+    // Drop occupies the "excess" bottom of the source bar
+    const srcTop = topYs[i - 1] + hMain;  // bottom of continuing flow
+    const srcBot = topYs[i - 1] + hPrev;  // bottom of source bar
+
+    const destW  = 5;
+    const destH  = dropCount * scale;
+    const destX  = xPrev + (xThis - xPrev) * 0.78;
+    const cpxD   = (xPrev + destX) / 2;
+    const destTop = baseTagY;
+    const destBot = destTop + destH;
+
+    const d = [
+      `M ${xPrev},${srcTop}`,
+      `C ${cpxD},${srcTop} ${cpxD},${destTop} ${destX},${destTop}`,
+      `L ${destX},${destBot}`,
+      `C ${cpxD},${destBot} ${cpxD},${srcBot} ${xPrev},${srcBot} Z`,
+    ].join(' ');
+
     dropPaths.push(
-      <path key={`drop-${i}`} d={d} fill="rgba(13,53,71,0.07)" stroke="rgba(13,53,71,0.1)" strokeWidth={0.5} />
+      <path key={`drop-${i}`} d={d}
+        fill="rgba(169,182,189,0.55)" stroke="rgba(13,53,71,0.10)" strokeWidth={0.5} />
+    );
+    dropPaths.push(
+      <rect key={`dn-${i}`} x={destX} y={destTop} width={destW} height={destH} fill="#8a98a0" rx={1.5} />
     );
     dropLabels.push(
-      <text key={`dl-name-${i}`} x={labelX} y={tagTop + 4}
-        style={{ fontSize: 9, fontWeight: 500, fill: 'rgba(13,53,71,0.45)', fontFamily: 'monospace' }}>
-        {stage.drop.label}
-      </text>
-    );
-    dropLabels.push(
-      <text key={`dl-val-${i}`} x={labelX} y={tagTop + 18}
-        style={{ fontSize: 10.5, fontWeight: 600, fill: 'rgba(13,53,71,0.6)', fontFamily: 'monospace', fontVariantNumeric: 'tabular-nums' }}>
-        {dropCount.toLocaleString('en-US')}
-      </text>
+      <g key={`dl-${i}`}>
+        <text x={destX + destW / 2} y={destBot + 16}
+          textAnchor="middle" className="sky-drop-name" dominantBaseline="middle">
+          {stage.drop.label}
+        </text>
+        <text x={destX + destW / 2} y={destBot + 32}
+          textAnchor="middle" className="sky-drop-val" dominantBaseline="middle">
+          {dropCount.toLocaleString('en-US')}
+        </text>
+      </g>
     );
   }
 
-  // Last-stage multi-drop
+  // Last-stage multi-drop — each drop gets its own ribbon + destination bar, stacked
   const lastI = stages.length - 1;
   const lastStage = stages[lastI];
-  if (lastStage.drops) {
+  if (lastStage.drops && lastStage.drops.length) {
     const xPrev = xs[lastI - 1] + nodeW;
     const xThis = xs[lastI];
-    const totalLastDrop = stages[lastI - 1].value - stages[lastI].value;
-    const dropsTotal = lastStage.drops.reduce((s, d) => s + d.value, 0) || 1;
-    let cursor = padT + hs[lastI];
-    // Tag just past the Won bar; cpx is the natural midpoint for a smooth S-curve
-    const lastTagX = xThis + nodeW + 4;
-    const lastCpx = (xPrev + lastTagX) / 2;
-    // Label text one full stage-width to the right of the tag box
-    const lastLabelX = lastTagX + 68 + stageW;
+
+    let cursorY    = topYs[lastI - 1] + hs[lastI]; // bottom of the won slice
+    let destCursor = baseTagY;
+
     lastStage.drops.forEach((drop, di) => {
-      const bandH = (drop.value / dropsTotal) * totalLastDrop * scale;
-      const srcTop = cursor;
-      const srcBot = cursor + bandH;
-      const tagW = 68;
-      const tagX = lastTagX;
-      const cpx = lastCpx;
-      const tagTop = baseTagY + (dropRow + di) * tagStep;
-      const tagBot = tagTop + tagBandH;
-      const d = `M ${xPrev},${srcTop} C ${cpx},${srcTop} ${cpx},${tagTop} ${tagX},${tagTop} L ${tagX + tagW},${tagTop} L ${tagX + tagW},${tagBot} L ${tagX},${tagBot} C ${cpx},${tagBot} ${cpx},${srcBot} ${xPrev},${srcBot} Z`;
-      const isRose = drop.tone === 'rose';
+      const stripH  = Math.max(drop.value * scale, 2);
+      const srcTop  = cursorY;
+      const srcBot  = cursorY + stripH;
+      cursorY = srcBot;
+
+      const destW   = 5;
+      const destX   = xPrev + (xThis - xPrev) * 0.78;
+      const cpxD    = (xPrev + destX) / 2;
+      const destTop = destCursor;
+      const destBot = destTop + stripH;
+      destCursor = destBot + 52; // 16px name + 16px val + 20px breathing room
+
+      const isRose   = drop.tone === 'rose';
+      const fill     = isRose ? 'rgba(196,107,122,0.50)' : 'rgba(169,182,189,0.55)';
+      const stroke   = isRose ? 'rgba(196,107,122,0.40)' : 'rgba(13,53,71,0.10)';
+      const nodeFill = isRose ? '#c46b7a' : '#8a98a0';
+
+      const d = [
+        `M ${xPrev},${srcTop}`,
+        `C ${cpxD},${srcTop} ${cpxD},${destTop} ${destX},${destTop}`,
+        `L ${destX},${destBot}`,
+        `C ${cpxD},${destBot} ${cpxD},${srcBot} ${xPrev},${srcBot} Z`,
+      ].join(' ');
+
       dropPaths.push(
-        <path key={`mdrop-${di}`} d={d}
-          fill={isRose ? 'rgba(196,107,122,0.22)' : 'rgba(13,53,71,0.07)'}
-          stroke={isRose ? 'rgba(196,107,122,0.30)' : 'rgba(13,53,71,0.10)'}
-          strokeWidth={0.5} />
+        <path key={`ldrop-${di}`} d={d} fill={fill} stroke={stroke} strokeWidth={0.5} />
+      );
+      dropPaths.push(
+        <rect key={`ldn-${di}`} x={destX} y={destTop} width={destW}
+          height={Math.max(stripH, 2)} fill={nodeFill} rx={1.5} />
       );
       dropLabels.push(
-        <text key={`ml-name-${di}`} x={lastLabelX} y={tagTop + 4}
-          style={{ fontSize: 9, fontWeight: 500, fill: isRose ? '#b14545' : 'rgba(13,53,71,0.45)', fontFamily: 'monospace' }}>
-          {drop.label}
-        </text>
+        <g key={`ldl-${di}`}>
+          <text x={destX + destW / 2} y={destBot + 16}
+            textAnchor="middle"
+            className={`sky-drop-name${isRose ? ' is-rose' : ''}`}
+            dominantBaseline="middle">
+            {drop.label}
+          </text>
+          <text x={destX + destW / 2} y={destBot + 32}
+            textAnchor="middle"
+            className={`sky-drop-val${isRose ? ' is-rose' : ''}`}
+            dominantBaseline="middle">
+            {drop.value.toLocaleString('en-US')}
+          </text>
+        </g>
       );
-      dropLabels.push(
-        <text key={`ml-val-${di}`} x={lastLabelX} y={tagTop + 18}
-          style={{ fontSize: 10.5, fontWeight: 600, fill: isRose ? '#b14545' : 'rgba(13,53,71,0.6)', fontFamily: 'monospace', fontVariantNumeric: 'tabular-nums' }}>
-          {Math.round((drop.value / dropsTotal) * totalLastDrop).toLocaleString('en-US')}
-        </text>
-      );
-      cursor = srcBot;
     });
   }
 
-  // Nodes
+  // Nodes — centred bars with stage labels above
   const nodes = stages.map((s, i) => {
     const isFinal = i === stages.length - 1;
-    const pct = Math.round((s.value / stages[0].value) * 1000) / 10;
+    const pct = i === 0 ? null : Math.round((s.value / stages[0].value) * 1000) / 10;
     return (
       <g key={s.key}>
-        <rect
-          x={xs[i]} y={padT} width={nodeW} height={hs[i]} rx={3}
+        <clipPath id={`barClip${i}`}>
+          <rect x={xs[i]} y={topYs[i]} width={nodeW} height={hs[i]} rx={3} />
+        </clipPath>
+        <rect x={xs[i]} y={topYs[i]} width={nodeW} height={hs[i]} rx={3}
           fill={isFinal ? '#00A4B4' : '#1f4a5e'}
           style={isFinal ? { filter: 'drop-shadow(0 6px 14px rgba(0,164,180,0.35))' } : undefined}
         />
-        <text x={xs[i] + nodeW / 2} y={padT - 44} textAnchor="middle"
-          style={{ fontSize: 9.5, fontWeight: 600, fill: 'rgba(13,53,71,0.5)', letterSpacing: '0.16em', textTransform: 'uppercase', fontFamily: 'Manrope, sans-serif' }}>
+        <text x={xs[i] + nodeW / 2} y={topYs[i] - 44}
+          textAnchor="middle" className="sky-stage-name" dominantBaseline="middle">
           {s.label}
         </text>
-        <text x={xs[i] + nodeW / 2} y={padT - 22} textAnchor="middle"
-          style={{ fontSize: 26, fontWeight: 500, fill: '#0d3547', letterSpacing: '-0.026em', fontVariantNumeric: 'tabular-nums' }}>
+        <text x={xs[i] + nodeW / 2} y={topYs[i] - 22}
+          textAnchor="middle" className="sky-stage-num" dominantBaseline="middle">
           {s.value.toLocaleString('en-US')}
         </text>
-        {i > 0 && (
-          <text x={xs[i] + nodeW / 2} y={padT - 6} textAnchor="middle"
-            style={{ fontSize: 10, fontWeight: 500, fill: 'rgba(13,53,71,0.35)', fontFamily: 'monospace' }}>
+        {pct !== null && (
+          <text x={xs[i] + nodeW / 2} y={topYs[i] - 6}
+            textAnchor="middle" className="sky-stage-pct" dominantBaseline="middle">
             {pct}%
           </text>
         )}
@@ -352,12 +394,19 @@ function SankeyFlow({ stages }: { stages: SankeyStage[] }) {
   });
 
   return (
-    <svg
-      viewBox="0 0 1280 470"
-      style={{ width: '100%', minWidth: 980, height: 'auto', display: 'block', overflow: 'visible', fontFamily: 'var(--font-manrope, sans-serif)' }}
-      preserveAspectRatio="xMidYMid meet"
-    >
+    <svg viewBox={`0 0 ${W} ${H}`}
+      style={{ width: '100%', minWidth: 980, height: 'auto', display: 'block', overflow: 'visible' }}
+      preserveAspectRatio="xMidYMid meet">
       <defs>
+        <style>{`
+          .sky-stage-num  { font-size:26px; font-weight:500; fill:#0d3547; letter-spacing:-0.026em; font-variant-numeric:tabular-nums; font-family:'Manrope',sans-serif; }
+          .sky-stage-name { font-size:9.5px; font-weight:600; fill:rgba(13,53,71,0.5); letter-spacing:0.16em; text-transform:uppercase; font-family:'Manrope',sans-serif; }
+          .sky-stage-pct  { font-size:10px; font-weight:500; fill:rgba(13,53,71,0.35); font-family:'JetBrains Mono',monospace; }
+          .sky-drop-name  { font-size:11.5px; font-weight:500; fill:rgba(13,53,71,0.55); font-family:'Plus Jakarta Sans',sans-serif; }
+          .sky-drop-name.is-rose { fill:#b14545; }
+          .sky-drop-val   { font-size:14px; font-weight:600; fill:#0d3547; font-variant-numeric:tabular-nums; font-family:'Manrope',sans-serif; }
+          .sky-drop-val.is-rose  { fill:#b14545; }
+        `}</style>
         <linearGradient id="sankeyMain" x1="0" y1="0" x2="1" y2="0">
           <stop offset="0%"   stopColor="#00A4B4" stopOpacity="0.30" />
           <stop offset="55%"  stopColor="#00A4B4" stopOpacity="0.42" />
@@ -587,6 +636,15 @@ export default function DashboardPage() {
             closedWonDealIds.add(dealId);
           }
         }
+        // Enriched contacts with at least one closed-lost deal (and no closed-won in the same window)
+        const closedLostContactIds = new Set<string>();
+        for (const [contactId, dealIds] of dealIdsByEnrichedContact.entries()) {
+          const hasWon = dealIds.some((id) => closedWonDealIds.has(id));
+          if (hasWon) continue; // won takes precedence
+          const hasLost = dealIds.some((id) => (dealsById.get(id)?.deal_stage ?? '').toLowerCase() === 'closedlost');
+          if (hasLost) closedLostContactIds.add(contactId);
+        }
+
         const totalClosedWonAmount = Array.from(closedWonDealIds).reduce((sum, dealId) => {
           const amount = dealsById.get(dealId)?.amount;
           return typeof amount === 'number' && Number.isFinite(amount) ? sum + amount : sum;
@@ -608,6 +666,7 @@ export default function DashboardPage() {
           arcovaSourcedCustomers: customerSnapshots.filter((s) => s.is_arcova_sourced === true).length,
           arcovaEnrichedCustomers: customerSnapshots.filter((s) => s.is_arcova_enriched === true).length,
           wonAfterArcovaTouch: customerSnapshots.filter((s) => s.won_after_arcova_touch === true).length,
+          lostAfterArcovaTouch: closedLostContactIds.size,
           arcovaEnrichedContacts,
           capturedSignals: allRelevantSignals.length,
           contactSignalsCaptured: contactSignals.length,
@@ -650,19 +709,19 @@ export default function DashboardPage() {
     const withSignals = Math.min(stats.enrichedContactsWithSignals, enriched);
     const engaged     = Math.min(stats.engagedArcovaEnrichedContacts, withSignals);
     const won         = Math.min(stats.wonAfterArcovaTouch, engaged);
-    const stillOpen   = Math.max(0, engaged - won);
-    const closedLost  = Math.max(0, Math.round(stillOpen * 0.25));
+    const lost        = Math.min(stats.lostAfterArcovaTouch, Math.max(0, engaged - won));
+    const stillOpen   = Math.max(0, engaged - won - lost);
     return [
       { key: 'upload',  label: 'Uploaded',    value: total },
       { key: 'enrich',  label: 'Enriched',    value: enriched,    drop: { label: 'Not enriched',    value: Math.max(0, total - enriched) } },
       { key: 'signal',  label: 'Signals',     value: withSignals, drop: { label: 'No buying signal', value: Math.max(0, enriched - withSignals) } },
       { key: 'engaged', label: 'Engaged',     value: engaged,     drop: { label: 'No engagement',   value: Math.max(0, withSignals - engaged) } },
       { key: 'won',     label: 'Closed-won',  value: won, drops: [
-        { label: 'Still open',  value: stillOpen,  tone: 'neutral' as const },
-        { label: 'Closed-lost', value: closedLost, tone: 'rose'    as const },
+        { label: 'Still open',  value: stillOpen, tone: 'neutral' as const },
+        { label: 'Closed-lost', value: lost,      tone: 'rose'    as const },
       ]},
     ].filter(s => s.value > 0);
-  }, [stats.contacts, stats.arcovaEnrichedContacts, stats.enrichedContactsWithSignals, stats.engagedArcovaEnrichedContacts, stats.wonAfterArcovaTouch]);
+  }, [stats.contacts, stats.arcovaEnrichedContacts, stats.enrichedContactsWithSignals, stats.engagedArcovaEnrichedContacts, stats.wonAfterArcovaTouch, stats.lostAfterArcovaTouch]);
   const engagedPct = stats.periodArcovaTouchedContacts > 0 ? (stats.periodEngagedArcovaEnrichedContacts / stats.periodArcovaTouchedContacts) * 100 : 0;
   const wonPct = stats.periodArcovaTouchedContacts > 0 ? (stats.periodWonAfterArcovaTouch / stats.periodArcovaTouchedContacts) * 100 : 0;
   const sigConvRate = stats.capturedSignals > 0
@@ -916,9 +975,9 @@ export default function DashboardPage() {
 
           {/* ── 03 JOURNEY ── */}
           <SectionHead
-            num="03 · Customer journey"
+            num="03 · Journey flow"
             title="Where every uploaded contact ended up."
-            note="Lifetime view — independent of the period selector."
+            note="Each band narrows as contacts drop out at every stage. Lifetime view."
           />
 
           <section className={cn(glassCardStrong, 'relative overflow-hidden px-8 py-7')}>
@@ -933,11 +992,11 @@ export default function DashboardPage() {
                 Main flow
               </span>
               <span className="inline-flex items-center gap-1.5">
-                <i className="inline-block h-2 w-4 rounded-sm bg-arcova-navy/10" style={{ border: '1px solid rgba(13,53,71,0.08)' }} />
+                <i className="inline-block h-2 w-4 rounded-sm" style={{ background: 'rgba(169,182,189,0.55)', border: '1px solid rgba(13,53,71,0.08)' }} />
                 Dropped at this stage
               </span>
               <span className="inline-flex items-center gap-1.5">
-                <i className="inline-block h-2 w-4 rounded-sm" style={{ background: 'rgba(196,107,122,0.22)', border: '1px solid rgba(196,107,122,0.30)' }} />
+                <i className="inline-block h-2 w-4 rounded-sm" style={{ background: 'rgba(196,107,122,0.50)', border: '1px solid rgba(196,107,122,0.40)' }} />
                 Closed-lost
               </span>
               <span className="ml-auto italic">Lifetime view — independent of the period selector.</span>
