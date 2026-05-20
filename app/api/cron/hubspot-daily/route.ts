@@ -277,6 +277,10 @@ async function pullNewFromHubSpot(
         company_domain: p.website || '',
         linkedin_url: p.hs_linkedin_url || '',
         location,
+        // Phones — picked up downstream by import-queue and stacked into
+        // contact_phones via ensureImportPhoneEntry.
+        phone: p.phone || '',
+        mobile_phone: p.mobilephone || '',
       },
     };
   });

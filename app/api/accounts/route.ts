@@ -47,6 +47,7 @@ type AggregatedAccount = CompanyAggRow & {
   max_contact_intent_score: number | null;
   data_provenance_type: string;
   data_provenance_imported_at: string | null;
+  user_overrides?: Record<string, unknown> | null;
 };
 
 type ScratchAgg = CompanyAggRow & {
@@ -264,6 +265,31 @@ export async function GET(request: Request) {
             existing.max_contact_intent_score == null
               ? rowIntent
               : Math.max(existing.max_contact_intent_score, rowIntent);
+        }
+      }
+    }
+
+    // Merge per-user overrides from user_companies.user_overrides on top of
+    // the canonical company fields. The accounts_view does this via COALESCE
+    // server-side; here we replicate it in code because the existing query
+    // joins contacts → companies (not accounts_view).
+    if (byCompany.size > 0) {
+      const companyIds = [...byCompany.keys()];
+      const { data: overrideRows, error: overrideErr } = await supabase
+        .from('user_companies')
+        .select('company_id, user_overrides')
+        .eq('user_id', user.id)
+        .in('company_id', companyIds);
+      if (!overrideErr && overrideRows) {
+        for (const row of overrideRows as Array<{ company_id: string; user_overrides: Record<string, unknown> | null }>) {
+          const target = byCompany.get(row.company_id);
+          if (!target) continue;
+          const overrides = row.user_overrides ?? {};
+          for (const [key, value] of Object.entries(overrides)) {
+            if (value === null || value === undefined) continue;
+            (target as unknown as Record<string, unknown>)[key] = value;
+          }
+          (target as unknown as Record<string, unknown>).user_overrides = overrides;
         }
       }
     }

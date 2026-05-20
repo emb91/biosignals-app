@@ -160,6 +160,26 @@ export async function processQueuedRowsInBackground(params: {
           first_name: enrichmentResult.first_name || (rawData.first_name as string) || '',
           last_name: enrichmentResult.last_name || (rawData.last_name as string) || '',
           email: enrichmentResult.email || row.email || '',
+          // Phones captured from the CSV row are passed through verbatim;
+          // import-ingestion calls ensureImportPhoneEntry which normalises
+          // and dedupes per (user, contact, phone).
+          phone: typeof rawData.phone === 'string' ? rawData.phone : undefined,
+          mobile_phone:
+            typeof rawData.mobile_phone === 'string'
+              ? rawData.mobile_phone
+              : typeof rawData.mobile === 'string'
+                ? rawData.mobile
+                : typeof rawData.cell === 'string'
+                  ? (rawData.cell as string)
+                  : undefined,
+          work_phone:
+            typeof rawData.work_phone === 'string'
+              ? rawData.work_phone
+              : typeof rawData.direct_phone === 'string'
+                ? (rawData.direct_phone as string)
+                : typeof rawData.office_phone === 'string'
+                  ? (rawData.office_phone as string)
+                  : undefined,
           linkedin_url: enrichmentResult.linkedin_url || '',
           profile_photo_url: enrichmentResult.profile_photo_url,
           headline: enrichmentResult.headline,

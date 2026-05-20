@@ -339,24 +339,41 @@ export async function runClinicalTrialsMonitor(
 ): Promise<ClinicalTrialsMonitorResult> {
   const admin = createAdminClient();
 
-  const query = admin
-    .from('companies')
-    .select('id, user_id, company_name, domain, aliases')
+  // Ownership + archive state live in user_companies.
+  const { data: linkRows, error: linkError } = await admin
+    .from('user_companies')
+    .select('company_id')
     .eq('user_id', input.userId)
-    .is('archived_at', null)
-    .order('updated_at', { ascending: false });
+    .is('archived_at', null);
+  if (linkError) throw new Error(`user_companies query: ${linkError.message}`);
+  let ownedIds = (linkRows ?? [])
+    .map((r) => (r as { company_id?: unknown }).company_id)
+    .filter((v): v is string => typeof v === 'string' && Boolean(v));
 
   const companyIds = Array.isArray(input.companyIds)
     ? input.companyIds.filter((value): value is string => typeof value === 'string' && Boolean(value))
     : [];
-
   if (companyIds.length > 0) {
-    query.in('id', companyIds);
+    const requestedSet = new Set(companyIds);
+    ownedIds = ownedIds.filter((id) => requestedSet.has(id));
   } else {
-    query.limit(Math.min(Math.max(input.limit ?? 25, 1), 100));
+    ownedIds = ownedIds.slice(0, Math.min(Math.max(input.limit ?? 25, 1), 100));
   }
 
-  const { data: companies, error: companiesError } = await query;
+  if (ownedIds.length === 0) {
+    return {
+      processed: 0,
+      failed: 0,
+      emitted_signal_types: [],
+      recomputed_companies: [],
+      failures: [],
+    };
+  }
+
+  const { data: companies, error: companiesError } = await admin
+    .from('companies')
+    .select('id, user_id, company_name, domain, aliases')
+    .in('id', ownedIds);
   if (companiesError) throw new Error(companiesError.message);
 
   // Lazy-populate aliases for any company missing them. ensureCompanyAliases

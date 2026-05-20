@@ -6,6 +6,7 @@
  */
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
+import { persistRunHistory } from '@/lib/signals/run-history';
 import { runClinicalTrialsMonitor } from '@/lib/signals/run-clinical-trials-monitor';
 import { syncCtDelta } from '@/lib/signals/sync-ct-delta';
 
@@ -19,7 +20,7 @@ function messageFromUnknown(error: unknown): string {
 
 async function loadActiveUserIds(admin: ReturnType<typeof createAdminClient>): Promise<string[]> {
   const { data, error } = await admin
-    .from('companies')
+    .from('user_companies')
     .select('user_id')
     .is('archived_at', null);
   if (error) throw new Error(`load active users: ${error.message}`);
@@ -46,12 +47,38 @@ export async function GET(request: Request) {
     const failures: Array<{ user_id: string; error: string }> = [];
     for (const userId of userIds) {
       try {
-        await runClinicalTrialsMonitor({ userId });
+        const result = await runClinicalTrialsMonitor({ userId });
         monitorOk += 1;
+        await persistRunHistory(admin, {
+          userId,
+          signalKey: 'clinical_trials_all',
+          runner: 'clinical_trials',
+          scope: 'company',
+          status: result.failed > 0 ? 'failed' : 'success',
+          processed: result.processed,
+          failed: result.failed,
+          emittedSignalTypes: result.emitted_signal_types,
+          recomputedCompanies: result.recomputed_companies,
+          failures: result.failures.map((f) => ({
+            entity_type: 'company',
+            entity_id: f.company_id,
+            error: f.error,
+          })),
+          trigger: 'cron',
+        });
       } catch (error) {
         monitorFailed += 1;
         failures.push({ user_id: userId, error: messageFromUnknown(error) });
         console.error(`[cron/clinical-trials-delta] monitor failed for user ${userId}:`, error);
+        await persistRunHistory(admin, {
+          userId,
+          signalKey: 'clinical_trials_all',
+          runner: 'clinical_trials',
+          scope: 'company',
+          status: 'failed',
+          failures: [{ error: messageFromUnknown(error) }],
+          trigger: 'cron',
+        });
       }
     }
 

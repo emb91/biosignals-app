@@ -23,6 +23,7 @@ import {
 import { formatProvenanceImportedAt } from '@/lib/data-provenance';
 import { ROUTES, withQuery } from '@/lib/routes';
 import { looksLikeEmail, type ContactEmailRow } from '@/lib/contact-emails';
+import type { ContactPhoneRow } from '@/lib/contact-phones';
 import {
   buildContactEmailDisplayRows,
   formatContactLocationDisplay,
@@ -323,6 +324,7 @@ interface Lead {
   data_provenance_type?: string | null;
   data_provenance_imported_at?: string | null;
   contact_emails?: ContactEmailRow[] | null;
+  contact_phones?: ContactPhoneRow[] | null;
   hubspot_lead_state?: 'active' | 'customer' | 'dormant' | 'context_only' | 'none' | null;
   hubspot_latest_deal_stage?: string | null;
   hubspot_latest_deal_name?: string | null;
@@ -3360,6 +3362,40 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                                       <p key={`${r.label}-${r.email}-${i}`} className="break-all leading-snug">
                                         <span className="font-medium text-gray-600">{r.label}: </span>
                                         {r.email}
+                                      </p>
+                                    ));
+                                  })()}
+                                </div>
+                              </div>
+
+                              {/* Stacked phone numbers — same pattern as emails.
+                                  Read-only here; values flow in via import,
+                                  HubSpot sync, or Apollo enrichment. */}
+                              <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50/80 px-3 py-2">
+                                <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                                  Phone numbers (read-only)
+                                </p>
+                                <div className="mt-2 space-y-2 text-xs text-gray-700">
+                                  {(() => {
+                                    const phones = selectedLead.contact_phones ?? [];
+                                    if (phones.length === 0) {
+                                      return <p className="text-gray-500">None on file yet.</p>;
+                                    }
+                                    const labelFor = (cat: string) => {
+                                      if (cat === 'import') return 'Import';
+                                      if (cat === 'user') return 'User-added';
+                                      if (cat === 'enriched_work') return 'Work';
+                                      if (cat === 'enriched_mobile') return 'Mobile';
+                                      if (cat === 'enriched_personal') return 'Personal';
+                                      return 'Enriched';
+                                    };
+                                    return phones.map((p) => (
+                                      <p key={p.id} className="break-all leading-snug">
+                                        <span className="font-medium text-gray-600">{labelFor(p.category)}: </span>
+                                        {p.phone}
+                                        {p.source_provider && (
+                                          <span className="ml-1 text-[10px] text-gray-400">({p.source_provider})</span>
+                                        )}
                                       </p>
                                     ));
                                   })()}

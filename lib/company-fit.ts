@@ -729,6 +729,24 @@ async function clearCompanyFit(
     throw companyUpdateResult.error;
   }
 
+  // Dual-write: per-user scoring state lives in user_companies going forward.
+  await supabase
+    .from('user_companies')
+    .upsert(
+      {
+        user_id: userId,
+        company_id: companyId,
+        matched_icp_id: null,
+        company_fit_score: 0,
+        company_fit_breakdown: null,
+        company_fit_coverage: null,
+        company_fit_scored_at: now,
+        company_fit_version: SCORE_VERSION,
+        updated_at: now,
+      },
+      { onConflict: 'user_id,company_id' },
+    );
+
   const { data: contacts, error: contactUpdateError } = await supabase
     .from('contacts')
     .update({
@@ -813,6 +831,24 @@ async function persistScoresForCompany(
   if (companyUpdate.error) {
     throw companyUpdate.error;
   }
+
+  // Dual-write to user_companies (per-user scoring source of truth going forward).
+  await supabase
+    .from('user_companies')
+    .upsert(
+      {
+        user_id: userId,
+        company_id: companyId,
+        matched_icp_id: winner?.icpId ?? null,
+        company_fit_score: winner?.finalScore01 ?? 0,
+        company_fit_breakdown: winner?.breakdown ?? null,
+        company_fit_coverage: winner?.coverage01 ?? null,
+        company_fit_scored_at: now,
+        company_fit_version: SCORE_VERSION,
+        updated_at: now,
+      },
+      { onConflict: 'user_id,company_id' },
+    );
 
   const fitFields = buildContactFitFields(winner);
   const contactUpdate = await supabase
