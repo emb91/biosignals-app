@@ -17,6 +17,8 @@ import { classifyContacts } from '@/lib/contact-classification';
 import { runCompanyMonitor } from '@/lib/company-monitor';
 import { employeeCountToSizeBucket } from '@/lib/arcova-taxonomy';
 import { emitExternalContactSignalsFromEnrichment } from '@/lib/signals/readiness-external-contacts';
+import { ensureCompanyAliases } from '@/lib/signals/company-aliases';
+import { createAdminClient } from '@/lib/supabase-admin';
 
 type MinimalSupabase = {
   from: (table: string) => any;
@@ -758,6 +760,25 @@ async function upsertResolvedCompany(
         `[companies] Failed to update canonical company row (${context} id=${existingId}): ${updateError}`
       );
     }
+    // Dual-write: ensure the user_companies link exists for this user. Upsert
+    // so re-enrichment doesn't create dupes; the backfill should have already
+    // populated this row, but newly-resolved users on existing companies need
+    // it created.
+    const upsertLink = await supabase
+      .from('user_companies')
+      .upsert(
+        {
+          user_id: userId,
+          company_id: existingId,
+          source: input.source,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'user_id,company_id' },
+      );
+    const linkError = formatSupabaseErrorMessage(upsertLink?.error);
+    if (linkError) {
+      console.error(`[user_companies] dual-write (update path) failed for ${existingId} (${context}): ${linkError}`);
+    }
     return existingId;
   }
 
@@ -777,6 +798,36 @@ async function upsertResolvedCompany(
   if (!insertedId) {
     throw new Error(`[companies] Company upsert returned no id (${context})`);
   }
+
+  // Dual-write: also create the per-user link in user_companies. This keeps
+  // archived_at/source/added_at scoped per user, so a future refactor that
+  // drops the per-user columns from companies has zero data loss to migrate.
+  // For now both the old companies.user_id row and the user_companies link
+  // exist — readers can use either source while we migrate read paths.
+  const upsertLink = await supabase
+    .from('user_companies')
+    .upsert(
+      {
+        user_id: userId,
+        company_id: insertedId,
+        source: input.source,
+        archived_at: null,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_id,company_id' },
+    );
+  const linkError = formatSupabaseErrorMessage(upsertLink?.error);
+  if (linkError) {
+    console.error(`[user_companies] dual-write failed for ${insertedId} (${context}): ${linkError}`);
+  }
+
+  // Eager: populate company aliases via Haiku in the background. Don't await —
+  // alias generation takes ~1-2s and we don't want to block the insert path.
+  // The monitors also have a lazy fallback that picks up any company with
+  // empty aliases on first scan, so this is best-effort.
+  void ensureCompanyAliases(createAdminClient(), insertedId).catch((err) => {
+    console.error(`[companies] eager ensureCompanyAliases failed for ${insertedId} (${context}):`, err);
+  });
 
   return insertedId;
 }

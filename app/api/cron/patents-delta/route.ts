@@ -1,12 +1,15 @@
 /**
- * Daily patent-events delta sync — Vercel cron entrypoint.
+ * Weekly patent-events delta sync + per-user monitor — Vercel cron entrypoint.
  *
- * Wraps the shared syncPatentsDelta() function so the same code runs both for
- * the scheduled daily cron and for the admin "patents-all" button's optional
- * sync_first step.
+ * Step 1: pull a week of new patent publications from BigQuery into the local
+ *         patent_events mirror.
+ * Step 2: walk every user with non-archived companies and run runPatentsMonitor
+ *         against the fresh mirror, so signals land in their feeds without
+ *         them having to press the admin test button.
  */
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
+import { runPatentsMonitor } from '@/lib/signals/run-patents-monitor';
 import { syncPatentsDelta } from '@/lib/signals/sync-patents-delta';
 
 export const dynamic = 'force-dynamic';
@@ -17,6 +20,19 @@ function messageFromUnknown(error: unknown): string {
   return String(error);
 }
 
+async function loadActiveUserIds(admin: ReturnType<typeof createAdminClient>): Promise<string[]> {
+  const { data, error } = await admin
+    .from('companies')
+    .select('user_id')
+    .is('archived_at', null);
+  if (error) throw new Error(`load active users: ${error.message}`);
+  const ids = new Set<string>();
+  for (const row of (data ?? []) as Array<{ user_id?: unknown }>) {
+    if (typeof row.user_id === 'string' && row.user_id) ids.add(row.user_id);
+  }
+  return [...ids];
+}
+
 export async function GET(request: Request) {
   const cronSecret = process.env.CRON_SECRET;
   const auth = request.headers.get('authorization');
@@ -25,8 +41,33 @@ export async function GET(request: Request) {
   }
   try {
     const admin = createAdminClient();
-    const result = await syncPatentsDelta({ admin });
-    return NextResponse.json({ success: true, ...result });
+    const syncResult = await syncPatentsDelta({ admin });
+
+    const userIds = await loadActiveUserIds(admin);
+    let monitorOk = 0;
+    let monitorFailed = 0;
+    const failures: Array<{ user_id: string; error: string }> = [];
+    for (const userId of userIds) {
+      try {
+        await runPatentsMonitor({ userId });
+        monitorOk += 1;
+      } catch (error) {
+        monitorFailed += 1;
+        failures.push({ user_id: userId, error: messageFromUnknown(error) });
+        console.error(`[cron/patents-delta] monitor failed for user ${userId}:`, error);
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      sync: syncResult,
+      monitor: {
+        users_total: userIds.length,
+        users_succeeded: monitorOk,
+        users_failed: monitorFailed,
+        failures,
+      },
+    });
   } catch (error) {
     return NextResponse.json({ error: messageFromUnknown(error) }, { status: 500 });
   }

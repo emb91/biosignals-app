@@ -1,4 +1,5 @@
 import { createAdminClient } from '@/lib/supabase-admin';
+import { ensureCompanyAliases } from '@/lib/signals/company-aliases';
 import { buildCompanyQueryVariants, normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
 import {
   generateAccountReason,
@@ -317,12 +318,32 @@ export async function runPatentsMonitor(input: PatentsMonitorInput): Promise<Pat
   const recomputedCompanyIds = new Set<string>();
   const failures: Array<{ company_id: string; error: string }> = [];
 
-  // Reads from the local patent_events mirror (populated by the daily
-  // /api/cron/patents-delta cron and the one-time backfill). Per-user scans
-  // now do zero BigQuery work — just indexed Supabase queries.
+  // Lazy-populate aliases for any company that doesn't have them yet. The
+  // service is no-op + cheap if aliases are already populated and fresh
+  // (< 180 days). If it fails for a company we just continue with whatever
+  // aliases exist — the monitor still works, just with thinner recall.
+  const companyAliasMap = new Map<string, string[]>();
+  for (const row of (companies ?? []) as CompanyRow[]) {
+    const name = row.company_name?.trim();
+    if (!name) continue;
+    let aliases = row.aliases ?? [];
+    if (aliases.length === 0) {
+      try {
+        const result = await ensureCompanyAliases(admin, row.id);
+        aliases = result.aliases;
+      } catch (error) {
+        console.error(`[patents] ensureCompanyAliases failed for ${row.id}:`, error);
+      }
+    }
+    companyAliasMap.set(row.id, aliases);
+  }
+
+  // Reads from the local patent_events mirror (populated by the weekly
+  // /api/cron/patents-delta cron). Per-user scans now do zero BigQuery
+  // work — just indexed Supabase queries.
   const companiesForFetch = ((companies ?? []) as CompanyRow[]).flatMap((row) => {
     const name = row.company_name?.trim();
-    return name ? [{ id: row.id, name, aliases: row.aliases ?? [] }] : [];
+    return name ? [{ id: row.id, name, aliases: companyAliasMap.get(row.id) ?? [] }] : [];
   });
   const patentsByCompany = await fetchPatentsForCompaniesFromLocal(admin, companiesForFetch, 100);
 
