@@ -1,11 +1,12 @@
 /**
- * Daily clinical trials delta sync — Vercel cron entrypoint.
+ * Daily clinical-trials delta sync + per-user monitor — Vercel cron entrypoint.
  *
- * Wraps the shared syncCtDelta() function. Daily cadence (vs weekly for FDA
- * and patents) because trial recruiting status / locations change frequently.
+ * Pulls recently-updated trials into the local clinical_trials mirror, then
+ * runs runClinicalTrialsMonitor for every user with non-archived companies.
  */
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
+import { runClinicalTrialsMonitor } from '@/lib/signals/run-clinical-trials-monitor';
 import { syncCtDelta } from '@/lib/signals/sync-ct-delta';
 
 export const dynamic = 'force-dynamic';
@@ -16,6 +17,19 @@ function messageFromUnknown(error: unknown): string {
   return String(error);
 }
 
+async function loadActiveUserIds(admin: ReturnType<typeof createAdminClient>): Promise<string[]> {
+  const { data, error } = await admin
+    .from('companies')
+    .select('user_id')
+    .is('archived_at', null);
+  if (error) throw new Error(`load active users: ${error.message}`);
+  const ids = new Set<string>();
+  for (const row of (data ?? []) as Array<{ user_id?: unknown }>) {
+    if (typeof row.user_id === 'string' && row.user_id) ids.add(row.user_id);
+  }
+  return [...ids];
+}
+
 export async function GET(request: Request) {
   const cronSecret = process.env.CRON_SECRET;
   const auth = request.headers.get('authorization');
@@ -24,8 +38,33 @@ export async function GET(request: Request) {
   }
   try {
     const admin = createAdminClient();
-    const result = await syncCtDelta({ admin });
-    return NextResponse.json({ success: true, ...result });
+    const syncResult = await syncCtDelta({ admin });
+
+    const userIds = await loadActiveUserIds(admin);
+    let monitorOk = 0;
+    let monitorFailed = 0;
+    const failures: Array<{ user_id: string; error: string }> = [];
+    for (const userId of userIds) {
+      try {
+        await runClinicalTrialsMonitor({ userId });
+        monitorOk += 1;
+      } catch (error) {
+        monitorFailed += 1;
+        failures.push({ user_id: userId, error: messageFromUnknown(error) });
+        console.error(`[cron/clinical-trials-delta] monitor failed for user ${userId}:`, error);
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      sync: syncResult,
+      monitor: {
+        users_total: userIds.length,
+        users_succeeded: monitorOk,
+        users_failed: monitorFailed,
+        failures,
+      },
+    });
   } catch (error) {
     return NextResponse.json({ error: messageFromUnknown(error) }, { status: 500 });
   }

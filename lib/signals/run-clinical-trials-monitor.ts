@@ -1,4 +1,5 @@
 import { createAdminClient } from '@/lib/supabase-admin';
+import { ensureCompanyAliases } from '@/lib/signals/company-aliases';
 import { buildCompanyQueryVariants, normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
 import {
   generateAccountReason,
@@ -358,6 +359,24 @@ export async function runClinicalTrialsMonitor(
   const { data: companies, error: companiesError } = await query;
   if (companiesError) throw new Error(companiesError.message);
 
+  // Lazy-populate aliases for any company missing them. ensureCompanyAliases
+  // is a no-op when aliases are already populated and fresh (<180 days).
+  const companyAliasMap = new Map<string, string[]>();
+  for (const row of (companies ?? []) as CompanyRow[]) {
+    const name = row.company_name?.trim();
+    if (!name) continue;
+    let aliases = row.aliases ?? [];
+    if (aliases.length === 0) {
+      try {
+        const result = await ensureCompanyAliases(admin, row.id);
+        aliases = result.aliases;
+      } catch (error) {
+        console.error(`[clinical-trials] ensureCompanyAliases failed for ${row.id}:`, error);
+      }
+    }
+    companyAliasMap.set(row.id, aliases);
+  }
+
   let processed = 0;
   let failed = 0;
   const emittedSignalTypes = new Set<string>();
@@ -369,7 +388,7 @@ export async function runClinicalTrialsMonitor(
     if (!companyName) continue;
 
     try {
-      const studies = await fetchStudiesForCompany(admin, companyName, row.aliases ?? [], 100);
+      const studies = await fetchStudiesForCompany(admin, companyName, companyAliasMap.get(row.id) ?? [], 100);
       const matching = studies.filter((study) => {
         if (!looksLikeCompanyStudy(companyName, study)) return false;
         if (input.onlySignalKey === 'clinical_trial_registered') {

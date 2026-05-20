@@ -1,4 +1,5 @@
 import { createAdminClient } from '@/lib/supabase-admin';
+import { ensureCompanyAliases } from '@/lib/signals/company-aliases';
 import { buildCompanyQueryVariants, normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
 import {
   generateAccountReason,
@@ -379,6 +380,24 @@ export async function runFdaRegulatoryMonitor(
   const { data: companies, error: companiesError } = await query;
   if (companiesError) throw new Error(companiesError.message);
 
+  // Lazy-populate aliases for any company missing them. ensureCompanyAliases
+  // is a no-op when aliases are already populated and fresh (<180 days).
+  const companyAliasMap = new Map<string, string[]>();
+  for (const row of (companies ?? []) as CompanyRow[]) {
+    const name = row.company_name?.trim();
+    if (!name) continue;
+    let aliases = row.aliases ?? [];
+    if (aliases.length === 0) {
+      try {
+        const result = await ensureCompanyAliases(admin, row.id);
+        aliases = result.aliases;
+      } catch (error) {
+        console.error(`[fda-regulatory] ensureCompanyAliases failed for ${row.id}:`, error);
+      }
+    }
+    companyAliasMap.set(row.id, aliases);
+  }
+
   let processed = 0;
   let failed = 0;
   const emittedSignalTypes = new Set<string>();
@@ -390,7 +409,7 @@ export async function runFdaRegulatoryMonitor(
     if (!companyName) continue;
 
     try {
-      const aliases = row.aliases ?? [];
+      const aliases = companyAliasMap.get(row.id) ?? [];
       const [records, device510k, devicePma] = await Promise.all([
         fetchFdaDrugRecordsForCompany(admin, companyName, aliases, 100),
         fetchFda510kRecordsForCompany(admin, companyName, aliases, 100),
