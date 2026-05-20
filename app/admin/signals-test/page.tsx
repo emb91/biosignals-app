@@ -326,6 +326,7 @@ export default function AdminSignalsTestPage() {
       const startedAt = Date.now();
       const body: Record<string, unknown> = {
         limit: batchCompanyMode ? batchLimit : 25,
+        sync_first: true,
       };
       if (!batchCompanyMode && selectedCompanyId) {
         body.company_ids = [selectedCompanyId];
@@ -421,6 +422,7 @@ export default function AdminSignalsTestPage() {
       const startedAt = Date.now();
       const body: Record<string, unknown> = {
         limit: batchCompanyMode ? batchLimit : 25,
+        sync_first: true,
       };
       if (!batchCompanyMode && selectedCompanyId) {
         body.company_ids = [selectedCompanyId];

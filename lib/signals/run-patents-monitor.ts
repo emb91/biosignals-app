@@ -1,4 +1,5 @@
 import { createAdminClient } from '@/lib/supabase-admin';
+import { buildCompanyQueryVariants, normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
 import {
   generateAccountReason,
   ingestSignalSourceEvent,
@@ -11,6 +12,7 @@ type CompanyRow = {
   id: string;
   user_id: string;
   company_name: string | null;
+  aliases: string[] | null;
 };
 
 type PatentsMonitorInput = {
@@ -71,29 +73,6 @@ function normalizeText(value?: string | null): string {
   return (value ?? '').trim().toLowerCase();
 }
 
-function normalizeCompanyForMatching(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, ' ')
-    .replace(/\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|gmbh|ag|sa|nv|pty)\b/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function buildCompanyQueryVariants(companyName: string): string[] {
-  const original = companyName.trim();
-  const normalized = normalizeCompanyForMatching(companyName);
-  const variants: string[] = [];
-  if (original) variants.push(original);
-  if (normalized && normalized !== original.toLowerCase()) variants.push(normalized);
-
-  const tokens = normalized.split(' ').filter(Boolean);
-  if (tokens.length >= 2) variants.push(tokens.slice(0, 2).join(' '));
-  if (tokens.length >= 3) variants.push(tokens.slice(0, 3).join(' '));
-
-  return [...new Set(variants)].filter((v) => v.length >= 4);
-}
-
 function toIsoDate(value?: string): string | null {
   if (!value) return null;
   const time = Date.parse(value);
@@ -122,7 +101,7 @@ function detectTherapeuticArea(row: PatentRow): string | null {
 
 async function fetchPatentsForCompaniesFromLocal(
   admin: ReturnType<typeof createAdminClient>,
-  companies: Array<{ id: string; name: string }>,
+  companies: Array<{ id: string; name: string; aliases?: string[] }>,
   limitPerCompany = 100,
 ): Promise<Map<string, PatentRow[]>> {
   const result = new Map<string, PatentRow[]>();
@@ -134,16 +113,28 @@ async function fetchPatentsForCompaniesFromLocal(
       result.set(company.id, []);
       continue;
     }
-    const normalized = normalizeCompanyForMatching(rawName);
-    if (normalized.length < 4) {
+    // Build a normalized search set from the primary name + LLM-derived aliases
+    // (e.g. "Moderna" → ["moderna", "modernatx", "moderna therapeutics", …]),
+    // then ILIKE-OR across all of them so we catch subsidiaries, renames, and
+    // legal-entity variations the substring on the primary name alone misses.
+    const aliases = company.aliases ?? [];
+    const searchTerms = buildCompanyQueryVariants(rawName, aliases)
+      .map((v) => normalizeCompanyForMatching(v))
+      .filter((v) => v.length >= 4);
+    const uniqueTerms = [...new Set(searchTerms)];
+    if (uniqueTerms.length === 0) {
       result.set(company.id, []);
       continue;
     }
 
+    const orClause = uniqueTerms
+      .map((term) => `assignee_name_normalized.ilike.%${term.replace(/[,()]/g, ' ').trim()}%`)
+      .join(',');
+
     const { data: assigneeRows, error: assigneeErr } = await admin
       .from('patent_event_assignees')
       .select('publication_number')
-      .ilike('assignee_name_normalized', `%${normalized}%`)
+      .or(orClause)
       .limit(Math.max(limitPerCompany * 3, 200));
 
     if (assigneeErr) {
@@ -302,7 +293,7 @@ export async function runPatentsMonitor(input: PatentsMonitorInput): Promise<Pat
   const admin = createAdminClient();
   const query = admin
     .from('companies')
-    .select('id, user_id, company_name')
+    .select('id, user_id, company_name, aliases')
     .eq('user_id', input.userId)
     .is('archived_at', null)
     .order('updated_at', { ascending: false });
@@ -331,7 +322,7 @@ export async function runPatentsMonitor(input: PatentsMonitorInput): Promise<Pat
   // now do zero BigQuery work — just indexed Supabase queries.
   const companiesForFetch = ((companies ?? []) as CompanyRow[]).flatMap((row) => {
     const name = row.company_name?.trim();
-    return name ? [{ id: row.id, name }] : [];
+    return name ? [{ id: row.id, name, aliases: row.aliases ?? [] }] : [];
   });
   const patentsByCompany = await fetchPatentsForCompaniesFromLocal(admin, companiesForFetch, 100);
 

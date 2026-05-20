@@ -1,4 +1,5 @@
 import { createAdminClient } from '@/lib/supabase-admin';
+import { buildCompanyQueryVariants, normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
 import {
   generateAccountReason,
   ingestSignalSourceEvent,
@@ -12,6 +13,7 @@ type CompanyRow = {
   user_id: string;
   company_name: string | null;
   domain: string | null;
+  aliases: string[] | null;
 };
 
 type ClinicalTrialsMonitorInput = {
@@ -155,77 +157,54 @@ function isCompletedStatus(status?: string | null): boolean {
   return hasAny(s, ['completed']);
 }
 
-async function fetchStudiesForCompany(companyName: string, pageSize = 25): Promise<CtStudy[]> {
-  const query = encodeURIComponent(companyName);
-  const fields = encodeURIComponent(
-    [
-      'protocolSection.identificationModule.nctId',
-      'protocolSection.identificationModule.briefTitle',
-      'protocolSection.statusModule.overallStatus',
-      'protocolSection.statusModule.lastUpdatePostDateStruct',
-      'protocolSection.designModule.phases',
-      'protocolSection.conditionsModule.conditions',
-      'protocolSection.contactsLocationsModule.locations',
-      'protocolSection.sponsorCollaboratorsModule.leadSponsor',
-      'protocolSection.sponsorCollaboratorsModule.collaborators',
-    ].join(',')
-  );
-  const url = `https://clinicaltrials.gov/api/v2/studies?query.term=${query}&fields=${fields}&pageSize=${pageSize}`;
+function escapePostgrestPattern(term: string): string {
+  return term.replace(/[,()]/g, ' ').trim();
+}
 
-  const response = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
-      'User-Agent': 'ArcovaSignalBot/1.0',
-    },
-  });
-  if (!response.ok) {
-    throw new Error(`ClinicalTrials.gov request failed (${response.status})`);
-  }
+async function fetchStudiesForCompany(
+  admin: ReturnType<typeof createAdminClient>,
+  companyName: string,
+  aliases: string[],
+  limit = 100,
+): Promise<CtStudy[]> {
+  // Read from the local clinical_trials mirror (populated by syncCtDelta).
+  // ILIKE-OR across normalized variants on lead_sponsor_normalized.
+  // Trigram index makes this fast even at 500K+ rows.
+  const terms = [...new Set(
+    buildCompanyQueryVariants(companyName, aliases)
+      .map((v) => normalizeCompanyForMatching(v))
+      .filter((v) => v.length >= 4),
+  )];
+  if (terms.length === 0) return [];
 
-  const payload = (await response.json()) as { studies?: unknown[] };
-  const studies = Array.isArray(payload?.studies) ? payload.studies : [];
+  const orClause = terms
+    .map((t) => `lead_sponsor_normalized.ilike.%${escapePostgrestPattern(t)}%`)
+    .join(',');
+  const { data, error } = await admin
+    .from('clinical_trials')
+    .select('nct_id, brief_title, overall_status, phases, conditions, lead_sponsor, collaborators, last_update_post_date, locations_count')
+    .or(orClause)
+    .order('last_update_post_date', { ascending: false })
+    .limit(Math.min(Math.max(limit, 1), 500));
+  if (error) throw new Error(`clinical_trials query failed: ${error.message}`);
 
-  return studies
-    .map((raw): CtStudy | null => {
-      if (!raw || typeof raw !== 'object') return null;
-      const r = raw as Record<string, any>;
-      const ps = r.protocolSection ?? {};
-      const idm = ps.identificationModule ?? {};
-      const sm = ps.statusModule ?? {};
-      const dm = ps.designModule ?? {};
-      const cm = ps.conditionsModule ?? {};
-      const clm = ps.contactsLocationsModule ?? {};
-      const sponsor = ps.sponsorCollaboratorsModule ?? {};
-      const nctId = typeof idm.nctId === 'string' ? idm.nctId.trim() : '';
-      if (!nctId) return null;
-      const title = typeof idm.briefTitle === 'string' ? idm.briefTitle : null;
-      const overallStatus = typeof sm.overallStatus === 'string' ? sm.overallStatus : null;
-      const phases = Array.isArray(dm.phases) ? dm.phases.filter((p: unknown) => typeof p === 'string') : [];
-      const conditions = Array.isArray(cm.conditions) ? cm.conditions.filter((c: unknown) => typeof c === 'string') : [];
-      const leadSponsor = typeof sponsor?.leadSponsor?.name === 'string' ? sponsor.leadSponsor.name : null;
-      const collaborators = Array.isArray(sponsor.collaborators)
-        ? sponsor.collaborators
-            .map((c: any) => (typeof c?.name === 'string' ? c.name : null))
-            .filter((v: string | null): v is string => Boolean(v))
-        : [];
-      const dateStruct = sm.lastUpdatePostDateStruct ?? {};
-      const lastUpdatePostDate = typeof dateStruct.date === 'string' ? dateStruct.date : null;
-      const locationsCount = Array.isArray(clm.locations) ? clm.locations.length : null;
-
-      return {
-        nctId,
-        title,
-        overallStatus,
-        phases,
-        conditions,
-        leadSponsor,
-        collaborators,
-        lastUpdatePostDate,
-        sourceUrl: `https://clinicaltrials.gov/study/${nctId}`,
-        locationsCount,
-      };
-    })
-    .filter((study): study is CtStudy => Boolean(study));
+  return (data ?? []).map((r) => {
+    const row = r as Record<string, unknown>;
+    const nctId = typeof row.nct_id === 'string' ? row.nct_id : '';
+    return {
+      nctId,
+      title: typeof row.brief_title === 'string' ? row.brief_title : null,
+      overallStatus: typeof row.overall_status === 'string' ? row.overall_status : null,
+      phases: Array.isArray(row.phases) ? (row.phases as string[]) : [],
+      conditions: Array.isArray(row.conditions) ? (row.conditions as string[]) : [],
+      leadSponsor: typeof row.lead_sponsor === 'string' ? row.lead_sponsor : null,
+      collaborators: Array.isArray(row.collaborators) ? (row.collaborators as string[]) : [],
+      lastUpdatePostDate:
+        typeof row.last_update_post_date === 'string' ? row.last_update_post_date : null,
+      sourceUrl: `https://clinicaltrials.gov/study/${nctId}`,
+      locationsCount: typeof row.locations_count === 'number' ? row.locations_count : null,
+    };
+  }).filter((s): s is CtStudy => Boolean(s.nctId));
 }
 
 async function sourceEventExists(
@@ -361,7 +340,7 @@ export async function runClinicalTrialsMonitor(
 
   const query = admin
     .from('companies')
-    .select('id, user_id, company_name, domain')
+    .select('id, user_id, company_name, domain, aliases')
     .eq('user_id', input.userId)
     .is('archived_at', null)
     .order('updated_at', { ascending: false });
@@ -390,7 +369,7 @@ export async function runClinicalTrialsMonitor(
     if (!companyName) continue;
 
     try {
-      const studies = await fetchStudiesForCompany(companyName, 25);
+      const studies = await fetchStudiesForCompany(admin, companyName, row.aliases ?? [], 100);
       const matching = studies.filter((study) => {
         if (!looksLikeCompanyStudy(companyName, study)) return false;
         if (input.onlySignalKey === 'clinical_trial_registered') {

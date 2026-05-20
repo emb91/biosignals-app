@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
+import { createAdminClient } from '@/lib/supabase-admin';
 import { runClinicalTrialsMonitor } from '@/lib/signals/run-clinical-trials-monitor';
+import { syncCtDelta, type SyncCtDeltaResult } from '@/lib/signals/sync-ct-delta';
 import type { SignalKey } from '@/lib/signals/readiness-types';
 
 type RunClinicalTrialsBody = {
@@ -9,6 +11,14 @@ type RunClinicalTrialsBody = {
   only_signal_key?: string;
   run_all?: boolean;
   batch_size?: number;
+  sync_first?: boolean;
+};
+
+type SyncSummary = {
+  ran: boolean;
+  ok: boolean;
+  result: SyncCtDeltaResult | null;
+  error: string | null;
 };
 
 type PersistRunHistoryInput = {
@@ -92,6 +102,19 @@ export async function POST(request: Request) {
       ? body.company_ids.filter((value): value is string => typeof value === 'string' && Boolean(value))
       : [];
 
+    const syncSummary: SyncSummary = { ran: false, ok: false, result: null, error: null };
+    if (body.sync_first === true) {
+      syncSummary.ran = true;
+      try {
+        syncSummary.result = await syncCtDelta({ admin: createAdminClient() });
+        syncSummary.ok = true;
+      } catch (error) {
+        syncSummary.ok = false;
+        syncSummary.error = messageFromUnknown(error);
+        console.error('[signals/run/clinical-trials] sync_first failed (continuing with stale data):', error);
+      }
+    }
+
     let result: Awaited<ReturnType<typeof runClinicalTrialsMonitor>>;
     let executedCompanyIds: string[] = requestedCompanyIds;
     if (runAll && requestedCompanyIds.length === 0) {
@@ -172,6 +195,7 @@ export async function POST(request: Request) {
       success: true,
       run_all: runAll,
       batch_size: runAll ? batchSize : null,
+      sync: syncSummary,
       result: {
         clinical_trials_processed: result.processed,
         processed: result.processed,

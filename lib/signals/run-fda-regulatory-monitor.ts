@@ -1,4 +1,5 @@
 import { createAdminClient } from '@/lib/supabase-admin';
+import { buildCompanyQueryVariants, normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
 import {
   generateAccountReason,
   ingestSignalSourceEvent,
@@ -12,6 +13,7 @@ type CompanyRow = {
   user_id: string;
   company_name: string | null;
   domain: string | null;
+  aliases: string[] | null;
 };
 
 type FdaRegulatoryMonitorInput = {
@@ -47,7 +49,32 @@ type DrugsFdaResult = {
   submissions?: DrugsFdaSubmission[];
 };
 
+type Device510kResult = {
+  k_number?: string;
+  applicant?: string;
+  device_name?: string;
+  product_code?: string;
+  decision_date?: string;
+  decision_description?: string;
+  decision_code?: string;
+};
+
+type DevicePmaResult = {
+  pma_number?: string;
+  supplement_number?: string;
+  supplement_type?: string;
+  supplement_reason?: string;
+  applicant?: string;
+  trade_name?: string;
+  generic_name?: string;
+  decision_date?: string;
+  decision_code?: string;
+  advisory_committee_description?: string;
+};
+
 const SOURCE = 'openfda_drugsfda';
+const SOURCE_510K = 'openfda_device_510k';
+const SOURCE_PMA = 'openfda_device_pma';
 
 function messageFromUnknown(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -141,28 +168,130 @@ function isLikelyIndicationExpansion(submission: DrugsFdaSubmission): boolean {
   ]);
 }
 
-async function fetchFdaRecordsForCompany(companyName: string, limit = 25): Promise<DrugsFdaResult[]> {
-  const query = encodeURIComponent(`sponsor_name:"${companyName}"`);
-  const url = `https://api.fda.gov/drug/drugsfda.json?search=${query}&limit=${Math.min(Math.max(limit, 1), 100)}`;
-  const response = await fetch(url, { headers: { Accept: 'application/json' } });
-  if (!response.ok) {
-    if (response.status === 404) return [];
-    throw new Error(`openFDA request failed (${response.status})`);
+/**
+ * Build an OpenFDA Lucene-style search clause that ORs across the primary
+ * name + every alias. Aliases are quoted so multi-word legal names like
+ * "ModernaTx, Inc." aren't tokenized into "moderna" + "inc" (which would
+ * over-match unrelated sponsors).
+ */
+/**
+ * Build an OR-clause across normalized variants of the company name + aliases.
+ * Used for ILIKE matching against the *_normalized columns in our local FDA
+ * mirror tables (populated by syncFdaDelta). Trigram indexes on those columns
+ * make this fast.
+ */
+function buildNormalizedSearchTerms(companyName: string, aliases: string[]): string[] {
+  return [...new Set(
+    buildCompanyQueryVariants(companyName, aliases)
+      .map((v) => normalizeCompanyForMatching(v))
+      .filter((v) => v.length >= 4),
+  )];
+}
+
+function escapePostgrestPattern(term: string): string {
+  return term.replace(/[,()]/g, ' ').trim();
+}
+
+async function fetchFdaDrugRecordsForCompany(
+  admin: ReturnType<typeof createAdminClient>,
+  companyName: string,
+  aliases: string[],
+  limit = 100,
+): Promise<DrugsFdaResult[]> {
+  const terms = buildNormalizedSearchTerms(companyName, aliases);
+  if (terms.length === 0) return [];
+  const orClause = terms.map((t) => `sponsor_normalized.ilike.%${escapePostgrestPattern(t)}%`).join(',');
+  const { data, error } = await admin
+    .from('fda_drug_submissions')
+    .select('*')
+    .or(orClause)
+    .order('submission_status_date', { ascending: false })
+    .limit(Math.min(Math.max(limit, 1), 500));
+  if (error) throw new Error(`fda_drug_submissions query failed: ${error.message}`);
+
+  // Group flat submission rows back into DrugsFdaResult[] (one per application)
+  // so the downstream emission loop works unchanged.
+  const byApp = new Map<string, DrugsFdaResult>();
+  for (const r of (data ?? []) as Array<Record<string, unknown>>) {
+    const appNo = typeof r.application_number === 'string' ? r.application_number : '';
+    if (!appNo) continue;
+    if (!byApp.has(appNo)) {
+      byApp.set(appNo, {
+        application_number: appNo,
+        sponsor_name: typeof r.sponsor_name === 'string' ? r.sponsor_name : undefined,
+        products: typeof r.product_brand_name === 'string'
+          ? [{ brand_name: r.product_brand_name }]
+          : [],
+        submissions: [],
+      });
+    }
+    const app = byApp.get(appNo)!;
+    app.submissions!.push({
+      submission_number: typeof r.submission_number === 'string' ? r.submission_number : undefined,
+      submission_status: typeof r.submission_status === 'string' ? r.submission_status : undefined,
+      submission_status_date: typeof r.submission_status_date === 'string' ? r.submission_status_date : undefined,
+      submission_type: typeof r.submission_type === 'string' ? r.submission_type : undefined,
+      submission_class_code: typeof r.submission_class_code === 'string' ? r.submission_class_code : undefined,
+      submission_class_code_description:
+        typeof r.submission_class_code_description === 'string' ? r.submission_class_code_description : undefined,
+      review_priority: typeof r.review_priority === 'string' ? r.review_priority : undefined,
+      submission_property_type: Array.isArray(r.submission_property_type)
+        ? (r.submission_property_type as Array<{ code?: string; value?: string }>)
+        : undefined,
+    });
   }
-  const payload = (await response.json()) as { results?: DrugsFdaResult[] };
-  return Array.isArray(payload.results) ? payload.results : [];
+  return [...byApp.values()];
+}
+
+async function fetchFda510kRecordsForCompany(
+  admin: ReturnType<typeof createAdminClient>,
+  companyName: string,
+  aliases: string[],
+  limit = 100,
+): Promise<Device510kResult[]> {
+  const terms = buildNormalizedSearchTerms(companyName, aliases);
+  if (terms.length === 0) return [];
+  const orClause = terms.map((t) => `applicant_normalized.ilike.%${escapePostgrestPattern(t)}%`).join(',');
+  const { data, error } = await admin
+    .from('fda_device_510k')
+    .select('k_number, applicant, device_name, product_code, decision_code, decision_description, decision_date')
+    .or(orClause)
+    .order('decision_date', { ascending: false })
+    .limit(Math.min(Math.max(limit, 1), 500));
+  if (error) throw new Error(`fda_device_510k query failed: ${error.message}`);
+  return (data ?? []) as Device510kResult[];
+}
+
+async function fetchFdaPmaRecordsForCompany(
+  admin: ReturnType<typeof createAdminClient>,
+  companyName: string,
+  aliases: string[],
+  limit = 100,
+): Promise<DevicePmaResult[]> {
+  const terms = buildNormalizedSearchTerms(companyName, aliases);
+  if (terms.length === 0) return [];
+  const orClause = terms.map((t) => `applicant_normalized.ilike.%${escapePostgrestPattern(t)}%`).join(',');
+  const { data, error } = await admin
+    .from('fda_device_pma')
+    .select('pma_number, supplement_number, applicant, trade_name, generic_name, supplement_type, supplement_reason, decision_code, decision_date, advisory_committee_description')
+    .or(orClause)
+    .order('decision_date', { ascending: false })
+    .limit(Math.min(Math.max(limit, 1), 500));
+  if (error) throw new Error(`fda_device_pma query failed: ${error.message}`);
+  return (data ?? []) as DevicePmaResult[];
 }
 
 async function sourceEventExists(
   admin: ReturnType<typeof createAdminClient>,
   userId: string,
+  source: string,
   sourceEventId: string,
 ): Promise<boolean> {
   const { data, error } = await admin
     .from('signal_source_events')
     .select('id')
     .eq('user_id', userId)
-    .eq('source', SOURCE)
+    .eq('source', source)
     .eq('source_event_id', sourceEventId)
     .limit(1)
     .maybeSingle();
@@ -176,6 +305,7 @@ async function emitCompanySignal(
     userId: string;
     companyId: string;
     companyName: string;
+    source?: string;
     signalKey: SignalKey;
     sourceEventType: string;
     sourceEventId: string;
@@ -185,13 +315,14 @@ async function emitCompanySignal(
     metadata: Record<string, unknown>;
   },
 ): Promise<boolean> {
-  if (await sourceEventExists(admin, input.userId, input.sourceEventId)) return false;
+  const source = input.source ?? SOURCE;
+  if (await sourceEventExists(admin, input.userId, source, input.sourceEventId)) return false;
 
   const ingest = await ingestSignalSourceEvent(admin, {
     userId: input.userId,
     entityScope: 'company',
     companyId: input.companyId,
-    source: SOURCE,
+    source,
     sourceEventType: input.sourceEventType,
     sourceEventId: input.sourceEventId,
     sourceUrl: input.sourceUrl,
@@ -209,7 +340,7 @@ async function emitCompanySignal(
       userId: input.userId,
       entityId: input.companyId,
       entityScope: 'company',
-      source: SOURCE,
+      source,
       sourceUrl: input.sourceUrl,
       sourceEventType: input.sourceEventType,
       sourceEventId: input.sourceEventId,
@@ -233,7 +364,7 @@ export async function runFdaRegulatoryMonitor(
   const admin = createAdminClient();
   const query = admin
     .from('companies')
-    .select('id, user_id, company_name, domain')
+    .select('id, user_id, company_name, domain, aliases')
     .eq('user_id', input.userId)
     .is('archived_at', null)
     .order('updated_at', { ascending: false });
@@ -259,7 +390,12 @@ export async function runFdaRegulatoryMonitor(
     if (!companyName) continue;
 
     try {
-      const records = await fetchFdaRecordsForCompany(companyName, 25);
+      const aliases = row.aliases ?? [];
+      const [records, device510k, devicePma] = await Promise.all([
+        fetchFdaDrugRecordsForCompany(admin, companyName, aliases, 100),
+        fetchFda510kRecordsForCompany(admin, companyName, aliases, 100),
+        fetchFdaPmaRecordsForCompany(admin, companyName, aliases, 100),
+      ]);
       let emittedAny = false;
       const onlySignal = input.onlySignalKey;
       const shouldEmit = (signalKey: SignalKey) => !onlySignal || onlySignal === signalKey;
@@ -427,6 +563,115 @@ export async function runFdaRegulatoryMonitor(
               emittedAny = true;
               emittedSignalTypes.add('complete_response_letter');
             }
+          }
+        }
+      }
+
+      // ── 510(k) device clearances ──────────────────────────────────────
+      for (const device of device510k) {
+        const kNumber = device.k_number || 'unknown_k';
+        const decision = normalizeText(device.decision_description);
+        const isCleared = decision.includes('substantially equivalent') || /^se/.test(normalizeText(device.decision_code));
+        const eventAt = toIsoDate(device.decision_date);
+        const sourceUrl = `https://www.accessdata.fda.gov/scripts/cdrh/cfdocs/cfpmn/pmn.cfm?ID=${encodeURIComponent(kNumber)}`;
+        const metadata = {
+          fda_dataset: '510k',
+          k_number: kNumber,
+          applicant: device.applicant ?? null,
+          device_name: device.device_name ?? null,
+          product_code: device.product_code ?? null,
+          decision_code: device.decision_code ?? null,
+          decision_description: device.decision_description ?? null,
+          decision_date: device.decision_date ?? null,
+        };
+        if (shouldEmit('fda_approval') && isCleared) {
+          const id = `${SOURCE_510K}:${row.id}:${kNumber}:fda_510k_cleared`;
+          const emitted = await emitCompanySignal(admin, {
+            userId: input.userId,
+            companyId: row.id,
+            companyName,
+            source: SOURCE_510K,
+            signalKey: 'fda_approval',
+            sourceEventType: 'fda_510k_cleared',
+            sourceEventId: id,
+            sourceUrl,
+            eventAt,
+            summary: `FDA 510(k) clearance for ${device.device_name ?? kNumber} (${device.applicant ?? companyName}).`,
+            metadata,
+          });
+          if (emitted) {
+            emittedAny = true;
+            emittedSignalTypes.add('fda_approval');
+          }
+        }
+      }
+
+      // ── PMA device approvals + supplements ────────────────────────────
+      for (const device of devicePma) {
+        const pmaNo = device.pma_number || 'unknown_pma';
+        const supNo = device.supplement_number || '';
+        const decision = normalizeText(device.decision_code);
+        const isApproved = decision === 'appr' || decision.startsWith('appr');
+        const eventAt = toIsoDate(device.decision_date);
+        const idBase = supNo ? `${pmaNo}/${supNo}` : pmaNo;
+        const sourceUrl = `https://www.accessdata.fda.gov/scripts/cdrh/cfdocs/cfpma/pma.cfm?id=${encodeURIComponent(pmaNo)}`;
+        const metadata = {
+          fda_dataset: 'pma',
+          pma_number: pmaNo,
+          supplement_number: supNo || null,
+          supplement_type: device.supplement_type ?? null,
+          supplement_reason: device.supplement_reason ?? null,
+          applicant: device.applicant ?? null,
+          trade_name: device.trade_name ?? null,
+          generic_name: device.generic_name ?? null,
+          decision_code: device.decision_code ?? null,
+          decision_date: device.decision_date ?? null,
+        };
+        if (shouldEmit('fda_approval') && isApproved) {
+          const id = `${SOURCE_PMA}:${row.id}:${idBase}:fda_pma_approved`;
+          const emitted = await emitCompanySignal(admin, {
+            userId: input.userId,
+            companyId: row.id,
+            companyName,
+            source: SOURCE_PMA,
+            signalKey: 'fda_approval',
+            sourceEventType: 'fda_pma_approved',
+            sourceEventId: id,
+            sourceUrl,
+            eventAt,
+            summary: `FDA PMA ${supNo ? 'supplement ' : ''}approval for ${device.trade_name ?? pmaNo} (${device.applicant ?? companyName}).`,
+            metadata,
+          });
+          if (emitted) {
+            emittedAny = true;
+            emittedSignalTypes.add('fda_approval');
+          }
+        }
+        // PMA supplements with reasons containing "new indication" / "label" = indication expansion
+        const supReason = normalizeText(device.supplement_reason);
+        if (
+          shouldEmit('indication_expansion') &&
+          isApproved &&
+          supNo &&
+          hasAny(supReason, ['new indication', 'label', 'expanded indication'])
+        ) {
+          const id = `${SOURCE_PMA}:${row.id}:${idBase}:indication_expansion`;
+          const emitted = await emitCompanySignal(admin, {
+            userId: input.userId,
+            companyId: row.id,
+            companyName,
+            source: SOURCE_PMA,
+            signalKey: 'indication_expansion',
+            sourceEventType: 'fda_pma_indication_expansion',
+            sourceEventId: id,
+            sourceUrl,
+            eventAt,
+            summary: `PMA supplement (${device.supplement_reason}) for ${device.trade_name ?? pmaNo}.`,
+            metadata,
+          });
+          if (emitted) {
+            emittedAny = true;
+            emittedSignalTypes.add('indication_expansion');
           }
         }
       }

@@ -7,6 +7,14 @@
     {
       "path": "/api/cron/patents-delta",
       "schedule": "0 7 * * 1"
+    },
+    {
+      "path": "/api/cron/fda-delta",
+      "schedule": "0 8 * * 2"
+    },
+    {
+      "path": "/api/cron/clinical-trials-delta",
+      "schedule": "0 9 * * *"
     }
   ]
 }

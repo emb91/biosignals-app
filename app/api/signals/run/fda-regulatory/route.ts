@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
+import { createAdminClient } from '@/lib/supabase-admin';
 import { runFdaRegulatoryMonitor } from '@/lib/signals/run-fda-regulatory-monitor';
+import { syncFdaDelta, type SyncFdaDeltaResult } from '@/lib/signals/sync-fda-delta';
 import type { SignalKey } from '@/lib/signals/readiness-types';
 
 type RunFdaRegulatoryBody = {
@@ -9,6 +11,14 @@ type RunFdaRegulatoryBody = {
   only_signal_key?: string;
   run_all?: boolean;
   batch_size?: number;
+  sync_first?: boolean;
+};
+
+type SyncSummary = {
+  ran: boolean;
+  ok: boolean;
+  result: SyncFdaDeltaResult | null;
+  error: string | null;
 };
 
 type PersistRunHistoryInput = {
@@ -90,6 +100,22 @@ export async function POST(request: Request) {
       ? body.company_ids.filter((value): value is string => typeof value === 'string' && Boolean(value))
       : [];
 
+    // Optional: pull fresh FDA data from OpenFDA into local mirror before
+    // running monitor. Same sync_first pattern as patents — used by admin
+    // button so manual testing doesn't have to wait for the weekly cron.
+    const syncSummary: SyncSummary = { ran: false, ok: false, result: null, error: null };
+    if (body.sync_first === true) {
+      syncSummary.ran = true;
+      try {
+        syncSummary.result = await syncFdaDelta({ admin: createAdminClient() });
+        syncSummary.ok = true;
+      } catch (error) {
+        syncSummary.ok = false;
+        syncSummary.error = messageFromUnknown(error);
+        console.error('[signals/run/fda-regulatory] sync_first failed (continuing with stale data):', error);
+      }
+    }
+
     let result: Awaited<ReturnType<typeof runFdaRegulatoryMonitor>>;
     let executedCompanyIds: string[] = requestedCompanyIds;
     if (runAll && requestedCompanyIds.length === 0) {
@@ -168,6 +194,7 @@ export async function POST(request: Request) {
       success: true,
       run_all: runAll,
       batch_size: runAll ? batchSize : null,
+      sync: syncSummary,
       result: {
         fda_regulatory_processed: result.processed,
         processed: result.processed,
