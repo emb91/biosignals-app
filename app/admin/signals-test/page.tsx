@@ -133,6 +133,19 @@ const GRANTS_SINGLE_SIGNAL_KEYS = new Set<SignalKey>([
   'grant_award',
 ]);
 
+const CONFERENCES_SINGLE_SIGNAL_KEYS = new Set<SignalKey>([
+  'conference_presentation',
+  'conference_speaker',
+]);
+
+const JOB_CHANGE_SINGLE_SIGNAL_KEYS = new Set<SignalKey>([
+  'recently_changed_company',
+  'recently_promoted',
+  'new_internal_role',
+  'title_change',
+  'new_to_role',
+]);
+
 function buttonClassForStatus(status: ExecutionStatus): string {
   if (status === 'active') {
     return 'border-emerald-300 bg-emerald-50 hover:bg-emerald-100';
@@ -323,11 +336,17 @@ export default function AdminSignalsTestPage() {
         // Auto-advance the queue. The /api/cron/funding-backfill cron only
         // fires in deployed environments; locally and during testing we rely
         // on this poller to keep claiming the next chunk. The DB-level claim
-        // in processSecBackfillJobChunk (worker_claimed_at IS NULL or stale)
-        // makes this safe to race with the cron in production.
+        // in processSecBackfillJobChunk (worker_claimed_at IS NULL or stale
+        // beyond 30 min) makes this safe to race with the cron in production.
         const claimedAt = job.worker_claimed_at ? Date.parse(job.worker_claimed_at) : 0;
-        // Treat any claim younger than 4 minutes as live (a chunk is ~2-3 min).
-        const isClaimLive = claimedAt > 0 && Date.now() - claimedAt < 4 * 60 * 1000;
+        // Match the server-side staleness window (30 min). A shorter UI
+        // threshold (we previously used 4 min) caused log spam: the UI would
+        // fire /process every 5s while a long chunk was in flight; the server
+        // refused each call because the claim was still fresh, but each
+        // refusal cleared the in-flight ref, so the next poll re-fired.
+        // Now the UI trusts the server's claim: if worker_claimed_at is fresh
+        // within 30 min, leave it alone.
+        const isClaimLive = claimedAt > 0 && Date.now() - claimedAt < 30 * 60 * 1000;
         if (!inFlight && !secBackfillBusy && !isClaimLive) {
           secBackfillProcessInFlightRef.current = true;
           appendSecBackfillProgressLine('[SEC backfill] Auto-kicking next chunk...');
@@ -483,6 +502,11 @@ export default function AdminSignalsTestPage() {
       if (GRANTS_SINGLE_SIGNAL_KEYS.has(signalKey)) {
         appendLog(`Skipped: ${signalKey} now runs only via Grants (All).`);
         setStatus(`${signalKey} is now bundled under Grants (All).`);
+        return;
+      }
+      if (CONFERENCES_SINGLE_SIGNAL_KEYS.has(signalKey)) {
+        appendLog(`Skipped: ${signalKey} now runs only via Conferences (All).`);
+        setStatus(`${signalKey} is now bundled under Conferences (All).`);
         return;
       }
 
@@ -1120,6 +1144,107 @@ export default function AdminSignalsTestPage() {
     }
   }
 
+  async function runConferencesBundle() {
+    const runKey = 'conferences_all';
+    if (busySignal) {
+      appendLog(`Run skipped: ${busySignal} is already in progress.`);
+      setStatus(`A run is already in progress: ${busySignal}`);
+      return;
+    }
+
+    setBusySignal(runKey);
+    const abortController = new AbortController();
+    activeRunAbortRef.current = abortController;
+    setStatus('Running full conferences bundle...');
+    appendLog('Starting run for conferences_all');
+    let heartbeat: ReturnType<typeof setInterval> | null = null;
+    try {
+      const startedAt = Date.now();
+      const body: Record<string, unknown> = {
+        limit: batchCompanyMode ? batchLimit : 25,
+        // Force refresh on the admin-button path so the salesperson sees
+        // fresh data immediately rather than 14-day-old cache.
+        force_refresh: true,
+      };
+      if (!batchCompanyMode && selectedCompanyId) {
+        body.company_ids = [selectedCompanyId];
+        appendLog(`Target company scope set: ${selectedCompanyId}`);
+      } else {
+        body.run_all = true;
+        body.batch_size = Math.min(50, Math.max(1, batchCompanyMode ? Math.min(batchLimit, 50) : 20));
+        if (batchCompanyMode) {
+          appendLog(`Batch company mode enabled (run_all=true, batch_size=${body.batch_size}, limit=${batchLimit}).`);
+        } else {
+          appendLog(`No company selected; running all companies (run_all=true, batch_size=${body.batch_size}).`);
+        }
+      }
+      appendLog('force_refresh=true → Sonnet web_search will fire per company (skip cache).');
+
+      appendLog('Calling /api/signals/run/conferences...');
+      heartbeat = setInterval(() => {
+        const elapsedSec = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
+        appendLog(`Run in progress... ${elapsedSec}s elapsed`);
+      }, 5000);
+      const res = await fetch('/api/signals/run/conferences', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: abortController.signal,
+      });
+      clearInterval(heartbeat);
+      heartbeat = null;
+      const json = await res.json();
+      appendLog(`Run completed with HTTP ${res.status}`);
+
+      setLastResponse({
+        signalKey: runKey,
+        ok: res.ok,
+        httpStatus: res.status,
+        payload: json,
+        at: new Date().toISOString(),
+      });
+      setHistory((prev) => [
+        {
+          signalKey: runKey,
+          ok: res.ok,
+          httpStatus: res.status,
+          at: new Date().toISOString(),
+        },
+        ...prev.slice(0, 11),
+      ]);
+
+      if (!res.ok) {
+        appendLog(`Run failed: ${json?.error || 'Unknown error'}`);
+        setStatus(`conferences_all failed: ${json?.error || 'Unknown error'}`);
+      } else {
+        const result = (json as { result?: Record<string, unknown> })?.result;
+        if (result) {
+          appendLog(
+            `Processed=${String(result.processed ?? 0)} failed=${String(result.failed ?? 0)} llm_calls=${String(result.llm_calls ?? 0)}`,
+          );
+          appendOptionalRunDiagnostics(result);
+        }
+        appendLog('Refreshing signal status colors...');
+        setStatus('conferences_all ingestion complete. Signal statuses refreshed.');
+      }
+      await refreshSignalStatuses();
+      appendLog('Signal status refresh complete.');
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        appendLog('Run cancelled by user.');
+        setStatus('conferences_all cancelled.');
+        return;
+      }
+      appendLog(`Run errored: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setStatus(`conferences_all failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      activeRunAbortRef.current = null;
+      if (heartbeat) clearInterval(heartbeat);
+      appendLog('Run finished for conferences_all');
+      setBusySignal(null);
+    }
+  }
+
   async function runHiringBundle() {
     const runKey = 'hiring_all';
     if (busySignal) {
@@ -1242,6 +1367,73 @@ export default function AdminSignalsTestPage() {
       activeRunAbortRef.current = null;
       if (heartbeat) clearInterval(heartbeat);
       appendLog('Run finished for hiring_all');
+      setBusySignal(null);
+    }
+  }
+
+  async function runJobChangeBundle() {
+    const runKey = 'job_change_all';
+    if (busySignal) {
+      appendLog(`Run skipped: ${busySignal} is already in progress.`);
+      setStatus(`A run is already in progress: ${busySignal}`);
+      return;
+    }
+    setBusySignal(runKey);
+    const abortController = new AbortController();
+    activeRunAbortRef.current = abortController;
+    setStatus('Running job-change monitor...');
+    appendLog('Starting run for job_change_all');
+    let heartbeat: ReturnType<typeof setInterval> | null = null;
+    try {
+      const startedAt = Date.now();
+      const body: Record<string, unknown> = { limit: 20 };
+      appendLog('Scraping LinkedIn profiles via harvestapi~linkedin-profile-scraper (20 contacts, oldest-checked-first).');
+      appendLog('Calling /api/signals/run/job-change...');
+      heartbeat = setInterval(() => {
+        appendLog(`Run in progress... ${Math.max(1, Math.floor((Date.now() - startedAt) / 1000))}s elapsed`);
+      }, 5000);
+      const res = await fetch('/api/signals/run/job-change', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: abortController.signal,
+      });
+      clearInterval(heartbeat);
+      heartbeat = null;
+      const json = await res.json();
+      appendLog(`Run completed with HTTP ${res.status}`);
+      setLastResponse({ signalKey: runKey, ok: res.ok, httpStatus: res.status, payload: json, at: new Date().toISOString() });
+      setHistory((prev) => [{ signalKey: runKey, ok: res.ok, httpStatus: res.status, at: new Date().toISOString() }, ...prev.slice(0, 11)]);
+      if (!res.ok) {
+        appendLog(`Run failed: ${json?.error || 'Unknown error'}`);
+        setStatus(`job_change_all failed: ${json?.error || 'Unknown error'}`);
+      } else {
+        const result = (json as { result?: Record<string, unknown> })?.result;
+        if (result) {
+          appendLog(`Processed=${String(result.processed ?? 0)} no_change=${String(result.no_change ?? 0)} signals_emitted=${String(result.signals_emitted ?? 0)} failed=${String(result.failed ?? 0)}`);
+          if (Array.isArray(result.emitted_signal_types) && result.emitted_signal_types.length > 0) {
+            appendLog(`Signal types: ${(result.emitted_signal_types as string[]).join(', ')}`);
+          }
+          const failures = Array.isArray(result.failures) ? (result.failures as Array<Record<string, unknown>>) : [];
+          for (const f of failures.slice(0, 5)) {
+            appendLog(`contact:${String(f.contact_id ?? 'unknown')} -> ${String(f.error ?? 'unknown')}`);
+          }
+        }
+        setStatus('job_change_all complete.');
+      }
+      await refreshSignalStatuses();
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        appendLog('Run cancelled by user.');
+        setStatus('job_change_all cancelled.');
+        return;
+      }
+      appendLog(`Run errored: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setStatus(`job_change_all failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      activeRunAbortRef.current = null;
+      if (heartbeat) clearInterval(heartbeat);
+      appendLog('Run finished for job_change_all');
       setBusySignal(null);
     }
   }
@@ -1718,6 +1910,20 @@ export default function AdminSignalsTestPage() {
                     </div>
                   </button>
                 )}
+                {dimension === 'new_strategy' && (
+                  <button
+                    type="button"
+                    onClick={() => void runConferencesBundle()}
+                    disabled={busySignal !== null}
+                    className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-left text-sm font-medium text-emerald-900 hover:bg-emerald-100 disabled:opacity-50"
+                  >
+                    <div className="font-medium">conferences_all</div>
+                    <div className="text-xs text-emerald-700">Company + contact family · Sonnet web_search</div>
+                    <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-800">
+                      {busySignal === 'conferences_all' ? 'Running...' : 'Active'}
+                    </div>
+                  </button>
+                )}
                 {dimension === 'new_people' && (
                   <button
                     type="button"
@@ -1732,6 +1938,20 @@ export default function AdminSignalsTestPage() {
                     </div>
                   </button>
                 )}
+                {dimension === 'new_people' && (
+                  <button
+                    type="button"
+                    onClick={() => void runJobChangeBundle()}
+                    disabled={busySignal !== null}
+                    className="rounded-md border border-violet-300 bg-violet-50 px-3 py-2 text-left text-sm font-medium text-violet-900 hover:bg-violet-100 disabled:opacity-50"
+                  >
+                    <div className="font-medium">job_change_all</div>
+                    <div className="text-xs text-violet-700">Contact · LinkedIn profile via Apify</div>
+                    <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-violet-800">
+                      {busySignal === 'job_change_all' ? 'Running...' : 'Active'}
+                    </div>
+                  </button>
+                )}
                 {signalsByDimension[dimension].map((entry) => (
                   (() => {
                     if (
@@ -1740,7 +1960,9 @@ export default function AdminSignalsTestPage() {
                       PATENT_SINGLE_SIGNAL_KEYS.has(entry.signalKey as SignalKey) ||
                       FUNDING_SINGLE_SIGNAL_KEYS.has(entry.signalKey as SignalKey) ||
                       HIRING_SINGLE_SIGNAL_KEYS.has(entry.signalKey as SignalKey) ||
-                      GRANTS_SINGLE_SIGNAL_KEYS.has(entry.signalKey as SignalKey)
+                      GRANTS_SINGLE_SIGNAL_KEYS.has(entry.signalKey as SignalKey) ||
+                      CONFERENCES_SINGLE_SIGNAL_KEYS.has(entry.signalKey as SignalKey) ||
+                      JOB_CHANGE_SINGLE_SIGNAL_KEYS.has(entry.signalKey as SignalKey)
                     ) {
                       return null;
                     }
