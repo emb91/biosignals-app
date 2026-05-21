@@ -15,11 +15,14 @@
  */
 import type { createAdminClient } from '@/lib/supabase-admin';
 import { normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
+import { classifySecFiling, type SecFilingClassification } from '@/lib/signals/classify-sec-filing';
 import {
   isRateLimitError,
   secFetchJson,
   secFetchText,
 } from '@/lib/signals/sec-edgar-client';
+
+const CLASSIFIABLE_8K_ITEMS = new Set(['1.01', '5.02', '8.01']);
 
 const SUBMISSIONS_URL_BASE = 'https://data.sec.gov/submissions';
 const DEFAULT_CATCH_UP_DAYS = 90;
@@ -151,9 +154,10 @@ export async function backfillSecForCik(
     const filingUrl = primaryDocUrl ?? `${primaryDirUrl}/${row.accession_number}-index.htm`;
 
     let items: string[] | null = null;
+    let body: string | null = null;
     if (primaryDocUrl) {
       try {
-        const body = await secFetchText(primaryDocUrl);
+        body = await secFetchText(primaryDocUrl);
         items = extractEightKItems(body);
       } catch (error) {
         if (isRateLimitError(error)) {
@@ -169,6 +173,32 @@ export async function backfillSecForCik(
       }
     }
 
+    // Mirror sync-sec-delta.ts: when an 8-K has item 1.01 / 5.02 / 8.01,
+    // classify the body so the funding monitor can emit a specific signal
+    // (licensing_deal, leadership_churn, restructuring, etc) instead of
+    // dropping the filing on the floor.
+    let classification: SecFilingClassification | null = null;
+    let classifiedAt: string | null = null;
+    if (body && Array.isArray(items) && items.some((item) => CLASSIFIABLE_8K_ITEMS.has(item))) {
+      try {
+        classification = await classifySecFiling({
+          formType: row.form_type,
+          entityName,
+          filingDate: row.filing_date,
+          items,
+          primaryDocText: body,
+        });
+        classifiedAt = classification ? new Date().toISOString() : null;
+      } catch (classifyError) {
+        // Non-fatal — leave null so a future re-classification pass can pick
+        // it up. Don't break the catch-up loop for a single LLM hiccup.
+        console.warn(
+          `[sec-per-cik-backfill] classify failed for ${row.accession_number}:`,
+          messageFromUnknown(classifyError),
+        );
+      }
+    }
+
     const { error } = await admin.from('sec_filings_local').upsert(
       {
         accession_number: row.accession_number,
@@ -180,6 +210,8 @@ export async function backfillSecForCik(
         filing_url: filingUrl,
         primary_doc_url: primaryDocUrl,
         items,
+        classification,
+        classified_at: classifiedAt,
         last_seen_at: startedAtIso,
       },
       { onConflict: 'accession_number' },
