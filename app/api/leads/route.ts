@@ -359,27 +359,30 @@ async function attachReadinessBestEffort(
       .filter((v): v is string => Boolean(v)),
   );
   if (companyIds.length === 0) {
-    return rows.map((row) => ({ ...row, company_readiness_label: null }));
+    return rows.map((row) => ({ ...row, company_readiness_label: null, company_readiness_score: null }));
   }
   try {
     const { data, error } = await supabase
       .from('account_readiness_snapshots')
-      .select('company_id, overall_label')
+      .select('company_id, overall_label, overall_score')
       .in('company_id', companyIds);
-    if (error || !data) return rows.map((row) => ({ ...row, company_readiness_label: null }));
-    const labelMap = new Map<string, string | null>(
-      (data as Array<{ company_id: string; overall_label: string | null }>).map((r) => [
+    if (error || !data) return rows.map((row) => ({ ...row, company_readiness_label: null, company_readiness_score: null }));
+    const readinessMap = new Map<string, { label: string | null; score: number | null }>(
+      (data as Array<{ company_id: string; overall_label: string | null; overall_score: number | null }>).map((r) => [
         r.company_id,
-        r.overall_label,
+        { label: r.overall_label, score: r.overall_score },
       ]),
     );
-    return rows.map((row) => ({
-      ...row,
-      company_readiness_label:
-        typeof row.company_id === 'string' ? (labelMap.get(row.company_id) ?? null) : null,
-    }));
+    return rows.map((row) => {
+      const r = typeof row.company_id === 'string' ? readinessMap.get(row.company_id) : null;
+      return {
+        ...row,
+        company_readiness_label: r?.label ?? null,
+        company_readiness_score: r?.score ?? null,
+      };
+    });
   } catch {
-    return rows.map((row) => ({ ...row, company_readiness_label: null }));
+    return rows.map((row) => ({ ...row, company_readiness_label: null, company_readiness_score: null }));
   }
 }
 

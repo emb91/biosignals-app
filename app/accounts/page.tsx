@@ -920,22 +920,17 @@ export default function AccountsPage() {
           </span>
         );
       case 'readiness': {
-        const rl = (account as AccountRow).readiness_label ?? null;
-        if (!rl) return <span className="text-xs text-gray-300">—</span>;
+        const rs = (account as AccountRow).readiness_score ?? null;
+        if (rs == null) return <span className="text-xs text-gray-300">—</span>;
+        const pct = Math.round(rs * 100);
         return (
           <span className={cn(
-            'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold capitalize ring-1',
-            rl === 'high'   ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' :
-            rl === 'medium' ? 'bg-amber-50   text-amber-700   ring-amber-200'   :
-                              'bg-rose-50    text-rose-700    ring-rose-200',
+            'text-sm font-semibold tabular-nums',
+            rs >= 0.7  ? 'text-emerald-600' :
+            rs >= 0.35 ? 'text-amber-600'   :
+                         'text-rose-500',
           )}>
-            <span className={cn(
-              'h-1.5 w-1.5 rounded-full shrink-0',
-              rl === 'high'   ? 'bg-emerald-500' :
-              rl === 'medium' ? 'bg-amber-500'   :
-                                'bg-rose-500',
-            )} />
-            {rl}
+            {pct}
           </span>
         );
       }
