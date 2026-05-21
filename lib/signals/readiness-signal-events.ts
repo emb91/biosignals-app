@@ -4,6 +4,7 @@ import {
   ingestSignalSourceEvent,
   normalizeSignalSourceEvent,
   recomputeAccountReadiness,
+  recomputeContactReadiness,
 } from '@/lib/signals/readiness-service';
 import type { BuyerFunction, SignalKey } from '@/lib/signals/readiness-types';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -165,9 +166,22 @@ export async function mirrorSignalEventToReadiness(
     })
   );
 
+  // For contact-scoped signals, also recompute the contact's own readiness snapshot
+  let contactReadiness = null;
+  if (entityScope === 'contact' && contactId) {
+    contactReadiness = await recomputeContactReadiness(supabase, {
+      userId,
+      contactId,
+    }).catch((e) => {
+      console.warn('[mirrorSignalEventToReadiness] contact readiness recompute skipped', e);
+      return null;
+    });
+  }
+
   return {
     ingestResult,
     normalized,
     companies,
+    contactReadiness,
   };
 }

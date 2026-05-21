@@ -353,36 +353,36 @@ async function attachReadinessBestEffort(
   supabase: SupabaseClientLike,
   rows: LeadRow[],
 ): Promise<LeadRow[]> {
-  const companyIds = dedupe(
+  const contactIds = dedupe(
     rows
-      .map((row) => (typeof row.company_id === 'string' ? row.company_id : null))
+      .map((row) => (typeof row.id === 'string' ? row.id : null))
       .filter((v): v is string => Boolean(v)),
   );
-  if (companyIds.length === 0) {
-    return rows.map((row) => ({ ...row, company_readiness_label: null, company_readiness_score: null }));
+  if (contactIds.length === 0) {
+    return rows.map((row) => ({ ...row, contact_readiness_label: null, contact_readiness_score: null }));
   }
   try {
     const { data, error } = await supabase
-      .from('account_readiness_snapshots')
-      .select('company_id, overall_label, overall_score')
-      .in('company_id', companyIds);
-    if (error || !data) return rows.map((row) => ({ ...row, company_readiness_label: null, company_readiness_score: null }));
+      .from('contact_readiness_snapshots')
+      .select('contact_id, overall_label, overall_score')
+      .in('contact_id', contactIds);
+    if (error || !data) return rows.map((row) => ({ ...row, contact_readiness_label: null, contact_readiness_score: null }));
     const readinessMap = new Map<string, { label: string | null; score: number | null }>(
-      (data as Array<{ company_id: string; overall_label: string | null; overall_score: number | null }>).map((r) => [
-        r.company_id,
+      (data as Array<{ contact_id: string; overall_label: string | null; overall_score: number | null }>).map((r) => [
+        r.contact_id,
         { label: r.overall_label, score: r.overall_score },
       ]),
     );
     return rows.map((row) => {
-      const r = typeof row.company_id === 'string' ? readinessMap.get(row.company_id) : null;
+      const r = typeof row.id === 'string' ? readinessMap.get(row.id) : null;
       return {
         ...row,
-        company_readiness_label: r?.label ?? null,
-        company_readiness_score: r?.score ?? null,
+        contact_readiness_label: r?.label ?? null,
+        contact_readiness_score: r?.score ?? null,
       };
     });
   } catch {
-    return rows.map((row) => ({ ...row, company_readiness_label: null, company_readiness_score: null }));
+    return rows.map((row) => ({ ...row, contact_readiness_label: null, contact_readiness_score: null }));
   }
 }
 
@@ -824,9 +824,12 @@ export async function GET(request: Request) {
 
       if (lifecycle === 'customers') {
         query = query.in('id', customerContactIds);
-      } else if (lifecycle === 'leads' && customerContactIds.length > 0) {
-        query = query.not('id', 'in', `(${customerContactIds.join(',')})`);
       }
+      // Note: 'leads' view used to exclude customers (closed-won), but we now
+      // surface them with a "Complete" badge so the salesperson can still see
+      // existing-customer contacts in their main working list (relationship
+      // nurturing, expansion). The 'customers' view filter above still works
+      // for a dedicated "only-customers" surface.
 
       if (companyId) {
         query = query.eq('company_id', companyId);

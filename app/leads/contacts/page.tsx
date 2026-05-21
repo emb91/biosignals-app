@@ -342,8 +342,8 @@ interface Lead {
   attribution_latest_closed_won_at?: string | null;
   attribution_won_after_arcova_touch?: boolean | null;
   attribution_computed_at?: string | null;
-  company_readiness_label?: string | null;
-  company_readiness_score?: number | null;
+  contact_readiness_label?: string | null;
+  contact_readiness_score?: number | null;
   companies: {
     company_name: string | null;
     domain: string | null;
@@ -546,7 +546,11 @@ function getHubSpotTableBadge(lead: Lead): {
   switch (lead.hubspot_lead_state) {
     case 'customer':
       return {
-        label: 'Won',
+        // "Complete" reflects that the deal cycle for this contact has
+        // already closed-won — they're an existing customer, distinct from
+        // "Lost" (dormant) which is the closed-lost flavour. Same teal color
+        // signals "positive completion" without using the sales-y "Won" verb.
+        label: 'Complete',
         className: 'border-[rgba(45,138,138,0.24)] bg-[rgba(45,138,138,0.08)] text-[#2d8a8a]',
       };
     case 'dormant':
@@ -3069,8 +3073,8 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                           {/* Readiness — only visible at ≥1280px (7-column grid) */}
                           <div className="hidden min-w-0 items-center justify-center min-[1280px]:flex">
                             <TableFitGaugeButton
-                              score={lead.company_readiness_score ?? null}
-                              title="View account readiness"
+                              score={lead.contact_readiness_score ?? null}
+                              title="View contact readiness"
                               onOpen={(e) => {
                                 e.stopPropagation();
                                 setSelectedLeadId(lead.id);

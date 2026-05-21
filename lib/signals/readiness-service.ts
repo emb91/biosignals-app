@@ -11,8 +11,10 @@ import {
   insertNormalizedSignals,
   insertSignalSourceEvent,
   listNormalizedSignalsForCompany,
+  listNormalizedSignalsForContact,
   replaceReadinessSnapshotEvidence,
   upsertAccountReadinessSnapshot,
+  upsertContactReadinessSnapshot,
   upsertAccountReasonSnapshot,
 } from '@/lib/signals/readiness-store';
 import type {
@@ -69,6 +71,19 @@ export type RecomputeAccountReadinessInput = {
 
 export type RecomputeAccountReadinessResult = {
   companyId: string;
+  readinessSnapshotId: string;
+  overallScore: number;
+  overallLabel: 'low' | 'medium' | 'high';
+};
+
+export type RecomputeContactReadinessInput = {
+  userId: string;
+  contactId: string;
+  targetBuyerFunctions?: BuyerFunction[];
+};
+
+export type RecomputeContactReadinessResult = {
+  contactId: string;
   readinessSnapshotId: string;
   overallScore: number;
   overallLabel: 'low' | 'medium' | 'high';
@@ -157,6 +172,30 @@ export async function recomputeAccountReadiness(
 
   return {
     companyId: input.companyId,
+    readinessSnapshotId: snapshot.id,
+    overallScore: score.overallScore,
+    overallLabel: score.overallLabel,
+  };
+}
+
+export async function recomputeContactReadiness(
+  supabase: DatabaseClient,
+  input: RecomputeContactReadinessInput
+): Promise<RecomputeContactReadinessResult> {
+  const signals = await listNormalizedSignalsForContact(supabase, input.userId, input.contactId);
+
+  const score = scoreAccountReadiness(signals, {
+    targetBuyerFunctions: input.targetBuyerFunctions,
+  });
+
+  const snapshot = await upsertContactReadinessSnapshot(supabase, {
+    userId: input.userId,
+    contactId: input.contactId,
+    score,
+  });
+
+  return {
+    contactId: input.contactId,
     readinessSnapshotId: snapshot.id,
     overallScore: score.overallScore,
     overallLabel: score.overallLabel,
