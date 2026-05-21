@@ -30,6 +30,53 @@ type TargetsResponse = {
 
 type ExecutionStatus = 'active' | 'partial' | 'not_executed';
 
+type HiringCategoryMatch = {
+  key: string;
+  count: number;
+  titles: string[];
+  buyer_functions: string[];
+};
+
+type HiringCompanyDetail = {
+  company_id: string;
+  company_name: string;
+  postings_scraped: number;
+  postings_matched: number;
+  categories: HiringCategoryMatch[];
+  job_surge: boolean;
+  buyer_functions_activated: string[];
+};
+
+type SecBackfillJob = {
+  id: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'halted_rate_limit' | 'cancelled';
+  start_date: string;
+  end_date: string;
+  next_date: string;
+  last_processed_date: string | null;
+  days_processed: number;
+  days_skipped_no_data: number;
+  filings_upserted: number;
+  form_d_upserted: number;
+  form_8k_upserted: number;
+  form_424b_upserted: number;
+  chunks_completed: number;
+  requested_chunk_business_days: number;
+  rate_limit_halted: boolean;
+  last_error: string | null;
+  requested_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  worker_claimed_at: string | null;
+};
+
+type SecBackfillLog = {
+  id: number;
+  created_at: string;
+  level: string;
+  message: string;
+};
+
 const READINESS_DIMENSIONS = [
   'new_budget',
   'new_needs',
@@ -66,6 +113,24 @@ const PATENT_SINGLE_SIGNAL_KEYS = new Set<SignalKey>([
   'patent_granted',
   'new_therapeutic_area_patent',
   'assignee_portfolio_acceleration',
+]);
+
+const FUNDING_SINGLE_SIGNAL_KEYS = new Set<SignalKey>([
+  'funding_round',
+  'ipo_or_follow_on',
+]);
+
+const HIRING_SINGLE_SIGNAL_KEYS = new Set<SignalKey>([
+  'cmc_hiring',
+  'clinical_ops_hiring',
+  'regulatory_hiring',
+  'bd_hiring',
+  'commercial_hiring',
+  'job_surge',
+]);
+
+const GRANTS_SINGLE_SIGNAL_KEYS = new Set<SignalKey>([
+  'grant_award',
 ]);
 
 function buttonClassForStatus(status: ExecutionStatus): string {
@@ -106,7 +171,18 @@ export default function AdminSignalsTestPage() {
   >([]);
   const [statusBySignal, setStatusBySignal] = useState<Partial<Record<SignalKey, ExecutionStatus>>>({});
   const [progressLog, setProgressLog] = useState<string[]>([]);
+  const [secBackfillProgressLog, setSecBackfillProgressLog] = useState<string[]>([]);
+  const [secBackfillJob, setSecBackfillJob] = useState<SecBackfillJob | null>(null);
+  const [secBackfillBusy, setSecBackfillBusy] = useState<boolean>(false);
+  const [hiringDetails, setHiringDetails] = useState<HiringCompanyDetail[]>([]);
   const activeRunAbortRef = useRef<AbortController | null>(null);
+  const lastSecBackfillLogIdRef = useRef<number>(0);
+  const lastSecBackfillHeartbeatAtRef = useRef<number>(0);
+  // Prevents the poll loop from firing /process while a previous call is still
+  // running. Local dev has no Vercel cron, so the UI is the only thing that
+  // advances chunks — this ref is what makes the backfill keep flowing
+  // without the user clicking anything.
+  const secBackfillProcessInFlightRef = useRef<boolean>(false);
 
   const isAdminUser = isAdminEmail(user?.email);
 
@@ -143,6 +219,15 @@ export default function AdminSignalsTestPage() {
     })();
   }, [user, isAdminUser, selectedCompanyId, selectedContactId]);
 
+  useEffect(() => {
+    if (!user || !isAdminUser) return;
+    void refreshSecBackfillStatus();
+    const timer = window.setInterval(() => {
+      void refreshSecBackfillStatus();
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [user, isAdminUser]);
+
   const signalsByDimension = useMemo(
     () =>
       Object.fromEntries(
@@ -167,6 +252,26 @@ export default function AdminSignalsTestPage() {
     setProgressLog([]);
   }
 
+  function resetSecBackfillProgressLog() {
+    setSecBackfillProgressLog([]);
+    lastSecBackfillLogIdRef.current = 0;
+    lastSecBackfillHeartbeatAtRef.current = 0;
+  }
+
+  function appendSecBackfillProgressLine(line: string) {
+    const ts = new Date().toLocaleTimeString();
+    setSecBackfillProgressLog((prev) => [...prev, `[${ts}] ${line}`].slice(-400));
+  }
+
+  function appendSecBackfillLogs(logs: SecBackfillLog[]) {
+    for (const log of logs) {
+      if (log.id <= lastSecBackfillLogIdRef.current) continue;
+      const prefix = log.level === 'error' ? '[SEC backfill error]' : log.level === 'warn' ? '[SEC backfill warn]' : '[SEC backfill]';
+      appendSecBackfillProgressLine(`${prefix} ${log.message}`);
+      lastSecBackfillLogIdRef.current = log.id;
+    }
+  }
+
   function appendOptionalRunDiagnostics(result: Record<string, unknown>) {
     if (typeof result.records_scanned === 'number') {
       appendLog(`Records scanned=${String(result.records_scanned)}`);
@@ -187,6 +292,153 @@ export default function AdminSignalsTestPage() {
     };
     if (statusesRes.ok && statusesJson.statusBySignal) {
       setStatusBySignal(statusesJson.statusBySignal as Partial<Record<SignalKey, ExecutionStatus>>);
+    }
+  }
+
+  async function refreshSecBackfillStatus() {
+    try {
+      const afterId = lastSecBackfillLogIdRef.current;
+      const res = await fetch(`/api/admin/readiness/sec-backfill?after_id=${afterId}`);
+      const json = (await res.json()) as {
+        error?: string;
+        job?: SecBackfillJob | null;
+        logs?: SecBackfillLog[];
+      };
+      if (!res.ok) return;
+      setSecBackfillJob(json.job ?? null);
+      appendSecBackfillLogs(Array.isArray(json.logs) ? json.logs : []);
+      const job = json.job ?? null;
+      const inFlight = secBackfillProcessInFlightRef.current;
+      if (job?.status === 'queued' || job?.status === 'running') {
+        const now = Date.now();
+        // Suppress heartbeat while we have a /process call in flight — the
+        // server-side logs from that call tell a clearer story than "still
+        // running" spam.
+        if (!inFlight && now - lastSecBackfillHeartbeatAtRef.current >= 10_000) {
+          appendSecBackfillProgressLine(
+            `[SEC backfill] still ${job.status} — chunks=${job.chunks_completed} filings=${job.filings_upserted} next=${job.next_date}`,
+          );
+          lastSecBackfillHeartbeatAtRef.current = now;
+        }
+        // Auto-advance the queue. The /api/cron/funding-backfill cron only
+        // fires in deployed environments; locally and during testing we rely
+        // on this poller to keep claiming the next chunk. The DB-level claim
+        // in processSecBackfillJobChunk (worker_claimed_at IS NULL or stale)
+        // makes this safe to race with the cron in production.
+        const claimedAt = job.worker_claimed_at ? Date.parse(job.worker_claimed_at) : 0;
+        // Treat any claim younger than 4 minutes as live (a chunk is ~2-3 min).
+        const isClaimLive = claimedAt > 0 && Date.now() - claimedAt < 4 * 60 * 1000;
+        if (!inFlight && !secBackfillBusy && !isClaimLive) {
+          secBackfillProcessInFlightRef.current = true;
+          appendSecBackfillProgressLine('[SEC backfill] Auto-kicking next chunk...');
+          void (async () => {
+            try {
+              const processRes = await fetch('/api/admin/readiness/sec-backfill/process', {
+                method: 'POST',
+              });
+              const processJson = (await processRes.json().catch(() => ({}))) as {
+                error?: string;
+                job?: SecBackfillJob | null;
+                logs?: SecBackfillLog[];
+              };
+              if (!processRes.ok) {
+                appendSecBackfillProgressLine(
+                  `[SEC backfill error] Auto-chunk failed: ${processJson.error || `HTTP ${processRes.status}`}`,
+                );
+              } else {
+                if (processJson.job) setSecBackfillJob(processJson.job);
+                if (Array.isArray(processJson.logs)) appendSecBackfillLogs(processJson.logs);
+              }
+            } catch (autoError) {
+              const message = autoError instanceof Error ? autoError.message : 'Unknown error';
+              appendSecBackfillProgressLine(`[SEC backfill error] Auto-chunk errored: ${message}`);
+            } finally {
+              secBackfillProcessInFlightRef.current = false;
+              lastSecBackfillHeartbeatAtRef.current = 0;
+            }
+          })();
+        }
+      } else if (job) {
+        lastSecBackfillHeartbeatAtRef.current = 0;
+      }
+    } catch {
+      // Silent in the polling loop — avoid spamming the progress log.
+    }
+  }
+
+  async function startSecBackfill() {
+    if (secBackfillBusy) return;
+    setSecBackfillBusy(true);
+    setStatus('Queueing SEC 90-day backfill...');
+    appendSecBackfillProgressLine('Queueing SEC 90-day backfill job.');
+    lastSecBackfillHeartbeatAtRef.current = 0;
+    try {
+      const createRes = await fetch('/api/admin/readiness/sec-backfill?action=start&chunk_business_days=5');
+      const createJson = (await createRes.json()) as {
+        error?: string;
+        job?: SecBackfillJob | null;
+        logs?: SecBackfillLog[];
+      };
+      if (!createRes.ok) {
+        appendLog(`SEC backfill queue failed: ${createJson.error || 'Unknown error'}`);
+        setStatus(`SEC backfill queue failed: ${createJson.error || 'Unknown error'}`);
+        return;
+      }
+
+      setSecBackfillJob(createJson.job ?? null);
+      appendSecBackfillLogs(Array.isArray(createJson.logs) ? createJson.logs : []);
+      appendSecBackfillProgressLine('Kicking first SEC backfill chunk now.');
+
+      const processRes = await fetch('/api/admin/readiness/sec-backfill/process');
+      const processJson = (await processRes.json()) as {
+        error?: string;
+        job?: SecBackfillJob | null;
+        logs?: SecBackfillLog[];
+      };
+      if (!processRes.ok) {
+        appendLog(`SEC backfill first chunk failed to start: ${processJson.error || 'Unknown error'}`);
+        setStatus(`SEC backfill queued, but first chunk failed: ${processJson.error || 'Unknown error'}`);
+        return;
+      }
+
+      setSecBackfillJob(processJson.job ?? createJson.job ?? null);
+      appendSecBackfillLogs(Array.isArray(processJson.logs) ? processJson.logs : []);
+      setStatus('SEC backfill is running. The cron worker will keep processing even if this page closes.');
+      await refreshSecBackfillStatus();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      appendSecBackfillProgressLine(`SEC backfill errored: ${message}`);
+      setStatus(`SEC backfill failed: ${message}`);
+    } finally {
+      setSecBackfillBusy(false);
+    }
+  }
+
+  async function cancelSecBackfill() {
+    if (!secBackfillJob || secBackfillBusy) return;
+    setSecBackfillBusy(true);
+    appendSecBackfillProgressLine('Cancelling SEC backfill job...');
+    try {
+      const res = await fetch(`/api/admin/readiness/sec-backfill?action=cancel&job_id=${encodeURIComponent(secBackfillJob.id)}`);
+      const json = (await res.json()) as {
+        error?: string;
+        job?: SecBackfillJob | null;
+        logs?: SecBackfillLog[];
+      };
+      if (!res.ok) {
+        appendSecBackfillProgressLine(`SEC backfill cancel failed: ${json.error || 'Unknown error'}`);
+        setStatus(`SEC backfill cancel failed: ${json.error || 'Unknown error'}`);
+        return;
+      }
+      setSecBackfillJob(json.job ?? null);
+      appendSecBackfillLogs(Array.isArray(json.logs) ? json.logs : []);
+      setStatus('SEC backfill cancelled. No more chunks will be started.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      appendSecBackfillProgressLine(`SEC backfill cancel errored: ${message}`);
+      setStatus(`SEC backfill cancel failed: ${message}`);
+    } finally {
+      setSecBackfillBusy(false);
     }
   }
 
@@ -216,6 +468,21 @@ export default function AdminSignalsTestPage() {
       if (PATENT_SINGLE_SIGNAL_KEYS.has(signalKey)) {
         appendLog(`Skipped: ${signalKey} now runs only via Patents (All).`);
         setStatus(`${signalKey} is now bundled under Patents (All).`);
+        return;
+      }
+      if (FUNDING_SINGLE_SIGNAL_KEYS.has(signalKey)) {
+        appendLog(`Skipped: ${signalKey} now runs only via Funding (All).`);
+        setStatus(`${signalKey} is now bundled under Funding (All).`);
+        return;
+      }
+      if (HIRING_SINGLE_SIGNAL_KEYS.has(signalKey)) {
+        appendLog(`Skipped: ${signalKey} now runs only via Hiring (All).`);
+        setStatus(`${signalKey} is now bundled under Hiring (All).`);
+        return;
+      }
+      if (GRANTS_SINGLE_SIGNAL_KEYS.has(signalKey)) {
+        appendLog(`Skipped: ${signalKey} now runs only via Grants (All).`);
+        setStatus(`${signalKey} is now bundled under Grants (All).`);
         return;
       }
 
@@ -606,6 +873,379 @@ export default function AdminSignalsTestPage() {
     }
   }
 
+  async function runFundingBundle() {
+    const runKey = 'funding_all';
+    if (busySignal) {
+      appendLog(`Run skipped: ${busySignal} is already in progress.`);
+      setStatus(`A run is already in progress: ${busySignal}`);
+      return;
+    }
+
+    setBusySignal(runKey);
+    const abortController = new AbortController();
+    activeRunAbortRef.current = abortController;
+    setStatus('Running full funding bundle...');
+    appendLog('Starting run for funding_all');
+    let heartbeat: ReturnType<typeof setInterval> | null = null;
+    try {
+      const startedAt = Date.now();
+      const body: Record<string, unknown> = {
+        limit: batchCompanyMode ? batchLimit : 25,
+        sync_first: true,
+      };
+      if (!batchCompanyMode && selectedCompanyId) {
+        body.company_ids = [selectedCompanyId];
+        appendLog(`Target company scope set: ${selectedCompanyId}`);
+      } else {
+        body.run_all = true;
+        body.batch_size = Math.min(500, Math.max(1, batchCompanyMode ? batchLimit : 200));
+        if (batchCompanyMode) {
+          appendLog(`Batch company mode enabled (run_all=true, batch_size=${body.batch_size}, limit=${batchLimit}).`);
+        } else {
+          appendLog(`No company selected; running all companies (run_all=true, batch_size=${body.batch_size}).`);
+        }
+      }
+      appendLog('sync_first=true → will pull fresh SEC filings before running monitor.');
+
+      appendLog('Calling /api/signals/run/funding...');
+      heartbeat = setInterval(() => {
+        const elapsedSec = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
+        appendLog(`Run in progress... ${elapsedSec}s elapsed`);
+      }, 5000);
+      const res = await fetch('/api/signals/run/funding', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: abortController.signal,
+      });
+      clearInterval(heartbeat);
+      heartbeat = null;
+      const json = await res.json();
+      appendLog(`Run completed with HTTP ${res.status}`);
+
+      setLastResponse({
+        signalKey: runKey,
+        ok: res.ok,
+        httpStatus: res.status,
+        payload: json,
+        at: new Date().toISOString(),
+      });
+      setHistory((prev) => [
+        {
+          signalKey: runKey,
+          ok: res.ok,
+          httpStatus: res.status,
+          at: new Date().toISOString(),
+        },
+        ...prev.slice(0, 11),
+      ]);
+
+      if (!res.ok) {
+        appendLog(`Run failed: ${json?.error || 'Unknown error'}`);
+        setStatus(`funding_all failed: ${json?.error || 'Unknown error'}`);
+      } else {
+        const sync = (
+          json as {
+            sync?: {
+              ran?: boolean;
+              ok?: boolean;
+              cik_priming_processed?: number;
+              cik_priming_failed?: number;
+              result?: Record<string, unknown> | null;
+              error?: string | null;
+            };
+          }
+        )?.sync;
+        if (sync?.ran) {
+          appendLog(
+            `CIK priming: processed=${String(sync.cik_priming_processed ?? 0)} failed=${String(sync.cik_priming_failed ?? 0)}`,
+          );
+          if (sync.ok && sync.result) {
+            const r = sync.result;
+            appendLog(
+              `Sync OK: filings=${String(r.filings_upserted ?? 0)} form_d=${String(r.form_d_upserted ?? 0)} 8k=${String(
+                r.form_8k_upserted ?? 0,
+              )} 424b=${String(r.form_424b_upserted ?? 0)} range=${String(r.start_date ?? '?')}..${String(r.end_date ?? '?')}`,
+            );
+          } else if (sync.error) {
+            appendLog(`Sync FAILED (continuing with stale data): ${sync.error}`);
+          }
+        }
+        const result = (json as { result?: Record<string, unknown> })?.result;
+        if (result) {
+          appendLog(`Processed=${String(result.processed ?? 0)} failed=${String(result.failed ?? 0)}`);
+          appendOptionalRunDiagnostics(result);
+        }
+        appendLog('Refreshing signal status colors...');
+        setStatus('funding_all ingestion complete. Signal statuses refreshed.');
+      }
+      await refreshSignalStatuses();
+      appendLog('Signal status refresh complete.');
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        appendLog('Run cancelled by user.');
+        setStatus('funding_all cancelled.');
+        return;
+      }
+      appendLog(`Run errored: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setStatus(`funding_all failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      activeRunAbortRef.current = null;
+      if (heartbeat) clearInterval(heartbeat);
+      appendLog('Run finished for funding_all');
+      setBusySignal(null);
+    }
+  }
+
+  async function runGrantsBundle() {
+    const runKey = 'grants_all';
+    if (busySignal) {
+      appendLog(`Run skipped: ${busySignal} is already in progress.`);
+      setStatus(`A run is already in progress: ${busySignal}`);
+      return;
+    }
+
+    setBusySignal(runKey);
+    const abortController = new AbortController();
+    activeRunAbortRef.current = abortController;
+    setStatus('Running full grants bundle...');
+    appendLog('Starting run for grants_all');
+    let heartbeat: ReturnType<typeof setInterval> | null = null;
+    try {
+      const startedAt = Date.now();
+      const body: Record<string, unknown> = {
+        limit: batchCompanyMode ? batchLimit : 25,
+        sync_first: true,
+        sync_overlap_days: 90,
+      };
+      if (!batchCompanyMode && selectedCompanyId) {
+        body.company_ids = [selectedCompanyId];
+        appendLog(`Target company scope set: ${selectedCompanyId}`);
+      } else {
+        body.run_all = true;
+        body.batch_size = Math.min(500, Math.max(1, batchCompanyMode ? batchLimit : 200));
+        if (batchCompanyMode) {
+          appendLog(`Batch company mode enabled (run_all=true, batch_size=${body.batch_size}, limit=${batchLimit}).`);
+        } else {
+          appendLog(`No company selected; running all companies (run_all=true, batch_size=${body.batch_size}).`);
+        }
+      }
+      appendLog('sync_first=true → will pull fresh NIH RePORTER awards before running monitor.');
+
+      appendLog('Calling /api/signals/run/grants...');
+      heartbeat = setInterval(() => {
+        const elapsedSec = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
+        appendLog(`Run in progress... ${elapsedSec}s elapsed`);
+      }, 5000);
+      const res = await fetch('/api/signals/run/grants', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: abortController.signal,
+      });
+      clearInterval(heartbeat);
+      heartbeat = null;
+      const json = await res.json();
+      appendLog(`Run completed with HTTP ${res.status}`);
+
+      setLastResponse({
+        signalKey: runKey,
+        ok: res.ok,
+        httpStatus: res.status,
+        payload: json,
+        at: new Date().toISOString(),
+      });
+      setHistory((prev) => [
+        {
+          signalKey: runKey,
+          ok: res.ok,
+          httpStatus: res.status,
+          at: new Date().toISOString(),
+        },
+        ...prev.slice(0, 11),
+      ]);
+
+      if (!res.ok) {
+        appendLog(`Run failed: ${json?.error || 'Unknown error'}`);
+        setStatus(`grants_all failed: ${json?.error || 'Unknown error'}`);
+      } else {
+        const sync = (
+          json as {
+            sync?: {
+              ran?: boolean;
+              ok?: boolean;
+              result?: {
+                awards_upserted?: number;
+                sbir_pages_fetched?: number;
+                for_profit_pages_fetched?: number;
+                cutoff_date?: string;
+              } | null;
+              error?: string | null;
+            };
+          }
+        )?.sync;
+        if (sync?.ran) {
+          if (sync.ok && sync.result) {
+            const r = sync.result;
+            appendLog(
+              `NIH sync OK: awards=${String(r.awards_upserted ?? 0)} sbir_pages=${String(r.sbir_pages_fetched ?? 0)} for_profit_pages=${String(r.for_profit_pages_fetched ?? 0)} since=${String(r.cutoff_date ?? '?')}`,
+            );
+          } else if (sync.error) {
+            appendLog(`NIH sync FAILED (continuing with stale data): ${sync.error}`);
+          }
+        }
+        const result = (json as { result?: Record<string, unknown> })?.result;
+        if (result) {
+          appendLog(`Processed=${String(result.processed ?? 0)} failed=${String(result.failed ?? 0)}`);
+          appendOptionalRunDiagnostics(result);
+        }
+        appendLog('Refreshing signal status colors...');
+        setStatus('grants_all ingestion complete. Signal statuses refreshed.');
+      }
+      await refreshSignalStatuses();
+      appendLog('Signal status refresh complete.');
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        appendLog('Run cancelled by user.');
+        setStatus('grants_all cancelled.');
+        return;
+      }
+      appendLog(`Run errored: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setStatus(`grants_all failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      activeRunAbortRef.current = null;
+      if (heartbeat) clearInterval(heartbeat);
+      appendLog('Run finished for grants_all');
+      setBusySignal(null);
+    }
+  }
+
+  async function runHiringBundle() {
+    const runKey = 'hiring_all';
+    if (busySignal) {
+      appendLog(`Run skipped: ${busySignal} is already in progress.`);
+      setStatus(`A run is already in progress: ${busySignal}`);
+      return;
+    }
+
+    setBusySignal(runKey);
+    setHiringDetails([]);
+    const abortController = new AbortController();
+    activeRunAbortRef.current = abortController;
+    setStatus('Running full hiring bundle...');
+    appendLog('Starting run for hiring_all');
+    let heartbeat: ReturnType<typeof setInterval> | null = null;
+    try {
+      const startedAt = Date.now();
+      const body: Record<string, unknown> = {
+        limit: batchCompanyMode ? batchLimit : 25,
+      };
+      if (!batchCompanyMode && selectedCompanyId) {
+        body.company_ids = [selectedCompanyId];
+        appendLog(`Target company scope set: ${selectedCompanyId}`);
+      } else {
+        body.run_all = true;
+        body.batch_size = Math.min(500, Math.max(1, batchCompanyMode ? batchLimit : 200));
+        if (batchCompanyMode) {
+          appendLog(`Batch company mode enabled (run_all=true, batch_size=${body.batch_size}, limit=${batchLimit}).`);
+        } else {
+          appendLog(`No company selected; running all companies (run_all=true, batch_size=${body.batch_size}).`);
+        }
+      }
+      appendLog('Scraping LinkedIn job listings via curious_coder/linkedin-jobs-scraper (one batch call for all companies).');
+
+      appendLog('Calling /api/signals/run/hiring...');
+      heartbeat = setInterval(() => {
+        const elapsedSec = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
+        appendLog(`Run in progress... ${elapsedSec}s elapsed`);
+      }, 5000);
+      const res = await fetch('/api/signals/run/hiring', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: abortController.signal,
+      });
+      clearInterval(heartbeat);
+      heartbeat = null;
+      const json = await res.json();
+      appendLog(`Run completed with HTTP ${res.status}`);
+
+      setLastResponse({
+        signalKey: runKey,
+        ok: res.ok,
+        httpStatus: res.status,
+        payload: json,
+        at: new Date().toISOString(),
+      });
+      setHistory((prev) => [
+        {
+          signalKey: runKey,
+          ok: res.ok,
+          httpStatus: res.status,
+          at: new Date().toISOString(),
+        },
+        ...prev.slice(0, 11),
+      ]);
+
+      if (!res.ok) {
+        appendLog(`Run failed: ${json?.error || 'Unknown error'}`);
+        setStatus(`hiring_all failed: ${json?.error || 'Unknown error'}`);
+      } else {
+        const result = (json as { result?: Record<string, unknown> })?.result;
+        if (result) {
+          appendLog(`Processed=${String(result.processed ?? 0)} failed=${String(result.failed ?? 0)}`);
+          if (typeof result.postings_scanned === 'number') {
+            appendLog(`Postings scanned=${String(result.postings_scanned)}`);
+          }
+          if (typeof result.candidate_events_before_dedupe === 'number') {
+            appendLog(`Candidate events (pre-dedupe)=${String(result.candidate_events_before_dedupe)}`);
+          }
+          if (typeof result.events_skipped_as_duplicates === 'number') {
+            appendLog(`Duplicates skipped=${String(result.events_skipped_as_duplicates)}`);
+          }
+          const failures = Array.isArray(result.failures)
+            ? (result.failures as Array<Record<string, unknown>>)
+            : [];
+          if (failures.length > 0) {
+            appendLog(`Failure entries returned: ${failures.length}`);
+            for (const failure of failures.slice(0, 8)) {
+              appendLog(`company:${String(failure.company_id ?? 'unknown')} -> ${String(failure.error ?? 'Unknown error')}`);
+            }
+            if (failures.length > 8) appendLog(`...and ${failures.length - 8} more failures`);
+          }
+          // Populate hiring drilldown
+          const rawDetails = Array.isArray(result.details) ? result.details as HiringCompanyDetail[] : [];
+          setHiringDetails(rawDetails);
+          if (rawDetails.length > 0) {
+            appendLog(`Hiring drilldown: ${rawDetails.length} company/companies with matched postings.`);
+            for (const d of rawDetails.slice(0, 5)) {
+              const catSummary = d.categories.map((c) => `${c.key}(${c.count})`).join(', ');
+              appendLog(`  ${d.company_name}: ${d.postings_scraped} scraped, ${d.postings_matched} matched — ${catSummary}${d.job_surge ? ' ⚡surge' : ''}`);
+            }
+            if (rawDetails.length > 5) appendLog(`  ...and ${rawDetails.length - 5} more`);
+          }
+        }
+        appendLog('Refreshing signal status colors...');
+        setStatus('hiring_all ingestion complete. Signal statuses refreshed.');
+      }
+      await refreshSignalStatuses();
+      appendLog('Signal status refresh complete.');
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        appendLog('Run cancelled by user.');
+        setStatus('hiring_all cancelled.');
+        return;
+      }
+      appendLog(`Run errored: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setStatus(`hiring_all failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      activeRunAbortRef.current = null;
+      if (heartbeat) clearInterval(heartbeat);
+      appendLog('Run finished for hiring_all');
+      setBusySignal(null);
+    }
+  }
+
   async function runPatentsSelectedCompany() {
     const runKey = 'patents_selected_company';
     if (!selectedCompanyId) {
@@ -750,6 +1390,56 @@ export default function AdminSignalsTestPage() {
             </div>
           </div>
 
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-slate-900">SEC Form D Backfill</p>
+                <p className="text-xs text-slate-500">
+                  Queues a durable 90-day SEC backfill job. It runs in 5-business-day chunks and continues on cron even if this page closes.
+                </p>
+                {secBackfillJob && (
+                  <div className="text-xs text-slate-600">
+                    {`Status=${secBackfillJob.status} chunks=${secBackfillJob.chunks_completed} filings=${secBackfillJob.filings_upserted} next=${secBackfillJob.next_date}`}
+                  </div>
+                )}
+                {secBackfillJob?.last_error && (
+                  <div className="text-xs text-red-600">{secBackfillJob.last_error}</div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => void startSecBackfill()}
+                disabled={secBackfillBusy || secBackfillJob?.status === 'queued' || secBackfillJob?.status === 'running'}
+                className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {secBackfillBusy ? 'Starting...' : 'Start 90-Day SEC Backfill'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void cancelSecBackfill()}
+                disabled={secBackfillBusy || !(secBackfillJob?.status === 'queued' || secBackfillJob?.status === 'running')}
+                className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm font-medium text-red-800 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {secBackfillBusy ? 'Working...' : 'Cancel SEC Backfill'}
+              </button>
+            </div>
+            <div className="mt-4 space-y-1">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">SEC Backfill Log</p>
+                <button
+                  type="button"
+                  onClick={resetSecBackfillProgressLog}
+                  className="rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Reset
+                </button>
+              </div>
+              <pre className="max-h-52 overflow-auto rounded-md bg-slate-950 p-3 text-xs text-emerald-200">
+                {secBackfillProgressLog.length ? secBackfillProgressLog.join('\n') : 'No SEC backfill run yet.'}
+              </pre>
+            </div>
+          </div>
+
           <div className="grid gap-4 md:grid-cols-2">
             <div className="rounded-xl border border-slate-200 bg-white p-4">
               <p className="mb-2 text-sm font-medium text-slate-900">Target company</p>
@@ -881,6 +1571,79 @@ export default function AdminSignalsTestPage() {
             )}
           </section>
 
+          {/* ── Hiring drilldown ── */}
+          {hiringDetails.length > 0 && (
+            <section className="space-y-3 rounded-xl border border-violet-200 bg-violet-50 p-4">
+              <h2 className="text-lg font-semibold text-violet-900">
+                Hiring drilldown — {hiringDetails.length} {hiringDetails.length !== 1 ? 'companies' : 'company'} with matches
+              </h2>
+              <div className="space-y-3">
+                {hiringDetails.map((d) => (
+                  <div key={d.company_id} className="rounded-lg border border-violet-200 bg-white p-3 space-y-3">
+                    {/* Header row */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-semibold text-slate-900">{d.company_name}</span>
+                      <span className="text-xs text-slate-400">
+                        {d.postings_scraped} scraped · {d.postings_matched} matched
+                      </span>
+                      {d.job_surge && (
+                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-amber-800">
+                          ⚡ surge
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Buying team activated */}
+                    {d.buyer_functions_activated.length > 0 && (
+                      <div>
+                        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Buying team activated</p>
+                        <div className="flex flex-wrap gap-1">
+                          {d.buyer_functions_activated.map((fn) => (
+                            <span
+                              key={fn}
+                              className="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-medium text-indigo-800"
+                            >
+                              {fn.replace(/_/g, ' ')}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Per-category breakdown */}
+                    <div className="space-y-2 border-t border-slate-100 pt-2">
+                      {d.categories.map((cat) => (
+                        <div key={cat.key}>
+                          <div className="mb-1 flex flex-wrap items-center gap-2">
+                            <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-semibold text-violet-800">
+                              {cat.key.replace(/_/g, ' ')}
+                            </span>
+                            <span className="text-xs text-slate-400">{cat.count} role{cat.count !== 1 ? 's' : ''}</span>
+                            {cat.buyer_functions.map((fn) => (
+                              <span
+                                key={fn}
+                                className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-600"
+                              >
+                                {fn.replace(/_/g, ' ')}
+                              </span>
+                            ))}
+                          </div>
+                          <ul className="ml-2 space-y-0.5">
+                            {cat.titles.map((title, i) => (
+                              <li key={i} className="text-xs text-slate-600">
+                                · {title}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
           {READINESS_DIMENSIONS.map((dimension) => (
             <section key={dimension} className="space-y-3">
               <h2 className="text-lg font-semibold text-slate-900">{dimension}</h2>
@@ -896,6 +1659,34 @@ export default function AdminSignalsTestPage() {
                     <div className="text-xs text-emerald-700">Company family</div>
                     <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-800">
                       {busySignal === 'clinical_trials_all' ? 'Running...' : 'Active'}
+                    </div>
+                  </button>
+                )}
+                {dimension === 'new_budget' && (
+                  <button
+                    type="button"
+                    onClick={() => void runFundingBundle()}
+                    disabled={busySignal !== null}
+                    className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-left text-sm font-medium text-emerald-900 hover:bg-emerald-100 disabled:opacity-50"
+                  >
+                    <div className="font-medium">funding_all</div>
+                    <div className="text-xs text-emerald-700">Company family</div>
+                    <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-800">
+                      {busySignal === 'funding_all' ? 'Running...' : 'Active'}
+                    </div>
+                  </button>
+                )}
+                {dimension === 'new_budget' && (
+                  <button
+                    type="button"
+                    onClick={() => void runGrantsBundle()}
+                    disabled={busySignal !== null}
+                    className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-left text-sm font-medium text-emerald-900 hover:bg-emerald-100 disabled:opacity-50"
+                  >
+                    <div className="font-medium">grants_all</div>
+                    <div className="text-xs text-emerald-700">Company family · NIH RePORTER</div>
+                    <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-800">
+                      {busySignal === 'grants_all' ? 'Running...' : 'Active'}
                     </div>
                   </button>
                 )}
@@ -927,12 +1718,29 @@ export default function AdminSignalsTestPage() {
                     </div>
                   </button>
                 )}
+                {dimension === 'new_people' && (
+                  <button
+                    type="button"
+                    onClick={() => void runHiringBundle()}
+                    disabled={busySignal !== null}
+                    className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-left text-sm font-medium text-emerald-900 hover:bg-emerald-100 disabled:opacity-50"
+                  >
+                    <div className="font-medium">hiring_all</div>
+                    <div className="text-xs text-emerald-700">Company family · LinkedIn via Apify</div>
+                    <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-800">
+                      {busySignal === 'hiring_all' ? 'Running...' : 'Active'}
+                    </div>
+                  </button>
+                )}
                 {signalsByDimension[dimension].map((entry) => (
                   (() => {
                     if (
                       CLINICAL_SINGLE_SIGNAL_KEYS.has(entry.signalKey as SignalKey) ||
                       FDA_SINGLE_SIGNAL_KEYS.has(entry.signalKey as SignalKey) ||
-                      PATENT_SINGLE_SIGNAL_KEYS.has(entry.signalKey as SignalKey)
+                      PATENT_SINGLE_SIGNAL_KEYS.has(entry.signalKey as SignalKey) ||
+                      FUNDING_SINGLE_SIGNAL_KEYS.has(entry.signalKey as SignalKey) ||
+                      HIRING_SINGLE_SIGNAL_KEYS.has(entry.signalKey as SignalKey) ||
+                      GRANTS_SINGLE_SIGNAL_KEYS.has(entry.signalKey as SignalKey)
                     ) {
                       return null;
                     }
