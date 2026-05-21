@@ -745,6 +745,12 @@ export default function AccountsPage() {
     setPanelMode('action');
   };
 
+  const openSignalsTab = (id: string) => {
+    pendingOpenCriteriaRef.current = false;
+    setSelectedAccountId(id);
+    setPanelMode('signals');
+  };
+
   const openContactAcquisition = (account: AccountRow) => {
     const params = new URLSearchParams({
       mode: 'contacts_at_company',
@@ -921,17 +927,17 @@ export default function AccountsPage() {
         );
       case 'readiness': {
         const rs = (account as AccountRow).readiness_score ?? null;
-        if (rs == null) return <span className="text-xs text-gray-300">—</span>;
-        const pct = Math.round(rs * 100);
         return (
-          <span className={cn(
-            'text-sm font-semibold tabular-nums',
-            rs >= 0.7  ? 'text-emerald-600' :
-            rs >= 0.35 ? 'text-amber-600'   :
-                         'text-rose-500',
-          )}>
-            {pct}
-          </span>
+          <div className="flex items-center justify-center">
+            <TableFitGaugeButton
+              score={rs}
+              title="View account readiness"
+              onOpen={(e) => {
+                e.stopPropagation();
+                openSignalsTab(account.id);
+              }}
+            />
+          </div>
         );
       }
     }
@@ -1046,7 +1052,7 @@ export default function AccountsPage() {
                           onClick={() => handleSortCol(col)}
                           className={cn(
                             'flex min-w-0 items-center gap-1 hover:text-gray-800 transition-colors text-left',
-                            col === 'fit' || col === 'action' ? 'justify-center text-center' : '',
+                            col === 'fit' || col === 'readiness' || col === 'action' ? 'justify-center text-center' : '',
                           )}
                         >
                           {ACCOUNT_QUERY_COL_DEFS[col].label}

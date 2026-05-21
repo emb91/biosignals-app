@@ -2852,7 +2852,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                         ) : null}
                       </button>
                     ))}
-                    <div className="hidden items-center min-[1280px]:flex">
+                    <div className="hidden items-center justify-center min-[1280px]:flex">
                       <span className="normal-case tracking-normal">Readiness</span>
                     </div>
                     <button
@@ -2956,7 +2956,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                               </div>
                             </div>
 
-                            <div className="hidden min-w-0 items-center min-[1280px]:flex">
+                            <div className="hidden min-w-0 items-center justify-center min-[1280px]:flex">
                               <span className="text-[11px] text-gray-300 tabular-nums">—</span>
                             </div>
 
@@ -3067,22 +3067,17 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                           </div>
 
                           {/* Readiness — only visible at ≥1280px (7-column grid) */}
-                          <div className="hidden min-w-0 items-center min-[1280px]:flex">
-                            {(() => {
-                              const rs = lead.company_readiness_score ?? null;
-                              if (rs == null) return <span className="text-xs text-gray-300">—</span>;
-                              const pct = Math.round(rs * 100);
-                              return (
-                                <span className={cn(
-                                  'text-sm font-semibold tabular-nums',
-                                  rs >= 0.7  ? 'text-emerald-600' :
-                                  rs >= 0.35 ? 'text-amber-600'   :
-                                               'text-rose-500',
-                                )}>
-                                  {pct}
-                                </span>
-                              );
-                            })()}
+                          <div className="hidden min-w-0 items-center justify-center min-[1280px]:flex">
+                            <TableFitGaugeButton
+                              score={lead.company_readiness_score ?? null}
+                              title="View account readiness"
+                              onOpen={(e) => {
+                                e.stopPropagation();
+                                setSelectedLeadId(lead.id);
+                                setSelectedPreview('signals');
+                                cancelEditingLead();
+                              }}
+                            />
                           </div>
 
                           {/* Contact fit */}
