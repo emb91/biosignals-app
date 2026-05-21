@@ -256,7 +256,7 @@ function TaxonomyPills({ items }: { items: string[] | null | undefined }) {
   );
 }
 
-const DEFAULT_COLUMNS: AccountQueryColumn[] = ['company', 'company_type', 'fit', 'contacts', 'action'];
+const DEFAULT_COLUMNS: AccountQueryColumn[] = ['company', 'company_type', 'fit', 'contacts', 'readiness', 'action'];
 // Below 1280px the table is space-constrained (sidebar collapses to hamburger at
 // <1280, agent panel is still ~380px until <768). Cramming all 5 columns turns the
 // header into overlapping word soup — so below 1280 we keep just the essentials:
@@ -270,6 +270,7 @@ const ACCOUNT_QUERY_COL_DEFS: Record<AccountQueryColumn, { label: string; width:
   company_type: { label: 'Company type', width: 'minmax(0,0.82fr)' },
   fit: { label: 'Fit', width: 'minmax(0,4.25rem)' },
   contacts: { label: 'Contacts', width: 'minmax(0,7.5rem)' },
+  readiness: { label: 'Readiness', width: 'minmax(0,6.5rem)' },
   therapeutic_areas: { label: 'Therapeutic areas', width: 'minmax(0,1fr)' },
   modalities: { label: 'Modalities', width: 'minmax(0,1fr)' },
   action: { label: 'Action', width: 'minmax(0,9rem)' },
@@ -766,52 +767,32 @@ export default function AccountsPage() {
     const isArcovaAccount = (account.data_provenance_type || '').toLowerCase().includes('arcova');
 
     switch (col) {
-      case 'company': {
-        const readinessLabel = (account as AccountRow).readiness_label ?? null;
+      case 'company':
         return (
-          <div className="flex flex-col gap-0.5 min-w-0">
-            <div className="flex items-start gap-1.5 min-w-0">
-              {href ? (
-                <a
-                  href={href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={(e) => e.stopPropagation()}
-                  className="text-sm font-medium text-arcova-teal hover:underline line-clamp-2 break-words leading-snug min-w-0"
-                  title={companyLabel}
-                >
-                  {companyLabel}
-                </a>
-              ) : (
-                <span className="text-sm font-medium text-gray-900 line-clamp-2 break-words leading-snug min-w-0" title={companyLabel}>
-                  {companyLabel}
-                </span>
-              )}
-              {href && (
-                <a href={href} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-arcova-teal/60 hover:text-arcova-teal shrink-0 mt-0.5">
-                  <ExternalLink className="w-3 h-3" />
-                </a>
-              )}
-            </div>
-            {readinessLabel && (
-              <span className={cn(
-                'inline-flex w-fit items-center gap-1 rounded-full px-1.5 py-px text-[9px] font-bold uppercase tracking-wide',
-                readinessLabel === 'high' ? 'bg-emerald-50 text-emerald-700' :
-                readinessLabel === 'medium' ? 'bg-amber-50 text-amber-700' :
-                'bg-rose-50 text-rose-700',
-              )}>
-                <span className={cn(
-                  'h-1 w-1 rounded-full shrink-0',
-                  readinessLabel === 'high' ? 'bg-emerald-500' :
-                  readinessLabel === 'medium' ? 'bg-amber-500' :
-                  'bg-rose-500',
-                )} />
-                {readinessLabel}
+          <div className="flex items-start gap-1.5 min-w-0">
+            {href ? (
+              <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="text-sm font-medium text-arcova-teal hover:underline line-clamp-2 break-words leading-snug min-w-0"
+                title={companyLabel}
+              >
+                {companyLabel}
+              </a>
+            ) : (
+              <span className="text-sm font-medium text-gray-900 line-clamp-2 break-words leading-snug min-w-0" title={companyLabel}>
+                {companyLabel}
               </span>
+            )}
+            {href && (
+              <a href={href} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-arcova-teal/60 hover:text-arcova-teal shrink-0 mt-0.5">
+                <ExternalLink className="w-3 h-3" />
+              </a>
             )}
           </div>
         );
-      }
       case 'company_type':
         return account.company_type ? (
           <button
@@ -938,6 +919,26 @@ export default function AccountsPage() {
             {account.data_provenance_type || '—'}
           </span>
         );
+      case 'readiness': {
+        const rl = (account as AccountRow).readiness_label ?? null;
+        if (!rl) return <span className="text-xs text-gray-300">—</span>;
+        return (
+          <span className={cn(
+            'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold capitalize ring-1',
+            rl === 'high'   ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' :
+            rl === 'medium' ? 'bg-amber-50   text-amber-700   ring-amber-200'   :
+                              'bg-rose-50    text-rose-700    ring-rose-200',
+          )}>
+            <span className={cn(
+              'h-1.5 w-1.5 rounded-full shrink-0',
+              rl === 'high'   ? 'bg-emerald-500' :
+              rl === 'medium' ? 'bg-amber-500'   :
+                                'bg-rose-500',
+            )} />
+            {rl}
+          </span>
+        );
+      }
     }
   };
 

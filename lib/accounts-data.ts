@@ -16,6 +16,7 @@ export type AccountQueryColumn =
   | 'company_type'
   | 'fit'
   | 'contacts'
+  | 'readiness'
   | 'therapeutic_areas'
   | 'modalities'
   | 'action'

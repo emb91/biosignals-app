@@ -440,7 +440,7 @@ const LEADS_GRID_COLS_SM =
 const LEADS_GRID_COLS_LG =
   'minmax(0,1fr) minmax(0,1fr) minmax(0,1.15fr) minmax(5.5rem,0.7fr)';
 const LEADS_GRID_COLS_FULL =
-  'minmax(0,0.85fr) minmax(0,1fr) minmax(0,1.15fr) minmax(7.25rem,0.85fr) minmax(0,5.25rem) minmax(9.5rem,1.15fr)';
+  'minmax(0,0.85fr) minmax(0,1fr) minmax(0,1.15fr) minmax(0,6rem) minmax(7.25rem,0.85fr) minmax(0,5.25rem) minmax(9.5rem,1.15fr)';
 
 function pickLeadsGridCols(width: number): string {
   if (width >= 1280) return LEADS_GRID_COLS_FULL;
@@ -2851,6 +2851,9 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                         ) : null}
                       </button>
                     ))}
+                    <div className="hidden items-center min-[1280px]:flex">
+                      <span className="normal-case tracking-normal">Readiness</span>
+                    </div>
                     <button
                       type="button"
                       onClick={() => handleSortCol('contact_fit')}
@@ -2952,6 +2955,10 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                               </div>
                             </div>
 
+                            <div className="hidden min-w-0 items-center min-[1280px]:flex">
+                              <span className="text-[11px] text-gray-300 tabular-nums">—</span>
+                            </div>
+
                             <div className="min-w-0 flex items-center justify-center">
                               <span className="text-[11px] text-gray-300 tabular-nums">—</span>
                             </div>
@@ -3026,26 +3033,9 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                               const truncated = name.length > 30 ? name.slice(0, 30) + '…' : name;
                               const domain = companyFirmographics?.domain || lead.company_domain;
                               const href = companyFirmographics?.website || (domain ? `https://${domain}` : null);
-                              const readinessLabel = lead.company_readiness_label ?? null;
-                              const readinessBadge = readinessLabel ? (
-                                <span className={cn(
-                                  'inline-flex w-fit items-center gap-1 rounded-full px-1.5 py-px text-[9px] font-bold uppercase tracking-wide',
-                                  readinessLabel === 'high' ? 'bg-emerald-50 text-emerald-700' :
-                                  readinessLabel === 'medium' ? 'bg-amber-50 text-amber-700' :
-                                  'bg-rose-50 text-rose-700',
-                                )}>
-                                  <span className={cn(
-                                    'h-1 w-1 rounded-full shrink-0',
-                                    readinessLabel === 'high' ? 'bg-emerald-500' :
-                                    readinessLabel === 'medium' ? 'bg-amber-500' :
-                                    'bg-rose-500',
-                                  )} />
-                                  {readinessLabel}
-                                </span>
-                              ) : null;
                               if (lead.company_id) {
                                 return (
-                                  <div className="min-w-0 flex flex-col gap-0.5">
+                                  <div className="min-w-0">
                                     <button
                                       type="button"
                                       onClick={(e) => {
@@ -3056,24 +3046,45 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                                     >
                                       {truncated}
                                     </button>
-                                    {readinessBadge}
                                   </div>
                                 );
                               }
                               return href ? (
-                                <div className="min-w-0 flex flex-col gap-0.5">
+                                <div className="min-w-0">
                                   <a href={href} target="_blank" rel="noopener noreferrer"
                                     onClick={(e) => e.stopPropagation()}
                                     className="inline-block max-w-full truncate text-[12px] font-medium text-arcova-teal hover:underline">
                                     {truncated}
                                   </a>
-                                  {readinessBadge}
                                 </div>
                               ) : (
-                                <div className="min-w-0 flex flex-col gap-0.5">
+                                <div className="min-w-0">
                                   <p className="truncate text-[12px] font-medium text-gray-700">{truncated}</p>
-                                  {readinessBadge}
                                 </div>
+                              );
+                            })()}
+                          </div>
+
+                          {/* Readiness — only visible at ≥1280px (7-column grid) */}
+                          <div className="hidden min-w-0 items-center min-[1280px]:flex">
+                            {(() => {
+                              const rl = lead.company_readiness_label ?? null;
+                              if (!rl) return <span className="text-xs text-gray-300">—</span>;
+                              return (
+                                <span className={cn(
+                                  'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold capitalize ring-1',
+                                  rl === 'high'   ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' :
+                                  rl === 'medium' ? 'bg-amber-50   text-amber-700   ring-amber-200'   :
+                                                    'bg-rose-50    text-rose-700    ring-rose-200',
+                                )}>
+                                  <span className={cn(
+                                    'h-1.5 w-1.5 rounded-full shrink-0',
+                                    rl === 'high'   ? 'bg-emerald-500' :
+                                    rl === 'medium' ? 'bg-amber-500'   :
+                                                      'bg-rose-500',
+                                  )} />
+                                  {rl}
+                                </span>
                               );
                             })()}
                           </div>

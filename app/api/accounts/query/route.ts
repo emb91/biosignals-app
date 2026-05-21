@@ -21,6 +21,7 @@ export const VALID_ACCOUNT_COLUMNS = [
   'company_type',
   'fit',
   'contacts',
+  'readiness',
   'therapeutic_areas',
   'modalities',
   'action',
