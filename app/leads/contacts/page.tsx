@@ -57,6 +57,7 @@ import {
   Check,
   Plus,
 } from 'lucide-react';
+import { EntitySignalsList } from '@/components/EntitySignalsList';
 
 interface EmploymentHistoryItem {
   company_name: string | null;
@@ -341,6 +342,7 @@ interface Lead {
   attribution_latest_closed_won_at?: string | null;
   attribution_won_after_arcova_touch?: boolean | null;
   attribution_computed_at?: string | null;
+  company_readiness_label?: string | null;
   companies: {
     company_name: string | null;
     domain: string | null;
@@ -1074,7 +1076,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
   const [stoppingLeadId, setStoppingLeadId] = useState<string | null>(null);
   const [stopEnrichmentError, setStopEnrichmentError] = useState<string | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
-  const [selectedPreview, setSelectedPreview] = useState<'contact' | 'hubspot' | 'scoring' | 'action'>('contact');
+  const [selectedPreview, setSelectedPreview] = useState<'contact' | 'hubspot' | 'scoring' | 'action' | 'signals'>('contact');
   // Mirror the AgentPanel column's bounding rect so the contact drawer can
   // overlay it pixel-for-pixel regardless of viewport width or padding maths.
   // The AgentPanel renders its outermost div with the marker class
@@ -3024,9 +3026,26 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                               const truncated = name.length > 30 ? name.slice(0, 30) + '…' : name;
                               const domain = companyFirmographics?.domain || lead.company_domain;
                               const href = companyFirmographics?.website || (domain ? `https://${domain}` : null);
+                              const readinessLabel = lead.company_readiness_label ?? null;
+                              const readinessBadge = readinessLabel ? (
+                                <span className={cn(
+                                  'inline-flex w-fit items-center gap-1 rounded-full px-1.5 py-px text-[9px] font-bold uppercase tracking-wide',
+                                  readinessLabel === 'high' ? 'bg-emerald-50 text-emerald-700' :
+                                  readinessLabel === 'medium' ? 'bg-amber-50 text-amber-700' :
+                                  'bg-rose-50 text-rose-700',
+                                )}>
+                                  <span className={cn(
+                                    'h-1 w-1 rounded-full shrink-0',
+                                    readinessLabel === 'high' ? 'bg-emerald-500' :
+                                    readinessLabel === 'medium' ? 'bg-amber-500' :
+                                    'bg-rose-500',
+                                  )} />
+                                  {readinessLabel}
+                                </span>
+                              ) : null;
                               if (lead.company_id) {
                                 return (
-                                  <div className="min-w-0">
+                                  <div className="min-w-0 flex flex-col gap-0.5">
                                     <button
                                       type="button"
                                       onClick={(e) => {
@@ -3037,20 +3056,23 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                                     >
                                       {truncated}
                                     </button>
+                                    {readinessBadge}
                                   </div>
                                 );
                               }
                               return href ? (
-                                <div className="min-w-0">
+                                <div className="min-w-0 flex flex-col gap-0.5">
                                   <a href={href} target="_blank" rel="noopener noreferrer"
                                     onClick={(e) => e.stopPropagation()}
                                     className="inline-block max-w-full truncate text-[12px] font-medium text-arcova-teal hover:underline">
                                     {truncated}
                                   </a>
+                                  {readinessBadge}
                                 </div>
                               ) : (
-                                <div className="min-w-0">
+                                <div className="min-w-0 flex flex-col gap-0.5">
                                   <p className="truncate text-[12px] font-medium text-gray-700">{truncated}</p>
+                                  {readinessBadge}
                                 </div>
                               );
                             })()}
@@ -3299,9 +3321,11 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                                 ? 'HubSpot'
                               : selectedPreview === 'scoring'
                                 ? 'Fit'
-                                : isCustomersPage
-                                  ? 'Customer'
-                                  : 'Action'}
+                                : selectedPreview === 'signals'
+                                  ? 'Signals'
+                                  : isCustomersPage
+                                    ? 'Customer'
+                                    : 'Action'}
                           </p>
                           <h2 className="font-manrope mt-1.5 break-words text-xl font-bold leading-tight tracking-[-0.024em] text-[rgb(13,53,71)] sm:text-2xl">
                             {[selectedLead.first_name, selectedLead.last_name].filter(Boolean).join(' ') ||
@@ -3363,7 +3387,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                       </div>
 
                       <div className="relative z-[1] flex border-b border-[rgba(13,53,71,0.08)] px-4">
-                        {(['contact', 'scoring', 'hubspot', 'action'] as const).map((mode) => (
+                        {(['contact', 'scoring', 'hubspot', 'action', 'signals'] as const).map((mode) => (
                           <button
                             key={mode}
                             type="button"
@@ -3381,9 +3405,11 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                                 ? 'HubSpot'
                                 : mode === 'scoring'
                                   ? 'Fit'
-                                  : isCustomersPage
-                                    ? 'Customer'
-                                    : 'Action'}
+                                  : mode === 'signals'
+                                    ? 'Signals'
+                                    : isCustomersPage
+                                      ? 'Customer'
+                                      : 'Action'}
                           </button>
                         ))}
                       </div>
@@ -4360,6 +4386,9 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                               </div>
                             );
                           })()
+                        ) : selectedPreview === 'signals' ? (
+                          /* ── Signals view ── */
+                          <EntitySignalsList contactId={selectedLead.id} />
                         ) : (
                           /* ── Scoring view ── */
                           <div className="space-y-3">

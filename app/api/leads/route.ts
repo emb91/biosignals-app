@@ -349,6 +349,40 @@ async function attachEnrichmentMetadataBestEffort(
   });
 }
 
+async function attachReadinessBestEffort(
+  supabase: SupabaseClientLike,
+  rows: LeadRow[],
+): Promise<LeadRow[]> {
+  const companyIds = dedupe(
+    rows
+      .map((row) => (typeof row.company_id === 'string' ? row.company_id : null))
+      .filter((v): v is string => Boolean(v)),
+  );
+  if (companyIds.length === 0) {
+    return rows.map((row) => ({ ...row, company_readiness_label: null }));
+  }
+  try {
+    const { data, error } = await supabase
+      .from('account_readiness_snapshots')
+      .select('company_id, overall_label')
+      .in('company_id', companyIds);
+    if (error || !data) return rows.map((row) => ({ ...row, company_readiness_label: null }));
+    const labelMap = new Map<string, string | null>(
+      (data as Array<{ company_id: string; overall_label: string | null }>).map((r) => [
+        r.company_id,
+        r.overall_label,
+      ]),
+    );
+    return rows.map((row) => ({
+      ...row,
+      company_readiness_label:
+        typeof row.company_id === 'string' ? (labelMap.get(row.company_id) ?? null) : null,
+    }));
+  } catch {
+    return rows.map((row) => ({ ...row, company_readiness_label: null }));
+  }
+}
+
 async function attachHubSpotLeadStateBestEffort(
   supabase: SupabaseClientLike,
   rows: LeadRow[],
@@ -984,7 +1018,8 @@ export async function GET(request: Request) {
     const withEmails = await attachContactEmailsBestEffort(supabase, enrichedRows);
     const withPhones = await attachContactPhonesBestEffort(supabase, withEmails);
     const withHubSpotLeadState = await attachHubSpotLeadStateBestEffort(supabase, withPhones);
-    const withAttribution = await attachContactAttributionBestEffort(supabase, withHubSpotLeadState);
+    const withReadiness = await attachReadinessBestEffort(supabase, withHubSpotLeadState);
+    const withAttribution = await attachContactAttributionBestEffort(supabase, withReadiness);
 
     return NextResponse.json({
       data: withAttribution,

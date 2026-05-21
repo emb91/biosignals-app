@@ -20,6 +20,10 @@
 import { createAdminClient } from '@/lib/supabase-admin';
 import { ensureCompanyAliases } from '@/lib/signals/company-aliases';
 import { ensureCompanyCik } from '@/lib/signals/company-cik';
+import {
+  signalKeyForClassification,
+  type SecFilingClassification,
+} from '@/lib/signals/classify-sec-filing';
 import { buildCompanyQueryVariants, normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
 import {
   generateAccountReason,
@@ -71,6 +75,8 @@ type SecFilingRow = {
   entity_type: string | null;
   industry_group_type: string | null;
   items: string[] | null;
+  classification: SecFilingClassification | null;
+  classified_at: string | null;
 };
 
 const SOURCE_FORM_D = 'sec_edgar_form_d';
@@ -125,7 +131,7 @@ async function fetchFilingsForCompany(
     const { data, error } = await admin
       .from('sec_filings_local')
       .select(
-        'accession_number, form_type, filing_date, cik, entity_name, entity_name_normalized, filing_url, primary_doc_url, total_offering_amount, total_amount_sold, total_remaining, date_of_first_sale, entity_type, industry_group_type, items',
+        'accession_number, form_type, filing_date, cik, entity_name, entity_name_normalized, filing_url, primary_doc_url, total_offering_amount, total_amount_sold, total_remaining, date_of_first_sale, entity_type, industry_group_type, items, classification, classified_at',
       )
       .eq('cik', company.cik)
       .order('filing_date', { ascending: false })
@@ -149,7 +155,7 @@ async function fetchFilingsForCompany(
   const { data, error } = await admin
     .from('sec_filings_local')
     .select(
-      'accession_number, form_type, filing_date, cik, entity_name, entity_name_normalized, filing_url, primary_doc_url, total_offering_amount, total_amount_sold, total_remaining, date_of_first_sale, entity_type, industry_group_type, items',
+      'accession_number, form_type, filing_date, cik, entity_name, entity_name_normalized, filing_url, primary_doc_url, total_offering_amount, total_amount_sold, total_remaining, date_of_first_sale, entity_type, industry_group_type, items, classification, classified_at',
     )
     .or(orClause)
     .order('filing_date', { ascending: false })
@@ -335,6 +341,9 @@ export async function runFundingMonitor(input: FundingMonitorInput): Promise<Fun
       );
 
       // Build the candidate source-event-id list per source, dedupe in bulk.
+      // A single 8-K can produce multiple signals (e.g., 3.02 PIPE +
+      // classification-driven licensing_deal), so we collect all candidate IDs
+      // across both code paths before the bulk existence check.
       const candidateBySource: Record<string, string[]> = {
         [SOURCE_FORM_D]: [],
         [SOURCE_8K]: [],
@@ -345,11 +354,21 @@ export async function runFundingMonitor(input: FundingMonitorInput): Promise<Fun
           candidateBySource[SOURCE_FORM_D].push(
             `${SOURCE_FORM_D}:${row.id}:${filing.accession_number}:funding_round`,
           );
-        } else if (FORM_8K_TYPES.has(filing.form_type) && shouldEmit('funding_round')) {
+        } else if (FORM_8K_TYPES.has(filing.form_type)) {
           const items = Array.isArray(filing.items) ? filing.items : [];
-          if (items.includes('3.02')) {
+          // Path 1: item-only PIPE detection → funding_round.
+          if (items.includes('3.02') && shouldEmit('funding_round')) {
             candidateBySource[SOURCE_8K].push(
               `${SOURCE_8K}:${row.id}:${filing.accession_number}:funding_round`,
+            );
+          }
+          // Path 2: classification-driven (licensing_deal / partnership_* /
+          // co_development_deal / milestone_payment / acquisition_distraction
+          // / leadership_churn / restructuring / financing).
+          const classificationMapping = signalKeyForClassification(filing.classification);
+          if (classificationMapping && shouldEmit(classificationMapping.signalKey)) {
+            candidateBySource[SOURCE_8K].push(
+              `${SOURCE_8K}:${row.id}:${filing.accession_number}:${classificationMapping.signalKey}`,
             );
           }
         } else if (FORM_424B_TYPES.has(filing.form_type) && shouldEmit('ipo_or_follow_on')) {
@@ -415,35 +434,88 @@ export async function runFundingMonitor(input: FundingMonitorInput): Promise<Fun
           } else {
             eventsSkippedAsDuplicates += 1;
           }
-        } else if (FORM_8K_TYPES.has(filing.form_type) && shouldEmit('funding_round')) {
+        } else if (FORM_8K_TYPES.has(filing.form_type)) {
           const items = Array.isArray(filing.items) ? filing.items : [];
-          if (!items.includes('3.02')) continue;
-          candidateEventsMatched += 1;
-          const sourceEventId = `${SOURCE_8K}:${row.id}:${filing.accession_number}:funding_round`;
-          const summary = `8-K Item 3.02 (unregistered equity sales / PIPE) filed by ${filing.entity_name ?? companyName} (filed ${filingDate}).`;
-          const emitted = await emitCompanySignal(admin, {
-            userId: input.userId,
-            companyId: row.id,
-            source: SOURCE_8K,
-            signalKey: 'funding_round',
-            sourceEventType: 'sec_form_8k_item_3_02',
-            sourceEventId,
-            sourceUrl: filing.filing_url,
-            eventAt,
-            summary,
-            metadata: { ...baseMetadata, items },
-            existingSourceEventIds: existingBySource[SOURCE_8K],
-          });
-          if (emitted === 'emitted') {
-            emittedAny = true;
-            emittedSignalTypes.add('funding_round');
-          } else {
-            eventsSkippedAsDuplicates += 1;
+
+          // Path 1: item-only PIPE detection (Item 3.02 = unregistered equity).
+          // Stays a pure item-code check; no LLM dependency on the high-precision
+          // financing path.
+          if (items.includes('3.02') && shouldEmit('funding_round')) {
+            candidateEventsMatched += 1;
+            const sourceEventId = `${SOURCE_8K}:${row.id}:${filing.accession_number}:funding_round`;
+            const summary = `8-K Item 3.02 (unregistered equity sales / PIPE) filed by ${filing.entity_name ?? companyName} (filed ${filingDate}).`;
+            const emitted = await emitCompanySignal(admin, {
+              userId: input.userId,
+              companyId: row.id,
+              source: SOURCE_8K,
+              signalKey: 'funding_round',
+              sourceEventType: 'sec_form_8k_item_3_02',
+              sourceEventId,
+              sourceUrl: filing.filing_url,
+              eventAt,
+              summary,
+              metadata: { ...baseMetadata, items },
+              existingSourceEventIds: existingBySource[SOURCE_8K],
+            });
+            if (emitted === 'emitted') {
+              emittedAny = true;
+              emittedSignalTypes.add('funding_round');
+            } else {
+              eventsSkippedAsDuplicates += 1;
+            }
+          }
+
+          // Path 2: LLM-classified 8-K body → routed signal flavour. Catches
+          // material agreements (1.01), leadership changes (5.02), and other
+          // events (8.01) that the item code alone can't disambiguate.
+          const classification = filing.classification;
+          const classificationMapping = signalKeyForClassification(classification);
+          if (classification && classificationMapping && shouldEmit(classificationMapping.signalKey)) {
+            candidateEventsMatched += 1;
+            const sourceEventId = `${SOURCE_8K}:${row.id}:${filing.accession_number}:${classificationMapping.signalKey}`;
+            // Build a sales-facing summary: prefer the LLM's rationale, fall
+            // back to a generic line if the model returned an empty string.
+            const fallbackSummary = `${classificationMapping.signalKey.replace(/_/g, ' ')} detected at ${
+              filing.entity_name ?? companyName
+            } via 8-K (filed ${filingDate}).`;
+            const summary = classification.rationale && classification.rationale.length > 0
+              ? `${classification.rationale} [8-K, filed ${filingDate}]`
+              : fallbackSummary;
+            const emitted = await emitCompanySignal(admin, {
+              userId: input.userId,
+              companyId: row.id,
+              source: SOURCE_8K,
+              signalKey: classificationMapping.signalKey,
+              sourceEventType: `sec_form_8k_${classification.category}`,
+              sourceEventId,
+              sourceUrl: filing.filing_url,
+              eventAt,
+              summary,
+              metadata: {
+                ...baseMetadata,
+                items,
+                classification,
+                classified_at: filing.classified_at,
+              },
+              existingSourceEventIds: existingBySource[SOURCE_8K],
+            });
+            if (emitted === 'emitted') {
+              emittedAny = true;
+              emittedSignalTypes.add(classificationMapping.signalKey);
+            } else {
+              eventsSkippedAsDuplicates += 1;
+            }
           }
         } else if (FORM_424B_TYPES.has(filing.form_type) && shouldEmit('ipo_or_follow_on')) {
           candidateEventsMatched += 1;
           const sourceEventId = `${SOURCE_424B}:${row.id}:${filing.accession_number}:ipo_or_follow_on`;
-          const summary = `Prospectus ${filing.form_type} filed by ${filing.entity_name ?? companyName} — public follow-on / IPO pricing (filed ${filingDate}).`;
+          // Enrich summary with LLM-extracted proceeds when available (only
+          // populated for tracked-CIK 424B filings; otherwise we fall back to
+          // the basic "they filed a prospectus" line).
+          const c = filing.classification;
+          const summary = c && c.rationale && c.rationale.length > 0
+            ? `${c.rationale} [${filing.form_type}, filed ${filingDate}]`
+            : `Prospectus ${filing.form_type} filed by ${filing.entity_name ?? companyName} — public follow-on / IPO pricing (filed ${filingDate}).`;
           const emitted = await emitCompanySignal(admin, {
             userId: input.userId,
             companyId: row.id,
@@ -454,7 +526,9 @@ export async function runFundingMonitor(input: FundingMonitorInput): Promise<Fun
             sourceUrl: filing.filing_url,
             eventAt,
             summary,
-            metadata: baseMetadata,
+            metadata: c
+              ? { ...baseMetadata, classification: c, classified_at: filing.classified_at }
+              : baseMetadata,
             existingSourceEventIds: existingBySource[SOURCE_424B],
           });
           if (emitted === 'emitted') {

@@ -18,6 +18,7 @@
 import type { createAdminClient } from '@/lib/supabase-admin';
 import { normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
 import { loadAllTrackedCiks } from '@/lib/signals/company-cik';
+import { classifySecFiling, type SecFilingClassification } from '@/lib/signals/classify-sec-filing';
 import {
   isRateLimitError,
   secFetchDailyIndex,
@@ -25,6 +26,11 @@ import {
   secFetchText,
   SecHttpError,
 } from '@/lib/signals/sec-edgar-client';
+
+// 8-K item codes worth classifying via LLM (item code alone is too coarse to
+// route to a signal — body needs reading). 3.02 is handled separately by the
+// existing item-list-based emit in run-funding-monitor.ts (PIPE detection).
+const CLASSIFIABLE_8K_ITEMS = new Set(['1.01', '5.02', '8.01']);
 
 const TARGET_FORM_TYPES_FORM_D = new Set(['D', 'D/A']);
 const TARGET_FORM_TYPES_8K = new Set(['8-K', '8-K/A']);
@@ -253,7 +259,7 @@ type IndexJson = {
   };
 };
 
-async function discoverPrimaryDoc(
+export async function discoverPrimaryDoc(
   primaryDirUrl: string,
   preferredExt: 'xml' | 'htm' | 'txt' | null,
 ): Promise<string | null> {
@@ -299,6 +305,8 @@ type FilingUpsertRow = {
   entity_type: string | null;
   industry_group_type: string | null;
   items: string[] | null;
+  classification: SecFilingClassification | null;
+  classified_at: string | null;
   extras: Record<string, unknown> | null;
   last_seen_at: string;
 };
@@ -320,9 +328,47 @@ function buildBaseUpsertRow(row: DailyIndexRow, primaryDocUrl: string | null, st
     entity_type: null,
     industry_group_type: null,
     items: null,
+    classification: null,
+    classified_at: null,
     extras: null,
     last_seen_at: startedAtIso,
   };
+}
+
+/**
+ * Try to classify a fetched 8-K / 424B body via Haiku. Failures are non-fatal
+ * — caller carries on with null classification, and the row can be reclassified
+ * later by a backfill of unclassified rows. Rate-limit errors bubble up so the
+ * caller can halt the entire sync.
+ */
+async function tryClassify(
+  formType: string,
+  entityName: string | null,
+  filingDate: string,
+  items: string[],
+  bodyText: string,
+  accessionNumber: string,
+): Promise<{ classification: SecFilingClassification | null; classifiedAt: string | null }> {
+  try {
+    const result = await classifySecFiling({
+      formType,
+      entityName,
+      filingDate,
+      items,
+      primaryDocText: bodyText,
+    });
+    return { classification: result, classifiedAt: result ? new Date().toISOString() : null };
+  } catch (error) {
+    // Anthropic SDK throws plain Errors; no rate-limit shape to bubble up the
+    // SEC pathway. Log and continue with null — the periodic reclassifier
+    // will pick this up next run.
+    console.warn(
+      `[sync-sec-delta] classification failed (${accessionNumber}): ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return { classification: null, classifiedAt: null };
+  }
 }
 
 // ── Main sync ─────────────────────────────────────────────────────────────
@@ -381,7 +427,21 @@ export async function syncSecDelta(input: SyncSecDeltaInput): Promise<SyncSecDel
   const upsertBuffer: FilingUpsertRow[] = [];
   const flush = async (): Promise<void> => {
     if (upsertBuffer.length === 0) return;
-    const chunk = upsertBuffer.splice(0, upsertBuffer.length);
+    // Dedupe within the chunk by accession_number. The SEC daily-index
+    // sometimes lists the same filing under multiple CIK rows (joint
+    // filers, parent + subsidiary on a single Form D, related-issuer
+    // 424B prospectuses), so the same accession can be queued twice in
+    // one buffer. Postgres `ON CONFLICT DO UPDATE` rejects a statement
+    // that touches the same row twice — collapsing here is the fix.
+    // Last-write-wins: the most recent push has the freshest parse
+    // (primary_doc XML or 8-K items) since later rows in the loop are
+    // processed after earlier ones for the same accession.
+    const byAccession = new Map<string, FilingUpsertRow>();
+    for (const row of upsertBuffer) {
+      byAccession.set(row.accession_number, row);
+    }
+    upsertBuffer.length = 0;
+    const chunk = [...byAccession.values()];
     const { error } = await admin
       .from('sec_filings_local')
       .upsert(chunk, { onConflict: 'accession_number' });
@@ -455,9 +515,10 @@ export async function syncSecDelta(input: SyncSecDeltaInput): Promise<SyncSecDel
             }
             const primaryDocUrl = await discoverPrimaryDoc(row.primaryDirUrl, 'htm');
             const base = buildBaseUpsertRow(row, primaryDocUrl, startedAtIso);
+            let body: string | null = null;
             if (primaryDocUrl) {
               try {
-                const body = await secFetchText(primaryDocUrl);
+                body = await secFetchText(primaryDocUrl);
                 base.items = extractEightKItems(body);
               } catch (error) {
                 if (isRateLimitError(error)) throw error;
@@ -466,10 +527,57 @@ export async function syncSecDelta(input: SyncSecDeltaInput): Promise<SyncSecDel
                 );
               }
             }
+            // Classify 8-Ks whose item codes (1.01 material agreement, 5.02
+            // leadership change, 8.01 catch-all) need body inspection to
+            // route to a specific signal. 3.02 (PIPE) is handled separately
+            // by the item-only path in run-funding-monitor.ts.
+            if (body && Array.isArray(base.items)
+                && base.items.some((item) => CLASSIFIABLE_8K_ITEMS.has(item))) {
+              const { classification, classifiedAt } = await tryClassify(
+                row.formType,
+                base.entity_name,
+                row.filingDate,
+                base.items,
+                body,
+                row.accessionNumber,
+              );
+              base.classification = classification;
+              base.classified_at = classifiedAt;
+            }
             upsertBuffer.push(base);
             form8kUpserted += 1;
           } else if (TARGET_FORM_TYPES_424B.has(row.formType)) {
-            const base = buildBaseUpsertRow(row, null, startedAtIso);
+            // 424B: default to index-only record for the global mirror; but if
+            // the CIK is tracked, also fetch the prospectus body and classify
+            // it to extract proceeds / use-of-proceeds. Untracked-CIK 424Bs
+            // stay as basic ipo_or_follow_on rows with no body fetch.
+            let base: FilingUpsertRow;
+            if (trackedCiks.has(row.cik)) {
+              const primaryDocUrl = await discoverPrimaryDoc(row.primaryDirUrl, 'htm');
+              base = buildBaseUpsertRow(row, primaryDocUrl, startedAtIso);
+              if (primaryDocUrl) {
+                try {
+                  const body = await secFetchText(primaryDocUrl);
+                  const { classification, classifiedAt } = await tryClassify(
+                    row.formType,
+                    base.entity_name,
+                    row.filingDate,
+                    [],
+                    body,
+                    row.accessionNumber,
+                  );
+                  base.classification = classification;
+                  base.classified_at = classifiedAt;
+                } catch (error) {
+                  if (isRateLimitError(error)) throw error;
+                  console.warn(
+                    `[sync-sec-delta] 424B primary_doc fetch failed (${row.accessionNumber}): ${messageFromUnknown(error)}`,
+                  );
+                }
+              }
+            } else {
+              base = buildBaseUpsertRow(row, null, startedAtIso);
+            }
             upsertBuffer.push(base);
             form424bUpserted += 1;
           }

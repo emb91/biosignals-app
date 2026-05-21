@@ -48,6 +48,8 @@ type AggregatedAccount = CompanyAggRow & {
   data_provenance_type: string;
   data_provenance_imported_at: string | null;
   user_overrides?: Record<string, unknown> | null;
+  readiness_label: string | null;
+  readiness_score: number | null;
 };
 
 type ScratchAgg = CompanyAggRow & {
@@ -121,6 +123,8 @@ function finalizeScratch(row: ScratchAgg): AggregatedAccount {
     max_contact_intent_score: row.max_contact_intent_score,
     data_provenance_type: formatDataProvenanceTypeOnly([...row.provenance_channels]),
     data_provenance_imported_at: row.provenance_earliest_import_at,
+    readiness_label: null,
+    readiness_score: null,
   };
 }
 
@@ -356,39 +360,59 @@ export async function GET(request: Request) {
     const total = accounts.length;
     const offset = (page - 1) * pageSize;
     const slice = accounts.slice(offset, offset + pageSize);
-
-    let icpLabels = new Map<string, string>();
+    const sliceCompanyIds = slice.map((a) => a.id);
 
     const needsIcps = slice.some((a) => Boolean(a.matched_icp_id));
-    if (needsIcps) {
-      const { data: icps, error: icpError } = await supabase
-        .from('icps')
-        .select('id, name, created_at')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
 
-      if (!icpError && icps) {
-        const ordered = icps as Array<{ id: string; name: string | null }>;
-        const indexById = new Map(ordered.map((row, index) => [row.id, index + 1]));
-        icpLabels = new Map(
-          ordered.map((row) => {
-            const idx = indexById.get(row.id);
-            const label =
-              idx != null && row.name?.trim()
-                ? `ICP ${idx}: ${row.name}`
-                : row.name?.trim() || (idx != null ? `ICP ${idx}` : null);
-            return [row.id, label ?? ''];
-          }),
-        );
-      }
+    const [icpResult, readinessResult] = await Promise.all([
+      needsIcps
+        ? supabase
+            .from('icps')
+            .select('id, name, created_at')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false })
+        : Promise.resolve({ data: [], error: null }),
+      sliceCompanyIds.length
+        ? supabase
+            .from('account_readiness_snapshots')
+            .select('company_id, overall_label, overall_score')
+            .eq('user_id', user.id)
+            .in('company_id', sliceCompanyIds)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+
+    let icpLabels = new Map<string, string>();
+    if (!icpResult.error && icpResult.data) {
+      const ordered = icpResult.data as Array<{ id: string; name: string | null }>;
+      const indexById = new Map(ordered.map((row, index) => [row.id, index + 1]));
+      icpLabels = new Map(
+        ordered.map((row) => {
+          const idx = indexById.get(row.id);
+          const label =
+            idx != null && row.name?.trim()
+              ? `ICP ${idx}: ${row.name}`
+              : row.name?.trim() || (idx != null ? `ICP ${idx}` : null);
+          return [row.id, label ?? ''];
+        }),
+      );
     }
 
-    const data = slice.map((account) => ({
-      ...account,
-      matched_icp_label: account.matched_icp_id
-        ? icpLabels.get(account.matched_icp_id) ?? null
-        : null,
-    }));
+    const readinessByCompanyId = new Map(
+      ((readinessResult.data || []) as Array<{ company_id: string; overall_label: string | null; overall_score: number | null }>)
+        .map((r) => [r.company_id, r]),
+    );
+
+    const data = slice.map((account) => {
+      const readiness = readinessByCompanyId.get(account.id) ?? null;
+      return {
+        ...account,
+        matched_icp_label: account.matched_icp_id
+          ? icpLabels.get(account.matched_icp_id) ?? null
+          : null,
+        readiness_label: readiness?.overall_label ?? null,
+        readiness_score: readiness?.overall_score ?? null,
+      };
+    });
 
     return NextResponse.json({
       data,
