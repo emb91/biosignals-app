@@ -43,6 +43,7 @@ import {
   SOURCE_CONTACT_MAX,
 } from '@/lib/lead-action';
 import { ROUTES, withQuery } from '@/lib/routes';
+import { EntitySignalsList } from '@/components/EntitySignalsList';
 
 const PAGE_SIZE = 50;
 
@@ -84,6 +85,8 @@ type AccountRow = {
   max_contact_intent_score: number | null;
   data_provenance_type: string;
   data_provenance_imported_at: string | null;
+  readiness_label?: string | null;
+  readiness_score?: number | null;
 };
 
 function score01ForActionCopy(value: number | null | undefined): number | null {
@@ -114,7 +117,7 @@ type ContactAtCompany = {
   seniority_level: string | null;
 };
 
-type PanelMode = 'details' | 'fit' | 'action' | 'contacts';
+type PanelMode = 'details' | 'fit' | 'action' | 'contacts' | 'signals';
 
 type ContactFitComponentKey = 'business_area' | 'seniority';
 
@@ -763,32 +766,52 @@ export default function AccountsPage() {
     const isArcovaAccount = (account.data_provenance_type || '').toLowerCase().includes('arcova');
 
     switch (col) {
-      case 'company':
+      case 'company': {
+        const readinessLabel = (account as AccountRow).readiness_label ?? null;
         return (
-          <div className="flex items-start gap-1.5 min-w-0">
-            {href ? (
-              <a
-                href={href}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
-                className="text-sm font-medium text-arcova-teal hover:underline line-clamp-2 break-words leading-snug min-w-0"
-                title={companyLabel}
-              >
-                {companyLabel}
-              </a>
-            ) : (
-              <span className="text-sm font-medium text-gray-900 line-clamp-2 break-words leading-snug min-w-0" title={companyLabel}>
-                {companyLabel}
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <div className="flex items-start gap-1.5 min-w-0">
+              {href ? (
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-sm font-medium text-arcova-teal hover:underline line-clamp-2 break-words leading-snug min-w-0"
+                  title={companyLabel}
+                >
+                  {companyLabel}
+                </a>
+              ) : (
+                <span className="text-sm font-medium text-gray-900 line-clamp-2 break-words leading-snug min-w-0" title={companyLabel}>
+                  {companyLabel}
+                </span>
+              )}
+              {href && (
+                <a href={href} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-arcova-teal/60 hover:text-arcova-teal shrink-0 mt-0.5">
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              )}
+            </div>
+            {readinessLabel && (
+              <span className={cn(
+                'inline-flex w-fit items-center gap-1 rounded-full px-1.5 py-px text-[9px] font-bold uppercase tracking-wide',
+                readinessLabel === 'high' ? 'bg-emerald-50 text-emerald-700' :
+                readinessLabel === 'medium' ? 'bg-amber-50 text-amber-700' :
+                'bg-rose-50 text-rose-700',
+              )}>
+                <span className={cn(
+                  'h-1 w-1 rounded-full shrink-0',
+                  readinessLabel === 'high' ? 'bg-emerald-500' :
+                  readinessLabel === 'medium' ? 'bg-amber-500' :
+                  'bg-rose-500',
+                )} />
+                {readinessLabel}
               </span>
-            )}
-            {href && (
-              <a href={href} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-arcova-teal/60 hover:text-arcova-teal shrink-0 mt-0.5">
-                <ExternalLink className="w-3 h-3" />
-              </a>
             )}
           </div>
         );
+      }
       case 'company_type':
         return account.company_type ? (
           <button
@@ -1200,7 +1223,7 @@ export default function AccountsPage() {
                     </div>
 
                     <div className="flex shrink-0 border-b border-[rgba(13,53,71,0.08)] px-5">
-                      {(['details', 'fit', 'action', 'contacts'] as PanelMode[]).map((mode) => (
+                      {(['details', 'fit', 'action', 'contacts', 'signals'] as PanelMode[]).map((mode) => (
                         <button
                           key={mode}
                           type="button"
@@ -1218,7 +1241,9 @@ export default function AccountsPage() {
                               ? 'Fit'
                               : mode === 'action'
                                 ? 'Action'
-                                : 'Details'}
+                                : mode === 'signals'
+                                  ? 'Signals'
+                                  : 'Details'}
                         </button>
                       ))}
                     </div>
@@ -1751,6 +1776,11 @@ export default function AccountsPage() {
                           )}
                         </div>
                       )}
+
+                      {panelMode === 'signals' && (
+                        <EntitySignalsList companyId={selectedAccount.id} />
+                      )}
+
                     </div>
 
                     {/* Panel footer — Edit / Archive account, mirrors the contact card.

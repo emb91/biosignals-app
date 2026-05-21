@@ -86,6 +86,8 @@ export async function GET(request: Request) {
     const search = (searchParams.get('search') || '').trim().toLowerCase();
     const scopeParam = searchParams.get('scope');
     const scope = scopeParam === 'contact' || scopeParam === 'company' ? scopeParam : null;
+    const companyIdParam = (searchParams.get('company_id') || '').trim() || null;
+    const contactIdParam = (searchParams.get('contact_id') || '').trim() || null;
 
     let query = supabase
       .from('normalized_signals')
@@ -134,6 +136,12 @@ export async function GET(request: Request) {
 
     if (scope) {
       query = query.eq('signal_scope', scope);
+    }
+    if (companyIdParam) {
+      query = query.eq('company_id', companyIdParam);
+    }
+    if (contactIdParam) {
+      query = query.eq('contact_id', contactIdParam);
     }
 
     const { data, error } = await query;
