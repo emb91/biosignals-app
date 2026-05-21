@@ -3,6 +3,7 @@ import {
   ingestSignalSourceEvent,
   normalizeSignalSourceEvent,
   recomputeAccountReadiness,
+  recomputeContactReadiness,
 } from '@/lib/signals/readiness-service';
 import type { BuyerFunction, SignalKey } from '@/lib/signals/readiness-types';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -369,6 +370,14 @@ export async function emitExternalContactSignalsFromEnrichment(
     userId: input.previous.userId,
     companyId: input.current.companyId,
   });
+
+  // Also recompute the contact's own readiness snapshot (non-fatal)
+  await recomputeContactReadiness(supabase, {
+    userId: input.previous.userId,
+    contactId: input.previous.contactId,
+  }).catch((e) =>
+    console.warn('[readiness-external-contacts] contact readiness recompute skipped:', e)
+  );
 
   return {
     emittedSignalTypes: decision.signalKeys,
