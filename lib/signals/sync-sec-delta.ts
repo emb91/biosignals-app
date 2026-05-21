@@ -381,7 +381,21 @@ export async function syncSecDelta(input: SyncSecDeltaInput): Promise<SyncSecDel
   const upsertBuffer: FilingUpsertRow[] = [];
   const flush = async (): Promise<void> => {
     if (upsertBuffer.length === 0) return;
-    const chunk = upsertBuffer.splice(0, upsertBuffer.length);
+    // Dedupe within the chunk by accession_number. The SEC daily-index
+    // sometimes lists the same filing under multiple CIK rows (joint
+    // filers, parent + subsidiary on a single Form D, related-issuer
+    // 424B prospectuses), so the same accession can be queued twice in
+    // one buffer. Postgres `ON CONFLICT DO UPDATE` rejects a statement
+    // that touches the same row twice — collapsing here is the fix.
+    // Last-write-wins: the most recent push has the freshest parse
+    // (primary_doc XML or 8-K items) since later rows in the loop are
+    // processed after earlier ones for the same accession.
+    const byAccession = new Map<string, FilingUpsertRow>();
+    for (const row of upsertBuffer) {
+      byAccession.set(row.accession_number, row);
+    }
+    upsertBuffer.length = 0;
+    const chunk = [...byAccession.values()];
     const { error } = await admin
       .from('sec_filings_local')
       .upsert(chunk, { onConflict: 'accession_number' });
