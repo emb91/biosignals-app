@@ -60,6 +60,11 @@ const PATENT_SIGNAL_KEYS = new Set<SignalKey>([
   'assignee_portfolio_acceleration',
 ]);
 
+const FUNDING_SIGNAL_KEYS = new Set<SignalKey>([
+  'funding_round',
+  'ipo_or_follow_on',
+]);
+
 function messageFromUnknown(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (error && typeof error === 'object') {
@@ -142,6 +147,12 @@ export async function POST(
     if (PATENT_SIGNAL_KEYS.has(signalKey)) {
       return NextResponse.json(
         { error: 'Single patent signal runs are disabled. Use /api/signals/run/patents.' },
+        { status: 400 },
+      );
+    }
+    if (FUNDING_SIGNAL_KEYS.has(signalKey)) {
+      return NextResponse.json(
+        { error: 'Funding signal runs are disabled here. Use /api/signals/run/funding.' },
         { status: 400 },
       );
     }

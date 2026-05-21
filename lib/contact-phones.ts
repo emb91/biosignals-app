@@ -164,6 +164,82 @@ export async function ensureEnrichedPhoneEntry(
 }
 
 /**
+ * Saves "user-added" phone numbers for a contact (the manual-entry block
+ * on the contact panel). Only rows with category `user` are removed and
+ * rewritten from `additionalPhones`. Import / enriched rows are left alone.
+ *
+ * Mirrors syncUserAddedContactEmails — both functions read the form's full
+ * list and treat it as the new source of truth for that category.
+ */
+export async function syncUserAddedContactPhones(
+  supabase: SupabaseFrom,
+  params: {
+    contactId: string;
+    userId: string;
+    /** Full list of user-typed phones from the form (NOT contact-level primary). */
+    additionalPhones: string[];
+  },
+): Promise<void> {
+  const seenNorm = new Set<string>();
+  const deduped: string[] = [];
+  for (const raw of params.additionalPhones) {
+    const normalised = normalizePhone(raw);
+    if (!normalised) continue;
+    if (seenNorm.has(normalised)) continue;
+    seenNorm.add(normalised);
+    deduped.push(normalised);
+  }
+
+  try {
+    const { error: delErr } = await supabase
+      .from('contact_phones')
+      .delete()
+      .eq('contact_id', params.contactId)
+      .eq('user_id', params.userId)
+      .eq('category', 'user');
+    if (delErr) throw delErr;
+
+    // Avoid colliding with rows already present in other categories (import
+    // / enriched_*). The UNIQUE (user_id, contact_id, phone) constraint
+    // wouldn't allow it anyway, but we want to skip silently rather than
+    // error out.
+    const { data: blockingRows, error: selErr } = await supabase
+      .from('contact_phones')
+      .select('phone')
+      .eq('contact_id', params.contactId)
+      .eq('user_id', params.userId);
+    if (selErr) throw selErr;
+
+    const takenNorm = new Set<string>();
+    for (const row of blockingRows || []) {
+      const normalised = normalizePhone((row as { phone?: string }).phone);
+      if (normalised) takenNorm.add(normalised);
+    }
+
+    const toInsert = deduped.filter((p) => !takenNorm.has(p));
+    if (toInsert.length === 0) return;
+
+    const now = new Date().toISOString();
+    for (const phone of toInsert) {
+      const { error: insErr } = await supabase.from('contact_phones').insert({
+        contact_id: params.contactId,
+        user_id: params.userId,
+        phone,
+        category: 'user',
+        label: null,
+        source_provider: null,
+        phone_status: null,
+        updated_at: now,
+      });
+      if (insErr && !isPostgresUniqueViolation(insErr)) throw insErr;
+    }
+  } catch (e: unknown) {
+    if (isMissingContactPhonesTableError(e)) return;
+    throw e;
+  }
+}
+
+/**
  * Load all phones for a set of contacts owned by one user. Used by the
  * contact side panel / leads list to render the phone stack.
  */

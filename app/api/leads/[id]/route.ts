@@ -5,6 +5,11 @@ import {
   syncUserAddedContactEmails,
   syncPrimaryEmailAsUserRowIfNeeded,
 } from '@/lib/contact-emails';
+import {
+  fetchContactPhonesForContacts,
+  looksLikePhone,
+  syncUserAddedContactPhones,
+} from '@/lib/contact-phones';
 import { createClient } from '@/lib/supabase-server';
 
 type LeadUpdateBody = {
@@ -23,6 +28,8 @@ type LeadUpdateBody = {
   country?: string;
   /** Secondary addresses with category `user` (primary `email` is separate). */
   user_secondary_emails?: unknown;
+  /** Phones with category `user` — manual entry block on the contact panel. */
+  user_phones?: unknown;
 };
 
 const normalizeString = (value: unknown): string | null => {
@@ -89,13 +96,20 @@ export async function GET(
     }
 
     try {
-      const grouped = await fetchContactEmailsForContacts(supabase, [id]);
+      const [emailsGrouped, phonesGrouped] = await Promise.all([
+        fetchContactEmailsForContacts(supabase, [id]),
+        fetchContactPhonesForContacts(supabase, [id]),
+      ]);
       return NextResponse.json({
-        data: { ...data, contact_emails: grouped.get(id) ?? [] },
+        data: {
+          ...data,
+          contact_emails: emailsGrouped.get(id) ?? [],
+          contact_phones: phonesGrouped.get(id) ?? [],
+        },
       });
     } catch {
       return NextResponse.json({
-        data: { ...data, contact_emails: [] },
+        data: { ...data, contact_emails: [], contact_phones: [] },
       });
     }
   } catch (error) {
@@ -132,6 +146,12 @@ export async function PUT(
           .filter((s) => s.length > 0 && s.toLowerCase() !== primaryEmailNorm)
       : [];
 
+    const userPhones = Array.isArray(body.user_phones)
+      ? (body.user_phones.filter((item) => typeof item === 'string') as string[])
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0)
+      : [];
+
     const primaryEmailRaw = normalizeString(body.email);
     if (primaryEmailRaw && !looksLikeEmail(primaryEmailRaw)) {
       return NextResponse.json(
@@ -144,6 +164,15 @@ export async function PUT(
       if (!looksLikeEmail(s)) {
         return NextResponse.json(
           { error: 'Each additional email must look like a valid address.' },
+          { status: 400 },
+        );
+      }
+    }
+
+    for (const p of userPhones) {
+      if (!looksLikePhone(p)) {
+        return NextResponse.json(
+          { error: 'Each phone must look like a valid number.' },
           { status: 400 },
         );
       }
@@ -201,6 +230,20 @@ export async function PUT(
     }
 
     try {
+      await syncUserAddedContactPhones(supabase, {
+        contactId: id,
+        userId: user.id,
+        additionalPhones: userPhones,
+      });
+    } catch (phoneErr) {
+      console.error('syncUserAddedContactPhones failed:', phoneErr);
+      return NextResponse.json(
+        { error: `Could not save phones: ${messageFromUnknown(phoneErr)}` },
+        { status: 500 },
+      );
+    }
+
+    try {
       await syncPrimaryEmailAsUserRowIfNeeded(supabase, {
         contactId: id,
         userId: user.id,
@@ -215,13 +258,20 @@ export async function PUT(
     }
 
     try {
-      const grouped = await fetchContactEmailsForContacts(supabase, [id]);
+      const [emailsGrouped, phonesGrouped] = await Promise.all([
+        fetchContactEmailsForContacts(supabase, [id]),
+        fetchContactPhonesForContacts(supabase, [id]),
+      ]);
       return NextResponse.json({
-        data: { ...data, contact_emails: grouped.get(id) ?? [] },
+        data: {
+          ...data,
+          contact_emails: emailsGrouped.get(id) ?? [],
+          contact_phones: phonesGrouped.get(id) ?? [],
+        },
       });
     } catch {
       return NextResponse.json({
-        data: { ...data, contact_emails: [] },
+        data: { ...data, contact_emails: [], contact_phones: [] },
       });
     }
   } catch (error) {

@@ -559,64 +559,73 @@ Priority tier definitions:
 - `OUT`: downstream outcome/state signals; do not drive readiness in this phase.
 - `CS-LATER`: customer-success/retention signals; out of scope for this phase.
 
-| Signal key | Readiness conditions | Type | Tier |
-|---|---|---|---|
-| `phase_transition` | `new_needs`, `new_strategy` | Precursor | `P1` |
-| `clinical_trial_registered` | `new_needs` | Precursor | `P1` |
-| `trial_site_expansion` | `new_needs` | Precursor | `P1` |
-| `indication_expansion` | `new_needs`, `new_strategy` | Precursor | `P1` |
-| `fda_approval` | `new_needs`, `new_strategy` | Precursor | `P1` |
-| `trial_failure_or_halt` | `caution` | Precursor | `P1` |
-| `program_discontinuation` | `caution` | Precursor | `P1` |
-| `cmc_hiring` | `new_people`, `new_needs` | Precursor | `P1` |
-| `clinical_ops_hiring` | `new_people`, `new_needs` | Precursor | `P1` |
-| `regulatory_hiring` | `new_people`, `new_needs` | Precursor | `P1` |
-| `job_surge` | `new_people`, `new_needs` | Precursor | `P1` |
-| `new_facility` | `new_needs` | Precursor | `P1` |
-| `facility_expansion` | `new_needs` | Precursor | `P1` |
-| `cmc_scale_up` | `new_needs` | Precursor | `P1` |
-| `funding_round` | `new_budget` | Precursor | `P1` |
-| `grant_award` | `new_budget` | Precursor | `P1` |
-| `ipo_or_follow_on` | `new_budget` | Precursor | `P1` |
-| `distressed_financing` | `caution` | Precursor | `P1` |
-| `milestone_payment` | `new_budget` | Precursor | `P2` |
-| `partnership_with_upfront_economics` | `new_budget`, `new_strategy` | Precursor | `P2` |
-| `partnership_deal` | `new_strategy` | Precursor | `P2` |
-| `licensing_deal` | `new_strategy`, `new_budget` | Precursor | `P2` |
-| `co_development_deal` | `new_strategy`, `new_needs` | Precursor | `P2` |
-| `bd_hiring` | `new_people`, `new_strategy` | Precursor | `P2` |
-| `commercial_hiring` | `new_people`, `new_strategy` | Precursor | `P2` |
-| `quality_compliance_buildout` | `new_needs` | Precursor | `P2` |
-| `cdmo_partnership` | `new_needs`, `new_strategy` | Precursor | `P2` |
-| `breakthrough_designation` | `new_needs` | Precursor | `P2` |
-| `regional_expansion` | `new_strategy` | Precursor | `P2` |
-| `commercialization_move` | `new_strategy`, `new_needs` | Precursor | `P2` |
-| `restructuring` | `caution` | Precursor | `P2` |
-| `acquisition_distraction` | `caution` | Precursor | `P2` |
-| `leadership_churn` | `caution`, `new_people` | Precursor | `P2` |
-| `layoffs` | `caution` | Precursor | `P2` |
-| `new_to_role` | `new_people` | Precursor | `P2` |
-| `recently_promoted` | `new_people` | Precursor | `P2` |
-| `recently_changed_company` | `new_people` | Precursor | `P2` |
-| `new_internal_role` | `new_people` | Precursor | `P2` |
-| `title_change` | `new_people` | Precursor | `P2` |
-| `board_or_advisory_role` | `new_people`, `new_strategy` | Precursor | `P3` |
-| `conference_presentation` | `new_strategy` | Precursor | `P3` |
-| `conference_speaker` | `new_strategy`, `new_people` | Precursor | `P3` |
-| `publication` | `new_strategy` | Precursor | `P3` |
-| `new_paper_published` | `new_strategy` | Precursor | `P3` |
-| `patent_filed_or_granted` | `new_strategy` | Precursor | `P3` |
-| `platform_repositioning` | `new_strategy` | Precursor | `P3` |
-| `demo_requested` | `new_budget`, `new_needs` | Precursor | `P3` |
-| `inbound_enquiry` | `new_budget`, `new_needs` | Precursor | `P3` |
-| `visited_your_website` | `new_needs` | Precursor | `P3` |
-| `attended_your_webinar_or_event` | `new_needs` | Precursor | `P3` |
-| `downloaded_your_content` | `new_needs` | Precursor | `P3` |
-| `responded_to_previous_outreach` | `new_needs` | Outcome | `OUT` |
-| `open_opportunity_in_crm` | `new_budget` | Outcome | `OUT` |
-| `new_contact_added_in_crm` | `new_people` | Outcome | `OUT` |
-| `closed_lost_in_crm` | `caution` | Outcome | `OUT` |
-| `lapsed_customer` | `caution` | Customer-state | `CS-LATER` |
+| Status | Signal key | Readiness conditions | Type | Tier | Source |
+|---|---|---|---|---|---|
+| ✅ | `phase_transition` | `new_needs`, `new_strategy` | Precursor | `P1` | clinical-trials monitor (ClinicalTrials.gov mirror) |
+| ✅ | `clinical_trial_registered` | `new_needs` | Precursor | `P1` | clinical-trials monitor |
+| ✅ | `trial_site_expansion` | `new_needs` | Precursor | `P1` | clinical-trials monitor |
+| ✅ | `indication_expansion` | `new_needs`, `new_strategy` | Precursor | `P1` | clinical-trials + FDA monitors |
+| ✅ | `fda_approval` | `new_needs`, `new_strategy` | Precursor | `P1` | FDA monitor (drugsFDA, 510k, PMA) |
+| ✅ | `trial_failure_or_halt` | `caution` | Precursor | `P1` | clinical-trials monitor |
+| ✅ | `program_discontinuation` | `caution` | Precursor | `P1` | clinical-trials monitor |
+| ✅ | `cmc_hiring` | `new_people`, `new_needs` | Precursor | `P1` | hiring monitor (LinkedIn via Apify) |
+| ✅ | `clinical_ops_hiring` | `new_people`, `new_needs` | Precursor | `P1` | hiring monitor |
+| ✅ | `regulatory_hiring` | `new_people`, `new_needs` | Precursor | `P1` | hiring monitor |
+| ✅ | `job_surge` | `new_people`, `new_needs` | Precursor | `P1` | hiring monitor |
+| ⬜ | `new_facility` | `new_needs` | Precursor | `P1` | not yet wired — needs press-release / news monitor |
+| ⬜ | `facility_expansion` | `new_needs` | Precursor | `P1` | not yet wired — needs press-release / news monitor |
+| ⬜ | `cmc_scale_up` | `new_needs` | Precursor | `P1` | not yet wired — inferred from hiring + facility combo |
+| ✅ | `funding_round` | `new_budget` | Precursor | `P1` | funding monitor (SEC Form D + 8-K Item 3.02) |
+| ✅ | `grant_award` | `new_budget` | Precursor | `P1` | grants monitor (NIH RePORTER) |
+| ✅ | `ipo_or_follow_on` | `new_budget` | Precursor | `P1` | funding monitor (SEC 424B prospectus filings) |
+| ⬜ | `distressed_financing` | `caution` | Precursor | `P1` | not yet wired — V2 of funding (8-K + LLM classification, or 10-Q runway delta) |
+| ⬜ | `milestone_payment` | `new_budget` | Precursor | `P2` | not yet wired — needs partnership/8-K LLM classifier |
+| ⬜ | `partnership_with_upfront_economics` | `new_budget`, `new_strategy` | Precursor | `P2` | not yet wired — V2 of funding (8-K Item 1.01 + LLM) |
+| ⬜ | `partnership_deal` | `new_strategy` | Precursor | `P2` | not yet wired |
+| ⬜ | `licensing_deal` | `new_strategy`, `new_budget` | Precursor | `P2` | not yet wired |
+| ⬜ | `co_development_deal` | `new_strategy`, `new_needs` | Precursor | `P2` | not yet wired |
+| ✅ | `bd_hiring` | `new_people`, `new_strategy` | Precursor | `P2` | hiring monitor |
+| ✅ | `commercial_hiring` | `new_people`, `new_strategy` | Precursor | `P2` | hiring monitor |
+| ⬜ | `quality_compliance_buildout` | `new_needs` | Precursor | `P2` | not yet wired — inferred from QA/QC hiring + GMP roles |
+| ⬜ | `cdmo_partnership` | `new_needs`, `new_strategy` | Precursor | `P2` | not yet wired |
+| ✅ | `breakthrough_designation` | `new_needs` | Precursor | `P2` | FDA monitor |
+| ⬜ | `regional_expansion` | `new_strategy` | Precursor | `P2` | not yet wired |
+| ⬜ | `commercialization_move` | `new_strategy`, `new_needs` | Precursor | `P2` | not yet wired |
+| ⬜ | `restructuring` | `caution` | Precursor | `P2` | not yet wired |
+| ⬜ | `acquisition_distraction` | `caution` | Precursor | `P2` | not yet wired — could derive from M&A close 8-Ks |
+| ⬜ | `leadership_churn` | `caution`, `new_people` | Precursor | `P2` | not yet wired — could derive from 8-K Item 5.02 + LinkedIn |
+| ⬜ | `layoffs` | `caution` | Precursor | `P2` | not yet wired — news / WARN Act filings |
+| ⬜ | `new_to_role` | `new_people` | Precursor | `P2` | not yet wired — contact-side monitor needed |
+| ✅ | `recently_promoted` | `new_people` | Precursor | `P2` | HubSpot contact sync |
+| ✅ | `recently_changed_company` | `new_people` | Precursor | `P2` | HubSpot contact sync |
+| ✅ | `new_internal_role` | `new_people` | Precursor | `P2` | HubSpot contact sync |
+| ✅ | `title_change` | `new_people` | Precursor | `P2` | HubSpot contact sync |
+| ⬜ | `board_or_advisory_role` | `new_people`, `new_strategy` | Precursor | `P3` | not yet wired |
+| ⬜ | `conference_presentation` | `new_strategy` | Precursor | `P3` | not yet wired — needs conference/news scraping |
+| ⬜ | `conference_speaker` | `new_strategy`, `new_people` | Precursor | `P3` | not yet wired |
+| ⬜ | `publication` | `new_strategy` | Precursor | `P3` | not yet wired — PubMed/biorxiv ingestion |
+| ⬜ | `new_paper_published` | `new_strategy` | Precursor | `P3` | not yet wired |
+| ✅ | `patent_filed_or_granted` | `new_strategy` | Precursor | `P3` | patents monitor (USPTO via PatentsView mirror) |
+| ⬜ | `platform_repositioning` | `new_strategy` | Precursor | `P3` | not yet wired — narrative-driven, needs LLM over press releases |
+| ⬜ | `demo_requested` | `new_budget`, `new_needs` | Precursor | `P3` | first-party — out of Arcova scope (stays in HubSpot) |
+| ⬜ | `inbound_enquiry` | `new_budget`, `new_needs` | Precursor | `P3` | first-party — out of Arcova scope |
+| ⬜ | `visited_your_website` | `new_needs` | Precursor | `P3` | first-party — out of Arcova scope |
+| ⬜ | `attended_your_webinar_or_event` | `new_needs` | Precursor | `P3` | first-party — out of Arcova scope |
+| ⬜ | `downloaded_your_content` | `new_needs` | Precursor | `P3` | first-party — out of Arcova scope |
+| ⬜ | `responded_to_previous_outreach` | `new_needs` | Outcome | `OUT` | first-party — out of Arcova scope |
+| ✅ | `open_opportunity_in_crm` | `new_budget` | Outcome | `OUT` | HubSpot deal sync |
+| ✅ | `new_contact_added_in_crm` | `new_people` | Outcome | `OUT` | HubSpot contact sync |
+| ✅ | `closed_lost_in_crm` | `caution` | Outcome | `OUT` | HubSpot deal sync |
+| ⬜ | `lapsed_customer` | `caution` | Customer-state | `CS-LATER` | deferred per phase rule |
+
+**Status legend:** ✅ = signal currently wired and emitting to `signal_source_events`; ⬜ = catalog entry exists but no monitor emits it yet.
+
+**Additional signals wired but not on this priority list** (catalog overflow — emitted by existing monitors, lighter-touch readiness contributions):
+- Clinical-trials monitor also emits: `clinical_trial_recruiting`, `clinical_trial_completed`, `clinical_trial_sponsor_change`
+- FDA monitor also emits: `fast_track_designation`, `priority_review`, `orphan_designation`, `complete_response_letter`
+- Patents monitor also emits: `patent_application_published`, `patent_granted`, `new_therapeutic_area_patent`, `assignee_portfolio_acceleration`
+
+**Roll-up:** **30 of 56 catalog signals wired (54%)** as of 2026-05-21. The remaining P1/P2 gaps (`new_facility`, `facility_expansion`, `cmc_scale_up`, `distressed_financing`, `milestone_payment`, `partnership_with_upfront_economics`, `licensing_deal`, `co_development_deal`, `partnership_deal`, `cdmo_partnership`, `restructuring`, `acquisition_distraction`, `leadership_churn`, `layoffs`, `new_to_role`, `quality_compliance_buildout`, `regional_expansion`, `commercialization_move`) cluster around two missing capabilities: (1) an 8-K Item 1.01 / Item 8.01 LLM classifier for partnership/license/restructuring events, and (2) a press-release/news ingestion + classification monitor for facility, layoff, and narrative signals.
 
 Phase rule:
 

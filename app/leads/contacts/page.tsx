@@ -23,7 +23,7 @@ import {
 import { formatProvenanceImportedAt } from '@/lib/data-provenance';
 import { ROUTES, withQuery } from '@/lib/routes';
 import { looksLikeEmail, type ContactEmailRow } from '@/lib/contact-emails';
-import type { ContactPhoneRow } from '@/lib/contact-phones';
+import { looksLikePhone, type ContactPhoneRow } from '@/lib/contact-phones';
 import {
   buildContactEmailDisplayRows,
   formatContactLocationDisplay,
@@ -396,6 +396,7 @@ type EditableLeadFields = {
   city: string;
   country: string;
   user_secondary_emails: string[];
+  user_phones: string[];
 };
 
 type EnrichmentStageKey =
@@ -587,6 +588,18 @@ function userSecondaryEmailsFromLead(lead: Lead): string[] {
     if (!e) continue;
     if (primary && e.toLowerCase() === primary) continue;
     out.push(row.email);
+  }
+  return out;
+}
+
+function userPhonesFromLead(lead: Lead): string[] {
+  const rows = lead.contact_phones || [];
+  const out: string[] = [];
+  for (const row of rows) {
+    if (row.category !== 'user') continue;
+    const p = (row.phone || '').trim();
+    if (!p) continue;
+    out.push(row.phone);
   }
   return out;
 }
@@ -1400,6 +1413,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
       city: lead.city || '',
       country: lead.country || '',
       user_secondary_emails: [...userSecondaryEmailsFromLead(lead)],
+      user_phones: [...userPhonesFromLead(lead)],
     });
   };
 
@@ -1439,7 +1453,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
   };
 
   const updateEditingField = (
-    field: keyof Omit<EditableLeadFields, 'user_secondary_emails'>,
+    field: keyof Omit<EditableLeadFields, 'user_secondary_emails' | 'user_phones'>,
     value: string,
   ) => {
     setLeadEditError(null);
@@ -1472,6 +1486,32 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
     });
   };
 
+  const updateUserPhoneAt = (index: number, value: string) => {
+    setLeadEditError(null);
+    setEditingFields((prev) => {
+      if (!prev) return prev;
+      const next = [...prev.user_phones];
+      next[index] = value;
+      return { ...prev, user_phones: next };
+    });
+  };
+
+  const addUserPhone = () => {
+    setLeadEditError(null);
+    setEditingFields((prev) =>
+      prev ? { ...prev, user_phones: [...prev.user_phones, ''] } : prev,
+    );
+  };
+
+  const removeUserPhoneAt = (index: number) => {
+    setLeadEditError(null);
+    setEditingFields((prev) => {
+      if (!prev) return prev;
+      const next = prev.user_phones.filter((_, i) => i !== index);
+      return { ...prev, user_phones: next };
+    });
+  };
+
   const saveLead = async (leadId: string) => {
     if (!editingFields) return;
 
@@ -1485,6 +1525,14 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
     for (const s of secondaryTrimmed) {
       if (!looksLikeEmail(s)) {
         setLeadEditError('Each additional email must look like a valid address.');
+        return;
+      }
+    }
+
+    const phonesTrimmed = editingFields.user_phones.map((p) => p.trim()).filter(Boolean);
+    for (const p of phonesTrimmed) {
+      if (!looksLikePhone(p)) {
+        setLeadEditError('Each phone must look like a valid number.');
         return;
       }
     }
@@ -1512,6 +1560,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
           user_secondary_emails: secondaryTrimmed.filter(
             (s) => s.toLowerCase() !== primaryTrim.toLowerCase(),
           ),
+          user_phones: phonesTrimmed,
         }),
       });
 
@@ -1523,7 +1572,10 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
         return;
       }
 
-      const d = result.data as Lead & { contact_emails?: ContactEmailRow[] };
+      const d = result.data as Lead & {
+        contact_emails?: ContactEmailRow[];
+        contact_phones?: ContactPhoneRow[];
+      };
 
       setLeads((prev) =>
         prev.map((lead) =>
@@ -1546,6 +1598,9 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                 contact_emails: Array.isArray(d.contact_emails)
                   ? d.contact_emails
                   : lead.contact_emails,
+                contact_phones: Array.isArray(d.contact_phones)
+                  ? d.contact_phones
+                  : lead.contact_phones,
                 updated_at: d.updated_at ?? lead.updated_at,
               }
             : lead
@@ -3370,20 +3425,22 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
 
                               {/* Stacked phone numbers — same pattern as emails.
                                   Read-only here; values flow in via import,
-                                  HubSpot sync, or Apollo enrichment. */}
+                                  HubSpot sync, or Apollo enrichment.
+                                  User-added phones are edited separately below. */}
                               <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50/80 px-3 py-2">
                                 <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
-                                  Phone numbers (read-only)
+                                  Import and enrichment phones (read-only)
                                 </p>
                                 <div className="mt-2 space-y-2 text-xs text-gray-700">
                                   {(() => {
-                                    const phones = selectedLead.contact_phones ?? [];
+                                    const phones = (selectedLead.contact_phones ?? []).filter(
+                                      (p) => p.category !== 'user',
+                                    );
                                     if (phones.length === 0) {
                                       return <p className="text-gray-500">None on file yet.</p>;
                                     }
                                     const labelFor = (cat: string) => {
                                       if (cat === 'import') return 'Import';
-                                      if (cat === 'user') return 'User-added';
                                       if (cat === 'enriched_work') return 'Work';
                                       if (cat === 'enriched_mobile') return 'Mobile';
                                       if (cat === 'enriched_personal') return 'Personal';
@@ -3467,6 +3524,48 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                                           onClick={() => removeUserSecondaryEmailAt(idx)}
                                           className="shrink-0 rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
                                           aria-label="Remove email"
+                                        >
+                                          <Trash2 className="h-4 w-4" />
+                                        </button>
+                                      </div>
+                                    ))
+                                  )}
+                                </div>
+                              </div>
+                              <div className="space-y-1">
+                                <div className="flex items-center justify-between gap-2">
+                                  <label className="text-xs text-gray-400">Phones (you added)</label>
+                                  <button
+                                    type="button"
+                                    onClick={addUserPhone}
+                                    className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-0.5 text-[11px] font-medium text-gray-600 hover:bg-white"
+                                  >
+                                    <Plus className="h-3 w-3" />
+                                    Add
+                                  </button>
+                                </div>
+                                <div className="space-y-2">
+                                  {(editingFields?.user_phones ?? []).length === 0 ? (
+                                    <p className="text-xs text-gray-500">
+                                      Optional phones saved under &quot;You added&quot;.
+                                    </p>
+                                  ) : (
+                                    (editingFields?.user_phones ?? []).map((phone, idx) => (
+                                      <div key={idx} className="flex items-center gap-2">
+                                        <input
+                                          type="tel"
+                                          autoComplete="off"
+                                          value={phone}
+                                          onChange={(e) => updateUserPhoneAt(idx, e.target.value)}
+                                          onKeyDown={blurInputOnEnter}
+                                          className={LEAD_EDIT_INPUT_CLASS}
+                                          placeholder="+1 415 555 0123"
+                                        />
+                                        <button
+                                          type="button"
+                                          onClick={() => removeUserPhoneAt(idx)}
+                                          className="shrink-0 rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+                                          aria-label="Remove phone"
                                         >
                                           <Trash2 className="h-4 w-4" />
                                         </button>

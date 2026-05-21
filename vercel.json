@@ -15,6 +15,22 @@
     {
       "path": "/api/cron/clinical-trials-delta",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/funding-delta",
+      "schedule": "0 10 * * *"
+    },
+    {
+      "path": "/api/cron/funding-backfill",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/jobs-delta",
+      "schedule": "0 6 * * 1"
+    },
+    {
+      "path": "/api/cron/grants-delta",
+      "schedule": "0 11 * * *"
     }
   ]
 }
