@@ -106,7 +106,12 @@ const FEATURE_MODELS: Record<LlmFeature, { openrouter: string; anthropic: string
     anthropic: 'claude-haiku-4-5',
   },
   generate_icp_name: {
-    openrouter: 'google/gemini-2.0-flash-001',
+    // Reverted from gemini-2.0-flash: Flash ignored the explicit "3–10 words"
+    // floor and the "weave in distinguishing modality" hint, producing
+    // 2-word names like "Preclinical CRO" instead of "Preclinical Cell
+    // Therapy and Gene Therapy CRO". Haiku follows the prompt faithfully and
+    // call volume is tiny (one call per ICP creation), so cost diff is noise.
+    openrouter: 'anthropic/claude-haiku-4-5',
     anthropic: 'claude-haiku-4-5',
   },
 };
