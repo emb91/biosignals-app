@@ -182,7 +182,18 @@ export async function recomputeContactReadiness(
   supabase: DatabaseClient,
   input: RecomputeContactReadinessInput
 ): Promise<RecomputeContactReadinessResult> {
-  const signals = await listNormalizedSignalsForContact(supabase, input.userId, input.contactId);
+  const [signals, contactFitRow] = await Promise.all([
+    listNormalizedSignalsForContact(supabase, input.userId, input.contactId),
+    // Pull contact fit so the snapshot can store priority = fit × (0.5 + 0.5 × readiness).
+    // Best-effort: a missing row leaves priority null and the snapshot still writes.
+    supabase
+      .from('contacts')
+      .select('contact_fit_score')
+      .eq('id', input.contactId)
+      .eq('user_id', input.userId)
+      .maybeSingle()
+      .then((res) => (res.error ? null : (res.data as { contact_fit_score: number | null } | null))),
+  ]);
 
   const score = scoreAccountReadiness(signals, {
     targetBuyerFunctions: input.targetBuyerFunctions,
@@ -191,6 +202,7 @@ export async function recomputeContactReadiness(
   const snapshot = await upsertContactReadinessSnapshot(supabase, {
     userId: input.userId,
     contactId: input.contactId,
+    fitScore: contactFitRow?.contact_fit_score ?? null,
     score,
   });
 

@@ -95,6 +95,9 @@ const SIGNAL_LABELS: Record<string, string> = {
   open_opportunity_in_crm: 'Open Opportunity',
   closed_lost_in_crm: 'Closed Lost',
   new_contact_added_in_crm: 'New CRM Contact',
+  prior_customer_relationship: 'Prior Customer',
+  prior_active_deal_relationship: 'Prior Active Deal',
+  prior_pipeline_relationship: 'Prior Pipeline',
 };
 
 const DIMENSION_COLORS: Record<string, string> = {

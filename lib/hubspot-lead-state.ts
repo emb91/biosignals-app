@@ -205,7 +205,13 @@ export async function resolveContactHubSpotStates(
       const candidateLinks = [
         ...(linksByContactId.get(contactId) ?? []),
         ...(emailNorm ? (linksByEmail.get(emailNorm) ?? []) : []),
-      ];
+      ].filter((link) => {
+        // Skip links that were detached when the contact's
+        // recently_changed_company signal fired — the closed-won / closed-lost
+        // status at their OLD employer shouldn't follow them to a new role.
+        const payload = (link.raw_payload ?? {}) as Record<string, unknown>;
+        return payload.detached_due_to_job_change !== true;
+      });
 
       // Deduplicate on deal ID
       const dedupedLinks = Array.from(

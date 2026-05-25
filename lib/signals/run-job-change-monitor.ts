@@ -21,7 +21,12 @@
 
 import { createAdminClient } from '@/lib/supabase-admin';
 import { emitExternalContactSignalsFromEnrichment } from '@/lib/signals/readiness-external-contacts';
-import { recomputeContactReadiness } from '@/lib/signals/readiness-service';
+import {
+  ingestSignalSourceEvent,
+  normalizeSignalSourceEvent,
+  recomputeAccountReadiness,
+  recomputeContactReadiness,
+} from '@/lib/signals/readiness-service';
 import { fetchWithRetry } from '@/lib/signals/fetch-with-retry';
 import { persistRunHistory } from '@/lib/signals/run-history';
 
@@ -181,29 +186,368 @@ function extractCurrentEmployment(
 // ── Company ID resolution ──────────────────────────────────────────────────
 
 /**
- * Try to resolve a Supabase company_id for the scraped company name.
- * Looks in user_companies → companies by case-insensitive name match.
- * Falls back to the contact's existing company_id if no match is found —
- * that still allows title/promotion signals to fire.
+ * Resolve (or create) a Supabase company_id for the scraped company name.
+ *
+ * Order of attempts:
+ *   1. Fast path — scraped name matches the contact's currently-recorded
+ *      company name (case-insensitive). Return existing company_id.
+ *   2. Existing link in user_companies for this user. Return its company_id.
+ *   3. Existing canonical company globally (any user). Link the user via
+ *      user_companies upsert, then return its id.
+ *   4. Brand-new company. Insert a minimal companies stub + user_companies
+ *      link, return the new id.
+ *
+ * If anything errors during creation, falls back to the existing company_id
+ * so the rest of the monitor still emits title/promotion signals.
  */
-async function resolveCompanyId(
+async function resolveOrCreateCompanyId(
   admin: ReturnType<typeof createAdminClient>,
   userId: string,
   companyName: string | null,
-  fallbackCompanyId: string | null
+  fallbackCompanyId: string | null,
+  currentCompanyName: string | null,
 ): Promise<string | null> {
   if (!companyName) return fallbackCompanyId;
+  const trimmed = companyName.trim();
+  if (!trimmed) return fallbackCompanyId;
 
-  const { data } = await admin
+  // 1. Fast path — scrape matches the contact's currently-recorded company.
+  if (
+    currentCompanyName &&
+    currentCompanyName.trim().toLowerCase() === trimmed.toLowerCase()
+  ) {
+    return fallbackCompanyId;
+  }
+
+  // 2. Already linked under user_companies.
+  const { data: linkedRow } = await admin
     .from('user_companies')
     .select('company_id, companies!inner(company_name)')
     .eq('user_id', userId)
-    .ilike('companies.company_name', companyName.trim())
+    .ilike('companies.company_name', trimmed)
     .limit(1)
     .maybeSingle();
+  if (linkedRow && typeof linkedRow.company_id === 'string') {
+    return linkedRow.company_id;
+  }
 
-  if (data && typeof data.company_id === 'string') return data.company_id;
-  return fallbackCompanyId;
+  // 3. Canonical company exists globally (other user's import); just link it.
+  const { data: existingCompany } = await admin
+    .from('companies')
+    .select('id')
+    .ilike('company_name', trimmed)
+    .limit(1)
+    .maybeSingle();
+  if (existingCompany && typeof existingCompany.id === 'string') {
+    await admin
+      .from('user_companies')
+      .upsert(
+        {
+          user_id: userId,
+          company_id: existingCompany.id,
+          source: 'job_change_monitor',
+          archived_at: null,
+        },
+        { onConflict: 'user_id,company_id' },
+      );
+    return existingCompany.id;
+  }
+
+  // 4. Create a fresh stub. Minimal fields — enrichment fills the rest later.
+  const { data: created, error: insertErr } = await admin
+    .from('companies')
+    .insert({ company_name: trimmed, source: 'job_change_monitor' })
+    .select('id')
+    .single();
+  if (insertErr || !created || typeof created.id !== 'string') {
+    console.warn(
+      `[job-change-monitor] failed to create company stub for "${trimmed}":`,
+      insertErr,
+    );
+    return fallbackCompanyId;
+  }
+
+  await admin
+    .from('user_companies')
+    .upsert(
+      {
+        user_id: userId,
+        company_id: created.id,
+        source: 'job_change_monitor',
+        archived_at: null,
+      },
+      { onConflict: 'user_id,company_id' },
+    );
+
+  return created.id;
+}
+
+// ── Closed-deal detach ────────────────────────────────────────────────────
+
+/**
+ * When a `recently_changed_company` signal fires, the contact's existing
+ * HubSpot deal links (closed-won / closed-lost) at the OLD company become
+ * stale — the person isn't a customer of that account anymore, they've
+ * moved on. Mark those links so the dual-lookup in resolveContactHubSpotStates
+ * skips them and the CRM badge / priority cap stop applying.
+ *
+ * Uses the same dual-lookup (arcova_contact_id AND hubspot_contact_email)
+ * as /api/leads so we catch links matched by either path.
+ */
+async function detachClosedDealLinks(
+  admin: ReturnType<typeof createAdminClient>,
+  userId: string,
+  contactId: string,
+  contactEmail: string | null,
+): Promise<number> {
+  try {
+    const emailNorm = contactEmail?.trim().toLowerCase() || null;
+
+    // 1. Find every deal link tied to this contact (id or email).
+    const [byId, byEmail] = await Promise.all([
+      admin
+        .from('crm_deal_contact_links')
+        .select('id, hubspot_deal_id, raw_payload')
+        .eq('user_id', userId)
+        .eq('arcova_contact_id', contactId),
+      emailNorm
+        ? admin
+            .from('crm_deal_contact_links')
+            .select('id, hubspot_deal_id, raw_payload')
+            .eq('user_id', userId)
+            .eq('hubspot_contact_email', emailNorm)
+        : Promise.resolve({ data: [] as Array<{ id: string; hubspot_deal_id: unknown; raw_payload: unknown }>, error: null }),
+    ]);
+
+    type LinkRow = { id: string; hubspot_deal_id: unknown; raw_payload: unknown };
+    const allLinks = new Map<string, LinkRow>();
+    for (const row of (byId.data ?? []) as LinkRow[]) allLinks.set(row.id, row);
+    for (const row of (byEmail.data ?? []) as LinkRow[]) allLinks.set(row.id, row);
+    if (allLinks.size === 0) return 0;
+
+    // 2. Find which of those deals are closed (won OR lost).
+    const dealIds = [
+      ...new Set(
+        [...allLinks.values()]
+          .map((l) => (l.hubspot_deal_id != null ? String(l.hubspot_deal_id) : null))
+          .filter((v): v is string => Boolean(v)),
+      ),
+    ];
+    if (!dealIds.length) return 0;
+
+    const { data: dealRows } = await admin
+      .from('crm_deals')
+      .select('hubspot_deal_id, deal_stage')
+      .eq('user_id', userId)
+      .in('hubspot_deal_id', dealIds);
+
+    const closedDealIds = new Set<string>();
+    for (const row of (dealRows ?? []) as Array<{ hubspot_deal_id: unknown; deal_stage: string | null }>) {
+      const stage = (row.deal_stage || '').trim().toLowerCase();
+      if (stage === 'closedwon' || stage === 'closedlost') {
+        closedDealIds.add(String(row.hubspot_deal_id));
+      }
+    }
+    if (closedDealIds.size === 0) return 0;
+
+    // 3. Mark each matching link as detached (additive raw_payload update so
+    //    we don't clobber existing payload fields).
+    let updated = 0;
+    for (const link of allLinks.values()) {
+      const dealId = link.hubspot_deal_id != null ? String(link.hubspot_deal_id) : null;
+      if (!dealId || !closedDealIds.has(dealId)) continue;
+      const payload = (link.raw_payload ?? {}) as Record<string, unknown>;
+      if (payload.detached_due_to_job_change === true) continue;
+      const nextPayload = {
+        ...payload,
+        detached_due_to_job_change: true,
+        detached_at: new Date().toISOString(),
+      };
+      const { error: updErr } = await admin
+        .from('crm_deal_contact_links')
+        .update({ raw_payload: nextPayload })
+        .eq('id', link.id);
+      if (!updErr) updated++;
+    }
+    return updated;
+  } catch (err) {
+    console.warn('[job-change-monitor] detachClosedDealLinks failed:', err);
+    return 0;
+  }
+}
+
+// ── Prior-relationship signal ─────────────────────────────────────────────
+
+const PRIOR_RELATIONSHIP_SOURCE = 'job_change_monitor/prior_relationship';
+
+type PriorRelationshipTier =
+  | 'prior_customer_relationship'
+  | 'prior_active_deal_relationship'
+  | 'prior_pipeline_relationship';
+
+/**
+ * Before the job-change monitor detaches a contact's closed deal links, inspect
+ * the prior engagement level at the OLD company and emit a tiered positive
+ * readiness signal scoped to the NEW company.
+ *
+ * Example: Kumar was closed-won at Enzene. He moves to Illumina. This emits
+ * `prior_customer_relationship` against Illumina — surfacing the warm-start
+ * relationship context without needing any manual tagging.
+ *
+ * Tiers (highest wins):
+ *   closed-won  → prior_customer_relationship   (strong, 365d)
+ *   active deal → prior_active_deal_relationship (medium, 180d)
+ *   closed-lost → prior_pipeline_relationship    (weak, 90d)
+ *
+ * Called BEFORE detachClosedDealLinks so the links are still un-flagged.
+ */
+async function emitPriorRelationshipSignal(
+  admin: ReturnType<typeof createAdminClient>,
+  userId: string,
+  contactId: string,
+  contactEmail: string | null,
+  newCompanyId: string,
+  eventAt: string,
+): Promise<PriorRelationshipTier | null> {
+  try {
+    const emailNorm = contactEmail?.trim().toLowerCase() || null;
+
+    // 1. Gather all non-detached deal links for this contact.
+    const [byId, byEmail] = await Promise.all([
+      admin
+        .from('crm_deal_contact_links')
+        .select('hubspot_deal_id, raw_payload')
+        .eq('user_id', userId)
+        .eq('arcova_contact_id', contactId),
+      emailNorm
+        ? admin
+            .from('crm_deal_contact_links')
+            .select('hubspot_deal_id, raw_payload')
+            .eq('user_id', userId)
+            .eq('hubspot_contact_email', emailNorm)
+        : Promise.resolve({
+            data: [] as Array<{ hubspot_deal_id: unknown; raw_payload: unknown }>,
+            error: null,
+          }),
+    ]);
+
+    type LinkRow = { hubspot_deal_id: unknown; raw_payload: unknown };
+    const activeDealIds = new Set<string>();
+    for (const row of [...(byId.data ?? []), ...(byEmail.data ?? [])] as LinkRow[]) {
+      const payload = (row.raw_payload ?? {}) as Record<string, unknown>;
+      if (payload.detached_due_to_job_change === true) continue; // already detached
+      if (row.hubspot_deal_id != null) activeDealIds.add(String(row.hubspot_deal_id));
+    }
+    if (activeDealIds.size === 0) return null;
+
+    // 2. Look up deal stages.
+    const { data: dealRows } = await admin
+      .from('crm_deals')
+      .select('deal_stage')
+      .eq('user_id', userId)
+      .in('hubspot_deal_id', [...activeDealIds]);
+
+    if (!dealRows || dealRows.length === 0) return null;
+
+    // 3. Determine the best (highest-tier) prior engagement level.
+    // Score each deal stage: closedwon=3, active=2, closedlost=1, unknown=0
+    let bestScore = 0;
+    for (const row of dealRows as Array<{ deal_stage: string | null }>) {
+      const stage = (row.deal_stage ?? '').trim().toLowerCase();
+      if (stage === 'closedwon') { bestScore = 3; break; }
+      if (stage !== 'closedlost' && stage !== '' && bestScore < 2) bestScore = 2;
+      else if (stage === 'closedlost' && bestScore < 1) bestScore = 1;
+    }
+    const bestTier: PriorRelationshipTier | null =
+      bestScore === 3 ? 'prior_customer_relationship'
+      : bestScore === 2 ? 'prior_active_deal_relationship'
+      : bestScore === 1 ? 'prior_pipeline_relationship'
+      : null;
+    if (!bestTier) return null;
+
+    // 4. Emit via the readiness-service pipeline.
+    const sourceEventId = `${PRIOR_RELATIONSHIP_SOURCE}:${contactId}:${newCompanyId}:${eventAt}`;
+
+    const tierMeta: Record<PriorRelationshipTier, { title: string; summary: string }> = {
+      prior_customer_relationship: {
+        title: 'Prior customer relationship — moved to new company',
+        summary:
+          'This contact was previously associated with a closed-won deal. They have now moved to a new company, creating a warm-start re-engagement opportunity.',
+      },
+      prior_active_deal_relationship: {
+        title: 'Prior active deal — moved to new company',
+        summary:
+          'This contact was previously associated with an active deal in the pipeline. They have now moved to a new company.',
+      },
+      prior_pipeline_relationship: {
+        title: 'Prior pipeline relationship — moved to new company',
+        summary:
+          'This contact was previously in the pipeline at their prior company. They have now moved to a new company.',
+      },
+    };
+
+    const { title, summary } = tierMeta[bestTier];
+
+    const ingestResult = await ingestSignalSourceEvent(
+      admin as unknown as Parameters<typeof ingestSignalSourceEvent>[0],
+      {
+        userId,
+        entityScope: 'contact',
+        companyId: newCompanyId,
+        contactId,
+        source: PRIOR_RELATIONSHIP_SOURCE,
+        sourceEventType: bestTier,
+        sourceEventId,
+        sourceUrl: null,
+        title,
+        summary,
+        excerpt: summary,
+        eventAt,
+        metadata: { new_company_id: newCompanyId, prior_deal_tier: bestTier },
+      },
+    );
+
+    const rawEvent = {
+      id: ingestResult.sourceEventId,
+      userId,
+      entityId: contactId,
+      entityScope: 'contact' as const,
+      source: PRIOR_RELATIONSHIP_SOURCE,
+      sourceUrl: null,
+      sourceEventType: bestTier,
+      sourceEventId,
+      title,
+      summary,
+      excerpt: summary,
+      eventAt,
+      observedAt: new Date().toISOString(),
+      metadata: { new_company_id: newCompanyId, prior_deal_tier: bestTier },
+    };
+
+    await normalizeSignalSourceEvent(
+      admin as unknown as Parameters<typeof normalizeSignalSourceEvent>[0],
+      {
+        userId,
+        rawEvent,
+        signalKeys: [bestTier],
+        companyId: newCompanyId,
+        contactId,
+      },
+    );
+
+    // Recompute the new company's readiness to pick up this signal immediately.
+    await recomputeAccountReadiness(
+      admin as unknown as Parameters<typeof recomputeAccountReadiness>[0],
+      { userId, companyId: newCompanyId },
+    ).catch((e) =>
+      console.warn('[job-change-monitor] prior-relationship account readiness recompute skipped:', e),
+    );
+
+    return bestTier;
+  } catch (err) {
+    console.warn('[job-change-monitor] emitPriorRelationshipSignal failed:', err);
+    return null;
+  }
 }
 
 // ── Main monitor ───────────────────────────────────────────────────────────
@@ -262,12 +606,16 @@ export async function runJobChangeMonitor(
       const profile = await scrapeLinkedInProfile(row.linkedin_url);
       const scraped = extractCurrentEmployment(profile);
 
-      // 2. Resolve company_id for the scraped company
-      const newCompanyId = await resolveCompanyId(
+      // 2. Resolve (or create) company_id for the scraped company. If the
+      // scrape detects a new employer the user hasn't imported yet, we
+      // auto-create a minimal stub so Kumar properly migrates off the old
+      // (e.g. closed-won) account.
+      const newCompanyId = await resolveOrCreateCompanyId(
         admin,
         row.user_id,
         scraped.companyName,
-        row.company_id
+        row.company_id,
+        row.resolved_current_company_name,
       );
 
       const eventAt = new Date().toISOString();
@@ -333,6 +681,66 @@ export async function runJobChangeMonitor(
       ).catch((e) =>
         console.warn('[job-change-monitor] contact readiness recompute skipped:', e)
       );
+
+      // 6. If the contact changed company:
+      //    a. Detach them from any closed-won / closed-lost deal links at the
+      //       OLD employer so the stale CRM context (Won badge, customer/
+      //       dormant priority cap) stops applying.
+      //    b. Queue a full contact re-enrichment (Apollo + LinkedIn + LLM
+      //       classification + fit + company monitor for the new stub). Mark
+      //       the contact 'requested' — the contact-enrichment-queue cron
+      //       picks it up and runs runContactResolutionPipelineForContact
+      //       which also enriches the new company stub as a side effect.
+      //    c. Promotion / internal role / title change keep the contact's
+      //       employer; their Apollo + CRM data is still valid, so no heavy
+      //       re-enrichment needed. recomputeContactReadiness (step 5) is
+      //       sufficient for those.
+      if (signalResult.emittedSignalTypes.includes('recently_changed_company')) {
+        // 6a. Emit a tiered prior-relationship signal at the NEW company BEFORE
+        //     detaching the deal links, so we can still read the pre-detach stages.
+        if (newCompanyId) {
+          const priorTier = await emitPriorRelationshipSignal(
+            admin,
+            row.user_id,
+            row.id,
+            row.email,
+            newCompanyId,
+            eventAt,
+          );
+          if (priorTier) {
+            signalsEmitted++;
+            emittedSignalTypes.add(priorTier);
+          }
+        }
+
+        // 6b. Detach closed deal links at the old employer.
+        const detached = await detachClosedDealLinks(
+          admin,
+          row.user_id,
+          row.id,
+          row.email,
+        );
+        if (detached > 0) {
+          console.info(
+            `[job-change-monitor] detached ${detached} closed deal link(s) for contact ${row.id}`,
+          );
+        }
+
+        const { error: queueErr } = await admin
+          .from('contacts')
+          .update({
+            enrichment_refresh_status: 'requested',
+            enrichment_refresh_last_error: null,
+            updated_at: eventAt,
+          })
+          .eq('id', row.id);
+        if (queueErr) {
+          console.warn(
+            `[job-change-monitor] failed to queue re-enrichment for contact ${row.id}:`,
+            queueErr,
+          );
+        }
+      }
 
       if (signalResult.emittedSignalTypes.length > 0) {
         signalsEmitted += signalResult.emittedSignalTypes.length;

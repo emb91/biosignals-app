@@ -15,6 +15,26 @@ import type { AccountReadinessScoreResult } from '@/lib/signals/readiness-score'
 
 type DatabaseClient = SupabaseClient<any, 'public', any>;
 
+/**
+ * Priority = fit × (0.5 + 0.5 × readiness). Hybrid model: fit acts as the
+ * floor, readiness boosts on top. Returns null when either input is missing
+ * so readers can fall back cleanly. Clamped to [0, 1].
+ *
+ * Keep this identical to the formula in app/api/accounts/route.ts and
+ * app/leads/contacts/page.tsx — it's the single source of truth for the
+ * Priority score stored on readiness snapshots.
+ */
+function computePriorityScore(
+  fitScore: number | null | undefined,
+  readinessScore: number | null | undefined,
+): number | null {
+  if (typeof fitScore !== 'number' || !Number.isFinite(fitScore)) return null;
+  if (typeof readinessScore !== 'number' || !Number.isFinite(readinessScore)) return null;
+  const raw = fitScore * (0.5 + 0.5 * readinessScore);
+  if (!Number.isFinite(raw)) return null;
+  return Math.max(0, Math.min(1, raw));
+}
+
 export type ReadinessSnapshotRecord = {
   id: string;
   user_id: string;
@@ -226,12 +246,15 @@ export async function upsertContactReadinessSnapshot(
   input: {
     userId: string;
     contactId: string;
+    fitScore?: number | null;
     score: AccountReadinessScoreResult;
   }
 ): Promise<{ id: string }> {
   const payload = {
     user_id: input.userId,
     contact_id: input.contactId,
+    fit_score: input.fitScore ?? null,
+    priority_score: computePriorityScore(input.fitScore ?? null, input.score.overallScore),
     overall_score: input.score.overallScore,
     overall_label: input.score.overallLabel,
     new_budget_score: input.score.dimensions.new_budget.score,
@@ -278,6 +301,7 @@ export async function upsertAccountReadinessSnapshot(
     company_id: input.companyId,
     fit_score: input.fitScore ?? null,
     fit_label: input.fitLabel ?? null,
+    priority_score: computePriorityScore(input.fitScore ?? null, input.score.overallScore),
     overall_score: input.score.overallScore,
     overall_label: input.score.overallLabel,
     new_budget_score: input.score.dimensions.new_budget.score,

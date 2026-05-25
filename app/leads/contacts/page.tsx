@@ -556,19 +556,18 @@ function getHubSpotTableBadge(lead: Lead): {
       };
     case 'dormant':
       return {
+        // Red, not grey — grey reads as "deprioritised" (cold lead), whereas
+        // Lost is a closed-out deal and deserves its own signal.
         label: 'Lost',
-        className: 'border-[rgba(125,144,154,0.24)] bg-[rgba(125,144,154,0.10)] text-[#5f7480]',
-      };
-    case 'context_only':
-      return {
-        label: 'Context only',
-        className: 'border-[rgba(13,53,71,0.12)] bg-[rgba(13,53,71,0.05)] text-[#4a6470]',
+        className: 'border-[rgba(220,38,38,0.24)] bg-[rgba(220,38,38,0.08)] text-[#b91c1c]',
       };
     case 'active':
       return {
         label: stageLabel || 'Active deal',
         className: 'border-[rgba(245,115,22,0.24)] bg-[rgba(255,122,89,0.08)] text-[#cc5b3f]',
       };
+    // 'context_only' (in HubSpot, no actionable deal) and 'none' both render
+    // as "No deal" — same neutral pill, since users don't distinguish them.
     default:
       return {
         label: 'No deal',
@@ -1080,11 +1079,10 @@ function SortArrow({ col, activeCol, dir }: { col: string; activeCol: string | n
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' | 'customers' }) {
+export function ContactsWorkspace() {
   const { user, loading } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const isCustomersPage = viewMode === 'customers';
 
   const [agentTrigger, setAgentTrigger] = useState<AgentPendingMessage | undefined>();
   // Value of the floating "Intercom-style" chat bar shown while a contact card is open.
@@ -1210,8 +1208,8 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
   const [agentFilterIds, setAgentFilterIds] = useState<Set<string> | null>(null);
 
   // Column sort state (client-side, applies to current page / agent filter)
-  const [tableSortCol, setTableSortCol] = useState<string | null>(null);
-  const [tableSortDir, setTableSortDir] = useState<'asc' | 'desc'>('asc');
+  const [tableSortCol, setTableSortCol] = useState<string | null>('priority');
+  const [tableSortDir, setTableSortDir] = useState<'asc' | 'desc'>('desc');
 
   useEffect(() => {
     if (!loading && !user) router.push('/login');
@@ -1224,7 +1222,6 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
       const params = new URLSearchParams({
         page: String(page),
         pageSize: String(PAGE_SIZE),
-        lifecycle: isCustomersPage ? 'customers' : 'leads',
       });
       if (search) params.set('search', search);
 
@@ -1252,7 +1249,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
     } finally {
       if (!silent) setLoadingLeads(false);
     }
-  }, [user, page, search, isCustomersPage]);
+  }, [user, page, search]);
 
   useEffect(() => {
     fetchLeads();
@@ -1317,7 +1314,6 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
       const params = new URLSearchParams({
         page: String(p),
         pageSize: '100',
-        lifecycle: isCustomersPage ? 'customers' : 'leads',
       });
       if (search) params.set('search', search);
       const res = await fetch(`/api/leads?${params}`);
@@ -1388,10 +1384,10 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${isCustomersPage ? 'customers' : 'leads'}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `leads-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [search, isCustomersPage]);
+  }, [search]);
 
 
   useEffect(() => {
@@ -1988,14 +1984,6 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
       (selectedLeadRefreshStatus === 'succeeded' ||
       (selectedLeadRefreshStatus === 'idle' &&
         ['completed', 'ambiguous'].includes(selectedLead.profile_enrichment_status || '')));
-
-  const customerAttributionSummary = isCustomersPage
-    ? {
-        sourced: leads.filter(isArcovaSourcedLead).length,
-        enriched: leads.filter(isArcovaEnrichedLead).length,
-        wonAfterTouch: leads.filter(isWonAfterArcovaTouch).length,
-      }
-    : null;
 
   const selectedLeadArcovaSourced = selectedLead ? isArcovaSourcedLead(selectedLead) : false;
   const selectedLeadArcovaEnriched = selectedLead ? isArcovaEnrichedLead(selectedLead) : false;
@@ -2594,19 +2582,15 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
       <div>
         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-arcova-teal">
           <Users className="h-3.5 w-3.5" />
-          {isCustomersPage ? 'Customers' : 'Leads'}
+          Leads
         </div>
         <h1 className="font-manrope mt-2 text-3xl font-semibold leading-tight tracking-[-0.028em] text-slate-950 sm:text-[2.25rem]">
-          {isCustomersPage ? 'Customer contacts' : 'Contacts'}
+          Contacts
         </h1>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
-          {isCustomersPage
-            ? total > 0
-              ? `${total.toLocaleString()} customer contact${total !== 1 ? 's' : ''} tracked here. Click a row for details, or the company name to open the account.`
-              : 'Won contacts from HubSpot will appear here once they move into your customer lifecycle.'
-            : total > 0
-              ? `${total.toLocaleString()} contact${total !== 1 ? 's' : ''} ready to review. Click a row for details, or the company name to open the account.`
-              : 'Your imported contacts will appear here once they are ready to review.'}
+          {total > 0
+            ? `${total.toLocaleString()} contact${total !== 1 ? 's' : ''} ready to review. Click a row for details, or the company name to open the account.`
+            : 'Your imported contacts will appear here once they are ready to review.'}
         </p>
       </div>
 
@@ -2627,17 +2611,15 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" sideOffset={6} className="min-w-[14rem]">
-              {!isCustomersPage && (
-                <DropdownMenuItem onSelect={() => router.push('/import')}>
-                  <Upload className="w-3.5 h-3.5" />
-                  Import
-                </DropdownMenuItem>
-              )}
+              <DropdownMenuItem onSelect={() => router.push('/import')}>
+                <Upload className="w-3.5 h-3.5" />
+                Import
+              </DropdownMenuItem>
               <DropdownMenuItem onSelect={handleDownloadCsv}>
                 <Download className="w-3.5 h-3.5" />
                 Export CSV
               </DropdownMenuItem>
-              {!isCustomersPage && hubspotConnected && (
+              {hubspotConnected && (
                 <>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
@@ -2765,36 +2747,6 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
     </div>
   ) : null;
 
-  const customerModeBanner = isCustomersPage ? (
-    <div className="mb-4 shrink-0 rounded-2xl border border-[rgba(45,138,138,0.18)] bg-[rgba(45,138,138,0.07)] px-4 py-3">
-      <div className="flex items-start gap-3">
-        <div className="mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-full bg-[rgba(45,138,138,0.12)] text-[#2d8a8a]">
-          <Users className="h-3.5 w-3.5" />
-        </div>
-        <div>
-          <p className="text-sm font-semibold text-[#0d3547]">Customer workflow</p>
-          <p className="mt-1 text-sm leading-6 text-[#4a6470]">
-            Closed-won HubSpot contacts live here so we can keep the CRM history, attribution, and relationship context
-            without sending them back through paid lead enrichment.
-          </p>
-          {customerAttributionSummary ? (
-            <div className="mt-3 flex flex-wrap gap-2">
-              <span className="inline-flex items-center rounded-full border border-[rgba(45,138,138,0.2)] bg-white/70 px-2.5 py-1 text-[11px] font-medium text-[#2d8a8a]">
-                {customerAttributionSummary.sourced} Arcova-sourced
-              </span>
-              <span className="inline-flex items-center rounded-full border border-[rgba(45,138,138,0.2)] bg-white/70 px-2.5 py-1 text-[11px] font-medium text-[#2d8a8a]">
-                {customerAttributionSummary.enriched} Arcova-enriched
-              </span>
-              <span className="inline-flex items-center rounded-full border border-[rgba(45,138,138,0.2)] bg-white/70 px-2.5 py-1 text-[11px] font-medium text-[#2d8a8a]">
-                {customerAttributionSummary.wonAfterTouch} won after Arcova touch
-              </span>
-            </div>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  ) : null;
-
   return (
     <div className="flex min-h-0 h-screen bg-transparent">
       <AppSidebar />
@@ -2805,7 +2757,6 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
             {loadingLeads ? (
               <>
                 {contactsPageTitleBlock}
-                {customerModeBanner}
                 {hubspotPullBanner}
                 {hubspotSyncBanner}
                 <div className="flex items-center justify-center py-24">
@@ -2815,40 +2766,32 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
             ) : leads.length === 0 && !search && !agentFilterIds ? (
               <>
                 {contactsPageTitleBlock}
-                {customerModeBanner}
                 {hubspotPullBanner}
                 {hubspotSyncBanner}
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-16 text-center">
                 <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                   <Users className="w-8 h-8 text-gray-400" />
                 </div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                  {isCustomersPage ? 'No customers yet' : 'No leads yet'}
-                </h3>
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">No leads yet</h3>
                 <p className="text-gray-500 mb-6 max-w-sm mx-auto">
-                  {isCustomersPage
-                    ? 'Closed-won HubSpot contacts will appear here once they move into your customer lifecycle.'
-                    : 'Import a CSV of contacts to start reviewing enriched leads.'}
+                  Import a CSV of contacts to start reviewing enriched leads.
                 </p>
-                {!isCustomersPage ? (
-                  <button
-                    onClick={() => router.push('/import')}
-                    className="px-6 py-3 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors"
-                  >
-                    Import contacts
-                  </button>
-                ) : null}
+                <button
+                  onClick={() => router.push('/import')}
+                  className="px-6 py-3 bg-arcova-teal text-white rounded-lg hover:bg-arcova-teal/90 transition-colors"
+                >
+                  Import contacts
+                </button>
               </div>
               </>
             ) : leads.length === 0 && search && !agentFilterIds ? (
               <>
                 {contactsPageTitleBlock}
-                {customerModeBanner}
                 {hubspotPullBanner}
                 {hubspotSyncBanner}
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
                 <p className="text-gray-500">
-                  No {isCustomersPage ? 'customers' : 'leads'} matching &ldquo;{search}&rdquo;
+                  No leads matching &ldquo;{search}&rdquo;
                 </p>
               </div>
               </>
@@ -2860,7 +2803,6 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                 )}
               >
                 {contactsPageTitleBlock}
-                {customerModeBanner}
                 {hubspotPullBanner}
                 {hubspotSyncBanner}
                 {/* ── Leads table ── */}
@@ -3177,40 +3119,6 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                           {/* Action — hidden below 1280px (narrow viewport) */}
                           <div className="hidden min-w-0 items-center justify-center min-[1280px]:flex">
                             {(() => {
-                              if (lead.hubspot_lead_state === 'customer') {
-                                return (
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setSelectedLeadId(lead.id);
-                                      setSelectedPreview('hubspot');
-                                      cancelEditingLead();
-                                    }}
-                                    className="inline-flex items-center rounded-full border border-[rgba(45,138,138,0.24)] bg-[rgba(45,138,138,0.08)] px-2.5 py-1 text-[11px] font-medium text-[#2d8a8a]"
-                                  >
-                                    Customer
-                                  </button>
-                                );
-                              }
-
-                              if (lead.hubspot_lead_state === 'dormant') {
-                                return (
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setSelectedLeadId(lead.id);
-                                      setSelectedPreview('hubspot');
-                                      cancelEditingLead();
-                                    }}
-                                    className="inline-flex items-center rounded-full border border-[rgba(125,144,154,0.24)] bg-[rgba(125,144,154,0.10)] px-2.5 py-1 text-[11px] font-medium text-[#5f7480]"
-                                  >
-                                    Dormant
-                                  </button>
-                                );
-                              }
-
                               const action = getContactAction(lead);
                               const config = LEAD_ACTION_PILL_CLASS[action];
                               return (
@@ -3317,11 +3225,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                             setSelectedLeadId(null);
                             cancelEditingLead();
                           }}
-                          placeholder={
-                            isCustomersPage
-                              ? 'Ask anything about your customers…'
-                              : 'Ask anything about your contacts…'
-                          }
+                          placeholder="Ask anything about your contacts…"
                           className="w-full"
                         />
                       </div>
@@ -3373,8 +3277,6 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                                   ? 'Signals'
                                   : selectedPreview === 'priority'
                                     ? 'Priority'
-                                  : isCustomersPage
-                                    ? 'Customer'
                                     : 'Action'}
                           </p>
                           <h2 className="font-manrope mt-1.5 break-words text-xl font-bold leading-tight tracking-[-0.024em] text-[rgb(13,53,71)] sm:text-2xl">
@@ -3459,9 +3361,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                                     ? 'Fit'
                                     : mode === 'signals'
                                       ? 'Signals'
-                                      : isCustomersPage
-                                        ? 'Customer'
-                                        : 'Action'}
+                                      : 'Action'}
                           </button>
                         ))}
                       </div>
@@ -3557,7 +3457,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                               </div>
                               <div className="space-y-1">
                                 <label className="text-xs text-gray-400">
-                                  Primary email ({isCustomersPage ? 'Customers / sync' : 'Leads / sync'})
+                                  Primary email (Leads / sync)
                                 </label>
                                 <input
                                   type="email"
@@ -4721,9 +4621,8 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
             selectedLeadId && 'invisible',
           )}
           page="leads"
-          headerSubtitle={isCustomersPage ? 'Working on your customers' : undefined}
           pageContext={{
-            leadsView: isCustomersPage ? 'customers' : 'contacts',
+            leadsView: 'contacts',
             ...(selectedLead ? {
               selectedLead: {
                 id: selectedLead.id,
@@ -4750,5 +4649,5 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
 }
 
 export default function LeadsPage() {
-  return <ContactsWorkspace viewMode="leads" />;
+  return <ContactsWorkspace />;
 }

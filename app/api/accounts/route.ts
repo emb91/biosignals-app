@@ -372,6 +372,106 @@ export async function GET(request: Request) {
       }
     }
 
+    // ── Surface companies with zero contacts ──────────────────────────────
+    // Pure contacts → companies aggregation drops companies the user has
+    // imported / created but has no contacts at. Those are still real
+    // accounts the user owns — an empty account is itself an opportunity
+    // ("good fit, source contacts here"). Fetch all active user_companies
+    // and add any that aren't already aggregated as contact_count=0 rows.
+    {
+      const existingCompanyIds = new Set(byCompany.keys());
+      const { data: emptyRows, error: emptyErr } = await supabase
+        .from('user_companies')
+        .select(
+          `
+          company_id,
+          source,
+          added_at,
+          user_overrides,
+          companies!inner (
+            id,
+            company_name,
+            domain,
+            logo_url,
+            company_fit_score,
+            company_fit_coverage,
+            matched_icp_id,
+            therapeutic_areas,
+            modalities,
+            development_stages,
+            funding_stage,
+            funding_status_label,
+            company_type,
+            linkedin_url,
+            description,
+            bio_summary,
+            employee_count,
+            employee_range,
+            headquarters_city,
+            headquarters_country,
+            total_funding_usd,
+            latest_funding_date,
+            funding_resolution_summary,
+            founded_year,
+            specialties,
+            products_services,
+            services,
+            technologies,
+            last_enriched_at
+          )
+        `,
+        )
+        .eq('user_id', user.id)
+        .is('archived_at', null);
+
+      if (!emptyErr && emptyRows) {
+        for (const row of emptyRows as Array<{
+          company_id: string;
+          source: string | null;
+          added_at: string | null;
+          user_overrides: Record<string, unknown> | null;
+          companies: CompanyAggRow | CompanyAggRow[] | null;
+        }>) {
+          const company = Array.isArray(row.companies) ? row.companies[0] : row.companies;
+          if (!company?.id) continue;
+          if (existingCompanyIds.has(company.id)) continue;
+
+          // Map user_companies.source → provenance channel for the badge.
+          const src = (row.source || '').trim().toLowerCase();
+          const channels = new Set<DataProvenanceChannel>();
+          if (src === 'arcova' || src === 'fiber' || src === 'apollo' || src === 'job_change_monitor') {
+            channels.add('arcova');
+          } else if (src === 'hubspot') {
+            channels.add('hubspot');
+          } else if (src) {
+            channels.add('csv');
+          }
+
+          const scratch: ScratchAgg = {
+            ...company,
+            contact_count: 0,
+            fit_sum: 0,
+            fit_n: 0,
+            best_contact_fit: null,
+            worst_contact_fit: null,
+            max_contact_intent_score: null,
+            provenance_channels: channels,
+            provenance_earliest_import_at: row.added_at,
+          };
+
+          // Layer overrides if present (mirrors the contacts-driven block above).
+          const overrides = row.user_overrides ?? {};
+          for (const [key, value] of Object.entries(overrides)) {
+            if (value === null || value === undefined) continue;
+            (scratch as unknown as Record<string, unknown>)[key] = value;
+          }
+          (scratch as unknown as Record<string, unknown>).user_overrides = overrides;
+
+          byCompany.set(company.id, scratch);
+        }
+      }
+    }
+
     let accounts: AggregatedAccount[] = [...byCompany.values()].map(finalizeScratch);
 
     if (coverageGapsOnly) {

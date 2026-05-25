@@ -122,7 +122,76 @@ type ContactAtCompany = {
   seniority_level: string | null;
 };
 
-type PanelMode = 'details' | 'fit' | 'action' | 'contacts' | 'signals' | 'priority';
+type PanelMode = 'details' | 'fit' | 'action' | 'contacts' | 'signals' | 'priority' | 'crm';
+
+interface AccountCrmDealContact {
+  arcova_contact_id: string | null;
+  full_name: string | null;
+  email: string | null;
+  hubspot_contact_id: string | null;
+}
+
+interface AccountCrmDeal {
+  hubspot_deal_id: string;
+  deal_name: string | null;
+  deal_stage: string | null;
+  amount: number | null;
+  close_date: string | null;
+  hs_lastmodifieddate: string | null;
+  synced_at: string | null;
+  hubspot_company_name: string | null;
+  hubspot_company_domain: string | null;
+  resolution_status: string | null;
+  resolution_suppressed: boolean;
+  mismatch_reason: string | null;
+  contacts: AccountCrmDealContact[];
+}
+
+interface AccountCrmContext {
+  company_id: string;
+  company_name: string | null;
+  company_domain: string | null;
+  deals: AccountCrmDeal[];
+}
+
+const formatLastUpdated = (iso: string | null | undefined): string => {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+};
+
+const formatUsdValue = (value: number | null | undefined): string | null => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  }).format(value);
+};
+
+// Inlined (and trimmed to the cases the accounts CRM panel needs) so this client
+// page doesn't transitively pull @/lib/nango (server-only secretKey) via
+// @/lib/hubspot-lead-state → @/lib/hubspot-deals.
+const HUBSPOT_STAGE_LABELS: Record<string, string> = {
+  appointmentscheduled: 'Appointment',
+  qualifiedtobuy:        'Qualified',
+  presentationscheduled: 'Presentation',
+  decisionmakerboughtin: 'Decision-maker bought in',
+  contractsent:          'Contract',
+  closedwon:             'Closed won',
+  closedlost:            'Closed lost',
+  dealswon:              'Won',
+};
+
+const formatHubSpotStageLabel = (value: string | null | undefined): string | null => {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase();
+  if (HUBSPOT_STAGE_LABELS[normalized]) return HUBSPOT_STAGE_LABELS[normalized];
+  return value
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .split(/[_\s]+/)
+    .map((part) => (part ? part[0].toUpperCase() + part.slice(1).toLowerCase() : part))
+    .join(' ');
+};
 
 type ContactFitComponentKey = 'business_area' | 'seniority';
 
@@ -409,8 +478,8 @@ export default function AccountsPage() {
   const agentTaskFiredRef = useRef<string | null>(null);
 
   const [agentFilterIds, setAgentFilterIds] = useState<Set<string> | null>(null);
-  const [tableSortCol, setTableSortCol] = useState<string | null>(null);
-  const [tableSortDir, setTableSortDir] = useState<'asc' | 'desc'>('asc');
+  const [tableSortCol, setTableSortCol] = useState<string | null>('priority');
+  const [tableSortDir, setTableSortDir] = useState<'asc' | 'desc'>('desc');
   const [editAccountOpen, setEditAccountOpen] = useState(false);
 
   // Panel state
@@ -479,6 +548,13 @@ export default function AccountsPage() {
     error: string | null;
     message: string | null;
   }>({ loading: false, data: null, error: null, message: null });
+
+  const hubspotCrmCacheRef = useRef<Record<string, AccountCrmContext>>({});
+  const [hubspotCrmPanel, setHubspotCrmPanel] = useState<{
+    loading: boolean;
+    data: AccountCrmContext | null;
+    error: string | null;
+  }>({ loading: false, data: null, error: null });
 
   // Reset detail accordion when account changes (or open Criteria after taxonomy click)
   useEffect(() => {
@@ -656,6 +732,48 @@ export default function AccountsPage() {
     };
   }, [panelMode, selectedAccountId]);
 
+  // Lazy-load HubSpot CRM context when the CRM tab opens. Caches per account so
+  // re-opening the tab is instant; the cache lives for the lifetime of the page.
+  useEffect(() => {
+    if (panelMode !== 'crm' || !selectedAccountId) return;
+
+    const cached = hubspotCrmCacheRef.current[selectedAccountId];
+    if (cached) {
+      setHubspotCrmPanel({ loading: false, data: cached, error: null });
+      return;
+    }
+
+    let cancelled = false;
+    setHubspotCrmPanel({ loading: true, data: null, error: null });
+
+    (async () => {
+      try {
+        const response = await fetch(`/api/accounts/${encodeURIComponent(selectedAccountId)}/hubspot-crm`);
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(typeof result.error === 'string' ? result.error : 'Failed to load HubSpot CRM context.');
+        }
+        if (cancelled) return;
+        const data = (result.data ?? null) as AccountCrmContext | null;
+        if (data && selectedAccountId) {
+          hubspotCrmCacheRef.current[selectedAccountId] = data;
+        }
+        setHubspotCrmPanel({ loading: false, data, error: null });
+      } catch (err) {
+        if (cancelled) return;
+        setHubspotCrmPanel({
+          loading: false,
+          data: null,
+          error: err instanceof Error ? err.message : 'Failed to load HubSpot CRM context.',
+        });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [panelMode, selectedAccountId]);
+
   const toggleContact = (contactId: string) => {
     setExpandedContactId((prev) => {
       const opening = prev !== contactId;
@@ -766,6 +884,12 @@ export default function AccountsPage() {
     setPanelMode('priority');
   };
 
+  const openCrmTab = (id: string) => {
+    pendingOpenCriteriaRef.current = false;
+    setSelectedAccountId(id);
+    setPanelMode('crm');
+  };
+
   const openContactAcquisition = (account: AccountRow) => {
     const params = new URLSearchParams({
       mode: 'contacts_at_company',
@@ -864,27 +988,31 @@ export default function AccountsPage() {
         const row = account as AccountRow;
         const crmStatus = row.crm_status ?? null;
         // Mirror getHubSpotTableBadge from the contacts view exactly.
-        if (!crmStatus || crmStatus === 'none') {
-          return (
-            <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium border-[rgba(13,53,71,0.10)] bg-[rgba(13,53,71,0.04)] text-[#7d909a]">
-              No deal
-            </span>
-          );
-        }
-        const activeLabel = row.crm_deal_stage_label ?? 'Active deal';
-        const badge =
-          crmStatus === 'customer'
-            ? { label: 'Won',          className: 'border-[rgba(45,138,138,0.24)] bg-[rgba(45,138,138,0.08)] text-[#2d8a8a]' }
+        // 'context_only' (in CRM, no actionable deal) and 'none'/null both
+        // render as "No deal" — same neutral pill.
+        const isNoDeal = !crmStatus || crmStatus === 'none' || crmStatus === 'context_only';
+        const badge = isNoDeal
+          ? { label: 'No deal',     className: 'border-[rgba(13,53,71,0.10)] bg-[rgba(13,53,71,0.04)] text-[#7d909a]' }
+          : crmStatus === 'customer'
+            ? { label: 'Won',       className: 'border-[rgba(45,138,138,0.24)] bg-[rgba(45,138,138,0.08)] text-[#2d8a8a]' }
             : crmStatus === 'dormant'
-            ? { label: 'Lost',         className: 'border-[rgba(125,144,154,0.24)] bg-[rgba(125,144,154,0.10)] text-[#5f7480]' }
-            : crmStatus === 'context_only'
-            ? { label: 'Context only', className: 'border-[rgba(13,53,71,0.12)] bg-[rgba(13,53,71,0.05)] text-[#4a6470]' }
-            : /* active */
-              { label: activeLabel,    className: 'border-[rgba(245,115,22,0.24)] bg-[rgba(255,122,89,0.08)] text-[#cc5b3f]' };
+              ? { label: 'Lost',    className: 'border-[rgba(220,38,38,0.24)] bg-[rgba(220,38,38,0.08)] text-[#b91c1c]' }
+              : /* active */
+                { label: row.crm_deal_stage_label ?? 'Active deal', className: 'border-[rgba(245,115,22,0.24)] bg-[rgba(255,122,89,0.08)] text-[#cc5b3f]' };
         return (
-          <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium', badge.className)}>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              openCrmTab(account.id);
+            }}
+            className={cn(
+              'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium cursor-pointer transition-shadow hover:shadow-sm active:scale-[0.97]',
+              badge.className,
+            )}
+          >
             {badge.label}
-          </span>
+          </button>
         );
       }
       case 'therapeutic_areas':
@@ -1244,7 +1372,9 @@ export default function AccountsPage() {
                                   ? 'Priority'
                                   : panelMode === 'signals'
                                     ? 'Signals'
-                                    : 'Company'}
+                                    : panelMode === 'crm'
+                                      ? 'CRM'
+                                      : 'Company'}
                         </p>
                         <h2 className="font-manrope mt-1.5 break-words text-xl font-bold leading-tight tracking-[-0.024em] text-[rgb(13,53,71)] sm:text-2xl">
                           {selectedAccount.company_name || selectedAccount.domain || 'Company'}
@@ -1287,7 +1417,7 @@ export default function AccountsPage() {
                     </div>
 
                     <div className="flex shrink-0 border-b border-[rgba(13,53,71,0.08)] px-5">
-                      {(['details', 'priority', 'fit', 'action', 'contacts', 'signals'] as PanelMode[]).map((mode) => (
+                      {(['details', 'priority', 'fit', 'action', 'contacts', 'signals', 'crm'] as PanelMode[]).map((mode) => (
                         <button
                           key={mode}
                           type="button"
@@ -1309,7 +1439,9 @@ export default function AccountsPage() {
                                   ? 'Signals'
                                   : mode === 'priority'
                                     ? 'Priority'
-                                    : 'Details'}
+                                    : mode === 'crm'
+                                      ? 'CRM'
+                                      : 'Details'}
                         </button>
                       ))}
                     </div>
@@ -1845,6 +1977,130 @@ export default function AccountsPage() {
 
                       {panelMode === 'signals' && (
                         <EntitySignalsList companyId={selectedAccount.id} />
+                      )}
+
+                      {panelMode === 'crm' && (
+                        <div className="space-y-4">
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2">
+                              <span className="inline-flex h-2.5 w-2.5 rounded-full bg-[#ff7a59]" />
+                              <h2 className="text-lg font-semibold leading-tight text-gray-900">HubSpot CRM</h2>
+                            </div>
+                            <p className="text-[13.5px] leading-[1.55] text-[#4a6470]">
+                              Every HubSpot deal tied to a contact at this account, rolled up in one view.
+                            </p>
+                          </div>
+
+                          {hubspotCrmPanel.loading ? (
+                            <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-white/80 px-4 py-4">
+                              <p className="text-sm leading-snug text-[#4a6470]">Loading HubSpot CRM…</p>
+                            </div>
+                          ) : hubspotCrmPanel.error ? (
+                            <div className="rounded-xl border border-[#ffd8c7] bg-[#fff7f3] px-4 py-4">
+                              <p className="text-sm leading-snug text-[#b45309]">{hubspotCrmPanel.error}</p>
+                            </div>
+                          ) : hubspotCrmPanel.data?.deals.length ? (
+                            <div className="space-y-3">
+                              {hubspotCrmPanel.data.deals.map((deal) => {
+                                const arcovaDomain = hubspotCrmPanel.data?.company_domain ?? selectedAccount.domain ?? null;
+                                const hasMismatch =
+                                  Boolean(deal.hubspot_company_domain) &&
+                                  Boolean(arcovaDomain) &&
+                                  deal.hubspot_company_domain !== arcovaDomain;
+                                const stageLabel = formatHubSpotStageLabel(deal.deal_stage) ?? '—';
+
+                                return (
+                                  <div
+                                    key={deal.hubspot_deal_id}
+                                    className="rounded-2xl border border-[rgba(13,53,71,0.08)] bg-white/90 px-4 py-4 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]"
+                                  >
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div className="min-w-0">
+                                        <p className="text-base font-semibold text-[#0d3547]">
+                                          {deal.deal_name || 'HubSpot deal'}
+                                        </p>
+                                        <p className="mt-1 text-xs text-[#7d909a]">
+                                          HubSpot account:{' '}
+                                          <span className="font-medium text-[#4a6470]">
+                                            {deal.hubspot_company_name || deal.hubspot_company_domain || '—'}
+                                          </span>
+                                        </p>
+                                      </div>
+                                      <span className="inline-flex shrink-0 items-center rounded-full border border-[rgba(13,53,71,0.10)] bg-[rgba(13,53,71,0.04)] px-2 py-0.5 text-[11px] font-medium text-[#4a6470]">
+                                        {stageLabel}
+                                      </span>
+                                    </div>
+
+                                    <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                                      <div>
+                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          Amount
+                                        </p>
+                                        <p className="mt-1 text-sm leading-snug text-[#0d3547]">
+                                          {formatUsdValue(deal.amount) || '—'}
+                                        </p>
+                                      </div>
+                                      <div>
+                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          Close date
+                                        </p>
+                                        <p className="mt-1 text-sm leading-snug text-[#0d3547]">
+                                          {formatLastUpdated(deal.close_date)}
+                                        </p>
+                                      </div>
+                                      <div>
+                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          Last synced
+                                        </p>
+                                        <p className="mt-1 text-sm leading-snug text-[#0d3547]">
+                                          {formatLastUpdated(deal.synced_at)}
+                                        </p>
+                                      </div>
+                                    </div>
+
+                                    {deal.contacts.length > 0 && (
+                                      <div className="mt-3 border-t border-[rgba(13,53,71,0.06)] pt-3">
+                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          Involved contacts
+                                        </p>
+                                        <ul className="mt-2 space-y-1">
+                                          {deal.contacts.map((c, idx) => (
+                                            <li
+                                              key={`${deal.hubspot_deal_id}:${c.arcova_contact_id ?? c.email ?? idx}`}
+                                              className="text-xs text-[#4a6470]"
+                                            >
+                                              <span className="font-medium text-[#0d3547]">
+                                                {c.full_name || c.email || 'Unknown contact'}
+                                              </span>
+                                              {c.email && c.full_name ? (
+                                                <span className="text-[#7d909a]"> · {c.email}</span>
+                                              ) : null}
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    )}
+
+                                    {hasMismatch && (
+                                      <div className="mt-3 rounded-lg border border-[#ffd8c7] bg-[#fff7f3] px-3 py-2">
+                                        <p className="text-xs leading-snug text-[#b45309]">
+                                          HubSpot account domain ({deal.hubspot_company_domain}) doesn't match the Arcova
+                                          account ({arcovaDomain}).
+                                        </p>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-white/80 px-4 py-4">
+                              <p className="text-sm leading-snug text-[#4a6470]">
+                                No  HubSpot deal activity on this account yet.
+                              </p>
+                            </div>
+                          )}
+                        </div>
                       )}
 
                       {panelMode === 'priority' && (() => {
