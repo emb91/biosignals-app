@@ -116,6 +116,15 @@ const FEATURE_MODELS: Record<LlmFeature, { openrouter: string; anthropic: string
   },
 };
 
+// Features that should bypass OpenRouter and go straight to Anthropic.
+// Use this when (a) the underlying model is Anthropic anyway and (b) call
+// volume is low enough that the ~5% OpenRouter markup isn't worth a second
+// observability surface or routing branch. Currently just generate_icp_name —
+// fires once per ICP creation, needs Haiku quality, no reason to pay the markup.
+const ANTHROPIC_DIRECT_FEATURES: ReadonlySet<LlmFeature> = new Set([
+  'generate_icp_name',
+]);
+
 const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 
 // ── Public API ─────────────────────────────────────────────────────────────
@@ -166,6 +175,7 @@ export class LlmCompletionError extends Error {
  */
 function pickProvider(opts: LlmCompletionInput): 'openrouter' | 'anthropic' {
   if (opts.provider) return opts.provider;
+  if (ANTHROPIC_DIRECT_FEATURES.has(opts.feature)) return 'anthropic';
   const openrouterKey = process.env.OPENROUTER_API_KEY;
   if (openrouterKey && openrouterKey.length > 0) return 'openrouter';
   return 'anthropic';
