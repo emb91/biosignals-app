@@ -1,6 +1,6 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { NextResponse } from 'next/server';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
+import { completeLlm } from '@/lib/llm-client';
 
 export async function POST(request: Request) {
   try {
@@ -20,17 +20,6 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!process.env.ANTHROPIC_API_KEY) {
-      return NextResponse.json(
-        { error: 'API key not configured' },
-        { status: 500 }
-      );
-    }
-
-    const anthropic = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY,
-    });
-
     const prompt = `A life science company sells to ${companyType || 'biotech and pharmaceutical'} companies.
 
 Target business area: ${selectedBusinessArea}
@@ -43,21 +32,21 @@ ${availableTitles.map((title: string) => `- ${title}`).join('\n')}
 Pick the 2-5 most appropriate specific roles from the list above for this target profile.
 Return ONLY a JSON array of strings. No explanation, no markdown. Do not include em dashes in your response.`;
 
-    const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 200,
-      messages: [{ role: 'user', content: prompt }],
+    const completion = await completeLlm({
+      feature: 'suggest_roles',
+      prompt,
+      maxTokens: 200,
     });
 
     await recordLlmUsageEvent({
-      provider: 'anthropic',
+      provider: completion.provider,
       feature: 'suggest_roles',
       route: 'app/api/suggest-roles',
-      model: 'claude-sonnet-4-6',
-      usage: message.usage,
+      model: completion.model,
+      usage: completion.usage,
     });
 
-    const responseText = (message.content[0] as { type: string; text: string }).text.trim();
+    const responseText = completion.text.trim();
     
     let titles: string[];
     try {

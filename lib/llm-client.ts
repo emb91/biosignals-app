@@ -32,7 +32,17 @@ export type LlmFeature =
   | 'company_aliases'
   | 'contact_classification'
   | 'intent_scoring'
-  | 'icp_audit';
+  | 'icp_audit'
+  // Tier-4 simple-task features — default to Gemini Flash 2.0 on OpenRouter
+  // (~40× cheaper than Sonnet, similar latency). Auto-falls back to Haiku
+  // via direct Anthropic if OpenRouter errors.
+  | 'suggest_buyer_functions'
+  | 'suggest_roles'
+  | 'suggest_seniority'
+  | 'generate_contact_name'
+  | 'recommend_signals'
+  | 'recommend_persona_signals'
+  | 'generate_icp_name';
 
 /**
  * Default models per (feature, route). Override via the `model` arg.
@@ -69,6 +79,36 @@ const FEATURE_MODELS: Record<LlmFeature, { openrouter: string; anthropic: string
     openrouter: 'anthropic/claude-haiku-4-5',
     anthropic: 'claude-haiku-4-5',
   },
+  // Tier-4: Gemini Flash on the primary route. If OpenRouter fails, the
+  // wrapper auto-falls back to Anthropic direct using the Haiku model below.
+  suggest_buyer_functions: {
+    openrouter: 'google/gemini-2.0-flash-001',
+    anthropic: 'claude-haiku-4-5',
+  },
+  suggest_roles: {
+    openrouter: 'google/gemini-2.0-flash-001',
+    anthropic: 'claude-haiku-4-5',
+  },
+  suggest_seniority: {
+    openrouter: 'google/gemini-2.0-flash-001',
+    anthropic: 'claude-haiku-4-5',
+  },
+  generate_contact_name: {
+    openrouter: 'google/gemini-2.0-flash-001',
+    anthropic: 'claude-haiku-4-5',
+  },
+  recommend_signals: {
+    openrouter: 'google/gemini-2.0-flash-001',
+    anthropic: 'claude-haiku-4-5',
+  },
+  recommend_persona_signals: {
+    openrouter: 'google/gemini-2.0-flash-001',
+    anthropic: 'claude-haiku-4-5',
+  },
+  generate_icp_name: {
+    openrouter: 'google/gemini-2.0-flash-001',
+    anthropic: 'claude-haiku-4-5',
+  },
 };
 
 const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
@@ -81,10 +121,18 @@ export type LlmCompletionInput = {
   /** Optional system prompt — steers behaviour without taking from the user-turn budget. */
   system?: string;
   maxTokens?: number;
+  /** Sampling temperature 0..1. Omit for default. */
+  temperature?: number;
   /** Override the default model for this feature. */
   model?: string;
   /** Force a specific provider regardless of env. Useful for tests. */
   provider?: 'openrouter' | 'anthropic';
+  /**
+   * Disable auto-fallback to direct Anthropic when OpenRouter fails. Default
+   * is to fall back so a flaky OpenRouter doesn't take down user-facing
+   * features. Set to true for cron jobs where you'd rather see the failure.
+   */
+  disableFallback?: boolean;
 };
 
 export type LlmCompletionResult = {
@@ -123,10 +171,48 @@ export async function completeLlm(opts: LlmCompletionInput): Promise<LlmCompleti
   const model = opts.model ?? FEATURE_MODELS[opts.feature][provider];
   const maxTokens = opts.maxTokens ?? 1024;
 
-  if (provider === 'openrouter') {
-    return completeWithOpenRouter({ model, prompt: opts.prompt, system: opts.system, maxTokens });
+  try {
+    if (provider === 'openrouter') {
+      return await completeWithOpenRouter({
+        model,
+        prompt: opts.prompt,
+        system: opts.system,
+        maxTokens,
+        temperature: opts.temperature,
+      });
+    }
+    return await completeWithAnthropic({
+      model,
+      prompt: opts.prompt,
+      system: opts.system,
+      maxTokens,
+      temperature: opts.temperature,
+    });
+  } catch (error) {
+    // Auto-fallback: when OpenRouter errors (rate limit, transient 5xx,
+    // model-unavailable), fall back to direct Anthropic using the
+    // Anthropic-equivalent model so user-facing features don't go dark.
+    // Skip when the caller forced a provider, disabled fallback, or
+    // ANTHROPIC_API_KEY isn't set.
+    const shouldFallback =
+      provider === 'openrouter' &&
+      !opts.provider &&
+      !opts.disableFallback &&
+      Boolean(process.env.ANTHROPIC_API_KEY);
+    if (!shouldFallback) throw error;
+    const errMsg = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `[llm-client] OpenRouter failed for feature=${opts.feature}, falling back to Anthropic: ${errMsg.slice(0, 200)}`,
+    );
+    const fallbackModel = FEATURE_MODELS[opts.feature].anthropic;
+    return completeWithAnthropic({
+      model: fallbackModel,
+      prompt: opts.prompt,
+      system: opts.system,
+      maxTokens,
+      temperature: opts.temperature,
+    });
   }
-  return completeWithAnthropic({ model, prompt: opts.prompt, system: opts.system, maxTokens });
 }
 
 // ── OpenRouter ────────────────────────────────────────────────────────────
@@ -136,6 +222,7 @@ async function completeWithOpenRouter(opts: {
   prompt: string;
   system?: string;
   maxTokens: number;
+  temperature?: number;
 }): Promise<LlmCompletionResult> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
@@ -158,6 +245,7 @@ async function completeWithOpenRouter(opts: {
       model: opts.model,
       messages,
       max_tokens: opts.maxTokens,
+      ...(typeof opts.temperature === 'number' ? { temperature: opts.temperature } : {}),
     }),
   });
   if (!response.ok) {
@@ -192,6 +280,7 @@ async function completeWithAnthropic(opts: {
   prompt: string;
   system?: string;
   maxTokens: number;
+  temperature?: number;
 }): Promise<LlmCompletionResult> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -205,6 +294,7 @@ async function completeWithAnthropic(opts: {
       max_tokens: opts.maxTokens,
       // Anthropic takes `system` as a top-level param rather than a message.
       ...(opts.system ? { system: opts.system } : {}),
+      ...(typeof opts.temperature === 'number' ? { temperature: opts.temperature } : {}),
       messages: [{ role: 'user', content: opts.prompt }],
     });
   } catch (error) {

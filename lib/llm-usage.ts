@@ -30,6 +30,11 @@ type AnthropicPricingTier = {
   cacheRead: number;
 };
 
+// Single pricing table covering both direct-Anthropic and OpenRouter-routed
+// model identifiers. Function name keeps the historical `Anthropic` prefix for
+// backwards compat with callers — but the table itself handles any supported
+// model. Cache fields default to 0 for non-Anthropic models (Gemini, GPT) since
+// they don't expose Anthropic-style prompt caching.
 const ANTHROPIC_PRICING_USD_PER_MTOK: Record<string, AnthropicPricingTier[]> = {
   'claude-sonnet-4-6': [
     { promptThresholdTokens: 200_000, input: 3, output: 15, cacheWrite: 3.75, cacheRead: 0.3 },
@@ -44,6 +49,14 @@ const ANTHROPIC_PRICING_USD_PER_MTOK: Record<string, AnthropicPricingTier[]> = {
   ],
   'claude-haiku-4-5-20251001': [
     { input: 0.8, output: 4, cacheWrite: 1, cacheRead: 0.08 },
+  ],
+  // OpenRouter — non-Anthropic models. Full identifier (no prefix stripping).
+  // Pricing pulled from openrouter.ai/models as of 2026-05-25.
+  'google/gemini-2.0-flash-001': [
+    { input: 0.10, output: 0.40, cacheWrite: 0, cacheRead: 0 },
+  ],
+  'openai/gpt-4o-mini': [
+    { input: 0.15, output: 0.60, cacheWrite: 0, cacheRead: 0 },
   ],
 };
 

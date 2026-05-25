@@ -1,8 +1,8 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { NextResponse } from 'next/server';
 import { BUSINESS_AREA_OPTIONS } from '@/lib/arcova-taxonomy';
 import { resolveCustomerSegments } from '@/lib/split-customer-segments';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
+import { completeLlm } from '@/lib/llm-client';
 
 export async function POST(request: Request) {
   try {
@@ -15,17 +15,6 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
-
-    if (!process.env.ANTHROPIC_API_KEY) {
-      return NextResponse.json(
-        { error: 'API key not configured' },
-        { status: 500 }
-      );
-    }
-
-    const anthropic = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY,
-    });
 
     // Build seller description from their company profile
     let sellerDescription = 'a life science company';
@@ -68,21 +57,21 @@ Consider the company size and stage when making recommendations. A 10-person sta
 
 Return ONLY a JSON array of business area names from the list above. No explanation, no markdown. Do not include em dashes in your response.`;
 
-    const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 200,
-      messages: [{ role: 'user', content: prompt }],
+    const completion = await completeLlm({
+      feature: 'suggest_buyer_functions',
+      prompt,
+      maxTokens: 200,
     });
 
     await recordLlmUsageEvent({
-      provider: 'anthropic',
+      provider: completion.provider,
       feature: 'suggest_functions',
       route: 'app/api/suggest-functions',
-      model: 'claude-sonnet-4-6',
-      usage: message.usage,
+      model: completion.model,
+      usage: completion.usage,
     });
 
-    const responseText = (message.content[0] as { type: string; text: string }).text.trim();
+    const responseText = completion.text.trim();
     
     let functions: string[];
     try {

@@ -1,4 +1,3 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { NextResponse } from 'next/server';
 import {
   CONTACT_SIGNALS,
@@ -6,24 +5,13 @@ import {
   isContactSignalComingSoon,
 } from '@/lib/signals/catalog';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
+import { completeLlm } from '@/lib/llm-client';
 
 const SELECTABLE_CONTACT_SIGNALS = CONTACT_SIGNALS.filter((s) => !isContactSignalComingSoon(s.id));
 const SELECTABLE_CONTACT_ID_SET = new Set(SELECTABLE_CONTACT_SIGNALS.map((s) => s.id));
 
 export async function POST(request: Request) {
   try {
-    if (!process.env.ANTHROPIC_API_KEY) {
-      console.error('ANTHROPIC_API_KEY is not set');
-      return NextResponse.json(
-        { error: 'Anthropic API key not configured' },
-        { status: 500 }
-      );
-    }
-
-    const anthropic = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY,
-    });
-
     const body = await request.json();
     const { name, functions, seniorityLevels, jobTitles } = body;
 
@@ -49,21 +37,21 @@ Return ONLY a JSON array of signal IDs (the part before the colon), ordered by r
 Do not include em dashes in your response.
 Return ONLY the JSON array, nothing else.`;
 
-    const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
-      messages: [{ role: 'user', content: prompt }],
+    const completion = await completeLlm({
+      feature: 'recommend_persona_signals',
+      prompt,
+      maxTokens: 1024,
     });
 
     await recordLlmUsageEvent({
-      provider: 'anthropic',
+      provider: completion.provider,
       feature: 'recommend_persona_signals',
       route: 'app/api/recommend-persona-signals',
-      model: 'claude-sonnet-4-6',
-      usage: message.usage,
+      model: completion.model,
+      usage: completion.usage,
     });
 
-    const responseText = (message.content[0] as { type: string; text: string }).text.trim();
+    const responseText = completion.text.trim();
 
     let recommendedIds: string[];
     try {

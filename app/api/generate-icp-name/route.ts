@@ -1,17 +1,9 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { NextResponse } from 'next/server';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
+import { completeLlm } from '@/lib/llm-client';
 
 export async function POST(request: Request) {
   try {
-    if (!process.env.ANTHROPIC_API_KEY) {
-      console.error('ANTHROPIC_API_KEY is not set');
-      return NextResponse.json(
-        { error: 'Anthropic API key not configured' },
-        { status: 500 }
-      );
-    }
-
     const body = await request.json();
     const {
       companyType,
@@ -27,10 +19,6 @@ export async function POST(request: Request) {
       exampleCompanyName,
       exampleCompanyDescription,
     } = body;
-
-    const anthropic = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY,
-    });
 
     const cleanupName = (text: string): string => {
       return text.replace(/[.!?,;:]+$/g, '').replace(/\s+/g, ' ').trim();
@@ -141,24 +129,24 @@ Rules:
 - If nothing narrow stands out, use a broad but grammatical label (e.g. "Broad Portfolio Biopharma")
 - Return only the title, nothing else`;
 
-    const message = await anthropic.messages.create({
-      model: 'claude-haiku-4-5',
-      max_tokens: 64,
+    const completion = await completeLlm({
+      feature: 'generate_icp_name',
+      prompt,
+      maxTokens: 64,
       temperature: 0.4,
       system:
         'Output only the ICP category title: a natural Title Case noun phrase. No quotes, labels, or explanation.',
-      messages: [{ role: 'user', content: prompt }],
     });
 
     await recordLlmUsageEvent({
-      provider: 'anthropic',
+      provider: completion.provider,
       feature: 'generate_icp_name',
       route: 'app/api/generate-icp-name',
-      model: 'claude-haiku-4-5',
-      usage: message.usage,
+      model: completion.model,
+      usage: completion.usage,
     });
 
-    const rawName = (message.content[0] as { type: string; text: string }).text.trim();
+    const rawName = completion.text.trim();
     const name = cleanupName(rawName) || fallbackName;
 
     return NextResponse.json({ name });

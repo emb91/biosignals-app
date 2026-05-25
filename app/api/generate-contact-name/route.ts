@@ -1,6 +1,6 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { NextResponse } from 'next/server';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
+import { completeLlm } from '@/lib/llm-client';
 
 export async function POST(request: Request) {
   try {
@@ -13,17 +13,6 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
-
-    if (!process.env.ANTHROPIC_API_KEY) {
-      return NextResponse.json(
-        { error: 'API key not configured' },
-        { status: 500 }
-      );
-    }
-
-    const anthropic = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY,
-    });
 
     const companyType = targetCompanyProfile?.company_type || 'Biotech';
     const companyProfileName = targetCompanyProfile?.name || companyType;
@@ -117,23 +106,23 @@ Examples of good descriptors:
 - R&D Leadership
 - Buyers`;
 
-    const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 20,
+    const completion = await completeLlm({
+      feature: 'generate_contact_name',
+      prompt,
+      maxTokens: 20,
       temperature: 0.7,
       system: 'You are a naming tool. Output only the descriptor, nothing else. No thinking, no explanation, no quotes.',
-      messages: [{ role: 'user', content: prompt }],
     });
 
     await recordLlmUsageEvent({
-      provider: 'anthropic',
+      provider: completion.provider,
       feature: 'generate_contact_name',
       route: 'app/api/generate-contact-name',
-      model: 'claude-sonnet-4-6',
-      usage: message.usage,
+      model: completion.model,
+      usage: completion.usage,
     });
 
-    const rawPrefix = (message.content[0] as { type: string; text: string }).text.trim();
+    const rawPrefix = completion.text.trim();
     let cleanedPrefix = cleanupName(rawPrefix);
     if (broadTeamDescriptor && cleanedPrefix.toLowerCase() !== broadTeamDescriptor.toLowerCase()) {
       cleanedPrefix = broadTeamDescriptor;
