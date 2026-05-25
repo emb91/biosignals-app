@@ -204,29 +204,41 @@ export async function completeLlm(opts: LlmCompletionInput): Promise<LlmCompleti
       temperature: opts.temperature,
     });
   } catch (error) {
-    // Auto-fallback: when OpenRouter errors (rate limit, transient 5xx,
-    // model-unavailable), fall back to direct Anthropic using the
-    // Anthropic-equivalent model so user-facing features don't go dark.
-    // Skip when the caller forced a provider, disabled fallback, or
-    // ANTHROPIC_API_KEY isn't set.
-    const shouldFallback =
-      provider === 'openrouter' &&
-      !opts.provider &&
-      !opts.disableFallback &&
-      Boolean(process.env.ANTHROPIC_API_KEY);
-    if (!shouldFallback) throw error;
+    // Auto-fallback in both directions so a dead provider doesn't take down
+    // user-facing features:
+    //   - OpenRouter → Anthropic (rate limit, transient 5xx, model unavail)
+    //   - Anthropic → OpenRouter (credits exhausted, 401, transient 5xx)
+    // Skipped when the caller forced a provider or disabled fallback.
     const errMsg = error instanceof Error ? error.message : String(error);
-    console.warn(
-      `[llm-client] OpenRouter failed for feature=${opts.feature}, falling back to Anthropic: ${errMsg.slice(0, 200)}`,
-    );
-    const fallbackModel = FEATURE_MODELS[opts.feature].anthropic;
-    return completeWithAnthropic({
-      model: fallbackModel,
-      prompt: opts.prompt,
-      system: opts.system,
-      maxTokens,
-      temperature: opts.temperature,
-    });
+    if (opts.provider || opts.disableFallback) throw error;
+
+    if (provider === 'openrouter' && process.env.ANTHROPIC_API_KEY) {
+      console.warn(
+        `[llm-client] OpenRouter failed for feature=${opts.feature}, falling back to Anthropic: ${errMsg.slice(0, 200)}`,
+      );
+      const fallbackModel = FEATURE_MODELS[opts.feature].anthropic;
+      return completeWithAnthropic({
+        model: fallbackModel,
+        prompt: opts.prompt,
+        system: opts.system,
+        maxTokens,
+        temperature: opts.temperature,
+      });
+    }
+    if (provider === 'anthropic' && process.env.OPENROUTER_API_KEY) {
+      console.warn(
+        `[llm-client] Anthropic failed for feature=${opts.feature}, falling back to OpenRouter: ${errMsg.slice(0, 200)}`,
+      );
+      const fallbackModel = FEATURE_MODELS[opts.feature].openrouter;
+      return completeWithOpenRouter({
+        model: fallbackModel,
+        prompt: opts.prompt,
+        system: opts.system,
+        maxTokens,
+        temperature: opts.temperature,
+      });
+    }
+    throw error;
   }
 }
 
