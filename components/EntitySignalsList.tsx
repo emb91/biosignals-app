@@ -11,6 +11,7 @@
 import { useEffect, useState } from 'react';
 import { ExternalLink, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { AnimatedCircularProgressBar } from '@/components/ui/animated-circular-progress-bar';
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -86,9 +87,17 @@ const SIGNAL_LABELS: Record<string, string> = {
   complete_response_letter: 'CRL Received',
   grant_award: 'Grant Award',
   new_to_role: 'New to Role',
+  recently_changed_company: 'Changed Company',
+  recently_promoted: 'Promoted',
+  new_internal_role: 'New Internal Role',
+  title_change: 'Title Change',
+  board_or_advisory_role: 'Board / Advisory Role',
   open_opportunity_in_crm: 'Open Opportunity',
   closed_lost_in_crm: 'Closed Lost',
   new_contact_added_in_crm: 'New CRM Contact',
+  prior_customer_relationship: 'Prior Customer',
+  prior_active_deal_relationship: 'Prior Active Deal',
+  prior_pipeline_relationship: 'Prior Pipeline',
 };
 
 const DIMENSION_COLORS: Record<string, string> = {
@@ -136,8 +145,19 @@ function relativeTime(iso: string): string {
 
 // ── Readiness band (company only) ─────────────────────────────────────────
 
+function readinessArcColor(pct: number | null): string {
+  if (pct == null) return 'rgba(13,53,71,0.14)';
+  if (pct >= 70) return '#10b981'; // emerald-500
+  if (pct >= 35) return '#f59e0b'; // amber-500
+  return '#ef4444';                // red-500
+}
+
 function ReadinessBand({ r }: { r: NonNullable<SignalItem['readiness']> }) {
   if (!r.overallLabel) return null;
+
+  const pct = r.overallScore != null ? Math.round(r.overallScore * 100) : null;
+  const arcColor = readinessArcColor(pct);
+
   const dims = [
     { key: 'new_budget', label: 'Budget', score: r.newBudgetScore },
     { key: 'new_needs', label: 'Needs', score: r.newNeedsScore },
@@ -146,28 +166,50 @@ function ReadinessBand({ r }: { r: NonNullable<SignalItem['readiness']> }) {
   ].filter((d) => d.score != null && d.score > 0);
 
   return (
-    <div className="mb-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5">
-      <div className="flex items-center justify-between mb-2">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Account readiness</p>
-        <span
-          className={cn(
-            'rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize',
-            READINESS_LABEL_STYLES[r.overallLabel] ?? 'bg-slate-100 text-slate-600',
-          )}
-        >
-          {r.overallLabel}
-        </span>
-      </div>
-      {dims.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {dims.map((d) => (
-            <div key={d.key} className="flex items-center gap-1">
-              <div className={cn('h-1.5 w-1.5 rounded-full', DIMENSION_COLORS[d.key] ?? 'bg-slate-300')} />
-              <span className="text-[10px] text-slate-500">{d.label}</span>
-            </div>
-          ))}
+    <div className="mb-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-3">
+      <div className="flex items-center gap-3">
+        {/* Circular score gauge */}
+        <div className="shrink-0">
+          <AnimatedCircularProgressBar
+            value={pct ?? 0}
+            gaugePrimaryColor={arcColor}
+            gaugeSecondaryColor="rgba(13,53,71,0.09)"
+            animateOnMount
+            deferAnimationMs={160}
+            label={
+              <span className="block text-sm font-semibold text-gray-700 leading-snug tabular-nums">
+                {pct != null ? `${pct}` : '—'}
+              </span>
+            }
+            className="size-12 [--transition-length:0.95s]"
+          />
         </div>
-      )}
+
+        {/* Label + dimensions */}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 mb-1.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Readiness</p>
+            <span
+              className={cn(
+                'rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize',
+                READINESS_LABEL_STYLES[r.overallLabel] ?? 'bg-slate-100 text-slate-600',
+              )}
+            >
+              {r.overallLabel}
+            </span>
+          </div>
+          {dims.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {dims.map((d) => (
+                <div key={d.key} className="flex items-center gap-1">
+                  <div className={cn('h-1.5 w-1.5 rounded-full', DIMENSION_COLORS[d.key] ?? 'bg-slate-300')} />
+                  <span className="text-[10px] text-slate-500">{d.label}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

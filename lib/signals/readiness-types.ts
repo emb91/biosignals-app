@@ -111,7 +111,10 @@ export type SignalKey =
   | 'distressed_financing'
   | 'acquisition_distraction'
   | 'leadership_churn'
-  | 'lapsed_customer';
+  | 'lapsed_customer'
+  | 'prior_customer_relationship'
+  | 'prior_active_deal_relationship'
+  | 'prior_pipeline_relationship';
 
 export type SignalCatalogEntry = {
   signalKey: SignalKey;

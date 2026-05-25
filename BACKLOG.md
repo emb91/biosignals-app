@@ -601,8 +601,8 @@ Priority tier definitions:
 | ✅ | `new_internal_role` | `new_people` | Precursor | `P2` | HubSpot contact sync |
 | ✅ | `title_change` | `new_people` | Precursor | `P2` | HubSpot contact sync |
 | ⬜ | `board_or_advisory_role` | `new_people`, `new_strategy` | Precursor | `P3` | not yet wired |
-| ⬜ | `conference_presentation` | `new_strategy` | Precursor | `P3` | not yet wired — needs conference/news scraping |
-| ⬜ | `conference_speaker` | `new_strategy`, `new_people` | Precursor | `P3` | not yet wired |
+| ✅ | `conference_presentation` | `new_strategy` | Precursor | `P3` | conferences monitor (Sonnet 4.6 + web_search per company, biotech taxonomy anchor) |
+| ✅ | `conference_speaker` | `new_strategy`, `new_people` | Precursor | `P3` | conferences monitor (fuzzy-match speaker name against contacts at the same company) |
 | ⬜ | `publication` | `new_strategy` | Precursor | `P3` | not yet wired — PubMed/biorxiv ingestion |
 | ⬜ | `new_paper_published` | `new_strategy` | Precursor | `P3` | not yet wired |
 | ✅ | `patent_filed_or_granted` | `new_strategy` | Precursor | `P3` | patents monitor (USPTO via PatentsView mirror) |
@@ -626,6 +626,109 @@ Priority tier definitions:
 - Patents monitor also emits: `patent_application_published`, `patent_granted`, `new_therapeutic_area_patent`, `assignee_portfolio_acceleration`
 
 **Roll-up:** **30 of 56 catalog signals wired (54%)** as of 2026-05-21. The remaining P1/P2 gaps (`new_facility`, `facility_expansion`, `cmc_scale_up`, `distressed_financing`, `milestone_payment`, `partnership_with_upfront_economics`, `licensing_deal`, `co_development_deal`, `partnership_deal`, `cdmo_partnership`, `restructuring`, `acquisition_distraction`, `leadership_churn`, `layoffs`, `new_to_role`, `quality_compliance_buildout`, `regional_expansion`, `commercialization_move`) cluster around two missing capabilities: (1) an 8-K Item 1.01 / Item 8.01 LLM classifier for partnership/license/restructuring events, and (2) a press-release/news ingestion + classification monitor for facility, layoff, and narrative signals.
+
+## Signal implementation inventory (per-monitor)
+
+Distinct from the priority table above — this lists exactly what each running monitor emits, with company vs contact scope and the underlying data source. Useful for spotting signal-key overlap between monitors (where the same `signalKey` is emitted by multiple sources with different `source_event_id`s, so they don't dedupe via the existing constraint).
+
+**Legend:** 🏢 = company-scope · 👤 = contact-scope · ⚠️ = signal key overlaps with another monitor (potential double-emission for the same underlying event)
+
+| Monitor / Source | Signal key | Scope | Approach | Notes |
+|---|---|---|---|---|
+| **Clinical Trials** | `clinical_trial_registered` | 🏢 | ClinicalTrials.gov daily API mirror (`clinical_trials` table) | |
+| | `clinical_trial_recruiting` | 🏢 | same | |
+| | `clinical_trial_completed` | 🏢 | same | |
+| | `clinical_trial_sponsor_change` | 🏢 | same | |
+| | `phase_transition` | 🏢 | same | |
+| | `trial_site_expansion` | 🏢 | same | |
+| | `indication_expansion` | 🏢 | same | also emitted by FDA |
+| | `trial_failure_or_halt` | 🏢 | same | |
+| | `program_discontinuation` | 🏢 | same | |
+| **FDA Regulatory** | `fda_approval` | 🏢 | openFDA drugsFDA + 510(k) + PMA daily mirror | |
+| | `breakthrough_designation` | 🏢 | same | |
+| | `fast_track_designation` | 🏢 | same | |
+| | `priority_review` | 🏢 | same | |
+| | `orphan_designation` | 🏢 | same | |
+| | `complete_response_letter` | 🏢 | same | |
+| | `indication_expansion` | 🏢 | same (PMA supplements) | also emitted by Clinical Trials |
+| **Patents** | `patent_filed_or_granted` | 🏢 | BigQuery `patents-public-data` → local mirror | |
+| | `patent_application_published` | 🏢 | same | |
+| | `patent_granted` | 🏢 | same | |
+| | `new_therapeutic_area_patent` | 🏢 | same, area inferred from abstract | |
+| | `assignee_portfolio_acceleration` | 🏢 | same, velocity threshold | |
+| **Funding (SEC EDGAR)** | `funding_round` | 🏢 | SEC EDGAR daily-index → Form D + Form D/A primary_doc.xml parse | structured |
+| | `funding_round` | 🏢 | SEC EDGAR daily-index → 8-K Item 3.02 item-code match | item-only, no LLM |
+| | `funding_round` | 🏢 | SEC 8-K Item 1.01/8.01 → Haiku classification (`financing` category) | LLM-classified |
+| | `ipo_or_follow_on` | 🏢 | SEC EDGAR 424B1..B7 prospectus filings (daily-index + LLM proceeds extraction for tracked CIKs) | |
+| | `licensing_deal` | 🏢 | SEC 8-K Item 1.01 → Haiku classification | |
+| | `partnership_with_upfront_economics` | 🏢 | SEC 8-K Item 1.01 → Haiku | |
+| | `co_development_deal` | 🏢 | SEC 8-K Item 1.01 → Haiku | |
+| | `partnership_deal` | 🏢 | SEC 8-K Item 1.01 → Haiku | |
+| | `milestone_payment` | 🏢 | SEC 8-K Item 1.01 → Haiku | |
+| | `acquisition_distraction` | 🏢 | SEC 8-K Item 1.01/8.01 → Haiku (buyer OR target) | |
+| | `leadership_churn` | 🏢 | SEC 8-K Item 5.02 → Haiku | should also emit 👤 contact when speaker matches a known contact |
+| | `restructuring` | 🏢 | SEC 8-K Item 1.01/8.01 → Haiku | |
+| **NIH Grants** | `grant_award` | 🏢 | NIH RePORTER v2 API (POST /v2/projects/search, SBIR/STTR activity codes + Domestic For-Profits org_type union) | |
+| **Hiring (LinkedIn)** | `cmc_hiring` | 🏢 | Apify `curious_coder/linkedin-jobs-scraper`, role-family classification | |
+| | `clinical_ops_hiring` | 🏢 | same | |
+| | `regulatory_hiring` | 🏢 | same | |
+| | `bd_hiring` | 🏢 | same | |
+| | `commercial_hiring` | 🏢 | same | |
+| | `job_surge` | 🏢 | same, volume threshold | |
+| **HubSpot — Deals** | `open_opportunity_in_crm` | 🏢 | HubSpot deals sync, deal stage state machine | |
+| | `closed_lost_in_crm` | 🏢 | same | |
+| | `new_contact_added_in_crm` | 🏢 | same | |
+| **HubSpot — Contacts** | `new_internal_role` | 👤 | HubSpot contact title-change sync | |
+| | `recently_promoted` | 👤 | same | |
+| | `recently_changed_company` | 👤 | same | |
+| | `title_change` | 👤 | same | |
+| **Conferences (web search)** | `conference_presentation` | 🏢 | per-company Sonnet 4.6 + `web_search_20250305`, biotech taxonomy anchor | ⚠️ overlap w/ Press Releases |
+| | `conference_speaker` | 👤 | same, when LLM-returned `speaker_name` fuzzy-matches a contact at that company | |
+| **Press Releases (RSS + Haiku)** | `conference_presentation` | 🏢 | GlobeNewswire + PRNewswire biotech RSS, Haiku 22-category classifier | ⚠️ overlap w/ Conferences |
+| | `licensing_deal` | 🏢 | same | ⚠️ overlap w/ Funding 8-K classifier |
+| | `partnership_with_upfront_economics` | 🏢 | same | ⚠️ overlap w/ Funding |
+| | `co_development_deal` | 🏢 | same | ⚠️ overlap w/ Funding |
+| | `partnership_deal` | 🏢 | same | ⚠️ overlap w/ Funding |
+| | `milestone_payment` | 🏢 | same | ⚠️ overlap w/ Funding |
+| | `leadership_churn` | 🏢 | same | ⚠️ overlap w/ Funding 8-K Item 5.02 |
+| | `layoffs` | 🏢 | same | **unique to Press Releases** |
+| | `new_facility` | 🏢 | same | **unique** |
+| | `facility_expansion` | 🏢 | same | **unique** |
+| | `restructuring` | 🏢 | same | ⚠️ overlap w/ Funding |
+| | `acquisition_distraction` | 🏢 | same | ⚠️ overlap w/ Funding M&A |
+| | `commercialization_move` | 🏢 | same | **unique** |
+| | `fda_approval` | 🏢 | same | ⚠️ overlap w/ FDA monitor |
+| | `phase_transition` | 🏢 | same | ⚠️ overlap w/ Clinical Trials monitor |
+| | `funding_round` | 🏢 | same | ⚠️ overlap w/ Funding Form D |
+| | `grant_award` | 🏢 | same | ⚠️ overlap w/ NIH Grants monitor |
+| | `ipo_or_follow_on` | 🏢 | same | ⚠️ overlap w/ Funding 424B |
+| | `trial_failure_or_halt` | 🏢 | same | ⚠️ overlap w/ Clinical Trials |
+| | `program_discontinuation` | 🏢 | same | ⚠️ overlap w/ Clinical Trials |
+
+**Coverage roll-up by scope:** 40 distinct company-scope emit paths · 5 distinct contact-scope emit paths.
+
+**Catalog gaps still without any monitor** (catalog entries exist but nothing emits them):
+- `new_facility`, `facility_expansion`, `cmc_scale_up` — actually wired via press releases now (drop from gap list when press release classification lands)
+- `distressed_financing` (P1) — V2 SEC funding classifier could emit this for debt/credit facility 8-Ks
+- `new_to_role` (P2 contact) — needs a contact-side LinkedIn / HubSpot signal
+- `board_or_advisory_role` (P3 contact + company)
+- `quality_compliance_buildout` (P2) — could be inferred from hiring monitor if QA/QC roles are tagged
+- `cdmo_partnership` (P2)
+- `regional_expansion` (P2)
+- `commercialization_move` (P2) — wired via press releases now
+- `conference_speaker` from press releases — gap: classifier extracts `speaker_name` but monitor doesn't emit contact-scope signal even when name matches a contact in book
+- `new_paper_published`, `publication`, `conference_speaker` (contact-scope flavours)
+- `board_or_advisory_role`
+- `platform_repositioning`
+- `lapsed_customer` (CS-LATER — deferred per phase rule)
+
+**Open architectural decisions (consequences of the inventory):**
+
+1. **Press release ↔ structured-monitor overlap.** Press-release classifier emits 20 categories, 12 of which overlap with dedicated structured monitors (Funding/SEC, FDA, Clinical Trials, NIH Grants). Different `source_event_id`s mean no natural dedupe — so the same underlying event can produce two `signal_source_events` rows. **Likely fix:** strip the overlapping categories from press-release emission and let press releases own only `layoffs`, `new_facility`, `facility_expansion`, `commercialization_move` (plus deal-flavour categories ONLY for companies SEC doesn't cover — which we can't easily detect classification-side, so easier to drop them all and rely on the SEC funding monitor + 8-K classifier).
+
+2. **Conference signals — three sources, three different shapes.** Sonnet web_search per company gives forward-looking but expensive, Press Releases catch the same events via newswire RSS, Press Releases don't emit `conference_speaker` even when speaker is named. Need to consolidate: either (a) make Conferences monitor the canonical source and have Press Releases ignore conferences entirely, or (b) make Press Releases the canonical source (cheaper, broader) and retire Sonnet conferences.
+
+3. **Contact-scope coverage is thin (5 of 45 signal paths).** HubSpot contact lifecycle covers most of it. To strengthen contact-scope sales-rep timing signals, biggest unlocks are (a) wiring `conference_speaker` from the press-release pipeline when a speaker name matches a contact, and (b) building a `new_to_role` contact-side monitor.
 
 Phase rule:
 

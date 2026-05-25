@@ -9,19 +9,12 @@
  * Idempotent — safe to call multiple times; re-runs only if the aliases column
  * is empty or older than ALIAS_REFRESH_DAYS.
  */
-import Anthropic from '@anthropic-ai/sdk';
+import { completeLlm } from '@/lib/llm-client';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { createAdminClient } from '@/lib/supabase-admin';
 
-const HAIKU_MODEL = 'claude-haiku-4-5';
 const ALIAS_REFRESH_DAYS = 180;
 const MAX_ALIASES_PER_COMPANY = 12;
-
-function requireAnthropicClient(): Anthropic {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    throw new Error('ANTHROPIC_API_KEY not configured');
-  }
-  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-}
 
 function buildPrompt(companyName: string, domain: string | null): string {
   const domainHint = domain ? `\nWebsite: ${domain}` : '';
@@ -68,17 +61,20 @@ function parseAliasArray(text: string): string[] {
 }
 
 async function fetchAliasesFromLlm(companyName: string, domain: string | null): Promise<string[]> {
-  const client = requireAnthropicClient();
-  const message = await client.messages.create({
-    model: HAIKU_MODEL,
-    max_tokens: 400,
-    messages: [{ role: 'user', content: buildPrompt(companyName, domain) }],
+  const completion = await completeLlm({
+    feature: 'company_aliases',
+    prompt: buildPrompt(companyName, domain),
+    maxTokens: 400,
   });
-  const text = message.content
-    .filter((block) => block.type === 'text')
-    .map((block) => (block as { type: 'text'; text: string }).text)
-    .join('\n');
-  return parseAliasArray(text);
+  await recordLlmUsageEvent({
+    provider: completion.provider,
+    feature: 'company_aliases',
+    route: 'lib/signals/company-aliases#fetchAliasesFromLlm',
+    model: completion.model,
+    usage: completion.usage,
+    metadata: { company_name: companyName.slice(0, 200) },
+  });
+  return parseAliasArray(completion.text);
 }
 
 type EnsureAliasesOptions = {

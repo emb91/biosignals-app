@@ -15,6 +15,26 @@ import type { AccountReadinessScoreResult } from '@/lib/signals/readiness-score'
 
 type DatabaseClient = SupabaseClient<any, 'public', any>;
 
+/**
+ * Priority = fit × (0.5 + 0.5 × readiness). Hybrid model: fit acts as the
+ * floor, readiness boosts on top. Returns null when either input is missing
+ * so readers can fall back cleanly. Clamped to [0, 1].
+ *
+ * Keep this identical to the formula in app/api/accounts/route.ts and
+ * app/leads/contacts/page.tsx — it's the single source of truth for the
+ * Priority score stored on readiness snapshots.
+ */
+function computePriorityScore(
+  fitScore: number | null | undefined,
+  readinessScore: number | null | undefined,
+): number | null {
+  if (typeof fitScore !== 'number' || !Number.isFinite(fitScore)) return null;
+  if (typeof readinessScore !== 'number' || !Number.isFinite(readinessScore)) return null;
+  const raw = fitScore * (0.5 + 0.5 * readinessScore);
+  if (!Number.isFinite(raw)) return null;
+  return Math.max(0, Math.min(1, raw));
+}
+
 export type ReadinessSnapshotRecord = {
   id: string;
   user_id: string;
@@ -189,6 +209,83 @@ export async function listNormalizedSignalsForCompany(
   }));
 }
 
+export async function listNormalizedSignalsForContact(
+  supabase: DatabaseClient,
+  userId: string,
+  contactId: string
+): Promise<NormalizedSignal[]> {
+  const { data, error } = await supabase
+    .from('normalized_signals')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('contact_id', contactId)
+    .eq('signal_scope', 'contact')
+    .order('observed_at', { ascending: false });
+
+  if (error) throw error;
+
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    rawSignalEventId: row.source_event_id,
+    signalKey: row.signal_key,
+    scope: row.signal_scope,
+    entityId: row.contact_id,
+    dimensions: stringArray(row.dimensions) as ReadinessDimension[],
+    buyerFunctions: stringArray(row.buyer_functions) as BuyerFunction[],
+    intentMechanisms: stringArray(row.intent_mechanisms) as IntentMechanism[],
+    defaultStrength: row.default_strength,
+    defaultConfidence: row.default_confidence,
+    eventAt: row.event_at,
+    observedAt: row.observed_at,
+    evidenceExcerpt: row.evidence_excerpt,
+  }));
+}
+
+export async function upsertContactReadinessSnapshot(
+  supabase: DatabaseClient,
+  input: {
+    userId: string;
+    contactId: string;
+    fitScore?: number | null;
+    score: AccountReadinessScoreResult;
+  }
+): Promise<{ id: string }> {
+  const payload = {
+    user_id: input.userId,
+    contact_id: input.contactId,
+    fit_score: input.fitScore ?? null,
+    priority_score: computePriorityScore(input.fitScore ?? null, input.score.overallScore),
+    overall_score: input.score.overallScore,
+    overall_label: input.score.overallLabel,
+    new_budget_score: input.score.dimensions.new_budget.score,
+    new_budget_label: input.score.dimensions.new_budget.label,
+    new_budget_confidence: input.score.dimensions.new_budget.confidenceLabel,
+    new_needs_score: input.score.dimensions.new_needs.score,
+    new_needs_label: input.score.dimensions.new_needs.label,
+    new_needs_confidence: input.score.dimensions.new_needs.confidenceLabel,
+    new_people_score: input.score.dimensions.new_people.score,
+    new_people_label: input.score.dimensions.new_people.label,
+    new_people_confidence: input.score.dimensions.new_people.confidenceLabel,
+    new_strategy_score: input.score.dimensions.new_strategy.score,
+    new_strategy_label: input.score.dimensions.new_strategy.label,
+    new_strategy_confidence: input.score.dimensions.new_strategy.confidenceLabel,
+    caution_score: input.score.dimensions.caution.score,
+    caution_label: input.score.dimensions.caution.label,
+    caution_confidence: input.score.dimensions.caution.confidenceLabel,
+    top_signal_ids: input.score.topSignalIds,
+    freshness_score: input.score.freshnessScore,
+  };
+
+  const { data, error } = await supabase
+    .from('contact_readiness_snapshots')
+    .upsert(payload, { onConflict: 'user_id,contact_id' })
+    .select('id')
+    .single();
+
+  if (error) throw error;
+  return data as { id: string };
+}
+
 export async function upsertAccountReadinessSnapshot(
   supabase: DatabaseClient,
   input: {
@@ -204,6 +301,7 @@ export async function upsertAccountReadinessSnapshot(
     company_id: input.companyId,
     fit_score: input.fitScore ?? null,
     fit_label: input.fitLabel ?? null,
+    priority_score: computePriorityScore(input.fitScore ?? null, input.score.overallScore),
     overall_score: input.score.overallScore,
     overall_label: input.score.overallLabel,
     new_budget_score: input.score.dimensions.new_budget.score,

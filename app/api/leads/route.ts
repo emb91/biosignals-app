@@ -36,7 +36,6 @@ type SupabaseClientLike = {
 
 type LeadRow = Record<string, unknown>;
 type HubSpotLeadState = 'active' | 'customer' | 'dormant' | 'context_only' | 'none';
-type LeadsLifecycleView = 'leads' | 'customers' | 'all';
 
 function attachDataProvenance(rows: LeadRow[]): LeadRow[] {
   return rows.map((row) => {
@@ -353,33 +352,36 @@ async function attachReadinessBestEffort(
   supabase: SupabaseClientLike,
   rows: LeadRow[],
 ): Promise<LeadRow[]> {
-  const companyIds = dedupe(
+  const contactIds = dedupe(
     rows
-      .map((row) => (typeof row.company_id === 'string' ? row.company_id : null))
+      .map((row) => (typeof row.id === 'string' ? row.id : null))
       .filter((v): v is string => Boolean(v)),
   );
-  if (companyIds.length === 0) {
-    return rows.map((row) => ({ ...row, company_readiness_label: null }));
+  if (contactIds.length === 0) {
+    return rows.map((row) => ({ ...row, contact_readiness_label: null, contact_readiness_score: null }));
   }
   try {
     const { data, error } = await supabase
-      .from('account_readiness_snapshots')
-      .select('company_id, overall_label')
-      .in('company_id', companyIds);
-    if (error || !data) return rows.map((row) => ({ ...row, company_readiness_label: null }));
-    const labelMap = new Map<string, string | null>(
-      (data as Array<{ company_id: string; overall_label: string | null }>).map((r) => [
-        r.company_id,
-        r.overall_label,
+      .from('contact_readiness_snapshots')
+      .select('contact_id, overall_label, overall_score')
+      .in('contact_id', contactIds);
+    if (error || !data) return rows.map((row) => ({ ...row, contact_readiness_label: null, contact_readiness_score: null }));
+    const readinessMap = new Map<string, { label: string | null; score: number | null }>(
+      (data as Array<{ contact_id: string; overall_label: string | null; overall_score: number | null }>).map((r) => [
+        r.contact_id,
+        { label: r.overall_label, score: r.overall_score },
       ]),
     );
-    return rows.map((row) => ({
-      ...row,
-      company_readiness_label:
-        typeof row.company_id === 'string' ? (labelMap.get(row.company_id) ?? null) : null,
-    }));
+    return rows.map((row) => {
+      const r = typeof row.id === 'string' ? readinessMap.get(row.id) : null;
+      return {
+        ...row,
+        contact_readiness_label: r?.label ?? null,
+        contact_readiness_score: r?.score ?? null,
+      };
+    });
   } catch {
-    return rows.map((row) => ({ ...row, company_readiness_label: null }));
+    return rows.map((row) => ({ ...row, contact_readiness_label: null, contact_readiness_score: null }));
   }
 }
 
@@ -657,97 +659,6 @@ function hubSpotLeadStateForStage(stage: string | null, suppressed: boolean): Hu
   return 'active';
 }
 
-async function listHubSpotCustomerContactIds(
-  supabase: SupabaseClientLike,
-  userId: string,
-): Promise<string[]> {
-  const linksResult = await supabase
-    .from('crm_deal_contact_links')
-    .select('arcova_contact_id, hubspot_deal_id')
-    .eq('user_id', userId)
-    .not('arcova_contact_id', 'is', null);
-
-  if (linksResult.error) {
-    console.warn('Best-effort customer lifecycle contact-link fetch failed:', linksResult.error);
-    return [];
-  }
-
-  const links = ((linksResult.data || []) as LeadRow[]).filter(
-    (row) => typeof row.arcova_contact_id === 'string' && row.hubspot_deal_id != null,
-  );
-  if (!links.length) return [];
-
-  const dealIds = dedupe(
-    links
-      .map((row) => (row.hubspot_deal_id != null ? String(row.hubspot_deal_id) : null))
-      .filter((value): value is string => Boolean(value)),
-  );
-  if (!dealIds.length) return [];
-
-  const [dealsResult, companyLinksResult] = await Promise.all([
-    supabase
-      .from('crm_deals')
-      .select('hubspot_deal_id, deal_stage, hs_lastmodifieddate, synced_at')
-      .eq('user_id', userId)
-      .in('hubspot_deal_id', dealIds),
-    supabase
-      .from('crm_deal_company_links')
-      .select('hubspot_deal_id, raw_payload')
-      .eq('user_id', userId)
-      .in('hubspot_deal_id', dealIds),
-  ]);
-
-  if (dealsResult.error || companyLinksResult.error) {
-    console.warn('Best-effort customer lifecycle deal fetch failed:', dealsResult.error || companyLinksResult.error);
-    return [];
-  }
-
-  const dealsById = new Map(
-    (((dealsResult.data || []) as LeadRow[]).map((row) => [String(row.hubspot_deal_id), row])),
-  );
-  const companyLinksByDealId = new Map(
-    (((companyLinksResult.data || []) as LeadRow[]).map((row) => [String(row.hubspot_deal_id), row])),
-  );
-
-  const latestByContactId = new Map<string, { state: HubSpotLeadState; modifiedAt: string | null }>();
-
-  for (const link of links) {
-    const contactId = String(link.arcova_contact_id);
-    const dealId = String(link.hubspot_deal_id);
-    const deal = dealsById.get(dealId);
-    if (!deal) continue;
-
-    const companyPayload = (companyLinksByDealId.get(dealId)?.raw_payload ?? {}) as Record<string, unknown>;
-    const suppressed =
-      companyPayload.resolution_suppressed === true || companyPayload.resolution_suppressed === 'true';
-    const modifiedAt =
-      typeof deal.hs_lastmodifieddate === 'string'
-        ? deal.hs_lastmodifieddate
-        : typeof deal.synced_at === 'string'
-          ? deal.synced_at
-          : null;
-
-    const candidate = {
-      state: hubSpotLeadStateForStage(
-        typeof deal.deal_stage === 'string' ? deal.deal_stage : null,
-        suppressed,
-      ),
-      modifiedAt,
-    };
-
-    const current = latestByContactId.get(contactId);
-    const currentTime = current?.modifiedAt ? new Date(current.modifiedAt).getTime() : 0;
-    const candidateTime = candidate.modifiedAt ? new Date(candidate.modifiedAt).getTime() : 0;
-    if (!current || candidateTime >= currentTime) {
-      latestByContactId.set(contactId, candidate);
-    }
-  }
-
-  return Array.from(latestByContactId.entries())
-    .filter(([, value]) => value.state === 'customer')
-    .map(([contactId]) => contactId);
-}
-
 function dedupe(values: string[]): string[] {
   return [...new Set(values)];
 }
@@ -769,15 +680,8 @@ export async function GET(request: Request) {
     const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get('pageSize') || '50', 10)));
     const search = searchParams.get('search') || '';
     const companyId = searchParams.get('companyId') || '';
-    const lifecycle = (searchParams.get('lifecycle') || 'leads') as LeadsLifecycleView;
 
     const offset = (page - 1) * pageSize;
-    const customerContactIds =
-      lifecycle === 'all' ? [] : await listHubSpotCustomerContactIds(supabase, user.id);
-
-    if (lifecycle === 'customers' && customerContactIds.length === 0) {
-      return NextResponse.json({ data: [], total: 0, page, pageSize });
-    }
 
     // Find company IDs matching taxonomy search terms (company type, TA, modality)
     let taxonomyCompanyIds: string[] = [];
@@ -818,12 +722,6 @@ export async function GET(request: Request) {
       .select(selectClause, { count: 'exact' })
       .eq('user_id', user.id)
       .is('archived_at', null);
-
-      if (lifecycle === 'customers') {
-        query = query.in('id', customerContactIds);
-      } else if (lifecycle === 'leads' && customerContactIds.length > 0) {
-        query = query.not('id', 'in', `(${customerContactIds.join(',')})`);
-      }
 
       if (companyId) {
         query = query.eq('company_id', companyId);

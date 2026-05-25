@@ -8,17 +8,16 @@
  * Owns the Claude call + the JSON-validation guard so the prompt isn't duplicated.
  */
 
-import Anthropic from '@anthropic-ai/sdk';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { redactInternalIdsFromAgentUserText } from '@/lib/agent-redact';
 import { ROUTES } from '@/lib/routes';
 import type { TodayPriority } from '@/lib/priorities/types';
 
-// Haiku is plenty for a structured-output audit — we're asking for JSON, not deep reasoning.
-// Roughly 10× cheaper per call than Sonnet, which matters because the audit fires whenever
-// an inbox loads with no fresh cache.
-const MODEL = 'claude-haiku-4-5';
+// Provider routing happens in lib/llm-client (`feature: 'icp_audit'`).
+// Defaults to Haiku 4.5 on both routes — plenty for structured-output audits
+// that ask for JSON not deep reasoning.
 
 export type IcpPriorityKind =
   | 'overlap'
@@ -41,7 +40,6 @@ export interface IcpPriority {
   icpLabels: string[];
 }
 
-const anthropic = new Anthropic();
 
 function isKind(v: unknown): v is IcpPriorityKind {
   return typeof v === 'string' && ['overlap', 'gap', 'too_broad', 'too_narrow', 'rename', 'other'].includes(v);
@@ -192,25 +190,25 @@ ${myCompany ? JSON.stringify(myCompany, null, 2) : '(no profile saved)'}
 ## The user's ICPs (${icps.length} total)
 ${JSON.stringify(icps, null, 2)}`;
 
-    const message = await anthropic.messages.create({
-      model: MODEL,
-      max_tokens: 1500,
+    const completion = await completeLlm({
+      feature: 'icp_audit',
+      prompt,
       system:
         'You output only the JSON object specified by the user. No prose before or after. No markdown fences. The JSON must parse cleanly on the first try.',
-      messages: [{ role: 'user', content: prompt }],
+      maxTokens: 1500,
     });
 
     await recordLlmUsageEvent({
       userId,
       userEmail,
-      provider: 'anthropic',
+      provider: completion.provider,
       feature: 'icp_priorities_audit',
       route: '/api/agent/icp-priorities',
-      model: MODEL,
-      usage: message.usage,
+      model: completion.model,
+      usage: completion.usage,
     });
 
-    const raw = message.content[0]?.type === 'text' ? message.content[0].text.trim() : '';
+    const raw = completion.text.trim();
     const jsonText = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
 
     let parsed: { priorities?: unknown[] } = {};

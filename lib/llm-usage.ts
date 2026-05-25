@@ -10,7 +10,11 @@ type AnthropicUsageShape = {
 type LlmUsageEventInput = {
   userId?: string | null;
   userEmail?: string | null;
-  provider: 'anthropic';
+  // 'openrouter' indicates the call was routed through OpenRouter's
+  // OpenAI-compatible endpoint. The underlying model may still be Anthropic
+  // (e.g. 'anthropic/claude-haiku-4-5') so cost estimation can strip the
+  // vendor prefix and reuse the Anthropic pricing table.
+  provider: 'anthropic' | 'openrouter';
   feature: string;
   route: string;
   model: string;
@@ -26,6 +30,11 @@ type AnthropicPricingTier = {
   cacheRead: number;
 };
 
+// Single pricing table covering both direct-Anthropic and OpenRouter-routed
+// model identifiers. Function name keeps the historical `Anthropic` prefix for
+// backwards compat with callers — but the table itself handles any supported
+// model. Cache fields default to 0 for non-Anthropic models (Gemini, GPT) since
+// they don't expose Anthropic-style prompt caching.
 const ANTHROPIC_PRICING_USD_PER_MTOK: Record<string, AnthropicPricingTier[]> = {
   'claude-sonnet-4-6': [
     { promptThresholdTokens: 200_000, input: 3, output: 15, cacheWrite: 3.75, cacheRead: 0.3 },
@@ -41,6 +50,14 @@ const ANTHROPIC_PRICING_USD_PER_MTOK: Record<string, AnthropicPricingTier[]> = {
   'claude-haiku-4-5-20251001': [
     { input: 0.8, output: 4, cacheWrite: 1, cacheRead: 0.08 },
   ],
+  // OpenRouter — non-Anthropic models. Full identifier (no prefix stripping).
+  // Pricing pulled from openrouter.ai/models as of 2026-05-25.
+  'google/gemini-2.0-flash-001': [
+    { input: 0.10, output: 0.40, cacheWrite: 0, cacheRead: 0 },
+  ],
+  'openai/gpt-4o-mini': [
+    { input: 0.15, output: 0.60, cacheWrite: 0, cacheRead: 0 },
+  ],
 };
 
 function num(value: unknown): number {
@@ -49,7 +66,11 @@ function num(value: unknown): number {
 
 export function estimateAnthropicUsageCostUsd(model: string, usage?: AnthropicUsageShape | null): number | null {
   if (!usage) return null;
-  const pricingTiers = ANTHROPIC_PRICING_USD_PER_MTOK[model];
+  // OpenRouter prefixes Anthropic model identifiers with "anthropic/"
+  // (e.g. "anthropic/claude-haiku-4-5"). Strip that so the same pricing
+  // table works for both direct Anthropic and OpenRouter-routed calls.
+  const lookupKey = model.startsWith('anthropic/') ? model.slice('anthropic/'.length) : model;
+  const pricingTiers = ANTHROPIC_PRICING_USD_PER_MTOK[lookupKey];
   if (!pricingTiers?.length) return null;
 
   const inputTokens = num(usage.input_tokens);

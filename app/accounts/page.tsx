@@ -32,6 +32,8 @@ import {
   type CompanyFitDetails,
 } from '@/components/company-icp-fit-detail-panel';
 import { TableFitGaugeButton } from '@/components/TableFitGaugeButton';
+import { fitScoreArcColor, percentDisplayNumber, priorityScoreArcColor } from '@/lib/fit-gauge';
+import { AnimatedCircularProgressBar } from '@/components/ui/animated-circular-progress-bar';
 import { AccountEditDialog } from '@/components/AccountEditDialog';
 import { formatProvenanceImportedAt } from '@/lib/data-provenance';
 import {
@@ -87,6 +89,9 @@ type AccountRow = {
   data_provenance_imported_at: string | null;
   readiness_label?: string | null;
   readiness_score?: number | null;
+  priority_score?: number | null;
+  crm_status?: 'customer' | 'active' | 'dormant' | 'context_only' | 'none' | null;
+  crm_deal_stage_label?: string | null;
 };
 
 function score01ForActionCopy(value: number | null | undefined): number | null {
@@ -117,7 +122,76 @@ type ContactAtCompany = {
   seniority_level: string | null;
 };
 
-type PanelMode = 'details' | 'fit' | 'action' | 'contacts' | 'signals';
+type PanelMode = 'details' | 'fit' | 'action' | 'contacts' | 'signals' | 'priority' | 'crm';
+
+interface AccountCrmDealContact {
+  arcova_contact_id: string | null;
+  full_name: string | null;
+  email: string | null;
+  hubspot_contact_id: string | null;
+}
+
+interface AccountCrmDeal {
+  hubspot_deal_id: string;
+  deal_name: string | null;
+  deal_stage: string | null;
+  amount: number | null;
+  close_date: string | null;
+  hs_lastmodifieddate: string | null;
+  synced_at: string | null;
+  hubspot_company_name: string | null;
+  hubspot_company_domain: string | null;
+  resolution_status: string | null;
+  resolution_suppressed: boolean;
+  mismatch_reason: string | null;
+  contacts: AccountCrmDealContact[];
+}
+
+interface AccountCrmContext {
+  company_id: string;
+  company_name: string | null;
+  company_domain: string | null;
+  deals: AccountCrmDeal[];
+}
+
+const formatLastUpdated = (iso: string | null | undefined): string => {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+};
+
+const formatUsdValue = (value: number | null | undefined): string | null => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  }).format(value);
+};
+
+// Inlined (and trimmed to the cases the accounts CRM panel needs) so this client
+// page doesn't transitively pull @/lib/nango (server-only secretKey) via
+// @/lib/hubspot-lead-state → @/lib/hubspot-deals.
+const HUBSPOT_STAGE_LABELS: Record<string, string> = {
+  appointmentscheduled: 'Appointment',
+  qualifiedtobuy:        'Qualified',
+  presentationscheduled: 'Presentation',
+  decisionmakerboughtin: 'Decision-maker bought in',
+  contractsent:          'Contract',
+  closedwon:             'Closed won',
+  closedlost:            'Closed lost',
+  dealswon:              'Won',
+};
+
+const formatHubSpotStageLabel = (value: string | null | undefined): string | null => {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase();
+  if (HUBSPOT_STAGE_LABELS[normalized]) return HUBSPOT_STAGE_LABELS[normalized];
+  return value
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .split(/[_\s]+/)
+    .map((part) => (part ? part[0].toUpperCase() + part.slice(1).toLowerCase() : part))
+    .join(' ');
+};
 
 type ContactFitComponentKey = 'business_area' | 'seniority';
 
@@ -256,20 +330,23 @@ function TaxonomyPills({ items }: { items: string[] | null | undefined }) {
   );
 }
 
-const DEFAULT_COLUMNS: AccountQueryColumn[] = ['company', 'company_type', 'fit', 'contacts', 'action'];
+const DEFAULT_COLUMNS: AccountQueryColumn[] = ['company', 'company_type', 'priority', 'contacts', 'crm_status', 'action'];
 // Below 1280px the table is space-constrained (sidebar collapses to hamburger at
 // <1280, agent panel is still ~380px until <768). Cramming all 5 columns turns the
 // header into overlapping word soup — so below 1280 we keep just the essentials:
 // Company (name), Company type, Fit. Same three columns hold at phone size — the
 // agent is hidden at <768 so the table has plenty of room for Company type to stay.
-const MEDIUM_COLUMNS: AccountQueryColumn[] = ['company', 'company_type', 'fit'];
-const SMALL_COLUMNS: AccountQueryColumn[] = ['company', 'company_type', 'fit'];
+const MEDIUM_COLUMNS: AccountQueryColumn[] = ['company', 'company_type', 'priority'];
+const SMALL_COLUMNS: AccountQueryColumn[] = ['company', 'company_type', 'priority'];
 
 const ACCOUNT_QUERY_COL_DEFS: Record<AccountQueryColumn, { label: string; width: string }> = {
   company: { label: 'Company', width: 'minmax(0,1.05fr)' },
   company_type: { label: 'Company type', width: 'minmax(0,0.82fr)' },
   fit: { label: 'Fit', width: 'minmax(0,4.25rem)' },
-  contacts: { label: 'Contacts', width: 'minmax(0,7.5rem)' },
+  priority: { label: 'Priority', width: 'minmax(0,4.75rem)' },
+  contacts: { label: 'Contacts', width: 'minmax(0,6rem)' },
+  crm_status: { label: 'CRM', width: 'minmax(0,6rem)' },
+  readiness: { label: 'Readiness', width: 'minmax(0,6.5rem)' },
   therapeutic_areas: { label: 'Therapeutic areas', width: 'minmax(0,1fr)' },
   modalities: { label: 'Modalities', width: 'minmax(0,1fr)' },
   action: { label: 'Action', width: 'minmax(0,9rem)' },
@@ -328,6 +405,8 @@ function getAccountSortValue(account: AccountRow | QueryAccount, col: string): s
       return account.company_fit_score ?? -1;
     case 'contacts':
       return account.contact_count;
+    case 'priority':
+      return (account as AccountRow).priority_score ?? -1;
     case 'therapeutic_areas':
       return ((account.therapeutic_areas || [])[0] || '').toLowerCase();
     case 'modalities':
@@ -399,8 +478,8 @@ export default function AccountsPage() {
   const agentTaskFiredRef = useRef<string | null>(null);
 
   const [agentFilterIds, setAgentFilterIds] = useState<Set<string> | null>(null);
-  const [tableSortCol, setTableSortCol] = useState<string | null>(null);
-  const [tableSortDir, setTableSortDir] = useState<'asc' | 'desc'>('asc');
+  const [tableSortCol, setTableSortCol] = useState<string | null>('priority');
+  const [tableSortDir, setTableSortDir] = useState<'asc' | 'desc'>('desc');
   const [editAccountOpen, setEditAccountOpen] = useState(false);
 
   // Panel state
@@ -469,6 +548,13 @@ export default function AccountsPage() {
     error: string | null;
     message: string | null;
   }>({ loading: false, data: null, error: null, message: null });
+
+  const hubspotCrmCacheRef = useRef<Record<string, AccountCrmContext>>({});
+  const [hubspotCrmPanel, setHubspotCrmPanel] = useState<{
+    loading: boolean;
+    data: AccountCrmContext | null;
+    error: string | null;
+  }>({ loading: false, data: null, error: null });
 
   // Reset detail accordion when account changes (or open Criteria after taxonomy click)
   useEffect(() => {
@@ -591,7 +677,7 @@ export default function AccountsPage() {
   }, [selectedAccountId, panelMode]);
 
   useEffect(() => {
-    if (panelMode !== 'fit' || !selectedAccountId) return;
+    if ((panelMode !== 'fit' && panelMode !== 'priority') || !selectedAccountId) return;
 
     const cached = companyFitCacheRef.current[selectedAccountId];
     if (cached) {
@@ -637,6 +723,48 @@ export default function AccountsPage() {
           data: null,
           error: err instanceof Error ? err.message : 'Failed to load company fit details.',
           message: null,
+        });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [panelMode, selectedAccountId]);
+
+  // Lazy-load HubSpot CRM context when the CRM tab opens. Caches per account so
+  // re-opening the tab is instant; the cache lives for the lifetime of the page.
+  useEffect(() => {
+    if (panelMode !== 'crm' || !selectedAccountId) return;
+
+    const cached = hubspotCrmCacheRef.current[selectedAccountId];
+    if (cached) {
+      setHubspotCrmPanel({ loading: false, data: cached, error: null });
+      return;
+    }
+
+    let cancelled = false;
+    setHubspotCrmPanel({ loading: true, data: null, error: null });
+
+    (async () => {
+      try {
+        const response = await fetch(`/api/accounts/${encodeURIComponent(selectedAccountId)}/hubspot-crm`);
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(typeof result.error === 'string' ? result.error : 'Failed to load HubSpot CRM context.');
+        }
+        if (cancelled) return;
+        const data = (result.data ?? null) as AccountCrmContext | null;
+        if (data && selectedAccountId) {
+          hubspotCrmCacheRef.current[selectedAccountId] = data;
+        }
+        setHubspotCrmPanel({ loading: false, data, error: null });
+      } catch (err) {
+        if (cancelled) return;
+        setHubspotCrmPanel({
+          loading: false,
+          data: null,
+          error: err instanceof Error ? err.message : 'Failed to load HubSpot CRM context.',
         });
       }
     })();
@@ -744,6 +872,24 @@ export default function AccountsPage() {
     setPanelMode('action');
   };
 
+  const openSignalsTab = (id: string) => {
+    pendingOpenCriteriaRef.current = false;
+    setSelectedAccountId(id);
+    setPanelMode('signals');
+  };
+
+  const openPriorityTab = (id: string) => {
+    pendingOpenCriteriaRef.current = false;
+    setSelectedAccountId(id);
+    setPanelMode('priority');
+  };
+
+  const openCrmTab = (id: string) => {
+    pendingOpenCriteriaRef.current = false;
+    setSelectedAccountId(id);
+    setPanelMode('crm');
+  };
+
   const openContactAcquisition = (account: AccountRow) => {
     const params = new URLSearchParams({
       mode: 'contacts_at_company',
@@ -766,52 +912,32 @@ export default function AccountsPage() {
     const isArcovaAccount = (account.data_provenance_type || '').toLowerCase().includes('arcova');
 
     switch (col) {
-      case 'company': {
-        const readinessLabel = (account as AccountRow).readiness_label ?? null;
+      case 'company':
         return (
-          <div className="flex flex-col gap-0.5 min-w-0">
-            <div className="flex items-start gap-1.5 min-w-0">
-              {href ? (
-                <a
-                  href={href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={(e) => e.stopPropagation()}
-                  className="text-sm font-medium text-arcova-teal hover:underline line-clamp-2 break-words leading-snug min-w-0"
-                  title={companyLabel}
-                >
-                  {companyLabel}
-                </a>
-              ) : (
-                <span className="text-sm font-medium text-gray-900 line-clamp-2 break-words leading-snug min-w-0" title={companyLabel}>
-                  {companyLabel}
-                </span>
-              )}
-              {href && (
-                <a href={href} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-arcova-teal/60 hover:text-arcova-teal shrink-0 mt-0.5">
-                  <ExternalLink className="w-3 h-3" />
-                </a>
-              )}
-            </div>
-            {readinessLabel && (
-              <span className={cn(
-                'inline-flex w-fit items-center gap-1 rounded-full px-1.5 py-px text-[9px] font-bold uppercase tracking-wide',
-                readinessLabel === 'high' ? 'bg-emerald-50 text-emerald-700' :
-                readinessLabel === 'medium' ? 'bg-amber-50 text-amber-700' :
-                'bg-rose-50 text-rose-700',
-              )}>
-                <span className={cn(
-                  'h-1 w-1 rounded-full shrink-0',
-                  readinessLabel === 'high' ? 'bg-emerald-500' :
-                  readinessLabel === 'medium' ? 'bg-amber-500' :
-                  'bg-rose-500',
-                )} />
-                {readinessLabel}
+          <div className="flex items-start gap-1.5 min-w-0">
+            {href ? (
+              <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="text-sm font-medium text-arcova-teal hover:underline line-clamp-2 break-words leading-snug min-w-0"
+                title={companyLabel}
+              >
+                {companyLabel}
+              </a>
+            ) : (
+              <span className="text-sm font-medium text-gray-900 line-clamp-2 break-words leading-snug min-w-0" title={companyLabel}>
+                {companyLabel}
               </span>
+            )}
+            {href && (
+              <a href={href} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-arcova-teal/60 hover:text-arcova-teal shrink-0 mt-0.5">
+                <ExternalLink className="w-3 h-3" />
+              </a>
             )}
           </div>
         );
-      }
       case 'company_type':
         return account.company_type ? (
           <button
@@ -854,10 +980,41 @@ export default function AccountsPage() {
                 : 'bg-slate-100 text-slate-600 hover:bg-arcova-teal/10 hover:text-arcova-teal',
             )}
           >
-            <Users className="w-3 h-3" />
-            {account.contact_count} contact{account.contact_count !== 1 ? 's' : ''}
+            <Users className="w-3 h-3 shrink-0" />
+            <span>{account.contact_count}</span>
           </button>
         );
+      case 'crm_status': {
+        const row = account as AccountRow;
+        const crmStatus = row.crm_status ?? null;
+        // Mirror getHubSpotTableBadge from the contacts view exactly.
+        // 'context_only' (in CRM, no actionable deal) and 'none'/null both
+        // render as "No deal" — same neutral pill.
+        const isNoDeal = !crmStatus || crmStatus === 'none' || crmStatus === 'context_only';
+        const badge = isNoDeal
+          ? { label: 'No deal',     className: 'border-[rgba(13,53,71,0.10)] bg-[rgba(13,53,71,0.04)] text-[#7d909a]' }
+          : crmStatus === 'customer'
+            ? { label: 'Won',       className: 'border-[rgba(45,138,138,0.24)] bg-[rgba(45,138,138,0.08)] text-[#2d8a8a]' }
+            : crmStatus === 'dormant'
+              ? { label: 'Lost',    className: 'border-[rgba(220,38,38,0.24)] bg-[rgba(220,38,38,0.08)] text-[#b91c1c]' }
+              : /* active */
+                { label: row.crm_deal_stage_label ?? 'Active deal', className: 'border-[rgba(245,115,22,0.24)] bg-[rgba(255,122,89,0.08)] text-[#cc5b3f]' };
+        return (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              openCrmTab(account.id);
+            }}
+            className={cn(
+              'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium cursor-pointer transition-shadow hover:shadow-sm active:scale-[0.97]',
+              badge.className,
+            )}
+          >
+            {badge.label}
+          </button>
+        );
+      }
       case 'therapeutic_areas':
         return (
           <InlinePills
@@ -938,6 +1095,37 @@ export default function AccountsPage() {
             {account.data_provenance_type || '—'}
           </span>
         );
+      case 'priority': {
+        const ps = (account as AccountRow).priority_score ?? null;
+        return (
+          <div className="flex items-center justify-center">
+            <TableFitGaugeButton
+              score={ps}
+              title="View priority score (fit × readiness)"
+              arcColorFn={priorityScoreArcColor}
+              onOpen={(e) => {
+                e.stopPropagation();
+                openPriorityTab(account.id);
+              }}
+            />
+          </div>
+        );
+      }
+      case 'readiness': {
+        const rs = (account as AccountRow).readiness_score ?? null;
+        return (
+          <div className="flex items-center justify-center">
+            <TableFitGaugeButton
+              score={rs}
+              title="View account readiness"
+              onOpen={(e) => {
+                e.stopPropagation();
+                openSignalsTab(account.id);
+              }}
+            />
+          </div>
+        );
+      }
     }
   };
 
@@ -1050,7 +1238,7 @@ export default function AccountsPage() {
                           onClick={() => handleSortCol(col)}
                           className={cn(
                             'flex min-w-0 items-center gap-1 hover:text-gray-800 transition-colors text-left',
-                            col === 'fit' || col === 'action' ? 'justify-center text-center' : '',
+                            col === 'fit' || col === 'priority' || col === 'readiness' || col === 'action' ? 'justify-center text-center' : '',
                           )}
                         >
                           {ACCOUNT_QUERY_COL_DEFS[col].label}
@@ -1101,7 +1289,7 @@ export default function AccountsPage() {
                                 key={col}
                                 className={cn(
                                   'min-w-0',
-                                  col === 'fit' || col === 'action' ? 'flex justify-center' : '',
+                                  col === 'fit' || col === 'priority' || col === 'action' ? 'flex justify-center' : '',
                                   col === 'therapeutic_areas' ? 'pl-2' : '',
                                 )}
                               >
@@ -1180,7 +1368,13 @@ export default function AccountsPage() {
                               ? 'Action'
                               : panelMode === 'contacts'
                                 ? 'Contacts'
-                                : 'Company'}
+                                : panelMode === 'priority'
+                                  ? 'Priority'
+                                  : panelMode === 'signals'
+                                    ? 'Signals'
+                                    : panelMode === 'crm'
+                                      ? 'CRM'
+                                      : 'Company'}
                         </p>
                         <h2 className="font-manrope mt-1.5 break-words text-xl font-bold leading-tight tracking-[-0.024em] text-[rgb(13,53,71)] sm:text-2xl">
                           {selectedAccount.company_name || selectedAccount.domain || 'Company'}
@@ -1223,7 +1417,7 @@ export default function AccountsPage() {
                     </div>
 
                     <div className="flex shrink-0 border-b border-[rgba(13,53,71,0.08)] px-5">
-                      {(['details', 'fit', 'action', 'contacts', 'signals'] as PanelMode[]).map((mode) => (
+                      {(['details', 'priority', 'fit', 'action', 'contacts', 'signals', 'crm'] as PanelMode[]).map((mode) => (
                         <button
                           key={mode}
                           type="button"
@@ -1243,7 +1437,11 @@ export default function AccountsPage() {
                                 ? 'Action'
                                 : mode === 'signals'
                                   ? 'Signals'
-                                  : 'Details'}
+                                  : mode === 'priority'
+                                    ? 'Priority'
+                                    : mode === 'crm'
+                                      ? 'CRM'
+                                      : 'Details'}
                         </button>
                       ))}
                     </div>
@@ -1780,6 +1978,218 @@ export default function AccountsPage() {
                       {panelMode === 'signals' && (
                         <EntitySignalsList companyId={selectedAccount.id} />
                       )}
+
+                      {panelMode === 'crm' && (
+                        <div className="space-y-4">
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2">
+                              <span className="inline-flex h-2.5 w-2.5 rounded-full bg-[#ff7a59]" />
+                              <h2 className="text-lg font-semibold leading-tight text-gray-900">HubSpot CRM</h2>
+                            </div>
+                            <p className="text-[13.5px] leading-[1.55] text-[#4a6470]">
+                              Every HubSpot deal tied to a contact at this account, rolled up in one view.
+                            </p>
+                          </div>
+
+                          {hubspotCrmPanel.loading ? (
+                            <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-white/80 px-4 py-4">
+                              <p className="text-sm leading-snug text-[#4a6470]">Loading HubSpot CRM…</p>
+                            </div>
+                          ) : hubspotCrmPanel.error ? (
+                            <div className="rounded-xl border border-[#ffd8c7] bg-[#fff7f3] px-4 py-4">
+                              <p className="text-sm leading-snug text-[#b45309]">{hubspotCrmPanel.error}</p>
+                            </div>
+                          ) : hubspotCrmPanel.data?.deals.length ? (
+                            <div className="space-y-3">
+                              {hubspotCrmPanel.data.deals.map((deal) => {
+                                const arcovaDomain = hubspotCrmPanel.data?.company_domain ?? selectedAccount.domain ?? null;
+                                const hasMismatch =
+                                  Boolean(deal.hubspot_company_domain) &&
+                                  Boolean(arcovaDomain) &&
+                                  deal.hubspot_company_domain !== arcovaDomain;
+                                const stageLabel = formatHubSpotStageLabel(deal.deal_stage) ?? '—';
+
+                                return (
+                                  <div
+                                    key={deal.hubspot_deal_id}
+                                    className="rounded-2xl border border-[rgba(13,53,71,0.08)] bg-white/90 px-4 py-4 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]"
+                                  >
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div className="min-w-0">
+                                        <p className="text-base font-semibold text-[#0d3547]">
+                                          {deal.deal_name || 'HubSpot deal'}
+                                        </p>
+                                        <p className="mt-1 text-xs text-[#7d909a]">
+                                          HubSpot account:{' '}
+                                          <span className="font-medium text-[#4a6470]">
+                                            {deal.hubspot_company_name || deal.hubspot_company_domain || '—'}
+                                          </span>
+                                        </p>
+                                      </div>
+                                      <span className="inline-flex shrink-0 items-center rounded-full border border-[rgba(13,53,71,0.10)] bg-[rgba(13,53,71,0.04)] px-2 py-0.5 text-[11px] font-medium text-[#4a6470]">
+                                        {stageLabel}
+                                      </span>
+                                    </div>
+
+                                    <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                                      <div>
+                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          Amount
+                                        </p>
+                                        <p className="mt-1 text-sm leading-snug text-[#0d3547]">
+                                          {formatUsdValue(deal.amount) || '—'}
+                                        </p>
+                                      </div>
+                                      <div>
+                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          Close date
+                                        </p>
+                                        <p className="mt-1 text-sm leading-snug text-[#0d3547]">
+                                          {formatLastUpdated(deal.close_date)}
+                                        </p>
+                                      </div>
+                                      <div>
+                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          Last synced
+                                        </p>
+                                        <p className="mt-1 text-sm leading-snug text-[#0d3547]">
+                                          {formatLastUpdated(deal.synced_at)}
+                                        </p>
+                                      </div>
+                                    </div>
+
+                                    {deal.contacts.length > 0 && (
+                                      <div className="mt-3 border-t border-[rgba(13,53,71,0.06)] pt-3">
+                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                          Involved contacts
+                                        </p>
+                                        <ul className="mt-2 space-y-1">
+                                          {deal.contacts.map((c, idx) => (
+                                            <li
+                                              key={`${deal.hubspot_deal_id}:${c.arcova_contact_id ?? c.email ?? idx}`}
+                                              className="text-xs text-[#4a6470]"
+                                            >
+                                              <span className="font-medium text-[#0d3547]">
+                                                {c.full_name || c.email || 'Unknown contact'}
+                                              </span>
+                                              {c.email && c.full_name ? (
+                                                <span className="text-[#7d909a]"> · {c.email}</span>
+                                              ) : null}
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    )}
+
+                                    {hasMismatch && (
+                                      <div className="mt-3 rounded-lg border border-[#ffd8c7] bg-[#fff7f3] px-3 py-2">
+                                        <p className="text-xs leading-snug text-[#b45309]">
+                                          HubSpot account domain ({deal.hubspot_company_domain}) doesn't match the Arcova
+                                          account ({arcovaDomain}).
+                                        </p>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-white/80 px-4 py-4">
+                              <p className="text-sm leading-snug text-[#4a6470]">
+                                No  HubSpot deal activity on this account yet.
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {panelMode === 'priority' && (() => {
+                        const fitNorm = (() => {
+                          const v = selectedAccount.company_fit_score;
+                          if (v == null || !Number.isFinite(v)) return null;
+                          return v > 1 ? v / 100 : v;
+                        })();
+                        const readinessNorm = selectedAccount.readiness_score ?? null;
+                        const priorityNorm = selectedAccount.priority_score ?? null;
+                        const priorityPct = percentDisplayNumber(priorityNorm);
+                        const fitPct = percentDisplayNumber(fitNorm);
+                        const readinessPct = percentDisplayNumber(readinessNorm);
+                        const ScoreRow = ({
+                          label,
+                          pct,
+                          arcColor,
+                          onOpen,
+                        }: {
+                          label: string;
+                          pct: number | null;
+                          arcColor: string;
+                          onOpen: () => void;
+                        }) => (
+                          <button
+                            type="button"
+                            onClick={onOpen}
+                            className="w-full rounded-xl border border-gray-100 bg-gray-50/70 px-4 py-3 flex items-center gap-4 text-left transition-colors hover:bg-arcova-teal/5"
+                          >
+                            <AnimatedCircularProgressBar
+                              value={pct ?? 0}
+                              gaugePrimaryColor={arcColor}
+                              gaugeSecondaryColor="rgba(13,53,71,0.09)"
+                              animateOnMount
+                              deferAnimationMs={160}
+                              label={
+                                <span className="block text-xs font-semibold text-gray-800 leading-snug tabular-nums">
+                                  {pct != null ? pct : '—'}
+                                </span>
+                              }
+                              className="size-12 shrink-0 [--transition-length:0.95s]"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">
+                                {label}
+                              </p>
+                              <p className="mt-1 text-[11px] font-semibold text-arcova-teal">
+                                See details →
+                              </p>
+                            </div>
+                          </button>
+                        );
+                        return (
+                          <div className="space-y-3">
+                            {/* Priority — large gauge, number only */}
+                            <div className="flex flex-col items-center justify-center rounded-xl border border-gray-100 bg-gray-50/70 px-4 py-6">
+                              <AnimatedCircularProgressBar
+                                value={priorityPct ?? 0}
+                                gaugePrimaryColor={priorityScoreArcColor(priorityPct)}
+                                gaugeSecondaryColor="rgba(13,53,71,0.09)"
+                                animateOnMount
+                                deferAnimationMs={160}
+                                label={
+                                  <span className="block text-xl font-semibold text-[#0d3547] leading-snug tabular-nums">
+                                    {priorityPct != null ? priorityPct : '—'}
+                                  </span>
+                                }
+                                className="size-24 [--transition-length:0.95s]"
+                              />
+                              <p className="mt-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">
+                                Priority score
+                              </p>
+                            </div>
+
+                            <ScoreRow
+                              label="Fit score"
+                              pct={fitPct}
+                              arcColor={fitScoreArcColor(fitPct)}
+                              onOpen={() => setPanelMode('fit')}
+                            />
+                            <ScoreRow
+                              label="Readiness score"
+                              pct={readinessPct}
+                              arcColor={fitScoreArcColor(readinessPct)}
+                              onOpen={() => setPanelMode('signals')}
+                            />
+                          </div>
+                        );
+                      })()}
 
                     </div>
 

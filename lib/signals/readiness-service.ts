@@ -11,8 +11,10 @@ import {
   insertNormalizedSignals,
   insertSignalSourceEvent,
   listNormalizedSignalsForCompany,
+  listNormalizedSignalsForContact,
   replaceReadinessSnapshotEvidence,
   upsertAccountReadinessSnapshot,
+  upsertContactReadinessSnapshot,
   upsertAccountReasonSnapshot,
 } from '@/lib/signals/readiness-store';
 import type {
@@ -69,6 +71,19 @@ export type RecomputeAccountReadinessInput = {
 
 export type RecomputeAccountReadinessResult = {
   companyId: string;
+  readinessSnapshotId: string;
+  overallScore: number;
+  overallLabel: 'low' | 'medium' | 'high';
+};
+
+export type RecomputeContactReadinessInput = {
+  userId: string;
+  contactId: string;
+  targetBuyerFunctions?: BuyerFunction[];
+};
+
+export type RecomputeContactReadinessResult = {
+  contactId: string;
   readinessSnapshotId: string;
   overallScore: number;
   overallLabel: 'low' | 'medium' | 'high';
@@ -157,6 +172,42 @@ export async function recomputeAccountReadiness(
 
   return {
     companyId: input.companyId,
+    readinessSnapshotId: snapshot.id,
+    overallScore: score.overallScore,
+    overallLabel: score.overallLabel,
+  };
+}
+
+export async function recomputeContactReadiness(
+  supabase: DatabaseClient,
+  input: RecomputeContactReadinessInput
+): Promise<RecomputeContactReadinessResult> {
+  const [signals, contactFitRow] = await Promise.all([
+    listNormalizedSignalsForContact(supabase, input.userId, input.contactId),
+    // Pull contact fit so the snapshot can store priority = fit × (0.5 + 0.5 × readiness).
+    // Best-effort: a missing row leaves priority null and the snapshot still writes.
+    supabase
+      .from('contacts')
+      .select('contact_fit_score')
+      .eq('id', input.contactId)
+      .eq('user_id', input.userId)
+      .maybeSingle()
+      .then((res) => (res.error ? null : (res.data as { contact_fit_score: number | null } | null))),
+  ]);
+
+  const score = scoreAccountReadiness(signals, {
+    targetBuyerFunctions: input.targetBuyerFunctions,
+  });
+
+  const snapshot = await upsertContactReadinessSnapshot(supabase, {
+    userId: input.userId,
+    contactId: input.contactId,
+    fitScore: contactFitRow?.contact_fit_score ?? null,
+    score,
+  });
+
+  return {
+    contactId: input.contactId,
     readinessSnapshotId: snapshot.id,
     overallScore: score.overallScore,
     overallLabel: score.overallLabel,
