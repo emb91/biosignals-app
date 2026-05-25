@@ -11,6 +11,7 @@ import { ArcovaLoader } from '@/components/ArcovaLoader';
 import type { QueryLead } from '@/lib/leads-data';
 import {
   type LeadAction,
+  getActionFromScores,
   getLeadAction,
   getLeadActionFromFits,
   formatLeadActionLabel,
@@ -30,6 +31,7 @@ import {
 } from '@/lib/contact-profile-display';
 import { cn } from '@/lib/utils';
 import { TableFitGaugeButton } from '@/components/TableFitGaugeButton';
+import { AnimatedCircularProgressBar } from '@/components/ui/animated-circular-progress-bar';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -441,7 +443,7 @@ const LEADS_GRID_COLS_SM =
 const LEADS_GRID_COLS_LG =
   'minmax(0,1fr) minmax(0,1fr) minmax(0,1.15fr) minmax(5.5rem,0.7fr)';
 const LEADS_GRID_COLS_FULL =
-  'minmax(0,0.85fr) minmax(0,1fr) minmax(0,1.15fr) minmax(0,6rem) minmax(7.25rem,0.85fr) minmax(0,5.25rem) minmax(9.5rem,1.15fr)';
+  'minmax(0,0.85fr) minmax(0,1fr) minmax(0,1.15fr) minmax(7.25rem,0.85fr) minmax(0,5.25rem) minmax(9.5rem,1.15fr)';
 
 function pickLeadsGridCols(width: number): string {
   if (width >= 1280) return LEADS_GRID_COLS_FULL;
@@ -546,11 +548,10 @@ function getHubSpotTableBadge(lead: Lead): {
   switch (lead.hubspot_lead_state) {
     case 'customer':
       return {
-        // "Complete" reflects that the deal cycle for this contact has
-        // already closed-won — they're an existing customer, distinct from
-        // "Lost" (dormant) which is the closed-lost flavour. Same teal color
-        // signals "positive completion" without using the sales-y "Won" verb.
-        label: 'Complete',
+        // Closed-won deal — flagged as "Won" so it reads next to "Lost" in the
+        // CRM column. The Action column folds both Won and Lost into
+        // Deprioritise (deal cycle resolved); CRM column keeps them distinct.
+        label: 'Won',
         className: 'border-[rgba(45,138,138,0.24)] bg-[rgba(45,138,138,0.08)] text-[#2d8a8a]',
       };
     case 'dormant':
@@ -581,6 +582,64 @@ const percentDisplayNumber = (value: number | null | undefined): number | null =
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
   return Math.round(value <= 1 ? value * 100 : value);
 };
+
+/** Normalise any 0–1 or 0–100 score to a 0–1 fraction. */
+function normalize01(value: number | null | undefined): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  if (value > 1 && value <= 100) return value / 100;
+  if (value >= 0 && value <= 1) return value;
+  return null;
+}
+
+/**
+ * Contact priority = fit × (0.5 + 0.5 × readiness).
+ * Hybrid model: fit is the floor, readiness is a boost — a strong-fit contact
+ * scores at least half their fit even without a signal. Returns 0–1 or null.
+ */
+function contactPriorityScore(
+  contactFit: number | null | undefined,
+  readiness: number | null | undefined,
+): number | null {
+  const fit = normalize01(contactFit);
+  if (fit == null) return null;
+  const r = normalize01(readiness) ?? 0;
+  return fit * (0.5 + 0.5 * r);
+}
+
+/** Teal / orange / red bands for fit / readiness gauges. Matches lib/fit-gauge. */
+function fitScoreArcColor(pct: number | null): string {
+  if (pct == null) return 'rgba(13,53,71,0.14)';
+  if (pct >= 80) return '#00A4B4';
+  if (pct >= 45) return '#F97316';
+  return '#EF4444';
+}
+
+/** Softer bands for the priority gauge (matches lib/fit-gauge.priorityScoreArcColor). */
+function priorityScoreArcColor(pct: number | null): string {
+  if (pct == null) return 'rgba(13,53,71,0.14)';
+  if (pct >= 60) return '#00A4B4';
+  if (pct >= 30) return '#F97316';
+  return '#EF4444';
+}
+
+/**
+ * Compute the contact's recommended action from company_fit + contact_fit +
+ * contact_readiness + HubSpot lead state. Single source of truth used by the
+ * action pill, the action drawer, the sort comparator and the CSV export.
+ * `resolveCompanyFitForLeadAction` handles all the places the company fit can
+ * live on a Lead (lead.company_fit_score, lead.companies.company_fit_score,
+ * lead.fit_score).
+ */
+function getContactAction(
+  lead: Lead,
+): LeadAction {
+  return getActionFromScores(
+    resolveCompanyFitForLeadAction(lead),
+    lead.contact_fit_score ?? null,
+    lead.contact_readiness_score ?? null,
+    lead.hubspot_lead_state ?? null,
+  );
+}
 
 const LEAD_EDIT_INPUT_CLASS =
   'w-full rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-arcova-teal/30';
@@ -961,12 +1020,13 @@ function getSortValue(lead: Lead | QueryLead, col: string): string | number {
         (lead.resolved_current_company_name || lead.company_name) ?? ''
       ).toLowerCase();
     case 'status': {
-      const companyFit =
-        (lead as QueryLead).company_fit_score ??
-        (lead as QueryLead).companies?.company_fit_score ??
-        null;
       const order = LEAD_ACTION_SORT_ORDER;
-      return order[getLeadActionFromFits(companyFit, lead.contact_fit_score ?? null, lead.intent_score ?? null)] ?? 0;
+      return order[getActionFromScores(
+        resolveCompanyFitForLeadAction(lead),
+        lead.contact_fit_score ?? null,
+        (lead as Lead).contact_readiness_score ?? null,
+        (lead as Lead).hubspot_lead_state ?? null,
+      )] ?? 0;
     }
     case 'company_fit':
       return (
@@ -976,6 +1036,8 @@ function getSortValue(lead: Lead | QueryLead, col: string): string | number {
       );
     case 'contact_fit':
       return lead.contact_fit_score ?? -1;
+    case 'priority':
+      return contactPriorityScore(lead.contact_fit_score, (lead as Lead).contact_readiness_score ?? null) ?? -1;
     case 'source':
       return ((lead as QueryLead).data_provenance_type ?? '').toLowerCase();
     case 'signals':
@@ -1081,7 +1143,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
   const [stoppingLeadId, setStoppingLeadId] = useState<string | null>(null);
   const [stopEnrichmentError, setStopEnrichmentError] = useState<string | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
-  const [selectedPreview, setSelectedPreview] = useState<'contact' | 'hubspot' | 'scoring' | 'action' | 'signals'>('contact');
+  const [selectedPreview, setSelectedPreview] = useState<'contact' | 'hubspot' | 'scoring' | 'action' | 'signals' | 'priority'>('contact');
   // Mirror the AgentPanel column's bounding rect so the contact drawer can
   // overlay it pixel-for-pixel regardless of viewport width or padding maths.
   // The AgentPanel renders its outermost div with the marker class
@@ -1267,7 +1329,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
       p++;
     }
 
-    const actionLabel = (lead: Lead) => formatLeadActionLabel(getLeadAction(lead));
+    const actionLabel = (lead: Lead) => formatLeadActionLabel(getContactAction(lead));
 
     const pct = (n: number | null | undefined) =>
       n != null && Number.isFinite(n) ? `${Math.round(n * 100)}%` : '';
@@ -2856,21 +2918,18 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                         ) : null}
                       </button>
                     ))}
-                    <div className="hidden items-center justify-center min-[1280px]:flex">
-                      <span className="normal-case tracking-normal">Readiness</span>
-                    </div>
                     <button
                       type="button"
-                      onClick={() => handleSortCol('contact_fit')}
+                      onClick={() => handleSortCol('priority')}
                       className="flex w-full items-start justify-center gap-1 hover:text-gray-800 transition-colors"
                     >
                       <span className="flex items-center gap-1">
-                        Contact fit
-                        <SortArrow col="contact_fit" activeCol={tableSortCol} dir={tableSortDir} />
+                        Priority
+                        <SortArrow col="priority" activeCol={tableSortCol} dir={tableSortDir} />
                       </span>
                     </button>
                     <div className="hidden w-full items-center justify-center min-[1280px]:flex">
-                      <span className="normal-case tracking-normal">HubSpot</span>
+                      <span className="normal-case tracking-normal">CRM</span>
                     </div>
                     <button
                       type="button"
@@ -2958,10 +3017,6 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                                   {enrichmentProgress.percent}%
                                 </span>
                               </div>
-                            </div>
-
-                            <div className="hidden min-w-0 items-center justify-center min-[1280px]:flex">
-                              <span className="text-[11px] text-gray-300 tabular-nums">—</span>
                             </div>
 
                             <div className="min-w-0 flex items-center justify-center">
@@ -3070,29 +3125,16 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                             })()}
                           </div>
 
-                          {/* Readiness — only visible at ≥1280px (7-column grid) */}
-                          <div className="hidden min-w-0 items-center justify-center min-[1280px]:flex">
-                            <TableFitGaugeButton
-                              score={lead.contact_readiness_score ?? null}
-                              title="View contact readiness"
-                              onOpen={(e) => {
-                                e.stopPropagation();
-                                setSelectedLeadId(lead.id);
-                                setSelectedPreview('signals');
-                                cancelEditingLead();
-                              }}
-                            />
-                          </div>
-
-                          {/* Contact fit */}
+                          {/* Priority — fit × (0.5 + 0.5 × readiness). Click opens the Priority side panel. */}
                           <div className="min-w-0 flex items-center justify-center">
                             <TableFitGaugeButton
-                              score={lead.contact_fit_score}
-                              title="View contact fit"
+                              score={contactPriorityScore(lead.contact_fit_score, lead.contact_readiness_score)}
+                              title="View priority (fit × readiness)"
+                              arcColorFn={priorityScoreArcColor}
                               onOpen={(e) => {
                                 e.stopPropagation();
                                 setSelectedLeadId(lead.id);
-                                setSelectedPreview('scoring');
+                                setSelectedPreview('priority');
                                 cancelEditingLead();
                               }}
                             />
@@ -3169,7 +3211,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                                 );
                               }
 
-                              const action = getLeadAction(lead);
+                              const action = getContactAction(lead);
                               const config = LEAD_ACTION_PILL_CLASS[action];
                               return (
                                 <button
@@ -3329,6 +3371,8 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                                 ? 'Fit'
                                 : selectedPreview === 'signals'
                                   ? 'Signals'
+                                  : selectedPreview === 'priority'
+                                    ? 'Priority'
                                   : isCustomersPage
                                     ? 'Customer'
                                     : 'Action'}
@@ -3340,7 +3384,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                           </h2>
                           {selectedPreview === 'action' &&
                             (() => {
-                              const action = getLeadAction(selectedLead);
+                              const action = getContactAction(selectedLead);
                               const config = LEAD_ACTION_PILL_CLASS[action];
                               const updatedIso =
                                 selectedContactFit?.contact_fit_scored_at ??
@@ -3393,7 +3437,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                       </div>
 
                       <div className="relative z-[1] flex border-b border-[rgba(13,53,71,0.08)] px-4">
-                        {(['contact', 'scoring', 'hubspot', 'action', 'signals'] as const).map((mode) => (
+                        {(['contact', 'priority', 'scoring', 'hubspot', 'action', 'signals'] as const).map((mode) => (
                           <button
                             key={mode}
                             type="button"
@@ -3407,15 +3451,17 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                           >
                             {mode === 'contact'
                               ? 'Contact'
-                              : mode === 'hubspot'
-                                ? 'CRM'
-                                : mode === 'scoring'
-                                  ? 'Fit'
-                                  : mode === 'signals'
-                                    ? 'Signals'
-                                    : isCustomersPage
-                                      ? 'Customer'
-                                      : 'Action'}
+                              : mode === 'priority'
+                                ? 'Priority'
+                                : mode === 'hubspot'
+                                  ? 'CRM'
+                                  : mode === 'scoring'
+                                    ? 'Fit'
+                                    : mode === 'signals'
+                                      ? 'Signals'
+                                      : isCustomersPage
+                                        ? 'Customer'
+                                        : 'Action'}
                           </button>
                         ))}
                       </div>
@@ -4273,7 +4319,7 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                               );
                             }
 
-                            const action = getLeadAction(selectedLead);
+                            const action = getContactAction(selectedLead);
                             const contactName =
                               [selectedLead.first_name, selectedLead.last_name].filter(Boolean).join(' ') ||
                               selectedLead.full_name;
@@ -4395,6 +4441,92 @@ export function ContactsWorkspace({ viewMode = 'leads' }: { viewMode?: 'leads' |
                         ) : selectedPreview === 'signals' ? (
                           /* ── Signals view ── */
                           <EntitySignalsList contactId={selectedLead.id} />
+                        ) : selectedPreview === 'priority' ? (
+                          /* ── Priority view — numbers only; details live in Fit + Signals tabs. ── */
+                          (() => {
+                            const fitPct = percentDisplayNumber(selectedLead.contact_fit_score);
+                            const readinessPct = percentDisplayNumber(selectedLead.contact_readiness_score ?? null);
+                            const priorityNorm = contactPriorityScore(
+                              selectedLead.contact_fit_score,
+                              selectedLead.contact_readiness_score,
+                            );
+                            const priorityPct = percentDisplayNumber(priorityNorm);
+                            const ScoreRow = ({
+                              label,
+                              pct,
+                              arcColor,
+                              onOpen,
+                            }: {
+                              label: string;
+                              pct: number | null;
+                              arcColor: string;
+                              onOpen: () => void;
+                            }) => (
+                              <button
+                                type="button"
+                                onClick={onOpen}
+                                className="w-full rounded-xl border border-gray-100 bg-gray-50/70 px-4 py-3 flex items-center gap-4 text-left transition-colors hover:bg-arcova-teal/5"
+                              >
+                                <AnimatedCircularProgressBar
+                                  value={pct ?? 0}
+                                  gaugePrimaryColor={arcColor}
+                                  gaugeSecondaryColor="rgba(13,53,71,0.09)"
+                                  animateOnMount
+                                  deferAnimationMs={160}
+                                  label={
+                                    <span className="block text-xs font-semibold text-gray-800 leading-snug tabular-nums">
+                                      {pct != null ? pct : '—'}
+                                    </span>
+                                  }
+                                  className="size-12 shrink-0 [--transition-length:0.95s]"
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">
+                                    {label}
+                                  </p>
+                                  <p className="mt-1 text-[11px] font-semibold text-arcova-teal">
+                                    See details →
+                                  </p>
+                                </div>
+                              </button>
+                            );
+                            return (
+                              <div className="space-y-3">
+                                {/* Priority — large gauge, number only */}
+                                <div className="flex flex-col items-center justify-center rounded-xl border border-gray-100 bg-gray-50/70 px-4 py-6">
+                                  <AnimatedCircularProgressBar
+                                    value={priorityPct ?? 0}
+                                    gaugePrimaryColor={priorityScoreArcColor(priorityPct)}
+                                    gaugeSecondaryColor="rgba(13,53,71,0.09)"
+                                    animateOnMount
+                                    deferAnimationMs={160}
+                                    label={
+                                      <span className="block text-xl font-semibold text-[#0d3547] leading-snug tabular-nums">
+                                        {priorityPct != null ? priorityPct : '—'}
+                                      </span>
+                                    }
+                                    className="size-24 [--transition-length:0.95s]"
+                                  />
+                                  <p className="mt-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">
+                                    Priority score
+                                  </p>
+                                </div>
+
+                                <ScoreRow
+                                  label="Fit score"
+                                  pct={fitPct}
+                                  arcColor={fitScoreArcColor(fitPct)}
+                                  onOpen={() => setSelectedPreview('scoring')}
+                                />
+                                <ScoreRow
+                                  label="Readiness score"
+                                  pct={readinessPct}
+                                  arcColor={fitScoreArcColor(readinessPct)}
+                                  onOpen={() => setSelectedPreview('signals')}
+                                />
+                              </div>
+                            );
+                          })()
                         ) : (
                           /* ── Scoring view ── */
                           <div className="space-y-3">

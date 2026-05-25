@@ -11,3 +11,15 @@ export function fitScoreArcColor(pct: number | null): string {
   if (pct >= 45) return '#F97316';
   return '#EF4444';
 }
+
+/**
+ * Priority score arc color.  Uses softer thresholds than fit alone because the
+ * product of two 0–1 values naturally sits lower — e.g. fit=0.85 × readiness=0.80
+ * = 68 %, which should read as "good" not "amber".
+ */
+export function priorityScoreArcColor(pct: number | null): string {
+  if (pct == null) return 'rgba(13,53,71,0.14)';
+  if (pct >= 60) return '#00A4B4'; // teal  — high priority
+  if (pct >= 30) return '#F97316'; // orange — medium priority
+  return '#EF4444';                // red    — low / no priority
+}

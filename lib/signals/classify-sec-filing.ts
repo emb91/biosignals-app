@@ -14,10 +14,10 @@
  *
  * NOT for Form D — those have structured XML; we parse those directly.
  */
-import Anthropic from '@anthropic-ai/sdk';
+import { completeLlm } from '@/lib/llm-client';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import type { ReadinessDimension, SignalKey } from '@/lib/signals/readiness-types';
 
-const HAIKU_MODEL = 'claude-haiku-4-5';
 const MAX_INPUT_CHARS = 28_000; // ~7K tokens worth of body text — covers the cover page + first sections where the action lives
 
 // ── Category taxonomy ──────────────────────────────────────────────────────
@@ -110,13 +110,6 @@ export function signalKeyForClassification(
     default:
       return null;
   }
-}
-
-function requireAnthropic(): Anthropic {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    throw new Error('ANTHROPIC_API_KEY not configured');
-  }
-  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 }
 
 function build8KPrompt(opts: {
@@ -368,7 +361,6 @@ export async function classifySecFiling(input: ClassifyInput): Promise<SecFiling
     return null;
   }
 
-  const client = requireAnthropic();
   const is424B = /^424B/i.test(input.formType);
   const prompt = is424B
     ? build424BPrompt({
@@ -384,16 +376,23 @@ export async function classifySecFiling(input: ClassifyInput): Promise<SecFiling
         bodyText: cleanText,
       });
 
-  const message = await client.messages.create({
-    model: HAIKU_MODEL,
-    max_tokens: 700,
-    messages: [{ role: 'user', content: prompt }],
+  // Provider routing lives in lib/llm-client. Defaults to OpenRouter when
+  // OPENROUTER_API_KEY is set, falls back to direct Anthropic otherwise.
+  const completion = await completeLlm({
+    feature: 'sec_filing_classifier',
+    prompt,
+    maxTokens: 700,
   });
-  const text = message.content
-    .filter((block) => block.type === 'text')
-    .map((block) => (block as { type: 'text'; text: string }).text)
-    .join('\n');
 
-  const parsed = tolerantJsonParse(text) as Record<string, unknown>;
+  await recordLlmUsageEvent({
+    provider: completion.provider,
+    feature: 'sec_filing_classifier',
+    route: 'lib/signals/classify-sec-filing#classifySecFiling',
+    model: completion.model,
+    usage: completion.usage,
+    metadata: { form_type: input.formType, accession: input.entityName ? input.entityName.slice(0, 100) : null },
+  });
+
+  const parsed = tolerantJsonParse(completion.text) as Record<string, unknown>;
   return is424B ? normalize424BClassification(parsed) : normalize8KClassification(parsed);
 }

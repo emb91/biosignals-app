@@ -39,6 +39,10 @@
     {
       "path": "/api/cron/conferences-delta",
       "schedule": "0 12 * * 2"
+    },
+    {
+      "path": "/api/cron/press-releases-delta",
+      "schedule": "0 13 * * *"
     }
   ]
 }

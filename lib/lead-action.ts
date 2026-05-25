@@ -10,6 +10,11 @@ export const DEPRIORITIZE_COMPANY_BELOW = 0.45;
 export const SOURCE_COMPANY_MIN = 0.5;
 export const SOURCE_CONTACT_MAX = 0.65;
 
+/** Fit (0–1) below this → Deprioritise regardless of readiness. */
+export const DEPRIORITIZE_FIT_BELOW = 0.45;
+/** Readiness (0–1) at or above this → Reach out (otherwise Monitor / await signals). */
+export const REACH_OUT_READINESS_MIN = 0.7;
+
 export type LeadLikeForAction = {
   company_fit_score?: number | null;
   fit_score?: number | null;
@@ -180,16 +185,78 @@ function score01ForAction(value: number | null | undefined): number | null {
 }
 
 /**
- * Recommended action for an aggregated account row (company + best contact fit + any contact-level intent).
+ * New action logic driven by company fit + contact fit + readiness, with a
+ * CRM override. Evaluated in this order:
+ *
+ *  1. CRM is closed-won ('customer') or closed-lost ('dormant') → Deprioritise
+ *     (the deal cycle has resolved; nothing to action right now. The CRM
+ *     column still shows "Won" / "Lost" so they're not confused with cold
+ *     deprioritised leads.)
+ *  2. Company fit < DEPRIORITIZE_COMPANY_BELOW → Deprioritise (wrong account
+ *     entirely — no point sourcing a contact there).
+ *  3. Company fit ≥ SOURCE_COMPANY_MIN AND contact fit < SOURCE_CONTACT_MAX →
+ *     Source contact (right account, wrong persona — go find a better-fit
+ *     contact at this company).
+ *  4. Contact fit ≥ SOURCE_CONTACT_MAX AND readiness ≥ REACH_OUT_READINESS_MIN
+ *     → Reach out (the contact is the right buyer and signals are firing).
+ *  5. Otherwise → Monitor (borderline company fit, or good fits but no
+ *     readiness signal yet — keep on the radar).
+ *
+ *  `contactFit` may be omitted on aggregate views (e.g. account rows that only
+ *  carry a single fit score). In that case fits collapse to one axis: a strong
+ *  company without persona context falls through to Monitor.
+ */
+export function getActionFromScores(
+  companyFit: number | null | undefined,
+  contactFit: number | null | undefined,
+  readiness: number | null | undefined,
+  crmState?: 'active' | 'customer' | 'dormant' | 'context_only' | 'none' | null,
+): LeadAction {
+  if (crmState === 'customer' || crmState === 'dormant') return 'deprioritize';
+  const companyNorm = score01ForAction(companyFit);
+  if (companyNorm == null || companyNorm < DEPRIORITIZE_COMPANY_BELOW) return 'deprioritize';
+  const contactNorm = score01ForAction(contactFit);
+  if (companyNorm >= SOURCE_COMPANY_MIN && (contactNorm == null || contactNorm < SOURCE_CONTACT_MAX)) {
+    return 'source_contact';
+  }
+  const readinessNorm = score01ForAction(readiness) ?? 0;
+  if (contactNorm != null && contactNorm >= SOURCE_CONTACT_MAX && readinessNorm >= REACH_OUT_READINESS_MIN) {
+    return 'reach_out';
+  }
+  return 'monitor';
+}
+
+/**
+ * Recommended action for an aggregated account row. Uses the same fit/readiness/
+ * CRM logic as `getActionFromScores`, but plugs in the account-shaped fields:
+ * company_fit_score, best_contact_fit (the strongest persona we have on file),
+ * readiness_score, and crm_status. Falls back to the old intent-based path only
+ * when readiness has not yet been computed for the account.
  */
 export function getAccountRowAction(account: {
   company_fit_score?: number | null;
   best_contact_fit?: number | null;
   max_contact_intent_score?: number | null;
+  readiness_score?: number | null;
+  crm_status?: 'active' | 'customer' | 'dormant' | 'context_only' | 'none' | null;
 }): LeadAction {
-  return getLeadActionFromFits(
-    score01ForAction(account.company_fit_score ?? null),
-    score01ForAction(account.best_contact_fit ?? null),
-    account.max_contact_intent_score ?? null,
+  // If neither readiness nor a CRM signal exists, fall back to the legacy
+  // intent-based logic so accounts still get a meaningful action before the
+  // readiness pipeline has run for them.
+  if (
+    account.readiness_score == null &&
+    (account.crm_status == null || account.crm_status === 'none')
+  ) {
+    return getLeadActionFromFits(
+      score01ForAction(account.company_fit_score ?? null),
+      score01ForAction(account.best_contact_fit ?? null),
+      account.max_contact_intent_score ?? null,
+    );
+  }
+  return getActionFromScores(
+    account.company_fit_score ?? null,
+    account.best_contact_fit ?? null,
+    account.readiness_score ?? null,
+    account.crm_status ?? null,
   );
 }

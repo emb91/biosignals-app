@@ -10,14 +10,17 @@ export function TableFitGaugeButton({
   score,
   onOpen,
   title = 'View fit',
+  arcColorFn,
 }: {
   score: number | null | undefined;
   onOpen: (e: MouseEvent<HTMLButtonElement>) => void;
   title?: string;
+  /** Override the color function — defaults to fitScoreArcColor. */
+  arcColorFn?: (pct: number | null) => string;
 }) {
   const pct = percentDisplayNumber(score);
   const hasScore = pct != null;
-  const primaryColor = fitScoreArcColor(pct);
+  const primaryColor = (arcColorFn ?? fitScoreArcColor)(pct);
 
   return (
     <button

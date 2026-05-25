@@ -9,13 +9,10 @@
  * and any gaps identified.
  */
 
-import Anthropic from '@anthropic-ai/sdk';
+import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
 const BATCH_SIZE = 10; // contacts scored per API call
-const MODEL = 'claude-haiku-4-5-20251001';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -129,24 +126,24 @@ Return ONLY a valid JSON array with exactly ${contacts.length} objects, one per 
   }
 ]`;
 
-  const message = await client.messages.create({
-    model: MODEL,
-    max_tokens: 2048,
-    messages: [{ role: 'user', content: prompt }],
+  const completion = await completeLlm({
+    feature: 'intent_scoring',
+    prompt,
+    maxTokens: 2048,
   });
   await recordLlmUsageEvent({
-    provider: 'anthropic',
+    provider: completion.provider,
     feature: 'contact_fit_scoring',
     route: 'lib/scoring#scoreBatch',
-    model: MODEL,
-    usage: message.usage,
+    model: completion.model,
+    usage: completion.usage,
     metadata: {
       batch_size: contacts.length,
       persona_count: personas.length,
     },
   });
 
-  const text = message.content[0].type === 'text' ? message.content[0].text : '';
+  const text = completion.text;
 
   // Extract JSON from response (handle markdown code blocks)
   const jsonMatch = text.match(/\[[\s\S]*\]/);

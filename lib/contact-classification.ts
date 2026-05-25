@@ -1,9 +1,7 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { BUSINESS_AREA_OPTIONS, SENIORITY_LEVEL_OPTIONS } from '@/lib/arcova-taxonomy';
+import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const MODEL = 'claude-haiku-4-5-20251001';
 const BATCH_SIZE = 10;
 
 export type ClassificationInput = {
@@ -69,23 +67,23 @@ JSON shape:
   }
 ]`;
 
-  const message = await client.messages.create({
-    model: MODEL,
-    max_tokens: 1600,
-    messages: [{ role: 'user', content: prompt }],
+  const completion = await completeLlm({
+    feature: 'contact_classification',
+    prompt,
+    maxTokens: 1600,
   });
 
   await recordLlmUsageEvent({
     userId: usageContext?.userId ?? null,
     userEmail: usageContext?.userEmail ?? null,
-    provider: 'anthropic',
+    provider: completion.provider,
     feature: 'contact_classification',
     route: 'lib/contact-classification#classifyBatch',
-    model: MODEL,
-    usage: message.usage,
+    model: completion.model,
+    usage: completion.usage,
   });
 
-  const text = message.content[0]?.type === 'text' ? message.content[0].text : '';
+  const text = completion.text;
   const jsonMatch = text.match(/\[[\s\S]*\]/);
   if (!jsonMatch) {
     throw new Error(`Could not parse classification response: ${text.slice(0, 200)}`);

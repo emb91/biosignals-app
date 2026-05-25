@@ -601,8 +601,8 @@ Priority tier definitions:
 | ✅ | `new_internal_role` | `new_people` | Precursor | `P2` | HubSpot contact sync |
 | ✅ | `title_change` | `new_people` | Precursor | `P2` | HubSpot contact sync |
 | ⬜ | `board_or_advisory_role` | `new_people`, `new_strategy` | Precursor | `P3` | not yet wired |
-| ⬜ | `conference_presentation` | `new_strategy` | Precursor | `P3` | not yet wired — needs conference/news scraping |
-| ⬜ | `conference_speaker` | `new_strategy`, `new_people` | Precursor | `P3` | not yet wired |
+| ✅ | `conference_presentation` | `new_strategy` | Precursor | `P3` | conferences monitor (Sonnet 4.6 + web_search per company, biotech taxonomy anchor) |
+| ✅ | `conference_speaker` | `new_strategy`, `new_people` | Precursor | `P3` | conferences monitor (fuzzy-match speaker name against contacts at the same company) |
 | ⬜ | `publication` | `new_strategy` | Precursor | `P3` | not yet wired — PubMed/biorxiv ingestion |
 | ⬜ | `new_paper_published` | `new_strategy` | Precursor | `P3` | not yet wired |
 | ✅ | `patent_filed_or_granted` | `new_strategy` | Precursor | `P3` | patents monitor (USPTO via PatentsView mirror) |

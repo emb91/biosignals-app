@@ -5,7 +5,7 @@
  */
 import type { createAdminClient } from '@/lib/supabase-admin';
 
-type RunHistoryRunner = 'patents' | 'clinical_trials' | 'fda_regulatory' | 'funding' | 'hiring' | 'grants' | 'conferences' | 'job_change';
+type RunHistoryRunner = 'patents' | 'clinical_trials' | 'fda_regulatory' | 'funding' | 'hiring' | 'grants' | 'conferences' | 'job_change' | 'press_releases';
 
 export type PersistRunHistoryInput = {
   userId: string;

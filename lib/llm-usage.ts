@@ -10,7 +10,11 @@ type AnthropicUsageShape = {
 type LlmUsageEventInput = {
   userId?: string | null;
   userEmail?: string | null;
-  provider: 'anthropic';
+  // 'openrouter' indicates the call was routed through OpenRouter's
+  // OpenAI-compatible endpoint. The underlying model may still be Anthropic
+  // (e.g. 'anthropic/claude-haiku-4-5') so cost estimation can strip the
+  // vendor prefix and reuse the Anthropic pricing table.
+  provider: 'anthropic' | 'openrouter';
   feature: string;
   route: string;
   model: string;
@@ -49,7 +53,11 @@ function num(value: unknown): number {
 
 export function estimateAnthropicUsageCostUsd(model: string, usage?: AnthropicUsageShape | null): number | null {
   if (!usage) return null;
-  const pricingTiers = ANTHROPIC_PRICING_USD_PER_MTOK[model];
+  // OpenRouter prefixes Anthropic model identifiers with "anthropic/"
+  // (e.g. "anthropic/claude-haiku-4-5"). Strip that so the same pricing
+  // table works for both direct Anthropic and OpenRouter-routed calls.
+  const lookupKey = model.startsWith('anthropic/') ? model.slice('anthropic/'.length) : model;
+  const pricingTiers = ANTHROPIC_PRICING_USD_PER_MTOK[lookupKey];
   if (!pricingTiers?.length) return null;
 
   const inputTokens = num(usage.input_tokens);
