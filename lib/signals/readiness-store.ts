@@ -476,9 +476,12 @@ export async function getCompanyFitSnapshot(
   userId: string,
   companyId: string
 ): Promise<{ companyName: string; fitScore: number; fitLabel: ReadinessLabel } | null> {
+  // company_fit_score is the canonical ICP-fit score (the one the UI surfaces);
+  // companies.fit_score is a legacy/unused column that's 0 or null for every
+  // row and used to silently zero-out priority calculations downstream.
   const { data, error } = await supabase
     .from('companies')
-    .select('company_name, fit_score')
+    .select('company_name, company_fit_score')
     .eq('user_id', userId)
     .eq('id', companyId)
     .maybeSingle();
@@ -486,7 +489,7 @@ export async function getCompanyFitSnapshot(
   if (error) throw error;
   if (!data) return null;
 
-  const fitScore = scalarNumber(data.fit_score) ?? 0;
+  const fitScore = scalarNumber(data.company_fit_score) ?? 0;
   const fitLabel: ReadinessLabel = fitScore >= 0.7 ? 'high' : fitScore >= 0.35 ? 'medium' : 'low';
 
   return {

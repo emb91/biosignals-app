@@ -239,7 +239,13 @@ export function getAccountRowAction(account: {
   max_contact_intent_score?: number | null;
   readiness_score?: number | null;
   crm_status?: 'active' | 'customer' | 'dormant' | 'context_only' | 'none' | null;
+  contact_count?: number | null;
 }): LeadAction {
+  // No contacts on file → always source, regardless of CRM state.
+  if (typeof account.contact_count === 'number' && account.contact_count === 0) {
+    return 'source_contact';
+  }
+
   // If neither readiness nor a CRM signal exists, fall back to the legacy
   // intent-based logic so accounts still get a meaningful action before the
   // readiness pipeline has run for them.

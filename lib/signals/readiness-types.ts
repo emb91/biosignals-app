@@ -114,7 +114,8 @@ export type SignalKey =
   | 'lapsed_customer'
   | 'prior_customer_relationship'
   | 'prior_active_deal_relationship'
-  | 'prior_pipeline_relationship';
+  | 'prior_pipeline_relationship'
+  | 'key_contact_departed';
 
 export type SignalCatalogEntry = {
   signalKey: SignalKey;

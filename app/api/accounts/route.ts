@@ -3,7 +3,6 @@ import { createClient } from '@/lib/supabase-server';
 import {
   type DataProvenanceChannel,
   formatDataProvenanceTypeOnly,
-  resolveContactDataProvenance,
 } from '@/lib/data-provenance';
 import {
   resolveContactHubSpotStates,
@@ -12,7 +11,9 @@ import {
   formatHubSpotStageLabel,
 } from '@/lib/hubspot-lead-state';
 
-type CompanyAggRow = {
+// Row returned by the list_user_accounts Postgres RPC.
+// Aggregation, sort, and pagination happen entirely in SQL.
+type AccountRpcRow = {
   id: string;
   company_name: string | null;
   domain: string | null;
@@ -42,32 +43,18 @@ type CompanyAggRow = {
   services: string[] | null;
   technologies: string[] | null;
   last_enriched_at: string | null;
-};
-
-// AggregatedAccount inherits all CompanyAggRow fields (including the new funding/founding ones)
-type AggregatedAccount = CompanyAggRow & {
   contact_count: number;
   best_contact_fit: number | null;
   worst_contact_fit: number | null;
   avg_contact_fit: number | null;
   max_contact_intent_score: number | null;
-  data_provenance_type: string;
-  data_provenance_imported_at: string | null;
-  user_overrides?: Record<string, unknown> | null;
-  readiness_label: string | null;
   readiness_score: number | null;
+  readiness_label: string | null;
   priority_score: number | null;
-};
-
-type ScratchAgg = CompanyAggRow & {
-  contact_count: number;
-  fit_sum: number;
-  fit_n: number;
-  best_contact_fit: number | null;
-  worst_contact_fit: number | null;
-  max_contact_intent_score: number | null;
-  provenance_channels: Set<DataProvenanceChannel>;
-  provenance_earliest_import_at: string | null;
+  uc_source: string | null;
+  uc_added_at: string | null;
+  user_overrides: Record<string, unknown> | null;
+  total_count: number;
 };
 
 function clamp01(value: number): number {
@@ -81,65 +68,21 @@ function normalizeScore01(value: number | null | undefined): number | null {
   return null;
 }
 
-function maxPositiveIntent(value: unknown): number | null {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return null;
-  return value;
-}
-
 function parseThreshold(raw: string | null, fallback: number): number {
   const n = parseFloat(raw ?? '');
   if (!Number.isFinite(n)) return fallback;
   return clamp01(n);
 }
 
-function finalizeScratch(row: ScratchAgg): AggregatedAccount {
-  return {
-    id: row.id,
-    company_name: row.company_name,
-    domain: row.domain,
-    logo_url: row.logo_url,
-    company_fit_score: row.company_fit_score,
-    company_fit_coverage: row.company_fit_coverage,
-    matched_icp_id: row.matched_icp_id,
-    therapeutic_areas: row.therapeutic_areas,
-    modalities: row.modalities,
-    development_stages: row.development_stages,
-    funding_stage: row.funding_stage,
-    funding_status_label: row.funding_status_label,
-    company_type: row.company_type,
-    linkedin_url: row.linkedin_url,
-    description: row.description,
-    bio_summary: row.bio_summary,
-    employee_count: row.employee_count,
-    employee_range: row.employee_range,
-    headquarters_city: row.headquarters_city,
-    headquarters_country: row.headquarters_country,
-    total_funding_usd: row.total_funding_usd,
-    latest_funding_date: row.latest_funding_date,
-    funding_resolution_summary: row.funding_resolution_summary,
-    founded_year: row.founded_year,
-    specialties: row.specialties,
-    products_services: row.products_services,
-    services: row.services,
-    technologies: row.technologies,
-    last_enriched_at: row.last_enriched_at,
-    contact_count: row.contact_count,
-    best_contact_fit: row.best_contact_fit,
-    worst_contact_fit: row.worst_contact_fit,
-    avg_contact_fit: row.fit_n > 0 ? row.fit_sum / row.fit_n : null,
-    max_contact_intent_score: row.max_contact_intent_score,
-    data_provenance_type: formatDataProvenanceTypeOnly([...row.provenance_channels]),
-    data_provenance_imported_at: row.provenance_earliest_import_at,
-    readiness_label: null,
-    readiness_score: null,
-    priority_score: null,
-  };
+function channelFromSource(source: string | null): DataProvenanceChannel[] {
+  const src = (source || '').trim().toLowerCase();
+  if (src === 'arcova' || src === 'fiber' || src === 'apollo' || src === 'job_change_monitor') return ['arcova'];
+  if (src === 'hubspot') return ['hubspot'];
+  if (src) return ['csv'];
+  return [];
 }
 
 // ── Account-level CRM status ──────────────────────────────────────────────
-// Uses the shared resolveContactHubSpotStates (same logic as /api/leads) to
-// compute a per-contact HubSpot lead state, then aggregates per company by
-// taking the highest-priority state across all contacts at that company.
 
 type SupabaseLike = Awaited<ReturnType<typeof createClient>>;
 
@@ -220,7 +163,6 @@ export async function GET(request: Request) {
     const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get('pageSize') || '50', 10)));
     const search = (searchParams.get('search') || '').trim();
 
-    /** Narrow “strong ICP / weak persona” slice. Off by default so Accounts lists every company you have contacts on. */
     const coverageGapsOnly =
       searchParams.get('coverageGaps') === '1' || searchParams.get('coverageGaps') === 'true';
 
@@ -231,314 +173,48 @@ export async function GET(request: Request) {
       ? parseThreshold(searchParams.get('maxBestContactFit'), 0.999999)
       : 1;
 
-    const { data: rows, error } = await supabase
-      .from('contacts')
-      .select(
-        `
-        company_id,
-        contact_fit_score,
-        intent_score,
-        created_at,
-        source,
-        upload_batches (
-          filename,
-          created_at
-        ),
-        companies (
-          id,
-          company_name,
-          domain,
-          logo_url,
-          company_fit_score,
-          company_fit_coverage,
-          matched_icp_id,
-          therapeutic_areas,
-          modalities,
-          development_stages,
-          funding_stage,
-          funding_status_label,
-          company_type,
-          linkedin_url,
-          description,
-          bio_summary,
-          employee_count,
-          employee_range,
-          headquarters_city,
-          headquarters_country,
-          total_funding_usd,
-          latest_funding_date,
-          funding_resolution_summary,
-          founded_year,
-          specialties,
-          products_services,
-          services,
-          technologies,
-          last_enriched_at
-        )
-      `,
-      )
-      .eq('user_id', user.id)
-      .is('archived_at', null)
-      .not('company_id', 'is', null);
-
-    if (error) {
-      console.error('Error fetching contacts for accounts:', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-
-    const byCompany = new Map<string, ScratchAgg>();
-
-    for (const row of rows || []) {
-      const companyId = row.company_id as string | null;
-      const company = row.companies as CompanyAggRow | CompanyAggRow[] | null;
-      const resolvedCompany = Array.isArray(company) ? company[0] : company;
-
-      if (!companyId || !resolvedCompany?.id) continue;
-
-      const contactFit = normalizeScore01(row.contact_fit_score as number | null);
-
-      const prov = resolveContactDataProvenance({
-        upload_batches: row.upload_batches,
-        created_at: typeof row.created_at === 'string' ? row.created_at : null,
-        source: typeof row.source === 'string' ? row.source : null,
-      });
-
-      const existing = byCompany.get(companyId);
-      if (!existing) {
-        byCompany.set(companyId, {
-          ...resolvedCompany,
-          contact_count: 1,
-          fit_sum: contactFit ?? 0,
-          fit_n: contactFit == null ? 0 : 1,
-          best_contact_fit: contactFit,
-          worst_contact_fit: contactFit,
-          max_contact_intent_score: maxPositiveIntent(row.intent_score),
-          provenance_channels: new Set(prov.channels),
-          provenance_earliest_import_at: prov.importedAt,
-        });
-      } else {
-        existing.contact_count += 1;
-        for (const c of prov.channels) existing.provenance_channels.add(c);
-        if (
-          prov.importedAt &&
-          (!existing.provenance_earliest_import_at || prov.importedAt < existing.provenance_earliest_import_at)
-        ) {
-          existing.provenance_earliest_import_at = prov.importedAt;
-        }
-        if (contactFit != null) {
-          existing.fit_sum += contactFit;
-          existing.fit_n += 1;
-          existing.best_contact_fit =
-            existing.best_contact_fit == null
-              ? contactFit
-              : Math.max(existing.best_contact_fit, contactFit);
-          existing.worst_contact_fit =
-            existing.worst_contact_fit == null
-              ? contactFit
-              : Math.min(existing.worst_contact_fit, contactFit);
-        }
-        const rowIntent = maxPositiveIntent(row.intent_score);
-        if (rowIntent != null) {
-          existing.max_contact_intent_score =
-            existing.max_contact_intent_score == null
-              ? rowIntent
-              : Math.max(existing.max_contact_intent_score, rowIntent);
-        }
-      }
-    }
-
-    // Merge per-user overrides from user_companies.user_overrides on top of
-    // the canonical company fields. The accounts_view does this via COALESCE
-    // server-side; here we replicate it in code because the existing query
-    // joins contacts → companies (not accounts_view).
-    if (byCompany.size > 0) {
-      const companyIds = [...byCompany.keys()];
-      const { data: overrideRows, error: overrideErr } = await supabase
-        .from('user_companies')
-        .select('company_id, user_overrides')
-        .eq('user_id', user.id)
-        .in('company_id', companyIds);
-      if (!overrideErr && overrideRows) {
-        for (const row of overrideRows as Array<{ company_id: string; user_overrides: Record<string, unknown> | null }>) {
-          const target = byCompany.get(row.company_id);
-          if (!target) continue;
-          const overrides = row.user_overrides ?? {};
-          for (const [key, value] of Object.entries(overrides)) {
-            if (value === null || value === undefined) continue;
-            (target as unknown as Record<string, unknown>)[key] = value;
-          }
-          (target as unknown as Record<string, unknown>).user_overrides = overrides;
-        }
-      }
-    }
-
-    // ── Surface companies with zero contacts ──────────────────────────────
-    // Pure contacts → companies aggregation drops companies the user has
-    // imported / created but has no contacts at. Those are still real
-    // accounts the user owns — an empty account is itself an opportunity
-    // ("good fit, source contacts here"). Fetch all active user_companies
-    // and add any that aren't already aggregated as contact_count=0 rows.
-    {
-      const existingCompanyIds = new Set(byCompany.keys());
-      const { data: emptyRows, error: emptyErr } = await supabase
-        .from('user_companies')
-        .select(
-          `
-          company_id,
-          source,
-          added_at,
-          user_overrides,
-          companies!inner (
-            id,
-            company_name,
-            domain,
-            logo_url,
-            company_fit_score,
-            company_fit_coverage,
-            matched_icp_id,
-            therapeutic_areas,
-            modalities,
-            development_stages,
-            funding_stage,
-            funding_status_label,
-            company_type,
-            linkedin_url,
-            description,
-            bio_summary,
-            employee_count,
-            employee_range,
-            headquarters_city,
-            headquarters_country,
-            total_funding_usd,
-            latest_funding_date,
-            funding_resolution_summary,
-            founded_year,
-            specialties,
-            products_services,
-            services,
-            technologies,
-            last_enriched_at
-          )
-        `,
-        )
-        .eq('user_id', user.id)
-        .is('archived_at', null);
-
-      if (!emptyErr && emptyRows) {
-        for (const row of emptyRows as Array<{
-          company_id: string;
-          source: string | null;
-          added_at: string | null;
-          user_overrides: Record<string, unknown> | null;
-          companies: CompanyAggRow | CompanyAggRow[] | null;
-        }>) {
-          const company = Array.isArray(row.companies) ? row.companies[0] : row.companies;
-          if (!company?.id) continue;
-          if (existingCompanyIds.has(company.id)) continue;
-
-          // Map user_companies.source → provenance channel for the badge.
-          const src = (row.source || '').trim().toLowerCase();
-          const channels = new Set<DataProvenanceChannel>();
-          if (src === 'arcova' || src === 'fiber' || src === 'apollo' || src === 'job_change_monitor') {
-            channels.add('arcova');
-          } else if (src === 'hubspot') {
-            channels.add('hubspot');
-          } else if (src) {
-            channels.add('csv');
-          }
-
-          const scratch: ScratchAgg = {
-            ...company,
-            contact_count: 0,
-            fit_sum: 0,
-            fit_n: 0,
-            best_contact_fit: null,
-            worst_contact_fit: null,
-            max_contact_intent_score: null,
-            provenance_channels: channels,
-            provenance_earliest_import_at: row.added_at,
-          };
-
-          // Layer overrides if present (mirrors the contacts-driven block above).
-          const overrides = row.user_overrides ?? {};
-          for (const [key, value] of Object.entries(overrides)) {
-            if (value === null || value === undefined) continue;
-            (scratch as unknown as Record<string, unknown>)[key] = value;
-          }
-          (scratch as unknown as Record<string, unknown>).user_overrides = overrides;
-
-          byCompany.set(company.id, scratch);
-        }
-      }
-    }
-
-    let accounts: AggregatedAccount[] = [...byCompany.values()].map(finalizeScratch);
-
-    if (coverageGapsOnly) {
-      accounts = accounts.filter((account) => {
-        const companyFit =
-          typeof account.company_fit_score === 'number' && Number.isFinite(account.company_fit_score)
-            ? account.company_fit_score
-            : null;
-        if (companyFit == null || companyFit < minCompanyFit) return false;
-
-        const best = normalizeScore01(account.best_contact_fit) ?? 0;
-
-        return best <= maxBestContactFit;
-      });
-    }
-
-    if (search) {
-      const q = search.toLowerCase();
-      const listMatch = (arr: string[] | null | undefined) =>
-        (arr || []).some((s) => s.toLowerCase().includes(q));
-      accounts = accounts.filter((account) => {
-        const name = (account.company_name || '').toLowerCase();
-        const domain = (account.domain || '').toLowerCase();
-        if (name.includes(q) || domain.includes(q)) return true;
-        if (listMatch(account.therapeutic_areas)) return true;
-        if (listMatch(account.modalities)) return true;
-        if (listMatch(account.development_stages)) return true;
-        const funding = (account.funding_stage || account.funding_status_label || '').toLowerCase();
-        if (funding.includes(q)) return true;
-        const ctype = (account.company_type || '').toLowerCase();
-        if (ctype.includes(q)) return true;
-        return false;
-      });
-    }
-
-    accounts.sort((a, b) => {
-      const cfA =
-        typeof a.company_fit_score === 'number' && Number.isFinite(a.company_fit_score)
-          ? a.company_fit_score
-          : 0;
-      const cfB =
-        typeof b.company_fit_score === 'number' && Number.isFinite(b.company_fit_score)
-          ? b.company_fit_score
-          : 0;
-      if (cfB !== cfA) return cfB - cfA;
-
-      const bestA = normalizeScore01(a.best_contact_fit) ?? 0;
-      const bestB = normalizeScore01(b.best_contact_fit) ?? 0;
-      return bestA - bestB;
-    });
-
+    // ── Find focus-company page (no contacts scan needed) ──────────────────
     let page = rawPage;
     if (companyIdFocus) {
-      const idx = accounts.findIndex((a) => a.id === companyIdFocus);
-      if (idx >= 0) {
-        page = Math.floor(idx / pageSize) + 1;
+      const { data: focusPage } = await supabase.rpc('get_account_page_for_company', {
+        p_user_id: user.id,
+        p_company_id: companyIdFocus,
+        p_page_size: pageSize,
+      });
+      if (typeof focusPage === 'number' && focusPage >= 1) {
+        page = focusPage;
       }
     }
 
-    const total = accounts.length;
     const offset = (page - 1) * pageSize;
-    const slice = accounts.slice(offset, offset + pageSize);
-    const sliceCompanyIds = slice.map((a) => a.id);
 
-    const needsIcps = slice.some((a) => Boolean(a.matched_icp_id));
+    // ── Single RPC: aggregation + join + sort + pagination in SQL ──────────
+    // list_user_accounts groups contacts per company (with contact fit stats),
+    // joins to companies + account_readiness_snapshots, orders by
+    // priority_score DESC, and returns only the requested page — eliminating
+    // the full contacts table scan and JS rollup that ran before.
+    const { data: rpcRows, error: rpcError } = await supabase.rpc('list_user_accounts', {
+      p_user_id: user.id,
+      p_search: search || null,
+      p_coverage_gaps_only: coverageGapsOnly,
+      p_min_company_fit: minCompanyFit,
+      p_max_best_contact_fit: maxBestContactFit,
+      p_limit: pageSize,
+      p_offset: offset,
+    });
 
-    const [icpResult, readinessResult, companyCrmStatuses] = await Promise.all([
+    if (rpcError) {
+      console.error('Error in list_user_accounts RPC:', rpcError);
+      return NextResponse.json({ error: rpcError.message }, { status: 500 });
+    }
+
+    const rows = (rpcRows || []) as AccountRpcRow[];
+    const total = rows[0]?.total_count ?? 0;
+    const sliceCompanyIds = rows.map((r) => r.id);
+
+    const needsIcps = rows.some((r) => Boolean(r.matched_icp_id));
+
+    const [icpResult, companyCrmStatuses] = await Promise.all([
       needsIcps
         ? supabase
             .from('icps')
@@ -546,14 +222,7 @@ export async function GET(request: Request) {
             .eq('user_id', user.id)
             .order('created_at', { ascending: false })
         : Promise.resolve({ data: [], error: null }),
-      sliceCompanyIds.length
-        ? supabase
-            .from('account_readiness_snapshots')
-            .select('company_id, overall_label, overall_score')
-            .eq('user_id', user.id)
-            .in('company_id', sliceCompanyIds)
-        : Promise.resolve({ data: [], error: null }),
-      // CRM status per company — scoped to this page's companies
+      // CRM status scoped to this page only — the expensive per-contact lookup.
       fetchCompanyCrmStatuses(supabase, user.id, sliceCompanyIds),
     ]);
 
@@ -573,58 +242,57 @@ export async function GET(request: Request) {
       );
     }
 
-    const readinessByCompanyId = new Map(
-      ((readinessResult.data || []) as Array<{ company_id: string; overall_label: string | null; overall_score: number | null }>)
-        .map((r) => [r.company_id, r]),
-    );
+    const data = rows.map((row) => {
+      // Apply user_overrides on top of RPC row (lightweight key merge)
+      const overrides = row.user_overrides ?? {};
 
-    const data = slice.map((account) => {
-      const readiness = readinessByCompanyId.get(account.id) ?? null;
-      const crmEntry = companyCrmStatuses.get(account.id) ?? null;
-      const isCustomerCompany = crmEntry?.state === 'customer';
+      const crmEntry = companyCrmStatuses.get(row.id) ?? null;
 
-      // Normalise fit to 0-1
-      const fitRaw = account.company_fit_score;
-      const fitNorm =
-        fitRaw != null && Number.isFinite(fitRaw)
-          ? fitRaw > 1 ? fitRaw / 100 : fitRaw
-          : null;
-      const readinessNorm = readiness?.overall_score ?? null;
-
-      // Priority = fit × (0.5 + 0.5 × readiness).
-      // Hybrid model: fit acts as the floor, readiness boosts on top. A
-      // strong-fit account with no readiness still scores half its fit; readiness
-      // alone can't carry a weak fit. When readiness hasn't been computed yet,
-      // treat it as 0 (so a strong fit still surfaces at half).
-      const basePriority =
-        fitNorm != null
-          ? fitNorm * (0.5 + 0.5 * (readinessNorm ?? 0))
-          : null;
-
-      // CRM status is its own signal: closed-won (customer) and closed-lost
-      // (dormant) accounts are already in the CRM lifecycle and don't need
-      // active outreach. Cap their priority directly — readiness stays clean.
+      // CRM-deprioritised accounts: cap readiness at 0.01 so priority reflects
+      // "already handled" — fit × (0.5 + 0.5 × 0.01) ≈ fit × 0.505.
       const crmDeprioritised =
         crmEntry?.state === 'customer' || crmEntry?.state === 'dormant';
-      const priorityScore =
-        basePriority != null && crmDeprioritised ? 0.01 : basePriority;
+
+      const rawReadiness = row.readiness_score ?? null;
+      const displayedReadiness =
+        crmDeprioritised && rawReadiness != null ? 0.01 : rawReadiness;
+
+      const storedPriority = row.priority_score ?? null;
+      const fitNorm = normalizeScore01(row.company_fit_score);
+      const basePriority = crmDeprioritised
+        ? fitNorm != null
+          ? fitNorm * (0.5 + 0.5 * 0.01)
+          : null
+        : storedPriority != null
+          ? storedPriority
+          : fitNorm != null
+            ? fitNorm * 0.5
+            : null;
 
       return {
-        ...account,
-        matched_icp_label: account.matched_icp_id
-          ? icpLabels.get(account.matched_icp_id) ?? null
-          : null,
-        readiness_label: readiness?.overall_label ?? null,
-        readiness_score: readiness?.overall_score ?? null,
-        priority_score: priorityScore,
+        // Spread RPC row, then layer overrides on top
+        ...row,
+        ...Object.fromEntries(
+          Object.entries(overrides).filter(([, v]) => v !== null && v !== undefined),
+        ),
+        matched_icp_label: row.matched_icp_id ? icpLabels.get(row.matched_icp_id) ?? null : null,
+        data_provenance_type: formatDataProvenanceTypeOnly(channelFromSource(row.uc_source)),
+        data_provenance_imported_at: row.uc_added_at,
+        readiness_label: row.readiness_label,
+        readiness_score: displayedReadiness,
+        priority_score: basePriority,
         crm_status: crmEntry?.state ?? null,
         crm_deal_stage_label: crmEntry?.dealStageLabel ?? null,
+        // Don't expose raw RPC fields the frontend doesn't need
+        uc_source: undefined,
+        uc_added_at: undefined,
+        total_count: undefined,
       };
     });
 
     return NextResponse.json({
       data,
-      total,
+      total: Number(total),
       page,
       pageSize,
       coverageGapsOnly,

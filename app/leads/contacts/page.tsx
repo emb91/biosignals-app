@@ -346,6 +346,8 @@ interface Lead {
   attribution_computed_at?: string | null;
   contact_readiness_label?: string | null;
   contact_readiness_score?: number | null;
+  /** Mirrored from contact_readiness_snapshots.priority_score by the readiness cron. */
+  priority_score?: number | null;
   companies: {
     company_name: string | null;
     domain: string | null;
@@ -594,11 +596,20 @@ function normalize01(value: number | null | undefined): number | null {
  * Contact priority = fit × (0.5 + 0.5 × readiness).
  * Hybrid model: fit is the floor, readiness is a boost — a strong-fit contact
  * scores at least half their fit even without a signal. Returns 0–1 or null.
+ *
+ * Prefers the stored `priority_score` on the lead (written by the readiness
+ * cron — see lib/signals/readiness-service.ts) so all callers see the same
+ * value the API sorts on. Falls back to the live computation only when the
+ * stored column is null (older rows or a freshly-imported contact before its
+ * first readiness recompute).
  */
 function contactPriorityScore(
   contactFit: number | null | undefined,
   readiness: number | null | undefined,
+  stored?: number | null,
 ): number | null {
+  const storedNorm = normalize01(stored);
+  if (storedNorm != null) return storedNorm;
   const fit = normalize01(contactFit);
   if (fit == null) return null;
   const r = normalize01(readiness) ?? 0;
@@ -1036,7 +1047,13 @@ function getSortValue(lead: Lead | QueryLead, col: string): string | number {
     case 'contact_fit':
       return lead.contact_fit_score ?? -1;
     case 'priority':
-      return contactPriorityScore(lead.contact_fit_score, (lead as Lead).contact_readiness_score ?? null) ?? -1;
+      return (
+        contactPriorityScore(
+          lead.contact_fit_score,
+          (lead as Lead).contact_readiness_score ?? null,
+          (lead as Lead).priority_score ?? null,
+        ) ?? -1
+      );
     case 'source':
       return ((lead as QueryLead).data_provenance_type ?? '').toLowerCase();
     case 'signals':
@@ -3070,7 +3087,7 @@ export function ContactsWorkspace() {
                           {/* Priority — fit × (0.5 + 0.5 × readiness). Click opens the Priority side panel. */}
                           <div className="min-w-0 flex items-center justify-center">
                             <TableFitGaugeButton
-                              score={contactPriorityScore(lead.contact_fit_score, lead.contact_readiness_score)}
+                              score={contactPriorityScore(lead.contact_fit_score, lead.contact_readiness_score, lead.priority_score ?? null)}
                               title="View priority (fit × readiness)"
                               arcColorFn={priorityScoreArcColor}
                               onOpen={(e) => {
@@ -4349,6 +4366,7 @@ export function ContactsWorkspace() {
                             const priorityNorm = contactPriorityScore(
                               selectedLead.contact_fit_score,
                               selectedLead.contact_readiness_score,
+                              selectedLead.priority_score ?? null,
                             );
                             const priorityPct = percentDisplayNumber(priorityNorm);
                             const ScoreRow = ({

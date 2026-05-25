@@ -185,6 +185,7 @@ const SIGNAL_FAMILY_MAP: Record<SignalKey, SignalFamily[]> = {
   prior_customer_relationship: ['crm_relationship_state', 'external_contact_change'],
   prior_active_deal_relationship: ['crm_relationship_state', 'external_contact_change'],
   prior_pipeline_relationship: ['crm_relationship_state', 'external_contact_change'],
+  key_contact_departed: ['external_contact_change'],
 };
 
 type ChecklistState = Partial<Record<SignalKey, boolean>>;

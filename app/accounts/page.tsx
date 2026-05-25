@@ -19,6 +19,7 @@ import {
   ChevronUp,
   ChevronsUpDown,
   ExternalLink,
+  Loader2,
   Pencil,
   RotateCw,
   Trash2,
@@ -609,6 +610,32 @@ export default function AccountsPage() {
   const toggleBar = (key: string) =>
     setExpandedBars((prev) => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
 
+  // Lazy-fetched reason snapshot for the priority panel summary.
+  const [accountReasonText, setAccountReasonText] = useState<string | null>(null);
+  const [accountReasonLoading, setAccountReasonLoading] = useState(false);
+  useEffect(() => {
+    if (panelMode !== 'priority' || !selectedAccountId) {
+      setAccountReasonText(null);
+      return;
+    }
+    // CRM-capped accounts use template copy — no need to fetch.
+    const acc = accounts.find((a) => a.id === selectedAccountId);
+    if (acc?.crm_status === 'customer' || acc?.crm_status === 'dormant') {
+      setAccountReasonText(null);
+      return;
+    }
+    let cancelled = false;
+    setAccountReasonLoading(true);
+    fetch(`/api/accounts/${selectedAccountId}/reason`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (!cancelled) setAccountReasonText(json?.reason?.why_now ?? json?.reason?.summary_short ?? null);
+      })
+      .catch(() => { if (!cancelled) setAccountReasonText(null); })
+      .finally(() => { if (!cancelled) setAccountReasonLoading(false); });
+    return () => { cancelled = true; };
+  }, [panelMode, selectedAccountId, accounts]);
+
   useEffect(() => {
     if (!loading && !user) router.push('/login');
   }, [user, loading, router]);
@@ -975,9 +1002,13 @@ export default function AccountsPage() {
             onClick={(e) => openContacts(account.id, e)}
             className={cn(
               'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors',
-              isSelected && panelMode === 'contacts'
-                ? 'bg-arcova-teal text-white'
-                : 'bg-slate-100 text-slate-600 hover:bg-arcova-teal/10 hover:text-arcova-teal',
+              account.contact_count === 0
+                ? (isSelected && panelMode === 'contacts'
+                    ? 'bg-amber-500 text-white'
+                    : 'bg-amber-50 text-amber-700 hover:bg-amber-100')
+                : (isSelected && panelMode === 'contacts'
+                    ? 'bg-arcova-teal text-white'
+                    : 'bg-slate-100 text-slate-600 hover:bg-arcova-teal/10 hover:text-arcova-teal'),
             )}
           >
             <Users className="w-3 h-3 shrink-0" />
@@ -1512,16 +1543,33 @@ export default function AccountsPage() {
 
                             {action === 'source_contact' && (
                               <div className="space-y-3">
-                                <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
-                                  <strong>{companyLabel}</strong> is a strong ICP fit, but the contacts on file are not
-                                  the right personas to approach yet. Source a better-matched contact before you reach
-                                  out.
-                                </p>
-                                <p className="text-[13.5px] leading-[1.55] text-[#4a6470]">
-                                  Open the Data page to request more contacts for this account. This company and ICP
-                                  context are passed through so the agent can help you queue the right acquisition
-                                  job.
-                                </p>
+                                {selectedAccount.contact_count === 0 ? (
+                                  <>
+                                    <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
+                                      <strong>{companyLabel}</strong> has no contacts on file. Your last known contact
+                                      at this account has moved on — find a replacement to keep this account warm.
+                                    </p>
+                                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                                      <p className="text-[12.5px] leading-[1.5] text-amber-800">
+                                        Arcova detected a contact departure at this account. Sourcing a new contact
+                                        here lets you re-establish coverage without losing the account entirely.
+                                      </p>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <>
+                                    <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
+                                      <strong>{companyLabel}</strong> is a strong ICP fit, but the contacts on file are not
+                                      the right personas to approach yet. Source a better-matched contact before you reach
+                                      out.
+                                    </p>
+                                    <p className="text-[13.5px] leading-[1.55] text-[#4a6470]">
+                                      Open the Data page to request more contacts for this account. This company and ICP
+                                      context are passed through so the agent can help you queue the right acquisition
+                                      job.
+                                    </p>
+                                  </>
+                                )}
                                 <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
                                   <button
                                     type="button"
@@ -1529,7 +1577,7 @@ export default function AccountsPage() {
                                     className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-white px-4 py-2.5 text-sm font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/5"
                                   >
                                     <Users className="h-4 w-4" />
-                                    Find buyer-persona contacts
+                                    Find replacement contact
                                   </button>
                                 </div>
                               </div>
@@ -1862,7 +1910,29 @@ export default function AccountsPage() {
                               <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-arcova-teal" />
                             </div>
                           ) : contacts.length === 0 ? (
-                            <p className="text-sm text-gray-400 text-center py-12">No contacts found.</p>
+                            <div className="space-y-3 py-2">
+                              {selectedAccount.contact_count === 0 ? (
+                                <>
+                                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3.5">
+                                    <p className="text-[13px] font-semibold text-amber-900 mb-1">Contact departed</p>
+                                    <p className="text-[12.5px] leading-[1.5] text-amber-800">
+                                      Your last known contact at this account has moved on. Source a replacement
+                                      contact to keep this account warm and maintain coverage.
+                                    </p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => openContactAcquisition(selectedAccount)}
+                                    className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-white px-3 py-2.5 text-sm font-semibold text-arcova-teal hover:bg-arcova-teal/5 transition-colors"
+                                  >
+                                    <Users className="h-3.5 w-3.5" />
+                                    Find replacement contact
+                                  </button>
+                                </>
+                              ) : (
+                                <p className="text-sm text-gray-400 text-center py-12">No contacts found.</p>
+                              )}
+                            </div>
                           ) : (
                             <div className="space-y-2">
                               {contacts.map((contact) => {
@@ -2153,8 +2223,72 @@ export default function AccountsPage() {
                             </div>
                           </button>
                         );
+                        // ── Priority summary copy ──────────────────────────
+                        const crmStatus = selectedAccount.crm_status ?? null;
+                        const companyLabel = selectedAccount.company_name || 'This account';
+                        const crmCapped = crmStatus === 'customer' || crmStatus === 'dormant';
+
+                        // Template copy for CRM-overridden cases (no API call needed).
+                        const crmSummary: string | null = (() => {
+                          if (crmStatus === 'customer') {
+                            const hasSignals = readinessPct != null && readinessPct >= 50;
+                            return hasSignals
+                              ? `${companyLabel}'s signal readiness is strong (${readinessPct}), but priority is capped because you have an existing closed-won relationship here. Priority will recalculate automatically if the CRM state changes.`
+                              : `Priority is low because ${companyLabel} is an existing closed-won customer. Readiness will continue tracking signals in the background.`;
+                          }
+                          if (crmStatus === 'dormant') {
+                            const hasSignals = readinessPct != null && readinessPct >= 50;
+                            return hasSignals
+                              ? `${companyLabel} shows strong signal activity (${readinessPct} readiness), but priority is suppressed because the last deal was lost. Watch for material changes before re-engaging.`
+                              : `Priority is low because the last deal at ${companyLabel} was lost. Monitor for new signals that indicate changed circumstances.`;
+                          }
+                          return null;
+                        })();
+
+                        // Fallback template for non-CRM cases when no LLM reason exists.
+                        const fallbackSummary: string = (() => {
+                          if (priorityPct == null || priorityPct < 5) {
+                            return `No strong signals or fit data available yet for ${companyLabel}. Check back once enrichment runs.`;
+                          }
+                          if (priorityPct >= 70) {
+                            return `${companyLabel} shows strong fit and buying signals — a good moment for personalised outreach.`;
+                          }
+                          if (priorityPct >= 35) {
+                            return `${companyLabel} has moderate priority. Signals are building — monitor for further activity before reaching out.`;
+                          }
+                          return `${companyLabel} has limited fit or signals at this stage. Keep it on the radar.`;
+                        })();
+
+                        const summaryText = crmCapped
+                          ? crmSummary
+                          : (accountReasonText ?? fallbackSummary);
+
                         return (
                           <div className="space-y-3">
+                            {/* Contextual summary */}
+                            {summaryText && (
+                              <div className={cn(
+                                'rounded-xl border px-4 py-3.5',
+                                crmCapped
+                                  ? 'border-amber-200 bg-amber-50'
+                                  : 'border-arcova-teal/20 bg-arcova-teal/5',
+                              )}>
+                                {accountReasonLoading ? (
+                                  <div className="flex items-center gap-2 text-[12.5px] text-slate-400">
+                                    <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+                                    Summarising…
+                                  </div>
+                                ) : (
+                                  <p className={cn(
+                                    'text-[12.5px] leading-[1.55]',
+                                    crmCapped ? 'text-amber-900' : 'text-[#1a4a5c]',
+                                  )}>
+                                    {summaryText}
+                                  </p>
+                                )}
+                              </div>
+                            )}
+
                             {/* Priority — large gauge, number only */}
                             <div className="flex flex-col items-center justify-center rounded-xl border border-gray-100 bg-gray-50/70 px-4 py-6">
                               <AnimatedCircularProgressBar
@@ -2182,7 +2316,7 @@ export default function AccountsPage() {
                               onOpen={() => setPanelMode('fit')}
                             />
                             <ScoreRow
-                              label="Readiness score"
+                              label="Signal readiness"
                               pct={readinessPct}
                               arcColor={fitScoreArcColor(readinessPct)}
                               onOpen={() => setPanelMode('signals')}

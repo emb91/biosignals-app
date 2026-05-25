@@ -83,6 +83,7 @@ const SIGNAL_IMPACT_OVERRIDES: Partial<Record<SignalKey, number>> = {
   prior_customer_relationship: 76,
   prior_active_deal_relationship: 58,
   prior_pipeline_relationship: 30,
+  key_contact_departed: 52,
 };
 
 function withImpact(entry: RawSignalCatalogEntry): SignalCatalogEntry {
@@ -875,6 +876,17 @@ const RAW_READINESS_SIGNAL_CATALOG: readonly RawSignalCatalogEntry[] = [
     buyerFunctions: ['commercial'],
     intentMechanisms: ['suppression'],
     notes: 'First-party relationship warning.',
+  },
+  {
+    signalKey: 'key_contact_departed',
+    scope: 'company',
+    dimensions: ['new_people', 'new_strategy'],
+    defaultStrength: 'medium',
+    defaultConfidence: 'high',
+    decayDays: 120,
+    buyerFunctions: [],
+    intentMechanisms: ['leadership_change', 'strategy_shift'],
+    notes: 'A known contact at this account moved to a new company. Creates an opportunity to re-establish with their replacement.',
   },
 ] as const;
 
