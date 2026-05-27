@@ -116,7 +116,7 @@ const FEATURE_MODELS: Record<LlmFeature, { openrouter: string; anthropic: string
     anthropic: 'claude-haiku-4-5',
   },
   press_release_classifier: {
-    openrouter: 'anthropic/claude-haiku-4-5',
+    openrouter: 'google/gemini-2.0-flash-001',
     anthropic: 'claude-haiku-4-5',
   },
 };

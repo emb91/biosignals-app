@@ -28,7 +28,6 @@ export const SIGNAL_DISPLAY_NAMES: Record<string, string> = {
   hiring_expansion: 'Hiring expansion',
   company_founded: 'Company founded or incorporated',
   new_facility: 'New office or facility',
-  conference_presentation: 'Conference presentation or poster',
   publication: 'Publication in peer-reviewed journal',
 
   visited_your_website: 'Website visit',
@@ -65,7 +64,6 @@ export const SIGNAL_DISPLAY_NAMES: Record<string, string> = {
   title_change: 'Title change',
   board_or_advisory_role: 'Board or advisory role',
   new_paper_published: 'New paper published',
-  conference_speaker: 'Conference speaker',
   principal_investigator_new_trial: 'Principal investigator on new trial',
   award_or_recognition: 'Award or recognition',
   patent_filed_or_granted: 'Patent filed or granted',

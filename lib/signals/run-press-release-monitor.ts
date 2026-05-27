@@ -25,7 +25,6 @@
  *   phase_transition                 → phase_transition
  *   new_facility                     → new_facility
  *   facility_expansion               → new_facility
- *   conference_presentation          → conference_presentation
  *   commercialization_move           → fda_approval
  *   m_and_a                          → ma
  *
@@ -99,7 +98,6 @@ const CATEGORY_TO_SIGNAL_KEY: Partial<Record<PressReleaseCategory, SignalKey>> =
   phase_transition: 'phase_transition',
   new_facility: 'new_facility',
   facility_expansion: 'facility_expansion',
-  conference_presentation: 'conference_presentation',
   commercialization_move: 'commercialization_move',
   m_and_a: 'ma_event',
   // m_and_a_target, leadership_churn, layoffs, restructuring, other → no mapping (skipped)
