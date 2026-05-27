@@ -45,13 +45,15 @@ export async function GET(request: Request) {
     Math.min(10, Number(process.env.CONTACT_ENRICHMENT_QUEUE_BATCH ?? '3')),
   );
 
-  // Pick oldest-requested contacts. Sort by updated_at so contacts that have
-  // been waiting longest get processed first.
+  // Pick next contacts to enrich. Priority ordering:
+  //   1. enrichment_refresh_priority DESC — job-change contacts (priority=1) first
+  //   2. updated_at ASC                  — oldest-first within each priority tier
   const { data: pending, error: fetchErr } = await admin
     .from('contacts')
     .select('id, user_id, updated_at')
     .eq('enrichment_refresh_status', 'requested')
     .is('archived_at', null)
+    .order('enrichment_refresh_priority', { ascending: false })
     .order('updated_at', { ascending: true, nullsFirst: true })
     .limit(batchSize);
 

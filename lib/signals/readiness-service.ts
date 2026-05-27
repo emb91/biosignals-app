@@ -344,7 +344,6 @@ export async function buildPersistedAccountReadinessContext(
       whyNow: reasonSnapshot.why_now,
       affectedFunctions: reasonSnapshot.affected_functions,
       suggestedAngle: reasonSnapshot.suggested_angle,
-      confidenceLabel: reasonSnapshot.confidence_label,
     },
   };
 }

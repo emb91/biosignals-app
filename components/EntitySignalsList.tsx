@@ -19,14 +19,16 @@ type SignalItem = {
   id: string;
   signalKey: string;
   dimensions: string[];
-  defaultStrength: string;
-  defaultConfidence: string;
+
   observedAt: string;
   eventAt: string | null;
   evidenceExcerpt: string | null;
   sourceTitle: string | null;
   sourceSummary: string | null;
   sourceUrl: string | null;
+  sourceMetadata: Record<string, unknown>;
+  companyName: string | null;
+  contactName: string | null;
   buyerFunctions: string[];
   readiness?: {
     overallScore: number | null;
@@ -48,6 +50,14 @@ type Props = {
   companyId?: string;
   /** UUID of the contact (contacts panel) */
   contactId?: string;
+  /**
+   * When set, overrides the raw readiness score shown in the readiness band.
+   * Used when CRM status caps the effective readiness (e.g. closed-won customer).
+   * Value is 0–1.
+   */
+  effectiveReadinessScore?: number | null;
+  /** Human-readable reason the readiness is capped, shown as a note. */
+  crmCappedReason?: string | null;
 };
 
 // ── Display helpers ────────────────────────────────────────────────────────
@@ -56,9 +66,14 @@ const SIGNAL_LABELS: Record<string, string> = {
   cmc_hiring: 'CMC Hiring',
   clinical_ops_hiring: 'Clinical Ops Hiring',
   regulatory_hiring: 'Regulatory Hiring',
+  research_hiring: 'R&D Hiring',
+  quality_hiring: 'Quality / GMP Hiring',
+  medical_hiring: 'Medical Affairs Hiring',
   bd_hiring: 'BD Hiring',
   commercial_hiring: 'Commercial Hiring',
-  job_surge: 'Hiring Surge',
+  data_informatics_hiring: 'Data & Informatics Hiring',
+  executive_hiring: 'Executive Hiring',
+  hiring_expansion: 'Hiring Expansion',
   funding_round: 'Funding Round',
   ipo_or_follow_on: 'IPO / Follow-on',
   milestone_payment: 'Milestone Payment',
@@ -92,6 +107,10 @@ const SIGNAL_LABELS: Record<string, string> = {
   new_internal_role: 'New Internal Role',
   title_change: 'Title Change',
   board_or_advisory_role: 'Board / Advisory Role',
+  leadership_churn: 'Leadership Change',
+  restructuring: 'Restructuring',
+  terminated_deal: 'Deal Terminated',
+  acquisition_distraction: 'Acquisition',
   open_opportunity_in_crm: 'Open Opportunity',
   closed_lost_in_crm: 'Closed Lost',
   new_contact_added_in_crm: 'New CRM Contact',
@@ -107,12 +126,6 @@ const DIMENSION_COLORS: Record<string, string> = {
   new_people: 'bg-violet-500',
   new_strategy: 'bg-amber-500',
   caution: 'bg-rose-500',
-};
-
-const STRENGTH_STYLES: Record<string, string> = {
-  strong: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
-  medium: 'bg-slate-100 text-slate-600 ring-slate-200',
-  weak: 'bg-slate-50 text-slate-400 ring-slate-100',
 };
 
 const READINESS_LABEL_STYLES: Record<string, string> = {
@@ -144,7 +157,7 @@ function relativeTime(iso: string): string {
   return `${Math.floor(days / 365)}y ago`;
 }
 
-// ── Readiness band (company only) ─────────────────────────────────────────
+// ── Readiness band ────────────────────────────────────────────────────────
 
 function readinessArcColor(pct: number | null): string {
   if (pct == null) return 'rgba(13,53,71,0.14)';
@@ -153,10 +166,22 @@ function readinessArcColor(pct: number | null): string {
   return '#ef4444';                // red-500
 }
 
-function ReadinessBand({ r }: { r: NonNullable<SignalItem['readiness']> }) {
+function ReadinessBand({
+  r,
+  effectiveScore,
+  cappedReason,
+}: {
+  r: NonNullable<SignalItem['readiness']>;
+  effectiveScore?: number | null;
+  cappedReason?: string | null;
+}) {
   if (!r.overallLabel) return null;
 
-  const pct = r.overallScore != null ? Math.round(r.overallScore * 100) : null;
+  const rawPct = r.overallScore != null ? Math.round(r.overallScore * 100) : null;
+  const effectivePct = effectiveScore != null ? Math.round(effectiveScore * 100) : null;
+  const isCapped = effectivePct != null && rawPct != null && effectivePct < rawPct;
+  const pct = isCapped ? effectivePct : rawPct;
+  const displayLabel = isCapped && effectiveScore != null ? scoreLabel(effectiveScore) : r.overallLabel;
   const arcColor = readinessArcColor(pct);
 
   const dims = [
@@ -193,10 +218,10 @@ function ReadinessBand({ r }: { r: NonNullable<SignalItem['readiness']> }) {
             <span
               className={cn(
                 'rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize',
-                READINESS_LABEL_STYLES[r.overallLabel] ?? 'bg-slate-100 text-slate-600',
+                READINESS_LABEL_STYLES[displayLabel] ?? 'bg-slate-100 text-slate-600',
               )}
             >
-              {r.overallLabel}
+              {displayLabel}
             </span>
           </div>
           {dims.length > 0 && (
@@ -211,7 +236,127 @@ function ReadinessBand({ r }: { r: NonNullable<SignalItem['readiness']> }) {
           )}
         </div>
       </div>
+      {isCapped && cappedReason && (
+        <p className="mt-2 text-[11px] leading-snug text-amber-800">
+          Raw signal readiness is {rawPct}; effective readiness is capped at {effectivePct}.
+        </p>
+      )}
     </div>
+  );
+}
+
+// ── Deal details extraction ────────────────────────────────────────────────
+
+function formatUsd(n: unknown): string | null {
+  const num = typeof n === 'number' ? n : typeof n === 'string' ? Number(n) : null;
+  if (num == null || !Number.isFinite(num) || num <= 0) return null;
+  if (num >= 1_000_000_000) return `$${(num / 1_000_000_000).toFixed(1)}B`;
+  if (num >= 1_000_000) return `$${(num / 1_000_000).toFixed(0)}M`;
+  if (num >= 1_000) return `$${(num / 1_000).toFixed(0)}K`;
+  return `$${num.toFixed(0)}`;
+}
+
+function coerceStr(v: unknown): string | null {
+  return typeof v === 'string' && v.trim() ? v.trim() : null;
+}
+
+type DealRow = { label: string; value: string };
+
+const DEAL_SIGNAL_KEYS = new Set([
+  'licensing_deal', 'partnership_with_upfront_economics', 'co_development_deal',
+  'partnership_deal', 'milestone_payment', 'ma_event', 'terminated_deal',
+]);
+
+function extractDealRows(signalKey: string, metadata: Record<string, unknown>): DealRow[] {
+  const rows: DealRow[] = [];
+  const c = metadata.classification && typeof metadata.classification === 'object'
+    ? (metadata.classification as Record<string, unknown>)
+    : null;
+
+  // Form D — structured XML fields sit directly on metadata
+  if (signalKey === 'funding_round' && !c) {
+    const offered = formatUsd(metadata.total_offering_amount);
+    const sold = formatUsd(metadata.total_amount_sold);
+    if (offered) rows.push({ label: 'Offering size', value: offered });
+    if (sold && sold !== offered) rows.push({ label: 'Raised to date', value: sold });
+    return rows;
+  }
+
+  if (!c) return rows;
+
+  // 424B prospectus — IPO / follow-on proceeds
+  if (signalKey === 'ipo_or_follow_on') {
+    const type = coerceStr(c.offering_type);
+    const gross = formatUsd(c.gross_proceeds_usd);
+    const use = coerceStr(c.use_of_proceeds_summary);
+    if (type) rows.push({ label: 'Type', value: type.replace(/_/g, ' ') });
+    if (gross) rows.push({ label: 'Gross proceeds', value: gross });
+    if (use) rows.push({ label: 'Use of proceeds', value: use });
+    return rows;
+  }
+
+  // 8-K leadership change
+  if (signalKey === 'leadership_churn') {
+    const name = coerceStr(c.person_name);
+    const role = coerceStr(c.role);
+    const type = coerceStr(c.change_type);
+    if (name || role) {
+      const parts = [type ? type.charAt(0).toUpperCase() + type.slice(1) : null, name, role ? `(${role})` : null]
+        .filter(Boolean).join(' ');
+      if (parts) rows.push({ label: 'Person', value: parts });
+    }
+    const circ = coerceStr(c.circumstances);
+    if (circ) rows.push({ label: 'Circumstances', value: circ });
+    return rows;
+  }
+
+  // Terminated deal
+  if (signalKey === 'terminated_deal') {
+    const party = coerceStr(c.counterparty);
+    const agreeType = coerceStr(c.agreement_type);
+    const partyType = coerceStr(c.counterparty_type);
+    const reason = coerceStr(c.termination_reason);
+    if (party) rows.push({ label: 'Counterparty', value: party });
+    if (agreeType) rows.push({ label: 'Agreement', value: agreeType.replace(/_/g, ' ') });
+    if (partyType) rows.push({ label: 'Counterparty type', value: partyType.toUpperCase() });
+    if (reason) rows.push({ label: 'Reason', value: reason.replace(/_/g, ' ') });
+    return rows;
+  }
+
+  // Deal signals — licensing, partnership, co-dev, milestone, M&A
+  if (DEAL_SIGNAL_KEYS.has(signalKey)) {
+    const party = coerceStr(c.counterparty);
+    const upfront = formatUsd(c.upfront_usd);
+    const milestones = formatUsd(c.milestone_max_usd);
+    const area = coerceStr(c.therapy_area);
+    const territory = coerceStr(c.territory);
+    const structure = coerceStr(c.deal_structure);
+    if (party) rows.push({ label: 'Counterparty', value: party });
+    if (upfront) rows.push({ label: 'Upfront', value: upfront });
+    if (milestones) rows.push({ label: 'Max milestones', value: milestones });
+    if (area) rows.push({ label: 'Area', value: area });
+    if (territory) rows.push({ label: 'Territory', value: territory });
+    if (structure) rows.push({ label: 'Structure', value: structure });
+  }
+
+  return rows;
+}
+
+function DealDetails({ rows }: { rows: DealRow[] }) {
+  if (rows.length === 0) return null;
+  return (
+    <dl className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-1 rounded-md border border-slate-100 bg-slate-50 px-2.5 py-2">
+      {rows.map(({ label, value }) => (
+        <div key={label} className="col-span-1 min-w-0">
+          <dt className="text-[10px] font-medium uppercase tracking-wide text-slate-400 leading-none mb-0.5">
+            {label}
+          </dt>
+          <dd className="text-[11px] text-slate-700 font-medium leading-snug truncate" title={value}>
+            {value}
+          </dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 
@@ -221,6 +366,7 @@ function SignalCard({ item }: { item: SignalItem }) {
   const primaryDim = item.dimensions[0] ?? '';
   const accent = DIMENSION_COLORS[primaryDim] ?? 'bg-slate-300';
   const excerpt = item.evidenceExcerpt || item.sourceSummary || null;
+  const dealRows = extractDealRows(item.signalKey, item.sourceMetadata ?? {});
 
   return (
     <div className="relative flex gap-2.5 rounded-lg border border-slate-100 bg-white px-3 py-2.5 hover:border-slate-200 transition-colors">
@@ -232,14 +378,6 @@ function SignalCard({ item }: { item: SignalItem }) {
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="text-[13px] font-semibold text-slate-900 leading-tight">
             {signalLabel(item.signalKey)}
-          </span>
-          <span
-            className={cn(
-              'rounded-full px-1.5 py-px text-[10px] font-medium capitalize ring-1',
-              STRENGTH_STYLES[item.defaultStrength] ?? STRENGTH_STYLES.medium,
-            )}
-          >
-            {item.defaultStrength}
           </span>
           <span className="text-[11px] text-slate-400 ml-auto shrink-0">
             {relativeTime(item.observedAt)}
@@ -263,10 +401,13 @@ function SignalCard({ item }: { item: SignalItem }) {
           </div>
         )}
 
-        {/* Excerpt */}
+        {/* Excerpt / rationale */}
         {excerpt && (
           <p className="text-[12px] leading-snug text-slate-500 line-clamp-2">{excerpt}</p>
         )}
+
+        {/* Structured deal / event details */}
+        <DealDetails rows={dealRows} />
 
         {/* Source link */}
         {item.sourceUrl && (
@@ -286,7 +427,88 @@ function SignalCard({ item }: { item: SignalItem }) {
 
 // ── Main component ─────────────────────────────────────────────────────────
 
-export function EntitySignalsList({ companyId, contactId }: Props) {
+function scoreLabel(score: number | null): string {
+  if (score == null) return 'low';
+  if (score >= 0.7) return 'high';
+  if (score >= 0.35) return 'medium';
+  return 'low';
+}
+
+function buildReadinessSummary({
+  entityLabel,
+  items,
+  readiness,
+  effectiveScore,
+  cappedReason,
+  generatedReason,
+}: {
+  entityLabel: string;
+  items: SignalItem[];
+  readiness: SignalItem['readiness'] | null;
+  effectiveScore?: number | null;
+  cappedReason?: string | null;
+  generatedReason?: string | null;
+}): string | null {
+  if (cappedReason) return cappedReason;
+  if (generatedReason) return generatedReason;
+  if (!readiness?.overallScore && readiness?.overallScore !== 0) {
+    const topSignals = items
+      .slice(0, 3)
+      .map((item) => signalLabel(item.signalKey).toLowerCase());
+    const dims = [...new Set(items.flatMap((item) => item.dimensions))].slice(0, 3);
+    const signalText =
+      topSignals.length === 0
+        ? 'recent activity'
+        : topSignals.length === 1
+          ? topSignals[0]
+          : topSignals.length === 2
+            ? `${topSignals[0]} and ${topSignals[1]}`
+            : `${topSignals[0]}, ${topSignals[1]}, and ${topSignals[2]}`;
+    const dimText =
+      dims.length === 0
+        ? ''
+        : ` These signals are mostly in ${dims.map((d) => d.replace(/_/g, ' ')).join(', ')}.`;
+    return `Recent signals for ${entityLabel} include ${signalText}.${dimText}`.trim();
+  }
+
+  const activeDims = [
+    { label: 'new budget', score: readiness.newBudgetScore },
+    { label: 'new needs', score: readiness.newNeedsScore },
+    { label: 'new people', score: readiness.newPeopleScore },
+    { label: 'new strategy', score: readiness.newStrategyScore },
+  ]
+    .filter((d) => d.score != null && d.score >= 0.2)
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+    .map((d) => d.label);
+
+  const score = effectiveScore ?? readiness.overallScore;
+  const label = scoreLabel(score);
+  if (activeDims.length === 0) {
+    return `${entityLabel} has low readiness because there are not enough recent buying signals yet. This can change as new account or contact activity appears.`;
+  }
+
+  const joined =
+    activeDims.length === 1
+      ? activeDims[0]
+      : activeDims.length === 2
+        ? `${activeDims[0]} and ${activeDims[1]}`
+        : `${activeDims.slice(0, -1).join(', ')}, and ${activeDims[activeDims.length - 1]}`;
+
+  if (label === 'high') {
+    return `A combination of ${joined} signals means ${entityLabel} is ready for outreach now.`;
+  }
+  if (label === 'medium') {
+    return `${entityLabel} has some readiness from ${joined}, but the evidence is still building.`;
+  }
+  return `${entityLabel} has limited readiness right now. The strongest evidence is ${joined}, but it is not enough to make this a strong outreach moment yet.`;
+}
+
+export function EntitySignalsList({
+  companyId,
+  contactId,
+  effectiveReadinessScore,
+  crmCappedReason,
+}: Props) {
   const [items, setItems] = useState<SignalItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -303,10 +525,13 @@ export function EntitySignalsList({ companyId, contactId }: Props) {
 
     fetch(`/api/signals/feed?${params.toString()}`)
       .then((r) => r.json())
-      .then((json: { data?: SignalItem[]; error?: string }) => {
+      .then((json: { data?: Array<SignalItem & { sourceMetadata?: Record<string, unknown> }>; error?: string }) => {
         if (cancelled) return;
         if (json.error) { setError(json.error); return; }
-        setItems(json.data ?? []);
+        setItems((json.data ?? []).map((item) => ({
+          ...item,
+          sourceMetadata: item.sourceMetadata ?? {},
+        })));
       })
       .catch((e) => { if (!cancelled) setError(String(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -338,20 +563,39 @@ export function EntitySignalsList({ companyId, contactId }: Props) {
     );
   }
 
-  // For company panels, show the readiness band from the first item that has one
-  const readiness = companyId ? (items.find((i) => i.readiness?.overallLabel)?.readiness ?? null) : null;
-  const whyNow = companyId ? (items.find((i) => i.reason?.whyNow)?.reason?.whyNow ?? null) : null;
+  const readiness = items.find((i) => i.readiness?.overallLabel)?.readiness ?? null;
+  const reason = items.find((i) => i.reason?.whyNow || i.reason?.summaryShort)?.reason ?? null;
+  const entityLabel =
+    items.find((i) => (contactId ? i.contactName : i.companyName))?.[contactId ? 'contactName' : 'companyName'] ??
+    (companyId ? 'This account' : 'This contact');
+  const summary = buildReadinessSummary({
+    entityLabel,
+    items,
+    readiness,
+    effectiveScore: effectiveReadinessScore,
+    cappedReason: crmCappedReason,
+    generatedReason: reason?.whyNow ?? reason?.summaryShort ?? null,
+  });
 
   return (
     <div className="space-y-3">
-      {/* Readiness band — company only */}
-      {readiness && <ReadinessBand r={readiness} />}
-
-      {/* Why now — generated reason */}
-      {whyNow && (
-        <p className="rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-[12px] leading-snug text-indigo-800">
-          {whyNow}
+      {summary && (
+        <p className={cn(
+          'rounded-lg border px-3 py-2 text-[12px] leading-snug',
+          crmCappedReason
+            ? 'border-amber-200 bg-amber-50 text-amber-900'
+            : 'border-indigo-100 bg-indigo-50 text-indigo-800',
+        )}>
+          {summary}
         </p>
+      )}
+
+      {readiness && (
+        <ReadinessBand
+          r={readiness}
+          effectiveScore={effectiveReadinessScore}
+          cappedReason={crmCappedReason}
+        />
       )}
 
       {/* Signal count */}

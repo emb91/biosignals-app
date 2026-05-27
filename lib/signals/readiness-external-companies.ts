@@ -55,13 +55,6 @@ function isRecentDate(value?: string | null, withinDays = 270): boolean {
   return ageMs >= 0 && ageMs <= withinDays * 24 * 60 * 60 * 1000;
 }
 
-function isDistressed(summary?: string | null, statusLabel?: string | null): boolean {
-  const haystack = `${summary || ''} ${statusLabel || ''}`.toLowerCase();
-  return /(down round|bridge financing|distressed|rescue financing|emergency financing|insolv|administration|bankrupt)/i.test(
-    haystack,
-  );
-}
-
 function formatFundingAmount(value?: number | null): string | null {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return null;
   if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(1)}B`;
@@ -208,17 +201,6 @@ function buildFundingDecision(
     previous_latest_funding_date: funding.previous_latest_funding_date,
     latest_funding_date: funding.latest_funding_date,
   };
-
-  if (isDistressed(summary, statusLabel)) {
-    return {
-      sourceEventType: 'distressed_financing',
-      signalKeys: ['distressed_financing'],
-      title: `${eventLabel} signal detected`,
-      summary,
-      eventAt,
-      metadata,
-    };
-  }
 
   if (current === 'public') {
     return {

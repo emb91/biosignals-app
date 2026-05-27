@@ -471,6 +471,46 @@ Every agent working an account should receive structured signal context, not jus
 - The source of truth should be structured records and computed fields, not manually written page copy.
 - Agent prompts should consume the structured payload and optionally the rendered summary, never the summary alone.
 
+## ICP stage criteria and funding round write-back
+
+ICP criteria are intentional. If a user defines "Series A" in their ICP, they mean Series A — a user who's funding-agnostic simply leaves that field blank. There's no need to second-guess this with a "relationship fit" layer.
+
+Correct behaviour when a tracked company raises and moves out of stage: fit score drops AND the funding signal fires. The salesperson sees both — the raise is good news, the stage shift is a flag — and makes their own call. The product doesn't need to protect them from their own criteria.
+
+**Implication for funding write-back:** Once we have a reliable way to infer round stage from Form D data (amount + context), updating `funding_stage` on the company record is the right thing to do. The fit score change is correct, not a bug. For now we skip `funding_stage` only because Form D doesn't disclose the round letter — not because we want to shield the fit score from updating.
+
+## 8-K signal enrichment — downstream data use
+
+Structured fields extracted by the LLM classifier are currently stored in `sec_filings_local.classification` (JSONB) and passed as signal `metadata`, but nothing downstream reads them in a structured way. These are the queued follow-ups once the core signals are proven:
+
+### 1. Leadership change: role-aware dimension routing
+- Currently all `leadership_churn` signals hit fixed dimensions (`caution`, `new_people`).
+- We extract `buyer_function` from 5.02 filings (CFO, CMO, VP Clinical etc.) — this should dynamically adjust which readiness dimensions get weighted up.
+- A new CFO is primarily `new_budget`. A new CMO or Head of Commercial is `new_strategy` + `new_people`. A new VP Clinical is `new_needs`.
+- Implementation: add a `dimensionsForLeadershipRole(buyerFunction)` helper; call it when emitting `leadership_churn` signals instead of using fixed catalog dimensions.
+
+### 2. Bankruptcy / delisting: explicit caution alert — DEFERRED (post-MVP)
+- Caution/suppression logic only adds value when a company already has high readiness AND then shows distress. That's a rare intersection.
+- The downside of missing it is one ill-timed email — acceptable at MVP stage.
+- Signals still fire and score still moves; data is preserved. Skip the UI alert tier and distress/reorg distinction until readiness signals are proven to drive behaviour.
+
+### 3. Deal economics: structured signal cards
+- Licensing, partnership, and financing signals extract `upfront_usd`, `milestone_max_usd`, `counterparty`, `therapy_area` — but the UI shows only the LLM's one-line rationale.
+- These fields should render as a structured card: deal type, counterparty name, upfront amount, max milestones, therapy area.
+- Example: "Entered $45M licensing deal with Pfizer — oncology, worldwide rights. Max milestones: $320M."
+- Implementation: signal detail drawer reads `classification` from metadata and renders deal fields when present.
+
+### 4. Restructuring: distinguish distress vs. strategic reorg — DEFERRED (post-MVP)
+- Same reasoning as item 2: the nuance only matters at the intersection of high readiness + distress signal.
+- A low-readiness company getting more deprioritised is a near-zero net effect. The risk of missing it is one email.
+- Revisit once readiness scoring is proven to drive CRO behaviour and the signal volume is sufficient to make the distinction meaningful.
+
+### 5. Terminated deal: ICP-relevance routing (v2)
+- `terminated_deal` signals emit with `new_strategy` + `new_needs` regardless of what was terminated.
+- A terminated CRO service contract is irrelevant to a tools vendor but meaningful to another CRO. A terminated pharma licensing deal is irrelevant to a service provider but signals a strategic reset.
+- v2: use `counterparty_type` + `agreement_type` from the classification to filter signal relevance against the user's ICP before emitting, or weight the impact score down for irrelevant termination types.
+- Implementation: in `runFundingMonitor`, after classification lookup, check if `counterparty_type` is compatible with the user's ICP vendor category before emitting. Requires ICP vendor category to be stored as a user preference.
+
 ## Source roadmap (ordered by signal value and implementation quality)
 
 Build sources in the order that best supports readiness, not in the order that sources are easiest to name.
@@ -571,7 +611,7 @@ Priority tier definitions:
 | ✅ | `cmc_hiring` | `new_people`, `new_needs` | Precursor | `P1` | hiring monitor (LinkedIn via Apify) |
 | ✅ | `clinical_ops_hiring` | `new_people`, `new_needs` | Precursor | `P1` | hiring monitor |
 | ✅ | `regulatory_hiring` | `new_people`, `new_needs` | Precursor | `P1` | hiring monitor |
-| ✅ | `job_surge` | `new_people`, `new_needs` | Precursor | `P1` | hiring monitor |
+| ✅ | `hiring_expansion` | `new_people`, `new_needs` | Precursor | `P1` | hiring monitor |
 | ⬜ | `new_facility` | `new_needs` | Precursor | `P1` | not yet wired — needs press-release / news monitor |
 | ⬜ | `facility_expansion` | `new_needs` | Precursor | `P1` | not yet wired — needs press-release / news monitor |
 | ⬜ | `cmc_scale_up` | `new_needs` | Precursor | `P1` | not yet wired — inferred from hiring + facility combo |
@@ -601,8 +641,8 @@ Priority tier definitions:
 | ✅ | `new_internal_role` | `new_people` | Precursor | `P2` | HubSpot contact sync |
 | ✅ | `title_change` | `new_people` | Precursor | `P2` | HubSpot contact sync |
 | ⬜ | `board_or_advisory_role` | `new_people`, `new_strategy` | Precursor | `P3` | not yet wired |
-| ✅ | `conference_presentation` | `new_strategy` | Precursor | `P3` | conferences monitor (Sonnet 4.6 + web_search per company, biotech taxonomy anchor) |
-| ✅ | `conference_speaker` | `new_strategy`, `new_people` | Precursor | `P3` | conferences monitor (fuzzy-match speaker name against contacts at the same company) |
+| ⬜ | `conference_presentation` | `new_strategy` | Precursor | `P3` | **orphaned** — current Sonnet+web_search monitor produces poor output; rebuild needed using targeted conference website scraping (agenda/speaker pages per event) |
+| ⬜ | `conference_speaker` | `new_strategy`, `new_people` | Precursor | `P3` | **orphaned** — same; depends on conference scraping rebuild |
 | ⬜ | `publication` | `new_strategy` | Precursor | `P3` | not yet wired — PubMed/biorxiv ingestion |
 | ⬜ | `new_paper_published` | `new_strategy` | Precursor | `P3` | not yet wired |
 | ✅ | `patent_filed_or_granted` | `new_strategy` | Precursor | `P3` | patents monitor (USPTO via PatentsView mirror) |
@@ -674,7 +714,7 @@ Distinct from the priority table above — this lists exactly what each running 
 | | `regulatory_hiring` | 🏢 | same | |
 | | `bd_hiring` | 🏢 | same | |
 | | `commercial_hiring` | 🏢 | same | |
-| | `job_surge` | 🏢 | same, volume threshold | |
+| | `hiring_expansion` | 🏢 | same, volume threshold (≥10 postings) | |
 | **HubSpot — Deals** | `open_opportunity_in_crm` | 🏢 | HubSpot deals sync, deal stage state machine | |
 | | `closed_lost_in_crm` | 🏢 | same | |
 | | `new_contact_added_in_crm` | 🏢 | same | |
@@ -682,53 +722,34 @@ Distinct from the priority table above — this lists exactly what each running 
 | | `recently_promoted` | 👤 | same | |
 | | `recently_changed_company` | 👤 | same | |
 | | `title_change` | 👤 | same | |
-| **Conferences (web search)** | `conference_presentation` | 🏢 | per-company Sonnet 4.6 + `web_search_20250305`, biotech taxonomy anchor | ⚠️ overlap w/ Press Releases |
-| | `conference_speaker` | 👤 | same, when LLM-returned `speaker_name` fuzzy-matches a contact at that company | |
-| **Press Releases (RSS + Haiku)** | `conference_presentation` | 🏢 | GlobeNewswire + PRNewswire biotech RSS, Haiku 22-category classifier | ⚠️ overlap w/ Conferences |
-| | `licensing_deal` | 🏢 | same | ⚠️ overlap w/ Funding 8-K classifier |
-| | `partnership_with_upfront_economics` | 🏢 | same | ⚠️ overlap w/ Funding |
-| | `co_development_deal` | 🏢 | same | ⚠️ overlap w/ Funding |
-| | `partnership_deal` | 🏢 | same | ⚠️ overlap w/ Funding |
-| | `milestone_payment` | 🏢 | same | ⚠️ overlap w/ Funding |
-| | `leadership_churn` | 🏢 | same | ⚠️ overlap w/ Funding 8-K Item 5.02 |
-| | `layoffs` | 🏢 | same | **unique to Press Releases** |
-| | `new_facility` | 🏢 | same | **unique** |
-| | `facility_expansion` | 🏢 | same | **unique** |
-| | `restructuring` | 🏢 | same | ⚠️ overlap w/ Funding |
-| | `acquisition_distraction` | 🏢 | same | ⚠️ overlap w/ Funding M&A |
-| | `commercialization_move` | 🏢 | same | **unique** |
-| | `fda_approval` | 🏢 | same | ⚠️ overlap w/ FDA monitor |
-| | `phase_transition` | 🏢 | same | ⚠️ overlap w/ Clinical Trials monitor |
-| | `funding_round` | 🏢 | same | ⚠️ overlap w/ Funding Form D |
-| | `grant_award` | 🏢 | same | ⚠️ overlap w/ NIH Grants monitor |
-| | `ipo_or_follow_on` | 🏢 | same | ⚠️ overlap w/ Funding 424B |
-| | `trial_failure_or_halt` | 🏢 | same | ⚠️ overlap w/ Clinical Trials |
-| | `program_discontinuation` | 🏢 | same | ⚠️ overlap w/ Clinical Trials |
+| **Conferences (web search)** | `conference_presentation` | 🏢 | **orphaned** — Sonnet 4.6 + web_search approach produced poor output; rebuild with targeted conference site scraping | |
+| | `conference_speaker` | 👤 | **orphaned** — same | |
+| ~~**Press Releases (RSS + Haiku)**~~ | ~~all~~ | — | **cut** — monitor removed; signals were either duplicated by structured monitors or low-value noise | |
 
 **Coverage roll-up by scope:** 40 distinct company-scope emit paths · 5 distinct contact-scope emit paths.
 
 **Catalog gaps still without any monitor** (catalog entries exist but nothing emits them):
-- `new_facility`, `facility_expansion`, `cmc_scale_up` — actually wired via press releases now (drop from gap list when press release classification lands)
+- `new_facility`, `facility_expansion`, `cmc_scale_up` — press releases cut; no active monitor; need targeted news/web search approach
 - `distressed_financing` (P1) — V2 SEC funding classifier could emit this for debt/credit facility 8-Ks
 - `new_to_role` (P2 contact) — needs a contact-side LinkedIn / HubSpot signal
 - `board_or_advisory_role` (P3 contact + company)
 - `quality_compliance_buildout` (P2) — could be inferred from hiring monitor if QA/QC roles are tagged
 - `cdmo_partnership` (P2)
 - `regional_expansion` (P2)
-- `commercialization_move` (P2) — wired via press releases now
-- `conference_speaker` from press releases — gap: classifier extracts `speaker_name` but monitor doesn't emit contact-scope signal even when name matches a contact in book
-- `new_paper_published`, `publication`, `conference_speaker` (contact-scope flavours)
+- `commercialization_move` (P2) — press releases cut; no active monitor
+- `conference_presentation`, `conference_speaker` — orphaned; rebuild needed with targeted conference site scraping
+- `new_paper_published`, `publication` — PubMed API; not yet built
 - `board_or_advisory_role`
 - `platform_repositioning`
 - `lapsed_customer` (CS-LATER — deferred per phase rule)
 
 **Open architectural decisions (consequences of the inventory):**
 
-1. **Press release ↔ structured-monitor overlap.** Press-release classifier emits 20 categories, 12 of which overlap with dedicated structured monitors (Funding/SEC, FDA, Clinical Trials, NIH Grants). Different `source_event_id`s mean no natural dedupe — so the same underlying event can produce two `signal_source_events` rows. **Likely fix:** strip the overlapping categories from press-release emission and let press releases own only `layoffs`, `new_facility`, `facility_expansion`, `commercialization_move` (plus deal-flavour categories ONLY for companies SEC doesn't cover — which we can't easily detect classification-side, so easier to drop them all and rely on the SEC funding monitor + 8-K classifier).
+1. **Press releases cut.** Monitor removed. Signals `new_facility`, `facility_expansion`, `layoffs`, `commercialization_move` now have no active source — need targeted per-company web search approach (same pattern as conferences, cheaper than Sonnet+web_search per company).
 
-2. **Conference signals — three sources, three different shapes.** Sonnet web_search per company gives forward-looking but expensive, Press Releases catch the same events via newswire RSS, Press Releases don't emit `conference_speaker` even when speaker is named. Need to consolidate: either (a) make Conferences monitor the canonical source and have Press Releases ignore conferences entirely, or (b) make Press Releases the canonical source (cheaper, broader) and retire Sonnet conferences.
+2. **Conference signals orphaned.** Sonnet+web_search approach produced low-quality output. Rebuild should scrape specific conference agenda/speaker pages (Apify actor per conference family) rather than asking an LLM to web-search per company.
 
-3. **Contact-scope coverage is thin (5 of 45 signal paths).** HubSpot contact lifecycle covers most of it. To strengthen contact-scope sales-rep timing signals, biggest unlocks are (a) wiring `conference_speaker` from the press-release pipeline when a speaker name matches a contact, and (b) building a `new_to_role` contact-side monitor.
+3. **Contact-scope coverage is thin (5 of 45 signal paths).** HubSpot contact lifecycle covers most of it. Biggest unlocks: (a) `conference_speaker` once conference scraping is rebuilt, (b) `new_to_role` contact-side monitor.
 
 Phase rule:
 

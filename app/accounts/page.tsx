@@ -19,7 +19,6 @@ import {
   ChevronUp,
   ChevronsUpDown,
   ExternalLink,
-  Loader2,
   Pencil,
   RotateCw,
   Trash2,
@@ -90,6 +89,7 @@ type AccountRow = {
   data_provenance_imported_at: string | null;
   readiness_label?: string | null;
   readiness_score?: number | null;
+  raw_readiness_score?: number | null;
   priority_score?: number | null;
   crm_status?: 'customer' | 'active' | 'dormant' | 'context_only' | 'none' | null;
   crm_deal_stage_label?: string | null;
@@ -486,6 +486,7 @@ export default function AccountsPage() {
   // Panel state
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [panelMode, setPanelMode] = useState<PanelMode>('details');
+  const [failedLogoByAccountId, setFailedLogoByAccountId] = useState<Record<string, true>>({});
 
   // Floating chat-bar value — shown while a company card is open (same pattern as
   // /leads/contacts). On submit we dismiss the company card and forward the text
@@ -584,6 +585,18 @@ export default function AccountsPage() {
     });
   }, [selectedAccountId]);
 
+  useEffect(() => {
+    if (!selectedAccountId) return;
+    const selected = accounts.find((account) => account.id === selectedAccountId);
+    if (!selected?.logo_url) return;
+    setFailedLogoByAccountId((prev) => {
+      if (!prev[selectedAccountId]) return prev;
+      const next = { ...prev };
+      delete next[selectedAccountId];
+      return next;
+    });
+  }, [selectedAccountId, accounts]);
+
   // Company enrichment refresh
   const [refreshingCompanyId, setRefreshingCompanyId] = useState<string | null>(null);
   const rerunCompanyEnrichment = async (companyId: string) => {
@@ -610,31 +623,6 @@ export default function AccountsPage() {
   const toggleBar = (key: string) =>
     setExpandedBars((prev) => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
 
-  // Lazy-fetched reason snapshot for the priority panel summary.
-  const [accountReasonText, setAccountReasonText] = useState<string | null>(null);
-  const [accountReasonLoading, setAccountReasonLoading] = useState(false);
-  useEffect(() => {
-    if (panelMode !== 'priority' || !selectedAccountId) {
-      setAccountReasonText(null);
-      return;
-    }
-    // CRM-capped accounts use template copy — no need to fetch.
-    const acc = accounts.find((a) => a.id === selectedAccountId);
-    if (acc?.crm_status === 'customer' || acc?.crm_status === 'dormant') {
-      setAccountReasonText(null);
-      return;
-    }
-    let cancelled = false;
-    setAccountReasonLoading(true);
-    fetch(`/api/accounts/${selectedAccountId}/reason`)
-      .then((r) => r.json())
-      .then((json) => {
-        if (!cancelled) setAccountReasonText(json?.reason?.why_now ?? json?.reason?.summary_short ?? null);
-      })
-      .catch(() => { if (!cancelled) setAccountReasonText(null); })
-      .finally(() => { if (!cancelled) setAccountReasonLoading(false); });
-    return () => { cancelled = true; };
-  }, [panelMode, selectedAccountId, accounts]);
 
   useEffect(() => {
     if (!loading && !user) router.push('/login');
@@ -1430,11 +1418,17 @@ export default function AccountsPage() {
                       </div>
                       {/* Logo + close (right, matches Leads company panel) */}
                       <div className="flex items-start gap-2 shrink-0">
-                        {selectedAccount.logo_url ? (
+                        {selectedAccount.logo_url && !failedLogoByAccountId[selectedAccount.id] ? (
                           <img
                             src={selectedAccount.logo_url}
                             alt=""
                             className="w-16 h-16 rounded-xl object-contain bg-gray-50 border border-gray-100 p-1"
+                            onError={() =>
+                              setFailedLogoByAccountId((prev) => ({
+                                ...prev,
+                                [selectedAccount.id]: true,
+                              }))
+                            }
                           />
                         ) : (
                           <div className="w-16 h-16 rounded-xl bg-gray-100 flex items-center justify-center text-xl font-semibold text-gray-400">
@@ -1628,8 +1622,22 @@ export default function AccountsPage() {
                         );
                         const hasFirmographics = !!(selectedAccount.employee_count != null || selectedAccount.employee_range || selectedAccount.founded_year != null || selectedAccount.headquarters_city || selectedAccount.headquarters_country);
                         const hasFunding = !!(selectedAccount.funding_stage || selectedAccount.funding_status_label || selectedAccount.total_funding_usd != null || selectedAccount.latest_funding_date);
+                        const isPendingEnrichment = !selectedAccount.last_enriched_at;
                         return (
                           <div className="space-y-3">
+                            {isPendingEnrichment && (
+                              <div className="rounded-xl border border-amber-200 bg-amber-50/80 px-3.5 py-3 flex gap-2.5">
+                                <svg className="mt-0.5 w-4 h-4 shrink-0 text-amber-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+                                  <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                                </svg>
+                                <div className="min-w-0">
+                                  <p className="text-[12.5px] font-semibold text-amber-800">Enrichment in progress</p>
+                                  <p className="mt-0.5 text-[12px] leading-relaxed text-amber-700">
+                                    This company was added automatically when a contact changed jobs. Details, fit score, and signals will populate within the hour.
+                                  </p>
+                                </div>
+                              </div>
+                            )}
                             {getAccountRowAction(selectedAccount) === 'monitor' && (
                               <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4 space-y-2">
                                 <p className="text-[13px] leading-snug text-[#0d3547]">
@@ -2046,7 +2054,21 @@ export default function AccountsPage() {
                       )}
 
                       {panelMode === 'signals' && (
-                        <EntitySignalsList companyId={selectedAccount.id} />
+                        <EntitySignalsList
+                          companyId={selectedAccount.id}
+                          effectiveReadinessScore={selectedAccount.readiness_score ?? null}
+                          crmCappedReason={(() => {
+                            const rawPct = percentDisplayNumber(selectedAccount.raw_readiness_score ?? selectedAccount.readiness_score ?? null);
+                            const companyLabel = selectedAccount.company_name || 'This account';
+                            if (selectedAccount.crm_status === 'customer') {
+                              return `${companyLabel} is a closed-won account. Readiness is low as you have already sold to this company.`;
+                            }
+                            if (selectedAccount.crm_status === 'dormant') {
+                              return `${companyLabel} is a closed-lost account. Readiness is low because the last deal was lost.`;
+                            }
+                            return null;
+                          })()}
+                        />
                       )}
 
                       {panelMode === 'crm' && (
@@ -2180,10 +2202,12 @@ export default function AccountsPage() {
                           return v > 1 ? v / 100 : v;
                         })();
                         const readinessNorm = selectedAccount.readiness_score ?? null;
+                        const rawReadinessNorm = selectedAccount.raw_readiness_score ?? selectedAccount.readiness_score ?? null;
                         const priorityNorm = selectedAccount.priority_score ?? null;
                         const priorityPct = percentDisplayNumber(priorityNorm);
                         const fitPct = percentDisplayNumber(fitNorm);
                         const readinessPct = percentDisplayNumber(readinessNorm);
+                        const rawReadinessPct = percentDisplayNumber(rawReadinessNorm);
                         const ScoreRow = ({
                           label,
                           pct,
@@ -2223,72 +2247,8 @@ export default function AccountsPage() {
                             </div>
                           </button>
                         );
-                        // ── Priority summary copy ──────────────────────────
-                        const crmStatus = selectedAccount.crm_status ?? null;
-                        const companyLabel = selectedAccount.company_name || 'This account';
-                        const crmCapped = crmStatus === 'customer' || crmStatus === 'dormant';
-
-                        // Template copy for CRM-overridden cases (no API call needed).
-                        const crmSummary: string | null = (() => {
-                          if (crmStatus === 'customer') {
-                            const hasSignals = readinessPct != null && readinessPct >= 50;
-                            return hasSignals
-                              ? `${companyLabel}'s signal readiness is strong (${readinessPct}), but priority is capped because you have an existing closed-won relationship here. Priority will recalculate automatically if the CRM state changes.`
-                              : `Priority is low because ${companyLabel} is an existing closed-won customer. Readiness will continue tracking signals in the background.`;
-                          }
-                          if (crmStatus === 'dormant') {
-                            const hasSignals = readinessPct != null && readinessPct >= 50;
-                            return hasSignals
-                              ? `${companyLabel} shows strong signal activity (${readinessPct} readiness), but priority is suppressed because the last deal was lost. Watch for material changes before re-engaging.`
-                              : `Priority is low because the last deal at ${companyLabel} was lost. Monitor for new signals that indicate changed circumstances.`;
-                          }
-                          return null;
-                        })();
-
-                        // Fallback template for non-CRM cases when no LLM reason exists.
-                        const fallbackSummary: string = (() => {
-                          if (priorityPct == null || priorityPct < 5) {
-                            return `No strong signals or fit data available yet for ${companyLabel}. Check back once enrichment runs.`;
-                          }
-                          if (priorityPct >= 70) {
-                            return `${companyLabel} shows strong fit and buying signals — a good moment for personalised outreach.`;
-                          }
-                          if (priorityPct >= 35) {
-                            return `${companyLabel} has moderate priority. Signals are building — monitor for further activity before reaching out.`;
-                          }
-                          return `${companyLabel} has limited fit or signals at this stage. Keep it on the radar.`;
-                        })();
-
-                        const summaryText = crmCapped
-                          ? crmSummary
-                          : (accountReasonText ?? fallbackSummary);
-
                         return (
                           <div className="space-y-3">
-                            {/* Contextual summary */}
-                            {summaryText && (
-                              <div className={cn(
-                                'rounded-xl border px-4 py-3.5',
-                                crmCapped
-                                  ? 'border-amber-200 bg-amber-50'
-                                  : 'border-arcova-teal/20 bg-arcova-teal/5',
-                              )}>
-                                {accountReasonLoading ? (
-                                  <div className="flex items-center gap-2 text-[12.5px] text-slate-400">
-                                    <Loader2 className="w-3 h-3 animate-spin shrink-0" />
-                                    Summarising…
-                                  </div>
-                                ) : (
-                                  <p className={cn(
-                                    'text-[12.5px] leading-[1.55]',
-                                    crmCapped ? 'text-amber-900' : 'text-[#1a4a5c]',
-                                  )}>
-                                    {summaryText}
-                                  </p>
-                                )}
-                              </div>
-                            )}
-
                             {/* Priority — large gauge, number only */}
                             <div className="flex flex-col items-center justify-center rounded-xl border border-gray-100 bg-gray-50/70 px-4 py-6">
                               <AnimatedCircularProgressBar

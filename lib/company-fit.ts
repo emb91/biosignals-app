@@ -63,6 +63,7 @@ type CompanyScoreRow = {
 type IcpScoreRow = {
   id: string;
   name: string | null;
+  icpIndex: number | null;
   company_type: string | null;
   platform_category: string | null;
   therapeutic_areas: string[] | null;
@@ -115,6 +116,7 @@ type ScoreBreakdown = {
 type CompanyIcpScoreResult = {
   icpId: string;
   icpName: string | null;
+  icpIndex: number | null;
   rawScore01: number;
   finalScore01: number;
   scoreCap01: number;
@@ -564,6 +566,7 @@ function computeCompanyIcpScore(company: CompanyScoreRow, icp: IcpScoreRow): Com
   return {
     icpId: icp.id,
     icpName: icp.name,
+    icpIndex: icp.icpIndex,
     rawScore01,
     finalScore01,
     scoreCap01,
@@ -604,6 +607,26 @@ function pickWinner(scores: CompanyIcpScoreResult[]): CompanyIcpScoreResult | nu
   })[0];
 }
 
+function buildCompanyFitSummary(
+  company: CompanyScoreRow,
+  winner: CompanyIcpScoreResult | null,
+): string {
+  const companyLabel = company.company_name?.trim() || 'This company';
+  if (!winner) {
+    return `${companyLabel} has no ICP fit winner yet, so company fit is low until ICP criteria and profile evidence are available.`;
+  }
+  const scorePct = Math.round(winner.finalScore01 * 100);
+  const icpName = winner.icpName?.trim() || 'the best-matching ICP';
+  const icpLabel =
+    winner.icpIndex != null
+      ? `your ICP ${winner.icpIndex} ${icpName}`
+      : icpName;
+  const matched = winner.breakdown.matched_on.length > 0
+    ? winner.breakdown.matched_on.join(', ').toLowerCase()
+    : 'limited criteria overlap';
+  return `${companyLabel} is currently ${scorePct}% aligned to ${icpLabel}, with strongest fit evidence in ${matched}.`;
+}
+
 function buildContactFitFields(winner: CompanyIcpScoreResult | null): {
   fit_score: number;
   fit_score_reasoning: string;
@@ -631,16 +654,18 @@ async function loadIcpsForUser(supabase: MinimalSupabase, userId: string): Promi
   const { data, error } = await supabase
     .from('icps')
     .select(
-      'id, name, company_type, platform_category, therapeutic_areas, modalities, development_stages, company_sizes, funding_stages, example_company_enrichment',
+      'id, name, created_at, company_type, platform_category, therapeutic_areas, modalities, development_stages, company_sizes, funding_stages, example_company_enrichment',
     )
-    .eq('user_id', userId);
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false });
 
   if (error) {
     throw error;
   }
 
-  return ((data || []) as IcpScoreRow[]).map((row) => ({
+  return ((data || []) as Array<Omit<IcpScoreRow, 'icpIndex'> & { created_at?: string | null }>).map((row, index) => ({
     ...row,
+    icpIndex: index + 1,
     example_company_enrichment:
       row.example_company_enrichment &&
       typeof row.example_company_enrichment === 'object' &&
@@ -720,6 +745,7 @@ async function clearCompanyFit(
       company_fit_coverage: null,
       company_fit_scored_at: now,
       company_fit_version: SCORE_VERSION,
+      company_fit_summary: 'This company has no ICP fit winner yet, so company fit is low until ICP criteria and profile evidence are available.',
       updated_at: now,
     })
     .eq('user_id', userId)
@@ -742,6 +768,7 @@ async function clearCompanyFit(
         company_fit_coverage: null,
         company_fit_scored_at: now,
         company_fit_version: SCORE_VERSION,
+        company_fit_summary: 'This company has no ICP fit winner yet, so company fit is low until ICP criteria and profile evidence are available.',
         updated_at: now,
       },
       { onConflict: 'user_id,company_id' },
@@ -770,6 +797,7 @@ async function clearCompanyFit(
 async function persistScoresForCompany(
   supabase: MinimalSupabase,
   userId: string,
+  company: CompanyScoreRow,
   companyId: string,
   scores: CompanyIcpScoreResult[],
   staleIcpIds: string[],
@@ -823,6 +851,7 @@ async function persistScoresForCompany(
       company_fit_coverage: winner?.coverage01 ?? null,
       company_fit_scored_at: now,
       company_fit_version: SCORE_VERSION,
+      company_fit_summary: buildCompanyFitSummary(company, winner ?? null),
       updated_at: now,
     })
     .eq('user_id', userId)
@@ -845,6 +874,7 @@ async function persistScoresForCompany(
         company_fit_coverage: winner?.coverage01 ?? null,
         company_fit_scored_at: now,
         company_fit_version: SCORE_VERSION,
+        company_fit_summary: buildCompanyFitSummary(company, winner ?? null),
         updated_at: now,
       },
       { onConflict: 'user_id,company_id' },
@@ -917,6 +947,7 @@ export async function syncCompanyFitForCompanies(
       result.contactsSynced += await persistScoresForCompany(
         supabase,
         userId,
+        company,
         companyId,
         scores,
         staleIcpIds,

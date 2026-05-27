@@ -749,7 +749,9 @@ export async function runJobChangeMonitor(
         }
       );
 
-      // 4. Update stored job/company fields and mark checked timestamp
+      // 4. Update stored job/company fields and mark checked timestamp.
+      //    seniority_level is written here so ICP buyer-function mapping stays
+      //    current without waiting for the full enrichment queue to run.
       await admin
         .from('contacts')
         .update({
@@ -758,6 +760,9 @@ export async function runJobChangeMonitor(
             : {}),
           ...(scraped.companyName
             ? { resolved_current_company_name: scraped.companyName }
+            : {}),
+          ...(scraped.seniorityLevel
+            ? { seniority_level: scraped.seniorityLevel }
             : {}),
           ...(newCompanyId !== row.company_id && newCompanyId
             ? { company_id: newCompanyId }
@@ -832,11 +837,13 @@ export async function runJobChangeMonitor(
           );
         }
 
-        // 6d. Queue a full contact re-enrichment.
+        // 6d. Queue a full contact re-enrichment at high priority (1) so the
+        //     enrichment queue processes this before routine manual refreshes (0).
         const { error: queueErr } = await admin
           .from('contacts')
           .update({
             enrichment_refresh_status: 'requested',
+            enrichment_refresh_priority: 1,
             enrichment_refresh_last_error: null,
             updated_at: eventAt,
           })

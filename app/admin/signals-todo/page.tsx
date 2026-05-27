@@ -14,7 +14,6 @@ const AUTO_COMPLETED_SIGNALS = new Set<SignalKey>([
   'funding_round',
   'grant_award',
   'ipo_or_follow_on',
-  'distressed_financing',
   'clinical_trial_registered',
   'phase_transition',
   'trial_failure_or_halt',
@@ -150,9 +149,14 @@ const SIGNAL_FAMILY_MAP: Record<SignalKey, SignalFamily[]> = {
   cmc_hiring: ['external_company_change'],
   clinical_ops_hiring: ['external_company_change'],
   regulatory_hiring: ['external_company_change'],
+  research_hiring: ['external_company_change'],
+  quality_hiring: ['external_company_change'],
+  medical_hiring: ['external_company_change'],
   bd_hiring: ['external_company_change'],
   commercial_hiring: ['external_company_change'],
-  job_surge: ['external_company_change'],
+  data_informatics_hiring: ['external_company_change'],
+  executive_hiring: ['external_company_change'],
+  hiring_expansion: ['external_company_change'],
   new_to_role: ['external_contact_change', 'crm_contact_change'],
   recently_promoted: ['external_contact_change', 'crm_contact_change'],
   recently_changed_company: ['external_contact_change', 'crm_contact_change'],
@@ -178,7 +182,6 @@ const SIGNAL_FAMILY_MAP: Record<SignalKey, SignalFamily[]> = {
   trial_failure_or_halt: ['suppression_signals'],
   program_discontinuation: ['suppression_signals'],
   restructuring: ['suppression_signals'],
-  distressed_financing: ['suppression_signals'],
   acquisition_distraction: ['suppression_signals'],
   leadership_churn: ['external_contact_change', 'suppression_signals'],
   lapsed_customer: ['crm_relationship_state', 'suppression_signals'],
@@ -186,6 +189,7 @@ const SIGNAL_FAMILY_MAP: Record<SignalKey, SignalFamily[]> = {
   prior_active_deal_relationship: ['crm_relationship_state', 'external_contact_change'],
   prior_pipeline_relationship: ['crm_relationship_state', 'external_contact_change'],
   key_contact_departed: ['external_contact_change'],
+  terminated_deal: ['external_company_change'],
 };
 
 type ChecklistState = Partial<Record<SignalKey, boolean>>;
@@ -474,8 +478,6 @@ export default function AdminSignalsTodoPage() {
                                 <th className="px-3 py-2 font-medium">Signal</th>
                                 <th className="px-3 py-2 font-medium">Scope</th>
                                 <th className="px-3 py-2 font-medium">Families</th>
-                                <th className="px-3 py-2 font-medium">Strength</th>
-                                <th className="px-3 py-2 font-medium">Confidence</th>
                                 <th className="px-3 py-2 font-medium">Decay</th>
                                 <th className="px-3 py-2 font-medium">Notes</th>
                               </tr>
@@ -513,8 +515,6 @@ export default function AdminSignalsTodoPage() {
                                     </td>
                                     <td className="px-3 py-3 align-top text-slate-600">{scopeLabel(entry)}</td>
                                     <td className="px-3 py-3 align-top text-slate-600">{familyLabels(entry.signalKey)}</td>
-                                    <td className="px-3 py-3 align-top text-slate-600">{entry.defaultStrength}</td>
-                                    <td className="px-3 py-3 align-top text-slate-600">{entry.defaultConfidence}</td>
                                     <td className="px-3 py-3 align-top text-slate-600">{entry.decayDays}d</td>
                                     <td className="px-3 py-3 align-top text-slate-600">{entry.notes ?? '—'}</td>
                                   </tr>

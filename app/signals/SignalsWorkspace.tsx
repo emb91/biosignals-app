@@ -50,8 +50,7 @@ type SignalFeedRow = {
   dimensions: string[];
   buyerFunctions: string[];
   intentMechanisms: string[];
-  defaultStrength: string;
-  defaultConfidence: string;
+
   eventAt: string | null;
   observedAt: string;
   evidenceExcerpt: string | null;
@@ -80,7 +79,6 @@ type SignalFeedRow = {
     summaryShort: string | null;
     whyNow: string | null;
     suggestedAngle: string | null;
-    confidenceLabel: string | null;
   } | null;
 };
 
@@ -198,23 +196,6 @@ function readinessCategoryPillClass(dimension: string) {
   }
 }
 
-function strengthNumber(strength?: string | null) {
-  switch (strength) {
-    case 'strong':
-      return 3;
-    case 'medium':
-      return 2;
-    case 'weak':
-      return 1;
-    default:
-      return 2;
-  }
-}
-
-function strengthLabel(strength?: string | null) {
-  return `${toTitleCase(strength || 'medium')} (${strengthNumber(strength)})`;
-}
-
 function impactScore(row: SignalFeedRow) {
   return getSignalBaseImpactScore(row.signalKey as SignalKey);
 }
@@ -247,16 +228,6 @@ function effectPillClass(row: SignalFeedRow) {
   return 'border-[rgba(45,138,138,0.2)] bg-[rgba(238,251,250,0.92)] text-[#2d8a8a]';
 }
 
-function confidencePillClass(confidence?: string | null) {
-  switch (confidence) {
-    case 'high':
-      return 'border-[rgba(45,138,138,0.2)] bg-[rgba(238,251,250,0.92)] text-[#2d8a8a]';
-    case 'low':
-      return 'border-[rgba(220,107,61,0.18)] bg-[rgba(255,244,238,0.92)] text-[#dc6b3d]';
-    default:
-      return 'border-[rgba(73,111,157,0.18)] bg-[rgba(245,248,254,0.92)] text-[#496f9d]';
-  }
-}
 
 function readinessToneClass(label?: string | null) {
   switch (label) {
@@ -953,9 +924,6 @@ export function SignalsWorkspace({
                                   <span className={cn('inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-medium', effectPillClass(selectedSignal))}>
                                     {effectLabel(selectedSignal)}
                                   </span>
-                                  <span className={cn('inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-medium', confidencePillClass(selectedSignal.defaultConfidence))}>
-                                    {toTitleCase(selectedSignal.defaultConfidence)} confidence
-                                  </span>
                                   <span className={cn('inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-medium', readinessCategoryPillClass(primaryDimension(selectedSignal)))}>
                                     {dimensionLabel(primaryDimension(selectedSignal))}
                                   </span>
@@ -997,14 +965,6 @@ export function SignalsWorkspace({
                                           {signedImpactScore(selectedSignal)}
                                         </p>
                                       </div>
-                                    </div>
-                                    <div className="mt-3 flex items-center justify-between gap-4 border-t border-[rgba(13,53,71,0.08)] pt-3">
-                                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">
-                                        Strength band
-                                      </p>
-                                      <p className="text-sm font-medium text-[#0d3547]">
-                                        {strengthLabel(selectedSignal.defaultStrength)}
-                                      </p>
                                     </div>
                                   </div>
                                 </div>

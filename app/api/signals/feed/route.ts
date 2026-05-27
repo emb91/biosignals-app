@@ -16,8 +16,6 @@ type SignalFeedItem = {
   dimensions: string[];
   buyerFunctions: string[];
   intentMechanisms: string[];
-  defaultStrength: string;
-  defaultConfidence: string;
   eventAt: string | null;
   observedAt: string;
   evidenceExcerpt: string | null;
@@ -46,7 +44,6 @@ type SignalFeedItem = {
     summaryShort: string | null;
     whyNow: string | null;
     suggestedAngle: string | null;
-    confidenceLabel: string | null;
   } | null;
 };
 
@@ -100,8 +97,6 @@ export async function GET(request: Request) {
         dimensions,
         buyer_functions,
         intent_mechanisms,
-        default_strength,
-        default_confidence,
         event_at,
         observed_at,
         evidence_excerpt,
@@ -154,21 +149,32 @@ export async function GET(request: Request) {
     const rows = Array.isArray(data) ? data : [];
     const activeRows = rows.filter((row: any) => !row.company?.archived_at && !row.contact?.archived_at);
     const companyIds = [...new Set(activeRows.map((row: any) => normalizeString(row.company_id)).filter(Boolean))] as string[];
+    const contactIds = [...new Set(activeRows.map((row: any) => normalizeString(row.contact_id)).filter(Boolean))] as string[];
 
-    const [readinessResult, reasonsResult] = await Promise.all([
+    const readinessSelect =
+      'company_id,overall_score,overall_label,new_budget_score,new_budget_label,new_needs_score,new_needs_label,new_people_score,new_people_label,new_strategy_score,new_strategy_label,caution_score,caution_label';
+    const contactReadinessSelect =
+      'contact_id,overall_score,overall_label,new_budget_score,new_budget_label,new_needs_score,new_needs_label,new_people_score,new_people_label,new_strategy_score,new_strategy_label,caution_score,caution_label';
+
+    const [readinessResult, contactReadinessResult, reasonsResult] = await Promise.all([
       companyIds.length
         ? supabase
             .from('account_readiness_snapshots')
-            .select(
-              'company_id,overall_score,overall_label,new_budget_score,new_budget_label,new_needs_score,new_needs_label,new_people_score,new_people_label,new_strategy_score,new_strategy_label,caution_score,caution_label'
-            )
+            .select(readinessSelect)
             .eq('user_id', user.id)
             .in('company_id', companyIds)
+        : Promise.resolve({ data: [], error: null }),
+      contactIds.length
+        ? supabase
+            .from('contact_readiness_snapshots')
+            .select(contactReadinessSelect)
+            .eq('user_id', user.id)
+            .in('contact_id', contactIds)
         : Promise.resolve({ data: [], error: null }),
       companyIds.length
         ? supabase
             .from('account_reason_snapshots')
-            .select('company_id,summary_short,why_now,suggested_angle,confidence_label')
+            .select('company_id,summary_short,why_now,suggested_angle')
             .eq('user_id', user.id)
             .in('company_id', companyIds)
         : Promise.resolve({ data: [], error: null }),
@@ -177,17 +183,26 @@ export async function GET(request: Request) {
     if (readinessResult.error) {
       console.error('[GET /api/signals/feed] readiness error', readinessResult.error);
     }
+    if (contactReadinessResult.error) {
+      console.error('[GET /api/signals/feed] contact readiness error', contactReadinessResult.error);
+    }
     if (reasonsResult.error) {
       console.error('[GET /api/signals/feed] reasons error', reasonsResult.error);
     }
 
     const readinessByCompanyId = new Map((readinessResult.data || []).map((row: any) => [row.company_id, row]));
+    const readinessByContactId = new Map((contactReadinessResult.data || []).map((row: any) => [row.contact_id, row]));
     const reasonByCompanyId = new Map((reasonsResult.data || []).map((row: any) => [row.company_id, row]));
 
     const mapped: SignalFeedItem[] = activeRows.map((row: any) => {
       const companyId = normalizeString(row.company_id);
       const contactId = normalizeString(row.contact_id);
-      const readiness = companyId ? readinessByCompanyId.get(companyId) ?? null : null;
+      const readiness =
+        contactIdParam && contactId
+          ? readinessByContactId.get(contactId) ?? null
+          : companyId
+            ? readinessByCompanyId.get(companyId) ?? null
+            : null;
       const reason = companyId ? reasonByCompanyId.get(companyId) ?? null : null;
       return {
         id: String(row.id),
@@ -204,8 +219,6 @@ export async function GET(request: Request) {
         dimensions: normalizeStringArray(row.dimensions),
         buyerFunctions: normalizeStringArray(row.buyer_functions),
         intentMechanisms: normalizeStringArray(row.intent_mechanisms),
-        defaultStrength: normalizeString(row.default_strength) ?? 'medium',
-        defaultConfidence: normalizeString(row.default_confidence) ?? 'medium',
         eventAt: normalizeString(row.event_at),
         observedAt: normalizeString(row.observed_at) ?? new Date().toISOString(),
         evidenceExcerpt: normalizeString(row.evidence_excerpt),
@@ -240,7 +253,6 @@ export async function GET(request: Request) {
               summaryShort: normalizeString(reason.summary_short),
               whyNow: normalizeString(reason.why_now),
               suggestedAngle: normalizeString(reason.suggested_angle),
-              confidenceLabel: normalizeString(reason.confidence_label),
             }
           : null,
       };

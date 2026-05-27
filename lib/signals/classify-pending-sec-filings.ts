@@ -30,7 +30,16 @@ import {
 } from '@/lib/signals/sec-edgar-client';
 import { discoverPrimaryDoc } from '@/lib/signals/sync-sec-delta';
 
-const CLASSIFIABLE_8K_ITEMS = ['1.01', '5.02', '8.01'];
+// '1.01', '5.02', '8.01' — ambiguous; full LLM classification required.
+// Others below — structurally unambiguous; classifySecFiling returns a
+// deterministic result at zero LLM cost (but they still need the body fetch
+// to populate rationale and effective_date from the filing text).
+const CLASSIFIABLE_8K_ITEMS = [
+  '1.01', '1.02', '5.02', '8.01',  // needs LLM — content-dependent (1.02 = termination)
+  '2.01', '5.01', '1.03',          // deterministic: acquisition / change-of-control / bankruptcy
+  '2.03', '2.04', '2.05', '2.06',  // deterministic: financing / restructuring
+  '3.01',                           // deterministic: delisting notice
+];
 const DEFAULT_BATCH_SIZE = 10;
 const FORM_424B_LIKE = ['424B1', '424B2', '424B3', '424B4', '424B5', '424B7'];
 

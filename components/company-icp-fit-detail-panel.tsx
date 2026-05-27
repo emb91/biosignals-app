@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import '@/app/leads/contacts-layout.css';
 
@@ -62,6 +62,7 @@ export interface CompanyFitDetails {
   company_fit_coverage: number | null;
   company_fit_scored_at: string | null;
   company_fit_version: string | null;
+  company_fit_summary?: string | null;
   matched_icp_id: string | null;
   matched_icp_name: string | null;
   winning_breakdown: CompanyFitBreakdown | null;
@@ -136,12 +137,15 @@ function renderFitCriterionPills(
   key: CompanyFitComponentKey,
   component: CompanyFitBreakdownComponent,
 ) {
-  const exactPillLabels = getExactCompanyFitPillLabels(key, component.detail);
+  const matchPills = component.matchedValues ?? [];
+  const missPills = component.unmatchedValues ?? [];
+  const hasPills = matchPills.length > 0 || missPills.length > 0;
+
   return (
-    <div className="mt-1.5 space-y-1">
-      {component.matchedValues && component.matchedValues.length > 0 && (
+    <div className="mt-1.5">
+      {matchPills.length > 0 ? (
         <div className="flex flex-wrap gap-1">
-          {component.matchedValues.map((v) => (
+          {matchPills.map((v) => (
             <span
               key={v}
               className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal"
@@ -150,31 +154,8 @@ function renderFitCriterionPills(
             </span>
           ))}
         </div>
-      )}
-      {!(component.matchedValues && component.matchedValues.length > 0) &&
-        exactPillLabels.length > 0 && (
-          <div className="flex flex-wrap gap-1">
-            {exactPillLabels.map((label) => (
-              <span
-                key={label}
-                className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal"
-              >
-                {label}
-              </span>
-            ))}
-          </div>
-        )}
-      {component.unmatchedValues && component.unmatchedValues.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {component.unmatchedValues.map((v) => (
-            <span
-              key={v}
-              className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500"
-            >
-              {v}
-            </span>
-          ))}
-        </div>
+      ) : (
+        <p className="text-[11px] leading-snug text-slate-400">No overlap with ICP.</p>
       )}
     </div>
   );
@@ -184,14 +165,6 @@ function normalizeBreakdown(row: CompanyFitIcpScoreRow): CompanyFitBreakdown | n
   const raw = row.breakdown;
   if (!raw || typeof raw !== 'object' || !('components' in raw)) return null;
   return raw as CompanyFitBreakdown;
-}
-
-function toSingleSentence(value: string): string {
-  const text = value.replace(/\s+/g, ' ').trim();
-  if (!text) return '';
-  const firstSentence = text.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? text;
-  const trimmed = firstSentence.trim();
-  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
 }
 
 export function CompanyIcpFitDetailPanel({
@@ -213,10 +186,6 @@ export function CompanyIcpFitDetailPanel({
   embedded?: boolean;
   companyId?: string | null;
 }) {
-  const fitSummaryCacheRef = useRef(new Map<string, string | null>());
-  const [fitSummary, setFitSummary] = useState<string | null>(null);
-  const [fitSummaryLoading, setFitSummaryLoading] = useState(false);
-
   const [expandedBars, setExpandedBars] = useState<Set<string>>(new Set());
   const [otherIcpsOpen, setOtherIcpsOpen] = useState(false);
 
@@ -229,49 +198,11 @@ export function CompanyIcpFitDetailPanel({
     });
   }, []);
 
-  useEffect(() => {
-    if (!embedded || !companyId) {
-      setFitSummary(null);
-      setFitSummaryLoading(false);
-      return;
-    }
-
-    const cache = fitSummaryCacheRef.current;
-    if (cache.has(companyId)) {
-      setFitSummary(cache.get(companyId) ?? null);
-      setFitSummaryLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    setFitSummary(null);
-    setFitSummaryLoading(true);
-
-    fetch(`/api/companies/${encodeURIComponent(companyId)}/fit-summary`, { method: 'POST' })
-      .then(async (res) => {
-        const data = (await res.json().catch(() => ({}))) as { summary?: unknown };
-        if (!res.ok || cancelled) return;
-        const text = typeof data.summary === 'string' ? toSingleSentence(data.summary) : '';
-        cache.set(companyId, text || null);
-        if (!cancelled) setFitSummary(text || null);
-      })
-      .catch(() => {
-        if (!cancelled) {
-          cache.set(companyId, null);
-          setFitSummary(null);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setFitSummaryLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [embedded, companyId]);
-
   const headerFit = details?.company_fit_score ?? tableCompanyFitScore;
-  const displayedFitSummary = fitSummary ? toSingleSentence(fitSummary) : null;
+  const displayedFitSummary =
+    typeof details?.company_fit_summary === 'string' && details.company_fit_summary.trim()
+      ? details.company_fit_summary.trim()
+      : null;
 
   type HeroCritRow = { ok: FitCriterionOk; text: string; val: string; fitKey?: CompanyFitComponentKey };
 
@@ -529,9 +460,6 @@ export function CompanyIcpFitDetailPanel({
     <div className="flex flex-col gap-3.5">
       {embedded && companyId && (
         <>
-          {fitSummaryLoading && !displayedFitSummary && (
-            <p className="text-xs text-gray-400">Summarizing fit…</p>
-          )}
           {displayedFitSummary && (
             <div className="rounded-lg border border-slate-200/80 bg-white/90 px-3 py-2.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
               <p className="text-sm leading-relaxed text-gray-800">{displayedFitSummary}</p>

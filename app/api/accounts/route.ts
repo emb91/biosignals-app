@@ -280,6 +280,7 @@ export async function GET(request: Request) {
         data_provenance_imported_at: row.uc_added_at,
         readiness_label: row.readiness_label,
         readiness_score: displayedReadiness,
+        raw_readiness_score: rawReadiness,
         priority_score: basePriority,
         crm_status: crmEntry?.state ?? null,
         crm_deal_stage_label: crmEntry?.dealStageLabel ?? null,

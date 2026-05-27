@@ -5,7 +5,7 @@
  * (populated by syncNihGrantsDelta) for awards matching the company's
  * normalized name + LLM-derived aliases. Emits `grant_award` signal events,
  * which already map to the `new_budget` readiness dimension in the catalog
- * (defaultStrength: medium, decayDays: 240).
+ * (baseImpactScore: 48, decayDays: 240).
  *
  * Why org_name-only matching (not the SEC-style CIK-first approach)?
  *  - NIH RePORTER doesn't carry a stable cross-system identifier for the

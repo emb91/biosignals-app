@@ -272,6 +272,17 @@ interface HubSpotCrmFetchState {
   error: string | null;
 }
 
+interface PanelSummaries {
+  contactSummary: string;
+  fitSummary: string;
+}
+
+interface PanelSummariesFetchState {
+  loading: boolean;
+  data: PanelSummaries | null;
+  error: string | null;
+}
+
 interface Lead {
   id: string;
   full_name: string | null;
@@ -346,6 +357,8 @@ interface Lead {
   attribution_computed_at?: string | null;
   contact_readiness_label?: string | null;
   contact_readiness_score?: number | null;
+  contact_panel_summary?: string | null;
+  contact_fit_summary?: string | null;
   /** Mirrored from contact_readiness_snapshots.priority_score by the readiness cron. */
   priority_score?: number | null;
   companies: {
@@ -1212,12 +1225,16 @@ export function ContactsWorkspace() {
   const [companyFitByCompanyId, setCompanyFitByCompanyId] = useState<Record<string, CompanyFitFetchState>>({});
   const [contactFitByContactId, setContactFitByContactId] = useState<Record<string, ContactFitFetchState>>({});
   const [hubspotCrmByContactId, setHubspotCrmByContactId] = useState<Record<string, HubSpotCrmFetchState>>({});
+  const [panelSummariesByContactId, setPanelSummariesByContactId] = useState<Record<string, PanelSummariesFetchState>>({});
+  const [failedProfilePhotoByContactId, setFailedProfilePhotoByContactId] = useState<Record<string, true>>({});
   const companyFitCacheRef = useRef(companyFitByCompanyId);
   companyFitCacheRef.current = companyFitByCompanyId;
   const contactFitCacheRef = useRef(contactFitByContactId);
   contactFitCacheRef.current = contactFitByContactId;
   const hubspotCrmCacheRef = useRef(hubspotCrmByContactId);
   hubspotCrmCacheRef.current = hubspotCrmByContactId;
+  const panelSummariesCacheRef = useRef(panelSummariesByContactId);
+  panelSummariesCacheRef.current = panelSummariesByContactId;
   const [enrichmentVisuals, setEnrichmentVisuals] = useState<Record<string, EnrichmentVisualState>>({});
   const [progressNow, setProgressNow] = useState(() => Date.now());
 
@@ -1231,6 +1248,18 @@ export function ContactsWorkspace() {
   useEffect(() => {
     if (!loading && !user) router.push('/login');
   }, [user, loading, router]);
+
+  useEffect(() => {
+    if (!selectedLeadId) return;
+    const selected = leads.find((lead) => lead.id === selectedLeadId);
+    if (!selected?.profile_photo_url) return;
+    setFailedProfilePhotoByContactId((prev) => {
+      if (!prev[selectedLeadId]) return prev;
+      const next = { ...prev };
+      delete next[selectedLeadId];
+      return next;
+    });
+  }, [selectedLeadId, leads]);
 
   const fetchLeads = useCallback(async (silent = false) => {
     if (!user) return;
@@ -1961,6 +1990,8 @@ export function ContactsWorkspace() {
   const selectedContactFit = selectedContactFitState?.data ?? null;
   const selectedHubSpotCrmState = selectedLeadId ? hubspotCrmByContactId[selectedLeadId] ?? null : null;
   const selectedHubSpotCrm = selectedHubSpotCrmState?.data ?? null;
+  const selectedPanelSummariesState = selectedLeadId ? panelSummariesByContactId[selectedLeadId] ?? null : null;
+  const selectedPanelSummaries = selectedPanelSummariesState?.data ?? null;
   const selectedCompanyId = selectedLead?.company_id ?? null;
   const selectedCompanyFitState = selectedCompanyId ? companyFitByCompanyId[selectedCompanyId] ?? null : null;
   const selectedCompanyFit = selectedCompanyFitState?.data ?? null;
@@ -2173,6 +2204,59 @@ export function ContactsWorkspace() {
             loading: false,
             data: null,
             error: error instanceof Error ? error.message : 'Failed to load HubSpot CRM context.',
+          },
+        }));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedLeadId, selectedPreview]);
+
+  useEffect(() => {
+    if (!selectedLeadId) return;
+    if (selectedPreview !== 'contact' && selectedPreview !== 'scoring') return;
+
+    let cancelled = false;
+    setPanelSummariesByContactId((prev) => ({
+      ...prev,
+      [selectedLeadId]: {
+        loading: true,
+        data: prev[selectedLeadId]?.data ?? null,
+        error: null,
+      },
+    }));
+
+    (async () => {
+      try {
+        const response = await fetch(`/api/leads/${selectedLeadId}/panel-summaries`);
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(result.error || 'Failed to load panel summaries.');
+        }
+        if (cancelled) return;
+
+        setPanelSummariesByContactId((prev) => ({
+          ...prev,
+          [selectedLeadId]: {
+            loading: false,
+            data: {
+              contactSummary:
+                typeof result.contactSummary === 'string' ? result.contactSummary.trim() : '',
+              fitSummary: typeof result.fitSummary === 'string' ? result.fitSummary.trim() : '',
+            },
+            error: null,
+          },
+        }));
+      } catch (error) {
+        if (cancelled) return;
+        setPanelSummariesByContactId((prev) => ({
+          ...prev,
+          [selectedLeadId]: {
+            loading: false,
+            data: null,
+            error: error instanceof Error ? error.message : 'Failed to load panel summaries.',
           },
         }));
       }
@@ -3326,11 +3410,17 @@ export function ContactsWorkspace() {
                             })()}
                         </div>
                         <div className="flex items-start gap-2 flex-shrink-0">
-                          {selectedLead.profile_photo_url ? (
+                          {selectedLead.profile_photo_url && !failedProfilePhotoByContactId[selectedLead.id] ? (
                             <img
                               src={selectedLead.profile_photo_url}
                               alt=""
                               className="h-[3.375rem] w-[3.375rem] shrink-0 rounded-xl object-cover shadow-sm ring-1 ring-black/5"
+                              onError={() =>
+                                setFailedProfilePhotoByContactId((prev) => ({
+                                  ...prev,
+                                  [selectedLead.id]: true,
+                                }))
+                              }
                             />
                           ) : (
                             <div className="flex h-[3.375rem] w-[3.375rem] shrink-0 items-center justify-center rounded-xl bg-gray-200 text-lg font-medium text-gray-500 shadow-sm ring-1 ring-black/5">
@@ -3661,6 +3751,23 @@ export function ContactsWorkspace() {
                           ) : (
                             /* ── View mode ── */
                             <div className="space-y-4">
+                              {(() => {
+                                const contactSummaryText =
+                                  selectedPanelSummaries?.contactSummary?.trim() ||
+                                  selectedLead.contact_panel_summary?.trim() ||
+                                  '';
+                                if (!selectedPanelSummariesState?.loading && !contactSummaryText) return null;
+                                return (
+                                <div className="rounded-xl border border-[rgba(13,53,71,0.1)] bg-[rgba(13,53,71,0.03)] px-3 py-2.5">
+                                  <p className="text-[12.5px] leading-[1.55] text-[#1f475a]">
+                                    {selectedPanelSummariesState?.loading
+                                      ? 'Summarising contact context...'
+                                      : contactSummaryText}
+                                  </p>
+                                </div>
+                                );
+                              })()}
+
                               {selectedLead.contact_bio && selectedLead.contact_bio.length > 0 && (
                                 <div className="overflow-hidden rounded-xl border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
                                   <button
@@ -4357,7 +4464,20 @@ export function ContactsWorkspace() {
                           })()
                         ) : selectedPreview === 'signals' ? (
                           /* ── Signals view ── */
-                          <EntitySignalsList contactId={selectedLead.id} />
+                          <EntitySignalsList
+                            contactId={selectedLead.id}
+                            effectiveReadinessScore={selectedLead.contact_readiness_score ?? null}
+                            crmCappedReason={(() => {
+                              const contactLabel = selectedLead.full_name || 'This contact';
+                              if (selectedLead.hubspot_lead_state === 'customer') {
+                                return `${contactLabel} is a closed-won contact. Readiness is low as you have already sold to this company.`;
+                              }
+                              if (selectedLead.hubspot_lead_state === 'dormant') {
+                                return `${contactLabel} is a closed-lost contact. Readiness is low because the last deal was lost.`;
+                              }
+                              return null;
+                            })()}
+                          />
                         ) : selectedPreview === 'priority' ? (
                           /* ── Priority view — numbers only; details live in Fit + Signals tabs. ── */
                           (() => {
@@ -4448,16 +4568,26 @@ export function ContactsWorkspace() {
                         ) : (
                           /* ── Scoring view ── */
                           <div className="space-y-3">
+                            {(() => {
+                              const fitSummaryText =
+                                selectedPanelSummaries?.fitSummary?.trim() ||
+                                selectedLead.contact_fit_summary?.trim() ||
+                                '';
+                              if (!selectedPanelSummariesState?.loading && !fitSummaryText) return null;
+                              return (
+                              <div className="rounded-xl border border-[rgba(13,53,71,0.1)] bg-[rgba(13,53,71,0.03)] px-3.5 py-3">
+                                <p className="text-[12.5px] leading-[1.55] text-[#1f475a]">
+                                  {selectedPanelSummariesState?.loading
+                                    ? 'Summarising fit...'
+                                    : fitSummaryText}
+                                </p>
+                              </div>
+                              );
+                            })()}
+
                             <div className="space-y-2">
                               <h2 className="text-lg font-semibold text-gray-900 leading-tight">Lead prioritisation</h2>
                               <div className="flex flex-wrap gap-1.5">
-                                {(selectedLead.matched_icp_index != null || selectedLead.matched_icp_name) && (
-                                  <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2.5 py-0.5 text-xs font-medium text-arcova-teal">
-                                    {selectedLead.matched_icp_index != null
-                                      ? `Best fit ICP-${selectedLead.matched_icp_index}`
-                                      : `Best fit: ${selectedLead.matched_icp_name}`}
-                                  </span>
-                                )}
                                 {selectedContactFit?.contact_fit_score != null && (
                                   <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
                                     Contact fit {formatPercentValue(selectedContactFit.contact_fit_score)}
@@ -4465,8 +4595,6 @@ export function ContactsWorkspace() {
                                 )}
                               </div>
                             </div>
-                            {renderOverallFitActionCard()}
-                            {renderCompanyIcpFitScoresCard()}
                             {renderContactFitScoresCard()}
                           </div>
                         )}

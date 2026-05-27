@@ -5,6 +5,7 @@ import { syncContactFitForContacts } from '@/lib/contact-fit';
 import { syncCompanyFitForCompanies } from '@/lib/company-fit';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { ensureCompanyAliases } from '@/lib/signals/company-aliases';
+import { ensureCompanyCik } from '@/lib/signals/company-cik';
 
 export type EnrichedImportRecord = {
   raw_upload_id: string;
@@ -306,6 +307,11 @@ async function upsertCompany(
     // Eager: populate aliases in the background. Doesn't block the import.
     void ensureCompanyAliases(createAdminClient(), insertedId).catch((err) => {
       console.error(`[import-ingestion] eager ensureCompanyAliases failed for ${insertedId} (${context}):`, err);
+    });
+    // Eager: resolve CIK in the background so funding signals use precise CIK
+    // matching instead of fuzzy name matching from the first run.
+    void ensureCompanyCik(createAdminClient(), insertedId).catch((err) => {
+      console.warn(`[import-ingestion] eager ensureCompanyCik failed for ${insertedId} (${context}):`, err instanceof Error ? err.message : String(err));
     });
   }
   return insertedId;

@@ -20,6 +20,97 @@ import type { ReadinessDimension, SignalKey } from '@/lib/signals/readiness-type
 
 const MAX_INPUT_CHARS = 28_000; // ~7K tokens worth of body text — covers the cover page + first sections where the action lives
 
+// ── Item-code fast paths ──────────────────────────────────────────────────────
+// 8-K filings contain section headings like "Item 1.01", "Item 5.02" etc.
+// We extract these from the body text to short-circuit LLM calls when the
+// category can be determined structurally.
+
+/**
+ * Extract 8-K item codes (e.g. "1.01", "5.02") present in the filing body.
+ * Supplements item codes already stored in sec_filings_local.items, which can
+ * be incomplete for legacy rows ingested before the V2 extractor shipped.
+ */
+export function extractItemCodesFromText(text: string): string[] {
+  const codes = new Set<string>();
+  const matches = text.matchAll(/\bitem\s+(\d+\.\d+)/gi);
+  for (const m of matches) codes.add(m[1]);
+  return [...codes];
+}
+
+/**
+ * Item codes that are NEVER actionable for our signal set.
+ * If ALL items in a filing are from this set, return null immediately — no LLM call.
+ */
+const NEVER_ACTIONABLE_ITEM_CODES = new Set([
+  '2.02', // Results of operations (earnings release) — huge volume, never a signal
+  '7.01', // Regulation FD disclosure (voluntary analyst communication)
+  '9.01', // Financial statements and exhibits (metadata; always accompanies other items)
+  '4.01', // Change of certifying accountant
+  '3.03', // Material modification to rights of security holders
+  '5.03', // Amendments to articles of incorporation or bylaws
+  '5.04', // Temporary suspension of trading under employee benefit plans
+  '5.05', // Amendment to code of ethics
+  '5.07', // Submission of matters to security holder vote
+  '5.08', // Exempt solicitation
+]);
+
+/**
+ * Item codes that deterministically map to a category without needing an LLM
+ * call — used when no genuinely ambiguous items (1.01, 1.02, 8.01) are present
+ * alongside them. Detail fields (counterparty, person name, etc.) will be empty
+ * but the signal category and rationale are accurate.
+ */
+const DETERMINISTIC_ITEM_MAP: Readonly<
+  Record<string, { category: Sec8KCategory; rationale: (entityName: string | null) => string }>
+> = {
+  '5.01': {
+    category: 'm_and_a_target',
+    rationale: (n) =>
+      `${n ?? 'Company'} disclosed a change in control — they are being acquired or a controlling stake has transferred.`,
+  },
+  '1.03': {
+    category: 'restructuring',
+    rationale: (n) => `${n ?? 'Company'} filed for bankruptcy or receivership.`,
+  },
+  '2.01': {
+    category: 'acquisition_distraction',
+    rationale: (n) => `${n ?? 'Company'} completed an acquisition or disposition of assets.`,
+  },
+  '2.03': {
+    category: 'financing',
+    rationale: (n) =>
+      `${n ?? 'Company'} created a direct financial obligation — debt facility, term loan, or notes issued.`,
+  },
+  '2.04': {
+    category: 'restructuring',
+    rationale: (n) =>
+      `${n ?? 'Company'} disclosed a triggering event that accelerates or increases a direct financial obligation.`,
+  },
+  '2.05': {
+    category: 'restructuring',
+    rationale: (n) =>
+      `${n ?? 'Company'} disclosed costs from exit or disposal activities — likely restructuring or layoffs.`,
+  },
+  '2.06': {
+    category: 'restructuring',
+    rationale: (n) => `${n ?? 'Company'} disclosed a material impairment of assets.`,
+  },
+  '3.01': {
+    category: 'restructuring',
+    rationale: (n) =>
+      `${n ?? 'Company'} received a notice of failure to satisfy continued listing requirements.`,
+  },
+};
+
+/**
+ * Item codes where the category genuinely can't be inferred from the code alone.
+ * '1.01' — material agreement entered; could be any deal type, financing, or employment.
+ * '8.01' — catch-all other events; anything.
+ * '1.02' is NOT here: termination of agreement is always terminated_deal — the LLM
+ * extracts counterparty_type/agreement_type/termination_reason from the body.
+ */
+const AMBIGUOUS_ITEM_CODES = new Set(['1.01', '8.01']);
+
 // ── Category taxonomy ──────────────────────────────────────────────────────
 // Each category maps directly to a signal_key the catalog already knows about.
 // 'other' means "nothing actionable" → no signal emitted, but we still cache
@@ -36,6 +127,7 @@ export type Sec8KCategory =
   | 'restructuring'
   | 'leadership_churn'         // 5.02 events
   | 'financing'                // non-3.02 debt/credit/notes
+  | 'terminated_deal'          // 1.02 — termination of a material definitive agreement
   | 'other';
 
 export type Sec424BCategory =
@@ -67,6 +159,11 @@ export type SecFilingClassification = {
   buyer_function?: string | null;             // mapped from role when possible
   circumstances?: string | null;              // "resignation", "termination", "retirement"
 
+  // Termination fields (terminated_deal / Item 1.02)
+  agreement_type?: 'license' | 'partnership' | 'collaboration' | 'service_agreement' | 'co_development' | 'other' | null;
+  counterparty_type?: 'biotech' | 'pharma' | 'cro' | 'cmo' | 'academic' | 'government' | 'other' | null;
+  termination_reason?: 'strategic' | 'program_failure' | 'completion' | 'cause' | 'unknown' | null;
+
   // 424B proceeds fields
   offering_type?: 'ipo' | 'follow_on' | 'shelf_takedown' | 'atm' | null;
   gross_proceeds_usd?: number | null;
@@ -95,11 +192,13 @@ export function signalKeyForClassification(
       return { signalKey: 'milestone_payment', dimensions: ['new_budget'] };
     case 'acquisition_distraction':
     case 'm_and_a_target':
-      return { signalKey: 'acquisition_distraction', dimensions: ['caution'] };
+      return { signalKey: 'ma_event', dimensions: ['new_budget', 'new_strategy', 'new_people', 'new_needs'] };
     case 'restructuring':
       return { signalKey: 'restructuring', dimensions: ['caution'] };
     case 'leadership_churn':
       return { signalKey: 'leadership_churn', dimensions: ['caution', 'new_people'] };
+    case 'terminated_deal':
+      return { signalKey: 'terminated_deal', dimensions: ['new_strategy', 'new_needs'] };
     case 'financing':
       return { signalKey: 'funding_round', dimensions: ['new_budget'] };
     case 'ipo_or_follow_on':
@@ -137,6 +236,7 @@ Classify the filing into EXACTLY ONE of these categories based on what the filin
 - "restructuring" — layoffs, reorganization, program prioritization, write-downs
 - "leadership_churn" — Item 5.02 — executive officer or director appointment/departure
 - "financing" — non-Item-3.02 financing: credit facility, term loan, senior notes, convertible notes, debt issuance
+- "terminated_deal" — the company terminated (ended or discontinued) a previously disclosed agreement, collaboration, or service contract (Item 1.02)
 - "other" — anything else (real estate, employment agreements, routine matters, technical SEC items)
 
 Return ONLY a JSON object (no prose, no markdown fences) with this shape, including only fields that apply:
@@ -155,6 +255,12 @@ Return ONLY a JSON object (no prose, no markdown fences) with this shape, includ
   "deal_structure": "<short description or null>",
   "territory": "<short description or null>",
   "therapy_area": "<short description or null>",
+
+  // For terminated_deal (Item 1.02):
+  "counterparty": "<name of the other party, or null>",
+  "agreement_type": "license" | "partnership" | "collaboration" | "service_agreement" | "co_development" | "other" | null,
+  "counterparty_type": "biotech" | "pharma" | "cro" | "cmo" | "academic" | "government" | "other" | null,
+  "termination_reason": "strategic" | "program_failure" | "completion" | "cause" | "unknown" | null,
 
   // For leadership_churn (Item 5.02):
   "person_name": "<full name or null>",
@@ -266,6 +372,12 @@ function coerceStringArray(value: unknown, maxItems = 8, maxLen = 200): string[]
     .slice(0, maxItems);
 }
 
+function coerceEnumOrNull<T extends string>(value: unknown, allowed: readonly T[]): T | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return (allowed as readonly string[]).includes(trimmed) ? (trimmed as T) : null;
+}
+
 function coerceConfidence(value: unknown): 'low' | 'medium' | 'high' {
   if (value === 'high' || value === 'medium' || value === 'low') return value;
   return 'medium';
@@ -282,6 +394,7 @@ const ALLOWED_8K_CATEGORIES: ReadonlySet<Sec8KCategory> = new Set<Sec8KCategory>
   'restructuring',
   'leadership_churn',
   'financing',
+  'terminated_deal',
   'other',
 ]);
 
@@ -320,6 +433,9 @@ function normalize8KClassification(raw: Record<string, unknown>): SecFilingClass
     change_type: changeTypeValue,
     buyer_function: coerceStringOrNull(raw.buyer_function, 60),
     circumstances: coerceStringOrNull(raw.circumstances, 200),
+    agreement_type: coerceEnumOrNull(raw.agreement_type, ['license', 'partnership', 'collaboration', 'service_agreement', 'co_development', 'other'] as const),
+    counterparty_type: coerceEnumOrNull(raw.counterparty_type, ['biotech', 'pharma', 'cro', 'cmo', 'academic', 'government', 'other'] as const),
+    termination_reason: coerceEnumOrNull(raw.termination_reason, ['strategic', 'program_failure', 'completion', 'cause', 'unknown'] as const),
   };
 }
 
@@ -362,6 +478,45 @@ export async function classifySecFiling(input: ClassifyInput): Promise<SecFiling
   }
 
   const is424B = /^424B/i.test(input.formType);
+
+  // ── 8-K item-code fast paths (no LLM) ───────────────────────────────────
+  if (!is424B) {
+    // Merge DB-stored item codes with codes extracted directly from the body
+    // text. The body extraction catches legacy rows where items weren't stored.
+    const bodyItems = extractItemCodesFromText(cleanText);
+    const allItems = [...new Set([...(input.items ?? []), ...bodyItems])].filter(Boolean);
+
+    if (allItems.length > 0) {
+      // Fast-path 1: every item is never-actionable → skip entirely, no LLM.
+      if (allItems.every((c) => NEVER_ACTIONABLE_ITEM_CODES.has(c))) {
+        return null;
+      }
+
+      // Fast-path 2: no ambiguous items present and at least one deterministic
+      // item code found → return classification without LLM. Detail fields
+      // (counterparty, person name, etc.) are left empty but the category,
+      // confidence, and rationale are accurate.
+      const hasAmbiguous = allItems.some((c) => AMBIGUOUS_ITEM_CODES.has(c));
+      if (!hasAmbiguous) {
+        for (const itemCode of allItems) {
+          const det = DETERMINISTIC_ITEM_MAP[itemCode];
+          if (det) {
+            return {
+              category: det.category,
+              confidence: 'high',
+              rationale: det.rationale(input.entityName),
+              key_facts: [],
+              effective_date: input.filingDate,
+            };
+          }
+        }
+      }
+
+      // Enrich the input items for the LLM prompt with the merged set.
+      input = { ...input, items: allItems };
+    }
+  }
+
   const prompt = is424B
     ? build424BPrompt({
         entityName: input.entityName,
