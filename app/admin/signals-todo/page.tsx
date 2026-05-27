@@ -169,8 +169,6 @@ const SIGNAL_FAMILY_MAP: Record<SignalKey, SignalFamily[]> = {
   regional_expansion: ['external_company_change'],
   commercialization_move: ['external_company_change'],
   platform_repositioning: ['external_company_change'],
-  conference_presentation: ['external_company_change'],
-  conference_speaker: ['external_contact_change'],
   publication: ['external_company_change'],
   new_paper_published: ['external_contact_change'],
   patent_filed_or_granted: ['external_company_change'],

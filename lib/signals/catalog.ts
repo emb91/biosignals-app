@@ -230,14 +230,6 @@ export const SIGNAL_CATALOG: SignalDefinition[] = [
     description: 'A new facility often signals expansion and operational investment.',
   },
   {
-    id: 'conference_presentation',
-    scope: 'company',
-    displayName: 'Conference presentation or poster',
-    category: 'Corporate & Strategic',
-    baseWeight: 0.6,
-    description: 'Conference activity can signal active programs and market visibility.',
-  },
-  {
     id: 'publication',
     scope: 'company',
     displayName: 'Publication in peer-reviewed journal',
@@ -421,14 +413,6 @@ export const SIGNAL_CATALOG: SignalDefinition[] = [
     category: 'Publications & Recognition',
     baseWeight: 0.8,
     description: 'A new publication signals active research and potential near-term needs.',
-  },
-  {
-    id: 'conference_speaker',
-    scope: 'contact',
-    displayName: 'Conference speaker',
-    category: 'Publications & Recognition',
-    baseWeight: 0.7,
-    description: 'Speaking at a conference signals visibility and current domain focus.',
   },
   {
     id: 'principal_investigator_new_trial',

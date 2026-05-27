@@ -96,8 +96,6 @@ export type SignalKey =
   | 'regional_expansion'
   | 'commercialization_move'
   | 'platform_repositioning'
-  | 'conference_presentation'
-  | 'conference_speaker'
   | 'publication'
   | 'new_paper_published'
   | 'patent_filed_or_granted'
