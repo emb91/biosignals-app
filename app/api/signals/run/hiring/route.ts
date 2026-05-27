@@ -30,9 +30,14 @@ const HIRING_SIGNAL_KEYS = new Set<SignalKey>([
   'cmc_hiring',
   'clinical_ops_hiring',
   'regulatory_hiring',
+  'research_hiring',
+  'quality_hiring',
+  'medical_hiring',
   'bd_hiring',
   'commercial_hiring',
-  'job_surge',
+  'data_informatics_hiring',
+  'executive_hiring',
+  'hiring_expansion',
 ]);
 
 function messageFromUnknown(error: unknown): string {

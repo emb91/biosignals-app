@@ -206,12 +206,48 @@ export async function recomputeContactReadiness(
     score,
   });
 
+  // Mirror priority_score onto contacts so /api/leads can ORDER BY it without
+  // joining the snapshot table. Best-effort: ignored if the column is missing
+  // (older deploys) so a partial migration state doesn't break recompute.
+  const mirroredPriority = computeMirroredPriority(
+    contactFitRow?.contact_fit_score ?? null,
+    score.overallScore,
+  );
+  if (mirroredPriority !== undefined) {
+    const { error: mirrorErr } = await supabase
+      .from('contacts')
+      .update({ priority_score: mirroredPriority })
+      .eq('id', input.contactId)
+      .eq('user_id', input.userId);
+    if (mirrorErr) {
+      // Don't fail the readiness recompute for the mirror write — the snapshot
+      // is authoritative. Just log.
+      console.warn('Contact priority_score mirror write failed:', mirrorErr.message);
+    }
+  }
+
   return {
     contactId: input.contactId,
     readinessSnapshotId: snapshot.id,
     overallScore: score.overallScore,
     overallLabel: score.overallLabel,
   };
+}
+
+/** Mirror of computePriorityScore in readiness-store. Kept local to avoid a
+ *  cross-module export for a 3-line helper. Returns null when fit is missing,
+ *  undefined when neither input is usable (skip the mirror write). */
+function computeMirroredPriority(
+  fitScore: number | null | undefined,
+  readinessScore: number | null | undefined,
+): number | null | undefined {
+  if (typeof fitScore !== 'number' || !Number.isFinite(fitScore)) {
+    return readinessScore == null ? undefined : null;
+  }
+  if (typeof readinessScore !== 'number' || !Number.isFinite(readinessScore)) return null;
+  const raw = fitScore * (0.5 + 0.5 * readinessScore);
+  if (!Number.isFinite(raw)) return null;
+  return Math.max(0, Math.min(1, raw));
 }
 
 export async function generateAccountReason(
@@ -308,7 +344,6 @@ export async function buildPersistedAccountReadinessContext(
       whyNow: reasonSnapshot.why_now,
       affectedFunctions: reasonSnapshot.affected_functions,
       suggestedAngle: reasonSnapshot.suggested_angle,
-      confidenceLabel: reasonSnapshot.confidence_label,
     },
   };
 }

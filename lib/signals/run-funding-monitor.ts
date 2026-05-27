@@ -143,6 +143,7 @@ async function fetchFilingsForCompany(
   // Name fallback: only Form D filings carry a meaningful normalized entity
   // name in our mirror (8-K and 424B from tracked CIKs only). So name-match
   // here is effectively Form-D-only — which is the intent.
+  console.warn(`[funding] no CIK for company ${company.id} (${company.name}) — falling back to name match. Run ensureCompanyCik to resolve.`);
   const variants = buildCompanyQueryVariants(company.name, company.aliases)
     .map((v) => normalizeCompanyForMatching(v))
     .filter((v) => v.length >= 4);
@@ -340,6 +341,34 @@ export async function runFundingMonitor(input: FundingMonitorInput): Promise<Fun
         100,
       );
 
+      // CIK pin-back: if we used the name-fallback path (no CIK yet) and all
+      // matched Form D filings agree on a single CIK, write it back to
+      // companies.cik so every future run uses the fast, reliable CIK path
+      // instead of repeating the fuzzy name match.
+      // Only fires when cikSet.size === 1 — disagreement means ambiguous match,
+      // skip rather than risk pinning the wrong company.
+      if (!enrichedEntry.cik && filings.length > 0) {
+        const cikSet = new Set(
+          filings
+            .filter((f) => FORM_D_TYPES.has(f.form_type))
+            .map((f) => f.cik)
+            .filter((c): c is string => typeof c === 'string' && Boolean(c)),
+        );
+        if (cikSet.size === 1) {
+          const pinnedCik = [...cikSet][0];
+          try {
+            await admin
+              .from('companies')
+              .update({ cik: pinnedCik, cik_checked_at: new Date().toISOString() })
+              .eq('id', row.id)
+              .is('cik', null); // guard: only write if still unset
+            enrichedEntry.cik = pinnedCik;
+          } catch (pinErr) {
+            console.warn(`[funding] cik pin-back failed for ${row.id}:`, pinErr instanceof Error ? pinErr.message : String(pinErr));
+          }
+        }
+      }
+
       // Build the candidate source-event-id list per source, dedupe in bulk.
       // A single 8-K can produce multiple signals (e.g., 3.02 PIPE +
       // classification-driven licensing_deal), so we collect all candidate IDs
@@ -431,6 +460,30 @@ export async function runFundingMonitor(input: FundingMonitorInput): Promise<Fun
           if (emitted === 'emitted') {
             emittedAny = true;
             emittedSignalTypes.add('funding_round');
+            // Write back SEC funding data to the company record so the profile
+            // shows fresh data without waiting for Apollo re-enrichment.
+            // Only update when this filing is more recent than what's stored.
+            // Deliberately never writes funding_stage — Form D doesn't disclose
+            // the round letter, and overwriting it would break ICP fit scoring.
+            const filingDateIso = filing.date_of_first_sale ?? filing.filing_date;
+            if (filingDateIso) {
+              try {
+                await admin
+                  .from('companies')
+                  .update({
+                    sec_latest_funding_date: filingDateIso,
+                    sec_latest_funding_amount: filing.total_offering_amount ?? filing.total_amount_sold ?? null,
+                    sec_latest_funding_accession: filing.accession_number,
+                  })
+                  .eq('id', row.id)
+                  .or(`sec_latest_funding_date.is.null,sec_latest_funding_date.lt.${filingDateIso}`);
+              } catch (writeErr) {
+                console.warn(
+                  `[funding] sec funding write-back failed for ${row.id}:`,
+                  writeErr instanceof Error ? writeErr.message : String(writeErr),
+                );
+              }
+            }
           } else {
             eventsSkippedAsDuplicates += 1;
           }

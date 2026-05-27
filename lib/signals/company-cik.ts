@@ -1,17 +1,23 @@
 /**
- * Lazy CIK enrichment for companies — populates `companies.cik` from SEC's
- * public `company_tickers.json` registry. Public companies get a CIK match;
- * private companies are left null and fall back to entity_name_normalized
- * matching in the funding monitor.
+ * Eager CIK enrichment for companies — populates `companies.cik` via a
+ * three-tier resolution strategy:
  *
- * V2 candidate: EDGAR full-text search for private-co Form D filers, so we
- * can pin private companies to a CIK once we've seen them file once.
+ *  Tier 1: SEC `company_tickers.json`  — public companies, instant, free.
+ *  Tier 2: EDGAR company browse search — any company that has ever filed
+ *           (including private Form D filers). Calls the Atom XML endpoint.
+ *  Tier 3: Haiku disambiguation        — only when tier 2 returns multiple
+ *           candidates with similar names.
+ *
+ * Terminal state: null + `cik_checked_at` set = "confirmed no SEC filings" —
+ * honest, don't retry for CIK_REFRESH_DAYS.
  *
  * Idempotent — cheap to call repeatedly. Cached for CIK_REFRESH_DAYS.
  */
 import type { createAdminClient } from '@/lib/supabase-admin';
 import { normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
-import { secFetchJson } from '@/lib/signals/sec-edgar-client';
+import { secFetchJson, secFetchText, isRateLimitError } from '@/lib/signals/sec-edgar-client';
+import { completeLlm } from '@/lib/llm-client';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 
 const CIK_REFRESH_DAYS = 90;
 const TICKERS_URL = 'https://www.sec.gov/files/company_tickers.json';
@@ -61,17 +67,205 @@ async function loadTickerIndex(): Promise<TickerIndex> {
   return cachedIndex;
 }
 
+// ── EDGAR browse Atom endpoint ────────────────────────────────────────────
+// Covers any company that has ever filed — public or private Form D filers.
+// Returns up to `count` results in Atom XML. We use type=D to focus on the
+// Form D filers that name-match fallback cares most about; the endpoint works
+// for any form type, but limiting to D keeps result sets tight.
+const EDGAR_BROWSE_BASE = 'https://www.sec.gov/cgi-bin/browse-edgar';
+
+/**
+ * Extract text content of a single XML tag (case-insensitive, with or without
+ * namespace prefix, handles nested tags by stripping inner markup).
+ * Identical pattern to `extractTagText` in sync-sec-delta.ts.
+ */
+function extractAtomTagText(xml: string, tagName: string): string | null {
+  const re = new RegExp(`<(?:\\w+:)?${tagName}\\b[^>]*>([\\s\\S]*?)<\\/(?:\\w+:)?${tagName}>`, 'i');
+  const match = xml.match(re);
+  if (!match) return null;
+  return match[1]
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .trim();
+}
+
+/**
+ * Extract all `<entry>` blocks from an Atom feed response.
+ */
+function extractAtomEntries(xml: string): string[] {
+  const entries: string[] = [];
+  const re = /<entry\b[^>]*>([\s\S]*?)<\/entry>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(xml)) !== null) {
+    entries.push(match[1]);
+  }
+  return entries;
+}
+
+type EdgarBrowseCandidate = {
+  cik: string;
+  name: string;
+};
+
+/**
+ * Tier 2: Query EDGAR company browse for a single name, returning CIK
+ * candidates. Uses the Atom XML output format.
+ *
+ * Throws `SecHttpError` on 403/429 so callers can bubble rate-limit errors.
+ * Returns an empty array when EDGAR returns no results or the XML is
+ * unparseable.
+ */
+async function queryEdgarBrowse(name: string): Promise<EdgarBrowseCandidate[]> {
+  const params = new URLSearchParams({
+    action: 'getcompany',
+    company: name,
+    CIK: '',
+    type: 'D',
+    dateb: '',
+    owner: 'include',
+    count: '10',
+    search_text: '',
+    output: 'atom',
+  });
+  const url = `${EDGAR_BROWSE_BASE}?${params.toString()}`;
+  const xml = await secFetchText(url);
+  const entries = extractAtomEntries(xml);
+  const candidates: EdgarBrowseCandidate[] = [];
+  for (const entry of entries) {
+    // CIK is in <CIK> or inside the URI
+    const rawCik = extractAtomTagText(entry, 'CIK');
+    const companyName =
+      extractAtomTagText(entry, 'company-name') ??
+      extractAtomTagText(entry, 'entity-name') ??
+      extractAtomTagText(entry, 'name');
+    if (!rawCik || !companyName) continue;
+    const cik = padCik(rawCik);
+    if (!cik) continue;
+    candidates.push({ cik, name: companyName });
+  }
+  return candidates;
+}
+
+/**
+ * Tier 3: Haiku disambiguation when EDGAR returns multiple candidates and no
+ * single one is an exact normalised match. Returns the chosen CIK or null if
+ * none match confidently.
+ */
+export async function disambiguateCikWithHaiku(
+  companyName: string,
+  domain: string | null,
+  candidates: EdgarBrowseCandidate[],
+): Promise<string | null> {
+  const list = candidates
+    .map((c, i) => `${i + 1}. CIK ${c.cik} — "${c.name}"`)
+    .join('\n');
+  const domainHint = domain ? ` (domain: ${domain})` : '';
+  const prompt =
+    `I am looking for SEC EDGAR CIK for the company "${companyName}"${domainHint}.\n\n` +
+    `The following candidates were returned by EDGAR:\n${list}\n\n` +
+    `Which candidate is the correct match? Reply with ONLY the CIK number (10 digits, zero-padded) ` +
+    `if you are confident, or "none" if none match or you are unsure.`;
+
+  let result: Awaited<ReturnType<typeof completeLlm>> | null = null;
+  try {
+    result = await completeLlm({
+      feature: 'cik_disambiguation',
+      prompt,
+      maxTokens: 32,
+      temperature: 0,
+    });
+  } catch (err) {
+    console.warn('[cik] Haiku disambiguation failed:', err instanceof Error ? err.message : String(err));
+    return null;
+  }
+
+  void recordLlmUsageEvent({
+    provider: 'anthropic',
+    feature: 'cik_disambiguation',
+    route: 'lib/signals/company-cik',
+    model: result.model,
+    usage: result.usage,
+  }).catch(() => undefined);
+
+  const text = result.text.trim();
+  if (/^none$/i.test(text)) return null;
+  // Extract a 10-digit zero-padded CIK from the response
+  const cikMatch = text.match(/\b(\d{1,10})\b/);
+  if (!cikMatch) return null;
+  const chosen = padCik(cikMatch[1]);
+  // Verify the chosen CIK is one of the candidates we provided
+  if (chosen && candidates.some((c) => c.cik === chosen)) return chosen;
+  return null;
+}
+
+/**
+ * Tier 2 + 3: Resolve a CIK via EDGAR company browse search.
+ *
+ * - Tries each name variant in order, stopping at the first definitive result.
+ * - Single result: return that CIK directly.
+ * - Multiple results with an exact normalised match: return that CIK.
+ * - Multiple ambiguous results: delegate to Haiku disambiguation (tier 3).
+ * - Zero results: try next variant; if all exhausted, return null.
+ *
+ * Rate limit errors (SecHttpError 403/429) are allowed to propagate — callers
+ * must catch them and abort the run, not swallow them.
+ */
+export async function resolveCompanyCikFromEdgar(
+  names: string[],
+  domain?: string | null,
+): Promise<string | null> {
+  const seen = new Set<string>();
+  for (const name of names) {
+    if (!name?.trim() || seen.has(name.trim())) continue;
+    seen.add(name.trim());
+
+    let candidates: EdgarBrowseCandidate[];
+    try {
+      candidates = await queryEdgarBrowse(name.trim());
+    } catch (err) {
+      // Bubble rate-limit errors; swallow other transient HTTP errors so one
+      // bad variant doesn't abort the whole resolution attempt.
+      if (isRateLimitError(err)) throw err;
+      console.warn(`[cik] EDGAR browse failed for "${name}":`, err instanceof Error ? err.message : String(err));
+      continue;
+    }
+
+    if (candidates.length === 0) continue;
+    if (candidates.length === 1) return candidates[0].cik;
+
+    // Exact normalised match wins without needing LLM.
+    const normName = normalizeCompanyForMatching(name.trim());
+    const exact = candidates.find((c) => normalizeCompanyForMatching(c.name) === normName);
+    if (exact) return exact.cik;
+
+    // Multiple ambiguous candidates — try Haiku.
+    const chosen = await disambiguateCikWithHaiku(name.trim(), domain ?? null, candidates);
+    if (chosen) return chosen;
+    // Haiku couldn't decide — try next name variant before giving up.
+  }
+  return null;
+}
+
 export type EnsureCompanyCikResult = {
   companyId: string;
   cik: string | null;
-  source: 'cached' | 'tickers_json' | 'no_match' | 'skipped_unknown';
+  source: 'cached' | 'tickers_json' | 'edgar_browse' | 'no_match' | 'skipped_unknown';
 };
 
 /**
  * Ensure a company has a CIK populated. Returns the existing cached value if
- * fresh (<90 days). Otherwise consults SEC's company_tickers.json and writes
- * back the result (including a "checked but no match" cache via cik=null +
- * cik_checked_at=now).
+ * fresh (<90 days). Otherwise runs a three-tier resolution:
+ *
+ *  1. SEC `company_tickers.json` — public companies (fast, free, in-memory)
+ *  2. EDGAR company browse search — private Form D filers and any other filer
+ *  3. Haiku disambiguation — only when tier 2 returns multiple candidates
+ *
+ * Writes back the result (including null + cik_checked_at = "confirmed no
+ * match, don't retry for CIK_REFRESH_DAYS").
  */
 export async function ensureCompanyCik(
   admin: ReturnType<typeof createAdminClient>,
@@ -80,7 +274,7 @@ export async function ensureCompanyCik(
 ): Promise<EnsureCompanyCikResult> {
   const { data, error } = await admin
     .from('companies')
-    .select('id, company_name, aliases, cik, cik_checked_at')
+    .select('id, company_name, domain, aliases, cik, cik_checked_at')
     .eq('id', companyId)
     .maybeSingle();
   if (error) throw new Error(`load company failed: ${error.message}`);
@@ -88,6 +282,7 @@ export async function ensureCompanyCik(
   const row = data as {
     id: string;
     company_name: string | null;
+    domain: string | null;
     aliases: string[] | null;
     cik: string | null;
     cik_checked_at: string | null;
@@ -105,18 +300,36 @@ export async function ensureCompanyCik(
     return { companyId, cik: row.cik, source: 'cached' };
   }
 
+  const nameVariants = [name, ...(opts.aliases ?? row.aliases ?? [])];
+  const domain = row.domain ?? null;
+
+  // ── Tier 1: company_tickers.json (public companies) ──────────────────────
   const index = await loadTickerIndex();
-  const candidates = [name, ...(opts.aliases ?? row.aliases ?? [])]
+  const normalizedVariants = nameVariants
     .map((v) => normalizeCompanyForMatching(v))
     .filter((v) => v.length >= 4);
 
   let resolved: string | null = null;
-  for (const candidate of candidates) {
+  let source: EnsureCompanyCikResult['source'] = 'no_match';
+
+  for (const candidate of normalizedVariants) {
     const cik = index.byNormalizedTitle.get(candidate);
     if (cik) {
       resolved = cik;
+      source = 'tickers_json';
       break;
     }
+  }
+
+  // ── Tier 2 + 3: EDGAR browse (private cos / Form D filers) ───────────────
+  if (!resolved) {
+    resolved = await resolveCompanyCikFromEdgar(nameVariants, domain)
+      .catch((err) => {
+        if (isRateLimitError(err)) throw err;
+        console.warn(`[cik] resolveCompanyCikFromEdgar failed for company ${companyId}: ${err instanceof Error ? err.message : String(err)}`);
+        return null;
+      });
+    if (resolved) source = 'edgar_browse';
   }
 
   const { error: updateErr } = await admin
@@ -128,7 +341,7 @@ export async function ensureCompanyCik(
   return {
     companyId,
     cik: resolved,
-    source: resolved ? 'tickers_json' : 'no_match',
+    source: resolved ? source : 'no_match',
   };
 }
 

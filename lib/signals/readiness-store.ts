@@ -2,7 +2,6 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type {
   AccountReason,
   BuyerFunction,
-  ConfidenceLabel,
   IntentMechanism,
   NormalizedSignal,
   RawSignalEvent,
@@ -45,19 +44,14 @@ export type ReadinessSnapshotRecord = {
   overall_label: ReadinessLabel;
   new_budget_score: number;
   new_budget_label: ReadinessLabel;
-  new_budget_confidence: ConfidenceLabel;
   new_needs_score: number;
   new_needs_label: ReadinessLabel;
-  new_needs_confidence: ConfidenceLabel;
   new_people_score: number;
   new_people_label: ReadinessLabel;
-  new_people_confidence: ConfidenceLabel;
   new_strategy_score: number;
   new_strategy_label: ReadinessLabel;
-  new_strategy_confidence: ConfidenceLabel;
   caution_score: number;
   caution_label: ReadinessLabel;
-  caution_confidence: ConfidenceLabel;
   top_signal_ids: string[];
   freshness_score: number | null;
 };
@@ -158,8 +152,6 @@ export async function insertNormalizedSignals(
     dimensions: signal.dimensions,
     buyer_functions: signal.buyerFunctions,
     intent_mechanisms: signal.intentMechanisms,
-    default_strength: signal.defaultStrength,
-    default_confidence: signal.defaultConfidence,
     event_at: signal.eventAt,
     observed_at: signal.observedAt,
     evidence_excerpt: signal.evidenceExcerpt,
@@ -201,8 +193,7 @@ export async function listNormalizedSignalsForCompany(
     dimensions: stringArray(row.dimensions) as ReadinessDimension[],
     buyerFunctions: stringArray(row.buyer_functions) as BuyerFunction[],
     intentMechanisms: stringArray(row.intent_mechanisms) as IntentMechanism[],
-    defaultStrength: row.default_strength,
-    defaultConfidence: row.default_confidence,
+
     eventAt: row.event_at,
     observedAt: row.observed_at,
     evidenceExcerpt: row.evidence_excerpt,
@@ -233,8 +224,7 @@ export async function listNormalizedSignalsForContact(
     dimensions: stringArray(row.dimensions) as ReadinessDimension[],
     buyerFunctions: stringArray(row.buyer_functions) as BuyerFunction[],
     intentMechanisms: stringArray(row.intent_mechanisms) as IntentMechanism[],
-    defaultStrength: row.default_strength,
-    defaultConfidence: row.default_confidence,
+
     eventAt: row.event_at,
     observedAt: row.observed_at,
     evidenceExcerpt: row.evidence_excerpt,
@@ -259,19 +249,14 @@ export async function upsertContactReadinessSnapshot(
     overall_label: input.score.overallLabel,
     new_budget_score: input.score.dimensions.new_budget.score,
     new_budget_label: input.score.dimensions.new_budget.label,
-    new_budget_confidence: input.score.dimensions.new_budget.confidenceLabel,
     new_needs_score: input.score.dimensions.new_needs.score,
     new_needs_label: input.score.dimensions.new_needs.label,
-    new_needs_confidence: input.score.dimensions.new_needs.confidenceLabel,
     new_people_score: input.score.dimensions.new_people.score,
     new_people_label: input.score.dimensions.new_people.label,
-    new_people_confidence: input.score.dimensions.new_people.confidenceLabel,
     new_strategy_score: input.score.dimensions.new_strategy.score,
     new_strategy_label: input.score.dimensions.new_strategy.label,
-    new_strategy_confidence: input.score.dimensions.new_strategy.confidenceLabel,
     caution_score: input.score.dimensions.caution.score,
     caution_label: input.score.dimensions.caution.label,
-    caution_confidence: input.score.dimensions.caution.confidenceLabel,
     top_signal_ids: input.score.topSignalIds,
     freshness_score: input.score.freshnessScore,
   };
@@ -306,19 +291,14 @@ export async function upsertAccountReadinessSnapshot(
     overall_label: input.score.overallLabel,
     new_budget_score: input.score.dimensions.new_budget.score,
     new_budget_label: input.score.dimensions.new_budget.label,
-    new_budget_confidence: input.score.dimensions.new_budget.confidenceLabel,
     new_needs_score: input.score.dimensions.new_needs.score,
     new_needs_label: input.score.dimensions.new_needs.label,
-    new_needs_confidence: input.score.dimensions.new_needs.confidenceLabel,
     new_people_score: input.score.dimensions.new_people.score,
     new_people_label: input.score.dimensions.new_people.label,
-    new_people_confidence: input.score.dimensions.new_people.confidenceLabel,
     new_strategy_score: input.score.dimensions.new_strategy.score,
     new_strategy_label: input.score.dimensions.new_strategy.label,
-    new_strategy_confidence: input.score.dimensions.new_strategy.confidenceLabel,
     caution_score: input.score.dimensions.caution.score,
     caution_label: input.score.dimensions.caution.label,
-    caution_confidence: input.score.dimensions.caution.confidenceLabel,
     top_signal_ids: input.score.topSignalIds,
     freshness_score: input.score.freshnessScore,
   };
@@ -379,7 +359,6 @@ export async function upsertAccountReasonSnapshot(
     why_now: input.reason.whyNow,
     affected_functions: input.reason.affectedFunctions,
     suggested_angle: input.reason.suggestedAngle,
-    confidence_label: input.reason.confidenceLabel,
   };
 
   const { data, error } = await supabase
@@ -418,7 +397,6 @@ export async function getLatestReasonSnapshot(
   why_now: string;
   affected_functions: BuyerFunction[];
   suggested_angle: string;
-  confidence_label: ConfidenceLabel;
 } | null> {
   const { data, error } = await supabase
     .from('account_reason_snapshots')
@@ -436,7 +414,6 @@ export async function getLatestReasonSnapshot(
     why_now: data.why_now,
     affected_functions: stringArray(data.affected_functions) as BuyerFunction[],
     suggested_angle: data.suggested_angle,
-    confidence_label: data.confidence_label,
   };
 }
 
@@ -466,7 +443,6 @@ export async function getSignalEvidenceByIds(
       sourceUrl: null,
       eventAt: row.event_at,
       excerpt: row.evidence_excerpt,
-      confidenceLabel: row.default_confidence,
     }))
     .sort((a, b) => (order.get(a.id) ?? 999) - (order.get(b.id) ?? 999));
 }
@@ -476,9 +452,12 @@ export async function getCompanyFitSnapshot(
   userId: string,
   companyId: string
 ): Promise<{ companyName: string; fitScore: number; fitLabel: ReadinessLabel } | null> {
+  // company_fit_score is the canonical ICP-fit score (the one the UI surfaces);
+  // companies.fit_score is a legacy/unused column that's 0 or null for every
+  // row and used to silently zero-out priority calculations downstream.
   const { data, error } = await supabase
     .from('companies')
-    .select('company_name, fit_score')
+    .select('company_name, company_fit_score')
     .eq('user_id', userId)
     .eq('id', companyId)
     .maybeSingle();
@@ -486,7 +465,7 @@ export async function getCompanyFitSnapshot(
   if (error) throw error;
   if (!data) return null;
 
-  const fitScore = scalarNumber(data.fit_score) ?? 0;
+  const fitScore = scalarNumber(data.company_fit_score) ?? 0;
   const fitLabel: ReadinessLabel = fitScore >= 0.7 ? 'high' : fitScore >= 0.35 ? 'medium' : 'low';
 
   return {

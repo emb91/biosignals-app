@@ -1,7 +1,7 @@
 /**
  * Provider-routing LLM client.
  *
- * Routes classification-style features (press releases, SEC filings, etc.) to
+ * Routes classification-style features (SEC filings, etc.) to
  * OpenRouter when `OPENROUTER_API_KEY` is set; falls back to direct Anthropic
  * if either OpenRouter is unavailable or the feature is in the "always-direct"
  * set (currently any feature using Anthropic-specific server-side tools like
@@ -27,7 +27,6 @@ import Anthropic from '@anthropic-ai/sdk';
 // Add new features as they get OpenRouter-ised. Anything not listed here
 // stays on direct Anthropic.
 export type LlmFeature =
-  | 'press_release_classifier'
   | 'sec_filing_classifier'
   | 'company_aliases'
   | 'contact_classification'
@@ -42,7 +41,9 @@ export type LlmFeature =
   | 'generate_contact_name'
   | 'recommend_signals'
   | 'recommend_persona_signals'
-  | 'generate_icp_name';
+  | 'generate_icp_name'
+  | 'cik_disambiguation'
+  | 'press_release_classifier';
 
 /**
  * Default models per (feature, route). Override via the `model` arg.
@@ -55,10 +56,6 @@ export type LlmFeature =
  * validate output quality holds.
  */
 const FEATURE_MODELS: Record<LlmFeature, { openrouter: string; anthropic: string }> = {
-  press_release_classifier: {
-    openrouter: 'anthropic/claude-haiku-4-5',
-    anthropic: 'claude-haiku-4-5',
-  },
   sec_filing_classifier: {
     openrouter: 'anthropic/claude-haiku-4-5',
     anthropic: 'claude-haiku-4-5',
@@ -114,6 +111,14 @@ const FEATURE_MODELS: Record<LlmFeature, { openrouter: string; anthropic: string
     openrouter: 'anthropic/claude-haiku-4-5',
     anthropic: 'claude-haiku-4-5',
   },
+  cik_disambiguation: {
+    openrouter: 'anthropic/claude-haiku-4-5',
+    anthropic: 'claude-haiku-4-5',
+  },
+  press_release_classifier: {
+    openrouter: 'anthropic/claude-haiku-4-5',
+    anthropic: 'claude-haiku-4-5',
+  },
 };
 
 // Features that should bypass OpenRouter and go straight to Anthropic.
@@ -123,6 +128,7 @@ const FEATURE_MODELS: Record<LlmFeature, { openrouter: string; anthropic: string
 // fires once per ICP creation, needs Haiku quality, no reason to pay the markup.
 const ANTHROPIC_DIRECT_FEATURES: ReadonlySet<LlmFeature> = new Set([
   'generate_icp_name',
+  'cik_disambiguation',
 ]);
 
 const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';

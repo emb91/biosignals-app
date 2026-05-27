@@ -60,7 +60,7 @@ export async function GET(
     const companyResult = await supabase
       .from('companies')
       .select(
-        'id, matched_icp_id, company_fit_score, company_fit_breakdown, company_fit_coverage, company_fit_scored_at, company_fit_version',
+        'id, matched_icp_id, company_fit_score, company_fit_breakdown, company_fit_coverage, company_fit_scored_at, company_fit_version, company_fit_summary',
       )
       .eq('id', id)
       .eq('user_id', user.id)
@@ -144,6 +144,8 @@ export async function GET(
           typeof company.company_fit_scored_at === 'string' ? company.company_fit_scored_at : null,
         company_fit_version:
           typeof company.company_fit_version === 'string' ? company.company_fit_version : null,
+        company_fit_summary:
+          typeof company.company_fit_summary === 'string' ? company.company_fit_summary : null,
         matched_icp_id: matchedIcpId,
         matched_icp_name: matchedIcpId ? namesById.get(matchedIcpId) ?? null : null,
         winning_breakdown:

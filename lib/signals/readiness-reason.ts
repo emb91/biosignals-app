@@ -63,22 +63,6 @@ function suggestedAngle(dimensions: DimensionScoreResult[]): string {
   return 'Lead with a specific, evidence-backed hypothesis rather than a generic fit-based pitch.';
 }
 
-function confidenceLabel(score: AccountReadinessScoreResult): AccountReason['confidenceLabel'] {
-  const confidenceOrder = { low: 0, medium: 1, high: 2 } as const;
-  const top = topDimensions(score);
-  if (!top.length) return 'low';
-
-  const lowest = top.reduce(
-    (min, dimension) =>
-      confidenceOrder[dimension.confidenceLabel] < confidenceOrder[min]
-        ? dimension.confidenceLabel
-        : min,
-    top[0].confidenceLabel
-  );
-
-  return lowest;
-}
-
 export function buildAccountReason(input: BuildReasonInput): AccountReason {
   const active = topDimensions(input.score);
   const caution = input.score.dimensions.caution;
@@ -111,7 +95,6 @@ export function buildAccountReason(input: BuildReasonInput): AccountReason {
     whyNow,
     affectedFunctions: functionList,
     suggestedAngle: suggestedAngle(active),
-    confidenceLabel: confidenceLabel(input.score),
   };
 }
 

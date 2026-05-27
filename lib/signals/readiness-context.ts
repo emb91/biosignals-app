@@ -3,7 +3,6 @@ import { scoreAccountReadiness, type AccountReadinessScoreResult } from '@/lib/s
 import type {
   AccountReadinessContext,
   BuyerFunction,
-  ConfidenceLabel,
   NormalizedSignal,
   ReadinessLabel,
   RecommendedRouteContact,
@@ -35,18 +34,6 @@ function scoreToLabel(score: number): ReadinessLabel {
   return 'low';
 }
 
-function confidenceFromSignals(signals: NormalizedSignal[]): ConfidenceLabel {
-  if (!signals.length) return 'low';
-
-  const order = { low: 0, medium: 1, high: 2 } as const;
-  const avg =
-    signals.reduce((sum, signal) => sum + order[signal.defaultConfidence], 0) / signals.length;
-
-  if (avg >= 1.5) return 'high';
-  if (avg >= 0.75) return 'medium';
-  return 'low';
-}
-
 function toSignalEvidence(signal: NormalizedSignal): SignalEvidence {
   return {
     id: signal.id,
@@ -56,7 +43,6 @@ function toSignalEvidence(signal: NormalizedSignal): SignalEvidence {
     sourceUrl: null,
     eventAt: signal.eventAt,
     excerpt: signal.evidenceExcerpt,
-    confidenceLabel: signal.defaultConfidence,
   };
 }
 
@@ -109,10 +95,7 @@ export function buildAccountReadinessContext(
       newStrategy: score.dimensions.new_strategy,
       caution: score.dimensions.caution,
     },
-    reason: {
-      ...reason,
-      confidenceLabel: reason.confidenceLabel || confidenceFromSignals(input.signals),
-    },
+    reason,
     route: {
       recommendedContacts: input.recommendedContacts ?? [],
     },

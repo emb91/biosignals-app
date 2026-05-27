@@ -550,6 +550,98 @@ async function emitPriorRelationshipSignal(
   }
 }
 
+// ── Key-contact-departed signal ───────────────────────────────────────────
+
+/**
+ * Emits a `key_contact_departed` signal scoped to the OLD company (the company
+ * the contact just left) and recomputes that company's account readiness.
+ *
+ * This surfaces the account as needing a new contact so the user doesn't lose
+ * coverage after the departure is detected.
+ */
+async function emitKeyContactDepartedSignal(
+  admin: ReturnType<typeof createAdminClient>,
+  userId: string,
+  contactId: string,
+  contactName: string | null,
+  oldCompanyId: string,
+  newCompanyName: string | null,
+  eventAt: string,
+): Promise<boolean> {
+  try {
+    const sourceEventId = `job_change_monitor/key_contact_departed:${contactId}:${oldCompanyId}:${eventAt}`;
+    const title = 'Key contact departed';
+    const summary = `${contactName ?? 'A contact'} has moved on from this company${newCompanyName ? ` to ${newCompanyName}` : ''}. Find a replacement contact to maintain account coverage.`;
+
+    const ingestResult = await ingestSignalSourceEvent(
+      admin as unknown as Parameters<typeof ingestSignalSourceEvent>[0],
+      {
+        userId,
+        entityScope: 'company',
+        companyId: oldCompanyId,
+        contactId,
+        source: 'job_change_monitor/key_contact_departed',
+        sourceEventType: 'key_contact_departed',
+        sourceEventId,
+        sourceUrl: null,
+        title,
+        summary,
+        excerpt: summary,
+        eventAt,
+        metadata: {
+          departed_contact_id: contactId,
+          departed_contact_name: contactName,
+          new_company_name: newCompanyName,
+        },
+      },
+    );
+
+    const rawEvent = {
+      id: ingestResult.sourceEventId,
+      userId,
+      entityId: oldCompanyId,
+      entityScope: 'company' as const,
+      source: 'job_change_monitor/key_contact_departed',
+      sourceUrl: null,
+      sourceEventType: 'key_contact_departed',
+      sourceEventId,
+      title,
+      summary,
+      excerpt: summary,
+      eventAt,
+      observedAt: new Date().toISOString(),
+      metadata: {
+        departed_contact_id: contactId,
+        departed_contact_name: contactName,
+        new_company_name: newCompanyName,
+      },
+    };
+
+    await normalizeSignalSourceEvent(
+      admin as unknown as Parameters<typeof normalizeSignalSourceEvent>[0],
+      {
+        userId,
+        rawEvent,
+        signalKeys: ['key_contact_departed'],
+        companyId: oldCompanyId,
+        contactId,
+      },
+    );
+
+    await recomputeAccountReadiness(
+      admin as unknown as Parameters<typeof recomputeAccountReadiness>[0],
+      { userId, companyId: oldCompanyId },
+    ).catch((e) =>
+      console.warn('[job-change-monitor] key_contact_departed account readiness recompute skipped:', e),
+    );
+
+    return true;
+  } catch (err) {
+    console.warn('[job-change-monitor] emitKeyContactDepartedSignal failed:', err);
+    return false;
+  }
+}
+
 // ── Main monitor ───────────────────────────────────────────────────────────
 
 export type JobChangeMonitorInput = {
@@ -657,7 +749,9 @@ export async function runJobChangeMonitor(
         }
       );
 
-      // 4. Update stored job/company fields and mark checked timestamp
+      // 4. Update stored job/company fields and mark checked timestamp.
+      //    seniority_level is written here so ICP buyer-function mapping stays
+      //    current without waiting for the full enrichment queue to run.
       await admin
         .from('contacts')
         .update({
@@ -666,6 +760,9 @@ export async function runJobChangeMonitor(
             : {}),
           ...(scraped.companyName
             ? { resolved_current_company_name: scraped.companyName }
+            : {}),
+          ...(scraped.seniorityLevel
+            ? { seniority_level: scraped.seniorityLevel }
             : {}),
           ...(newCompanyId !== row.company_id && newCompanyId
             ? { company_id: newCompanyId }
@@ -713,7 +810,21 @@ export async function runJobChangeMonitor(
           }
         }
 
-        // 6b. Detach closed deal links at the old employer.
+        // 6b. Emit key_contact_departed at the old company so its readiness is
+        //     recomputed and the account surfaces as needing a new contact.
+        if (row.company_id && row.company_id !== newCompanyId) {
+          await emitKeyContactDepartedSignal(
+            admin,
+            row.user_id,
+            row.id,
+            row.full_name,
+            row.company_id,
+            scraped.companyName,
+            eventAt,
+          );
+        }
+
+        // 6c. Detach closed deal links at the old employer.
         const detached = await detachClosedDealLinks(
           admin,
           row.user_id,
@@ -726,10 +837,13 @@ export async function runJobChangeMonitor(
           );
         }
 
+        // 6d. Queue a full contact re-enrichment at high priority (1) so the
+        //     enrichment queue processes this before routine manual refreshes (0).
         const { error: queueErr } = await admin
           .from('contacts')
           .update({
             enrichment_refresh_status: 'requested',
+            enrichment_refresh_priority: 1,
             enrichment_refresh_last_error: null,
             updated_at: eventAt,
           })

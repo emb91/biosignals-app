@@ -7,12 +7,17 @@
  * no per-company scraping, no local DB mirror.
  *
  * Signal keys emitted:
- *   cmc_hiring          — CMC, process development, manufacturing science
- *   clinical_ops_hiring — clinical operations, CRA, trial management
- *   regulatory_hiring   — regulatory affairs, RA, regulatory submissions
- *   bd_hiring           — business development, licensing, alliance management
- *   commercial_hiring   — commercial, sales, medical affairs, market access
- *   job_surge           — ≥ JOB_SURGE_THRESHOLD matching postings for a company
+ *   cmc_hiring              — CMC, process development, manufacturing science
+ *   clinical_ops_hiring     — clinical operations, CRA, trial management
+ *   regulatory_hiring       — regulatory affairs, submissions
+ *   research_hiring         — R&D, discovery, preclinical science
+ *   quality_hiring          — QA, QC, GMP, validation
+ *   medical_hiring          — CMO, medical director, medical affairs
+ *   bd_hiring               — business development, licensing, alliances
+ *   commercial_hiring       — commercial, sales, market access
+ *   data_informatics_hiring — bioinformatics, biostatistics, data engineering
+ *   executive_hiring        — VP, SVP, C-suite
+ *   hiring_expansion        — ≥ JOB_SURGE_THRESHOLD total postings (broad growth signal)
  *
  * Dedup: one signal event per (company, signal_key, ISO-week). Prevents
  * re-emitting for roles that stay open across multiple weekly runs.
@@ -41,7 +46,7 @@ const ACTOR_TIMEOUT_MS = 120_000;
 /** Max results fetched per company search URL. */
 const RESULTS_PER_COMPANY = 25;
 
-/** Emit job_surge if a company returns at least this many matching postings. */
+/** Emit hiring_expansion if a company returns at least this many matching postings. */
 const JOB_SURGE_THRESHOLD = 10;
 
 const SOURCE = 'linkedin_jobs';
@@ -50,7 +55,7 @@ const SOURCE = 'linkedin_jobs';
 // All terms lowercased; matched against padded title_normalized so boundaries
 // work correctly (e.g. ' cra ' won't match 'aircraft').
 // First match wins for the primary category; a posting also contributes to
-// job_surge regardless of category.
+// hiring_expansion regardless of category.
 
 const CMC_TERMS = [
   'cmc',
@@ -153,7 +158,6 @@ const COMMERCIAL_TERMS = [
   'commercial manager',
   'commercial lead',
   'commercial strategy',
-  'medical affairs',
   'market access',
   'key account manager',
   'key account director',
@@ -163,26 +167,237 @@ const COMMERCIAL_TERMS = [
   'marketing manager',
   'launch excellence',
   'brand manager',
-  'field medical',
-  'medical science liaison',
   'msl ',
+];
+
+const RESEARCH_TERMS = [
+  'research scientist',
+  'senior scientist',
+  'principal scientist',
+  'discovery scientist',
+  'drug discovery',
+  'medicinal chemistry',
+  'medicinal chemist',
+  'target identification',
+  'target id',
+  'lead optimization',
+  'lead generation',
+  'hit identification',
+  'hit-to-lead',
+  'molecular biology',
+  'cell biology',
+  'structural biology',
+  'biochemist',
+  'biochemistry',
+  'pharmacologist',
+  'pharmacology',
+  'in vitro',
+  'in vivo',
+  'preclinical',
+  'toxicologist',
+  'toxicology',
+  'dmpk',
+  'pharmacokinetics',
+  ' pk ',
+  'pk/pd',
+  'translational',
+  'research associate',
+  'research director',
+  'head of research',
+  'vp research',
+  'chief scientific officer',
+  ' cso ',
+];
+
+const QUALITY_TERMS = [
+  'quality assurance',
+  'quality control',
+  'quality director',
+  'quality manager',
+  'quality associate',
+  'quality engineer',
+  'quality systems',
+  'quality operations',
+  ' qa ',
+  ' qc ',
+  'gmp',
+  'gxp',
+  'good manufacturing',
+  'good laboratory',
+  'validation engineer',
+  'validation scientist',
+  'qualified person',
+  ' qp ',
+  'batch release',
+  'deviation management',
+  'capa',
+  'audit manager',
+  'compliance specialist',
+  'compliance manager',
+  'quality compliance',
+];
+
+const MEDICAL_TERMS = [
+  'chief medical officer',
+  ' cmo ',
+  'medical director',
+  'vp medical',
+  'svp medical',
+  'head of medical',
+  'medical affairs',
+  'medical science liaison',
+  'field medical',
+  'medical monitor',
+  'medical lead',
+  'clinical development',
+  'vp clinical development',
+  'head of clinical development',
+  'clinical physician',
+  'physician scientist',
+  'medical advisor',
+  'medical manager',
+];
+
+const DATA_INFORMATICS_TERMS = [
+  'bioinformatics',
+  'bioinformatician',
+  'computational biologist',
+  'computational biology',
+  'biostatistician',
+  'biostatistics',
+  'statistical programmer',
+  'statistical programming',
+  'data scientist',
+  'data science',
+  'data engineer',
+  'data engineering',
+  'data analyst',
+  'machine learning',
+  'ai scientist',
+  'informatics',
+  'clinical informatics',
+  'clinical data scientist',
+  'omics',
+  'genomics analyst',
+  'genomics scientist',
+  'sequencing',
+  'ngs analyst',
+];
+
+const EXECUTIVE_TERMS = [
+  // C-suite — unambiguous regardless of company type
+  'chief executive officer',
+  ' ceo ',
+  'chief operating officer',
+  ' coo ',
+  'chief scientific officer',
+  ' cso ',
+  'chief medical officer',
+  ' cmo ',
+  'chief development officer',
+  ' cdo ',
+  'chief commercial officer',
+  ' cco ',
+  'chief business officer',
+  ' cbo ',
+  'chief financial officer',
+  ' cfo ',
+  // Named VP titles — specific enough to avoid noise
+  'vp clinical',
+  'vp regulatory',
+  'vp manufacturing',
+  'vp cmc',
+  'vp research',
+  'vp medical',
+  'vp business development',
+  'vp commercial',
+  'vp operations',
+  'vp development',
+  'vp scientific',
+  'vice president clinical',
+  'vice president regulatory',
+  'vice president manufacturing',
+  'vice president research',
+  'vice president medical',
+  'vice president business development',
+  'vice president commercial',
+  // SVP equivalents
+  'svp clinical',
+  'svp regulatory',
+  'svp manufacturing',
+  'svp research',
+  'svp medical',
+  'svp commercial',
+  'svp development',
+  // Named president/GM titles specific to biopharma
+  'president and ceo',
+  'president & ceo',
+  'general manager, ',
+  // Executive director (common in biopharma for senior ICs and functional leads)
+  'executive director, clinical',
+  'executive director, regulatory',
+  'executive director, manufacturing',
+  'executive director, cmc',
+  'executive director, research',
+  'executive director, medical',
+  'executive director, commercial',
+  'executive director, business',
 ];
 
 type HiringCategory =
   | 'cmc_hiring'
   | 'clinical_ops_hiring'
   | 'regulatory_hiring'
+  | 'research_hiring'
+  | 'quality_hiring'
+  | 'medical_hiring'
   | 'bd_hiring'
-  | 'commercial_hiring';
+  | 'commercial_hiring'
+  | 'data_informatics_hiring'
+  | 'executive_hiring';
+
+// Human-readable label used in signal summaries shown to sales reps.
+const CATEGORY_LABELS: Record<HiringCategory, string> = {
+  cmc_hiring: 'CMC / process development',
+  clinical_ops_hiring: 'clinical operations',
+  regulatory_hiring: 'regulatory affairs',
+  research_hiring: 'R&D / discovery',
+  quality_hiring: 'quality / GMP',
+  medical_hiring: 'medical affairs',
+  bd_hiring: 'business development',
+  commercial_hiring: 'commercial / market access',
+  data_informatics_hiring: 'data & informatics',
+  executive_hiring: 'executive / VP',
+};
+
+// One-line reasoning for why this hire matters commercially — shown in signal summary.
+const CATEGORY_REASONS: Record<HiringCategory, string> = {
+  cmc_hiring: 'likely scaling a drug into manufacturing',
+  clinical_ops_hiring: 'likely starting or expanding a clinical trial',
+  regulatory_hiring: 'likely approaching a submission or new market entry',
+  research_hiring: 'likely starting a new program or indication',
+  quality_hiring: 'likely ramping manufacturing or preparing for an audit',
+  medical_hiring: 'likely entering a new clinical phase or building pre-launch medical affairs',
+  bd_hiring: 'likely actively partnering or out-licensing',
+  commercial_hiring: 'likely in pre-launch or launch execution',
+  data_informatics_hiring: 'likely building data infrastructure or scaling trial operations',
+  executive_hiring: 'new leadership typically triggers active vendor re-evaluation',
+};
 
 function classifyTitle(titleNorm: string): HiringCategory | null {
   // Pad so word-boundary terms like ' cra ' work at string edges.
+  // Order matters: more specific / higher-signal categories first.
   const t = ` ${titleNorm} `;
-  for (const term of CMC_TERMS) if (t.includes(term)) return 'cmc_hiring';
-  for (const term of CLINICAL_OPS_TERMS) if (t.includes(term)) return 'clinical_ops_hiring';
-  for (const term of REGULATORY_TERMS) if (t.includes(term)) return 'regulatory_hiring';
-  for (const term of BD_TERMS) if (t.includes(term)) return 'bd_hiring';
-  for (const term of COMMERCIAL_TERMS) if (t.includes(term)) return 'commercial_hiring';
+  if (EXECUTIVE_TERMS.some((term) => t.includes(term))) return 'executive_hiring';
+  if (CMC_TERMS.some((term) => t.includes(term))) return 'cmc_hiring';
+  if (CLINICAL_OPS_TERMS.some((term) => t.includes(term))) return 'clinical_ops_hiring';
+  if (REGULATORY_TERMS.some((term) => t.includes(term))) return 'regulatory_hiring';
+  if (QUALITY_TERMS.some((term) => t.includes(term))) return 'quality_hiring';
+  if (MEDICAL_TERMS.some((term) => t.includes(term))) return 'medical_hiring';
+  if (RESEARCH_TERMS.some((term) => t.includes(term))) return 'research_hiring';
+  if (BD_TERMS.some((term) => t.includes(term))) return 'bd_hiring';
+  if (COMMERCIAL_TERMS.some((term) => t.includes(term))) return 'commercial_hiring';
+  if (DATA_INFORMATICS_TERMS.some((term) => t.includes(term))) return 'data_informatics_hiring';
   return null;
 }
 
@@ -301,7 +516,7 @@ export type CompanyHiringDetail = {
   /** Per-category breakdown with all matched titles and buyer function mappings */
   categories: CategoryMatch[];
   /** True if postings_scraped >= JOB_SURGE_THRESHOLD */
-  job_surge: boolean;
+  hiring_expansion: boolean;
   /** Deduplicated union of all buyer functions activated across detected categories */
   buyer_functions_activated: BuyerFunction[];
 };
@@ -375,7 +590,7 @@ async function emitHiringSignal(
     eventAt: string;
     metadata: Record<string, unknown>;
     existingIds: Set<string>;
-    /** Override buyer functions for normalization (e.g. derived from role mix for job_surge) */
+    /** Override buyer functions for normalization (e.g. derived from role mix for hiring_expansion) */
     buyerFunctionsOverride?: BuyerFunction[];
   },
 ): Promise<'emitted' | 'duplicate'> {
@@ -559,7 +774,7 @@ export async function runHiringMonitor(input: HiringMonitorInput): Promise<Hirin
       // Build detail entry for any company with matched postings.
       // Also derive the union of buyer functions from the actual category mix —
       // used both for the drilldown display and as the buyerFunctionsOverride for
-      // job_surge (per catalog note: "computed from classified role mix").
+      // hiring_expansion (per catalog note: "computed from classified role mix").
       const categoryMatches: CategoryMatch[] = [...byCategory.entries()].map(([key, list]) => ({
         key,
         count: list.length,
@@ -579,7 +794,7 @@ export async function runHiringMonitor(input: HiringMonitorInput): Promise<Hirin
           postings_scraped: postings.length,
           postings_matched: matchedCount,
           categories: categoryMatches,
-          job_surge: postings.length >= JOB_SURGE_THRESHOLD,
+          hiring_expansion: postings.length >= JOB_SURGE_THRESHOLD,
           buyer_functions_activated: buyerFunctionsFromMix,
         });
       }
@@ -591,8 +806,8 @@ export async function runHiringMonitor(input: HiringMonitorInput): Promise<Hirin
           candidateIds.push(`${SOURCE}:${companyId}:${cat}:${currentWeekKey}`);
         }
       }
-      if (shouldEmit('job_surge') && postings.length >= JOB_SURGE_THRESHOLD) {
-        candidateIds.push(`${SOURCE}:${companyId}:job_surge:${currentWeekKey}`);
+      if (shouldEmit('hiring_expansion') && postings.length >= JOB_SURGE_THRESHOLD) {
+        candidateIds.push(`${SOURCE}:${companyId}:hiring_expansion:${currentWeekKey}`);
       }
       candidatesBefore += candidateIds.length;
 
@@ -608,8 +823,11 @@ export async function runHiringMonitor(input: HiringMonitorInput): Promise<Hirin
       for (const [cat, list] of byCategory) {
         if (!shouldEmit(cat)) continue;
         const sourceEventId = `${SOURCE}:${companyId}:${cat}:${currentWeekKey}`;
+        const label = CATEGORY_LABELS[cat];
+        const reason = CATEGORY_REASONS[cat];
         const exampleTitles = list.slice(0, 3).map((p) => p.title).join('; ');
-        const summary = `${list.length} open ${cat.replace(/_/g, ' ')} role${list.length > 1 ? 's' : ''} detected at ${name} via LinkedIn (e.g. ${exampleTitles}).`;
+        const roleCount = list.length === 1 ? 'an open' : `${list.length} open`;
+        const summary = `${name} is hiring for ${roleCount} ${label} role${list.length > 1 ? 's' : ''} (${reason}). E.g. ${exampleTitles}.`;
 
         const result = await emitHiringSignal(admin, {
           userId: input.userId,
@@ -635,19 +853,21 @@ export async function runHiringMonitor(input: HiringMonitorInput): Promise<Hirin
         else skippedDupes += 1;
       }
 
-      // Emit job_surge — buyer functions derived from actual category mix,
-      // not the static catalog list (per catalog note on job_surge).
-      if (shouldEmit('job_surge') && postings.length >= JOB_SURGE_THRESHOLD) {
-        const sourceEventId = `${SOURCE}:${companyId}:job_surge:${currentWeekKey}`;
+      // Emit hiring_expansion — buyer functions derived from actual category mix,
+      // not the static catalog list (per catalog note on hiring_expansion).
+      if (shouldEmit('hiring_expansion') && postings.length >= JOB_SURGE_THRESHOLD) {
+        const sourceEventId = `${SOURCE}:${companyId}:hiring_expansion:${currentWeekKey}`;
         const matchedTitles = [...byCategory.values()].flat().map((p) => p.title);
-        const categoryLabels = categoryMatches.map((c) => `${c.key.replace(/_/g, ' ')} (${c.count})`).join(', ');
-        const summary = `${postings.length} open roles at ${name} — significant hiring activity. Matched categories: ${categoryLabels || 'none'}.`;
+        const categoryLabels = categoryMatches
+          .map((c) => `${CATEGORY_LABELS[c.key]} (${c.count})`)
+          .join(', ');
+        const summary = `${name} has ${postings.length} open roles across multiple functions — broad hiring expansion. Functions: ${categoryLabels || 'unclassified'}.`;
 
         const result = await emitHiringSignal(admin, {
           userId: input.userId,
           companyId,
           companyName: name,
-          signalKey: 'job_surge',
+          signalKey: 'hiring_expansion',
           sourceEventType: 'ats_jobs_surge',
           sourceEventId,
           sourceUrl: `https://www.linkedin.com/jobs/search/?keywords=${encodeURIComponent(name)}`,
@@ -668,7 +888,7 @@ export async function runHiringMonitor(input: HiringMonitorInput): Promise<Hirin
           existingIds,
         });
 
-        if (result === 'emitted') { emittedAny = true; emittedSignalTypes.add('job_surge'); }
+        if (result === 'emitted') { emittedAny = true; emittedSignalTypes.add('hiring_expansion'); }
         else skippedDupes += 1;
       }
 

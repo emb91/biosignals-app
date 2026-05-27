@@ -385,6 +385,39 @@ async function attachReadinessBestEffort(
   }
 }
 
+/**
+ * CRM-won/lost contacts are out of the active-outreach motion: mask readiness
+ * to a low floor (0.01) at read time and recompute priority from the masked
+ * readiness, so the gauges read as "already handled" without rewriting the
+ * stored snapshot. Mirrors the override in /api/accounts.
+ *
+ * Pure transform — runs after all attaches have merged so hubspot_lead_state
+ * and contact_readiness_score / priority_score / contact_fit_score are all
+ * present on the row.
+ */
+function applyCrmReadinessMask(rows: LeadRow[]): LeadRow[] {
+  return rows.map((row) => {
+    const leadState = row.hubspot_lead_state;
+    const crmDeprioritised = leadState === 'customer' || leadState === 'dormant';
+    if (!crmDeprioritised) return row;
+
+    const rawReadiness =
+      typeof row.contact_readiness_score === 'number' ? row.contact_readiness_score : null;
+    const fitRaw =
+      typeof row.contact_fit_score === 'number' && Number.isFinite(row.contact_fit_score)
+        ? row.contact_fit_score
+        : null;
+    const fitNorm = fitRaw == null ? null : fitRaw > 1 ? fitRaw / 100 : fitRaw;
+
+    return {
+      ...row,
+      contact_readiness_score: rawReadiness != null ? 0.01 : rawReadiness,
+      priority_score:
+        fitNorm != null ? Math.max(0, Math.min(1, fitNorm * (0.5 + 0.5 * 0.01))) : null,
+    };
+  });
+}
+
 async function attachHubSpotLeadStateBestEffort(
   supabase: SupabaseClientLike,
   rows: LeadRow[],
@@ -734,7 +767,12 @@ export async function GET(request: Request) {
         query = query.or(filter);
       }
 
+      // priority_score (mirrored from contact_readiness_snapshots) is the
+      // primary sort so paginated pages are ordered globally by priority.
+      // overall_fit_score / fit_score are tiebreakers for contacts without
+      // a readiness snapshot yet, then created_at as the final fallback.
       return query
+        .order('priority_score', { ascending: false, nullsFirst: false })
         .order('overall_fit_score', { ascending: false, nullsFirst: false })
         .order('fit_score', { ascending: false, nullsFirst: false })
         .order('created_at', { ascending: false })
@@ -742,7 +780,7 @@ export async function GET(request: Request) {
     };
 
     const baseLeadSelect =
-      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, email_status, email_status_reasoning, linkedin_url, profile_photo_url, headline, location, city, country, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, intent_score, overall_fit_score, contact_fit_score, source, created_at, updated_at, company_id, upload_batches(filename, created_at)';
+      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, email_status, email_status_reasoning, linkedin_url, profile_photo_url, headline, location, city, country, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, intent_score, overall_fit_score, contact_fit_score, contact_panel_summary, contact_fit_summary, priority_score, source, created_at, updated_at, company_id, upload_batches(filename, created_at)';
     const companySelectCore =
       'companies(company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_state, headquarters_country, specialties, products_services, services, technologies, company_type, company_type_display, platform_category, funding_stage, funding_status_label, total_funding_usd, latest_funding_date, funding_data_source, therapeutic_areas, modalities, development_stages, clinical_stage, matched_icp_id, company_fit_score, last_enriched_at)';
     const companySelectStable =
@@ -763,7 +801,7 @@ export async function GET(request: Request) {
     const tertiarySelect =
       `${baseLeadSelect}, ${companySelectStable}`;
     const fallbackSelect =
-      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, linkedin_url, profile_photo_url, headline, location, city, country, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, intent_score, overall_fit_score, contact_fit_score, source, created_at, updated_at, company_id, upload_batches(filename, created_at)';
+      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, linkedin_url, profile_photo_url, headline, location, city, country, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, intent_score, overall_fit_score, contact_fit_score, contact_panel_summary, contact_fit_summary, source, created_at, updated_at, company_id, upload_batches(filename, created_at)';
 
     let { data, error, count } = await runQuery(primarySelect);
 
@@ -904,23 +942,49 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const rowsWithEnrichmentMetadata = await attachEnrichmentMetadataBestEffort(
-      supabase,
-      ((data || []) as unknown) as LeadRow[],
-    );
+    // Parallelize all "best-effort attach" passes. Each helper takes the same
+    // base rows array and returns rows.map(row => ({ ...row, ...itsFields })),
+    // so the index order is preserved and we can merge by index. The previous
+    // implementation chained these sequentially — 7 round-trips serialized,
+    // which was the dominant /api/leads latency cost. Now they run as a
+    // single Promise.all, so total wait ≈ slowest single query.
+    //
+    // CRM-readiness masking moved to applyCrmReadinessMask (runs after merge)
+    // so attachReadinessBestEffort no longer needs the hubspot result.
+    const baseRows = ((data || []) as unknown) as LeadRow[];
+    const [
+      enrichmentRows,
+      icpRows,
+      emailRows,
+      phoneRows,
+      hubspotRows,
+      readinessRows,
+      attributionRows,
+    ] = await Promise.all([
+      attachEnrichmentMetadataBestEffort(supabase, baseRows),
+      attachMatchedIcpNames(supabase, baseRows),
+      attachContactEmailsBestEffort(supabase, baseRows),
+      attachContactPhonesBestEffort(supabase, baseRows),
+      attachHubSpotLeadStateBestEffort(supabase, baseRows),
+      attachReadinessBestEffort(supabase, baseRows),
+      attachContactAttributionBestEffort(supabase, baseRows),
+    ]);
 
-    const enrichedRows = attachDataProvenance(
-      (await attachMatchedIcpNames(supabase, rowsWithEnrichmentMetadata)) as LeadRow[],
-    );
+    const merged: LeadRow[] = baseRows.map((_, idx) => ({
+      ...enrichmentRows[idx],
+      ...icpRows[idx],
+      ...emailRows[idx],
+      ...phoneRows[idx],
+      ...hubspotRows[idx],
+      ...readinessRows[idx],
+      ...attributionRows[idx],
+    }));
 
-    const withEmails = await attachContactEmailsBestEffort(supabase, enrichedRows);
-    const withPhones = await attachContactPhonesBestEffort(supabase, withEmails);
-    const withHubSpotLeadState = await attachHubSpotLeadStateBestEffort(supabase, withPhones);
-    const withReadiness = await attachReadinessBestEffort(supabase, withHubSpotLeadState);
-    const withAttribution = await attachContactAttributionBestEffort(supabase, withReadiness);
+    // Synchronous post-processing: provenance label + CRM readiness mask.
+    const finalRows = applyCrmReadinessMask(attachDataProvenance(merged));
 
     return NextResponse.json({
-      data: withAttribution,
+      data: finalRows,
       total: count ?? 0,
       page,
       pageSize,

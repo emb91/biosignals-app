@@ -23,6 +23,7 @@ import { runCompanyMonitor } from '@/lib/company-monitor';
 import { employeeCountToSizeBucket } from '@/lib/arcova-taxonomy';
 import { emitExternalContactSignalsFromEnrichment } from '@/lib/signals/readiness-external-contacts';
 import { ensureCompanyAliases } from '@/lib/signals/company-aliases';
+import { ensureCompanyCik } from '@/lib/signals/company-cik';
 import { createAdminClient } from '@/lib/supabase-admin';
 
 type MinimalSupabase = {
@@ -832,6 +833,11 @@ async function upsertResolvedCompany(
   // empty aliases on first scan, so this is best-effort.
   void ensureCompanyAliases(createAdminClient(), insertedId).catch((err) => {
     console.error(`[companies] eager ensureCompanyAliases failed for ${insertedId} (${context}):`, err);
+  });
+  // Eager: resolve CIK in the background so funding signals use precise CIK
+  // matching instead of fuzzy name matching from the first run.
+  void ensureCompanyCik(createAdminClient(), insertedId).catch((err) => {
+    console.warn(`[companies] eager ensureCompanyCik failed for ${insertedId} (${context}):`, err instanceof Error ? err.message : String(err));
   });
 
   return insertedId;

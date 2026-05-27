@@ -27,10 +27,17 @@ import {
   SecHttpError,
 } from '@/lib/signals/sec-edgar-client';
 
-// 8-K item codes worth classifying via LLM (item code alone is too coarse to
-// route to a signal — body needs reading). 3.02 is handled separately by the
-// existing item-list-based emit in run-funding-monitor.ts (PIPE detection).
-const CLASSIFIABLE_8K_ITEMS = new Set(['1.01', '5.02', '8.01']);
+// 8-K item codes that warrant a classification pass.
+// '1.01', '5.02', '8.01' → ambiguous; full LLM classification required.
+// '2.01', '2.03', '2.04', '2.05', '2.06', '3.01', '5.01', '1.03' → structurally
+//   unambiguous; classifySecFiling returns a deterministic result at zero LLM cost.
+// '3.02' is handled separately by the item-only PIPE path in run-funding-monitor.ts.
+const CLASSIFIABLE_8K_ITEMS = new Set([
+  '1.01', '1.02', '5.02', '8.01',   // needs LLM — content-dependent (1.02 = termination)
+  '2.01', '5.01', '1.03',           // deterministic: acquisition / change-of-control / bankruptcy
+  '2.03', '2.04', '2.05', '2.06',   // deterministic: financing / restructuring
+  '3.01',                            // deterministic: delisting notice
+]);
 
 const TARGET_FORM_TYPES_FORM_D = new Set(['D', 'D/A']);
 const TARGET_FORM_TYPES_8K = new Set(['8-K', '8-K/A']);

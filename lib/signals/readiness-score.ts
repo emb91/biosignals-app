@@ -1,7 +1,6 @@
 import { READINESS_SIGNAL_CATALOG_BY_KEY, getSignalBaseImpactScore } from '@/lib/signals/readiness-catalog';
 import type {
   BuyerFunction,
-  ConfidenceLabel,
   DimensionContribution,
   DimensionState,
   NormalizedSignal,
@@ -18,12 +17,6 @@ const DIMENSIONS: ReadinessDimension[] = [
   'new_strategy',
   'caution',
 ];
-
-const CONFIDENCE_MULTIPLIER: Record<ConfidenceLabel, number> = {
-  low: 0.65,
-  medium: 0.82,
-  high: 1.0,
-};
 
 export type ReadinessScoringOptions = {
   asOf?: Date;
@@ -61,23 +54,6 @@ function scoreToLabel(score: number): ReadinessLabel {
   if (score >= 0.7) return 'high';
   if (score >= 0.35) return 'medium';
   return 'low';
-}
-
-function scoreToConfidence(score: number): ConfidenceLabel {
-  if (score >= 0.8) return 'high';
-  if (score >= 0.5) return 'medium';
-  return 'low';
-}
-
-function confidenceToNumeric(label: ConfidenceLabel): number {
-  return CONFIDENCE_MULTIPLIER[label];
-}
-
-function averageConfidence(values: ConfidenceLabel[]): ConfidenceLabel {
-  if (!values.length) return 'low';
-  const avg =
-    values.reduce((sum, label) => sum + confidenceToNumeric(label), 0) / values.length;
-  return scoreToConfidence(avg);
 }
 
 function recencyMultiplier(signal: NormalizedSignal, asOf: Date): number {
@@ -130,7 +106,6 @@ function buildDimensionState(
   asOf: Date,
   compoundWindowDays: number
 ): DimensionScoreResult {
-  const dimensionSignals = signals.filter((signal) => signal.dimensions.includes(dimension));
   const dimensionContributions = contributions.filter((item) => item.dimension === dimension);
   const rawScore = dimensionContributions.reduce((sum, item) => sum + item.contribution, 0);
   const withCompound = clamp01(rawScore + compoundBonus(signals, dimension, asOf, compoundWindowDays));
@@ -142,7 +117,6 @@ function buildDimensionState(
     dimension,
     score: withCompound,
     label: scoreToLabel(withCompound),
-    confidenceLabel: averageConfidence(dimensionSignals.map((signal) => signal.defaultConfidence)),
     evidenceIds: sortedEvidenceIds,
     contributionCount: dimensionContributions.length,
   };
@@ -192,10 +166,9 @@ export function scoreAccountReadiness(
 
   const contributions: DimensionContribution[] = signals.flatMap((signal) => {
     const strengthWeight = getSignalBaseImpactScore(signal.signalKey) / 100;
-    const confidenceMultiplier = CONFIDENCE_MULTIPLIER[signal.defaultConfidence];
     const recency = recencyMultiplier(signal, asOf);
     const relevance = relevanceMultiplier(signal, options.targetBuyerFunctions);
-    const contribution = clamp01(strengthWeight * confidenceMultiplier * recency * relevance);
+    const contribution = clamp01(strengthWeight * recency * relevance);
 
     return signal.dimensions.map((dimension) => ({
       signalId: signal.id,
@@ -203,7 +176,6 @@ export function scoreAccountReadiness(
       contribution,
       inputs: {
         strengthWeight,
-        confidenceMultiplier,
         recencyMultiplier: recency,
         relevanceMultiplier: relevance,
       },

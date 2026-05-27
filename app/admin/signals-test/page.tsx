@@ -43,7 +43,7 @@ type HiringCompanyDetail = {
   postings_scraped: number;
   postings_matched: number;
   categories: HiringCategoryMatch[];
-  job_surge: boolean;
+  hiring_expansion: boolean;
   buyer_functions_activated: string[];
 };
 
@@ -124,9 +124,14 @@ const HIRING_SINGLE_SIGNAL_KEYS = new Set<SignalKey>([
   'cmc_hiring',
   'clinical_ops_hiring',
   'regulatory_hiring',
+  'research_hiring',
+  'quality_hiring',
+  'medical_hiring',
   'bd_hiring',
   'commercial_hiring',
-  'job_surge',
+  'data_informatics_hiring',
+  'executive_hiring',
+  'hiring_expansion',
 ]);
 
 const GRANTS_SINGLE_SIGNAL_KEYS = new Set<SignalKey>([
@@ -1245,124 +1250,6 @@ export default function AdminSignalsTestPage() {
     }
   }
 
-  async function runPressReleasesBundle() {
-    const runKey = 'press_releases_all';
-    if (busySignal) {
-      appendLog(`Run skipped: ${busySignal} is already in progress.`);
-      setStatus(`A run is already in progress: ${busySignal}`);
-      return;
-    }
-
-    setBusySignal(runKey);
-    const abortController = new AbortController();
-    activeRunAbortRef.current = abortController;
-    setStatus('Running full press-releases bundle...');
-    appendLog('Starting run for press_releases_all');
-    let heartbeat: ReturnType<typeof setInterval> | null = null;
-    try {
-      const startedAt = Date.now();
-      const body: Record<string, unknown> = {
-        limit: batchCompanyMode ? batchLimit : 25,
-        sync_first: true,
-        sync_lookback_days: 7,
-      };
-      if (!batchCompanyMode && selectedCompanyId) {
-        body.company_ids = [selectedCompanyId];
-        appendLog(`Target company scope set: ${selectedCompanyId}`);
-      } else {
-        body.run_all = true;
-        body.batch_size = Math.min(500, Math.max(1, batchCompanyMode ? batchLimit : 200));
-        if (batchCompanyMode) {
-          appendLog(`Batch company mode (run_all=true, batch_size=${body.batch_size}, limit=${batchLimit}).`);
-        } else {
-          appendLog(`No company selected; running all companies (run_all=true, batch_size=${body.batch_size}).`);
-        }
-      }
-      appendLog('sync_first=true → will pull fresh RSS + classify before running monitor.');
-
-      appendLog('Calling /api/signals/run/press-releases...');
-      heartbeat = setInterval(() => {
-        const elapsedSec = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
-        appendLog(`Run in progress... ${elapsedSec}s elapsed`);
-      }, 5000);
-      const res = await fetch('/api/signals/run/press-releases', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: abortController.signal,
-      });
-      clearInterval(heartbeat);
-      heartbeat = null;
-      const json = await res.json();
-      appendLog(`Run completed with HTTP ${res.status}`);
-
-      setLastResponse({
-        signalKey: runKey,
-        ok: res.ok,
-        httpStatus: res.status,
-        payload: json,
-        at: new Date().toISOString(),
-      });
-      setHistory((prev) => [
-        { signalKey: runKey, ok: res.ok, httpStatus: res.status, at: new Date().toISOString() },
-        ...prev.slice(0, 11),
-      ]);
-
-      if (!res.ok) {
-        appendLog(`Run failed: ${json?.error || 'Unknown error'}`);
-        setStatus(`press_releases_all failed: ${json?.error || 'Unknown error'}`);
-      } else {
-        const sync = (
-          json as {
-            sync?: {
-              ran?: boolean;
-              ok?: boolean;
-              result?: {
-                articles_upserted?: number;
-                articles_classified?: number;
-                feeds_fetched?: number;
-                feeds_failed?: number;
-              } | null;
-              error?: string | null;
-            };
-          }
-        )?.sync;
-        if (sync?.ran) {
-          if (sync.ok && sync.result) {
-            const r = sync.result;
-            appendLog(
-              `RSS sync OK: articles=${String(r.articles_upserted ?? 0)} classified=${String(r.articles_classified ?? 0)} feeds_ok=${String(r.feeds_fetched ?? 0)} feeds_failed=${String(r.feeds_failed ?? 0)}`,
-            );
-          } else if (sync.error) {
-            appendLog(`RSS sync FAILED (continuing with stale data): ${sync.error}`);
-          }
-        }
-        const result = (json as { result?: Record<string, unknown> })?.result;
-        if (result) {
-          appendLog(`Processed=${String(result.processed ?? 0)} failed=${String(result.failed ?? 0)}`);
-          appendOptionalRunDiagnostics(result);
-        }
-        appendLog('Refreshing signal status colors...');
-        setStatus('press_releases_all ingestion complete. Signal statuses refreshed.');
-      }
-      await refreshSignalStatuses();
-      appendLog('Signal status refresh complete.');
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        appendLog('Run cancelled by user.');
-        setStatus('press_releases_all cancelled.');
-        return;
-      }
-      appendLog(`Run errored: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      setStatus(`press_releases_all failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    } finally {
-      activeRunAbortRef.current = null;
-      if (heartbeat) clearInterval(heartbeat);
-      appendLog('Run finished for press_releases_all');
-      setBusySignal(null);
-    }
-  }
-
   async function runHiringBundle() {
     const runKey = 'hiring_all';
     if (busySignal) {
@@ -1463,7 +1350,7 @@ export default function AdminSignalsTestPage() {
             appendLog(`Hiring drilldown: ${rawDetails.length} company/companies with matched postings.`);
             for (const d of rawDetails.slice(0, 5)) {
               const catSummary = d.categories.map((c) => `${c.key}(${c.count})`).join(', ');
-              appendLog(`  ${d.company_name}: ${d.postings_scraped} scraped, ${d.postings_matched} matched — ${catSummary}${d.job_surge ? ' ⚡surge' : ''}`);
+              appendLog(`  ${d.company_name}: ${d.postings_scraped} scraped, ${d.postings_matched} matched — ${catSummary}${d.hiring_expansion ? ' ⚡surge' : ''}`);
             }
             if (rawDetails.length > 5) appendLog(`  ...and ${rawDetails.length - 5} more`);
           }
@@ -1896,7 +1783,7 @@ export default function AdminSignalsTestPage() {
                       <span className="text-xs text-slate-400">
                         {d.postings_scraped} scraped · {d.postings_matched} matched
                       </span>
-                      {d.job_surge && (
+                      {d.hiring_expansion && (
                         <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-amber-800">
                           ⚡ surge
                         </span>
@@ -2042,20 +1929,7 @@ export default function AdminSignalsTestPage() {
                     </div>
                   </button>
                 )}
-                {dimension === 'new_strategy' && (
-                  <button
-                    type="button"
-                    onClick={() => void runPressReleasesBundle()}
-                    disabled={busySignal !== null}
-                    className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-left text-sm font-medium text-emerald-900 hover:bg-emerald-100 disabled:opacity-50"
-                  >
-                    <div className="font-medium">press_releases_all</div>
-                    <div className="text-xs text-emerald-700">Cross-dimensional · GlobeNewswire + PRNewswire RSS</div>
-                    <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-800">
-                      {busySignal === 'press_releases_all' ? 'Running...' : 'Active'}
-                    </div>
-                  </button>
-                )}
+
                 {dimension === 'new_people' && (
                   <button
                     type="button"

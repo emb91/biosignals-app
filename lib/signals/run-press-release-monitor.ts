@@ -1,28 +1,40 @@
 /**
- * Press-release signal monitor — V1.
+ * Press-release signal monitor — per-user company matching.
  *
- * For each of a user's active companies, query press_release_articles where
- * candidate_companies_normalized matches any of the company's normalized name
- * variants (primary + aliases). For each match, route classification.category
- * to the appropriate catalog signal via signalKeyForPressRelease().
+ * For each of a user's active companies, queries press_release_articles for
+ * recently published articles where candidate_companies_normalized contains a
+ * match for the company's name or any of its LLM-derived aliases. Emits
+ * appropriate signal events and recomputes account readiness.
  *
- * Cheap: zero LLM calls in the per-user path (classification was done once
- * during sync). All work is indexed Supabase queries.
+ * Matching strategy:
+ *   - Builds the same normalized query variants as the grants/funding monitors.
+ *   - Filters against the GIN-indexed candidate_companies_normalized column
+ *     using Postgrest ilike patterns.
+ *   - Dedupes against signal_source_events so re-running the monitor is safe.
  *
- * Signals this can emit (driven by classification.category):
- *   conference_presentation, licensing_deal, partnership_with_upfront_economics,
- *   co_development_deal, partnership_deal, milestone_payment, leadership_churn,
- *   layoffs, new_facility, facility_expansion, restructuring,
- *   acquisition_distraction, commercialization_move, fda_approval,
- *   phase_transition, funding_round, grant_award, ipo_or_follow_on,
- *   trial_failure_or_halt, program_discontinuation.
+ * Signal mapping (categories not listed here are skipped — negative/caution):
+ *   funding_round                    → new_funding
+ *   ipo_or_follow_on                 → ipo
+ *   grant_award                      → grant_award
+ *   licensing_deal                   → partnership_deal
+ *   partnership_with_upfront_economics → partnership_deal
+ *   co_development_deal              → partnership_deal
+ *   partnership_deal                 → partnership_deal
+ *   milestone_payment                → partnership_deal
+ *   fda_approval                     → fda_approval
+ *   phase_transition                 → phase_transition
+ *   new_facility                     → new_facility
+ *   facility_expansion               → new_facility
+ *   conference_presentation          → conference_presentation
+ *   commercialization_move           → fda_approval
+ *   m_and_a                          → ma
+ *
+ * Skipped (negative/caution per product decision):
+ *   m_and_a_target, leadership_churn, layoffs, restructuring, other
  */
+
 import { createAdminClient } from '@/lib/supabase-admin';
 import { ensureCompanyAliases } from '@/lib/signals/company-aliases';
-import {
-  signalKeyForPressRelease,
-  type PressReleaseClassification,
-} from '@/lib/signals/classify-press-release';
 import { buildCompanyQueryVariants, normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
 import {
   generateAccountReason,
@@ -31,10 +43,9 @@ import {
   recomputeAccountReadiness,
 } from '@/lib/signals/readiness-service';
 import type { SignalKey } from '@/lib/signals/readiness-types';
+import type { PressReleaseCategory, PressReleaseClassification } from '@/lib/signals/sync-press-release-delta';
 
-const SOURCE = 'newswire_press_release';
-
-type AdminClient = ReturnType<typeof createAdminClient>;
+// ── Types ──────────────────────────────────────────────────────────────────────
 
 type CompanyRow = {
   id: string;
@@ -43,7 +54,7 @@ type CompanyRow = {
   aliases: string[] | null;
 };
 
-type PressReleaseRow = {
+type ArticleRow = {
   id: string;
   source: string;
   source_url: string;
@@ -55,11 +66,11 @@ type PressReleaseRow = {
   candidate_companies_normalized: string[] | null;
 };
 
-type PressReleaseMonitorInput = {
+export type PressReleaseMonitorInput = {
   userId: string;
   companyIds?: string[];
-  limit?: number;
-  onlySignalKey?: SignalKey;
+  /** How many days back to look for press release articles. Default: 7. */
+  lookbackDays?: number;
 };
 
 export type PressReleaseMonitorResult = {
@@ -73,48 +84,86 @@ export type PressReleaseMonitorResult = {
   failures: Array<{ company_id: string; error: string }>;
 };
 
+// ── Signal mapping ─────────────────────────────────────────────────────────────
+
+const CATEGORY_TO_SIGNAL_KEY: Partial<Record<PressReleaseCategory, SignalKey>> = {
+  funding_round: 'funding_round',
+  ipo_or_follow_on: 'ipo_or_follow_on',
+  grant_award: 'grant_award',
+  licensing_deal: 'licensing_deal',
+  partnership_with_upfront_economics: 'partnership_with_upfront_economics',
+  co_development_deal: 'co_development_deal',
+  partnership_deal: 'partnership_deal',
+  milestone_payment: 'milestone_payment',
+  fda_approval: 'fda_approval',
+  phase_transition: 'phase_transition',
+  new_facility: 'new_facility',
+  facility_expansion: 'facility_expansion',
+  conference_presentation: 'conference_presentation',
+  commercialization_move: 'commercialization_move',
+  m_and_a: 'ma_event',
+  // m_and_a_target, leadership_churn, layoffs, restructuring, other → no mapping (skipped)
+};
+
+function signalKeyForCategory(category: PressReleaseCategory): SignalKey | null {
+  return CATEGORY_TO_SIGNAL_KEY[category] ?? null;
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+const SOURCE = 'press_release';
+
 function messageFromUnknown(error: unknown): string {
   if (error instanceof Error) return error.message;
-  return String(error);
+  if (error && typeof error === 'object') {
+    const obj = error as Record<string, unknown>;
+    if (typeof obj.message === 'string' && obj.message) return obj.message;
+    if (typeof obj.details === 'string' && obj.details) return obj.details;
+  }
+  return 'Internal server error';
 }
 
 function escapePostgrestPattern(term: string): string {
-  return term.replace(/[,()]/g, ' ').trim();
+  // Postgrest ilike doesn't support (), — strip characters that could break the pattern.
+  return term.replace(/[,()[\]{}]/g, ' ').trim();
 }
 
+// ── DB queries ─────────────────────────────────────────────────────────────────
+
 async function fetchArticlesForCompany(
-  admin: AdminClient,
-  company: { name: string; aliases: string[] },
-  limit = 100,
-): Promise<PressReleaseRow[]> {
-  // Match by candidate_companies_normalized (gin-indexed). We `cs.{value}`
-  // (contains) for each candidate name variant. Postgres `.cs.` is array
-  // containment — true if the array contains the value.
+  admin: ReturnType<typeof createAdminClient>,
+  company: { id: string; name: string; aliases: string[] },
+  cutoffIso: string,
+): Promise<ArticleRow[]> {
   const variants = buildCompanyQueryVariants(company.name, company.aliases)
     .map((v) => normalizeCompanyForMatching(v))
-    .filter((v) => v.length >= 3);
+    .filter((v) => v.length >= 4);
   const uniqueVariants = [...new Set(variants)];
   if (uniqueVariants.length === 0) return [];
 
+  // Filter to articles with a classification (unclassified ones don't have company data)
+  // and restrict to the lookback window
   const orClause = uniqueVariants
-    .map((t) => `candidate_companies_normalized.cs.{"${escapePostgrestPattern(t)}"}`)
+    .map((t) => `candidate_companies_normalized.cs.{${escapePostgrestPattern(t)}}`)
     .join(',');
 
+  // Note: We use the GIN-indexed candidate_companies_normalized column.
+  // Postgrest's .cs() (contains) operator works with array columns.
   const { data, error } = await admin
     .from('press_release_articles')
-    .select(
-      'id, source, source_url, title, summary, published_at, classification, candidate_companies, candidate_companies_normalized',
-    )
-    .or(orClause)
+    .select('id, source, source_url, title, summary, published_at, classification, candidate_companies, candidate_companies_normalized')
     .not('classification', 'is', null)
+    .gte('published_at', cutoffIso)
+    .or(orClause)
     .order('published_at', { ascending: false })
-    .limit(limit);
+    .limit(200);
+
   if (error) throw new Error(`press_release_articles query: ${error.message}`);
-  return (data ?? []) as PressReleaseRow[];
+  return (data ?? []) as ArticleRow[];
 }
 
 async function fetchExistingSourceEventIds(
-  admin: AdminClient,
+  admin: ReturnType<typeof createAdminClient>,
   userId: string,
   sourceEventIds: string[],
 ): Promise<Set<string>> {
@@ -138,8 +187,10 @@ async function fetchExistingSourceEventIds(
   return found;
 }
 
-async function emitSignal(
-  admin: AdminClient,
+// ── Emit ───────────────────────────────────────────────────────────────────────
+
+async function emitCompanySignal(
+  admin: ReturnType<typeof createAdminClient>,
   input: {
     userId: string;
     companyId: string;
@@ -147,14 +198,14 @@ async function emitSignal(
     sourceEventType: string;
     sourceEventId: string;
     sourceUrl: string;
+    title: string;
     summary: string;
-    eventAt: string | null;
+    eventAt: string;
     metadata: Record<string, unknown>;
     existingSourceEventIds: Set<string>;
   },
 ): Promise<'emitted' | 'duplicate'> {
   if (input.existingSourceEventIds.has(input.sourceEventId)) return 'duplicate';
-  const title = `${input.signalKey} detected from press release`;
 
   const ingest = await ingestSignalSourceEvent(admin, {
     userId: input.userId,
@@ -164,10 +215,10 @@ async function emitSignal(
     sourceEventType: input.sourceEventType,
     sourceEventId: input.sourceEventId,
     sourceUrl: input.sourceUrl,
-    title,
+    title: input.title,
     summary: input.summary,
     excerpt: input.summary,
-    eventAt: input.eventAt ?? new Date().toISOString(),
+    eventAt: input.eventAt,
     metadata: input.metadata,
   });
 
@@ -182,10 +233,10 @@ async function emitSignal(
       sourceUrl: input.sourceUrl,
       sourceEventType: input.sourceEventType,
       sourceEventId: input.sourceEventId,
-      title,
+      title: input.title,
       summary: input.summary,
       excerpt: input.summary,
-      eventAt: input.eventAt ?? null,
+      eventAt: input.eventAt,
       observedAt: new Date().toISOString(),
       metadata: input.metadata,
     },
@@ -197,29 +248,34 @@ async function emitSignal(
   return 'emitted';
 }
 
+// ── Main monitor ───────────────────────────────────────────────────────────────
+
 export async function runPressReleaseMonitor(
   input: PressReleaseMonitorInput,
 ): Promise<PressReleaseMonitorResult> {
   const admin = createAdminClient();
+  const lookbackDays = input.lookbackDays ?? 7;
+  const cutoffIso = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
 
+  // Load the user's active companies
   const { data: linkRows, error: linkError } = await admin
     .from('user_companies')
     .select('company_id')
     .eq('user_id', input.userId)
     .is('archived_at', null);
   if (linkError) throw new Error(`user_companies query: ${linkError.message}`);
+
   let ownedIds = (linkRows ?? [])
     .map((r) => (r as { company_id?: unknown }).company_id)
     .filter((v): v is string => typeof v === 'string' && Boolean(v));
 
-  const requestedIds = Array.isArray(input.companyIds)
+  // Optionally restrict to a specific subset of companies
+  const companyIds = Array.isArray(input.companyIds)
     ? input.companyIds.filter((v): v is string => typeof v === 'string' && Boolean(v))
     : [];
-  if (requestedIds.length > 0) {
-    const requestedSet = new Set(requestedIds);
+  if (companyIds.length > 0) {
+    const requestedSet = new Set(companyIds);
     ownedIds = ownedIds.filter((id) => requestedSet.has(id));
-  } else {
-    ownedIds = ownedIds.slice(0, Math.min(Math.max(input.limit ?? 25, 1), 500));
   }
 
   if (ownedIds.length === 0) {
@@ -250,8 +306,8 @@ export async function runPressReleaseMonitor(
   const recomputedCompanyIds = new Set<string>();
   const failures: Array<{ company_id: string; error: string }> = [];
 
-  // Lazy-populate aliases (cheap when fresh).
-  const aliasMap = new Map<string, string[]>();
+  // Lazy-populate aliases for any company missing them
+  const companyAliasMap = new Map<string, string[]>();
   for (const row of (companies ?? []) as CompanyRow[]) {
     const name = row.company_name?.trim();
     if (!name) continue;
@@ -260,36 +316,35 @@ export async function runPressReleaseMonitor(
       try {
         const result = await ensureCompanyAliases(admin, row.id);
         aliases = result.aliases;
-      } catch (e) {
-        console.warn(`[press-releases] ensureCompanyAliases failed for ${row.id}:`, e);
+      } catch (error) {
+        console.error(`[press-release-monitor] ensureCompanyAliases failed for ${row.id}:`, error);
       }
     }
-    aliasMap.set(row.id, aliases);
+    companyAliasMap.set(row.id, aliases);
   }
-
-  const onlySignal = input.onlySignalKey;
-  const shouldEmit = (key: SignalKey) => !onlySignal || onlySignal === key;
 
   for (const row of (companies ?? []) as CompanyRow[]) {
     const companyName = row.company_name?.trim();
     if (!companyName) continue;
+
     try {
-      const aliases = aliasMap.get(row.id) ?? [];
+      const aliases = companyAliasMap.get(row.id) ?? [];
       const articles = await fetchArticlesForCompany(
         admin,
-        { name: companyName, aliases },
-        100,
+        { id: row.id, name: companyName, aliases },
+        cutoffIso,
       );
 
-      // Pre-build all candidate source_event_ids so we can do one dedupe query
+      // Build all candidate source_event_ids for bulk dedupe check
       const candidateSourceEventIds: string[] = [];
-      const articleSignalPairs: Array<{ article: PressReleaseRow; signalKey: SignalKey }> = [];
       for (const article of articles) {
-        const signalKey = signalKeyForPressRelease(article.classification);
-        if (!signalKey || !shouldEmit(signalKey)) continue;
-        articleSignalPairs.push({ article, signalKey });
-        candidateSourceEventIds.push(`${SOURCE}:${row.id}:${article.id}:${signalKey}`);
+        const classification = article.classification;
+        if (!classification) continue;
+        const signalKey = signalKeyForCategory(classification.category);
+        if (!signalKey) continue; // skip negative/caution categories
+        candidateSourceEventIds.push(`${SOURCE}:${article.id}:${row.id}:${signalKey}`);
       }
+
       const existingSourceEventIds = await fetchExistingSourceEventIds(
         admin,
         input.userId,
@@ -298,37 +353,57 @@ export async function runPressReleaseMonitor(
 
       let emittedAny = false;
 
-      for (const { article, signalKey } of articleSignalPairs) {
+      for (const article of articles) {
         recordsScanned += 1;
+        const classification = article.classification;
+        if (!classification) continue;
+
+        const signalKey = signalKeyForCategory(classification.category);
+        if (!signalKey) continue; // skip m_and_a_target, leadership_churn, layoffs, restructuring, other
+
         candidateEventsMatched += 1;
-        const c = article.classification!;
-        const sourceEventId = `${SOURCE}:${row.id}:${article.id}:${signalKey}`;
-        const publishedDate = article.published_at.slice(0, 10);
 
-        const summary = c.rationale && c.rationale.length > 0
-          ? `${c.rationale} [${article.source}, ${publishedDate}]`
-          : `${signalKey.replace(/_/g, ' ')} reported for ${c.primary_company ?? companyName} (${publishedDate}).`;
+        const sourceEventId = `${SOURCE}:${article.id}:${row.id}:${signalKey}`;
+        const sourceEventType = `press_release_${classification.category}`;
 
-        const emitted = await emitSignal(admin, {
+        // Build a concise title for the signal feed
+        const signalTitle = article.title.length > 120
+          ? `${article.title.slice(0, 117)}…`
+          : article.title;
+
+        const summary = classification.rationale || article.summary || article.title;
+
+        const metadata: Record<string, unknown> = {
+          article_id: article.id,
+          source: article.source,
+          press_release_category: classification.category,
+          confidence: classification.confidence,
+          candidate_companies: article.candidate_companies ?? [],
+        };
+        if (classification.counterparty) metadata.counterparty = classification.counterparty;
+        if (classification.therapy_area) metadata.therapy_area = classification.therapy_area;
+        if (classification.amount_usd) metadata.amount_usd = classification.amount_usd;
+        if (classification.upfront_usd) metadata.upfront_usd = classification.upfront_usd;
+        if (classification.milestone_max_usd) metadata.milestone_max_usd = classification.milestone_max_usd;
+        if (classification.drug_name) metadata.drug_name = classification.drug_name;
+        if (classification.indication) metadata.indication = classification.indication;
+        if (classification.investors) metadata.investors = classification.investors;
+        if (classification.key_facts) metadata.key_facts = classification.key_facts;
+
+        const emitted = await emitCompanySignal(admin, {
           userId: input.userId,
           companyId: row.id,
           signalKey,
-          sourceEventType: `newswire_${c.category}`,
+          sourceEventType,
           sourceEventId,
           sourceUrl: article.source_url,
-          eventAt: article.published_at,
+          title: signalTitle,
           summary,
-          metadata: {
-            article_id: article.id,
-            source: article.source,
-            article_title: article.title,
-            published_at: article.published_at,
-            category: c.category,
-            confidence: c.confidence,
-            classification: c,
-          },
+          eventAt: article.published_at,
+          metadata,
           existingSourceEventIds,
         });
+
         if (emitted === 'emitted') {
           emittedAny = true;
           emittedSignalTypes.add(signalKey);
@@ -347,6 +422,10 @@ export async function runPressReleaseMonitor(
     } catch (error) {
       failed += 1;
       failures.push({ company_id: row.id, error: messageFromUnknown(error) });
+      console.error(
+        `[press-release-monitor] Failed for company ${row.id} (user ${input.userId}):`,
+        error,
+      );
     }
   }
 

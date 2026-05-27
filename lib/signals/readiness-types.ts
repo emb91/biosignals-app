@@ -7,10 +7,6 @@ export type ReadinessDimension =
 
 export type SignalScope = 'company' | 'contact';
 
-export type SignalStrength = 'weak' | 'medium' | 'strong';
-
-export type ConfidenceLabel = 'low' | 'medium' | 'high';
-
 export type ReadinessLabel = 'low' | 'medium' | 'high';
 
 export type BuyerFunction =
@@ -80,9 +76,14 @@ export type SignalKey =
   | 'cmc_hiring'
   | 'clinical_ops_hiring'
   | 'regulatory_hiring'
+  | 'research_hiring'
+  | 'quality_hiring'
+  | 'medical_hiring'
   | 'bd_hiring'
   | 'commercial_hiring'
-  | 'job_surge'
+  | 'data_informatics_hiring'
+  | 'executive_hiring'
+  | 'hiring_expansion'
   | 'new_to_role'
   | 'recently_promoted'
   | 'recently_changed_company'
@@ -108,22 +109,21 @@ export type SignalKey =
   | 'trial_failure_or_halt'
   | 'program_discontinuation'
   | 'restructuring'
-  | 'distressed_financing'
   | 'acquisition_distraction'
   | 'leadership_churn'
   | 'lapsed_customer'
   | 'prior_customer_relationship'
   | 'prior_active_deal_relationship'
-  | 'prior_pipeline_relationship';
+  | 'prior_pipeline_relationship'
+  | 'key_contact_departed'
+  | 'terminated_deal';
 
 export type SignalCatalogEntry = {
   signalKey: SignalKey;
   scope: SignalScope;
   dimensions: ReadinessDimension[];
-  defaultStrength: SignalStrength;
-  /** Base category impact out of 100 before confidence, recency, and relevance adjustments. */
+  /** Base category impact out of 100 before recency and relevance adjustments. */
   baseImpactScore: number;
-  defaultConfidence: ConfidenceLabel;
   decayDays: number;
   buyerFunctions: BuyerFunction[];
   intentMechanisms: IntentMechanism[];
@@ -156,8 +156,6 @@ export type NormalizedSignal = {
   dimensions: ReadinessDimension[];
   buyerFunctions: BuyerFunction[];
   intentMechanisms: IntentMechanism[];
-  defaultStrength: SignalStrength;
-  defaultConfidence: ConfidenceLabel;
   eventAt: string | null;
   observedAt: string;
   evidenceExcerpt: string | null;
@@ -171,13 +169,11 @@ export type SignalEvidence = {
   sourceUrl: string | null;
   eventAt: string | null;
   excerpt: string | null;
-  confidenceLabel: ConfidenceLabel;
 };
 
 export type DimensionState = {
   score: number;
   label: ReadinessLabel;
-  confidenceLabel: ConfidenceLabel;
   evidenceIds: string[];
 };
 
@@ -187,7 +183,6 @@ export type AccountReason = {
   whyNow: string;
   affectedFunctions: BuyerFunction[];
   suggestedAngle: string;
-  confidenceLabel: ConfidenceLabel;
 };
 
 export type AccountReadinessState = {
@@ -225,7 +220,6 @@ export type AccountReadinessContext = {
 
 export type ReadinessScoreInputs = {
   strengthWeight: number;
-  confidenceMultiplier: number;
   recencyMultiplier: number;
   relevanceMultiplier: number;
 };

@@ -71,8 +71,6 @@ export function normalizeReadinessEvent(
       dimensions: [...catalogEntry.dimensions],
       buyerFunctions: deriveBuyerFunctions(signalKey, input.buyerFunctionsOverride),
       intentMechanisms: [...catalogEntry.intentMechanisms],
-      defaultStrength: catalogEntry.defaultStrength,
-      defaultConfidence: catalogEntry.defaultConfidence,
       eventAt: input.rawEvent.eventAt,
       observedAt: input.rawEvent.observedAt,
       evidenceExcerpt: input.evidenceExcerpt ?? input.rawEvent.excerpt,

@@ -89,6 +89,7 @@ type AccountRow = {
   data_provenance_imported_at: string | null;
   readiness_label?: string | null;
   readiness_score?: number | null;
+  raw_readiness_score?: number | null;
   priority_score?: number | null;
   crm_status?: 'customer' | 'active' | 'dormant' | 'context_only' | 'none' | null;
   crm_deal_stage_label?: string | null;
@@ -485,6 +486,7 @@ export default function AccountsPage() {
   // Panel state
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [panelMode, setPanelMode] = useState<PanelMode>('details');
+  const [failedLogoByAccountId, setFailedLogoByAccountId] = useState<Record<string, true>>({});
 
   // Floating chat-bar value — shown while a company card is open (same pattern as
   // /leads/contacts). On submit we dismiss the company card and forward the text
@@ -583,6 +585,18 @@ export default function AccountsPage() {
     });
   }, [selectedAccountId]);
 
+  useEffect(() => {
+    if (!selectedAccountId) return;
+    const selected = accounts.find((account) => account.id === selectedAccountId);
+    if (!selected?.logo_url) return;
+    setFailedLogoByAccountId((prev) => {
+      if (!prev[selectedAccountId]) return prev;
+      const next = { ...prev };
+      delete next[selectedAccountId];
+      return next;
+    });
+  }, [selectedAccountId, accounts]);
+
   // Company enrichment refresh
   const [refreshingCompanyId, setRefreshingCompanyId] = useState<string | null>(null);
   const rerunCompanyEnrichment = async (companyId: string) => {
@@ -608,6 +622,7 @@ export default function AccountsPage() {
   const [expandedBars, setExpandedBars] = useState<Set<string>>(new Set());
   const toggleBar = (key: string) =>
     setExpandedBars((prev) => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
+
 
   useEffect(() => {
     if (!loading && !user) router.push('/login');
@@ -975,9 +990,13 @@ export default function AccountsPage() {
             onClick={(e) => openContacts(account.id, e)}
             className={cn(
               'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors',
-              isSelected && panelMode === 'contacts'
-                ? 'bg-arcova-teal text-white'
-                : 'bg-slate-100 text-slate-600 hover:bg-arcova-teal/10 hover:text-arcova-teal',
+              account.contact_count === 0
+                ? (isSelected && panelMode === 'contacts'
+                    ? 'bg-amber-500 text-white'
+                    : 'bg-amber-50 text-amber-700 hover:bg-amber-100')
+                : (isSelected && panelMode === 'contacts'
+                    ? 'bg-arcova-teal text-white'
+                    : 'bg-slate-100 text-slate-600 hover:bg-arcova-teal/10 hover:text-arcova-teal'),
             )}
           >
             <Users className="w-3 h-3 shrink-0" />
@@ -1399,11 +1418,17 @@ export default function AccountsPage() {
                       </div>
                       {/* Logo + close (right, matches Leads company panel) */}
                       <div className="flex items-start gap-2 shrink-0">
-                        {selectedAccount.logo_url ? (
+                        {selectedAccount.logo_url && !failedLogoByAccountId[selectedAccount.id] ? (
                           <img
                             src={selectedAccount.logo_url}
                             alt=""
                             className="w-16 h-16 rounded-xl object-contain bg-gray-50 border border-gray-100 p-1"
+                            onError={() =>
+                              setFailedLogoByAccountId((prev) => ({
+                                ...prev,
+                                [selectedAccount.id]: true,
+                              }))
+                            }
                           />
                         ) : (
                           <div className="w-16 h-16 rounded-xl bg-gray-100 flex items-center justify-center text-xl font-semibold text-gray-400">
@@ -1512,16 +1537,33 @@ export default function AccountsPage() {
 
                             {action === 'source_contact' && (
                               <div className="space-y-3">
-                                <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
-                                  <strong>{companyLabel}</strong> is a strong ICP fit, but the contacts on file are not
-                                  the right personas to approach yet. Source a better-matched contact before you reach
-                                  out.
-                                </p>
-                                <p className="text-[13.5px] leading-[1.55] text-[#4a6470]">
-                                  Open the Data page to request more contacts for this account. This company and ICP
-                                  context are passed through so the agent can help you queue the right acquisition
-                                  job.
-                                </p>
+                                {selectedAccount.contact_count === 0 ? (
+                                  <>
+                                    <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
+                                      <strong>{companyLabel}</strong> has no contacts on file. Your last known contact
+                                      at this account has moved on — find a replacement to keep this account warm.
+                                    </p>
+                                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                                      <p className="text-[12.5px] leading-[1.5] text-amber-800">
+                                        Arcova detected a contact departure at this account. Sourcing a new contact
+                                        here lets you re-establish coverage without losing the account entirely.
+                                      </p>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <>
+                                    <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
+                                      <strong>{companyLabel}</strong> is a strong ICP fit, but the contacts on file are not
+                                      the right personas to approach yet. Source a better-matched contact before you reach
+                                      out.
+                                    </p>
+                                    <p className="text-[13.5px] leading-[1.55] text-[#4a6470]">
+                                      Open the Data page to request more contacts for this account. This company and ICP
+                                      context are passed through so the agent can help you queue the right acquisition
+                                      job.
+                                    </p>
+                                  </>
+                                )}
                                 <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
                                   <button
                                     type="button"
@@ -1529,7 +1571,7 @@ export default function AccountsPage() {
                                     className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-white px-4 py-2.5 text-sm font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/5"
                                   >
                                     <Users className="h-4 w-4" />
-                                    Find buyer-persona contacts
+                                    Find replacement contact
                                   </button>
                                 </div>
                               </div>
@@ -1580,8 +1622,22 @@ export default function AccountsPage() {
                         );
                         const hasFirmographics = !!(selectedAccount.employee_count != null || selectedAccount.employee_range || selectedAccount.founded_year != null || selectedAccount.headquarters_city || selectedAccount.headquarters_country);
                         const hasFunding = !!(selectedAccount.funding_stage || selectedAccount.funding_status_label || selectedAccount.total_funding_usd != null || selectedAccount.latest_funding_date);
+                        const isPendingEnrichment = !selectedAccount.last_enriched_at;
                         return (
                           <div className="space-y-3">
+                            {isPendingEnrichment && (
+                              <div className="rounded-xl border border-amber-200 bg-amber-50/80 px-3.5 py-3 flex gap-2.5">
+                                <svg className="mt-0.5 w-4 h-4 shrink-0 text-amber-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+                                  <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                                </svg>
+                                <div className="min-w-0">
+                                  <p className="text-[12.5px] font-semibold text-amber-800">Enrichment in progress</p>
+                                  <p className="mt-0.5 text-[12px] leading-relaxed text-amber-700">
+                                    This company was added automatically when a contact changed jobs. Details, fit score, and signals will populate within the hour.
+                                  </p>
+                                </div>
+                              </div>
+                            )}
                             {getAccountRowAction(selectedAccount) === 'monitor' && (
                               <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4 space-y-2">
                                 <p className="text-[13px] leading-snug text-[#0d3547]">
@@ -1862,7 +1918,29 @@ export default function AccountsPage() {
                               <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-arcova-teal" />
                             </div>
                           ) : contacts.length === 0 ? (
-                            <p className="text-sm text-gray-400 text-center py-12">No contacts found.</p>
+                            <div className="space-y-3 py-2">
+                              {selectedAccount.contact_count === 0 ? (
+                                <>
+                                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3.5">
+                                    <p className="text-[13px] font-semibold text-amber-900 mb-1">Contact departed</p>
+                                    <p className="text-[12.5px] leading-[1.5] text-amber-800">
+                                      Your last known contact at this account has moved on. Source a replacement
+                                      contact to keep this account warm and maintain coverage.
+                                    </p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => openContactAcquisition(selectedAccount)}
+                                    className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-white px-3 py-2.5 text-sm font-semibold text-arcova-teal hover:bg-arcova-teal/5 transition-colors"
+                                  >
+                                    <Users className="h-3.5 w-3.5" />
+                                    Find replacement contact
+                                  </button>
+                                </>
+                              ) : (
+                                <p className="text-sm text-gray-400 text-center py-12">No contacts found.</p>
+                              )}
+                            </div>
                           ) : (
                             <div className="space-y-2">
                               {contacts.map((contact) => {
@@ -1976,7 +2054,21 @@ export default function AccountsPage() {
                       )}
 
                       {panelMode === 'signals' && (
-                        <EntitySignalsList companyId={selectedAccount.id} />
+                        <EntitySignalsList
+                          companyId={selectedAccount.id}
+                          effectiveReadinessScore={selectedAccount.readiness_score ?? null}
+                          crmCappedReason={(() => {
+                            const rawPct = percentDisplayNumber(selectedAccount.raw_readiness_score ?? selectedAccount.readiness_score ?? null);
+                            const companyLabel = selectedAccount.company_name || 'This account';
+                            if (selectedAccount.crm_status === 'customer') {
+                              return `${companyLabel} is a closed-won account. Readiness is low as you have already sold to this company.`;
+                            }
+                            if (selectedAccount.crm_status === 'dormant') {
+                              return `${companyLabel} is a closed-lost account. Readiness is low because the last deal was lost.`;
+                            }
+                            return null;
+                          })()}
+                        />
                       )}
 
                       {panelMode === 'crm' && (
@@ -2110,10 +2202,12 @@ export default function AccountsPage() {
                           return v > 1 ? v / 100 : v;
                         })();
                         const readinessNorm = selectedAccount.readiness_score ?? null;
+                        const rawReadinessNorm = selectedAccount.raw_readiness_score ?? selectedAccount.readiness_score ?? null;
                         const priorityNorm = selectedAccount.priority_score ?? null;
                         const priorityPct = percentDisplayNumber(priorityNorm);
                         const fitPct = percentDisplayNumber(fitNorm);
                         const readinessPct = percentDisplayNumber(readinessNorm);
+                        const rawReadinessPct = percentDisplayNumber(rawReadinessNorm);
                         const ScoreRow = ({
                           label,
                           pct,
@@ -2182,7 +2276,7 @@ export default function AccountsPage() {
                               onOpen={() => setPanelMode('fit')}
                             />
                             <ScoreRow
-                              label="Readiness score"
+                              label="Signal readiness"
                               pct={readinessPct}
                               arcColor={fitScoreArcColor(readinessPct)}
                               onOpen={() => setPanelMode('signals')}

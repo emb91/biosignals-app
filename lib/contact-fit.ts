@@ -336,6 +336,26 @@ function pickWinner(scores: ContactPersonaScoreResult[]): ContactPersonaScoreRes
   })[0];
 }
 
+function buildContactPanelSummary(contact: ContactScoreRow): string {
+  const name = contact.full_name?.trim() || 'This contact';
+  const role = contact.job_title?.trim() || 'unknown role';
+  const companyHint = contact.company_id ? 'their linked account' : 'a company not yet linked';
+  return `${name} is tracked as ${role} at ${companyHint}. This summary updates when profile or scoring context changes.`;
+}
+
+function buildContactFitSummary(
+  contact: ContactScoreRow,
+  winner: ContactPersonaScoreResult | null,
+): string {
+  const name = contact.full_name?.trim() || 'This contact';
+  if (!winner) {
+    return `${name} has no eligible persona match yet, so contact fit is low.`;
+  }
+  const scorePct = scoreToPercent(winner.finalScore01);
+  const personaLabel = winner.personaName?.trim() || 'the best-matching persona';
+  return `${name} is currently ${scorePct}% aligned to ${personaLabel}.`;
+}
+
 async function loadPersonasForUser(supabase: MinimalSupabase, userId: string): Promise<PersonaScoreRow[]> {
   const { data, error } = await supabase
     .from('personas')
@@ -435,6 +455,8 @@ async function clearContactFit(
       contact_fit_coverage: null,
       contact_fit_scored_at: now,
       contact_fit_version: SCORE_VERSION,
+      contact_panel_summary: buildContactPanelSummary(contact),
+      contact_fit_summary: buildContactFitSummary(contact, null),
       updated_at: now,
     })
     .eq('user_id', userId)
@@ -497,6 +519,8 @@ async function persistScoresForContact(
       contact_fit_coverage: winner?.coverage01 ?? null,
       contact_fit_scored_at: now,
       contact_fit_version: SCORE_VERSION,
+      contact_panel_summary: buildContactPanelSummary(contact),
+      contact_fit_summary: buildContactFitSummary(contact, winner),
       updated_at: now,
     })
     .eq('user_id', userId)
