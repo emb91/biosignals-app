@@ -38,9 +38,9 @@ export async function POST(request: Request) {
     const supabase = createAdminClient();
 
     const { data: company, error: companyError } = await supabase
-      .from('companies')
-      .select('id')
-      .eq('id', companyId)
+      .from('user_companies')
+      .select('company_id')
+      .eq('company_id', companyId)
       .eq('user_id', user.id)
       .maybeSingle();
 
@@ -50,17 +50,17 @@ export async function POST(request: Request) {
 
     const readiness = await recomputeAccountReadiness(supabase, {
       userId: user.id,
-      companyId: company.id,
+      companyId: company.company_id,
     });
 
     const reason = await generateAccountReason(supabase, {
       userId: user.id,
-      companyId: company.id,
+      companyId: company.company_id,
     });
 
     const context = await buildPersistedAccountReadinessContext(supabase, {
       userId: user.id,
-      companyId: company.id,
+      companyId: company.company_id,
     });
 
     return NextResponse.json({

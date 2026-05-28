@@ -264,10 +264,7 @@ export function AccountEditDialog({ account, open, onClose, onSaved }: Props) {
 
   const labelClass = 'text-xs font-semibold text-gray-600 mb-1 block';
   const inputClass = 'w-full rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:border-arcova-teal focus:outline-none focus:ring-1 focus:ring-arcova-teal/40';
-  const overrideBadge = (key: string) =>
-    overrideKeys.has(key) ? (
-      <span className="ml-2 inline-flex items-center rounded-full bg-arcova-teal/10 px-1.5 py-0.5 text-[10px] font-medium text-arcova-teal">your edit</span>
-    ) : null;
+  const overrideBadge = (_key: string) => null;
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4">
@@ -275,10 +272,6 @@ export function AccountEditDialog({ account, open, onClose, onSaved }: Props) {
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
           <div>
             <h2 className="text-base font-semibold text-gray-900">Edit account</h2>
-            <p className="text-xs text-gray-500 mt-0.5">
-              Your edits override the shared enriched data — just for your account.
-              Categorical fields use the same taxonomy your ICPs are scored against.
-            </p>
           </div>
           <button
             type="button"
@@ -320,11 +313,11 @@ export function AccountEditDialog({ account, open, onClose, onSaved }: Props) {
           </Section>
 
           {/* ── Categorisation (drives ICP matching) ────────────────── */}
-          <Section title="Categorisation" subtitle="These fields are matched against your ICP definitions.">
+          <Section title="Categorisation">
             <div className="grid grid-cols-2 gap-4">
               <Field label="Company type" badge={overrideBadge('company_type')}>
                 <select className={inputClass} value={form.company_type} onChange={setText('company_type')}>
-                  <option value="">— Unset (use enriched)</option>
+                  <option value="">—</option>
                   {COMPANY_TYPE_OPTIONS.map((opt) => (
                     <option key={opt.value} value={opt.value} title={opt.description}>
                       {opt.value}
@@ -334,7 +327,7 @@ export function AccountEditDialog({ account, open, onClose, onSaved }: Props) {
               </Field>
               <Field label="Industry" badge={overrideBadge('industry')}>
                 <select className={inputClass} value={form.industry} onChange={setText('industry')}>
-                  <option value="">— Unset (use enriched)</option>
+                  <option value="">—</option>
                   {INDUSTRY_OPTIONS.map((opt) => (
                     <option key={opt} value={opt}>{opt}</option>
                   ))}
@@ -346,24 +339,16 @@ export function AccountEditDialog({ account, open, onClose, onSaved }: Props) {
               {form.company_type === 'SaaS' && (
                 <Field label="Platform category" badge={overrideBadge('platform_category')}>
                   <select className={inputClass} value={form.platform_category} onChange={setText('platform_category')}>
-                    <option value="">— Unset (use enriched)</option>
+                    <option value="">—</option>
                     {PLATFORM_CATEGORY_OPTIONS.map((opt) => (
                       <option key={opt} value={opt}>{opt}</option>
                     ))}
                   </select>
                 </Field>
               )}
-              <Field label="Clinical stage" badge={overrideBadge('clinical_stage')}>
-                <select className={inputClass} value={form.clinical_stage} onChange={setText('clinical_stage')}>
-                  <option value="">— Unset (use enriched)</option>
-                  {DEVELOPMENT_STAGE_OPTIONS.map((opt) => (
-                    <option key={opt} value={opt}>{opt}</option>
-                  ))}
-                </select>
-              </Field>
               <Field label="Funding stage" badge={overrideBadge('funding_stage')}>
                 <select className={inputClass} value={form.funding_stage} onChange={setText('funding_stage')}>
-                  <option value="">— Unset (use enriched)</option>
+                  <option value="">—</option>
                   {FUNDING_STAGE_OPTIONS.map((opt) => (
                     <option key={opt} value={opt}>{opt}</option>
                   ))}
@@ -408,7 +393,7 @@ export function AccountEditDialog({ account, open, onClose, onSaved }: Props) {
               </Field>
               <Field label="Employee range (bucket)" badge={overrideBadge('employee_range')}>
                 <select className={inputClass} value={form.employee_range} onChange={setText('employee_range')}>
-                  <option value="">— Unset (use enriched)</option>
+                  <option value="">—</option>
                   {COMPANY_SIZE_OPTIONS.map((opt) => (
                     <option key={opt} value={opt}>{opt}</option>
                   ))}
@@ -416,7 +401,7 @@ export function AccountEditDialog({ account, open, onClose, onSaved }: Props) {
               </Field>
               <Field label="Company size bucket" badge={overrideBadge('company_size_bucket')}>
                 <select className={inputClass} value={form.company_size_bucket} onChange={setText('company_size_bucket')}>
-                  <option value="">— Unset (use enriched)</option>
+                  <option value="">—</option>
                   {COMPANY_SIZE_OPTIONS.map((opt) => (
                     <option key={opt} value={opt}>{opt}</option>
                   ))}

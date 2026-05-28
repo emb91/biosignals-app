@@ -66,9 +66,6 @@ export type SignalKey =
   | 'fda_approval'
   | 'new_facility'
   | 'facility_expansion'
-  | 'cmc_scale_up'
-  | 'cdmo_partnership'
-  | 'quality_compliance_buildout'
   | 'visited_your_website'
   | 'attended_your_webinar_or_event'
   | 'downloaded_your_content'
@@ -89,13 +86,10 @@ export type SignalKey =
   | 'recently_changed_company'
   | 'new_internal_role'
   | 'title_change'
-  | 'board_or_advisory_role'
   | 'partnership_deal'
   | 'licensing_deal'
   | 'co_development_deal'
-  | 'regional_expansion'
   | 'commercialization_move'
-  | 'platform_repositioning'
   | 'publication'
   | 'new_paper_published'
   | 'patent_filed_or_granted'
@@ -103,7 +97,6 @@ export type SignalKey =
   | 'patent_granted'
   | 'new_therapeutic_area_patent'
   | 'assignee_portfolio_acceleration'
-  | 'layoffs'
   | 'trial_failure_or_halt'
   | 'program_discontinuation'
   | 'restructuring'
@@ -114,7 +107,8 @@ export type SignalKey =
   | 'prior_active_deal_relationship'
   | 'prior_pipeline_relationship'
   | 'key_contact_departed'
-  | 'terminated_deal';
+  | 'terminated_deal'
+  | 'principal_investigator_new_trial';
 
 export type SignalCatalogEntry = {
   signalKey: SignalKey;

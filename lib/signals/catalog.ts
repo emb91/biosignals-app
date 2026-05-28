@@ -383,14 +383,6 @@ export const SIGNAL_CATALOG: SignalDefinition[] = [
     description: 'A title change can reflect broadened scope or increased seniority.',
   },
   {
-    id: 'board_or_advisory_role',
-    scope: 'contact',
-    displayName: 'Board or advisory role',
-    category: 'Career & Role Changes',
-    baseWeight: 0.6,
-    description: 'Joining a board or advisory position signals growing influence and network.',
-  },
-  {
     id: 'active_on_linkedin',
     scope: 'contact',
     displayName: 'Active on LinkedIn',

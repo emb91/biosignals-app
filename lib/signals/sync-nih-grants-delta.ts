@@ -13,6 +13,7 @@
  */
 import type { createAdminClient } from '@/lib/supabase-admin';
 import { normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
+import { resolveCompanyMentions } from '@/lib/companies/resolve-mentions';
 
 const NIH_REPORTER_ENDPOINT = 'https://api.reporter.nih.gov/v2/projects/search';
 
@@ -225,6 +226,7 @@ type GrantUpsertRow = {
   mechanism_code_dc: string | null;
   extras: Record<string, unknown> | null;
   last_seen_at: string;
+  mentioned_company_ids?: string[];
 };
 
 function awardToRow(award: ReporterAward, startedAtIso: string): GrantUpsertRow | null {
@@ -311,6 +313,22 @@ export async function syncNihGrantsDelta(input: SyncNihGrantsDeltaInput): Promis
     for (const award of byApplId.values()) {
       const row = awardToRow(award, startedAtIso);
       if (row) rows.push(row);
+    }
+
+    // Resolve org_name → canonical company ids in one batched call so signal
+    // monitors can query mentioned_company_ids instead of fuzzy ILIKE.
+    const uniqueOrgs = [...new Set(rows.map((r) => r.org_name).filter((n): n is string => Boolean(n)))];
+    if (uniqueOrgs.length > 0) {
+      try {
+        const resolved = await resolveCompanyMentions(admin, uniqueOrgs);
+        for (const row of rows) {
+          const id = row.org_name ? resolved.get(row.org_name)?.canonicalId : null;
+          row.mentioned_company_ids = id ? [id] : [];
+        }
+      } catch (e) {
+        console.error('[sync-nih-grants] resolver failed:', e);
+        for (const row of rows) row.mentioned_company_ids = [];
+      }
     }
 
     let upserted = 0;

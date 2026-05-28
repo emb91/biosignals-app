@@ -11,19 +11,84 @@ import { useEffect, useMemo, useState } from 'react';
 
 const STORAGE_KEY = 'arcova_admin_signals_todo_v1';
 const AUTO_COMPLETED_SIGNALS = new Set<SignalKey>([
+  // Funding / SEC pipeline
   'funding_round',
   'grant_award',
   'ipo_or_follow_on',
+  'milestone_payment',
+  'partnership_with_upfront_economics',
+  'ma_event',
+  'restructuring',
+  'acquisition_distraction',
+  'leadership_churn',
+  'terminated_deal',
+  // Clinical trials pipeline
   'clinical_trial_registered',
+  'clinical_trial_recruiting',
+  'clinical_trial_completed',
+  'clinical_trial_sponsor_change',
   'phase_transition',
+  'trial_site_expansion',
+  'indication_expansion',
   'trial_failure_or_halt',
+  'program_discontinuation',
+  // FDA pipeline
+  'fda_approval',
+  'breakthrough_designation',
+  'fast_track_designation',
+  'priority_review',
+  'orphan_designation',
+  'complete_response_letter',
+  // Patents pipeline
+  'patent_filed_or_granted',
+  'patent_application_published',
+  'patent_granted',
+  'new_therapeutic_area_patent',
+  'assignee_portfolio_acceleration',
+  // Hiring pipeline
+  'cmc_hiring',
+  'clinical_ops_hiring',
+  'regulatory_hiring',
+  'research_hiring',
+  'quality_hiring',
+  'medical_hiring',
+  'bd_hiring',
+  'commercial_hiring',
+  'data_informatics_hiring',
+  'executive_hiring',
+  'hiring_expansion',
+  // Job change / contact pipeline
+  'new_to_role',
+  'recently_promoted',
+  'recently_changed_company',
+  'new_internal_role',
+  'title_change',
+  'key_contact_departed',
+  'prior_customer_relationship',
+  'prior_active_deal_relationship',
+  'prior_pipeline_relationship',
+  // principal_investigator_new_trial: NOT exposed as a standalone button.
+  // PI matching is a side-effect of the "Clinical Trials All" run, which
+  // already calls emitPrincipalInvestigatorSignal per study.
+  // Press releases pipeline
+  'partnership_deal',
+  'licensing_deal',
+  'co_development_deal',
+  'commercialization_move',
+  'new_facility',
+  'facility_expansion',
+  // HubSpot / CRM
   'open_opportunity_in_crm',
   'new_contact_added_in_crm',
-  'title_change',
-  'recently_promoted',
-  'new_internal_role',
-  'recently_changed_company',
   'closed_lost_in_crm',
+  'lapsed_customer',
+  // First-party engagement (HubSpot)
+  'demo_requested',
+  'inbound_enquiry',
+  'visited_your_website',
+  'attended_your_webinar_or_event',
+  'downloaded_your_content',
+  'responded_to_previous_outreach',
 ]);
 
 type SignalFamily =
@@ -139,9 +204,6 @@ const SIGNAL_FAMILY_MAP: Record<SignalKey, SignalFamily[]> = {
   fda_approval: ['external_company_change'],
   new_facility: ['external_company_change'],
   facility_expansion: ['external_company_change'],
-  cmc_scale_up: ['external_company_change'],
-  cdmo_partnership: ['external_company_change'],
-  quality_compliance_buildout: ['external_company_change'],
   visited_your_website: ['first_party_engagement'],
   attended_your_webinar_or_event: ['first_party_engagement'],
   downloaded_your_content: ['first_party_engagement'],
@@ -162,13 +224,10 @@ const SIGNAL_FAMILY_MAP: Record<SignalKey, SignalFamily[]> = {
   recently_changed_company: ['external_contact_change', 'crm_contact_change'],
   new_internal_role: ['external_contact_change', 'crm_contact_change'],
   title_change: ['external_contact_change', 'crm_contact_change'],
-  board_or_advisory_role: ['external_contact_change'],
   partnership_deal: ['external_company_change'],
   licensing_deal: ['external_company_change'],
   co_development_deal: ['external_company_change'],
-  regional_expansion: ['external_company_change'],
   commercialization_move: ['external_company_change'],
-  platform_repositioning: ['external_company_change'],
   publication: ['external_company_change'],
   new_paper_published: ['external_contact_change'],
   patent_filed_or_granted: ['external_company_change'],
@@ -176,7 +235,6 @@ const SIGNAL_FAMILY_MAP: Record<SignalKey, SignalFamily[]> = {
   patent_granted: ['external_company_change'],
   new_therapeutic_area_patent: ['external_company_change'],
   assignee_portfolio_acceleration: ['external_company_change'],
-  layoffs: ['suppression_signals'],
   trial_failure_or_halt: ['suppression_signals'],
   program_discontinuation: ['suppression_signals'],
   restructuring: ['suppression_signals'],
@@ -188,6 +246,7 @@ const SIGNAL_FAMILY_MAP: Record<SignalKey, SignalFamily[]> = {
   prior_pipeline_relationship: ['crm_relationship_state', 'external_contact_change'],
   key_contact_departed: ['external_contact_change'],
   terminated_deal: ['external_company_change'],
+  principal_investigator_new_trial: ['external_contact_change'],
 };
 
 type ChecklistState = Partial<Record<SignalKey, boolean>>;

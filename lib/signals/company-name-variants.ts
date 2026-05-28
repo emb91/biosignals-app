@@ -1,12 +1,14 @@
 /**
- * Shared helpers for generating company name variants used to match
- * external data sources (patent assignees, FDA sponsor names, ClinicalTrials.gov
- * sponsors, etc.) where the same company can appear under different legal
- * entity names, subsidiaries, and minor formatting variations.
+ * Company name normalization helper used by the resolver
+ * (lib/companies/resolve-mentions.ts) and by sync jobs to populate
+ * `*_normalized` columns at ingest.
  *
- * For high-quality matching, populate a per-company `aliases TEXT[]` column
- * via LLM lookup (see lib/signals/company-aliases.ts) and pass those aliases
- * here as `extraAliases`.
+ * Historical note: this file used to also export `buildCompanyQueryVariants`
+ * which generated ILIKE substring variants for fuzzy DB matching. That whole
+ * approach was replaced by the canonical-company resolver in Phase 2/3 —
+ * each monitor now does indexed equality/overlap on `canonical_company_id`
+ * or `mentioned_company_ids` instead of fuzzy text matching. Removed in
+ * Phase 5.
  */
 
 const ENTITY_SUFFIX_PATTERN =
@@ -23,44 +25,4 @@ export function normalizeCompanyForMatching(value: string): string {
     .replace(ENTITY_SUFFIX_PATTERN, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-}
-
-/**
- * Build a list of plausible search variants for a single company name.
- *
- * Returns variants in roughly decreasing specificity (original first,
- * normalized last). Filters out variants shorter than 4 characters because
- * those produce too many false positives.
- *
- * Pass `extraAliases` to include LLM-derived legal entity names and
- * subsidiaries. Those are inserted near the top so source searches prefer
- * them — usually they're more accurate than text-derived variants.
- */
-export function buildCompanyQueryVariants(
-  companyName: string,
-  extraAliases: string[] = [],
-): string[] {
-  const variants: string[] = [];
-  const original = companyName.trim();
-  if (original) variants.push(original);
-  for (const alias of extraAliases) {
-    const trimmed = (alias ?? '').trim();
-    if (trimmed) variants.push(trimmed);
-  }
-  const normalized = normalizeCompanyForMatching(companyName);
-  if (normalized && normalized !== original.toLowerCase()) variants.push(normalized);
-  const tokens = normalized.split(' ').filter(Boolean);
-  if (tokens.length >= 2) variants.push(tokens.slice(0, 2).join(' '));
-  if (tokens.length >= 3) variants.push(tokens.slice(0, 3).join(' '));
-
-  const seen = new Set<string>();
-  const deduped: string[] = [];
-  for (const v of variants) {
-    const key = v.toLowerCase();
-    if (seen.has(key)) continue;
-    if (key.length < 4) continue;
-    seen.add(key);
-    deduped.push(v);
-  }
-  return deduped;
 }

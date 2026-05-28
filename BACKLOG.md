@@ -230,9 +230,6 @@ These are the canonical signal families. They are not the final product output; 
 - Manufacturing / facilities / quality:
   - `new_facility`
   - `facility_expansion`
-  - `cmc_scale_up`
-  - `cdmo_partnership`
-  - `quality_compliance_buildout`
 - Demand/engagement signals:
   - `visited_your_website`
   - `attended_your_webinar_or_event`
@@ -254,7 +251,6 @@ These are the canonical signal families. They are not the final product output; 
   - `recently_changed_company`
   - `new_internal_role`
   - `title_change`
-  - `board_or_advisory_role`
 
 ### `new_strategy`
 
@@ -262,13 +258,9 @@ These are the canonical signal families. They are not the final product output; 
   - `partnership_deal`
   - `licensing_deal`
   - `co_development_deal`
-  - `regional_expansion`
   - `commercialization_move`
-  - `platform_repositioning`
   - `indication_expansion`
 - Scientific / market visibility that may support a strategy shift:
-  - `conference_presentation`
-  - `conference_speaker`
   - `publication`
   - `new_paper_published`
   - `patent_filed_or_granted`
@@ -276,7 +268,6 @@ These are the canonical signal families. They are not the final product output; 
 ### `caution`
 
 - Negative or suppressive conditions:
-  - `layoffs`
   - `trial_failure_or_halt`
   - `program_discontinuation`
   - `restructuring`
@@ -614,7 +605,6 @@ Priority tier definitions:
 | ✅ | `hiring_expansion` | `new_people`, `new_needs` | Precursor | `P1` | hiring monitor |
 | ⬜ | `new_facility` | `new_needs` | Precursor | `P1` | not yet wired — needs press-release / news monitor |
 | ⬜ | `facility_expansion` | `new_needs` | Precursor | `P1` | not yet wired — needs press-release / news monitor |
-| ⬜ | `cmc_scale_up` | `new_needs` | Precursor | `P1` | not yet wired — inferred from hiring + facility combo |
 | ✅ | `funding_round` | `new_budget` | Precursor | `P1` | funding monitor (SEC Form D + 8-K Item 3.02) |
 | ✅ | `grant_award` | `new_budget` | Precursor | `P1` | grants monitor (NIH RePORTER) |
 | ✅ | `ipo_or_follow_on` | `new_budget` | Precursor | `P1` | funding monitor (SEC 424B prospectus filings) |
@@ -626,27 +616,21 @@ Priority tier definitions:
 | ⬜ | `co_development_deal` | `new_strategy`, `new_needs` | Precursor | `P2` | not yet wired |
 | ✅ | `bd_hiring` | `new_people`, `new_strategy` | Precursor | `P2` | hiring monitor |
 | ✅ | `commercial_hiring` | `new_people`, `new_strategy` | Precursor | `P2` | hiring monitor |
-| ⬜ | `quality_compliance_buildout` | `new_needs` | Precursor | `P2` | not yet wired — inferred from QA/QC hiring + GMP roles |
-| ⬜ | `cdmo_partnership` | `new_needs`, `new_strategy` | Precursor | `P2` | not yet wired |
 | ✅ | `breakthrough_designation` | `new_needs` | Precursor | `P2` | FDA monitor |
-| ⬜ | `regional_expansion` | `new_strategy` | Precursor | `P2` | not yet wired |
 | ⬜ | `commercialization_move` | `new_strategy`, `new_needs` | Precursor | `P2` | not yet wired |
 | ⬜ | `restructuring` | `caution` | Precursor | `P2` | not yet wired |
 | ⬜ | `acquisition_distraction` | `caution` | Precursor | `P2` | not yet wired — could derive from M&A close 8-Ks |
 | ⬜ | `leadership_churn` | `caution`, `new_people` | Precursor | `P2` | not yet wired — could derive from 8-K Item 5.02 + LinkedIn |
-| ⬜ | `layoffs` | `caution` | Precursor | `P2` | not yet wired — news / WARN Act filings |
 | ⬜ | `new_to_role` | `new_people` | Precursor | `P2` | not yet wired — contact-side monitor needed |
 | ✅ | `recently_promoted` | `new_people` | Precursor | `P2` | HubSpot contact sync |
 | ✅ | `recently_changed_company` | `new_people` | Precursor | `P2` | HubSpot contact sync |
 | ✅ | `new_internal_role` | `new_people` | Precursor | `P2` | HubSpot contact sync |
 | ✅ | `title_change` | `new_people` | Precursor | `P2` | HubSpot contact sync |
-| ⬜ | `board_or_advisory_role` | `new_people`, `new_strategy` | Precursor | `P3` | not yet wired |
 | ⬜ | `conference_presentation` | `new_strategy` | Precursor | `P3` | **orphaned** — current Sonnet+web_search monitor produces poor output; rebuild needed using targeted conference website scraping (agenda/speaker pages per event) |
 | ⬜ | `conference_speaker` | `new_strategy`, `new_people` | Precursor | `P3` | **orphaned** — same; depends on conference scraping rebuild |
 | ⬜ | `publication` | `new_strategy` | Precursor | `P3` | not yet wired — PubMed/biorxiv ingestion |
 | ⬜ | `new_paper_published` | `new_strategy` | Precursor | `P3` | not yet wired |
 | ✅ | `patent_filed_or_granted` | `new_strategy` | Precursor | `P3` | patents monitor (USPTO via PatentsView mirror) |
-| ⬜ | `platform_repositioning` | `new_strategy` | Precursor | `P3` | not yet wired — narrative-driven, needs LLM over press releases |
 | ⬜ | `demo_requested` | `new_budget`, `new_needs` | Precursor | `P3` | first-party — out of Arcova scope (stays in HubSpot) |
 | ⬜ | `inbound_enquiry` | `new_budget`, `new_needs` | Precursor | `P3` | first-party — out of Arcova scope |
 | ⬜ | `visited_your_website` | `new_needs` | Precursor | `P3` | first-party — out of Arcova scope |
@@ -665,7 +649,7 @@ Priority tier definitions:
 - FDA monitor also emits: `fast_track_designation`, `priority_review`, `orphan_designation`, `complete_response_letter`
 - Patents monitor also emits: `patent_application_published`, `patent_granted`, `new_therapeutic_area_patent`, `assignee_portfolio_acceleration`
 
-**Roll-up:** **30 of 56 catalog signals wired (54%)** as of 2026-05-21. The remaining P1/P2 gaps (`new_facility`, `facility_expansion`, `cmc_scale_up`, `distressed_financing`, `milestone_payment`, `partnership_with_upfront_economics`, `licensing_deal`, `co_development_deal`, `partnership_deal`, `cdmo_partnership`, `restructuring`, `acquisition_distraction`, `leadership_churn`, `layoffs`, `new_to_role`, `quality_compliance_buildout`, `regional_expansion`, `commercialization_move`) cluster around two missing capabilities: (1) an 8-K Item 1.01 / Item 8.01 LLM classifier for partnership/license/restructuring events, and (2) a press-release/news ingestion + classification monitor for facility, layoff, and narrative signals.
+**Roll-up (updated 2026-05-27):** Remaining P1/P2 gaps: `new_facility`, `facility_expansion`, `distressed_financing`, `milestone_payment`, `partnership_with_upfront_economics`, `licensing_deal`, `co_development_deal`, `partnership_deal`, `restructuring`, `acquisition_distraction`, `leadership_churn`, `commercialization_move`, `new_to_role`.
 
 ## Signal implementation inventory (per-monitor)
 
@@ -722,34 +706,24 @@ Distinct from the priority table above — this lists exactly what each running 
 | | `recently_promoted` | 👤 | same | |
 | | `recently_changed_company` | 👤 | same | |
 | | `title_change` | 👤 | same | |
-| **Conferences (web search)** | `conference_presentation` | 🏢 | **orphaned** — Sonnet 4.6 + web_search approach produced poor output; rebuild with targeted conference site scraping | |
-| | `conference_speaker` | 👤 | **orphaned** — same | |
+| ~~**Conferences (web search)**~~ | ~~all~~ | — | **cut** — Sonnet+web_search approach produced poor output; pipeline removed | |
 | ~~**Press Releases (RSS + Haiku)**~~ | ~~all~~ | — | **cut** — monitor removed; signals were either duplicated by structured monitors or low-value noise | |
 
 **Coverage roll-up by scope:** 40 distinct company-scope emit paths · 5 distinct contact-scope emit paths.
 
 **Catalog gaps still without any monitor** (catalog entries exist but nothing emits them):
-- `new_facility`, `facility_expansion`, `cmc_scale_up` — press releases cut; no active monitor; need targeted news/web search approach
+- `new_facility`, `facility_expansion` — press releases cut; no active monitor; need targeted news/web search approach
+- `commercialization_move` — same
 - `distressed_financing` (P1) — V2 SEC funding classifier could emit this for debt/credit facility 8-Ks
 - `new_to_role` (P2 contact) — needs a contact-side LinkedIn / HubSpot signal
-- `board_or_advisory_role` (P3 contact + company)
-- `quality_compliance_buildout` (P2) — could be inferred from hiring monitor if QA/QC roles are tagged
-- `cdmo_partnership` (P2)
-- `regional_expansion` (P2)
-- `commercialization_move` (P2) — press releases cut; no active monitor
-- `conference_presentation`, `conference_speaker` — orphaned; rebuild needed with targeted conference site scraping
 - `new_paper_published`, `publication` — PubMed API; not yet built
-- `board_or_advisory_role`
-- `platform_repositioning`
 - `lapsed_customer` (CS-LATER — deferred per phase rule)
 
 **Open architectural decisions (consequences of the inventory):**
 
-1. **Press releases cut.** Monitor removed. Signals `new_facility`, `facility_expansion`, `layoffs`, `commercialization_move` now have no active source — need targeted per-company web search approach (same pattern as conferences, cheaper than Sonnet+web_search per company).
+1. **Press releases cut.** Monitor removed. Signals `new_facility`, `facility_expansion`, `commercialization_move` now have no active source — need targeted per-company web search approach.
 
-2. **Conference signals orphaned.** Sonnet+web_search approach produced low-quality output. Rebuild should scrape specific conference agenda/speaker pages (Apify actor per conference family) rather than asking an LLM to web-search per company.
-
-3. **Contact-scope coverage is thin (5 of 45 signal paths).** HubSpot contact lifecycle covers most of it. Biggest unlocks: (a) `conference_speaker` once conference scraping is rebuilt, (b) `new_to_role` contact-side monitor.
+2. **Contact-scope coverage is thin.** HubSpot contact lifecycle covers most of it. Biggest unlock: `new_to_role` contact-side monitor + PubMed for `new_paper_published`.
 
 Phase rule:
 

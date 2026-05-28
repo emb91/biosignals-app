@@ -21,7 +21,7 @@ type CompanyContext = {
   id: string;
   company_name: string | null;
   domain: string | null;
-  company_website: string | null;
+  website: string | null;
   linkedin_url: string | null;
   matched_icp_id: string | null;
 };
@@ -77,8 +77,8 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'companyId required for contacts_at_company' }, { status: 400 });
       }
       const { data: company, error: companyErr } = await supabase
-        .from('companies')
-        .select('id, company_name, domain, company_website, linkedin_url, matched_icp_id')
+        .from('accounts_view')
+        .select('id, company_name, domain, website, linkedin_url, matched_icp_id')
         .eq('user_id', user.id)
         .eq('id', companyId)
         .maybeSingle();

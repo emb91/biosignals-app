@@ -96,6 +96,51 @@ function clearedKeys(input: unknown): string[] {
   return cleared;
 }
 
+/**
+ * GET: full account detail for a single company (side panel + agent context).
+ * Reads from accounts_view which COALESCEs user_overrides over canonical.
+ * Returns ~50 fields including firmographics, criteria, products, funding,
+ * readiness — everything the side panel renders.
+ *
+ * The list endpoint /api/accounts is intentionally lean (~25 fields per row);
+ * use this endpoint when a user selects a specific account.
+ */
+export async function GET(
+  _request: Request,
+  context: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await context.params;
+    const supabase = await createClient();
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { data, error } = await supabase
+      .from('accounts_view')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    if (!data) {
+      return NextResponse.json({ error: 'Account not found' }, { status: 404 });
+    }
+
+    return NextResponse.json({ data });
+  } catch (error) {
+    console.error('Error in accounts/[id] GET:', error);
+    return NextResponse.json({ error: messageFromUnknown(error) }, { status: 500 });
+  }
+}
+
 export async function PATCH(
   request: Request,
   context: { params: Promise<{ id: string }> }
@@ -177,7 +222,7 @@ export async function DELETE(
     const now = new Date().toISOString();
 
     const { error: companyError } = await supabase
-      .from('companies')
+      .from('user_companies')
       .update({
         archived_at: now,
         archived_by: user.id,
@@ -185,7 +230,7 @@ export async function DELETE(
         updated_at: now,
       })
       .eq('user_id', user.id)
-      .eq('id', id)
+      .eq('company_id', id)
       .is('archived_at', null);
 
     if (companyError) {

@@ -58,14 +58,16 @@ async function personaForContact(
 
 async function matchedIcpForCompany(
   supabase: SupabaseClient<any>,
+  userId: string,
   companyId: string | null
 ): Promise<string | null> {
   if (!companyId) return null;
 
   const { data } = await supabase
-    .from('companies')
+    .from('user_companies')
     .select('matched_icp_id')
-    .eq('id', companyId)
+    .eq('user_id', userId)
+    .eq('company_id', companyId)
     .maybeSingle();
 
   return typeof data?.matched_icp_id === 'string' ? data.matched_icp_id : null;
@@ -128,7 +130,7 @@ export async function GET(
     }
 
     if (!icpId) {
-      icpId = await matchedIcpForCompany(supabase, companyId);
+      icpId = await matchedIcpForCompany(supabase, user.id, companyId);
     }
 
     let icpSel: Array<{ signalId: string; weight: number }> = [];

@@ -2,14 +2,14 @@
  * Press-release signal monitor — per-user company matching.
  *
  * For each of a user's active companies, queries press_release_articles for
- * recently published articles where candidate_companies_normalized contains a
- * match for the company's name or any of its LLM-derived aliases. Emits
- * appropriate signal events and recomputes account readiness.
+ * recently published articles where mentioned_company_ids contains the
+ * company id. Emits appropriate signal events and recomputes account readiness.
  *
  * Matching strategy:
- *   - Builds the same normalized query variants as the grants/funding monitors.
- *   - Filters against the GIN-indexed candidate_companies_normalized column
- *     using Postgrest ilike patterns.
+ *   - mentioned_company_ids is populated at ingest by the resolver
+ *     (lib/companies/resolve-mentions.ts) and GIN-indexed.
+ *   - Per-user lookup is a single SQL array-overlap (Postgrest .overlaps),
+ *     then per-company filtering in memory.
  *   - Dedupes against signal_source_events so re-running the monitor is safe.
  *
  * Signal mapping (categories not listed here are skipped — negative/caution):
@@ -33,8 +33,6 @@
  */
 
 import { createAdminClient } from '@/lib/supabase-admin';
-import { ensureCompanyAliases } from '@/lib/signals/company-aliases';
-import { buildCompanyQueryVariants, normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
 import {
   generateAccountReason,
   ingestSignalSourceEvent,
@@ -48,9 +46,7 @@ import type { PressReleaseCategory, PressReleaseClassification } from '@/lib/sig
 
 type CompanyRow = {
   id: string;
-  user_id: string;
   company_name: string | null;
-  aliases: string[] | null;
 };
 
 type ArticleRow = {
@@ -62,7 +58,7 @@ type ArticleRow = {
   published_at: string;
   classification: PressReleaseClassification | null;
   candidate_companies: string[] | null;
-  candidate_companies_normalized: string[] | null;
+  mentioned_company_ids: string[] | null;
 };
 
 export type PressReleaseMonitorInput = {
@@ -98,6 +94,9 @@ const CATEGORY_TO_SIGNAL_KEY: Partial<Record<PressReleaseCategory, SignalKey>> =
   phase_transition: 'phase_transition',
   new_facility: 'new_facility',
   facility_expansion: 'facility_expansion',
+  // conference_presentation: intentionally skipped — see TalkingPoints task.
+  // It's outreach context (a hook for "see you at X conference"), not intent.
+  // Surfaces as raw key_facts on the article row; doesn't move readiness.
   commercialization_move: 'commercialization_move',
   m_and_a: 'ma_event',
   // m_and_a_target, leadership_churn, layoffs, restructuring, other → no mapping (skipped)
@@ -121,43 +120,39 @@ function messageFromUnknown(error: unknown): string {
   return 'Internal server error';
 }
 
-function escapePostgrestPattern(term: string): string {
-  // Postgrest ilike doesn't support (), — strip characters that could break the pattern.
-  return term.replace(/[,()[\]{}]/g, ' ').trim();
-}
-
 // ── DB queries ─────────────────────────────────────────────────────────────────
 
-async function fetchArticlesForCompany(
+/**
+ * Fetch all classified articles in the lookback window that mention at least
+ * one of the user's tracked companies. The mentioned_company_ids array is
+ * populated at ingest by lib/companies/resolve-mentions.ts and indexed via
+ * GIN, so the && (array overlap) lookup is a fast index seek.
+ */
+async function fetchArticlesMentioning(
   admin: ReturnType<typeof createAdminClient>,
-  company: { id: string; name: string; aliases: string[] },
+  ownedIds: string[],
   cutoffIso: string,
 ): Promise<ArticleRow[]> {
-  const variants = buildCompanyQueryVariants(company.name, company.aliases)
-    .map((v) => normalizeCompanyForMatching(v))
-    .filter((v) => v.length >= 4);
-  const uniqueVariants = [...new Set(variants)];
-  if (uniqueVariants.length === 0) return [];
-
-  // Filter to articles with a classification (unclassified ones don't have company data)
-  // and restrict to the lookback window
-  const orClause = uniqueVariants
-    .map((t) => `candidate_companies_normalized.cs.{${escapePostgrestPattern(t)}}`)
-    .join(',');
-
-  // Note: We use the GIN-indexed candidate_companies_normalized column.
-  // Postgrest's .cs() (contains) operator works with array columns.
+  if (ownedIds.length === 0) return [];
+  // Postgrest array-overlap syntax: ov.{uuid1,uuid2,...}
   const { data, error } = await admin
     .from('press_release_articles')
-    .select('id, source, source_url, title, summary, published_at, classification, candidate_companies, candidate_companies_normalized')
+    .select('id, source, source_url, title, summary, published_at, classification, candidate_companies, mentioned_company_ids')
     .not('classification', 'is', null)
     .gte('published_at', cutoffIso)
-    .or(orClause)
+    .overlaps('mentioned_company_ids', ownedIds)
     .order('published_at', { ascending: false })
-    .limit(200);
+    .limit(500);
 
   if (error) throw new Error(`press_release_articles query: ${error.message}`);
   return (data ?? []) as ArticleRow[];
+}
+
+/**
+ * Articles the resolver tagged with this company id.
+ */
+function articlesForCompany(articles: ArticleRow[], companyId: string): ArticleRow[] {
+  return articles.filter((a) => (a.mentioned_company_ids ?? []).includes(companyId));
 }
 
 async function fetchExistingSourceEventIds(
@@ -252,7 +247,9 @@ export async function runPressReleaseMonitor(
   input: PressReleaseMonitorInput,
 ): Promise<PressReleaseMonitorResult> {
   const admin = createAdminClient();
-  const lookbackDays = input.lookbackDays ?? 7;
+  // Default 14 days, clamped to [1, 30]. Matches the other monitors so the
+  // signal feed has a consistent "recent activity" window across pipelines.
+  const lookbackDays = Math.min(30, Math.max(1, Math.floor(input.lookbackDays ?? 14)));
   const cutoffIso = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
 
   // Load the user's active companies
@@ -291,7 +288,7 @@ export async function runPressReleaseMonitor(
 
   const { data: companies, error: companiesError } = await admin
     .from('companies')
-    .select('id, user_id, company_name, aliases')
+    .select('id, company_name')
     .in('id', ownedIds);
   if (companiesError) throw new Error(companiesError.message);
 
@@ -304,34 +301,16 @@ export async function runPressReleaseMonitor(
   const recomputedCompanyIds = new Set<string>();
   const failures: Array<{ company_id: string; error: string }> = [];
 
-  // Lazy-populate aliases for any company missing them
-  const companyAliasMap = new Map<string, string[]>();
-  for (const row of (companies ?? []) as CompanyRow[]) {
-    const name = row.company_name?.trim();
-    if (!name) continue;
-    let aliases = row.aliases ?? [];
-    if (aliases.length === 0) {
-      try {
-        const result = await ensureCompanyAliases(admin, row.id);
-        aliases = result.aliases;
-      } catch (error) {
-        console.error(`[press-release-monitor] ensureCompanyAliases failed for ${row.id}:`, error);
-      }
-    }
-    companyAliasMap.set(row.id, aliases);
-  }
+  // One SQL hit — articles in the lookback window mentioning ANY of this
+  // user's companies (index seek on mentioned_company_ids GIN).
+  const allArticles = await fetchArticlesMentioning(admin, ownedIds, cutoffIso);
 
   for (const row of (companies ?? []) as CompanyRow[]) {
     const companyName = row.company_name?.trim();
     if (!companyName) continue;
 
     try {
-      const aliases = companyAliasMap.get(row.id) ?? [];
-      const articles = await fetchArticlesForCompany(
-        admin,
-        { id: row.id, name: companyName, aliases },
-        cutoffIso,
-      );
+      const articles = articlesForCompany(allArticles, row.id);
 
       // Build all candidate source_event_ids for bulk dedupe check
       const candidateSourceEventIds: string[] = [];

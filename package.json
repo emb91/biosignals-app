@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "test:journey": "tsc -p tsconfig.test.json && node --test /private/tmp/arcova-journey-tests/agent-journey-state.test.js",
+    "test:resolver": "rm -rf /private/tmp/arcova-resolver-tests && tsc -p tsconfig.test.resolver.json && node --test /private/tmp/arcova-resolver-tests/resolve-mentions.test.js",
     "gen-sitemap": "node generate-sitemap.js"
   },
   "dependencies": {

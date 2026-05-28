@@ -119,11 +119,11 @@ export async function POST(request: Request) {
     let executedCompanyIds: string[] = requestedCompanyIds;
     if (runAll && requestedCompanyIds.length === 0) {
       const companyQuery = authClient
-        .from('companies')
-        .select('id')
+        .from('user_companies')
+        .select('company_id')
         .eq('user_id', user.id)
         .is('archived_at', null)
-        .order('id', { ascending: true });
+        .order('company_id', { ascending: true });
       if (typeof body.limit === 'number' && Number.isFinite(body.limit)) {
         companyQuery.limit(Math.max(1, body.limit));
       }
@@ -132,7 +132,7 @@ export async function POST(request: Request) {
         throw new Error(allCompaniesError.message);
       }
       const allIds = (allCompanies ?? [])
-        .map((row: { id?: unknown }) => (typeof row.id === 'string' ? row.id : null))
+        .map((row: { company_id?: unknown }) => (typeof row.company_id === 'string' ? row.company_id : null))
         .filter((value): value is string => Boolean(value));
       executedCompanyIds = allIds;
 

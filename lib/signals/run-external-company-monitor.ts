@@ -38,20 +38,42 @@ export async function runExternalCompanyMonitor(
 ): Promise<ExternalCompanyMonitorResult> {
   const admin = createAdminClient();
 
-  const query = admin
-    .from('companies')
-    .select('id, company_name, domain, website')
+  // Resolve which company IDs this user actively tracks.
+  const { data: ownedRows, error: ownedError } = await admin
+    .from('user_companies')
+    .select('company_id')
     .eq('user_id', input.userId)
-    .is('archived_at', null)
-    .order('funding_checked_at', { ascending: true, nullsFirst: true });
+    .is('archived_at', null);
+  if (ownedError) {
+    throw new Error(`user_companies query: ${ownedError.message}`);
+  }
+  let ownedIds = (ownedRows ?? [])
+    .map((r) => (r as { company_id?: unknown }).company_id)
+    .filter((v): v is string => typeof v === 'string' && Boolean(v));
 
   const companyIds = Array.isArray(input.companyIds)
     ? input.companyIds.filter((value): value is string => typeof value === 'string' && Boolean(value))
     : [];
-
   if (companyIds.length > 0) {
-    query.in('id', companyIds);
-  } else {
+    const requested = new Set(companyIds);
+    ownedIds = ownedIds.filter((id) => requested.has(id));
+  }
+  if (ownedIds.length === 0) {
+    return {
+      processed: 0,
+      failed: 0,
+      emitted_signal_types: [],
+      recomputed_companies: [],
+      failures: [],
+    };
+  }
+
+  const query = admin
+    .from('companies')
+    .select('id, company_name, domain, website')
+    .in('id', ownedIds)
+    .order('funding_checked_at', { ascending: true, nullsFirst: true });
+  if (companyIds.length === 0) {
     query.limit(Math.min(Math.max(input.limit ?? 25, 1), 100));
   }
 
