@@ -75,10 +75,10 @@ export async function POST(request: Request) {
       }
 
       const { data: company, error: companyLookupError } = await supabase
-        .from('companies')
-        .select('id, archived_at')
+        .from('user_companies')
+        .select('company_id, archived_at')
         .eq('user_id', user.id)
-        .eq('id', companyIdToRestore)
+        .eq('company_id', companyIdToRestore)
         .maybeSingle();
 
       if (companyLookupError) {
@@ -121,7 +121,7 @@ export async function POST(request: Request) {
     const now = new Date().toISOString();
 
     const { error: companyError } = await supabase
-      .from('companies')
+      .from('user_companies')
       .update({
         archived_at: null,
         archived_by: null,
@@ -129,7 +129,7 @@ export async function POST(request: Request) {
         updated_at: now,
       })
       .eq('user_id', user.id)
-      .eq('id', companyIdToRestore);
+      .eq('company_id', companyIdToRestore);
 
     if (companyError) {
       return NextResponse.json({ error: companyError.message }, { status: 500 });

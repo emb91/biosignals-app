@@ -70,7 +70,7 @@ async function seedSignalsForUser(
     const admin = createAdminClient();
 
     const companyQuery = admin
-      .from('companies')
+      .from('accounts_view')
       .select('id, company_name')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
@@ -78,7 +78,7 @@ async function seedSignalsForUser(
 
     const { data: company, error: companyError } = companyIdParam
       ? await admin
-          .from('companies')
+          .from('accounts_view')
           .select('id, company_name')
           .eq('id', companyIdParam)
           .eq('user_id', user.id)

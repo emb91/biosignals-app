@@ -25,7 +25,7 @@ export async function GET() {
     const { data: contactRows, error } = await supabase
       .from('contacts')
       .select(
-        'company_id, contact_fit_score, fit_score, intent_score, companies(id, company_fit_score, matched_icp_id)',
+        'company_id, contact_fit_score, fit_score, intent_score',
       )
       .eq('user_id', user.id)
       .is('archived_at', null)
@@ -36,25 +36,41 @@ export async function GET() {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
+    // matched_icp_id + company_fit_score live on user_companies now
+    // (Phase 1d moved them off the canonical companies table). Fetch the
+    // per-user link rows separately and join in memory.
+    const { data: ucRows, error: ucErr } = await supabase
+      .from('user_companies')
+      .select('company_id, matched_icp_id, company_fit_score')
+      .eq('user_id', user.id)
+      .is('archived_at', null);
+    if (ucErr) {
+      console.error('[icp-coverage] user_companies:', ucErr);
+      return NextResponse.json({ error: ucErr.message }, { status: 500 });
+    }
+    const ucByCompanyId = new Map<string, { matched_icp_id: string | null; company_fit_score: number | null }>();
+    for (const r of (ucRows ?? []) as Array<{ company_id: string; matched_icp_id: string | null; company_fit_score: number | null }>) {
+      ucByCompanyId.set(r.company_id, {
+        matched_icp_id: r.matched_icp_id,
+        company_fit_score: r.company_fit_score,
+      });
+    }
+
     const icpToCompanies = new Map<string, Set<string>>();
     const uncategorizedCompanies = new Set<string>();
 
     for (const row of contactRows ?? []) {
       const companyId = row.company_id as string | null;
       if (!companyId) continue;
-
-      const co = row.companies;
-      const company = Array.isArray(co)
-        ? (co[0] as { id: string; company_fit_score: number | null; matched_icp_id: string | null } | undefined)
-        : (co as { id: string; company_fit_score: number | null; matched_icp_id: string | null } | null);
-      if (!company?.id) continue;
+      const uc = ucByCompanyId.get(companyId);
+      if (!uc) continue;
 
       const action = getLeadAction(row as LeadLikeForAction);
       if (!isMonitorOrReachOutAction(action)) continue;
 
       const icpId =
-        typeof company.matched_icp_id === 'string' && company.matched_icp_id.length > 0
-          ? company.matched_icp_id
+        typeof uc.matched_icp_id === 'string' && uc.matched_icp_id.length > 0
+          ? uc.matched_icp_id
           : null;
 
       if (icpId) {

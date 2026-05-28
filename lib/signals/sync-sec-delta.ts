@@ -18,6 +18,7 @@
 import type { createAdminClient } from '@/lib/supabase-admin';
 import { normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
 import { loadAllTrackedCiks } from '@/lib/signals/company-cik';
+import { resolveCompanyMentions } from '@/lib/companies/resolve-mentions';
 import { classifySecFiling, type SecFilingClassification } from '@/lib/signals/classify-sec-filing';
 import {
   isRateLimitError,
@@ -316,6 +317,7 @@ type FilingUpsertRow = {
   classified_at: string | null;
   extras: Record<string, unknown> | null;
   last_seen_at: string;
+  canonical_company_id?: string | null;
 };
 
 function buildBaseUpsertRow(row: DailyIndexRow, primaryDocUrl: string | null, startedAtIso: string): FilingUpsertRow {
@@ -449,6 +451,25 @@ export async function syncSecDelta(input: SyncSecDeltaInput): Promise<SyncSecDel
     }
     upsertBuffer.length = 0;
     const chunk = [...byAccession.values()];
+
+    // Resolve entity_name → canonical company id for this chunk.
+    const uniqueNames = [
+      ...new Set(chunk.map((r) => r.entity_name).filter((n): n is string => Boolean(n))),
+    ];
+    if (uniqueNames.length > 0) {
+      try {
+        const resolved = await resolveCompanyMentions(admin, uniqueNames);
+        for (const row of chunk) {
+          row.canonical_company_id = row.entity_name
+            ? (resolved.get(row.entity_name)?.canonicalId ?? null)
+            : null;
+        }
+      } catch (e) {
+        console.error('[sync-sec] resolver failed for chunk:', e);
+        for (const row of chunk) row.canonical_company_id = null;
+      }
+    }
+
     const { error } = await admin
       .from('sec_filings_local')
       .upsert(chunk, { onConflict: 'accession_number' });

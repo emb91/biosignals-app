@@ -1,6 +1,4 @@
 import { createAdminClient } from '@/lib/supabase-admin';
-import { ensureCompanyAliases } from '@/lib/signals/company-aliases';
-import { buildCompanyQueryVariants, normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
 import {
   generateAccountReason,
   ingestSignalSourceEvent,
@@ -11,9 +9,7 @@ import type { SignalKey } from '@/lib/signals/readiness-types';
 
 type CompanyRow = {
   id: string;
-  user_id: string;
   company_name: string | null;
-  aliases: string[] | null;
 };
 
 type PatentsMonitorInput = {
@@ -21,7 +17,17 @@ type PatentsMonitorInput = {
   companyIds?: string[];
   limit?: number;
   onlySignalKey?: SignalKey;
+  /** How many days back to look. Default 14, clamped to [1, 30]. */
+  lookbackDays?: number;
 };
+
+const DEFAULT_LOOKBACK_DAYS = 14;
+const MAX_LOOKBACK_DAYS = 30;
+
+function clampLookback(value: number | undefined): number {
+  const v = typeof value === 'number' && Number.isFinite(value) ? value : DEFAULT_LOOKBACK_DAYS;
+  return Math.min(MAX_LOOKBACK_DAYS, Math.max(1, Math.floor(v)));
+}
 
 export type PatentsMonitorResult = {
   processed: number;
@@ -102,44 +108,23 @@ function detectTherapeuticArea(row: PatentRow): string | null {
 
 async function fetchPatentsForCompaniesFromLocal(
   admin: ReturnType<typeof createAdminClient>,
-  companies: Array<{ id: string; name: string; aliases?: string[] }>,
+  companies: Array<{ id: string; name: string }>,
+  cutoffIso: string,
   limitPerCompany = 100,
 ): Promise<Map<string, PatentRow[]>> {
   const result = new Map<string, PatentRow[]>();
   if (companies.length === 0) return result;
 
   for (const company of companies) {
-    const rawName = company.name?.trim();
-    if (!rawName) {
-      result.set(company.id, []);
-      continue;
-    }
-    // Build a normalized search set from the primary name + LLM-derived aliases
-    // (e.g. "Moderna" → ["moderna", "modernatx", "moderna therapeutics", …]),
-    // then ILIKE-OR across all of them so we catch subsidiaries, renames, and
-    // legal-entity variations the substring on the primary name alone misses.
-    const aliases = company.aliases ?? [];
-    const searchTerms = buildCompanyQueryVariants(rawName, aliases)
-      .map((v) => normalizeCompanyForMatching(v))
-      .filter((v) => v.length >= 4);
-    const uniqueTerms = [...new Set(searchTerms)];
-    if (uniqueTerms.length === 0) {
-      result.set(company.id, []);
-      continue;
-    }
-
-    const orClause = uniqueTerms
-      .map((term) => `assignee_name_normalized.ilike.%${term.replace(/[,()]/g, ' ').trim()}%`)
-      .join(',');
-
+    // canonical_company_id was populated at ingest by the resolver.
     const { data: assigneeRows, error: assigneeErr } = await admin
       .from('patent_event_assignees')
       .select('publication_number')
-      .or(orClause)
+      .eq('canonical_company_id', company.id)
       .limit(Math.max(limitPerCompany * 3, 200));
 
     if (assigneeErr) {
-      throw new Error(`patent_event_assignees query failed for "${rawName}": ${assigneeErr.message}`);
+      throw new Error(`patent_event_assignees query failed for "${company.name}": ${assigneeErr.message}`);
     }
 
     const publicationNumbers = [
@@ -156,15 +141,18 @@ async function fetchPatentsForCompaniesFromLocal(
       continue;
     }
 
+    // Time cutoff applied on patent_events (the table that carries dates);
+    // assignees table has no date column.
     const { data: patents, error: patentsErr } = await admin
       .from('patent_events')
       .select('publication_number, kind_code, country_code, publication_date, filing_date, title, abstract')
       .in('publication_number', publicationNumbers)
+      .gte('publication_date', cutoffIso)
       .order('publication_date', { ascending: false })
       .limit(limitPerCompany);
 
     if (patentsErr) {
-      throw new Error(`patent_events query failed for "${rawName}": ${patentsErr.message}`);
+      throw new Error(`patent_events query failed for "${company.name}": ${patentsErr.message}`);
     }
 
     const patentRows: PatentRow[] = (patents ?? []).map((p) => {
@@ -292,6 +280,8 @@ async function emitCompanySignal(
 
 export async function runPatentsMonitor(input: PatentsMonitorInput): Promise<PatentsMonitorResult> {
   const admin = createAdminClient();
+  const lookbackDays = clampLookback(input.lookbackDays);
+  const cutoffIso = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
 
   // Ownership + archive state live in user_companies (the per-user link table).
   // First find the active company ids for this user, then load shared metadata
@@ -331,7 +321,7 @@ export async function runPatentsMonitor(input: PatentsMonitorInput): Promise<Pat
 
   const { data: companies, error: companiesError } = await admin
     .from('companies')
-    .select('id, user_id, company_name, aliases')
+    .select('id, company_name')
     .in('id', ownedIds);
   if (companiesError) throw new Error(companiesError.message);
 
@@ -344,34 +334,14 @@ export async function runPatentsMonitor(input: PatentsMonitorInput): Promise<Pat
   const recomputedCompanyIds = new Set<string>();
   const failures: Array<{ company_id: string; error: string }> = [];
 
-  // Lazy-populate aliases for any company that doesn't have them yet. The
-  // service is no-op + cheap if aliases are already populated and fresh
-  // (< 180 days). If it fails for a company we just continue with whatever
-  // aliases exist — the monitor still works, just with thinner recall.
-  const companyAliasMap = new Map<string, string[]>();
-  for (const row of (companies ?? []) as CompanyRow[]) {
-    const name = row.company_name?.trim();
-    if (!name) continue;
-    let aliases = row.aliases ?? [];
-    if (aliases.length === 0) {
-      try {
-        const result = await ensureCompanyAliases(admin, row.id);
-        aliases = result.aliases;
-      } catch (error) {
-        console.error(`[patents] ensureCompanyAliases failed for ${row.id}:`, error);
-      }
-    }
-    companyAliasMap.set(row.id, aliases);
-  }
-
   // Reads from the local patent_events mirror (populated by the weekly
   // /api/cron/patents-delta cron). Per-user scans now do zero BigQuery
-  // work — just indexed Supabase queries.
+  // work — just indexed Supabase queries via canonical_company_id.
   const companiesForFetch = ((companies ?? []) as CompanyRow[]).flatMap((row) => {
     const name = row.company_name?.trim();
-    return name ? [{ id: row.id, name, aliases: companyAliasMap.get(row.id) ?? [] }] : [];
+    return name ? [{ id: row.id, name }] : [];
   });
-  const patentsByCompany = await fetchPatentsForCompaniesFromLocal(admin, companiesForFetch, 100);
+  const patentsByCompany = await fetchPatentsForCompaniesFromLocal(admin, companiesForFetch, cutoffIso, 100);
 
   for (const row of (companies ?? []) as CompanyRow[]) {
     const companyName = row.company_name?.trim();

@@ -5,6 +5,7 @@ import { syncContactFitForContacts } from '@/lib/contact-fit';
 import { syncCompanyFitForCompanies } from '@/lib/company-fit';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { ensureCompanyAliases } from '@/lib/signals/company-aliases';
+import { backfillRecentMentionsForCompany } from '@/lib/companies/backfill-mentions-for-company';
 import { ensureCompanyCik } from '@/lib/signals/company-cik';
 
 export type EnrichedImportRecord = {
@@ -143,7 +144,6 @@ type ExistingCompany = {
   therapeutic_areas: string[] | null;
   modalities: string[] | null;
   clinical_stage: string | null;
-  source: string | null;
 };
 
 function isMissingColumnError(error: unknown): boolean {
@@ -203,9 +203,8 @@ async function upsertCompany(
   const existing = await supabase
     .from('companies')
     .select(
-      'id, company_name, linkedin_url, description, industry, sub_industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_state, headquarters_country, therapeutic_areas, modalities, clinical_stage, source'
+      'id, company_name, linkedin_url, description, industry, sub_industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_state, headquarters_country, therapeutic_areas, modalities, clinical_stage'
     )
-    .eq('user_id', userId)
     .eq('domain', domain)
     .maybeSingle();
 
@@ -216,8 +215,9 @@ async function upsertCompany(
 
   const existingCompany = (existing?.data as ExistingCompany | null) || null;
   const now = new Date().toISOString();
+  // Per-user source label (lives on user_companies).
+  const perUserSource = record.enrichment_provider || 'imported';
   const companyPayload = {
-    user_id: userId,
     domain,
     company_name: pickCanonicalString(record.company_name, existingCompany?.company_name),
     linkedin_url: pickCanonicalString(record.company_linkedin_url, existingCompany?.linkedin_url),
@@ -243,7 +243,6 @@ async function upsertCompany(
     ),
     modalities: pickCanonicalStringArray(record.company_modalities, existingCompany?.modalities),
     clinical_stage: pickCanonicalString(record.company_clinical_stage, existingCompany?.clinical_stage),
-    source: record.enrichment_provider || existingCompany?.source || 'imported',
     last_enriched_at: now,
     updated_at: now,
   };
@@ -261,14 +260,14 @@ async function upsertCompany(
       );
     }
 
-    // Dual-write user_companies (idempotent — upsert).
+    // Link this user to the canonical company.
     await supabase
       .from('user_companies')
       .upsert(
         {
           user_id: userId,
           company_id: existingCompany.id,
-          source: companyPayload.source,
+          source: perUserSource,
           updated_at: now,
         },
         { onConflict: 'user_id,company_id' },
@@ -290,14 +289,14 @@ async function upsertCompany(
 
   const insertedId = (insertResult.data?.id as string) ?? null;
   if (insertedId) {
-    // Dual-write user_companies.
+    // Link this user to the new canonical company.
     await supabase
       .from('user_companies')
       .upsert(
         {
           user_id: userId,
           company_id: insertedId,
-          source: companyPayload.source,
+          source: perUserSource,
           archived_at: null,
           updated_at: now,
         },
@@ -313,6 +312,19 @@ async function upsertCompany(
     void ensureCompanyCik(createAdminClient(), insertedId).catch((err) => {
       console.warn(`[import-ingestion] eager ensureCompanyCik failed for ${insertedId} (${context}):`, err instanceof Error ? err.message : String(err));
     });
+    // Phase 4: backfill mentioned_company_ids for last 14 days of source data
+    // so newly-imported companies show recent signals immediately. Chained off
+    // ensureCompanyAliases so the backfill matches against the freshest alias set.
+    void ensureCompanyAliases(createAdminClient(), insertedId)
+      .then(() => backfillRecentMentionsForCompany(createAdminClient(), insertedId))
+      .then((bf) => {
+        if (bf.total_updated > 0) {
+          console.log(`[import-ingestion] phase-4 backfill: ${insertedId} matched ${bf.total_updated} rows across`, bf.updated_by_table);
+        }
+      })
+      .catch((err) => {
+        console.warn(`[import-ingestion] phase-4 backfill failed for ${insertedId} (${context}):`, err instanceof Error ? err.message : String(err));
+      });
   }
   return insertedId;
 }

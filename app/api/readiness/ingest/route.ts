@@ -95,9 +95,9 @@ export async function POST(request: Request) {
 
     if (companyId) {
       const { data: company, error: companyError } = await supabase
-        .from('companies')
-        .select('id')
-        .eq('id', companyId)
+        .from('user_companies')
+        .select('company_id')
+        .eq('company_id', companyId)
         .eq('user_id', user.id)
         .maybeSingle();
 

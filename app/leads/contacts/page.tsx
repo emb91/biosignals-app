@@ -30,6 +30,8 @@ import {
   formatContactLocationDisplay,
 } from '@/lib/contact-profile-display';
 import { cn } from '@/lib/utils';
+import { cachedJson, invalidateCache } from '@/lib/page-fetch-cache';
+import { OutreachPanel } from '@/components/OutreachPanel';
 import { TableFitGaugeButton } from '@/components/TableFitGaugeButton';
 import { AnimatedCircularProgressBar } from '@/components/ui/animated-circular-progress-bar';
 import {
@@ -1171,7 +1173,12 @@ export function ContactsWorkspace() {
   const [stoppingLeadId, setStoppingLeadId] = useState<string | null>(null);
   const [stopEnrichmentError, setStopEnrichmentError] = useState<string | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
-  const [selectedPreview, setSelectedPreview] = useState<'contact' | 'hubspot' | 'scoring' | 'action' | 'signals' | 'priority'>('contact');
+  // Detail fetched per-selection from /api/leads/[id]. Side panel reads from
+  // merged { ...selectedLeadLean, ...selectedLeadDetail } so it has both the
+  // lean-list fields (readiness, attribution, hubspot state) AND the canonical
+  // detail fields (full companies(...) nested data) without bloating the list.
+  const [selectedLeadDetailById, setSelectedLeadDetailById] = useState<Record<string, Partial<Lead>>>({});
+  const [selectedPreview, setSelectedPreview] = useState<'contact' | 'hubspot' | 'scoring' | 'action' | 'signals' | 'priority' | 'outreach'>('contact');
   // Mirror the AgentPanel column's bounding rect so the contact drawer can
   // overlay it pixel-for-pixel regardless of viewport width or padding maths.
   // The AgentPanel renders its outermost div with the marker class
@@ -1264,6 +1271,10 @@ export function ContactsWorkspace() {
   const fetchLeads = useCallback(async (silent = false) => {
     if (!user) return;
     if (!silent) setLoadingLeads(true);
+    // `silent` is the convention for "just-mutated, need fresh data" so
+    // we bypass the module-level cache. Initial load (silent=false) and
+    // tab-switch returns happily use the cache.
+    if (silent) invalidateCache('/api/leads');
     try {
       const params = new URLSearchParams({
         page: String(page),
@@ -1271,25 +1282,23 @@ export function ContactsWorkspace() {
       });
       if (search) params.set('search', search);
 
-      const res = await fetch(`/api/leads?${params}`);
-      if (res.ok) {
-        const result = await res.json();
-        const nextLeads = (result.data || []).slice().sort((a: Lead, b: Lead) => {
-          const aScore = a.overall_fit_score ?? -1;
-          const bScore = b.overall_fit_score ?? -1;
-          return bScore - aScore;
-        });
-        setLeads(nextLeads);
-        setTotal(result.total || 0);
+      const { data: result } = await cachedJson<{
+        data?: Lead[];
+        total?: number;
+      }>(`/api/leads?${params}`);
+      const nextLeads = (result.data || []).slice().sort((a: Lead, b: Lead) => {
+        const aScore = a.overall_fit_score ?? -1;
+        const bScore = b.overall_fit_score ?? -1;
+        return bScore - aScore;
+      });
+      setLeads(nextLeads);
+      setTotal(result.total || 0);
 
-        // Preserve the user's current selection if it's still present, but otherwise
-        // keep nothing selected so the agent shows as the full card by default.
-        // (Used to auto-select the first lead; that hid the agent on every page load.)
-        setSelectedLeadId((current) => {
-          if (current && nextLeads.some((lead: Lead) => lead.id === current)) return current;
-          return null;
-        });
-      }
+      // Preserve the user's current selection if it's still present.
+      setSelectedLeadId((current) => {
+        if (current && nextLeads.some((lead: Lead) => lead.id === current)) return current;
+        return null;
+      });
     } catch (err) {
       console.error('Error fetching leads:', err);
     } finally {
@@ -1300,6 +1309,32 @@ export function ContactsWorkspace() {
   useEffect(() => {
     fetchLeads();
   }, [fetchLeads]);
+
+  // Fetch full detail for the selected lead (full companies(...) + extra lead
+  // fields) — these aren't in the lean list response. Cached via page-fetch-cache
+  // so re-selecting is instant.
+  useEffect(() => {
+    if (!selectedLeadId) return;
+    if (selectedLeadDetailById[selectedLeadId]) return; // already loaded
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data: result } = await cachedJson<{ data?: Partial<Lead> }>(
+          `/api/leads/${encodeURIComponent(selectedLeadId)}`,
+        );
+        if (cancelled || !result.data) return;
+        setSelectedLeadDetailById((prev) => ({
+          ...prev,
+          [selectedLeadId]: result.data!,
+        }));
+      } catch (e) {
+        console.error('Error fetching lead detail:', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedLeadId, selectedLeadDetailById]);
 
   useEffect(() => {
     fetch('/api/hubspot/status')
@@ -1960,7 +1995,17 @@ export function ContactsWorkspace() {
     tableSortCol,
     tableSortDir,
   );
-  const selectedLead = leads.find((lead) => lead.id === selectedLeadId) ?? null;
+  // Lean list row from the table fetch.
+  const selectedLeadLean = leads.find((lead) => lead.id === selectedLeadId) ?? null;
+  // Merge in the detail fetch (full companies(...) nested + extra lead fields).
+  // Detail wins where it has a value; lean fills the rest (readiness,
+  // attribution, hubspot lead state, etc. live only on the lean list row).
+  const selectedLead: Lead | null = selectedLeadLean
+    ? ({
+        ...selectedLeadLean,
+        ...(selectedLeadId ? selectedLeadDetailById[selectedLeadId] ?? {} : {}),
+      } as Lead)
+    : null;
 
   // Only fade the bottom of the list while there's more content below the viewport;
   // when scrolled to the end the last rows render in full without the mask clipping
@@ -3378,7 +3423,9 @@ export function ContactsWorkspace() {
                                   ? 'Signals'
                                   : selectedPreview === 'priority'
                                     ? 'Priority'
-                                    : 'Action'}
+                                    : selectedPreview === 'outreach'
+                                      ? 'Outreach'
+                                      : 'Action'}
                           </p>
                           <h2 className="font-manrope mt-1.5 break-words text-xl font-bold leading-tight tracking-[-0.024em] text-[rgb(13,53,71)] sm:text-2xl">
                             {[selectedLead.first_name, selectedLead.last_name].filter(Boolean).join(' ') ||
@@ -3443,6 +3490,37 @@ export function ContactsWorkspace() {
                             <X className="h-3.5 w-3.5" strokeWidth={2} />
                           </button>
                         </div>
+                      </div>
+
+                      {/* Peer tab strip — all panel views as siblings. Existing
+                          row-button entries still work as deep-links into a tab. */}
+                      <div className="relative z-[1] flex items-center gap-1 overflow-x-auto border-b border-[rgba(13,53,71,0.06)] bg-white/60 px-3 py-1.5">
+                        {([
+                          { key: 'contact', label: 'Contact' },
+                          { key: 'scoring', label: 'Fit' },
+                          { key: 'action', label: 'Action' },
+                          { key: 'signals', label: 'Signals' },
+                          { key: 'priority', label: 'Priority' },
+                          { key: 'hubspot', label: 'CRM' },
+                          { key: 'outreach', label: 'Outreach' },
+                        ] as const).map(({ key, label }) => {
+                          const isActive = selectedPreview === key;
+                          return (
+                            <button
+                              key={key}
+                              type="button"
+                              onClick={() => setSelectedPreview(key)}
+                              className={cn(
+                                'shrink-0 rounded-md px-2 py-1 text-[11.5px] font-semibold transition-colors',
+                                isActive
+                                  ? 'bg-arcova-teal/10 text-arcova-teal'
+                                  : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700',
+                              )}
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
                       </div>
 
                       <div className="relative z-[1] flex border-b border-[rgba(13,53,71,0.08)] px-4">
@@ -4565,6 +4643,16 @@ export function ContactsWorkspace() {
                               </div>
                             );
                           })()
+                        ) : selectedPreview === 'outreach' ? (
+                          /* ── Outreach view — picker + sequence editor + export ── */
+                          <OutreachPanel
+                            contactId={selectedLead.id}
+                            contactName={
+                              [selectedLead.first_name, selectedLead.last_name].filter(Boolean).join(' ') ||
+                              selectedLead.full_name ||
+                              'Contact'
+                            }
+                          />
                         ) : (
                           /* ── Scoring view ── */
                           <div className="space-y-3">

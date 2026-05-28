@@ -23,7 +23,7 @@ export async function GET() {
 
     const [companiesRes, contactsRes] = await Promise.all([
       admin
-        .from('companies')
+        .from('accounts_view')
         .select('id, company_name, domain')
         .eq('user_id', user.id)
         .is('archived_at', null)

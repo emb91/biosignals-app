@@ -404,10 +404,11 @@ export async function ensureTrackedCompanyCiks(
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
+    // CIK is a canonical company property. Iterate all canonical companies;
+    // resolving an orphan CIK is harmless.
     const { data, error } = await admin
       .from('companies')
       .select('id')
-      .is('archived_at', null)
       .range(from, from + PAGE_SIZE - 1);
     if (error) throw new Error(`ensureTrackedCompanyCiks: ${error.message}`);
 

@@ -110,7 +110,7 @@ export async function POST(
     }
 
     const companyResult = await supabase
-      .from('companies')
+      .from('accounts_view')
       .select('id, company_name, matched_icp_id, company_fit_score, company_fit_breakdown')
       .eq('id', id)
       .eq('user_id', user.id)

@@ -13,6 +13,7 @@
  */
 import { BigQuery } from '@google-cloud/bigquery';
 import type { createAdminClient } from '@/lib/supabase-admin';
+import { resolveCompanyMentions } from '@/lib/companies/resolve-mentions';
 
 const BIGQUERY_LOCATION = 'US';
 const BIGQUERY_PUBLICATIONS_TABLE = 'patents-public-data.patents.publications';
@@ -174,6 +175,24 @@ export async function syncPatentsDelta(opts: {
       if (assigneeBatch.length === 0) return;
       const chunk = assigneeBatch;
       assigneeBatch = [];
+
+      // Resolve assignee names → canonical company ids in one batched call.
+      const uniqueNames = [
+        ...new Set(chunk.map((r) => r.assignee_name).filter((n): n is string => typeof n === 'string' && Boolean(n))),
+      ];
+      if (uniqueNames.length > 0) {
+        try {
+          const resolved = await resolveCompanyMentions(admin, uniqueNames);
+          for (const row of chunk) {
+            const name = row.assignee_name as string | null;
+            row.canonical_company_id = name ? (resolved.get(name)?.canonicalId ?? null) : null;
+          }
+        } catch (e) {
+          console.error('[sync-patents] resolver failed for chunk:', e);
+          for (const row of chunk) row.canonical_company_id = null;
+        }
+      }
+
       const { error } = await admin
         .from('patent_event_assignees')
         .upsert(chunk, { onConflict: 'publication_number,assignee_name' });

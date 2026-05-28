@@ -11,6 +11,7 @@
  */
 import { fetchWithRetry, TokenBucket } from '@/lib/signals/fetch-with-retry';
 import { normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
+import { resolveCompanyMentions } from '@/lib/companies/resolve-mentions';
 import type { createAdminClient } from '@/lib/supabase-admin';
 
 const DEFAULT_OVERLAP_DAYS = 8;
@@ -44,7 +45,10 @@ type CtStudyRaw = {
     };
     designModule?: { phases?: string[] };
     conditionsModule?: { conditions?: string[] };
-    contactsLocationsModule?: { locations?: Array<unknown> };
+    contactsLocationsModule?: {
+      locations?: Array<unknown>;
+      overallOfficials?: Array<{ name?: string; role?: string; affiliation?: string }>;
+    };
     sponsorCollaboratorsModule?: {
       leadSponsor?: { name?: string };
       collaborators?: Array<{ name?: string }>;
@@ -67,6 +71,7 @@ function buildUrl(cutoffIso: string, pageToken: string | null): string {
     'protocolSection.designModule.phases',
     'protocolSection.conditionsModule.conditions',
     'protocolSection.contactsLocationsModule.locations',
+    'protocolSection.contactsLocationsModule.overallOfficials',
     'protocolSection.sponsorCollaboratorsModule.leadSponsor',
     'protocolSection.sponsorCollaboratorsModule.collaborators',
   ].join(',');
@@ -102,6 +107,53 @@ function extractCollaborators(study: CtStudyRaw): string[] {
   return raw
     .map((c) => (typeof c?.name === 'string' ? c.name.trim() : ''))
     .filter(Boolean);
+}
+
+/**
+ * For each trial row in the buffer, resolve lead_sponsor + collaborators to
+ * canonical company ids and attach as `mentioned_company_ids`. Calls the
+ * resolver ONCE per chunk over the unique names (cache + dedup handle the
+ * heavy lifting), then maps results back per row.
+ */
+async function resolveAndAttachMentions(
+  admin: ReturnType<typeof createAdminClient>,
+  rows: Record<string, unknown>[],
+): Promise<void> {
+  // Collect all unique sponsor names across the chunk.
+  const allNames = new Set<string>();
+  for (const r of rows) {
+    const lead = r.lead_sponsor as string | null;
+    if (lead) allNames.add(lead);
+    const collabs = (r.collaborators as string[] | null) ?? [];
+    for (const c of collabs) if (c) allNames.add(c);
+  }
+  if (allNames.size === 0) {
+    for (const r of rows) r.mentioned_company_ids = [];
+    return;
+  }
+
+  let resolved: Map<string, { canonicalId: string | null }>;
+  try {
+    resolved = await resolveCompanyMentions(admin, [...allNames]);
+  } catch (e) {
+    console.error('[sync-ct-delta] resolver failed for chunk:', e);
+    for (const r of rows) r.mentioned_company_ids = [];
+    return;
+  }
+
+  for (const r of rows) {
+    const names: string[] = [];
+    if (r.lead_sponsor) names.push(r.lead_sponsor as string);
+    const collabs = (r.collaborators as string[] | null) ?? [];
+    for (const c of collabs) if (c) names.push(c);
+
+    const ids = new Set<string>();
+    for (const n of names) {
+      const id = resolved.get(n)?.canonicalId;
+      if (id) ids.add(id);
+    }
+    r.mentioned_company_ids = [...ids];
+  }
 }
 
 export async function syncCtDelta(opts: {
@@ -146,12 +198,16 @@ export async function syncCtDelta(opts: {
           locations_count: Array.isArray(ps.contactsLocationsModule?.locations)
             ? ps.contactsLocationsModule!.locations!.length
             : null,
+          overall_officials: (ps.contactsLocationsModule?.overallOfficials ?? [])
+            .map((o) => ({ name: o.name?.trim() ?? '', role: o.role?.trim() ?? '', affiliation: o.affiliation?.trim() ?? '' }))
+            .filter((o) => o.name),
           last_update_post_date: ps.statusModule?.lastUpdatePostDateStruct?.date ?? null,
           last_seen_at: startedAtIso,
         });
         if (buffer.length >= UPSERT_CHUNK) {
           const chunk = buffer;
           buffer = [];
+          await resolveAndAttachMentions(admin, chunk);
           const { error } = await admin
             .from('clinical_trials')
             .upsert(chunk, { onConflict: 'nct_id' });
@@ -161,6 +217,7 @@ export async function syncCtDelta(opts: {
       }
     }
     if (buffer.length > 0) {
+      await resolveAndAttachMentions(admin, buffer);
       const { error } = await admin
         .from('clinical_trials')
         .upsert(buffer, { onConflict: 'nct_id' });

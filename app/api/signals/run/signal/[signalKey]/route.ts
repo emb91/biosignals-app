@@ -40,6 +40,10 @@ const CLINICAL_SIGNAL_KEYS = new Set<SignalKey>([
   'indication_expansion',
   'trial_failure_or_halt',
   'program_discontinuation',
+  // PI: emitted as a side-effect of the clinical-trials runner. Redirect
+  // direct callers to /api/signals/run/clinical-trials rather than running
+  // the external_contact runner (which doesn't actually emit PI signals).
+  'principal_investigator_new_trial',
 ]);
 
 const FDA_SIGNAL_KEYS = new Set<SignalKey>([
@@ -261,11 +265,11 @@ export async function POST(
       let result: Awaited<ReturnType<typeof runExternalCompanyMonitor>>;
       if (runAll && companyIds.length === 0) {
         const companyQuery = authClient
-          .from('companies')
-          .select('id')
+          .from('user_companies')
+          .select('company_id')
           .eq('user_id', user.id)
           .is('archived_at', null)
-          .order('id', { ascending: true });
+          .order('company_id', { ascending: true });
         if (typeof limitValue === 'number') {
           companyQuery.limit(Math.max(1, limitValue));
         }
@@ -274,7 +278,7 @@ export async function POST(
           throw new Error(allCompaniesError.message);
         }
         const allIds = (allCompanies ?? [])
-          .map((row: { id?: unknown }) => (typeof row.id === 'string' ? row.id : null))
+          .map((row: { company_id?: unknown }) => (typeof row.company_id === 'string' ? row.company_id : null))
           .filter((value): value is string => Boolean(value));
 
         let totalProcessed = 0;

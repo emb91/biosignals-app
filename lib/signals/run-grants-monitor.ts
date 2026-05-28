@@ -18,8 +18,6 @@
  *    matching and clinical-trial sponsor matching.
  */
 import { createAdminClient } from '@/lib/supabase-admin';
-import { ensureCompanyAliases } from '@/lib/signals/company-aliases';
-import { buildCompanyQueryVariants, normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
 import {
   generateAccountReason,
   ingestSignalSourceEvent,
@@ -30,9 +28,7 @@ import type { SignalKey } from '@/lib/signals/readiness-types';
 
 type CompanyRow = {
   id: string;
-  user_id: string;
   company_name: string | null;
-  aliases: string[] | null;
 };
 
 type GrantsMonitorInput = {
@@ -40,7 +36,17 @@ type GrantsMonitorInput = {
   companyIds?: string[];
   limit?: number;
   onlySignalKey?: SignalKey;
+  /** How many days back to look. Default 14, clamped to [1, 30]. */
+  lookbackDays?: number;
 };
+
+const DEFAULT_LOOKBACK_DAYS = 14;
+const MAX_LOOKBACK_DAYS = 30;
+
+function clampLookback(value: number | undefined): number {
+  const v = typeof value === 'number' && Number.isFinite(value) ? value : DEFAULT_LOOKBACK_DAYS;
+  return Math.min(MAX_LOOKBACK_DAYS, Math.max(1, Math.floor(v)));
+}
 
 export type GrantsMonitorResult = {
   processed: number;
@@ -106,30 +112,21 @@ function formatUsd(amount: number | string | null): string | null {
   return `$${n.toFixed(0)}`;
 }
 
-function escapePostgrestPattern(term: string): string {
-  return term.replace(/[,()]/g, ' ').trim();
-}
-
 async function fetchGrantsForCompany(
   admin: ReturnType<typeof createAdminClient>,
-  company: { id: string; name: string; aliases: string[] },
+  companyId: string,
+  cutoffIso: string,
   limit = 100,
 ): Promise<GrantRow[]> {
-  const variants = buildCompanyQueryVariants(company.name, company.aliases)
-    .map((v) => normalizeCompanyForMatching(v))
-    .filter((v) => v.length >= 4);
-  const uniqueVariants = [...new Set(variants)];
-  if (uniqueVariants.length === 0) return [];
-
-  const orClause = uniqueVariants
-    .map((t) => `org_name_normalized.ilike.%${escapePostgrestPattern(t)}%`)
-    .join(',');
+  // mentioned_company_ids is populated at ingest by the resolver.
+  // Time cutoff: an award from 6 months ago is no longer "new budget".
   const { data, error } = await admin
     .from('nih_grants_local')
     .select(
       'appl_id, project_num, core_project_num, activity_code, award_amount, award_notice_date, project_start_date, project_end_date, fiscal_year, org_name, org_name_normalized, org_type_code, org_type_name, org_city, org_state, org_uei, agency_ic_code, agency_ic_abbr, agency_ic_name, project_title, contact_pi_name, mechanism_code_dc',
     )
-    .or(orClause)
+    .contains('mentioned_company_ids', [companyId])
+    .gte('award_notice_date', cutoffIso)
     .order('award_notice_date', { ascending: false })
     .limit(limit);
   if (error) throw new Error(`nih_grants_local query: ${error.message}`);
@@ -222,6 +219,8 @@ async function emitCompanySignal(
 
 export async function runGrantsMonitor(input: GrantsMonitorInput): Promise<GrantsMonitorResult> {
   const admin = createAdminClient();
+  const lookbackDays = clampLookback(input.lookbackDays);
+  const cutoffIso = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
 
   const { data: linkRows, error: linkError } = await admin
     .from('user_companies')
@@ -258,7 +257,7 @@ export async function runGrantsMonitor(input: GrantsMonitorInput): Promise<Grant
 
   const { data: companies, error: companiesError } = await admin
     .from('companies')
-    .select('id, user_id, company_name, aliases')
+    .select('id, company_name')
     .in('id', ownedIds);
   if (companiesError) throw new Error(companiesError.message);
 
@@ -271,23 +270,6 @@ export async function runGrantsMonitor(input: GrantsMonitorInput): Promise<Grant
   const recomputedCompanyIds = new Set<string>();
   const failures: Array<{ company_id: string; error: string }> = [];
 
-  // Lazy-populate aliases for any company missing them. Cheap when fresh.
-  const companyAliasMap = new Map<string, string[]>();
-  for (const row of (companies ?? []) as CompanyRow[]) {
-    const name = row.company_name?.trim();
-    if (!name) continue;
-    let aliases = row.aliases ?? [];
-    if (aliases.length === 0) {
-      try {
-        const result = await ensureCompanyAliases(admin, row.id);
-        aliases = result.aliases;
-      } catch (error) {
-        console.error(`[grants] ensureCompanyAliases failed for ${row.id}:`, error);
-      }
-    }
-    companyAliasMap.set(row.id, aliases);
-  }
-
   const onlySignal = input.onlySignalKey;
   const shouldEmit = (signalKey: SignalKey): boolean => !onlySignal || onlySignal === signalKey;
 
@@ -295,12 +277,7 @@ export async function runGrantsMonitor(input: GrantsMonitorInput): Promise<Grant
     const companyName = row.company_name?.trim();
     if (!companyName) continue;
     try {
-      const aliases = companyAliasMap.get(row.id) ?? [];
-      const grants = await fetchGrantsForCompany(
-        admin,
-        { id: row.id, name: companyName, aliases },
-        100,
-      );
+      const grants = await fetchGrantsForCompany(admin, row.id, cutoffIso, 100);
 
       // Bulk-dedupe via signal_source_events. We use a single source key
       // (nih_reporter) for all NIH grant events so the dedupe set is small

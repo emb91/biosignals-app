@@ -17,6 +17,7 @@ type AccountRpcRow = {
   id: string;
   company_name: string | null;
   domain: string | null;
+  website: string | null;
   logo_url: string | null;
   company_fit_score: number | null;
   company_fit_coverage: number | null;
@@ -30,12 +31,19 @@ type AccountRpcRow = {
   latest_funding_date: string | null;
   funding_resolution_summary: string | null;
   company_type: string | null;
+  industry: string | null;
+  sub_industry: string | null;
+  clinical_stage: string | null;
+  platform_category: string | null;
+  company_size_bucket: string | null;
+  tagline: string | null;
   linkedin_url: string | null;
   description: string | null;
   bio_summary: string | null;
   employee_count: number | null;
   employee_range: string | null;
   headquarters_city: string | null;
+  headquarters_state: string | null;
   headquarters_country: string | null;
   founded_year: number | null;
   specialties: string[] | null;
@@ -269,13 +277,45 @@ export async function GET(request: Request) {
             ? fitNorm * 0.5
             : null;
 
+      // LEAN LIST projection — only the fields the table view + agent
+      // list-mode actually need. Side panel + agent detail-mode use the
+      // GET /api/accounts/[id] endpoint for the full ~44-field record.
+      // Trimming here saves ~45% on wire payload per list load.
+      const overrideFor = (k: string) => {
+        const v = (overrides as Record<string, unknown>)[k];
+        return v === null || v === undefined ? undefined : v;
+      };
       return {
-        // Spread RPC row, then layer overrides on top
-        ...row,
-        ...Object.fromEntries(
-          Object.entries(overrides).filter(([, v]) => v !== null && v !== undefined),
-        ),
+        // Identity
+        id: row.id,
+        company_name: overrideFor('company_name') ?? row.company_name,
+        domain: row.domain,
+        logo_url: row.logo_url,
+        // ICP
+        matched_icp_id: row.matched_icp_id,
         matched_icp_label: row.matched_icp_id ? icpLabels.get(row.matched_icp_id) ?? null : null,
+        // Scores (sortable in table)
+        company_fit_score: row.company_fit_score,
+        company_fit_coverage: row.company_fit_coverage,
+        best_contact_fit: row.best_contact_fit,
+        avg_contact_fit: row.avg_contact_fit,
+        worst_contact_fit: row.worst_contact_fit,
+        max_contact_intent_score: row.max_contact_intent_score,
+        contact_count: row.contact_count,
+        // Categorisation (table pills)
+        company_type: overrideFor('company_type') ?? row.company_type,
+        therapeutic_areas: (overrideFor('therapeutic_areas') as string[] | undefined) ?? row.therapeutic_areas,
+        modalities: (overrideFor('modalities') as string[] | undefined) ?? row.modalities,
+        development_stages: (overrideFor('development_stages') as string[] | undefined) ?? row.development_stages,
+        // Firmographics (table cols)
+        employee_count: (overrideFor('employee_count') as number | undefined) ?? row.employee_count,
+        employee_range: overrideFor('employee_range') ?? row.employee_range,
+        headquarters_city: overrideFor('headquarters_city') ?? row.headquarters_city,
+        headquarters_country: overrideFor('headquarters_country') ?? row.headquarters_country,
+        // Funding (table col)
+        funding_stage: overrideFor('funding_stage') ?? row.funding_stage,
+        funding_status_label: row.funding_status_label,
+        // Computed
         data_provenance_type: formatDataProvenanceTypeOnly(channelFromSource(row.uc_source)),
         data_provenance_imported_at: row.uc_added_at,
         readiness_label: row.readiness_label,
@@ -284,10 +324,6 @@ export async function GET(request: Request) {
         priority_score: basePriority,
         crm_status: crmEntry?.state ?? null,
         crm_deal_stage_label: crmEntry?.dealStageLabel ?? null,
-        // Don't expose raw RPC fields the frontend doesn't need
-        uc_source: undefined,
-        uc_added_at: undefined,
-        total_count: undefined,
       };
     });
 

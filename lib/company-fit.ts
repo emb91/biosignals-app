@@ -43,7 +43,6 @@ type CompanyTypeMatchStatus = keyof typeof COMPANY_TYPE_CAPS;
 
 type CompanyScoreRow = {
   id: string;
-  user_id: string;
   company_name: string | null;
   domain: string | null;
   company_type: string | null;
@@ -683,9 +682,8 @@ async function loadCompaniesById(
   const { data, error } = await supabase
     .from('companies')
     .select(
-      'id, user_id, company_name, domain, company_type, platform_category, therapeutic_areas, modalities, development_stages, clinical_stage, company_size_bucket, employee_count, employee_range, funding_stage, funding_status_label, total_funding_usd',
+      'id, company_name, domain, company_type, platform_category, therapeutic_areas, modalities, development_stages, clinical_stage, company_size_bucket, employee_count, employee_range, funding_stage, funding_status_label, total_funding_usd',
     )
-    .eq('user_id', userId)
     .in('id', companyIds);
 
   if (error) {
@@ -736,27 +734,8 @@ async function clearCompanyFit(
     throw deleteResult.error;
   }
 
-  const companyUpdateResult = await supabase
-    .from('companies')
-    .update({
-      matched_icp_id: null,
-      company_fit_score: 0,
-      company_fit_breakdown: null,
-      company_fit_coverage: null,
-      company_fit_scored_at: now,
-      company_fit_version: SCORE_VERSION,
-      company_fit_summary: 'This company has no ICP fit winner yet, so company fit is low until ICP criteria and profile evidence are available.',
-      updated_at: now,
-    })
-    .eq('user_id', userId)
-    .eq('id', companyId);
-
-  if (companyUpdateResult.error) {
-    throw companyUpdateResult.error;
-  }
-
-  // Dual-write: per-user scoring state lives in user_companies going forward.
-  await supabase
+  // Per-user scoring state lives in user_companies.
+  const userCompanyUpdateResult = await supabase
     .from('user_companies')
     .upsert(
       {
@@ -773,6 +752,9 @@ async function clearCompanyFit(
       },
       { onConflict: 'user_id,company_id' },
     );
+  if (userCompanyUpdateResult.error) {
+    throw userCompanyUpdateResult.error;
+  }
 
   const { data: contacts, error: contactUpdateError } = await supabase
     .from('contacts')
@@ -842,27 +824,8 @@ async function persistScoresForCompany(
     }
   }
 
-  const companyUpdate = await supabase
-    .from('companies')
-    .update({
-      matched_icp_id: winner?.icpId ?? null,
-      company_fit_score: winner?.finalScore01 ?? 0,
-      company_fit_breakdown: winner?.breakdown ?? null,
-      company_fit_coverage: winner?.coverage01 ?? null,
-      company_fit_scored_at: now,
-      company_fit_version: SCORE_VERSION,
-      company_fit_summary: buildCompanyFitSummary(company, winner ?? null),
-      updated_at: now,
-    })
-    .eq('user_id', userId)
-    .eq('id', companyId);
-
-  if (companyUpdate.error) {
-    throw companyUpdate.error;
-  }
-
-  // Dual-write to user_companies (per-user scoring source of truth going forward).
-  await supabase
+  // Per-user scoring state lives in user_companies.
+  const userCompanyUpdate = await supabase
     .from('user_companies')
     .upsert(
       {
@@ -879,6 +842,9 @@ async function persistScoresForCompany(
       },
       { onConflict: 'user_id,company_id' },
     );
+  if (userCompanyUpdate.error) {
+    throw userCompanyUpdate.error;
+  }
 
   const fitFields = buildContactFitFields(winner);
   const contactUpdate = await supabase
@@ -974,8 +940,8 @@ export async function rescoreAllCompanyFitForUser(userId: string): Promise<Compa
   const supabase = createAdminClient();
 
   const { data: companies, error } = await supabase
-    .from('companies')
-    .select('id')
+    .from('user_companies')
+    .select('company_id')
     .eq('user_id', userId);
 
   if (error) {
@@ -985,7 +951,7 @@ export async function rescoreAllCompanyFitForUser(userId: string): Promise<Compa
   const result = await syncCompanyFitForCompanies(
     supabase,
     userId,
-    ((companies || []) as Array<{ id: string }>).map((row) => row.id),
+    ((companies || []) as Array<{ company_id: string }>).map((row) => row.company_id),
   );
 
   const unlinkedContactUpdate = await supabase

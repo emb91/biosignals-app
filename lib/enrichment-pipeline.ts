@@ -24,6 +24,7 @@ import { employeeCountToSizeBucket } from '@/lib/arcova-taxonomy';
 import { emitExternalContactSignalsFromEnrichment } from '@/lib/signals/readiness-external-contacts';
 import { ensureCompanyAliases } from '@/lib/signals/company-aliases';
 import { ensureCompanyCik } from '@/lib/signals/company-cik';
+import { backfillRecentMentionsForCompany } from '@/lib/companies/backfill-mentions-for-company';
 import { createAdminClient } from '@/lib/supabase-admin';
 
 type MinimalSupabase = {
@@ -681,13 +682,12 @@ async function upsertResolvedCompany(
 
   const context = `user=${userId} domain=${domain}`;
 
-  // Check if a row already exists for this user+domain
+  // Check if a canonical row already exists for this domain (companies is shared).
   const existing = await supabase
     .from('companies')
     .select(
       'id, company_name, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_state, headquarters_country, specialties'
     )
-    .eq('user_id', userId)
     .eq('domain', domain)
     .maybeSingle();
 
@@ -702,7 +702,6 @@ async function upsertResolvedCompany(
   const apolloFirmographics = input.apolloFirmographics || null;
 
   const payload: Record<string, unknown> = {
-    user_id: userId,
     domain,
     company_name: pickCanonicalString(input.resolvedCompanyName, existingCompany?.company_name),
     linkedin_url: pickCanonicalString(
@@ -752,7 +751,6 @@ async function upsertResolvedCompany(
       existingCompany?.headquarters_country
     ),
     specialties: pickCanonicalStringArray(apifyFirmographics.specialties, existingCompany?.specialties),
-    source: input.source,
     last_enriched_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
@@ -839,6 +837,21 @@ async function upsertResolvedCompany(
   void ensureCompanyCik(createAdminClient(), insertedId).catch((err) => {
     console.warn(`[companies] eager ensureCompanyCik failed for ${insertedId} (${context}):`, err instanceof Error ? err.message : String(err));
   });
+  // Phase 4: backfill mentioned_company_ids for the last 14 days of source
+  // data so the user sees recent activity for the newly-added company
+  // immediately, not just from the next sync cycle. Best-effort, runs after
+  // aliases populate so we match against the freshest alias set. Chained off
+  // ensureCompanyAliases to avoid racing it (aliases improve match quality).
+  void ensureCompanyAliases(createAdminClient(), insertedId)
+    .then(() => backfillRecentMentionsForCompany(createAdminClient(), insertedId))
+    .then((bf) => {
+      if (bf.total_updated > 0) {
+        console.log(`[companies] phase-4 backfill: ${insertedId} matched ${bf.total_updated} rows across`, bf.updated_by_table);
+      }
+    })
+    .catch((err) => {
+      console.warn(`[companies] phase-4 backfill failed for ${insertedId} (${context}):`, err instanceof Error ? err.message : String(err));
+    });
 
   return insertedId;
 }

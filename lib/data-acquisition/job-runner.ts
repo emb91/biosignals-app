@@ -110,11 +110,21 @@ async function loadPrioritizedCompaniesForIcpAccounts(
   requestType: 'better_contacts' | 'more_contacts_at_accounts',
   limit: number,
 ): Promise<DbCompanyRow[]> {
+  const { data: ownedRows, error: ownedError } = await admin
+    .from('user_companies')
+    .select('company_id')
+    .eq('user_id', userId)
+    .eq('matched_icp_id', icpId);
+  if (ownedError) throw new Error(ownedError.message);
+  const ownedIds = (ownedRows ?? [])
+    .map((r) => (r as { company_id?: unknown }).company_id)
+    .filter((v): v is string => typeof v === 'string');
+  if (ownedIds.length === 0) return [];
+
   const { data: companies, error } = await admin
     .from('companies')
     .select('id, company_name, domain, company_website, linkedin_url, apollo_organization_raw, employee_count')
-    .eq('user_id', userId)
-    .eq('matched_icp_id', icpId);
+    .in('id', ownedIds);
 
   if (error) throw new Error(error.message);
   const rows = (companies || []) as DbCompanyRow[];
@@ -563,10 +573,19 @@ export async function runDataAcquisitionJob(jobId: string): Promise<void> {
       job.max_screened_companies || targetCompanyCount * 6,
     );
 
-    const { data: existingCompanies } = await admin
-      .from('companies')
-      .select('company_name, domain, company_website, linkedin_url')
+    const { data: existingOwned } = await admin
+      .from('user_companies')
+      .select('company_id')
       .eq('user_id', job.user_id);
+    const existingOwnedIds = (existingOwned ?? [])
+      .map((r) => (r as { company_id?: unknown }).company_id)
+      .filter((v): v is string => typeof v === 'string');
+    const { data: existingCompanies } = existingOwnedIds.length > 0
+      ? await admin
+          .from('companies')
+          .select('company_name, domain, company_website, linkedin_url')
+          .in('id', existingOwnedIds)
+      : { data: [] as ExistingCompany[] };
     const existingCompanyKeySet = new Set(
       ((existingCompanies || []) as ExistingCompany[]).flatMap(existingCompanyKeys),
     );

@@ -277,6 +277,36 @@ const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'get_account_detail',
+    description:
+      "Get the FULL account detail for a specific company by id — bio, description, firmographics (founded year, HQ, size), products/services/technologies, full funding history, criteria (therapeutic areas, modalities, development stages, platform category), and any per-user overrides. Use this when you already know the company's id (e.g. user is viewing an account) and need the complete record to answer detailed questions. Prefer get_company_details when starting from a name.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        company_id: {
+          type: 'string',
+          description: 'The company UUID (from query_companies or selected account context).',
+        },
+      },
+      required: ['company_id'],
+    },
+  },
+  {
+    name: 'get_contact_detail',
+    description:
+      "Get the FULL contact detail for a specific lead by id — name, title, seniority, business area, bio, panel summary, fit/intent scores, employment history, enrichment status, and the FULL company nested record (firmographics, products, funding, criteria). Use this when you already know the contact's id (e.g. user is viewing a contact) and need the complete record. Prefer query_contacts when starting from a search/filter.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        contact_id: {
+          type: 'string',
+          description: 'The contact UUID (from query_contacts or selected contact context).',
+        },
+      },
+      required: ['contact_id'],
+    },
+  },
+  {
     name: 'query_contacts',
     description:
       "Query the user's contacts with optional filters. Returns matching contacts with their fit scores and company info. Use this when the user asks about specific contacts, personas, or wants to see who to reach out to.",
@@ -1076,6 +1106,62 @@ async function toolGetCompanyDetails(
   });
 }
 
+/**
+ * Returns the full account record from accounts_view for a specific company id.
+ * Same data the side panel renders — bio, firmographics, products, full funding
+ * detail, criteria, and any per-user overrides (already COALESCE'd by the view).
+ * Use when the caller already has a company id (e.g. user is on the account
+ * page) and needs the complete record.
+ */
+async function toolGetAccountDetail(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  input: Record<string, unknown>,
+): Promise<string> {
+  const companyId = typeof input.company_id === 'string' ? input.company_id.trim() : '';
+  if (!companyId) return JSON.stringify({ error: 'company_id is required' });
+
+  const { data, error } = await supabase
+    .from('accounts_view')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('id', companyId)
+    .maybeSingle();
+
+  if (error) return JSON.stringify({ error: error.message });
+  if (!data) return JSON.stringify({ error: `No account found for id ${companyId}` });
+
+  return JSON.stringify(data);
+}
+
+/**
+ * Returns the full contact record for a specific lead id, including the
+ * complete companies(...) nested data. Same shape as GET /api/leads/[id].
+ */
+async function toolGetContactDetail(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  input: Record<string, unknown>,
+): Promise<string> {
+  const contactId = typeof input.contact_id === 'string' ? input.contact_id.trim() : '';
+  if (!contactId) return JSON.stringify({ error: 'contact_id is required' });
+
+  const { data, error } = await supabase
+    .from('contacts')
+    .select(
+      // matched_icp_id + company_fit_score moved to user_companies in Phase 1d.
+      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, headline, email, email_status, linkedin_url, profile_photo_url, company_name, company_domain, location, city, country, contact_bio, contact_panel_summary, contact_fit_summary, fit_score, intent_score, overall_fit_score, contact_fit_score, priority_score, resolved_current_company_name, resolved_current_job_title, resolved_employment_history, source, created_at, updated_at, company_id, companies(id, company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, industry, sub_industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_state, headquarters_country, products_services, services, technologies, company_type, platform_category, funding_stage, funding_status_label, total_funding_usd, latest_funding_date, therapeutic_areas, modalities, development_stages, clinical_stage, last_enriched_at)'
+    )
+    .eq('user_id', userId)
+    .eq('id', contactId)
+    .maybeSingle();
+
+  if (error) return JSON.stringify({ error: error.message });
+  if (!data) return JSON.stringify({ error: `No contact found for id ${contactId}` });
+
+  return JSON.stringify(data);
+}
+
 async function toolQueryContacts(
   supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string,
@@ -1490,6 +1576,12 @@ async function runAgentLoop(
             break;
           case 'get_company_details':
             result = await toolGetCompanyDetails(supabase, userId, toolInput);
+            break;
+          case 'get_account_detail':
+            result = await toolGetAccountDetail(supabase, userId, toolInput);
+            break;
+          case 'get_contact_detail':
+            result = await toolGetContactDetail(supabase, userId, toolInput);
             break;
           case 'query_contacts':
             result = await toolQueryContacts(supabase, userId, toolInput);

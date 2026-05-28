@@ -15,6 +15,7 @@
  */
 import { fetchWithRetry, TokenBucket } from '@/lib/signals/fetch-with-retry';
 import { normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
+import { resolveCompanyMentions } from '@/lib/companies/resolve-mentions';
 import type { createAdminClient } from '@/lib/supabase-admin';
 
 const DEFAULT_OVERLAP_DAYS = 60;
@@ -160,6 +161,36 @@ async function chunkedUpsert(
   return upserted;
 }
 
+/**
+ * Attach `mentioned_company_ids` to each row by resolving its `nameField`
+ * (e.g. 'sponsor_name' or 'applicant') against the canonical directory.
+ * Calls the resolver ONCE per dedup-set; result map is reused per row.
+ */
+async function attachMentionedIds(
+  admin: ReturnType<typeof createAdminClient>,
+  rows: Record<string, unknown>[],
+  nameField: string,
+): Promise<void> {
+  const uniqueNames = [
+    ...new Set(rows.map((r) => r[nameField]).filter((n): n is string => typeof n === 'string' && Boolean(n))),
+  ];
+  if (uniqueNames.length === 0) {
+    for (const r of rows) r.mentioned_company_ids = [];
+    return;
+  }
+  try {
+    const resolved = await resolveCompanyMentions(admin, uniqueNames);
+    for (const r of rows) {
+      const name = r[nameField] as string | null;
+      const id = name ? resolved.get(name)?.canonicalId : null;
+      r.mentioned_company_ids = id ? [id] : [];
+    }
+  } catch (e) {
+    console.error(`[sync-fda] resolver failed for ${nameField}:`, e);
+    for (const r of rows) r.mentioned_company_ids = [];
+  }
+}
+
 async function syncDrugSubmissions(
   admin: ReturnType<typeof createAdminClient>,
   cutoffCompact: string,
@@ -205,6 +236,7 @@ async function syncDrugSubmissions(
       }
     }
   }
+  await attachMentionedIds(admin, rows, 'sponsor_name');
   return chunkedUpsert(admin, 'fda_drug_submissions', rows, 'application_number,submission_number');
 }
 
@@ -233,6 +265,7 @@ async function syncDevice510k(
       });
     }
   }
+  await attachMentionedIds(admin, rows, 'applicant');
   return chunkedUpsert(admin, 'fda_device_510k', rows, 'k_number');
 }
 
@@ -264,6 +297,7 @@ async function syncDevicePma(
       });
     }
   }
+  await attachMentionedIds(admin, rows, 'applicant');
   return chunkedUpsert(admin, 'fda_device_pma', rows, 'pma_number,supplement_number');
 }
 

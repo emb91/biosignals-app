@@ -43,7 +43,11 @@ export type LlmFeature =
   | 'recommend_persona_signals'
   | 'generate_icp_name'
   | 'cik_disambiguation'
-  | 'press_release_classifier';
+  | 'press_release_classifier'
+  | 'company_resolution'
+  // Outreach sequence — uses Sonnet for the 7-message generation. The hooks
+  // picker is signal-derived (no LLM) so doesn't need a feature flag.
+  | 'outreach_sequence';
 
 /**
  * Default models per (feature, route). Override via the `model` arg.
@@ -118,6 +122,21 @@ const FEATURE_MODELS: Record<LlmFeature, { openrouter: string; anthropic: string
   press_release_classifier: {
     openrouter: 'google/gemini-2.0-flash-001',
     anthropic: 'claude-haiku-4-5',
+  },
+  // Resolver disambiguation — only called on ambiguous trigram candidates
+  // (mostly cached after first call). Haiku is sufficient and worth the
+  // accuracy over Gemini Flash for entity-resolution edge cases.
+  company_resolution: {
+    openrouter: 'anthropic/claude-haiku-4-5',
+    anthropic: 'claude-haiku-4-5',
+  },
+  // Outreach sequence: writes 7 messages (initial + 6 follow-ups) anchored
+  // to a chosen signal. Sonnet — the cadence and tone variation across
+  // 7 messages is the main quality lever, and Arcova-fit context needs to
+  // be woven in naturally per message.
+  outreach_sequence: {
+    openrouter: 'anthropic/claude-sonnet-4-6',
+    anthropic: 'claude-sonnet-4-6',
   },
 };
 

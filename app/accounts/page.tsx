@@ -26,6 +26,7 @@ import {
   X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { cachedJson, invalidateCache } from '@/lib/page-fetch-cache';
 import { formatCurrencyShort } from '@/lib/funding-display';
 import {
   CompanyIcpFitDetailPanel,
@@ -53,6 +54,7 @@ type AccountRow = {
   id: string;
   company_name: string | null;
   domain: string | null;
+  website: string | null;
   logo_url: string | null;
   company_fit_score: number | null;
   company_fit_coverage: number | null;
@@ -64,12 +66,19 @@ type AccountRow = {
   funding_stage: string | null;
   funding_status_label: string | null;
   company_type: string | null;
+  industry: string | null;
+  sub_industry: string | null;
+  clinical_stage: string | null;
+  platform_category: string | null;
+  company_size_bucket: string | null;
+  tagline: string | null;
   linkedin_url: string | null;
   description: string | null;
   bio_summary: string | null;
   employee_count: number | null;
   employee_range: string | null;
   headquarters_city: string | null;
+  headquarters_state: string | null;
   headquarters_country: string | null;
   total_funding_usd: number | null;
   latest_funding_date: string | null;
@@ -93,6 +102,7 @@ type AccountRow = {
   priority_score?: number | null;
   crm_status?: 'customer' | 'active' | 'dormant' | 'context_only' | 'none' | null;
   crm_deal_stage_label?: string | null;
+  user_overrides?: Record<string, unknown> | null;
 };
 
 function score01ForActionCopy(value: number | null | undefined): number | null {
@@ -485,6 +495,11 @@ export default function AccountsPage() {
 
   // Panel state
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  // Detail fetched per-selection from /api/accounts/[id]. Side panel reads
+  // from the merged object so it has both the lean-list fields (computed
+  // priority, crm status, etc.) AND the canonical detail fields (firmographics,
+  // products, funding detail) without bloating the list payload.
+  const [selectedAccountDetailById, setSelectedAccountDetailById] = useState<Record<string, Partial<AccountRow>>>({});
   const [panelMode, setPanelMode] = useState<PanelMode>('details');
   const [failedLogoByAccountId, setFailedLogoByAccountId] = useState<Record<string, true>>({});
 
@@ -585,6 +600,32 @@ export default function AccountsPage() {
     });
   }, [selectedAccountId]);
 
+  // Fetch full detail for the selected account (firmographics, products,
+  // funding detail, etc.) — these fields aren't in the lean list response.
+  // Cached via the module-level fetch cache so re-selecting is instant.
+  useEffect(() => {
+    if (!selectedAccountId) return;
+    if (selectedAccountDetailById[selectedAccountId]) return; // already loaded
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data: result } = await cachedJson<{ data?: Partial<AccountRow> }>(
+          `/api/accounts/${encodeURIComponent(selectedAccountId)}`,
+        );
+        if (cancelled || !result.data) return;
+        setSelectedAccountDetailById((prev) => ({
+          ...prev,
+          [selectedAccountId]: result.data!,
+        }));
+      } catch (e) {
+        console.error('Error fetching account detail:', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedAccountId, selectedAccountDetailById]);
+
   useEffect(() => {
     if (!selectedAccountId) return;
     const selected = accounts.find((account) => account.id === selectedAccountId);
@@ -607,6 +648,7 @@ export default function AccountsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ company_id: companyId }),
       });
+      invalidateCache('/api/accounts');
       await fetchAccounts();
     } catch (err) {
       console.error('Error refreshing company enrichment:', err);
@@ -640,25 +682,27 @@ export default function AccountsPage() {
     try {
       const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
       if (focusId) params.set('companyId', focusId);
-      const res = await fetch(`/api/accounts?${params}`);
-      if (res.ok) {
-        const result = await res.json();
-        const next: AccountRow[] = result.data || [];
-        setAccounts(next);
-        setTotal(result.total || 0);
-        if (typeof result.page === 'number' && result.page >= 1) {
-          setPage(result.page);
-        }
-        // Preserve the user's current selection / deep-link focus if still present,
-        // but otherwise keep nothing selected so the agent shows as the full card by
-        // default. (Used to auto-select the first account; that hid the agent on every
-        // page load — same pattern as /leads/contacts.)
-        setSelectedAccountId((current) => {
-          if (focusId && next.some((a) => a.id === focusId)) return focusId;
-          if (current && next.some((a) => a.id === current)) return current;
-          return null;
-        });
+      // Module-level cache: tab-switch-and-back doesn't refetch within TTL.
+      // After mutations (edit/archive) we call invalidateCache('/api/accounts').
+      const { data: result } = await cachedJson<{
+        data?: AccountRow[];
+        total?: number;
+        page?: number;
+      }>(`/api/accounts?${params}`);
+      const next: AccountRow[] = result.data || [];
+      setAccounts(next);
+      setTotal(result.total || 0);
+      if (typeof result.page === 'number' && result.page >= 1) {
+        setPage(result.page);
       }
+      // Preserve the user's current selection / deep-link focus if still present,
+      // but otherwise keep nothing selected so the agent shows as the full card by
+      // default.
+      setSelectedAccountId((current) => {
+        if (focusId && next.some((a) => a.id === focusId)) return focusId;
+        if (current && next.some((a) => a.id === current)) return current;
+        return null;
+      });
     } catch (err) {
       console.error('Error fetching accounts:', err);
     } finally {
@@ -1170,8 +1214,18 @@ export default function AccountsPage() {
   // them. Re-measures whenever the row count changes (agent filter / fetch / etc.).
   const { hasMore: hasMoreBelow } = useScrollMask(accountsScrollRef, [sortedAccounts.length]);
 
-  const selectedAccount = selectedAccountId
+  // Lean list row from the table fetch.
+  const selectedAccountLean = selectedAccountId
     ? accounts.find((a) => a.id === selectedAccountId) ?? null
+    : null;
+  // Merge in the detail fetch (firmographics, products, funding detail, etc.).
+  // Detail wins where it has a value; lean fills the rest (computed fields like
+  // priority_score, crm_status, data_provenance_type live only on lean).
+  const selectedAccount: AccountRow | null = selectedAccountLean
+    ? {
+        ...selectedAccountLean,
+        ...(selectedAccountId ? selectedAccountDetailById[selectedAccountId] ?? {} : {}),
+      } as AccountRow
     : null;
 
   return (
@@ -1615,12 +1669,24 @@ export default function AccountsPage() {
                         const aboutText = selectedAccount.bio_summary || selectedAccount.description || null;
                         const hasCriteria = !!(
                           aboutText ||
+                          selectedAccount.tagline ||
                           selectedAccount.company_type ||
+                          selectedAccount.industry ||
+                          selectedAccount.sub_industry ||
+                          selectedAccount.platform_category ||
                           (selectedAccount.therapeutic_areas || []).length ||
                           (selectedAccount.modalities || []).length ||
                           (selectedAccount.development_stages || []).length
                         );
-                        const hasFirmographics = !!(selectedAccount.employee_count != null || selectedAccount.employee_range || selectedAccount.founded_year != null || selectedAccount.headquarters_city || selectedAccount.headquarters_country);
+                        const hasFirmographics = !!(
+                          selectedAccount.employee_count != null ||
+                          selectedAccount.employee_range ||
+                          selectedAccount.company_size_bucket ||
+                          selectedAccount.founded_year != null ||
+                          selectedAccount.headquarters_city ||
+                          selectedAccount.headquarters_state ||
+                          selectedAccount.headquarters_country
+                        );
                         const hasFunding = !!(selectedAccount.funding_stage || selectedAccount.funding_status_label || selectedAccount.total_funding_usd != null || selectedAccount.latest_funding_date);
                         const isPendingEnrichment = !selectedAccount.last_enriched_at;
                         return (
@@ -1708,10 +1774,34 @@ export default function AccountsPage() {
                                         <p className="text-sm text-gray-700 leading-relaxed">{aboutText}</p>
                                       </div>
                                     )}
+                                    {selectedAccount.tagline && (
+                                      <div>
+                                        <p className="text-gray-400 text-xs mb-1">Tagline</p>
+                                        <p className="text-sm text-gray-700 leading-relaxed">{selectedAccount.tagline}</p>
+                                      </div>
+                                    )}
                                     {selectedAccount.company_type && (
                                       <div>
                                         <p className="text-gray-400 text-xs mb-1">Company type</p>
                                         <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2.5 py-0.5 text-xs font-medium text-arcova-teal">{selectedAccount.company_type}</span>
+                                      </div>
+                                    )}
+                                    {selectedAccount.industry && (
+                                      <div>
+                                        <p className="text-gray-400 text-xs mb-1">Industry</p>
+                                        <p className="text-sm text-gray-700">{selectedAccount.industry}</p>
+                                      </div>
+                                    )}
+                                    {selectedAccount.sub_industry && (
+                                      <div>
+                                        <p className="text-gray-400 text-xs mb-1">Sub-industry</p>
+                                        <p className="text-sm text-gray-700">{selectedAccount.sub_industry}</p>
+                                      </div>
+                                    )}
+                                    {selectedAccount.platform_category && (
+                                      <div>
+                                        <p className="text-gray-400 text-xs mb-1">Platform category</p>
+                                        <p className="text-sm text-gray-700">{selectedAccount.platform_category}</p>
                                       </div>
                                     )}
                                     {(selectedAccount.therapeutic_areas || []).length > 0 && (
@@ -1754,6 +1844,12 @@ export default function AccountsPage() {
                                           <p className="text-gray-900 text-sm mt-0.5">{selectedAccount.employee_count != null ? selectedAccount.employee_count.toLocaleString() : selectedAccount.employee_range}</p>
                                         </div>
                                       )}
+                                      {selectedAccount.company_size_bucket && (
+                                        <div>
+                                          <p className="text-gray-400 text-xs">Size bucket</p>
+                                          <p className="text-gray-900 text-sm mt-0.5">{selectedAccount.company_size_bucket}</p>
+                                        </div>
+                                      )}
                                       {selectedAccount.founded_year != null && (
                                         <div>
                                           <p className="text-gray-400 text-xs">Founded</p>
@@ -1764,6 +1860,12 @@ export default function AccountsPage() {
                                         <div>
                                           <p className="text-gray-400 text-xs">City</p>
                                           <p className="text-gray-900 text-sm mt-0.5">{selectedAccount.headquarters_city}</p>
+                                        </div>
+                                      )}
+                                      {selectedAccount.headquarters_state && (
+                                        <div>
+                                          <p className="text-gray-400 text-xs">State</p>
+                                          <p className="text-gray-900 text-sm mt-0.5">{selectedAccount.headquarters_state}</p>
                                         </div>
                                       )}
                                       {selectedAccount.headquarters_country && (
@@ -2318,6 +2420,7 @@ export default function AccountsPage() {
                                   throw new Error(result.error || 'Failed to archive account.');
                                 }
 
+                                invalidateCache('/api/accounts');
                                 setAccounts((prev) => prev.filter((account) => account.id !== selectedAccount.id));
                                 setSelectedAccountId(null);
                               } catch (error) {
@@ -2342,9 +2445,16 @@ export default function AccountsPage() {
                     open={editAccountOpen}
                     onClose={() => setEditAccountOpen(false)}
                     onSaved={() => {
-                      // Refetch to pick up the new override values via accounts_view's
-                      // COALESCE. Simplest correct behavior; could be optimized to a
-                      // local merge later if list refetch becomes expensive.
+                      // Edit changed user_overrides — drop the list cache AND the
+                      // per-account detail cache so both refresh with new overrides.
+                      invalidateCache('/api/accounts');
+                      if (selectedAccountId) {
+                        setSelectedAccountDetailById((prev) => {
+                          const next = { ...prev };
+                          delete next[selectedAccountId];
+                          return next;
+                        });
+                      }
                       fetchAccounts();
                     }}
                   />

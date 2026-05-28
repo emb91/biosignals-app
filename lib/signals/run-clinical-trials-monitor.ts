@@ -1,6 +1,4 @@
 import { createAdminClient } from '@/lib/supabase-admin';
-import { ensureCompanyAliases } from '@/lib/signals/company-aliases';
-import { buildCompanyQueryVariants, normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
 import {
   generateAccountReason,
   ingestSignalSourceEvent,
@@ -11,10 +9,8 @@ import type { SignalKey } from '@/lib/signals/readiness-types';
 
 type CompanyRow = {
   id: string;
-  user_id: string;
   company_name: string | null;
   domain: string | null;
-  aliases: string[] | null;
 };
 
 type ClinicalTrialsMonitorInput = {
@@ -22,7 +18,17 @@ type ClinicalTrialsMonitorInput = {
   companyIds?: string[];
   limit?: number;
   onlySignalKey?: SignalKey;
+  /** How many days back to look. Default 14, clamped to [1, 30]. */
+  lookbackDays?: number;
 };
+
+const DEFAULT_LOOKBACK_DAYS = 14;
+const MAX_LOOKBACK_DAYS = 30;
+
+function clampLookback(value: number | undefined): number {
+  const v = typeof value === 'number' && Number.isFinite(value) ? value : DEFAULT_LOOKBACK_DAYS;
+  return Math.min(MAX_LOOKBACK_DAYS, Math.max(1, Math.floor(v)));
+}
 
 export type ClinicalTrialsMonitorResult = {
   processed: number;
@@ -43,6 +49,7 @@ type CtStudy = {
   lastUpdatePostDate: string | null;
   sourceUrl: string;
   locationsCount: number | null;
+  overallOfficials: Array<{ name: string; role: string; affiliation: string }>;
 };
 
 const SOURCE = 'clinicaltrials_gov';
@@ -63,64 +70,6 @@ function normalizeText(value?: string | null): string {
 
 function stripPunctuation(value: string): string {
   return value.replace(/[^a-z0-9\s]/gi, ' ').replace(/\s+/g, ' ').trim();
-}
-
-function companyTokens(name: string): string[] {
-  const stop = new Set([
-    'inc',
-    'incorporated',
-    'corp',
-    'corporation',
-    'co',
-    'company',
-    'ltd',
-    'limited',
-    'llc',
-    'plc',
-    'gmbh',
-    'therapeutics',
-    'biosciences',
-    'biotech',
-    'bio',
-  ]);
-  return stripPunctuation(normalizeText(name))
-    .split(' ')
-    .filter((token) => token.length >= 3 && !stop.has(token));
-}
-
-function looksLikeCompanyStudy(companyName: string, study: CtStudy): boolean {
-  const tokens = companyTokens(companyName);
-  if (!tokens.length) return false;
-  const haystack = normalizeText(
-    [
-      study.leadSponsor,
-      ...study.collaborators,
-      study.title,
-    ]
-      .filter(Boolean)
-      .join(' ')
-  );
-  if (!haystack) return false;
-  const matched = tokens.filter((token) => haystack.includes(token));
-  return matched.length >= Math.min(2, tokens.length);
-}
-
-function isHighConfidenceSponsorMatch(companyName: string, study: CtStudy): boolean {
-  const sponsor = normalizeText(study.leadSponsor);
-  if (!sponsor) return false;
-
-  const company = stripPunctuation(normalizeText(companyName));
-  const sponsorNorm = stripPunctuation(sponsor);
-  if (!company || !sponsorNorm) return false;
-
-  // Strong signal: one normalized name contains the other.
-  if (company.includes(sponsorNorm) || sponsorNorm.includes(company)) return true;
-
-  // Fallback: high overlap on meaningful tokens.
-  const companySet = new Set(companyTokens(companyName));
-  const sponsorTokens = stripPunctuation(sponsor).split(' ').filter((t) => t.length >= 3);
-  const overlap = sponsorTokens.filter((t) => companySet.has(t)).length;
-  return overlap >= Math.min(2, companySet.size);
 }
 
 function phaseRank(phases: string[]): number {
@@ -158,33 +107,37 @@ function isCompletedStatus(status?: string | null): boolean {
   return hasAny(s, ['completed']);
 }
 
-function escapePostgrestPattern(term: string): string {
-  return term.replace(/[,()]/g, ' ').trim();
+function nameTokens(name: string): string[] {
+  const stop = new Set(['md', 'phd', 'dr', 'prof', 'mr', 'ms', 'mrs', 'jr', 'sr']);
+  return stripPunctuation(normalizeText(name))
+    .split(' ')
+    .filter((t) => t.length >= 2 && !stop.has(t));
+}
+
+function piNameMatchesContact(piName: string, contactFullName: string): boolean {
+  const piTokens = nameTokens(piName);
+  const contactTokens = nameTokens(contactFullName);
+  if (piTokens.length < 2 || contactTokens.length < 2) return false;
+  const contactSet = new Set(contactTokens);
+  const matched = piTokens.filter((t) => contactSet.has(t)).length;
+  return matched >= Math.min(2, piTokens.length);
 }
 
 async function fetchStudiesForCompany(
   admin: ReturnType<typeof createAdminClient>,
-  companyName: string,
-  aliases: string[],
+  companyId: string,
+  cutoffIso: string,
   limit = 100,
 ): Promise<CtStudy[]> {
-  // Read from the local clinical_trials mirror (populated by syncCtDelta).
-  // ILIKE-OR across normalized variants on lead_sponsor_normalized.
-  // Trigram index makes this fast even at 500K+ rows.
-  const terms = [...new Set(
-    buildCompanyQueryVariants(companyName, aliases)
-      .map((v) => normalizeCompanyForMatching(v))
-      .filter((v) => v.length >= 4),
-  )];
-  if (terms.length === 0) return [];
-
-  const orClause = terms
-    .map((t) => `lead_sponsor_normalized.ilike.%${escapePostgrestPattern(t)}%`)
-    .join(',');
+  // Read from the local clinical_trials mirror. mentioned_company_ids is
+  // populated at ingest by the resolver and GIN-indexed.
+  // Time cutoff: signals are about recent state changes — a trial last
+  // updated 6 months ago isn't useful intent intel.
   const { data, error } = await admin
     .from('clinical_trials')
-    .select('nct_id, brief_title, overall_status, phases, conditions, lead_sponsor, collaborators, last_update_post_date, locations_count')
-    .or(orClause)
+    .select('nct_id, brief_title, overall_status, phases, conditions, lead_sponsor, collaborators, last_update_post_date, locations_count, overall_officials')
+    .contains('mentioned_company_ids', [companyId])
+    .gte('last_update_post_date', cutoffIso)
     .order('last_update_post_date', { ascending: false })
     .limit(Math.min(Math.max(limit, 1), 500));
   if (error) throw new Error(`clinical_trials query failed: ${error.message}`);
@@ -204,6 +157,9 @@ async function fetchStudiesForCompany(
         typeof row.last_update_post_date === 'string' ? row.last_update_post_date : null,
       sourceUrl: `https://clinicaltrials.gov/study/${nctId}`,
       locationsCount: typeof row.locations_count === 'number' ? row.locations_count : null,
+      overallOfficials: Array.isArray(row.overall_officials)
+        ? (row.overall_officials as Array<{ name: string; role: string; affiliation: string }>)
+        : [],
     };
   }).filter((s): s is CtStudy => Boolean(s.nctId));
 }
@@ -334,10 +290,112 @@ async function emitCompanySignal(
   return true;
 }
 
+async function emitPiSignalsForStudy(
+  admin: ReturnType<typeof createAdminClient>,
+  opts: {
+    userId: string;
+    companyId: string;
+    study: CtStudy;
+    emittedSignalTypes: Set<string>;
+  }
+): Promise<boolean> {
+  const principals = opts.study.overallOfficials.filter(
+    (o) => o.role.toUpperCase().includes('PRINCIPAL') || o.role.toUpperCase() === 'PI'
+  );
+  if (principals.length === 0) return false;
+
+  const { data: contacts, error } = await admin
+    .from('contacts')
+    .select('id, full_name')
+    .eq('user_id', opts.userId)
+    .eq('company_id', opts.companyId)
+    .is('archived_at', null)
+    .not('full_name', 'is', null);
+  if (error) throw new Error(`contacts query for PI matching: ${error.message}`);
+  if (!contacts || contacts.length === 0) return false;
+
+  const study = opts.study;
+  let anyEmitted = false;
+
+  for (const pi of principals) {
+    const contact = (contacts as Array<{ id: string; full_name: string | null }>).find(
+      (c) => c.full_name && piNameMatchesContact(pi.name, c.full_name)
+    );
+    if (!contact) continue;
+
+    const sourceEventId = `${SOURCE}:pi_new_trial:${contact.id}:${study.nctId}`;
+    if (await sourceEventExists(admin, opts.userId, sourceEventId)) continue;
+
+    const summary = `${contact.full_name} is listed as Principal Investigator on ${study.title ?? study.nctId} (${study.nctId}).`;
+
+    const ingest = await ingestSignalSourceEvent(admin, {
+      userId: opts.userId,
+      entityScope: 'contact',
+      companyId: opts.companyId,
+      contactId: contact.id,
+      source: SOURCE,
+      sourceEventType: 'principal_investigator_new_trial',
+      sourceEventId,
+      sourceUrl: study.sourceUrl,
+      title: 'Principal investigator on new clinical trial',
+      summary,
+      excerpt: summary,
+      eventAt: study.lastUpdatePostDate ?? new Date().toISOString(),
+      metadata: {
+        nct_id: study.nctId,
+        study_title: study.title,
+        study_status: study.overallStatus,
+        conditions: study.conditions,
+        phases: study.phases,
+        pi_name: pi.name,
+        pi_role: pi.role,
+        pi_affiliation: pi.affiliation,
+      },
+    });
+
+    await normalizeSignalSourceEvent(admin, {
+      userId: opts.userId,
+      rawEvent: {
+        id: ingest.sourceEventId,
+        userId: opts.userId,
+        entityId: contact.id,
+        entityScope: 'contact',
+        source: SOURCE,
+        sourceUrl: study.sourceUrl,
+        sourceEventType: 'principal_investigator_new_trial',
+        sourceEventId,
+        title: 'Principal investigator on new clinical trial',
+        summary,
+        excerpt: summary,
+        eventAt: study.lastUpdatePostDate ?? null,
+        observedAt: new Date().toISOString(),
+        metadata: {
+          nct_id: study.nctId,
+          study_title: study.title,
+          conditions: study.conditions,
+          phases: study.phases,
+          pi_name: pi.name,
+          pi_affiliation: pi.affiliation,
+        },
+      },
+      signalKeys: ['principal_investigator_new_trial'],
+      companyId: opts.companyId,
+      contactId: contact.id,
+    });
+
+    opts.emittedSignalTypes.add('principal_investigator_new_trial');
+    anyEmitted = true;
+  }
+
+  return anyEmitted;
+}
+
 export async function runClinicalTrialsMonitor(
   input: ClinicalTrialsMonitorInput
 ): Promise<ClinicalTrialsMonitorResult> {
   const admin = createAdminClient();
+  const lookbackDays = clampLookback(input.lookbackDays);
+  const cutoffIso = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
 
   // Ownership + archive state live in user_companies.
   const { data: linkRows, error: linkError } = await admin
@@ -372,27 +430,9 @@ export async function runClinicalTrialsMonitor(
 
   const { data: companies, error: companiesError } = await admin
     .from('companies')
-    .select('id, user_id, company_name, domain, aliases')
+    .select('id, company_name, domain')
     .in('id', ownedIds);
   if (companiesError) throw new Error(companiesError.message);
-
-  // Lazy-populate aliases for any company missing them. ensureCompanyAliases
-  // is a no-op when aliases are already populated and fresh (<180 days).
-  const companyAliasMap = new Map<string, string[]>();
-  for (const row of (companies ?? []) as CompanyRow[]) {
-    const name = row.company_name?.trim();
-    if (!name) continue;
-    let aliases = row.aliases ?? [];
-    if (aliases.length === 0) {
-      try {
-        const result = await ensureCompanyAliases(admin, row.id);
-        aliases = result.aliases;
-      } catch (error) {
-        console.error(`[clinical-trials] ensureCompanyAliases failed for ${row.id}:`, error);
-      }
-    }
-    companyAliasMap.set(row.id, aliases);
-  }
 
   let processed = 0;
   let failed = 0;
@@ -405,14 +445,12 @@ export async function runClinicalTrialsMonitor(
     if (!companyName) continue;
 
     try {
-      const studies = await fetchStudiesForCompany(admin, companyName, companyAliasMap.get(row.id) ?? [], 100);
-      const matching = studies.filter((study) => {
-        if (!looksLikeCompanyStudy(companyName, study)) return false;
-        if (input.onlySignalKey === 'clinical_trial_registered') {
-          return isHighConfidenceSponsorMatch(companyName, study);
-        }
-        return true;
-      });
+      const studies = await fetchStudiesForCompany(admin, row.id, cutoffIso, 100);
+      // The resolver vetted the company match at ingest. No secondary
+      // tokens-based filter needed — that would over-reject legitimate alias
+      // matches (e.g. a Genentech study correctly resolved to canonical Roche
+      // would fail a "does 'roche' appear in 'genentech'?" check).
+      const matching = studies;
       let emittedAny = false;
 
       for (const study of matching) {
@@ -619,6 +657,16 @@ export async function runClinicalTrialsMonitor(
               emittedSignalTypes.add('program_discontinuation');
             }
           }
+        }
+
+        if (!input.onlySignalKey || input.onlySignalKey === 'principal_investigator_new_trial') {
+          const piEmitted = await emitPiSignalsForStudy(admin, {
+            userId: input.userId,
+            companyId: row.id,
+            study,
+            emittedSignalTypes,
+          });
+          if (piEmitted) emittedAny = true;
         }
       }
 

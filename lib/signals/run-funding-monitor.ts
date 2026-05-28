@@ -18,13 +18,11 @@
  * surfacing non-financing events. See project_funding_signal_v1.md in memory.
  */
 import { createAdminClient } from '@/lib/supabase-admin';
-import { ensureCompanyAliases } from '@/lib/signals/company-aliases';
 import { ensureCompanyCik } from '@/lib/signals/company-cik';
 import {
   signalKeyForClassification,
   type SecFilingClassification,
 } from '@/lib/signals/classify-sec-filing';
-import { buildCompanyQueryVariants, normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
 import {
   generateAccountReason,
   ingestSignalSourceEvent,
@@ -35,9 +33,7 @@ import type { SignalKey } from '@/lib/signals/readiness-types';
 
 type CompanyRow = {
   id: string;
-  user_id: string;
   company_name: string | null;
-  aliases: string[] | null;
   cik: string | null;
 };
 
@@ -46,7 +42,17 @@ type FundingMonitorInput = {
   companyIds?: string[];
   limit?: number;
   onlySignalKey?: SignalKey;
+  /** How many days back to look. Default 14, clamped to [1, 30]. */
+  lookbackDays?: number;
 };
+
+const DEFAULT_LOOKBACK_DAYS = 14;
+const MAX_LOOKBACK_DAYS = 30;
+
+function clampLookback(value: number | undefined): number {
+  const v = typeof value === 'number' && Number.isFinite(value) ? value : DEFAULT_LOOKBACK_DAYS;
+  return Math.min(MAX_LOOKBACK_DAYS, Math.max(1, Math.floor(v)));
+}
 
 export type FundingMonitorResult = {
   processed: number;
@@ -116,52 +122,29 @@ function formatUsd(amount: number | string | null): string | null {
   return `$${n.toFixed(0)}`;
 }
 
-function escapePostgrestPattern(term: string): string {
-  return term.replace(/[,()]/g, ' ').trim();
-}
-
 async function fetchFilingsForCompany(
   admin: ReturnType<typeof createAdminClient>,
-  company: { id: string; name: string; cik: string | null; aliases: string[] },
+  company: { id: string; name: string; cik: string | null },
+  cutoffIso: string,
   limit = 100,
 ): Promise<SecFilingRow[]> {
-  // CIK match is the high-confidence path. Name fallback only kicks in when
-  // CIK is unknown (private cos that haven't matched company_tickers.json).
-  if (company.cik) {
-    const { data, error } = await admin
-      .from('sec_filings_local')
-      .select(
-        'accession_number, form_type, filing_date, cik, entity_name, entity_name_normalized, filing_url, primary_doc_url, total_offering_amount, total_amount_sold, total_remaining, date_of_first_sale, entity_type, industry_group_type, items, classification, classified_at',
-      )
-      .eq('cik', company.cik)
-      .order('filing_date', { ascending: false })
-      .limit(limit);
-    if (error) throw new Error(`sec_filings_local cik query: ${error.message}`);
-    return (data ?? []) as SecFilingRow[];
-  }
+  // Two paths unioned via `.or()`:
+  //   * cik = company.cik (when known, highest-confidence)
+  //   * canonical_company_id = company.id (resolved at ingest from entity_name)
+  const cikClause = company.cik ? `cik.eq.${company.cik}` : null;
+  const canonicalClause = `canonical_company_id.eq.${company.id}`;
+  const orClause = [cikClause, canonicalClause].filter(Boolean).join(',');
 
-  // Name fallback: only Form D filings carry a meaningful normalized entity
-  // name in our mirror (8-K and 424B from tracked CIKs only). So name-match
-  // here is effectively Form-D-only — which is the intent.
-  console.warn(`[funding] no CIK for company ${company.id} (${company.name}) — falling back to name match. Run ensureCompanyCik to resolve.`);
-  const variants = buildCompanyQueryVariants(company.name, company.aliases)
-    .map((v) => normalizeCompanyForMatching(v))
-    .filter((v) => v.length >= 4);
-  const uniqueVariants = [...new Set(variants)];
-  if (uniqueVariants.length === 0) return [];
-
-  const orClause = uniqueVariants
-    .map((t) => `entity_name_normalized.ilike.%${escapePostgrestPattern(t)}%`)
-    .join(',');
   const { data, error } = await admin
     .from('sec_filings_local')
     .select(
       'accession_number, form_type, filing_date, cik, entity_name, entity_name_normalized, filing_url, primary_doc_url, total_offering_amount, total_amount_sold, total_remaining, date_of_first_sale, entity_type, industry_group_type, items, classification, classified_at',
     )
     .or(orClause)
+    .gte('filing_date', cutoffIso)
     .order('filing_date', { ascending: false })
     .limit(limit);
-  if (error) throw new Error(`sec_filings_local name query: ${error.message}`);
+  if (error) throw new Error(`sec_filings_local query: ${error.message}`);
   return (data ?? []) as SecFilingRow[];
 }
 
@@ -253,6 +236,8 @@ async function emitCompanySignal(
 
 export async function runFundingMonitor(input: FundingMonitorInput): Promise<FundingMonitorResult> {
   const admin = createAdminClient();
+  const lookbackDays = clampLookback(input.lookbackDays);
+  const cutoffIso = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
 
   const { data: linkRows, error: linkError } = await admin
     .from('user_companies')
@@ -289,7 +274,7 @@ export async function runFundingMonitor(input: FundingMonitorInput): Promise<Fun
 
   const { data: companies, error: companiesError } = await admin
     .from('companies')
-    .select('id, user_id, company_name, aliases, cik')
+    .select('id, company_name, cik')
     .in('id', ownedIds);
   if (companiesError) throw new Error(companiesError.message);
 
@@ -302,29 +287,20 @@ export async function runFundingMonitor(input: FundingMonitorInput): Promise<Fun
   const recomputedCompanyIds = new Set<string>();
   const failures: Array<{ company_id: string; error: string }> = [];
 
-  // Lazy-populate aliases AND CIK for each company. Both are cheap when fresh.
-  const enriched = new Map<string, { aliases: string[]; cik: string | null }>();
+  // Lazy-populate CIK for each company — still useful as a strong signal
+  // alongside the resolver's canonical_company_id match.
+  const cikByCompany = new Map<string, string | null>();
   for (const row of (companies ?? []) as CompanyRow[]) {
     const name = row.company_name?.trim();
     if (!name) continue;
-    let aliases = row.aliases ?? [];
-    if (aliases.length === 0) {
-      try {
-        const result = await ensureCompanyAliases(admin, row.id);
-        aliases = result.aliases;
-      } catch (error) {
-        console.error(`[funding] ensureCompanyAliases failed for ${row.id}:`, error);
-      }
-    }
     let cik = row.cik;
     try {
-      const result = await ensureCompanyCik(admin, row.id, { aliases });
+      const result = await ensureCompanyCik(admin, row.id);
       cik = result.cik;
     } catch (error) {
-      // CIK enrichment failure is non-fatal — fall back to name-only matching.
       console.error(`[funding] ensureCompanyCik failed for ${row.id}:`, error);
     }
-    enriched.set(row.id, { aliases, cik });
+    cikByCompany.set(row.id, cik);
   }
 
   const onlySignal = input.onlySignalKey;
@@ -334,20 +310,20 @@ export async function runFundingMonitor(input: FundingMonitorInput): Promise<Fun
     const companyName = row.company_name?.trim();
     if (!companyName) continue;
     try {
-      const enrichedEntry = enriched.get(row.id) ?? { aliases: [], cik: null };
+      const cik = cikByCompany.get(row.id) ?? null;
       const filings = await fetchFilingsForCompany(
         admin,
-        { id: row.id, name: companyName, cik: enrichedEntry.cik, aliases: enrichedEntry.aliases },
+        { id: row.id, name: companyName, cik },
+        cutoffIso,
         100,
       );
 
-      // CIK pin-back: if we used the name-fallback path (no CIK yet) and all
-      // matched Form D filings agree on a single CIK, write it back to
-      // companies.cik so every future run uses the fast, reliable CIK path
-      // instead of repeating the fuzzy name match.
-      // Only fires when cikSet.size === 1 — disagreement means ambiguous match,
-      // skip rather than risk pinning the wrong company.
-      if (!enrichedEntry.cik && filings.length > 0) {
+      // CIK pin-back: if we matched filings via canonical_company_id (no CIK
+      // yet on the canonical company) and all matched Form D filings agree on
+      // a single CIK, write it back to companies.cik so future runs benefit
+      // from the CIK path too. Only fires when cikSet.size === 1 — disagreement
+      // means ambiguous, skip rather than risk pinning the wrong CIK.
+      if (!cik && filings.length > 0) {
         const cikSet = new Set(
           filings
             .filter((f) => FORM_D_TYPES.has(f.form_type))
@@ -362,7 +338,7 @@ export async function runFundingMonitor(input: FundingMonitorInput): Promise<Fun
               .update({ cik: pinnedCik, cik_checked_at: new Date().toISOString() })
               .eq('id', row.id)
               .is('cik', null); // guard: only write if still unset
-            enrichedEntry.cik = pinnedCik;
+            cikByCompany.set(row.id, pinnedCik);
           } catch (pinErr) {
             console.warn(`[funding] cik pin-back failed for ${row.id}:`, pinErr instanceof Error ? pinErr.message : String(pinErr));
           }

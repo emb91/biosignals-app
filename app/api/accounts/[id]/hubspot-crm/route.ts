@@ -21,11 +21,21 @@ export async function GET(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  const { data: ownership, error: ownershipError } = await supabase
+    .from('user_companies')
+    .select('company_id')
+    .eq('company_id', id)
+    .eq('user_id', user.id)
+    .maybeSingle();
+
+  if (ownershipError || !ownership) {
+    return NextResponse.json({ error: 'Account not found.' }, { status: 404 });
+  }
+
   const { data: company, error: companyError } = await supabase
     .from('companies')
     .select('id, company_name, domain')
     .eq('id', id)
-    .eq('user_id', user.id)
     .maybeSingle();
 
   if (companyError) {

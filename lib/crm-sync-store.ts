@@ -377,14 +377,25 @@ export async function findArcovaCompaniesByDomains(
   domains: string[]
 ): Promise<ArcovaCompanyRecord[]> {
   if (!domains.length) return [];
-  const { data, error } = await supabase
+  // First find canonical companies matching any of the domains/websites,
+  // then filter to those this user actually tracks.
+  const { data: candidates, error: candidatesError } = await supabase
     .from('companies')
     .select('id, domain, website, company_name')
-    .eq('user_id', userId)
     .or(domains.map((domain) => `domain.eq.${domain},website.eq.${domain}`).join(','));
+  if (candidatesError) throw candidatesError;
+  const candidateIds = (candidates ?? []).map((r) => (r as { id?: unknown }).id).filter((v): v is string => typeof v === 'string');
+  if (!candidateIds.length) return [];
 
-  if (error) throw error;
-  return (data ?? []) as ArcovaCompanyRecord[];
+  const { data: owned, error: ownedError } = await supabase
+    .from('user_companies')
+    .select('company_id')
+    .eq('user_id', userId)
+    .in('company_id', candidateIds);
+  if (ownedError) throw ownedError;
+  const ownedIds = new Set((owned ?? []).map((r) => (r as { company_id?: unknown }).company_id).filter((v): v is string => typeof v === 'string'));
+
+  return (candidates ?? []).filter((r) => ownedIds.has((r as { id: string }).id)) as ArcovaCompanyRecord[];
 }
 
 export async function findArcovaContactsByEmails(
@@ -409,12 +420,20 @@ export async function findArcovaCompaniesByIds(
   ids: string[]
 ): Promise<ArcovaCompanyRecord[]> {
   if (!ids.length) return [];
+  // Restrict to companies this user tracks.
+  const { data: owned, error: ownedError } = await supabase
+    .from('user_companies')
+    .select('company_id')
+    .eq('user_id', userId)
+    .in('company_id', ids);
+  if (ownedError) throw ownedError;
+  const ownedIds = (owned ?? []).map((r) => (r as { company_id?: unknown }).company_id).filter((v): v is string => typeof v === 'string');
+  if (!ownedIds.length) return [];
+
   const { data, error } = await supabase
     .from('companies')
     .select('id, domain, website, company_name')
-    .eq('user_id', userId)
-    .in('id', ids);
-
+    .in('id', ownedIds);
   if (error) throw error;
   return (data ?? []) as ArcovaCompanyRecord[];
 }

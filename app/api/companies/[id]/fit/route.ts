@@ -58,11 +58,11 @@ export async function GET(
     }
 
     const companyResult = await supabase
-      .from('companies')
+      .from('user_companies')
       .select(
-        'id, matched_icp_id, company_fit_score, company_fit_breakdown, company_fit_coverage, company_fit_scored_at, company_fit_version, company_fit_summary',
+        'company_id, matched_icp_id, company_fit_score, company_fit_breakdown, company_fit_coverage, company_fit_scored_at, company_fit_version, company_fit_summary',
       )
-      .eq('id', id)
+      .eq('company_id', id)
       .eq('user_id', user.id)
       .maybeSingle();
 

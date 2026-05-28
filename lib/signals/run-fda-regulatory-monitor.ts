@@ -1,6 +1,4 @@
 import { createAdminClient } from '@/lib/supabase-admin';
-import { ensureCompanyAliases } from '@/lib/signals/company-aliases';
-import { buildCompanyQueryVariants, normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
 import {
   generateAccountReason,
   ingestSignalSourceEvent,
@@ -11,10 +9,8 @@ import type { SignalKey } from '@/lib/signals/readiness-types';
 
 type CompanyRow = {
   id: string;
-  user_id: string;
   company_name: string | null;
   domain: string | null;
-  aliases: string[] | null;
 };
 
 type FdaRegulatoryMonitorInput = {
@@ -22,7 +18,17 @@ type FdaRegulatoryMonitorInput = {
   companyIds?: string[];
   limit?: number;
   onlySignalKey?: SignalKey;
+  /** How many days back to look. Default 14, clamped to [1, 30]. */
+  lookbackDays?: number;
 };
+
+const DEFAULT_LOOKBACK_DAYS = 14;
+const MAX_LOOKBACK_DAYS = 30;
+
+function clampLookback(value: number | undefined): number {
+  const v = typeof value === 'number' && Number.isFinite(value) ? value : DEFAULT_LOOKBACK_DAYS;
+  return Math.min(MAX_LOOKBACK_DAYS, Math.max(1, Math.floor(v)));
+}
 
 export type FdaRegulatoryMonitorResult = {
   processed: number;
@@ -175,37 +181,17 @@ function isLikelyIndicationExpansion(submission: DrugsFdaSubmission): boolean {
  * "ModernaTx, Inc." aren't tokenized into "moderna" + "inc" (which would
  * over-match unrelated sponsors).
  */
-/**
- * Build an OR-clause across normalized variants of the company name + aliases.
- * Used for ILIKE matching against the *_normalized columns in our local FDA
- * mirror tables (populated by syncFdaDelta). Trigram indexes on those columns
- * make this fast.
- */
-function buildNormalizedSearchTerms(companyName: string, aliases: string[]): string[] {
-  return [...new Set(
-    buildCompanyQueryVariants(companyName, aliases)
-      .map((v) => normalizeCompanyForMatching(v))
-      .filter((v) => v.length >= 4),
-  )];
-}
-
-function escapePostgrestPattern(term: string): string {
-  return term.replace(/[,()]/g, ' ').trim();
-}
-
 async function fetchFdaDrugRecordsForCompany(
   admin: ReturnType<typeof createAdminClient>,
-  companyName: string,
-  aliases: string[],
+  companyId: string,
+  cutoffIso: string,
   limit = 100,
 ): Promise<DrugsFdaResult[]> {
-  const terms = buildNormalizedSearchTerms(companyName, aliases);
-  if (terms.length === 0) return [];
-  const orClause = terms.map((t) => `sponsor_normalized.ilike.%${escapePostgrestPattern(t)}%`).join(',');
   const { data, error } = await admin
     .from('fda_drug_submissions')
     .select('*')
-    .or(orClause)
+    .contains('mentioned_company_ids', [companyId])
+    .gte('submission_status_date', cutoffIso)
     .order('submission_status_date', { ascending: false })
     .limit(Math.min(Math.max(limit, 1), 500));
   if (error) throw new Error(`fda_drug_submissions query failed: ${error.message}`);
@@ -246,17 +232,15 @@ async function fetchFdaDrugRecordsForCompany(
 
 async function fetchFda510kRecordsForCompany(
   admin: ReturnType<typeof createAdminClient>,
-  companyName: string,
-  aliases: string[],
+  companyId: string,
+  cutoffIso: string,
   limit = 100,
 ): Promise<Device510kResult[]> {
-  const terms = buildNormalizedSearchTerms(companyName, aliases);
-  if (terms.length === 0) return [];
-  const orClause = terms.map((t) => `applicant_normalized.ilike.%${escapePostgrestPattern(t)}%`).join(',');
   const { data, error } = await admin
     .from('fda_device_510k')
     .select('k_number, applicant, device_name, product_code, decision_code, decision_description, decision_date')
-    .or(orClause)
+    .contains('mentioned_company_ids', [companyId])
+    .gte('decision_date', cutoffIso)
     .order('decision_date', { ascending: false })
     .limit(Math.min(Math.max(limit, 1), 500));
   if (error) throw new Error(`fda_device_510k query failed: ${error.message}`);
@@ -265,17 +249,15 @@ async function fetchFda510kRecordsForCompany(
 
 async function fetchFdaPmaRecordsForCompany(
   admin: ReturnType<typeof createAdminClient>,
-  companyName: string,
-  aliases: string[],
+  companyId: string,
+  cutoffIso: string,
   limit = 100,
 ): Promise<DevicePmaResult[]> {
-  const terms = buildNormalizedSearchTerms(companyName, aliases);
-  if (terms.length === 0) return [];
-  const orClause = terms.map((t) => `applicant_normalized.ilike.%${escapePostgrestPattern(t)}%`).join(',');
   const { data, error } = await admin
     .from('fda_device_pma')
     .select('pma_number, supplement_number, applicant, trade_name, generic_name, supplement_type, supplement_reason, decision_code, decision_date, advisory_committee_description')
-    .or(orClause)
+    .contains('mentioned_company_ids', [companyId])
+    .gte('decision_date', cutoffIso)
     .order('decision_date', { ascending: false })
     .limit(Math.min(Math.max(limit, 1), 500));
   if (error) throw new Error(`fda_device_pma query failed: ${error.message}`);
@@ -363,6 +345,8 @@ export async function runFdaRegulatoryMonitor(
   input: FdaRegulatoryMonitorInput,
 ): Promise<FdaRegulatoryMonitorResult> {
   const admin = createAdminClient();
+  const lookbackDays = clampLookback(input.lookbackDays);
+  const cutoffIso = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
 
   // Ownership + archive state live in user_companies.
   const { data: linkRows, error: linkError } = await admin
@@ -397,27 +381,9 @@ export async function runFdaRegulatoryMonitor(
 
   const { data: companies, error: companiesError } = await admin
     .from('companies')
-    .select('id, user_id, company_name, domain, aliases')
+    .select('id, company_name, domain')
     .in('id', ownedIds);
   if (companiesError) throw new Error(companiesError.message);
-
-  // Lazy-populate aliases for any company missing them. ensureCompanyAliases
-  // is a no-op when aliases are already populated and fresh (<180 days).
-  const companyAliasMap = new Map<string, string[]>();
-  for (const row of (companies ?? []) as CompanyRow[]) {
-    const name = row.company_name?.trim();
-    if (!name) continue;
-    let aliases = row.aliases ?? [];
-    if (aliases.length === 0) {
-      try {
-        const result = await ensureCompanyAliases(admin, row.id);
-        aliases = result.aliases;
-      } catch (error) {
-        console.error(`[fda-regulatory] ensureCompanyAliases failed for ${row.id}:`, error);
-      }
-    }
-    companyAliasMap.set(row.id, aliases);
-  }
 
   let processed = 0;
   let failed = 0;
@@ -430,11 +396,10 @@ export async function runFdaRegulatoryMonitor(
     if (!companyName) continue;
 
     try {
-      const aliases = companyAliasMap.get(row.id) ?? [];
       const [records, device510k, devicePma] = await Promise.all([
-        fetchFdaDrugRecordsForCompany(admin, companyName, aliases, 100),
-        fetchFda510kRecordsForCompany(admin, companyName, aliases, 100),
-        fetchFdaPmaRecordsForCompany(admin, companyName, aliases, 100),
+        fetchFdaDrugRecordsForCompany(admin, row.id, cutoffIso, 100),
+        fetchFda510kRecordsForCompany(admin, row.id, cutoffIso, 100),
+        fetchFdaPmaRecordsForCompany(admin, row.id, cutoffIso, 100),
       ]);
       let emittedAny = false;
       const onlySignal = input.onlySignalKey;

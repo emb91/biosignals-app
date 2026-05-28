@@ -387,17 +387,17 @@ async function loadContactsById(
   }
 
   const companyResult = await supabase
-    .from('companies')
-    .select('id, matched_icp_id')
+    .from('user_companies')
+    .select('company_id, matched_icp_id')
     .eq('user_id', userId)
-    .in('id', companyIds);
+    .in('company_id', companyIds);
 
   if (companyResult.error) throw companyResult.error;
 
   const matchedIcpByCompanyId = new Map(
-    ((companyResult.data || []) as Array<{ id: string; matched_icp_id: string | null }>)
-      .filter((row) => typeof row.id === 'string')
-      .map((row) => [row.id, row.matched_icp_id ?? null]),
+    ((companyResult.data || []) as Array<{ company_id: string; matched_icp_id: string | null }>)
+      .filter((row) => typeof row.company_id === 'string')
+      .map((row) => [row.company_id, row.matched_icp_id ?? null]),
   );
 
   return contacts.map((contact) => ({

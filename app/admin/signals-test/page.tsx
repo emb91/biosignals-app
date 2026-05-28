@@ -95,6 +95,10 @@ const CLINICAL_SINGLE_SIGNAL_KEYS = new Set<SignalKey>([
   'indication_expansion',
   'trial_failure_or_halt',
   'program_discontinuation',
+  // PI signal is emitted as a side-effect of the Clinical Trials All run
+  // (see emitPrincipalInvestigatorSignal in run-clinical-trials-monitor.ts).
+  // Listed here so the standalone button is hidden + direct API hits 400.
+  'principal_investigator_new_trial',
 ]);
 
 const FDA_SINGLE_SIGNAL_KEYS = new Set<SignalKey>([
@@ -118,6 +122,11 @@ const PATENT_SINGLE_SIGNAL_KEYS = new Set<SignalKey>([
 const FUNDING_SINGLE_SIGNAL_KEYS = new Set<SignalKey>([
   'funding_round',
   'ipo_or_follow_on',
+  // SEC-derived signals — emitted by the funding/SEC pipeline
+  'restructuring',
+  'leadership_churn',
+  'acquisition_distraction',
+  'terminated_deal',
 ]);
 
 const HIRING_SINGLE_SIGNAL_KEYS = new Set<SignalKey>([
@@ -144,6 +153,25 @@ const JOB_CHANGE_SINGLE_SIGNAL_KEYS = new Set<SignalKey>([
   'new_internal_role',
   'title_change',
   'new_to_role',
+  // Also emitted by the job-change monitor
+  'key_contact_departed',
+  'prior_customer_relationship',
+  'prior_active_deal_relationship',
+  'prior_pipeline_relationship',
+]);
+
+// First-party / HubSpot signals — not runnable from this page; displayed on contact/company pages.
+const FIRST_PARTY_SIGNAL_KEYS = new Set<SignalKey>([
+  'demo_requested',
+  'inbound_enquiry',
+  'open_opportunity_in_crm',
+  'new_contact_added_in_crm',
+  'closed_lost_in_crm',
+  'lapsed_customer',
+  'visited_your_website',
+  'attended_your_webinar_or_event',
+  'downloaded_your_content',
+  'responded_to_previous_outreach',
 ]);
 
 // Signals emitted exclusively (or primarily) by the press-release pipeline.
@@ -1976,11 +2004,11 @@ export default function AdminSignalsTestPage() {
                     type="button"
                     onClick={() => void runJobChangeBundle()}
                     disabled={busySignal !== null}
-                    className="rounded-md border border-violet-300 bg-violet-50 px-3 py-2 text-left text-sm font-medium text-violet-900 hover:bg-violet-100 disabled:opacity-50"
+                    className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-left text-sm font-medium text-emerald-900 hover:bg-emerald-100 disabled:opacity-50"
                   >
                     <div className="font-medium">job_change_all</div>
-                    <div className="text-xs text-violet-700">Contact · LinkedIn profile via Apify</div>
-                    <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-violet-800">
+                    <div className="text-xs text-emerald-700">Contact · LinkedIn profile via Apify</div>
+                    <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-800">
                       {busySignal === 'job_change_all' ? 'Running...' : 'Active'}
                     </div>
                   </button>
@@ -1995,7 +2023,8 @@ export default function AdminSignalsTestPage() {
                       HIRING_SINGLE_SIGNAL_KEYS.has(entry.signalKey as SignalKey) ||
                       GRANTS_SINGLE_SIGNAL_KEYS.has(entry.signalKey as SignalKey) ||
                       JOB_CHANGE_SINGLE_SIGNAL_KEYS.has(entry.signalKey as SignalKey) ||
-                      PRESS_RELEASE_SINGLE_SIGNAL_KEYS.has(entry.signalKey as SignalKey)
+                      PRESS_RELEASE_SINGLE_SIGNAL_KEYS.has(entry.signalKey as SignalKey) ||
+                      FIRST_PARTY_SIGNAL_KEYS.has(entry.signalKey as SignalKey)
                     ) {
                       return null;
                     }

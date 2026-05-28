@@ -34,8 +34,8 @@ export async function GET() {
     }
 
     const { data: companyRows, error: coErr } = await supabase
-      .from('companies')
-      .select('id, matched_icp_id, company_fit_score')
+      .from('user_companies')
+      .select('company_id, matched_icp_id, company_fit_score')
       .eq('user_id', user.id);
 
     if (coErr) {
@@ -69,9 +69,9 @@ export async function GET() {
     const companiesByIcp = new Map<string, Set<string>>();
     for (const row of companyRows || []) {
       const icpId = row.matched_icp_id as string | null;
-      if (!icpId || typeof row.id !== 'string') continue;
+      if (!icpId || typeof row.company_id !== 'string') continue;
       if (!companiesByIcp.has(icpId)) companiesByIcp.set(icpId, new Set());
-      companiesByIcp.get(icpId)!.add(row.id);
+      companiesByIcp.get(icpId)!.add(row.company_id);
     }
 
     const contactsByCompany = new Map<string, { contactCount: number; fitValues: number[] }>();
@@ -91,7 +91,7 @@ export async function GET() {
 
     const companyFitById = new Map<string, number | null>();
     for (const row of companyRows || []) {
-      const id = row.id as string;
+      const id = row.company_id as string;
       const raw = row.company_fit_score as number | null | undefined;
       companyFitById.set(id, normalizeFitScore01(typeof raw === 'number' ? raw : null));
     }

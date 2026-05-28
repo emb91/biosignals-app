@@ -456,7 +456,7 @@ export async function getCompanyFitSnapshot(
   // companies.fit_score is a legacy/unused column that's 0 or null for every
   // row and used to silently zero-out priority calculations downstream.
   const { data, error } = await supabase
-    .from('companies')
+    .from('accounts_view')
     .select('company_name, company_fit_score')
     .eq('user_id', userId)
     .eq('id', companyId)

@@ -25,7 +25,7 @@ export async function GET() {
 
     const [accountsResult, contactsResult] = await Promise.all([
       supabase
-        .from('companies')
+        .from('accounts_view')
         .select('id, company_name, domain, archived_at, archived_reason')
         .eq('user_id', user.id)
         .not('archived_at', 'is', null)

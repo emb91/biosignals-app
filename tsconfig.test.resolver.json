@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/private/tmp/arcova-resolver-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/companies/match-helpers.ts",
+    "lib/companies/resolve-mentions.test.ts"
+  ]
+}
