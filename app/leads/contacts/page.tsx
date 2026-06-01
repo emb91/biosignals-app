@@ -1858,6 +1858,28 @@ export function ContactsWorkspace() {
   const stopLeadEnrichment = async (leadId: string) => {
     setStoppingLeadId(leadId);
     setStopEnrichmentError(null);
+    // Optimistically clear enrichment state so the UI stops showing
+    // "Enrichment running…" immediately, before the fetch round-trip.
+    setLeads((prev) =>
+      prev.map((lead) =>
+        lead.id === leadId
+          ? {
+              ...lead,
+              enrichment_refresh_status: 'cancelled',
+              linkedin_resolution_status:
+                lead.linkedin_resolution_status === 'pending' ||
+                lead.linkedin_resolution_status === 'processing'
+                  ? 'failed'
+                  : lead.linkedin_resolution_status,
+              profile_enrichment_status:
+                lead.profile_enrichment_status === 'pending' ||
+                lead.profile_enrichment_status === 'processing'
+                  ? 'blocked'
+                  : lead.profile_enrichment_status,
+            }
+          : lead,
+      ),
+    );
     try {
       const response = await fetch(`/api/enrich/${leadId}`, { method: 'DELETE' });
       // 409 means enrichment already finished — not an error worth surfacing
@@ -3521,34 +3543,6 @@ export function ContactsWorkspace() {
                             </button>
                           );
                         })}
-                      </div>
-
-                      <div className="relative z-[1] flex border-b border-[rgba(13,53,71,0.08)] px-4">
-                        {(['contact', 'priority', 'scoring', 'hubspot', 'action', 'signals'] as const).map((mode) => (
-                          <button
-                            key={mode}
-                            type="button"
-                            onClick={() => setSelectedPreview(mode)}
-                            className={cn(
-                              'py-2.5 pr-4 text-xs font-medium border-b-2 -mb-px transition-colors',
-                              selectedPreview === mode
-                                ? 'border-arcova-teal text-arcova-teal'
-                                : 'border-transparent text-[#7d909a] hover:text-[#0d3547]',
-                            )}
-                          >
-                            {mode === 'contact'
-                              ? 'Contact'
-                              : mode === 'priority'
-                                ? 'Priority'
-                                : mode === 'hubspot'
-                                  ? 'CRM'
-                                  : mode === 'scoring'
-                                    ? 'Fit'
-                                    : mode === 'signals'
-                                      ? 'Signals'
-                                      : 'Action'}
-                          </button>
-                        ))}
                       </div>
 
                       {/* Panel body */}
