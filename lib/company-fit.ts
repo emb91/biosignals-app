@@ -16,16 +16,22 @@ import {
 import { normalizePlatformCategoryForStorage } from '@/lib/platform-category';
 import { createAdminClient } from '@/lib/supabase-admin';
 
-const SCORE_VERSION = 'company_fit_v1';
+const SCORE_VERSION = 'company_fit_v2';
 
+// Weights sum to 100 (the score is earned ÷ active-weight, so the sum only
+// affects readability, not the math — but keeping it at 100 lets each weight
+// read as "% of importance"). Calibrated 2026-06-02:
+//   company_type is the master signal (also a hard cap below) — a match is
+//   ~half the score. "offering" merges the three archetype-dependent
+//   "what they work on" signals (modalities / therapeutic areas / platform
+//   category) into one OR-check so a therapeutics company isn't penalised for
+//   a missing platform_category, nor a SaaS company for missing modalities.
 const COMPONENT_WEIGHTS = {
-  companyType: 20,
-  platformCategory: 10,
-  therapeuticAreas: 15,
-  modalities: 20,
-  developmentStages: 20,
+  companyType: 45,
+  offering: 25,
+  developmentStages: 10,
+  funding: 10,
   companySize: 10,
-  funding: 5,
 } as const;
 
 const COMPANY_TYPE_CAPS = {
@@ -103,9 +109,9 @@ type ScoreBreakdown = {
   };
   components: {
     company_type: BreakdownComponent;
-    platform_category: BreakdownComponent;
-    therapeutic_areas: BreakdownComponent;
-    modalities: BreakdownComponent;
+    // "offering" merges modalities + therapeutic_areas + platform_category into
+    // one archetype-agnostic "what they work on" check (hit on any = full).
+    offering: BreakdownComponent;
     development_stages: BreakdownComponent;
     company_size: BreakdownComponent;
     funding: BreakdownComponent;
@@ -330,90 +336,64 @@ function computeCompanyIcpScore(company: CompanyScoreRow, icp: IcpScoreRow): Com
     unmatchedValues: companyTypeMatchStatus === 'mismatch' && icpCompanyType ? [icpCompanyType] : [],
   });
 
+  // ── Offering: archetype-agnostic "what they work on" ───────────────────────
+  // Merges modalities + therapeutic areas + platform category into ONE check.
+  // Active if the ICP defines ANY of them; a hit on ANY one earns full credit.
+  // So a therapeutics company is judged on modalities/TAs (not dinged for an
+  // empty platform_category), and a SaaS company is judged on platform_category
+  // (not dinged for empty modalities/TAs). Each sub-signal keeps any-match
+  // semantics (one overlap = a hit).
   const icpPlatformCategory = normalizePlatformCategoryForStorage(icp.platform_category);
   const companyPlatformCategory = normalizePlatformCategoryForStorage(company.platform_category);
   const platformCategoryMatched =
     Boolean(icpPlatformCategory) &&
     Boolean(companyPlatformCategory) &&
     normalizeText(companyPlatformCategory!) === normalizeText(icpPlatformCategory!);
-  const platformCategoryComponent = makeComponent({
-    label: 'Platform category',
-    active: Boolean(icpPlatformCategory),
-    available: Boolean(companyPlatformCategory),
-    weight: COMPONENT_WEIGHTS.platformCategory,
-    earned: platformCategoryMatched ? COMPONENT_WEIGHTS.platformCategory : 0,
-    detail:
-      !icpPlatformCategory
-        ? 'No platform-category criterion.'
-        : !companyPlatformCategory
-          ? `Platform category not enriched yet; ICP expects ${icpPlatformCategory}.`
-          : platformCategoryMatched
-            ? `Matches ${icpPlatformCategory}.`
-            : `ICP expects ${icpPlatformCategory}; company is ${companyPlatformCategory}.`,
-    matchStatus: platformCategoryMatched ? 'exact' : companyPlatformCategory ? 'mismatch' : 'unknown',
-  });
 
   const icpTherapeuticAreas = canonicalizeStringList(icp.therapeutic_areas, canonicalizeTherapeuticArea);
   const companyTherapeuticAreas = new Set(
     canonicalizeStringList(company.therapeutic_areas, canonicalizeTherapeuticArea),
   );
   const matchedTAValues = icpTherapeuticAreas.filter((value) => companyTherapeuticAreas.has(value));
-  const unmatchedTAValues = icpTherapeuticAreas.filter((value) => !companyTherapeuticAreas.has(value));
-  const matchedTherapeuticAreas = matchedTAValues.length;
-  // Any-match scoring: a company that does even one of our target therapeutic areas is a fit —
-  // they may have a portfolio across multiple TAs, but selling them on the one we cover still works.
-  const therapeuticAreasComponent = makeComponent({
-    label: 'Therapeutic areas',
-    active: icpTherapeuticAreas.length > 0,
-    available: companyTherapeuticAreas.size > 0,
-    weight: COMPONENT_WEIGHTS.therapeuticAreas,
-    earned:
-      icpTherapeuticAreas.length > 0 && matchedTherapeuticAreas > 0
-        ? COMPONENT_WEIGHTS.therapeuticAreas
-        : 0,
-    detail:
-      icpTherapeuticAreas.length === 0
-        ? 'No therapeutic-area criterion.'
-        : companyTherapeuticAreas.size === 0
-          ? `Therapeutic areas not enriched yet; ICP expects ${icpTherapeuticAreas.join(', ')}.`
-          : matchedTherapeuticAreas > 0
-            ? `Matches on ${matchedTAValues.join(', ')}.`
-            : `No overlap with ICP target ${icpTherapeuticAreas.join(', ')}.`,
-    matchedCount: matchedTherapeuticAreas,
-    totalSelected: icpTherapeuticAreas.length,
-    matchedValues: matchedTAValues,
-    unmatchedValues: unmatchedTAValues,
-  });
 
   const icpModalities = canonicalizeStringList(icp.modalities, canonicalizeModality);
   const companyModalities = canonicalizeStringList(company.modalities, canonicalizeModality);
   const expandedCompanyModalities = new Set(expandModalitiesWithParents(companyModalities));
   const matchedModalityValues = icpModalities.filter((value) => expandedCompanyModalities.has(value));
-  const unmatchedModalityValues = icpModalities.filter((value) => !expandedCompanyModalities.has(value));
-  const matchedModalities = matchedModalityValues.length;
-  // Any-match scoring: a company that develops even one of our target modalities is a fit —
-  // we can sell them the product covering that modality regardless of what else they do.
-  const modalitiesComponent = makeComponent({
-    label: 'Modalities',
-    active: icpModalities.length > 0,
-    available: companyModalities.length > 0,
-    weight: COMPONENT_WEIGHTS.modalities,
-    earned:
-      icpModalities.length > 0 && matchedModalities > 0
-        ? COMPONENT_WEIGHTS.modalities
-        : 0,
-    matchedValues: matchedModalityValues,
-    unmatchedValues: unmatchedModalityValues,
-    detail:
-      icpModalities.length === 0
-        ? 'No modality criterion.'
-        : companyModalities.length === 0
-          ? `Modalities not enriched yet; ICP expects ${icpModalities.join(', ')}.`
-          : matchedModalities > 0
-            ? `Matches on ${matchedModalityValues.join(', ')}.`
-            : `No overlap with ICP target ${icpModalities.join(', ')}.`,
-    matchedCount: matchedModalities,
-    totalSelected: icpModalities.length,
+
+  const offeringActive =
+    icpModalities.length > 0 || icpTherapeuticAreas.length > 0 || Boolean(icpPlatformCategory);
+  const offeringAvailable =
+    companyModalities.length > 0 || companyTherapeuticAreas.size > 0 || Boolean(companyPlatformCategory);
+  const offeringHit =
+    matchedModalityValues.length > 0 || matchedTAValues.length > 0 || platformCategoryMatched;
+  const offeringMatchedValues = [
+    ...matchedModalityValues,
+    ...matchedTAValues,
+    ...(platformCategoryMatched && icpPlatformCategory ? [icpPlatformCategory] : []),
+  ];
+  const offeringExpected = [
+    ...icpModalities,
+    ...icpTherapeuticAreas,
+    ...(icpPlatformCategory ? [icpPlatformCategory] : []),
+  ];
+  const offeringComponent = makeComponent({
+    label: 'Offering',
+    active: offeringActive,
+    available: offeringAvailable,
+    weight: COMPONENT_WEIGHTS.offering,
+    earned: offeringActive && offeringHit ? COMPONENT_WEIGHTS.offering : 0,
+    detail: !offeringActive
+      ? 'No modality, therapeutic-area, or platform criterion.'
+      : !offeringAvailable
+        ? `Offering not enriched yet; ICP expects ${offeringExpected.join(', ')}.`
+        : offeringHit
+          ? `Matches on ${offeringMatchedValues.join(', ')}.`
+          : `No overlap with ICP target ${offeringExpected.join(', ')}.`,
+    matchedCount: offeringMatchedValues.length,
+    totalSelected: offeringExpected.length,
+    matchedValues: offeringMatchedValues,
+    unmatchedValues: offeringExpected.filter((value) => !offeringMatchedValues.includes(value)),
   });
 
   const icpStages = canonicalizeStringList(icp.development_stages, canonicalizeDevelopmentStage);
@@ -451,20 +431,17 @@ function computeCompanyIcpScore(company: CompanyScoreRow, icp: IcpScoreRow): Com
 
   const icpSizeBuckets = getIcpReferenceSizeBuckets(icp);
   const companySize = getCompanySizeBucket(company);
-  const sizeScore = sizeSimilarity(companySize, icpSizeBuckets);
+  // Binary: the company is either in one of the ICP's target size bands or it
+  // isn't. No partial credit for adjacent bands (per product decision) — an
+  // out-of-band size earns 0.
+  const sizeInBand = Boolean(companySize) && icpSizeBuckets.includes(companySize!);
   const companySizeComponent = makeComponent({
     label: 'Company size',
     active: icpSizeBuckets.length > 0,
     available: Boolean(companySize),
     weight: COMPONENT_WEIGHTS.companySize,
-    earned:
-      icpSizeBuckets.length > 0 && sizeScore != null
-        ? COMPONENT_WEIGHTS.companySize * sizeScore
-        : 0,
-    matchedValues:
-      companySize && sizeScore != null && sizeScore > 0
-        ? [companySize]
-        : [],
+    earned: icpSizeBuckets.length > 0 && sizeInBand ? COMPONENT_WEIGHTS.companySize : 0,
+    matchedValues: sizeInBand && companySize ? [companySize] : [],
     detail:
       icpSizeBuckets.length === 0
         ? 'No company-size criterion.'
@@ -476,7 +453,7 @@ function computeCompanyIcpScore(company: CompanyScoreRow, icp: IcpScoreRow): Com
     matchStatus:
       !companySize
         ? 'unknown'
-        : sizeScore === 1
+        : sizeInBand
           ? 'exact'
           : 'mismatch',
   });
@@ -525,9 +502,7 @@ function computeCompanyIcpScore(company: CompanyScoreRow, icp: IcpScoreRow): Com
 
   const components = {
     company_type: companyTypeComponent,
-    platform_category: platformCategoryComponent,
-    therapeutic_areas: therapeuticAreasComponent,
-    modalities: modalitiesComponent,
+    offering: offeringComponent,
     development_stages: developmentStagesComponent,
     company_size: companySizeComponent,
     funding: fundingComponent,
