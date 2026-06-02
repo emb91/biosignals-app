@@ -791,7 +791,7 @@ async function toolGetWorkspaceJourneyState(
 
   for (const lead of leads) {
     const companyFit = lead.company_fit_score ?? lead.companies?.company_fit_score ?? null;
-    const action = getLeadActionFromFits(companyFit, lead.contact_fit_score ?? null, lead.intent_score ?? null);
+    const action = getLeadActionFromFits(companyFit, lead.contact_fit_score ?? null, lead.readiness_score ?? null);
     if (action === 'reach_out') leadStatusCounts.ready++;
     else if (action === 'monitor') leadStatusCounts.monitor++;
     else if (action === 'source_contact') {
@@ -1150,7 +1150,7 @@ async function toolGetContactDetail(
     .from('contacts')
     .select(
       // matched_icp_id + company_fit_score moved to user_companies in Phase 1d.
-      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, headline, email, email_status, linkedin_url, profile_photo_url, company_name, company_domain, location, city, country, contact_bio, contact_panel_summary, contact_fit_summary, fit_score, intent_score, overall_fit_score, contact_fit_score, priority_score, resolved_current_company_name, resolved_current_job_title, resolved_employment_history, source, created_at, updated_at, company_id, companies(id, company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, industry, sub_industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_state, headquarters_country, products_services, services, technologies, company_type, platform_category, funding_stage, funding_status_label, total_funding_usd, latest_funding_date, therapeutic_areas, modalities, development_stages, clinical_stage, last_enriched_at)'
+      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, headline, email, email_status, linkedin_url, profile_photo_url, company_name, company_domain, location, city, country, contact_bio, contact_panel_summary, contact_fit_summary, fit_score, readiness_score, overall_fit_score, contact_fit_score, priority_score, resolved_current_company_name, resolved_current_job_title, resolved_employment_history, source, created_at, updated_at, company_id, companies(id, company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, industry, sub_industry, employee_count, employee_range, founded_year, headquarters_city, headquarters_state, headquarters_country, products_services, services, technologies, company_type, platform_category, funding_stage, funding_status_label, total_funding_usd, latest_funding_date, therapeutic_areas, modalities, development_stages, clinical_stage, last_enriched_at)'
     )
     .eq('user_id', userId)
     .eq('id', contactId)

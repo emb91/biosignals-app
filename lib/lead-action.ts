@@ -1,6 +1,6 @@
 /**
  * Recommended lead action from company and contact ICP fit plus contact-scope buying signals.
- * Reach out only applies when intent_score reflects signal events; otherwise strong fits stay on Monitor.
+ * Reach out only applies when readiness_score reflects signal events; otherwise strong fits stay on Monitor.
  * Keeps Leads UI, CSV export, HubSpot push, and import summary aligned.
  */
 
@@ -20,7 +20,7 @@ export type LeadLikeForAction = {
   fit_score?: number | null;
   contact_fit_score?: number | null;
   /** Non-null positive values imply contact-scope signal events contributed to intent. */
-  intent_score?: number | null;
+  readiness_score?: number | null;
   companies?:
     | { company_fit_score?: number | null }
     | { company_fit_score?: number | null }[]
@@ -59,7 +59,7 @@ export function resolveContactFitForLeadAction(lead: Pick<LeadLikeForAction, 'co
   return null;
 }
 
-/** True when stored contact intent came from at least one signal event (see contacts.intent_score). */
+/** True when stored contact intent came from at least one signal event (see contacts.readiness_score). */
 export function hasContactBuyingSignal(intentScore: number | null | undefined): boolean {
   return typeof intentScore === 'number' && Number.isFinite(intentScore) && intentScore > 0;
 }
@@ -73,7 +73,7 @@ export function isLeadReadyAwaitingContactSignal(lead: LeadLikeForAction): boole
   const contact = resolveContactFitForLeadAction(lead);
   if (company === null || company < SOURCE_COMPANY_MIN) return false;
   if (contact === null || contact < SOURCE_CONTACT_MAX) return false;
-  return !hasContactBuyingSignal(lead.intent_score);
+  return !hasContactBuyingSignal(lead.readiness_score);
 }
 
 export function getLeadActionFromFits(
@@ -96,7 +96,7 @@ export function getLeadAction(lead: LeadLikeForAction): LeadAction {
   return getLeadActionFromFits(
     resolveCompanyFitForLeadAction(lead),
     resolveContactFitForLeadAction(lead),
-    lead.intent_score,
+    lead.readiness_score,
   );
 }
 
@@ -236,7 +236,7 @@ export function getActionFromScores(
 export function getAccountRowAction(account: {
   company_fit_score?: number | null;
   best_contact_fit?: number | null;
-  max_contact_intent_score?: number | null;
+  max_contact_readiness_score?: number | null;
   readiness_score?: number | null;
   crm_status?: 'active' | 'customer' | 'dormant' | 'context_only' | 'none' | null;
   contact_count?: number | null;
@@ -256,7 +256,7 @@ export function getAccountRowAction(account: {
     return getLeadActionFromFits(
       score01ForAction(account.company_fit_score ?? null),
       score01ForAction(account.best_contact_fit ?? null),
-      account.max_contact_intent_score ?? null,
+      account.max_contact_readiness_score ?? null,
     );
   }
   return getActionFromScores(

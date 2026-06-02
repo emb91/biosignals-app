@@ -25,7 +25,7 @@ export async function GET() {
     const { data: contactRows, error } = await supabase
       .from('contacts')
       .select(
-        'company_id, contact_fit_score, fit_score, intent_score',
+        'company_id, contact_fit_score, fit_score, readiness_score',
       )
       .eq('user_id', user.id)
       .is('archived_at', null)

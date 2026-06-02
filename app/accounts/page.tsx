@@ -93,7 +93,7 @@ type AccountRow = {
   best_contact_fit: number | null;
   worst_contact_fit: number | null;
   avg_contact_fit: number | null;
-  max_contact_intent_score: number | null;
+  max_contact_readiness_score: number | null;
   data_provenance_type: string;
   data_provenance_imported_at: string | null;
   readiness_label?: string | null;
@@ -118,7 +118,7 @@ function isAccountMonitorAwaitingSignal(account: AccountRow): boolean {
   const contact = score01ForActionCopy(account.best_contact_fit);
   if (company === null || company < SOURCE_COMPANY_MIN) return false;
   if (contact === null || contact < SOURCE_CONTACT_MAX) return false;
-  return !hasContactBuyingSignal(account.max_contact_intent_score);
+  return !hasContactBuyingSignal(account.max_contact_readiness_score);
 }
 
 type ContactAtCompany = {

@@ -67,7 +67,7 @@ export interface QueryLead {
   company_domain: string | null;
   company_fit_score: number | null;
   contact_fit_score: number | null;
-  intent_score: number | null;
+  readiness_score: number | null;
   source: string | null;
   created_at: string | null;
   data_provenance_imported_at: string | null;
@@ -157,13 +157,13 @@ export function applyLeadsSort(leads: QueryLead[], sortBy: LeadSortBy): QueryLea
     const cfitB = b.contact_fit_score ?? 0;
     switch (sortBy) {
       case 'status_best_first': {
-        const oA = ACTION_ORDER[getLeadActionFromFits(fitA, a.contact_fit_score ?? null, a.intent_score ?? null)] ?? 0;
-        const oB = ACTION_ORDER[getLeadActionFromFits(fitB, b.contact_fit_score ?? null, b.intent_score ?? null)] ?? 0;
+        const oA = ACTION_ORDER[getLeadActionFromFits(fitA, a.contact_fit_score ?? null, a.readiness_score ?? null)] ?? 0;
+        const oB = ACTION_ORDER[getLeadActionFromFits(fitB, b.contact_fit_score ?? null, b.readiness_score ?? null)] ?? 0;
         return oB - oA;
       }
       case 'status_worst_first': {
-        const oA = ACTION_ORDER[getLeadActionFromFits(fitA, a.contact_fit_score ?? null, a.intent_score ?? null)] ?? 0;
-        const oB = ACTION_ORDER[getLeadActionFromFits(fitB, b.contact_fit_score ?? null, b.intent_score ?? null)] ?? 0;
+        const oA = ACTION_ORDER[getLeadActionFromFits(fitA, a.contact_fit_score ?? null, a.readiness_score ?? null)] ?? 0;
+        const oB = ACTION_ORDER[getLeadActionFromFits(fitB, b.contact_fit_score ?? null, b.readiness_score ?? null)] ?? 0;
         return oA - oB;
       }
       case 'company_fit_desc': return fitB - fitA;
@@ -184,7 +184,7 @@ export function applyLeadsFilters(leads: QueryLead[], filters: LeadQueryFilters)
           : null;
 
     if (filters.actions && filters.actions.length > 0) {
-      const action = getLeadActionFromFits(companyFit, lead.contact_fit_score ?? null, lead.intent_score ?? null);
+      const action = getLeadActionFromFits(companyFit, lead.contact_fit_score ?? null, lead.readiness_score ?? null);
       if (!filters.actions.includes(action)) return false;
     }
     if (typeof filters.minCompanyFit === 'number') {
@@ -194,7 +194,7 @@ export function applyLeadsFilters(leads: QueryLead[], filters: LeadQueryFilters)
       if (companyFit !== null && companyFit > filters.maxCompanyFit) return false;
     }
     if (filters.hasSignal === true) {
-      if (!(typeof lead.intent_score === 'number' && lead.intent_score > 0)) return false;
+      if (!(typeof lead.readiness_score === 'number' && lead.readiness_score > 0)) return false;
     }
     if (filters.companyTypes && filters.companyTypes.length > 0) {
       const ct = (lead.companies?.company_type || '').toLowerCase();
@@ -301,7 +301,7 @@ export async function fetchFilteredLeads(
 
   // Fetch contacts ordered by fit score
   const selectClause =
-    'id, full_name, first_name, last_name, job_title, resolved_current_job_title, seniority_level, business_area, company_name, resolved_current_company_name, company_id, company_domain, fit_score, overall_fit_score, contact_fit_score, intent_score, source, created_at, upload_batches(filename, created_at)';
+    'id, full_name, first_name, last_name, job_title, resolved_current_job_title, seniority_level, business_area, company_name, resolved_current_company_name, company_id, company_domain, fit_score, overall_fit_score, contact_fit_score, readiness_score, source, created_at, upload_batches(filename, created_at)';
 
   let contactsQuery = supabase
     .from('contacts')
@@ -427,7 +427,7 @@ export async function fetchFilteredLeads(
       company_domain: (r.company_domain as string | null) ?? null,
       company_fit_score: companyFitScore,
       contact_fit_score: typeof r.contact_fit_score === 'number' ? r.contact_fit_score : null,
-      intent_score: typeof r.intent_score === 'number' ? r.intent_score : null,
+      readiness_score: typeof r.readiness_score === 'number' ? r.readiness_score : null,
       source: typeof r.source === 'string' ? r.source : null,
       created_at: typeof r.created_at === 'string' ? r.created_at : null,
       data_provenance_imported_at: importedAt,

@@ -4,12 +4,8 @@ import { createAdminClient } from '@/lib/supabase-admin';
 import { insertCompanySignalEvent, insertContactSignalEvent } from '@/lib/signals/write-signal-event';
 import { listLeadEvents } from '@/lib/signals/events';
 import { mirrorSignalEventToReadiness } from '@/lib/signals/readiness-signal-events';
-import {
-  persistCompanyIntentForCompanyRow,
-  persistContactIntentScore,
-} from '@/lib/signals/persist-intent';
 
-/** GET: recent user's events / or lead-scoped bundles. POST: authenticated insert (+ optional intent persist). */
+/** GET: recent user's events / or lead-scoped bundles. POST: authenticated insert (recompute readiness). */
 
 export async function GET(request: Request) {
   try {
@@ -132,10 +128,6 @@ export async function POST(request: Request) {
           rawPayload: body.rawPayload,
         });
 
-        await persistCompanyIntentForCompanyRow(supabase, user.id, companyId).catch((e) =>
-          console.warn('[POST signal-events] company intent persist skipped', e)
-        );
-
         const readinessAdmin = createAdminClient();
         const readinessMirror = await mirrorSignalEventToReadiness(readinessAdmin, user.id, row).catch((e) => {
           console.warn('[POST signal-events] readiness mirror skipped', e);
@@ -196,10 +188,6 @@ export async function POST(request: Request) {
           eventMetadata: body.eventMetadata,
           rawPayload: body.rawPayload,
         });
-
-        await persistContactIntentScore(supabase, user.id, { contactId }).catch((e) =>
-          console.warn('[POST signal-events] contact intent persist skipped', e)
-        );
 
         const readinessAdmin = createAdminClient();
         const readinessMirror = await mirrorSignalEventToReadiness(readinessAdmin, user.id, row).catch((e) => {

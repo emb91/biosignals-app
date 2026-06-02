@@ -52,7 +52,7 @@ export async function POST() {
       .from('contacts')
       .select(`
         id, email, first_name, last_name, job_title, seniority_level, business_area, source, created_at,
-        contact_fit_score, intent_score, overall_fit_score, contact_bio, linkedin_url,
+        contact_fit_score, readiness_score, overall_fit_score, contact_bio, linkedin_url,
         upload_batches(filename, created_at),
         companies(
           id,

@@ -85,7 +85,7 @@ async function pushUserToHubSpot(
     .from('contacts')
     .select(`
       id, email, first_name, last_name, job_title, seniority_level, business_area,
-      contact_fit_score, intent_score, overall_fit_score, contact_bio, linkedin_url,
+      contact_fit_score, readiness_score, overall_fit_score, contact_bio, linkedin_url,
       companies(
         id, domain,
         company_name, company_fit_score, modalities, therapeutic_areas, development_stages,
@@ -132,7 +132,7 @@ async function pushUserToHubSpot(
     const co = lead.companies as any;
     const companyFit = co?.company_fit_score ?? null;
     const contactFit = typeof lead.contact_fit_score === 'number' ? lead.contact_fit_score : null;
-    const intentScore = typeof lead.intent_score === 'number' ? lead.intent_score : null;
+    const intentScore = typeof lead.readiness_score === 'number' ? lead.readiness_score : null;
     const overallFit = lead.overall_fit_score ?? null;
     const action = computeAction(companyFit, contactFit, intentScore);
 

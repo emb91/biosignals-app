@@ -55,7 +55,7 @@ type AccountRpcRow = {
   best_contact_fit: number | null;
   worst_contact_fit: number | null;
   avg_contact_fit: number | null;
-  max_contact_intent_score: number | null;
+  max_contact_readiness_score: number | null;
   readiness_score: number | null;
   readiness_label: string | null;
   priority_score: number | null;
@@ -300,7 +300,7 @@ export async function GET(request: Request) {
         best_contact_fit: row.best_contact_fit,
         avg_contact_fit: row.avg_contact_fit,
         worst_contact_fit: row.worst_contact_fit,
-        max_contact_intent_score: row.max_contact_intent_score,
+        max_contact_readiness_score: row.max_contact_readiness_score,
         contact_count: row.contact_count,
         // Categorisation (table pills)
         company_type: overrideFor('company_type') ?? row.company_type,

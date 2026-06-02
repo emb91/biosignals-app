@@ -109,8 +109,8 @@ type Message = {
 type Gating = {
   contact_fit_score: number | null;
   company_fit_score: number | null;
-  contact_intent_score: number | null;
-  company_intent_score: number | null;
+  contact_readiness_score: number | null;
+  company_readiness_score: number | null;
   threshold: number;
   reason: 'fit_below_threshold' | 'intent_below_threshold' | 'no_company';
 };
@@ -558,11 +558,11 @@ function GatedNotice({ gating }: { gating: Gating }) {
         </div>
         <div className="flex justify-between">
           <dt>Contact intent</dt>
-          <dd className="font-mono">{fmt(gating.contact_intent_score)}</dd>
+          <dd className="font-mono">{fmt(gating.contact_readiness_score)}</dd>
         </div>
         <div className="flex justify-between">
           <dt>Company intent</dt>
-          <dd className="font-mono">{fmt(gating.company_intent_score)}</dd>
+          <dd className="font-mono">{fmt(gating.company_readiness_score)}</dd>
         </div>
       </dl>
     </div>

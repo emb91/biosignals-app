@@ -445,8 +445,8 @@ function phraseFor(
 type GatingScores = {
   contact_fit_score: number | null;
   company_fit_score: number | null;
-  contact_intent_score: number | null;
-  company_intent_score: number | null;
+  contact_readiness_score: number | null;
+  company_readiness_score: number | null;
   threshold: number;
   reason: 'fit_below_threshold' | 'intent_below_threshold' | 'no_company';
 };
@@ -816,7 +816,7 @@ export async function GET(request: Request) {
     const { data: contact, error: contactErr } = await supabase
       .from('contacts')
       .select(
-        'id, company_id, company_name, contact_fit_score, intent_score, ' +
+        'id, company_id, company_name, contact_fit_score, readiness_score, ' +
           'first_name, full_name, job_title, contact_bio, contact_fit_summary, ' +
           'companies(company_name)',
       )
@@ -833,7 +833,7 @@ export async function GET(request: Request) {
       company_id?: string | null;
       company_name?: string | null;
       contact_fit_score?: number | null;
-      intent_score?: number | null;
+      readiness_score?: number | null;
       first_name?: string | null;
       full_name?: string | null;
       job_title?: string | null;
@@ -843,7 +843,7 @@ export async function GET(request: Request) {
     };
     const companyId = contactRow.company_id ?? null;
     const contactFit = typeof contactRow.contact_fit_score === 'number' ? contactRow.contact_fit_score : null;
-    const contactIntent = typeof contactRow.intent_score === 'number' ? contactRow.intent_score : null;
+    const contactIntent = typeof contactRow.readiness_score === 'number' ? contactRow.readiness_score : null;
     // Prefer the canonical companies.company_name (cleaner) over the
     // denormalised contacts.company_name (often "Inc."-suffixed).
     const companiesField = Array.isArray(contactRow.companies)
@@ -859,14 +859,14 @@ export async function GET(request: Request) {
     if (companyId) {
       const { data: uc } = await supabase
         .from('user_companies')
-        .select('company_fit_score, intent_score')
+        .select('company_fit_score, readiness_score')
         .eq('user_id', user.id)
         .eq('company_id', companyId)
         .maybeSingle();
       if (uc) {
-        const ucRow = uc as { company_fit_score?: number | null; intent_score?: number | null };
+        const ucRow = uc as { company_fit_score?: number | null; readiness_score?: number | null };
         companyFit = typeof ucRow.company_fit_score === 'number' ? ucRow.company_fit_score : null;
-        companyIntent = typeof ucRow.intent_score === 'number' ? ucRow.intent_score : null;
+        companyIntent = typeof ucRow.readiness_score === 'number' ? ucRow.readiness_score : null;
       }
     }
 
@@ -882,8 +882,8 @@ export async function GET(request: Request) {
       const gating: GatingScores = {
         contact_fit_score: contactFit,
         company_fit_score: companyFit,
-        contact_intent_score: contactIntent,
-        company_intent_score: companyIntent,
+        contact_readiness_score: contactIntent,
+        company_readiness_score: companyIntent,
         threshold: HIGH_SCORE,
         reason: !companyId ? 'no_company' : !fitOk ? 'fit_below_threshold' : 'intent_below_threshold',
       };

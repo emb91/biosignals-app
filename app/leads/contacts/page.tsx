@@ -325,7 +325,7 @@ interface Lead {
   enrichment_refresh_started_at?: string | null;
   enrichment_refresh_finished_at?: string | null;
   fit_score: number | null;
-  intent_score: number | null;
+  readiness_score: number | null;
   overall_fit_score: number | null;
   company_fit_score: number | null;
   contact_fit_score: number | null;
@@ -1072,7 +1072,7 @@ function getSortValue(lead: Lead | QueryLead, col: string): string | number {
     case 'source':
       return ((lead as QueryLead).data_provenance_type ?? '').toLowerCase();
     case 'signals':
-      return lead.intent_score && lead.intent_score > 0 ? 1 : 0;
+      return lead.readiness_score && lead.readiness_score > 0 ? 1 : 0;
     case 'icp_match':
       return ((lead as QueryLead).matched_icp_label ?? '').toLowerCase();
     case 'funding_stage':
