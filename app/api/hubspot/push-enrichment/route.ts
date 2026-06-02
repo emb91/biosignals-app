@@ -10,7 +10,7 @@ import {
   batchUpdateCompanies,
   batchReadContactsByEmail,
 } from '@/lib/hubspot';
-import { getLeadAction, formatLeadActionLabel } from '@/lib/lead-action';
+import { getActionFromScores, effectiveReadiness, formatLeadActionLabel } from '@/lib/lead-action';
 import { formatDataSourceLabel, resolveContactDataProvenance } from '@/lib/data-provenance';
 
 function fmt(n: number | null | undefined): string {
@@ -52,13 +52,14 @@ export async function POST() {
       .from('contacts')
       .select(`
         id, email, first_name, last_name, job_title, seniority_level, business_area, source, created_at,
-        contact_fit_score, readiness_score, overall_fit_score, contact_bio, linkedin_url,
+        contact_fit_score, readiness_score, priority_score, overall_fit_score, contact_bio, linkedin_url,
+        company_id,
         upload_batches(filename, created_at),
         companies(
           id,
           domain,
           company_name,
-          company_fit_score, modalities, therapeutic_areas, development_stages,
+          modalities, therapeutic_areas, development_stages,
           company_type, platform_category, bio_summary,
           industry, employee_count, founded_year, headquarters_city, headquarters_state, headquarters_country,
           linkedin_url, funding_stage, funding_status_label, total_funding_usd
@@ -109,13 +110,58 @@ export async function POST() {
 
     await ensureArcovaHubSpotProperties(accessToken);
 
+    // Company-level scores (fit / readiness / priority) live on user_companies
+    // post-Phase-1d, NOT on companies. Build a per-company score map for this
+    // user so the contact + company pushes can read them.
+    const leadCompanyIds = [
+      ...new Set(
+        syncableLeads
+          .map((l) => (l as { company_id?: string | null }).company_id)
+          .filter((v): v is string => typeof v === 'string' && Boolean(v)),
+      ),
+    ];
+    const companyScoreById = new Map<
+      string,
+      { fit: number | null; readiness: number | null; priority: number | null }
+    >();
+    if (leadCompanyIds.length > 0) {
+      const { data: ucRows } = await admin
+        .from('user_companies')
+        .select('company_id, company_fit_score, readiness_score, priority_score')
+        .eq('user_id', user.id)
+        .in('company_id', leadCompanyIds);
+      for (const r of (ucRows ?? []) as Array<{
+        company_id: string;
+        company_fit_score: number | null;
+        readiness_score: number | null;
+        priority_score: number | null;
+      }>) {
+        companyScoreById.set(r.company_id, {
+          fit: r.company_fit_score,
+          readiness: r.readiness_score,
+          priority: r.priority_score,
+        });
+      }
+    }
+
     const enrichedAt = new Date().toISOString().slice(0, 10);
     const upserts: Array<{ email: string; properties: Record<string, string> }> = [];
 
     for (const lead of syncableLeads) {
       const contactFit = typeof lead.contact_fit_score === 'number' ? lead.contact_fit_score : null;
       const overallFit = lead.overall_fit_score ?? null;
-      const action = formatLeadActionLabel(getLeadAction(lead));
+      const contactReadiness = typeof lead.readiness_score === 'number' ? lead.readiness_score : null;
+      const contactPriority = typeof lead.priority_score === 'number' ? lead.priority_score : null;
+      const leadCompanyId = (lead as { company_id?: string | null }).company_id ?? null;
+      const actionScores = leadCompanyId ? companyScoreById.get(leadCompanyId) : undefined;
+      const action = formatLeadActionLabel(
+        getActionFromScores(
+          actionScores?.fit ?? null,
+          contactFit,
+          effectiveReadiness(actionScores?.readiness ?? null, contactReadiness),
+          null,
+        ),
+      );
 
       const props: Record<string, string> = {
         arcova_action: action,
@@ -132,6 +178,8 @@ export async function POST() {
 
       if (overallFit !== null) props.arcova_overall_fit_score = fmt(overallFit);
       if (contactFit !== null) props.arcova_contact_fit_score = fmt(contactFit);
+      if (contactReadiness !== null) props.arcova_contact_readiness_score = fmt(contactReadiness);
+      if (contactPriority !== null) props.arcova_contact_priority_score = fmt(contactPriority);
       if (lead.seniority_level) props.arcova_seniority = lead.seniority_level;
       if (lead.business_area) props.arcova_function = lead.business_area;
       props.arcova_enriched_email = lead.email!;
@@ -184,8 +232,10 @@ export async function POST() {
       if (!co) continue;
 
       const props: Record<string, string> = {};
-      const companyFit = co?.company_fit_score ?? null;
-      if (companyFit !== null) props.arcova_company_fit_score = fmt(companyFit);
+      const coScores = co?.id ? companyScoreById.get(co.id) : undefined;
+      if (coScores?.fit != null) props.arcova_company_fit_score = fmt(coScores.fit);
+      if (coScores?.readiness != null) props.arcova_company_readiness_score = fmt(coScores.readiness);
+      if (coScores?.priority != null) props.arcova_company_priority_score = fmt(coScores.priority);
       if (co.modalities?.length) props.arcova_modalities = fmtList(co.modalities);
       if (co.therapeutic_areas?.length) props.arcova_therapeutic_areas = fmtList(co.therapeutic_areas);
       if (co.development_stages?.length) props.arcova_development_stages = fmtList(co.development_stages);
