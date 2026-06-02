@@ -106,12 +106,14 @@ interface CompanyFirmographics {
 
 type CompanyFitComponentKey =
   | 'company_type'
-  | 'platform_category'
-  | 'therapeutic_areas'
-  | 'modalities'
+  | 'offering'
   | 'development_stages'
   | 'company_size'
-  | 'funding';
+  | 'funding'
+  // Legacy keys — kept so pre-company_fit_v2 breakdowns still render.
+  | 'platform_category'
+  | 'therapeutic_areas'
+  | 'modalities';
 
 interface CompanyFitBreakdownComponent {
   label: string;
@@ -494,12 +496,14 @@ function blurInputOnEnter(e: KeyboardEvent<HTMLInputElement>) {
 const MAX_VISIBLE_WORK_HISTORY = 3;
 const COMPANY_FIT_COMPONENT_ORDER: CompanyFitComponentKey[] = [
   'company_type',
-  'platform_category',
-  'therapeutic_areas',
-  'modalities',
+  'offering',
   'development_stages',
   'company_size',
   'funding',
+  // Legacy keys last — only render for pre-v2 breakdowns.
+  'platform_category',
+  'therapeutic_areas',
+  'modalities',
 ];
 const CONTACT_FIT_COMPONENT_ORDER: ContactFitComponentKey[] = ['business_area', 'seniority'];
 
