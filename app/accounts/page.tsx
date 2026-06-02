@@ -1509,7 +1509,7 @@ export default function AccountsPage() {
                           )}
                         >
                           {mode === 'contacts'
-                            ? `Contacts (${selectedAccount.contact_count})`
+                            ? 'Contacts'
                             : mode === 'fit'
                               ? 'Fit'
                               : mode === 'action'

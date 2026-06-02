@@ -113,8 +113,7 @@ export async function GET(request: Request) {
         company:companies!normalized_signals_company_id_fkey(
           id,
           company_name,
-          domain,
-          archived_at
+          domain
         ),
         contact:contacts!normalized_signals_contact_id_fkey(
           id,
@@ -147,7 +146,35 @@ export async function GET(request: Request) {
     }
 
     const rows = Array.isArray(data) ? data : [];
-    const activeRows = rows.filter((row: any) => !row.company?.archived_at && !row.contact?.archived_at);
+
+    // companies.archived_at was dropped in the P1d canonicalisation; archive
+    // state lives on user_companies (per-user). Pull the user's archived
+    // company_ids in one shot and filter rows whose company appears there.
+    const allCompanyIds = [
+      ...new Set(rows.map((row: any) => normalizeString(row.company_id)).filter(Boolean)),
+    ] as string[];
+    const archivedCompanyIds = new Set<string>();
+    if (allCompanyIds.length) {
+      const { data: archivedRows, error: archivedErr } = await supabase
+        .from('user_companies')
+        .select('company_id')
+        .eq('user_id', user.id)
+        .in('company_id', allCompanyIds)
+        .not('archived_at', 'is', null);
+      if (archivedErr) {
+        console.error('[GET /api/signals/feed] user_companies archive lookup error', archivedErr);
+      }
+      for (const r of (archivedRows ?? []) as Array<{ company_id: string | null }>) {
+        if (r.company_id) archivedCompanyIds.add(r.company_id);
+      }
+    }
+
+    const activeRows = rows.filter((row: any) => {
+      const cid = normalizeString(row.company_id);
+      if (cid && archivedCompanyIds.has(cid)) return false;
+      if (row.contact?.archived_at) return false;
+      return true;
+    });
     const companyIds = [...new Set(activeRows.map((row: any) => normalizeString(row.company_id)).filter(Boolean))] as string[];
     const contactIds = [...new Set(activeRows.map((row: any) => normalizeString(row.contact_id)).filter(Boolean))] as string[];
 

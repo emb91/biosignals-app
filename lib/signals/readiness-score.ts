@@ -56,8 +56,26 @@ function scoreToLabel(score: number): ReadinessLabel {
   return 'low';
 }
 
+// One-time warn cache so a deprecated key spamming the logs doesn't add to
+// readiness recompute cost. We just want a single breadcrumb per process.
+const warnedMissingCatalogKeys = new Set<string>();
+
 function recencyMultiplier(signal: NormalizedSignal, asOf: Date): number {
   const catalog = READINESS_SIGNAL_CATALOG_BY_KEY[signal.signalKey];
+  if (!catalog) {
+    // Stored signal has a key that's no longer in the catalog (renamed or
+    // removed signal type). Old code crashed on the .decayDays access and
+    // failed the entire entity's recompute. Skip the contribution instead —
+    // the signal can't score under the current rubric, but everything else
+    // for this entity should still be summed correctly.
+    if (!warnedMissingCatalogKeys.has(signal.signalKey)) {
+      warnedMissingCatalogKeys.add(signal.signalKey);
+      console.warn(
+        `[readiness-score] signalKey "${signal.signalKey}" not found in READINESS_SIGNAL_CATALOG_BY_KEY — treating as zero contribution. Likely a deprecated/renamed key with stale rows in normalized_signals.`,
+      );
+    }
+    return 0;
+  }
   const decayDays = catalog.decayDays;
   const ageDays = daysSince(signal.eventAt ?? signal.observedAt, asOf);
   return clamp01(1 - ageDays / decayDays);

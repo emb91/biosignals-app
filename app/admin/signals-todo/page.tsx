@@ -67,9 +67,18 @@ const AUTO_COMPLETED_SIGNALS = new Set<SignalKey>([
   'prior_customer_relationship',
   'prior_active_deal_relationship',
   'prior_pipeline_relationship',
-  // principal_investigator_new_trial: NOT exposed as a standalone button.
-  // PI matching is a side-effect of the "Clinical Trials All" run, which
-  // already calls emitPrincipalInvestigatorSignal per study.
+  // Publications pipeline (PubMed). Both signals emit from the same
+  // publications_all run — `publication` from the company affiliation phase,
+  // `new_paper_published` from the contact author phase AND from the company
+  // phase's contact cross-match (per-paper author scan against the user's
+  // tracked contacts).
+  'publication',
+  'new_paper_published',
+  // principal_investigator_new_trial: not exposed as its own button — it's a
+  // side-effect of the "Clinical Trials All" run, which already calls
+  // emitPrincipalInvestigatorSignal per study. Included here so the
+  // completion dashboard reflects that the signal IS implemented.
+  'principal_investigator_new_trial',
   // Press releases pipeline
   'partnership_deal',
   'licensing_deal',

@@ -47,7 +47,11 @@ export type LlmFeature =
   | 'company_resolution'
   // Outreach sequence — uses Sonnet for the 7-message generation. The hooks
   // picker is signal-derived (no LLM) so doesn't need a feature flag.
-  | 'outreach_sequence';
+  | 'outreach_sequence'
+  // Outreach hook curation — Haiku scores a small candidate list (≤12 hooks)
+  // against the seller's value prop and picks the top 3 with one-line
+  // reasoning. Cheap ($0.002/call), fires once per Outreach-tab open.
+  | 'outreach_curate_hooks';
 
 /**
  * Default models per (feature, route). Override via the `model` arg.
@@ -137,6 +141,13 @@ const FEATURE_MODELS: Record<LlmFeature, { openrouter: string; anthropic: string
   outreach_sequence: {
     openrouter: 'anthropic/claude-sonnet-4-6',
     anthropic: 'claude-sonnet-4-6',
+  },
+  // Hook curation: scores a candidate list against the seller's value prop,
+  // returns top 3 with reasoning. Tiny input (≤2k tokens) + tiny structured
+  // output. Haiku is plenty.
+  outreach_curate_hooks: {
+    openrouter: 'anthropic/claude-haiku-4-5',
+    anthropic: 'claude-haiku-4-5',
   },
 };
 

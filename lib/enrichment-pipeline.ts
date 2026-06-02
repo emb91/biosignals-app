@@ -241,14 +241,18 @@ export async function applyUserCancellationToLeadEnrichment(
     updated_at: now,
   };
 
-  if ((typed.linkedin_resolution_status || '') === 'processing') {
+  // Also cancel 'pending' sub-statuses — a freshly queued contact has
+  // linkedin_resolution_status='pending' before the pipeline claims it,
+  // so checking only 'processing' left those fields untouched and the UI
+  // kept showing "Enrichment running…" after stop.
+  if (['pending', 'processing'].includes(typed.linkedin_resolution_status || '')) {
     payload.linkedin_resolution_status = 'failed';
     payload.linkedin_resolution_completed_at = now;
     payload.linkedin_resolution_last_error = 'Stopped by user.';
     payload.profile_enrichment_status = 'blocked';
     payload.profile_enrichment_last_error = 'Enrichment was stopped before completion.';
     payload.profile_enrichment_completed_at = now;
-  } else if ((typed.profile_enrichment_status || '') === 'processing') {
+  } else if (['pending', 'processing'].includes(typed.profile_enrichment_status || '')) {
     payload.profile_enrichment_status = 'blocked';
     payload.profile_enrichment_last_error = 'Stopped by user.';
     payload.profile_enrichment_completed_at = now;

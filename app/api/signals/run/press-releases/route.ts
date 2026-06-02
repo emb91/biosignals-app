@@ -1,3 +1,5 @@
+export const maxDuration = 300;
+
 /**
  * Manual trigger for the press-release signal pipeline.
  *
