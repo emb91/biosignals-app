@@ -6,14 +6,21 @@
 
 export type LeadAction = 'source_contact' | 'reach_out' | 'monitor' | 'deprioritize';
 
-export const DEPRIORITIZE_COMPANY_BELOW = 0.45;
-export const SOURCE_COMPANY_MIN = 0.5;
-export const SOURCE_CONTACT_MAX = 0.65;
+/**
+ * The single "high" threshold (0–1) for fit and readiness. The action model is
+ * a binary high/low gate per axis (company fit → contact fit → readiness), so
+ * one threshold drives everything. Tunable — raise/lower to make the model
+ * stricter/looser. (Was a multi-band 0.45/0.5/0.65 scheme; collapsed to 0.7.)
+ */
+export const HIGH_SCORE = 0.7;
 
-/** Fit (0–1) below this → Deprioritise regardless of readiness. */
-export const DEPRIORITIZE_FIT_BELOW = 0.45;
-/** Readiness (0–1) at or above this → Reach out (otherwise Monitor / await signals). */
-export const REACH_OUT_READINESS_MIN = 0.7;
+// Legacy constant names kept for existing callers. All now collapse to the
+// single HIGH_SCORE threshold.
+export const DEPRIORITIZE_COMPANY_BELOW = HIGH_SCORE;
+export const SOURCE_COMPANY_MIN = HIGH_SCORE;
+export const SOURCE_CONTACT_MAX = HIGH_SCORE;
+export const DEPRIORITIZE_FIT_BELOW = HIGH_SCORE;
+export const REACH_OUT_READINESS_MIN = HIGH_SCORE;
 
 export type LeadLikeForAction = {
   company_fit_score?: number | null;
@@ -46,9 +53,9 @@ export function resolveCompanyFitForLeadAction(lead: LeadLikeForAction): number 
       ? companyObj.company_fit_score
       : null;
   if (nested != null) return nested;
-  if (typeof lead.fit_score === 'number' && Number.isFinite(lead.fit_score)) {
-    return lead.fit_score;
-  }
+  // NOTE: deliberately do NOT fall back to lead.fit_score here — that's the
+  // contact-level legacy fit column (now inert), never company fit. Using it
+  // as company fit was a latent bug. No company fit → resolves null.
   return null;
 }
 
@@ -76,20 +83,39 @@ export function isLeadReadyAwaitingContactSignal(lead: LeadLikeForAction): boole
   return !hasContactBuyingSignal(lead.readiness_score);
 }
 
+/**
+ * Effective readiness for a CONTACT = the stronger of the company's readiness
+ * and the contact's own, plus a small bump when both are meaningfully present.
+ * Company momentum floors it (company signals are common, avg ~0.7); a personal
+ * signal can lift it (rare but strong). All inputs/output are 0–1.
+ *
+ * Use this anywhere a contact's action/gate needs readiness — a great contact
+ * at a hot company should read as ready even with no personal signal.
+ */
+export function effectiveReadiness(
+  companyReadiness: number | null | undefined,
+  contactReadiness: number | null | undefined,
+): number | null {
+  const c = score01ForAction(companyReadiness);
+  const k = score01ForAction(contactReadiness);
+  if (c == null && k == null) return null;
+  const base = Math.max(c ?? 0, k ?? 0);
+  const bothPresent = (c ?? 0) > 0 && (k ?? 0) > 0;
+  const bumped = bothPresent ? base + 0.1 * Math.min(c ?? 0, k ?? 0) : base;
+  return Math.max(0, Math.min(1, bumped));
+}
+
+/**
+ * Canonical action core. Delegates to getActionFromScores (the single source of
+ * truth for the three-gate tree). `readiness` here is the contact's effective
+ * readiness (use effectiveReadiness() to combine company + contact first).
+ */
 export function getLeadActionFromFits(
   company: number | null,
   contact: number | null,
-  contactIntentScore?: number | null,
+  readiness?: number | null,
 ): LeadAction {
-  if (company === null || company < DEPRIORITIZE_COMPANY_BELOW) return 'deprioritize';
-  if (company >= SOURCE_COMPANY_MIN) {
-    if (contact === null || contact < SOURCE_CONTACT_MAX) {
-      return 'source_contact';
-    }
-    if (hasContactBuyingSignal(contactIntentScore)) return 'reach_out';
-    return 'monitor';
-  }
-  return 'monitor';
+  return getActionFromScores(company, contact, readiness ?? null, null);
 }
 
 export function getLeadAction(lead: LeadLikeForAction): LeadAction {
@@ -212,17 +238,19 @@ export function getActionFromScores(
   readiness: number | null | undefined,
   crmState?: 'active' | 'customer' | 'dormant' | 'context_only' | 'none' | null,
 ): LeadAction {
+  // 0. CRM resolved (won/lost) → nothing to action now.
   if (crmState === 'customer' || crmState === 'dormant') return 'deprioritize';
-  const companyNorm = score01ForAction(companyFit);
-  if (companyNorm == null || companyNorm < DEPRIORITIZE_COMPANY_BELOW) return 'deprioritize';
-  const contactNorm = score01ForAction(contactFit);
-  if (companyNorm >= SOURCE_COMPANY_MIN && (contactNorm == null || contactNorm < SOURCE_CONTACT_MAX)) {
-    return 'source_contact';
-  }
-  const readinessNorm = score01ForAction(readiness) ?? 0;
-  if (contactNorm != null && contactNorm >= SOURCE_CONTACT_MAX && readinessNorm >= REACH_OUT_READINESS_MIN) {
-    return 'reach_out';
-  }
+  // 1. Company fit is the hard gate. Below threshold, the contact is
+  //    irrelevant — a perfect contact at a non-ICP company is worth nothing.
+  const company = score01ForAction(companyFit);
+  if (company == null || company < HIGH_SCORE) return 'deprioritize';
+  // 2. Right account, wrong-persona contact → source a better contact.
+  const contact = score01ForAction(contactFit);
+  if (contact == null || contact < HIGH_SCORE) return 'source_contact';
+  // 3. Right account + right contact: readiness decides reach out vs monitor.
+  //    `readiness` should already be effective (max of company + contact).
+  const ready = score01ForAction(readiness) ?? 0;
+  if (ready >= HIGH_SCORE) return 'reach_out';
   return 'monitor';
 }
 

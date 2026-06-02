@@ -22,6 +22,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
+import { effectiveReadiness, getActionFromScores, HIGH_SCORE } from '@/lib/lead-action';
 
 const LOOKBACK_DAYS = 14;
 // Hard cap on hooks returned. Was 10; brought down so the picker is scannable.
@@ -313,12 +314,11 @@ function cleanTitle(raw: string | null, signalType: string | null): string {
   return t || humanizeSignalType(signalType);
 }
 
-// Outreach gate: only show hooks when the contact is worth reaching out to.
-// Per product direction: reach out only when BOTH contact and company fit are
-// high, AND at least one of contact-intent or company-intent is high.
-// "High" matches the readiness convention used elsewhere (>= 0.7, see
-// lib/signals/readiness-store.ts:469).
-const HIGH_SCORE = 0.7;
+// Outreach gate: only show hooks when the contact is in the "reach out" cell of
+// the action model — company fit high AND contact fit high AND effective
+// readiness (max of company + contact) high. HIGH_SCORE + the gate logic come
+// from lib/lead-action so the gate can never drift from the action shown in the
+// leads/accounts UI.
 
 function messageFromUnknown(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -448,7 +448,7 @@ type GatingScores = {
   contact_readiness_score: number | null;
   company_readiness_score: number | null;
   threshold: number;
-  reason: 'fit_below_threshold' | 'intent_below_threshold' | 'no_company';
+  reason: 'fit_below_threshold' | 'readiness_below_threshold' | 'no_company';
 };
 
 type SignalRow = {
@@ -843,7 +843,7 @@ export async function GET(request: Request) {
     };
     const companyId = contactRow.company_id ?? null;
     const contactFit = typeof contactRow.contact_fit_score === 'number' ? contactRow.contact_fit_score : null;
-    const contactIntent = typeof contactRow.readiness_score === 'number' ? contactRow.readiness_score : null;
+    const contactReadiness = typeof contactRow.readiness_score === 'number' ? contactRow.readiness_score : null;
     // Prefer the canonical companies.company_name (cleaner) over the
     // denormalised contacts.company_name (often "Inc."-suffixed).
     const companiesField = Array.isArray(contactRow.companies)
@@ -855,7 +855,7 @@ export async function GET(request: Request) {
     // Pull company-side scores from user_companies (post-Phase-1d the
     // per-user scoring fields live here, not on companies).
     let companyFit: number | null = null;
-    let companyIntent: number | null = null;
+    let companyReadiness: number | null = null;
     if (companyId) {
       const { data: uc } = await supabase
         .from('user_companies')
@@ -866,26 +866,25 @@ export async function GET(request: Request) {
       if (uc) {
         const ucRow = uc as { company_fit_score?: number | null; readiness_score?: number | null };
         companyFit = typeof ucRow.company_fit_score === 'number' ? ucRow.company_fit_score : null;
-        companyIntent = typeof ucRow.readiness_score === 'number' ? ucRow.readiness_score : null;
+        companyReadiness = typeof ucRow.readiness_score === 'number' ? ucRow.readiness_score : null;
       }
     }
 
-    // Apply the gate. Null scores fail the check (treated as below threshold).
-    const contactFitHigh = (contactFit ?? 0) >= HIGH_SCORE;
-    const companyFitHigh = (companyFit ?? 0) >= HIGH_SCORE;
-    const contactIntentHigh = (contactIntent ?? 0) >= HIGH_SCORE;
-    const companyIntentHigh = (companyIntent ?? 0) >= HIGH_SCORE;
-    const fitOk = contactFitHigh && companyFitHigh;
-    const intentOk = contactIntentHigh || companyIntentHigh;
+    // The gate IS the action model: only "reach out" contacts get hooks.
+    // effectiveReadiness folds company + contact readiness (max + bump) so a
+    // strong contact at a hot company qualifies even with no personal signal.
+    const effReadiness = effectiveReadiness(companyReadiness, contactReadiness);
+    const action = getActionFromScores(companyFit, contactFit, effReadiness, null);
 
-    if (!fitOk || !intentOk) {
+    if (action !== 'reach_out') {
       const gating: GatingScores = {
         contact_fit_score: contactFit,
         company_fit_score: companyFit,
-        contact_readiness_score: contactIntent,
-        company_readiness_score: companyIntent,
+        contact_readiness_score: contactReadiness,
+        company_readiness_score: companyReadiness,
         threshold: HIGH_SCORE,
-        reason: !companyId ? 'no_company' : !fitOk ? 'fit_below_threshold' : 'intent_below_threshold',
+        // 'monitor' = fits high but readiness low; otherwise a fit gate failed.
+        reason: !companyId ? 'no_company' : action === 'monitor' ? 'readiness_below_threshold' : 'fit_below_threshold',
       };
       return NextResponse.json({ hooks: [], gated: true, gating });
     }
