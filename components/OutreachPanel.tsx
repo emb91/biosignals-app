@@ -112,7 +112,7 @@ type Gating = {
   contact_readiness_score: number | null;
   company_readiness_score: number | null;
   threshold: number;
-  reason: 'fit_below_threshold' | 'intent_below_threshold' | 'no_company';
+  reason: 'fit_below_threshold' | 'readiness_below_threshold' | 'no_company';
 };
 
 type Props = {
@@ -540,7 +540,7 @@ function GatedNotice({ gating }: { gating: Gating }) {
       ? 'No company linked to this contact.'
       : gating.reason === 'fit_below_threshold'
       ? `Both contact fit and company fit need to be ≥ ${gating.threshold.toFixed(2)}.`
-      : `At least one of contact intent or company intent needs to be ≥ ${gating.threshold.toFixed(2)}.`;
+      : `Readiness needs to be ≥ ${gating.threshold.toFixed(2)} (from company or contact signals).`;
   return (
     <div className="rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2.5">
       <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-700">
@@ -557,11 +557,11 @@ function GatedNotice({ gating }: { gating: Gating }) {
           <dd className="font-mono">{fmt(gating.company_fit_score)}</dd>
         </div>
         <div className="flex justify-between">
-          <dt>Contact intent</dt>
+          <dt>Contact readiness</dt>
           <dd className="font-mono">{fmt(gating.contact_readiness_score)}</dd>
         </div>
         <div className="flex justify-between">
-          <dt>Company intent</dt>
+          <dt>Company readiness</dt>
           <dd className="font-mono">{fmt(gating.company_readiness_score)}</dd>
         </div>
       </dl>

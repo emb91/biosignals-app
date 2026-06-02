@@ -14,6 +14,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
+import { effectiveReadiness, getActionFromScores } from '@/lib/lead-action';
 
 const DAY_OFFSETS = [0, 3, 7, 11, 15, 21, 28] as const;
 
@@ -114,13 +115,58 @@ export async function POST(request: Request) {
     const { data: contact, error: contactErr } = await supabase
       .from('contacts')
       .select(
-        'id, full_name, first_name, job_title, seniority_level, business_area, contact_bio, contact_panel_summary, contact_fit_summary, resolved_current_company_name, resolved_employment_history, company_id, company_name, companies(id, company_name, domain, description, bio_summary, industry, employee_range, founded_year, headquarters_city, headquarters_country, company_type, funding_stage, therapeutic_areas, modalities, development_stages, products_services, services, technologies)'
+        'id, full_name, first_name, job_title, seniority_level, business_area, contact_bio, contact_panel_summary, contact_fit_summary, contact_fit_score, readiness_score, resolved_current_company_name, resolved_employment_history, company_id, company_name, companies(id, company_name, domain, description, bio_summary, industry, employee_range, founded_year, headquarters_city, headquarters_country, company_type, funding_stage, therapeutic_areas, modalities, development_stages, products_services, services, technologies)'
       )
       .eq('user_id', user.id)
       .eq('id', contactId)
       .maybeSingle();
     if (contactErr) return NextResponse.json({ error: contactErr.message }, { status: 500 });
     if (!contact) return NextResponse.json({ error: 'Contact not found' }, { status: 404 });
+
+    // Gate: a sequence may only be generated for a "reach out" contact (company
+    // fit high AND contact fit high AND effective readiness high). This mirrors
+    // the /hooks gate so a sequence can't be generated for a contact the picker
+    // would never have surfaced (e.g. via a direct API call). Same source of
+    // truth: lib/lead-action.getActionFromScores.
+    {
+      const c = contact as {
+        company_id?: string | null;
+        contact_fit_score?: number | null;
+        readiness_score?: number | null;
+      };
+      const contactFit = typeof c.contact_fit_score === 'number' ? c.contact_fit_score : null;
+      const contactReadiness = typeof c.readiness_score === 'number' ? c.readiness_score : null;
+      let companyFit: number | null = null;
+      let companyReadiness: number | null = null;
+      if (c.company_id) {
+        const { data: uc } = await supabase
+          .from('user_companies')
+          .select('company_fit_score, readiness_score')
+          .eq('user_id', user.id)
+          .eq('company_id', c.company_id)
+          .maybeSingle();
+        if (uc) {
+          const ucRow = uc as { company_fit_score?: number | null; readiness_score?: number | null };
+          companyFit = typeof ucRow.company_fit_score === 'number' ? ucRow.company_fit_score : null;
+          companyReadiness = typeof ucRow.readiness_score === 'number' ? ucRow.readiness_score : null;
+        }
+      }
+      const action = getActionFromScores(
+        companyFit,
+        contactFit,
+        effectiveReadiness(companyReadiness, contactReadiness),
+        null,
+      );
+      if (action !== 'reach_out') {
+        return NextResponse.json(
+          {
+            error: 'Contact is not in the reach-out state — sequence generation is gated on fit + readiness.',
+            action,
+          },
+          { status: 422 },
+        );
+      }
+    }
 
     const { data: selfCompany } = await supabase
       .from('user_company')
