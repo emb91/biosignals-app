@@ -170,6 +170,29 @@ export async function recomputeAccountReadiness(
 
   await replaceReadinessSnapshotEvidence(supabase, snapshot.id, score.contributions);
 
+  // Mirror readiness_score (always) + priority_score (when company fit is known)
+  // onto user_companies so accounts_view — which exposes uc.readiness_score and
+  // uc.priority_score — stays accurate without joining the snapshot. readiness_score
+  // is the canonical signal score (formerly "intent"), = snapshot overall_score.
+  const companyMirroredPriority = computeMirroredPriority(
+    fitSnapshot?.fitScore ?? null,
+    score.overallScore,
+  );
+  const companyMirror: Record<string, number | null> = {
+    readiness_score: score.overallScore,
+  };
+  if (companyMirroredPriority !== undefined) companyMirror.priority_score = companyMirroredPriority;
+  {
+    const { error: mirrorErr } = await supabase
+      .from('user_companies')
+      .update(companyMirror)
+      .eq('company_id', input.companyId)
+      .eq('user_id', input.userId);
+    if (mirrorErr) {
+      console.warn('Account readiness/priority mirror write failed:', mirrorErr.message);
+    }
+  }
+
   return {
     companyId: input.companyId,
     readinessSnapshotId: snapshot.id,
@@ -206,23 +229,27 @@ export async function recomputeContactReadiness(
     score,
   });
 
-  // Mirror priority_score onto contacts so /api/leads can ORDER BY it without
-  // joining the snapshot table. Best-effort: ignored if the column is missing
-  // (older deploys) so a partial migration state doesn't break recompute.
+  // Mirror readiness_score (always) + priority_score (when fit is known) onto
+  // contacts so /api/leads can read/ORDER BY without joining the snapshot.
+  // readiness_score is the canonical signal score (formerly "intent"),
+  // = snapshot overall_score. Best-effort: a mirror failure doesn't fail the
+  // recompute (the snapshot is authoritative).
   const mirroredPriority = computeMirroredPriority(
     contactFitRow?.contact_fit_score ?? null,
     score.overallScore,
   );
-  if (mirroredPriority !== undefined) {
+  const contactMirror: Record<string, number | null> = {
+    readiness_score: score.overallScore,
+  };
+  if (mirroredPriority !== undefined) contactMirror.priority_score = mirroredPriority;
+  {
     const { error: mirrorErr } = await supabase
       .from('contacts')
-      .update({ priority_score: mirroredPriority })
+      .update(contactMirror)
       .eq('id', input.contactId)
       .eq('user_id', input.userId);
     if (mirrorErr) {
-      // Don't fail the readiness recompute for the mirror write — the snapshot
-      // is authoritative. Just log.
-      console.warn('Contact priority_score mirror write failed:', mirrorErr.message);
+      console.warn('Contact readiness/priority mirror write failed:', mirrorErr.message);
     }
   }
 

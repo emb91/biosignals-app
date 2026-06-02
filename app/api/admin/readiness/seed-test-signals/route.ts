@@ -4,7 +4,6 @@ import { createAdminClient } from '@/lib/supabase-admin';
 import { isAdminEmail } from '@/lib/admin-access';
 import { insertCompanySignalEvent, insertContactSignalEvent } from '@/lib/signals/write-signal-event';
 import { mirrorSignalEventToReadiness } from '@/lib/signals/readiness-signal-events';
-import { persistCompanyIntentForCompanyRow, persistContactIntentScore } from '@/lib/signals/persist-intent';
 
 export async function GET(request: Request) {
   try {
@@ -130,10 +129,6 @@ async function seedSignalsForUser(
       insertedCompanyRows.push(row);
     }
 
-    await persistCompanyIntentForCompanyRow(admin, user.id, company.id).catch((e) =>
-      console.warn('[seed-test-signals] company intent persist skipped', e)
-    );
-
     const readinessCompanyResults = await Promise.all(
       insertedCompanyRows.map((row) =>
         mirrorSignalEventToReadiness(admin, user.id, row).catch((e) => {
@@ -160,10 +155,6 @@ async function seedSignalsForUser(
         eventMetadata: { seeded_for_testing: true },
         rawPayload: { seeded_for_testing: true },
       });
-
-      await persistContactIntentScore(admin, user.id, { contactId: contact.id }).catch((e) =>
-        console.warn('[seed-test-signals] contact intent persist skipped', e)
-      );
 
       readinessContactResult = await mirrorSignalEventToReadiness(admin, user.id, contactRow).catch((e) => {
         console.warn('[seed-test-signals] contact readiness mirror skipped', e);

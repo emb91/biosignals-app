@@ -50,7 +50,7 @@ Contact data available:
 - company_name
 - company_fit_score: 0–1 (composite: company type, TA, modality, dev stage, size, funding)
 - contact_fit_score: 0–1 (right function + right seniority for the ICP)
-- intent_score: number >0 means the contact has fired a buying signal (e.g. job change, promotion)
+- readiness_score: number >0 means the contact has fired a buying signal (e.g. job change, promotion)
 - source / data_provenance_type: "HubSpot", "CSV", "Arcova"
 
 Company data (joined):
