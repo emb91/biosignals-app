@@ -170,26 +170,21 @@ export async function recomputeAccountReadiness(
 
   await replaceReadinessSnapshotEvidence(supabase, snapshot.id, score.contributions);
 
-  // Mirror readiness_score (always) + priority_score (when company fit is known)
-  // onto user_companies so accounts_view — which exposes uc.readiness_score and
-  // uc.priority_score — stays accurate without joining the snapshot. readiness_score
-  // is the canonical signal score (formerly "intent"), = snapshot overall_score.
-  const companyMirroredPriority = computeMirroredPriority(
-    fitSnapshot?.fitScore ?? null,
-    score.overallScore,
-  );
-  const companyMirror: Record<string, number | null> = {
-    readiness_score: score.overallScore,
-  };
-  if (companyMirroredPriority !== undefined) companyMirror.priority_score = companyMirroredPriority;
+  // Mirror readiness_score onto user_companies so accounts_view (which exposes
+  // uc.readiness_score) stays accurate without joining the snapshot.
+  // readiness_score is the canonical signal score (formerly "intent"),
+  // = snapshot overall_score. NOTE: user_companies.priority_score is a STORED
+  // GENERATED column (company_fit_score × (0.5 + 0.5 × readiness_score)) — do
+  // NOT write it here; Postgres recomputes it automatically when readiness_score
+  // changes. (Writing it errors: "can only be updated to DEFAULT".)
   {
     const { error: mirrorErr } = await supabase
       .from('user_companies')
-      .update(companyMirror)
+      .update({ readiness_score: score.overallScore })
       .eq('company_id', input.companyId)
       .eq('user_id', input.userId);
     if (mirrorErr) {
-      console.warn('Account readiness/priority mirror write failed:', mirrorErr.message);
+      console.warn('Account readiness mirror write failed:', mirrorErr.message);
     }
   }
 
