@@ -174,6 +174,13 @@ const FIRST_PARTY_SIGNAL_KEYS = new Set<SignalKey>([
   'responded_to_previous_outreach',
 ]);
 
+// Signals emitted by the publications (PubMed) pipeline.
+// `publication` and `new_paper_published` have no standalone run path — use Publications (All).
+const PUBLICATIONS_SINGLE_SIGNAL_KEYS = new Set<SignalKey>([
+  'publication',
+  'new_paper_published',
+]);
+
 // Signals emitted exclusively (or primarily) by the press-release pipeline.
 // These don't have dedicated single-signal run paths — use Press Releases (All).
 const PRESS_RELEASE_SINGLE_SIGNAL_KEYS = new Set<SignalKey>([
@@ -260,9 +267,11 @@ export default function AdminSignalsTestPage() {
       }
 
       setTargets({ companies: targetsJson.companies ?? [], contacts: targetsJson.contacts ?? [] });
-      if (!selectedContactId && (targetsJson.contacts?.[0]?.id ?? '')) {
-        setSelectedContactId(targetsJson.contacts[0].id);
-      }
+      // Intentionally do NOT auto-select a contact here. Auto-selecting silently
+      // scopes "_all" runs (publications_all, etc.) to a single contact without
+      // the operator realising — they think they ran the full pipeline but only
+      // got one contact's worth of results. Leave the picker empty; the operator
+      // sets it deliberately when they want a scoped test run.
 
       const statusesJson = (await statusesRes.json()) as {
         error?: string;
@@ -549,6 +558,11 @@ export default function AdminSignalsTestPage() {
       if (PRESS_RELEASE_SINGLE_SIGNAL_KEYS.has(signalKey)) {
         appendLog(`Skipped: ${signalKey} now runs only via Press Releases (All).`);
         setStatus(`${signalKey} is now bundled under Press Releases (All).`);
+        return;
+      }
+      if (PUBLICATIONS_SINGLE_SIGNAL_KEYS.has(signalKey)) {
+        appendLog(`Skipped: ${signalKey} now runs only via Publications (All).`);
+        setStatus(`${signalKey} is now bundled under Publications (All).`);
         return;
       }
 
@@ -1305,6 +1319,117 @@ export default function AdminSignalsTestPage() {
     }
   }
 
+  async function runPublicationsBundle() {
+    const runKey = 'publications_all';
+    if (busySignal) {
+      appendLog(`Run skipped: ${busySignal} is already in progress.`);
+      setStatus(`A run is already in progress: ${busySignal}`);
+      return;
+    }
+
+    setBusySignal(runKey);
+    const abortController = new AbortController();
+    activeRunAbortRef.current = abortController;
+    setStatus('Running publications bundle (PubMed)...');
+    appendLog('Starting run for publications_all');
+    let heartbeat: ReturnType<typeof setInterval> | null = null;
+    try {
+      const startedAt = Date.now();
+      const body: Record<string, unknown> = {
+        lookback_days: 30,
+        max_per_company: 20,
+        max_per_contact: 10,
+      };
+      if (selectedCompanyId) {
+        body.company_ids = [selectedCompanyId];
+        appendLog(`Target company scope set: ${selectedCompanyId}`);
+      }
+      if (selectedContactId) {
+        body.contact_ids = [selectedContactId];
+        appendLog(`Target contact scope set: ${selectedContactId}`);
+      }
+      if (!selectedCompanyId && !selectedContactId) {
+        appendLog('No target selected; running all companies + contacts.');
+      }
+      appendLog('Querying PubMed for company affiliation + contact author matches (30-day window)...');
+
+      appendLog('Calling /api/signals/run/publications...');
+      heartbeat = setInterval(() => {
+        const elapsedSec = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
+        appendLog(`Run in progress... ${elapsedSec}s elapsed`);
+      }, 5000);
+      const res = await fetch('/api/signals/run/publications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: abortController.signal,
+      });
+      clearInterval(heartbeat);
+      heartbeat = null;
+      const json = await res.json();
+      appendLog(`Run completed with HTTP ${res.status}`);
+
+      setLastResponse({
+        signalKey: runKey,
+        ok: res.ok,
+        httpStatus: res.status,
+        payload: json,
+        at: new Date().toISOString(),
+      });
+      setHistory((prev) => [
+        {
+          signalKey: runKey,
+          ok: res.ok,
+          httpStatus: res.status,
+          at: new Date().toISOString(),
+        },
+        ...prev.slice(0, 11),
+      ]);
+
+      if (!res.ok) {
+        appendLog(`Run failed: ${(json as { error?: string })?.error ?? 'Unknown error'}`);
+        setStatus(`publications_all failed: ${(json as { error?: string })?.error ?? 'Unknown error'}`);
+      } else {
+        const result = (json as { result?: Record<string, unknown> })?.result;
+        if (result) {
+          appendLog(
+            `Companies: processed=${String(result.companies_processed ?? 0)} failed=${String(result.companies_failed ?? 0)} articles_scanned=${String(result.company_articles_scanned ?? 0)}`,
+          );
+          appendLog(
+            `Contacts: processed=${String(result.contacts_processed ?? 0)} failed=${String(result.contacts_failed ?? 0)} articles_scanned=${String(result.contact_articles_scanned ?? 0)}`,
+          );
+          if (typeof result.candidate_events_matched_before_dedupe === 'number') {
+            appendLog(`Candidate events (pre-dedupe)=${String(result.candidate_events_matched_before_dedupe)}`);
+          }
+          if (typeof result.events_skipped_as_duplicates === 'number') {
+            appendLog(`Duplicates skipped=${String(result.events_skipped_as_duplicates)}`);
+          }
+          const signalTypes = Array.isArray(result.emitted_signal_types) ? (result.emitted_signal_types as string[]) : [];
+          if (signalTypes.length > 0) {
+            appendLog(`Emitted signal types: ${signalTypes.join(', ')}`);
+          }
+        }
+        appendLog('Refreshing signal status colors...');
+        setStatus('publications_all ingestion complete. Signal statuses refreshed.');
+      }
+      await refreshSignalStatuses();
+      appendLog('Signal status refresh complete.');
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        appendLog('Run cancelled by user.');
+        setStatus('publications_all cancelled.');
+        return;
+      }
+      appendLog(`Run errored: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setStatus(`publications_all failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      activeRunAbortRef.current = null;
+      if (heartbeat) clearInterval(heartbeat);
+      appendLog('Run finished for publications_all');
+      setBusySignal(null);
+    }
+  }
+
   async function runHiringBundle() {
     const runKey = 'hiring_all';
     if (busySignal) {
@@ -1984,6 +2109,20 @@ export default function AdminSignalsTestPage() {
                     </div>
                   </button>
                 )}
+                {dimension === 'new_strategy' && (
+                  <button
+                    type="button"
+                    onClick={() => void runPublicationsBundle()}
+                    disabled={busySignal !== null}
+                    className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-left text-sm font-medium text-emerald-900 hover:bg-emerald-100 disabled:opacity-50"
+                  >
+                    <div className="font-medium">publications_all</div>
+                    <div className="text-xs text-emerald-700">Company + Contact · PubMed 30 days</div>
+                    <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-800">
+                      {busySignal === 'publications_all' ? 'Running...' : 'Active'}
+                    </div>
+                  </button>
+                )}
 
                 {dimension === 'new_people' && (
                   <button
@@ -2024,6 +2163,7 @@ export default function AdminSignalsTestPage() {
                       GRANTS_SINGLE_SIGNAL_KEYS.has(entry.signalKey as SignalKey) ||
                       JOB_CHANGE_SINGLE_SIGNAL_KEYS.has(entry.signalKey as SignalKey) ||
                       PRESS_RELEASE_SINGLE_SIGNAL_KEYS.has(entry.signalKey as SignalKey) ||
+                      PUBLICATIONS_SINGLE_SIGNAL_KEYS.has(entry.signalKey as SignalKey) ||
                       FIRST_PARTY_SIGNAL_KEYS.has(entry.signalKey as SignalKey)
                     ) {
                       return null;

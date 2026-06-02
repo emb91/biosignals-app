@@ -1860,26 +1860,34 @@ export function ContactsWorkspace() {
     setStopEnrichmentError(null);
     // Optimistically clear enrichment state so the UI stops showing
     // "Enrichment running…" immediately, before the fetch round-trip.
+    //
+    // CRITICAL: we have to patch BOTH the lean list (`leads`) AND the per-lead
+    // detail cache (`selectedLeadDetailById`). selectedLead is the merge of
+    // those two with detail winning (see line 2028) — if we only patch the
+    // lean list, the detail cache's stale "running" overrides our flip on
+    // every render and the "Enrichment running…" pill never disappears. That
+    // was the bug.
+    const optimisticPatch = (lead: Pick<Lead, 'linkedin_resolution_status' | 'profile_enrichment_status'>) => ({
+      enrichment_refresh_status: 'cancelled' as const,
+      linkedin_resolution_status:
+        lead.linkedin_resolution_status === 'pending' ||
+        lead.linkedin_resolution_status === 'processing'
+          ? ('failed' as const)
+          : lead.linkedin_resolution_status,
+      profile_enrichment_status:
+        lead.profile_enrichment_status === 'pending' ||
+        lead.profile_enrichment_status === 'processing'
+          ? ('blocked' as const)
+          : lead.profile_enrichment_status,
+    });
     setLeads((prev) =>
-      prev.map((lead) =>
-        lead.id === leadId
-          ? {
-              ...lead,
-              enrichment_refresh_status: 'cancelled',
-              linkedin_resolution_status:
-                lead.linkedin_resolution_status === 'pending' ||
-                lead.linkedin_resolution_status === 'processing'
-                  ? 'failed'
-                  : lead.linkedin_resolution_status,
-              profile_enrichment_status:
-                lead.profile_enrichment_status === 'pending' ||
-                lead.profile_enrichment_status === 'processing'
-                  ? 'blocked'
-                  : lead.profile_enrichment_status,
-            }
-          : lead,
-      ),
+      prev.map((lead) => (lead.id === leadId ? { ...lead, ...optimisticPatch(lead) } : lead)),
     );
+    setSelectedLeadDetailById((prev) => {
+      const existing = prev[leadId];
+      if (!existing) return prev;
+      return { ...prev, [leadId]: { ...existing, ...optimisticPatch(existing as Lead) } };
+    });
     try {
       const response = await fetch(`/api/enrich/${leadId}`, { method: 'DELETE' });
       // 409 means enrichment already finished — not an error worth surfacing
@@ -1889,6 +1897,10 @@ export function ContactsWorkspace() {
           typeof result.error === 'string' ? result.error : 'Could not stop enrichment.',
         );
       }
+      // Invalidate the per-lead detail cache entry so the next read of the
+      // selected lead pulls the server's confirmed post-stop state rather
+      // than the in-memory optimistic patch.
+      invalidateCache(`/api/leads/${encodeURIComponent(leadId)}`);
       await fetchLeads(true);
     } catch (error) {
       console.error('Error stopping enrichment:', error);
@@ -2070,6 +2082,18 @@ export function ContactsWorkspace() {
   const isSelectedLeadRefreshRunning = selectedLead ? isLeadRefreshRunning(selectedLead) : false;
   const selectedLeadRefreshStatus = selectedLead ? getLeadRefreshStatus(selectedLead) : 'idle';
   const selectedLeadRefreshStatusMeta = getLeadRefreshStatusMeta(selectedLeadRefreshStatus);
+  // Effective status: roll the rolled-up `enrichment_refresh_status` together
+  // with the per-stage statuses (linkedin_resolution_status,
+  // profile_enrichment_status). If ANY per-stage queue entry is still pending
+  // or processing, the contact IS effectively still enriching even if the
+  // top-level refresh job has been marked `cancelled` / `succeeded` / `failed`
+  // by a stuck or partial state. The Stop button + pill should track this
+  // effective status so the UI never lies (showing "Enrichment running…" on
+  // the bottom button while also showing "Enrichment stopped" in the pill).
+  // `isSelectedLeadRefreshRunning` is defined above.
+  const effectiveRefreshStatus: LeadRefreshStatus =
+    isSelectedLeadRefreshRunning ? 'running' : selectedLeadRefreshStatus;
+  const effectiveRefreshStatusMeta = getLeadRefreshStatusMeta(effectiveRefreshStatus);
 
   const selectedLeadDataSourceTypeLabel =
     !selectedLead
@@ -4087,11 +4111,11 @@ export function ContactsWorkspace() {
                                     Last updated {formatLastUpdated(selectedLead.updated_at || selectedLead.created_at)}
                                   </p>
 
-                                  {selectedLeadRefreshStatus === 'running' && (
+                                  {effectiveRefreshStatus === 'running' && (
                                     <div
-                                      className={`rounded-lg border px-3 py-2 text-xs ${selectedLeadRefreshStatusMeta.className}`}
+                                      className={`rounded-lg border px-3 py-2 text-xs ${effectiveRefreshStatusMeta.className}`}
                                     >
-                                      <p className="font-medium">{selectedLeadRefreshStatusMeta.label}</p>
+                                      <p className="font-medium">{effectiveRefreshStatusMeta.label}</p>
                                       <div className="mt-2 flex flex-col gap-1.5">
                                         <button
                                           type="button"
@@ -4695,11 +4719,11 @@ export function ContactsWorkspace() {
                               Last updated {formatLastUpdated(selectedLead.updated_at || selectedLead.created_at)}
                             </p>
 
-                            {selectedLeadRefreshStatus === 'running' && (
+                            {effectiveRefreshStatus === 'running' && (
                               <div
-                                className={`rounded-lg border px-3 py-2 text-xs ${selectedLeadRefreshStatusMeta.className}`}
+                                className={`rounded-lg border px-3 py-2 text-xs ${effectiveRefreshStatusMeta.className}`}
                               >
-                                <p className="font-medium">{selectedLeadRefreshStatusMeta.label}</p>
+                                <p className="font-medium">{effectiveRefreshStatusMeta.label}</p>
                                 <div className="mt-2 flex flex-col gap-1.5">
                                   <button
                                     type="button"
