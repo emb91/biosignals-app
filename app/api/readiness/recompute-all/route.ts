@@ -74,7 +74,13 @@ export async function POST(request: Request) {
 
     for (const row of (companyRows ?? []) as Array<{ company_id: string }>) {
       try {
-        await recomputeAccountReadiness(admin, { userId: user.id, companyId: row.company_id });
+        // cascadeContacts:false — this route recomputes every contact in its own
+        // loop below, so per-company cascade would be redundant double work.
+        await recomputeAccountReadiness(admin, {
+          userId: user.id,
+          companyId: row.company_id,
+          cascadeContacts: false,
+        });
         companiesProcessed += 1;
         if (regenerateReasons) {
           try {

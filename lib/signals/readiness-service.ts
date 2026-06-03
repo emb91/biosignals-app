@@ -68,6 +68,13 @@ export type RecomputeAccountReadinessInput = {
   userId: string;
   companyId: string;
   targetBuyerFunctions?: BuyerFunction[];
+  /**
+   * Cascade to this company's contacts when its readiness changes. Contact
+   * priority folds in company readiness (effectiveReadiness), so a company whose
+   * readiness moves must re-rank its contacts. Default true. Bulk recompute-all
+   * paths that loop contacts themselves pass false to avoid double work.
+   */
+  cascadeContacts?: boolean;
 };
 
 export type RecomputeAccountReadinessResult = {
@@ -161,6 +168,21 @@ export async function recomputeAccountReadiness(
     targetBuyerFunctions: input.targetBuyerFunctions,
   });
 
+  // Capture the previous company readiness BEFORE the mirror write, so the
+  // cascade below only fires when readiness actually moved (keeps routine
+  // monitor sweeps that find nothing new from re-scoring every contact).
+  const cascadeContacts = input.cascadeContacts !== false;
+  let previousReadiness: number | null = null;
+  if (cascadeContacts) {
+    const { data: prev } = await supabase
+      .from('user_companies')
+      .select('readiness_score')
+      .eq('company_id', input.companyId)
+      .eq('user_id', input.userId)
+      .maybeSingle();
+    previousReadiness = (prev as { readiness_score?: number | null } | null)?.readiness_score ?? null;
+  }
+
   const snapshot = await upsertAccountReadinessSnapshot(supabase, {
     userId: input.userId,
     companyId: input.companyId,
@@ -186,6 +208,40 @@ export async function recomputeAccountReadiness(
       .eq('user_id', input.userId);
     if (mirrorErr) {
       console.warn('Account readiness mirror write failed:', mirrorErr.message);
+    }
+  }
+
+  // Cascade: contact priority = fit × (0.5 + 0.5 × effectiveReadiness(company,
+  // contact)). When this company's readiness changes, its contacts' priorities
+  // are stale until they recompute, so refresh them here. Only when it actually
+  // moved, and only when the caller didn't opt out (bulk recompute-all loops
+  // contacts itself). recomputeContactReadiness does NOT call back into account
+  // readiness, so there's no recursion.
+  if (cascadeContacts) {
+    const moved =
+      previousReadiness == null || Math.abs(previousReadiness - score.overallScore) > 0.001;
+    if (moved) {
+      const { data: contactRows } = await supabase
+        .from('contacts')
+        .select('id')
+        .eq('user_id', input.userId)
+        .eq('company_id', input.companyId)
+        .is('archived_at', null);
+      for (const row of (contactRows ?? []) as Array<{ id: string }>) {
+        try {
+          await recomputeContactReadiness(supabase, {
+            userId: input.userId,
+            contactId: row.id,
+            targetBuyerFunctions: input.targetBuyerFunctions,
+          });
+        } catch (cascadeErr) {
+          console.warn(
+            'Contact priority cascade failed for',
+            row.id,
+            cascadeErr instanceof Error ? cascadeErr.message : cascadeErr,
+          );
+        }
+      }
     }
   }
 
