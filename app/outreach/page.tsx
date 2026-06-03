@@ -602,7 +602,10 @@ export default function OutreachPage() {
                 </p>
               </div>
             ) : (
-              <div className="relative min-h-0 flex-1 rounded-2xl border border-white/80 bg-white/55 backdrop-blur-xl shadow-[0_8px_24px_-16px_rgba(13,53,71,0.2)] overflow-hidden">
+              {/* Container sizes to its content (no flex-1) — a 2-row table shouldn't
+                  fill the whole viewport. max-h-full caps it when there are many rows
+                  so the inner scroll still kicks in within the page. */}
+              <div className="relative max-h-full rounded-2xl border border-white/80 bg-white/55 backdrop-blur-xl shadow-[0_8px_24px_-16px_rgba(13,53,71,0.2)] overflow-hidden">
                 {/* Scroll affordance — a gradient fade on the right edge of the table
                     so it's visually obvious the row extends past the visible area.
                     `pointer-events-none` so it doesn't intercept the table clicks. */}
@@ -611,7 +614,7 @@ export default function OutreachPage() {
                 <div className="pointer-events-none absolute top-2 right-2 z-30 rounded-full border border-[rgba(13,53,71,0.1)] bg-white/85 px-2 py-0.5 text-[10px] font-semibold text-arcova-teal shadow-sm">
                   Scroll →
                 </div>
-                <div className="h-full overflow-auto">
+                <div className="overflow-auto">
                   <table className="w-full text-[12.5px]">
                     <thead className="bg-white/60 border-b border-[rgba(13,53,71,0.07)]">
                       <tr>
