@@ -1566,7 +1566,7 @@ export default function AccountsPage() {
                                   <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
                                     <button
                                       type="button"
-                                      onClick={() => router.push(ROUTES.accountSignals)}
+                                      onClick={() => router.push(ROUTES.accounts)}
                                       className="inline-flex items-center gap-1.5 text-sm font-semibold text-arcova-teal hover:text-arcova-teal/85 transition-colors"
                                     >
                                       View Signals
@@ -1711,7 +1711,7 @@ export default function AccountsPage() {
                                 </p>
                                 <button
                                   type="button"
-                                  onClick={() => router.push(ROUTES.accountSignals)}
+                                  onClick={() => router.push(ROUTES.accounts)}
                                   className="inline-flex items-center gap-1.5 text-sm font-semibold text-arcova-teal hover:text-arcova-teal/85 transition-colors"
                                 >
                                   Review signals

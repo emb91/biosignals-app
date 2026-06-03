@@ -18,8 +18,15 @@
  *     anchor returns the cached draft from outreach_sequences (no re-run).
  */
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, RefreshCw, Download, Copy, ChevronLeft } from 'lucide-react';
-import { invalidateCache } from '@/lib/page-fetch-cache';
+import { useRouter } from 'next/navigation';
+import { Loader2, RefreshCw, Download, Copy, ChevronLeft, Send } from 'lucide-react';
+import { cachedJson, invalidateCache } from '@/lib/page-fetch-cache';
+
+// Hooks are deterministic for a given contact + day (signal events flow in
+// at most daily). Cache for 24h — the "Re-query" button bypasses the cache
+// for the rare "I want fresh" case. Without this, switching contacts and
+// coming back triggers a wasteful re-fetch every time.
+const HOOKS_TTL_MS = 24 * 60 * 60 * 1000;
 
 // Compact date format for hook chips. Shows "May 30" (current year) or
 // "May 30 '25" (other years). Keeps the picker rows tight.
@@ -106,6 +113,17 @@ type Message = {
   body: string;
 };
 
+type ExistingSequence = {
+  id: string;
+  anchor_hook_text: string;
+  anchor_signal_type: string | null;
+  dispatch_status: 'draft' | 'sent' | 'replied' | 'failed' | 'exported' | 'queued' | string | null;
+  dispatch_channel: string | null;
+  dispatch_error: string | null;
+  last_status_at: string | null;
+  created_at: string;
+};
+
 type Gating = {
   contact_fit_score: number | null;
   company_fit_score: number | null;
@@ -134,6 +152,12 @@ export function OutreachPanel({ contactId, contactName }: Props) {
   // evaluated and honestly concluded nothing concrete fits.
   const [aiVerdict, setAiVerdict] = useState<'ok' | 'no_strong_hooks' | null>(null);
 
+  // Existing sequence for this contact, if any. Drives the "you're already
+  // reaching out to this person" notice instead of the picker.
+  const [existingSequence, setExistingSequence] = useState<ExistingSequence | null>(null);
+  // User clicked "Stage another angle" — hide the notice + show the picker.
+  const [overrideExisting, setOverrideExisting] = useState(false);
+
   // Editor state
   const [anchorHook, setAnchorHook] = useState<Hook | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -143,6 +167,11 @@ export function OutreachPanel({ contactId, contactName }: Props) {
   // Export state
   const [exporting, setExporting] = useState<'csv' | 'clipboard' | null>(null);
   const [exportSuccess, setExportSuccess] = useState<string | null>(null);
+
+  // Staging state — primary path now: drop the sequence into /outreach for
+  // multi-step channel selection + lemlist dispatch.
+  const [staging, setStaging] = useState(false);
+  const router = useRouter();
 
   // Reset when contact changes
   useEffect(() => {
@@ -156,6 +185,8 @@ export function OutreachPanel({ contactId, contactName }: Props) {
     setGating(null);
     setCuration(null);
     setAiVerdict(null);
+    setExistingSequence(null);
+    setOverrideExisting(false);
   }, [contactId]);
 
   // Auto-load signals on mount — cheap DB query, no LLM cost.
@@ -172,18 +203,26 @@ export function OutreachPanel({ contactId, contactName }: Props) {
     setHooksError(null);
     (async () => {
       try {
-        const res = await fetch(`/api/outreach/hooks?contactId=${encodeURIComponent(contactId)}`);
-        const json = await res.json();
+        const { data: json } = await cachedJson<{
+          hooks?: Hook[];
+          gated?: boolean;
+          gating?: Gating;
+          curation?: string;
+          ai_verdict?: string;
+          existing_sequence?: ExistingSequence | null;
+        }>(`/api/outreach/hooks?contactId=${encodeURIComponent(contactId)}`, {
+          ttlMs: HOOKS_TTL_MS,
+        });
         if (cancelled) return;
-        if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
         setHooks(json.hooks ?? []);
-        setGating(json.gated === true && json.gating ? (json.gating as Gating) : null);
+        setGating(json.gated === true && json.gating ? json.gating : null);
         setCuration(json.curation === 'ai' || json.curation === 'mechanical' ? json.curation : null);
         setAiVerdict(
           json.ai_verdict === 'ok' || json.ai_verdict === 'no_strong_hooks'
             ? json.ai_verdict
             : null,
         );
+        setExistingSequence(json.existing_sequence ?? null);
       } catch (e) {
         if (cancelled) return;
         setHooksError(e instanceof Error ? e.message : String(e));
@@ -197,12 +236,14 @@ export function OutreachPanel({ contactId, contactName }: Props) {
   }, [contactId, hooks]);
 
   const refreshHooks = useCallback(() => {
+    // Drop this contact's cache entry so the effect re-fetches from the network.
+    invalidateCache(`/api/outreach/hooks?contactId=${encodeURIComponent(contactId)}`);
     setHooks(null);
     setHooksError(null);
     setGating(null);
     setCuration(null);
     setAiVerdict(null);
-  }, []);
+  }, [contactId]);
 
   const pickHook = useCallback(
     async (hook: Hook) => {
@@ -244,9 +285,33 @@ export function OutreachPanel({ contactId, contactName }: Props) {
     setExportSuccess(null);
   }, []);
 
-  const updateMessage = useCallback((index: number, patch: Partial<Message>) => {
-    setMessages((prev) => prev.map((m, i) => (i === index ? { ...m, ...patch } : m)));
-  }, []);
+  const stageForOutreach = useCallback(async () => {
+    if (!anchorHook || messages.length === 0) return;
+    setStaging(true);
+    setExportSuccess(null);
+    try {
+      const res = await fetch('/api/outreach/lemlist/stage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contactId,
+          anchorHookText: anchorHook.title,
+          anchorSignalEventId: anchorHook.source_event_id,
+          anchorSignalType: anchorHook.signal_type,
+          // Default channel = email; user picks per-step in the /outreach editor.
+          messages: messages.map((m) => ({ ...m, channel: 'email' })),
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { id?: string; error?: string };
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      invalidateCache('/api/outreach');
+      router.push(`/outreach?highlight=${encodeURIComponent(json.id ?? '')}`);
+    } catch (e) {
+      setExportSuccess(`Stage failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setStaging(false);
+    }
+  }, [anchorHook, messages, contactId, router]);
 
   const exportSequence = useCallback(
     async (format: 'csv' | 'clipboard') => {
@@ -295,6 +360,23 @@ export function OutreachPanel({ contactId, contactName }: Props) {
     },
     [anchorHook, messages, contactId, contactName],
   );
+
+  // ── ALREADY-CONTACTED NOTICE ────────────────────────────────────────────
+  // If we have a prior sequence and the user hasn't asked to override, show
+  // a state-aware notice instead of the hook picker. Click "Stage another
+  // angle" to fall through to the picker.
+  if (view === 'picker' && existingSequence && !overrideExisting) {
+    return (
+      <ContactedNotice
+        sequence={existingSequence}
+        contactName={contactName}
+        onStageAnother={() => setOverrideExisting(true)}
+        onOpenOutreach={() =>
+          router.push(`/outreach?highlight=${encodeURIComponent(existingSequence.id)}`)
+        }
+      />
+    );
+  }
 
   // ── PICKER ──────────────────────────────────────────────────────────────
   if (view === 'picker') {
@@ -458,34 +540,32 @@ export function OutreachPanel({ contactId, contactName }: Props) {
 
       {messages.length > 0 && (
         <>
-          <ul className="space-y-3">
-            {messages.map((m, i) => (
-              <li key={i} className="rounded-xl border border-gray-150 bg-white p-3">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-2">
-                  {m.day_offset === 0 ? 'Day 0 · Initial' : `Day ${m.day_offset} · Follow-up`}
-                </p>
-                <input
-                  type="text"
-                  value={m.subject}
-                  onChange={(e) => updateMessage(i, { subject: e.target.value })}
-                  className="w-full rounded-md border border-gray-200 px-2 py-1 text-sm font-medium text-gray-900 focus:border-arcova-teal focus:outline-none focus:ring-1 focus:ring-arcova-teal/30"
-                  placeholder="Subject"
-                />
-                <textarea
-                  value={m.body}
-                  onChange={(e) => updateMessage(i, { body: e.target.value })}
-                  rows={Math.min(10, Math.max(3, m.body.split('\n').length + 1))}
-                  className="mt-2 w-full rounded-md border border-gray-200 px-2 py-1.5 text-sm text-gray-700 leading-snug focus:border-arcova-teal focus:outline-none focus:ring-1 focus:ring-arcova-teal/30"
-                  placeholder="Message body"
-                />
-              </li>
-            ))}
-          </ul>
+          {/* Primary CTA pinned to the top — staging is the main action,
+              and the rep shouldn't have to scroll a 7-message preview to find
+              the button. Edits happen on /outreach where there's room. */}
+          <div className="sticky top-0 z-10 -mx-1 mb-1 bg-white/85 px-1 pt-0.5 pb-2 backdrop-blur">
+            <button
+              type="button"
+              onClick={() => void stageForOutreach()}
+              disabled={staging || exporting !== null}
+              className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-arcova-navy text-white px-3 py-2 text-sm font-semibold hover:bg-[#0d3547] transition-colors disabled:opacity-60"
+            >
+              {staging ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Send className="w-3.5 h-3.5" />
+              )}
+              {staging ? 'Staging…' : 'Stage for outreach'}
+            </button>
+            <p className="mt-1 text-[11px] text-gray-500">
+              Pick channel + edit copy on the next screen.
+            </p>
+          </div>
 
           {exportSuccess && (
             <div
               className={`rounded-lg border px-3 py-2 text-xs ${
-                exportSuccess.startsWith('Export failed')
+                exportSuccess.startsWith('Export failed') || exportSuccess.startsWith('Stage failed')
                   ? 'border-red-200 bg-red-50 text-red-700'
                   : 'border-green-200 bg-green-50 text-green-800'
               }`}
@@ -494,36 +574,174 @@ export function OutreachPanel({ contactId, contactName }: Props) {
             </div>
           )}
 
-          <div className="flex flex-col gap-2 pt-1">
-            <button
-              type="button"
-              onClick={() => exportSequence('csv')}
-              disabled={exporting !== null}
-              className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-arcova-teal text-white px-3 py-2 text-sm font-semibold hover:bg-arcova-teal/90 transition-colors disabled:opacity-60"
-            >
-              {exporting === 'csv' ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Download className="w-3.5 h-3.5" />
-              )}
-              Save & download CSV
-            </button>
-            <button
-              type="button"
-              onClick={() => exportSequence('clipboard')}
-              disabled={exporting !== null}
-              className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-arcova-teal/40 text-arcova-teal px-3 py-2 text-sm font-semibold hover:bg-arcova-teal/5 transition-colors disabled:opacity-60"
-            >
-              {exporting === 'clipboard' ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Copy className="w-3.5 h-3.5" />
-              )}
-              Save & copy to clipboard
-            </button>
-          </div>
+          {/* Read-only preview cards. No inputs/textareas — keeps the panel
+              compact and signals "this is a draft, edit it in /outreach". */}
+          <ul className="space-y-2">
+            {messages.map((m, i) => (
+              <li key={i} className="rounded-xl border border-gray-150 bg-white p-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">
+                  {m.day_offset === 0 ? 'Day 0 · Initial' : `Day ${m.day_offset} · Follow-up`}
+                </p>
+                <p className="text-[13px] font-medium text-gray-900 leading-snug">
+                  {m.subject}
+                </p>
+                <p className="mt-1.5 whitespace-pre-wrap text-[12.5px] text-gray-700 leading-snug">
+                  {m.body}
+                </p>
+              </li>
+            ))}
+          </ul>
+
+          <details className="group pt-1">
+            <summary className="cursor-pointer text-[11.5px] text-gray-500 hover:text-arcova-teal list-none flex items-center gap-1">
+              <span>Other export options</span>
+            </summary>
+            <div className="mt-2 flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => exportSequence('csv')}
+                disabled={exporting !== null}
+                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-arcova-teal/40 text-arcova-teal px-3 py-2 text-[12.5px] font-semibold hover:bg-arcova-teal/5 transition-colors disabled:opacity-60"
+              >
+                {exporting === 'csv' ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Download className="w-3.5 h-3.5" />
+                )}
+                Save & download CSV
+              </button>
+              <button
+                type="button"
+                onClick={() => exportSequence('clipboard')}
+                disabled={exporting !== null}
+                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-arcova-teal/40 text-arcova-teal px-3 py-2 text-[12.5px] font-semibold hover:bg-arcova-teal/5 transition-colors disabled:opacity-60"
+              >
+                {exporting === 'clipboard' ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Copy className="w-3.5 h-3.5" />
+                )}
+                Save & copy to clipboard
+              </button>
+            </div>
+          </details>
         </>
       )}
+    </div>
+  );
+}
+
+// ── ContactedNotice ──────────────────────────────────────────────────────────
+// State-aware "you've already reached out" message. Replaces the hook picker
+// when an outreach_sequences row already exists for this contact, so reps
+// don't accidentally double-pitch.
+//
+// Five states, each with distinct copy + actions:
+//   draft   — sequence staged but not sent. "Open draft" + "Draft another".
+//   sent    — leads enrolled in lemlist. "Open" + "Stage another angle".
+//   replied — they answered. "Open" only — human takes over here.
+//   failed  — last dispatch errored. "Open to retry" + "Stage another angle".
+//   exported/queued — fallback, just a generic "previously contacted" note.
+function ContactedNotice({
+  sequence,
+  contactName,
+  onStageAnother,
+  onOpenOutreach,
+}: {
+  sequence: ExistingSequence;
+  contactName: string;
+  onStageAnother: () => void;
+  onOpenOutreach: () => void;
+}) {
+  const firstName = (contactName ?? '').trim().split(/\s+/)[0] || 'this contact';
+  const when = sequence.last_status_at ?? sequence.created_at;
+  const whenStr = when
+    ? new Date(when).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    : '';
+
+  const status = (sequence.dispatch_status ?? 'draft').toLowerCase();
+
+  let headline = '';
+  let body: React.ReactNode = null;
+  let allowAnother = false;
+  let openLabel = 'Open in /outreach';
+
+  if (status === 'draft') {
+    headline = `You've already drafted a sequence for ${firstName}.`;
+    body = (
+      <>
+        Anchored on: <span className="text-gray-900">{sequence.anchor_hook_text}</span>. Open it
+        to edit copy + send to lemlist, or draft a different angle.
+      </>
+    );
+    allowAnother = true;
+    openLabel = 'Open draft';
+  } else if (status === 'sent' || status === 'queued') {
+    headline = `You're already reaching out to ${firstName}.`;
+    body = (
+      <>
+        Sequence sent {whenStr && `on ${whenStr} `}anchored on:{' '}
+        <span className="text-gray-900">{sequence.anchor_hook_text}</span>. Wait for a reply
+        before pitching a new angle — or open it to track status.
+      </>
+    );
+    allowAnother = true;
+  } else if (status === 'replied') {
+    headline = `${firstName} replied.`;
+    body = (
+      <>
+        They responded {whenStr && `on ${whenStr} `}to the sequence anchored on:{' '}
+        <span className="text-gray-900">{sequence.anchor_hook_text}</span>. Take it human from
+        here — open to see the thread.
+      </>
+    );
+    allowAnother = false;
+  } else if (status === 'failed') {
+    headline = `Last dispatch to ${firstName} failed.`;
+    body = (
+      <>
+        <span className="text-red-700">{sequence.dispatch_error || 'Unknown error'}</span>. Open
+        to retry, or stage another angle.
+      </>
+    );
+    allowAnother = true;
+    openLabel = 'Open to retry';
+  } else {
+    headline = `${firstName} was previously contacted.`;
+    body = (
+      <>
+        Anchored on: <span className="text-gray-900">{sequence.anchor_hook_text}</span>.
+      </>
+    );
+    allowAnother = true;
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-3.5">
+        <p className="text-[13px] font-semibold text-[#0d3547]">{headline}</p>
+        <p className="mt-1 text-[12.5px] leading-snug text-gray-700">{body}</p>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <button
+          type="button"
+          onClick={onOpenOutreach}
+          className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-arcova-navy text-white px-3 py-2 text-sm font-semibold hover:bg-[#0d3547] transition-colors"
+        >
+          <Send className="w-3.5 h-3.5" />
+          {openLabel}
+        </button>
+        {allowAnother && (
+          <button
+            type="button"
+            onClick={onStageAnother}
+            className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-arcova-teal/40 text-arcova-teal px-3 py-2 text-[12.5px] font-semibold hover:bg-arcova-teal/5 transition-colors"
+          >
+            Stage another angle
+          </button>
+        )}
+      </div>
     </div>
   );
 }

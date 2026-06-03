@@ -4473,7 +4473,7 @@ export function ContactsWorkspace() {
                                       <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
                                         <button
                                           type="button"
-                                          onClick={() => router.push(ROUTES.contactSignals)}
+                                          onClick={() => router.push(ROUTES.contacts)}
                                           className="inline-flex items-center gap-1.5 text-sm font-semibold text-arcova-teal hover:text-arcova-teal/85 transition-colors"
                                         >
                                           View Signals

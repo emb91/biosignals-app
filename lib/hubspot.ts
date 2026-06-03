@@ -15,6 +15,10 @@ export type ArcovaContactProperties = {
   arcova_enriched_email: string;
   arcova_enriched_at: string;
   arcova_person_summary: string;
+  arcova_outreach_status: string;
+  arcova_last_outreach_at: string;
+  arcova_last_outreach_anchor: string;
+  arcova_last_outreach_channel: string;
 };
 
 export type ArcovaCompanyProperties = {
@@ -110,6 +114,13 @@ const ARCOVA_CONTACT_PROPERTIES: HubSpotPropertyDefinition[] = [
   { name: 'arcova_enriched_at', label: 'Arcova: Enriched At', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
   { name: 'arcova_person_summary', label: 'Arcova: Person Summary', type: 'string', fieldType: 'textarea', groupName: 'arcova_intelligence' },
   { name: 'arcova_linkedin_url', label: 'Arcova: LinkedIn URL', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
+  // Outreach lifecycle — updated by /api/outreach/lemlist/dispatch and the
+  // reply webhook. Surfaces "we've reached out / they replied" inside HubSpot
+  // so reps not in Arcova still see the state.
+  { name: 'arcova_outreach_status', label: 'Arcova: Outreach Status', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
+  { name: 'arcova_last_outreach_at', label: 'Arcova: Last Outreach At', type: 'datetime', fieldType: 'date', groupName: 'arcova_intelligence' },
+  { name: 'arcova_last_outreach_anchor', label: 'Arcova: Last Outreach Anchor', type: 'string', fieldType: 'textarea', groupName: 'arcova_intelligence' },
+  { name: 'arcova_last_outreach_channel', label: 'Arcova: Last Outreach Channel', type: 'string', fieldType: 'text', groupName: 'arcova_intelligence' },
 ];
 
 const ARCOVA_COMPANY_PROPERTIES: HubSpotPropertyDefinition[] = [
@@ -511,4 +522,76 @@ export async function fetchHubSpotContacts(accessToken: string): Promise<HubSpot
   } while (after);
 
   return contacts;
+}
+
+// ── Token helper for outreach side-effects ────────────────────────────────
+// Tiny convenience for routes (dispatch, webhook) that need to push status
+// to HubSpot as a side-effect. Returns null if the user hasn't connected
+// HubSpot or the token fetch fails — callers treat HubSpot push as best-effort.
+export async function getHubSpotTokenForUser(
+  userId: string,
+): Promise<string | null> {
+  try {
+    const { nango: nangoLib, HUBSPOT_INTEGRATION_ID: integrationId } = await import('./nango');
+    const { createClient } = await import('./supabase-server');
+    const supabase = await createClient();
+    const { data: conn } = await supabase
+      .from('nango_connections')
+      .select('nango_connection_id')
+      .eq('user_id', userId)
+      .eq('integration_id', integrationId)
+      .maybeSingle();
+    const connRow = conn as { nango_connection_id?: string } | null;
+    if (!connRow?.nango_connection_id) return null;
+    return (await nangoLib.getToken(integrationId, connRow.nango_connection_id)) as string;
+  } catch {
+    return null;
+  }
+}
+
+// ── Outreach status push ──────────────────────────────────────────────────
+// Single-contact PATCH by email. Used after a lemlist dispatch (status='sent')
+// and from the reply webhook (status='replied'|'failed'). Only updates
+// contacts that already exist in HubSpot — we don't create new ones from
+// outreach activity, which would pollute the CRM.
+
+export type OutreachHubSpotUpdate = {
+  email: string;
+  status: 'sent' | 'replied' | 'failed';
+  anchor?: string | null;
+  channel?: string | null;
+  /** ISO timestamp. Defaults to now. */
+  at?: string;
+};
+
+/**
+ * Push outreach lifecycle data for one contact to HubSpot.
+ *
+ * Returns 'updated' on success, 'not_found' if the contact isn't in HubSpot
+ * (404, expected — we silently skip), or 'error' on any other failure.
+ * Callers should treat this as best-effort and NEVER block dispatch on it.
+ */
+export async function pushOutreachStatusByEmail(
+  accessToken: string,
+  update: OutreachHubSpotUpdate,
+): Promise<'updated' | 'not_found' | 'error'> {
+  const at = update.at ?? new Date().toISOString();
+  const properties: Record<string, string> = {
+    arcova_outreach_status: update.status,
+    arcova_last_outreach_at: at,
+  };
+  if (update.anchor) properties.arcova_last_outreach_anchor = update.anchor;
+  if (update.channel) properties.arcova_last_outreach_channel = update.channel;
+
+  const res = await fetch(
+    `https://api.hubapi.com/crm/v3/objects/contacts/${encodeURIComponent(update.email)}?idProperty=email`,
+    {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ properties }),
+    },
+  );
+  if (res.ok) return 'updated';
+  if (res.status === 404) return 'not_found';
+  return 'error';
 }
