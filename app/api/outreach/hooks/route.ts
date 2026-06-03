@@ -22,12 +22,33 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
+import { effectiveReadiness, getActionFromScores, HIGH_SCORE } from '@/lib/lead-action';
+import { personaFunctionNames } from '@/lib/persona-functions';
 
-const LOOKBACK_DAYS = 14;
+// 30 days, not 14: month-old signals like an FDA approval or indication
+// expansion are still strong, honest outreach anchors. The panel shows them as
+// recent; the picker should too. Caution/stale years-old events are excluded by
+// recency + the caution-never-a-hook rule regardless.
+const LOOKBACK_DAYS = 30;
 // Hard cap on hooks returned. Was 10; brought down so the picker is scannable.
 // Combined with tier-based ranking below, the top of the list is now the
 // outreach-worthiest signals rather than a dump of every publication.
 const MAX_HOOKS = 6;
+
+// HARD RULE: CRM-internal pipeline/status events are the seller's OWN HubSpot
+// bookkeeping — a deal logged, a contact added, a deal closed/lost. They are NOT
+// market signals about the prospect and must NEVER become an outreach hook: you
+// cannot cold-open a contact about a deal your own team created in HubSpot.
+// (Prospect-ENGAGEMENT events that also live in the CRM — demo requested,
+// inbound enquiry, website/webinar/content, replied to outreach — are genuine
+// prospect actions and are deliberately NOT excluded.)
+const CRM_INTERNAL_EVENT_TYPES = new Set<string>([
+  'open_opportunity_in_crm',
+  'new_contact_added_in_crm',
+  'closed_lost_in_crm',
+  'lapsed_customer',
+  'terminated_deal',
+]);
 
 // Maximum chars for the displayed title. PubMed titles especially blow past
 // what's readable in a side-panel card. ~80 chars + ellipsis fits one line at
@@ -90,6 +111,7 @@ const SIGNAL_TYPE_LABEL: Record<string, string> = {
   ats_jobs_data_informatics_hiring: 'Data / informatics hiring',
   ats_jobs_executive_hiring: 'Executive hiring',
   ats_jobs_hiring_expansion: 'Hiring surge',
+  ats_jobs_surge: 'Hiring surge',
   // Clinical trials
   clinical_trial_registered: 'Trial registered',
   clinical_trial_recruiting: 'Trial recruiting',
@@ -131,8 +153,13 @@ function humanizeSignalType(raw: string | null): string {
   if (!raw) return 'Signal';
   const mapped = SIGNAL_TYPE_LABEL[raw];
   if (mapped) return mapped;
+  // Strip the internal `ats_jobs_` source/workflow prefix — the user cares about
+  // the hiring, not that we read it from an applicant-tracking system. A bare
+  // "surge" (or nothing left) is just a hiring surge.
+  let key = raw.replace(/^ats_jobs_/, '');
+  if (key === '' || key === 'surge' || key === 'hiring_expansion') key = 'hiring surge';
   // Fallback: turn `foo_bar_baz` into `Foo bar baz` so unknown types still render.
-  return raw
+  return key
     .replace(/[_-]+/g, ' ')
     .replace(/\b\w/, (c) => c.toUpperCase());
 }
@@ -313,12 +340,11 @@ function cleanTitle(raw: string | null, signalType: string | null): string {
   return t || humanizeSignalType(signalType);
 }
 
-// Outreach gate: only show hooks when the contact is worth reaching out to.
-// Per product direction: reach out only when BOTH contact and company fit are
-// high, AND at least one of contact-intent or company-intent is high.
-// "High" matches the readiness convention used elsewhere (>= 0.7, see
-// lib/signals/readiness-store.ts:469).
-const HIGH_SCORE = 0.7;
+// Outreach gate: only show hooks when the contact is in the "reach out" cell of
+// the action model — company fit high AND contact fit high AND effective
+// readiness (max of company + contact) high. HIGH_SCORE + the gate logic come
+// from lib/lead-action so the gate can never drift from the action shown in the
+// leads/accounts UI.
 
 function messageFromUnknown(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -448,7 +474,7 @@ type GatingScores = {
   contact_readiness_score: number | null;
   company_readiness_score: number | null;
   threshold: number;
-  reason: 'fit_below_threshold' | 'intent_below_threshold' | 'no_company';
+  reason: 'fit_below_threshold' | 'readiness_below_threshold' | 'no_company';
 };
 
 type SignalRow = {
@@ -561,6 +587,9 @@ function buildCurationPrompt(opts: {
   contact: { firstName: string; fullName: string; title: string | null; bio: string | null; fitSummary: string | null };
   contactCompanyName: string | null;
   sellerCompany: { name: string | null; tagline: string | null; valueProps: unknown; capabilities: unknown; whyCustomersBuy: unknown } | null;
+  buyingGroupFunctions: string[];
+  buyingGroupSeniority: string[];
+  contactPersonaFunctions: string[];
   candidates: Array<{ idx: number; signalType: string; isContact: boolean; title: string; summary: string | null }>;
 }): string {
   const seller = opts.sellerCompany;
@@ -589,9 +618,23 @@ function buildCurationPrompt(opts: {
 
   const firstName = opts.contact.firstName || 'the contact';
   const coName = opts.contactCompanyName || 'the company';
+
+  // The buying group = the functions/seniority we sell into (inferred per ICP).
+  // It tells us WHO cares and WHY an angle lands — it is NOT a filter that
+  // vetoes company signals by their originating department.
+  const buyingGroupBlock =
+    opts.buyingGroupFunctions.length > 0
+      ? `WHO WE SELL INTO (the buying group)
+- Functions we target: ${opts.buyingGroupFunctions.join(', ')}
+- Seniority we target: ${opts.buyingGroupSeniority.length ? opts.buyingGroupSeniority.join(', ') : '(any)'}
+${opts.contactPersonaFunctions.length ? `- ${firstName} sits in this buying group as: ${opts.contactPersonaFunctions.join(', ')}` : ''}
+
+USE THIS to judge WHO cares and WHY an angle lands — NOT as a filter on which signals count. ${firstName} sits on the commercial / decision side, so they care about their company's TRAJECTORY: funding, regulatory approvals, indication/market expansion, hiring surges, new programs, deals, partnerships, a wave of publications or patents — anything that says the company is scaling or commercialising is a buying-relevant moment for them, EVEN WHEN the signal originates in science, regulatory, clinical, or manufacturing. Do NOT discard a signal just because it didn't come from ${firstName}'s own department. The only real noise is a trivial, isolated event in an unrelated function with no strategic read (e.g. a single HR or facilities hire). When in doubt, it's relevant.`
+      : `WHO WE SELL INTO: (buying group not yet inferred for this account — judge relevance from ${firstName}'s title and what someone in their role owns, and from the company's overall trajectory.)`;
+
   return `You are picking outreach angles for a B2B sales rep.
 
-CONTACT
+CONTACT (the reader — the email must resonate with THEM)
 - Name: ${firstName} (${opts.contact.fullName})
 - Title: ${opts.contact.title ?? 'unknown'}
 - At: ${coName}
@@ -601,28 +644,47 @@ CONTACT
 OUR COMPANY (the seller)
 ${sellerBlock}
 
-CANDIDATE SIGNALS (last 14 days)
+${buyingGroupBlock}
+
+CANDIDATE SIGNALS (last ${LOOKBACK_DAYS} days)
 ${candidateLines}
 
 ═══ YOUR JOB ═══
 
-Pick the candidates that pass THE GROUNDING BAR. Up to ${MAX_PICKS}. Maybe 0. Maybe 1. Whatever is honest.
+The decision to reach out has ALREADY been made — this account cleared the fit + readiness gate before you were called. Your job is NOT to re-decide whether to reach out. It is to pick the BEST ANGLE(S) to open with. When the account has real recent activity (it does, or you wouldn't be here), you will almost always find at least one good angle. Returning nothing is reserved for the rare case where EVERY candidate is stale or a caution/setback — never for "no single signal is a perfect fit."
+
+Pick up to ${MAX_PICKS} angles, strongest first.
+
+CORE PRINCIPLE: a signal earns us the TIMING; the email has to RESONATE with ${firstName}. The angle does not have to BE a single signal — it has to be something ${firstName} would care about given their role and where their company is heading. A company that is publishing heavily, hiring fast, getting approvals, expanding indications, raising, or signing deals is in a buying-relevant moment, and that is itself a resonant reason to open a conversation with a commercial leader — even if no single item is a perfect standalone hook.
+
+═══ THINK AT THE RIGHT ALTITUDE (read this twice) ═══
+
+Reason like a SALES STRATEGIST, not a domain scientist. The question is "what does this activity MEAN about where ${coName} is as a business, and why would that make ${firstName} want to talk to us?" — NOT "does the technical content of this specific paper or patent match our product?"
+
+Do NOT get into the weeds of a signal's subject matter. You do not need to understand the science in a publication or the claims in a patent. What matters is what their EXISTENCE, CATEGORY, and VOLUME mean:
+- publishing heavily → active, well-resourced, scientifically productive
+- many patents → investing, building IP, scaling
+- FDA approval / indication expansion → commercialising, new revenue, new budget
+- hiring surge → growth, new initiatives, new owners of problems
+- new deal / partnership → money moving, momentum
+Stack those up and the read is simple: "this company is busy, growing, and commercialising — a great moment to start a conversation." A commercial leader cares about THAT, regardless of whether any single paper's topic maps to our product. Zoom OUT. Do not reject a clearly-active account because the molecular detail of one signal doesn't tie to a value prop.
 
 ═══ THE GROUNDING BAR (every pick must clear all three) ═══
 
-For each candidate you pick, you must be able to:
-1. Name ONE specific value_propositions item or capability from our_company that the hook activates. Not "what we do generally" — a named item from the list above.
-2. Point to ONE specific fact from the candidate's TITLE that ties to it. Not "she works in research" — a concrete fact from the title text.
-3. State the connection in plain English a 13-year-old could follow.
+For each angle you pick, you must be able to:
+1. Name ONE specific value_propositions item or capability from our_company it connects to. Not "what we do generally" — a named item from the list above.
+2. Ground it in the FACT and SCALE of the activity — "filed 34 patents", "opened 17 roles", "won FDA approval", "published several papers this month", or a theme across signals. Ground on what HAPPENED, NOT on the technical content inside it. No inventing.
+3. Say in plain English why it lands for ${firstName} given their role AND their company's trajectory. A commercial / BD / exec buyer caring about company momentum PASSES — the signal does NOT have to originate in their own function, and its subject matter does NOT have to match our product.
 
-If you can't fill (1) AND (2) AND (3) concretely without inventing, DO NOT pick the candidate. Drop it. Returning fewer picks is BETTER than picking weak ones.
+Drop a candidate only if it is stale, a caution/setback (never a hook), or genuinely irrelevant operational noise. Otherwise it is fair game.
 
-═══ WHAT'S WEAK (drop these in 95% of cases) ═══
+═══ WHAT TO DROP ═══
 
-- Generic publications / papers — only pick if the paper topic maps DIRECTLY to a named value_prop. Otherwise drop.
-- Patents — too long-lead.
-- Generic hiring that doesn't intersect what we sell.
-- Old news.
+- Caution / setback signals (program discontinued, trial halted, restructuring, leadership churn) — NEVER a hook, no exceptions.
+- Genuinely old news (months/years old) when fresher activity exists.
+- A trivial, isolated event in an unrelated function with no strategic read.
+
+Publications, patents, hiring surges, approvals, expansions, deals, partnerships are ALL fair game when recent — on their own if strong, or combined into a momentum theme.
 
 ═══ HOW TO WRITE THE "reason" FIELD ═══
 
@@ -650,19 +712,13 @@ BAD examples (do not write like this):
 - "First-author paper is fresh proof-point; rep can position our pipeline as tool to accelerate next analysis."  ← "position", "proof-point"
 - "They recently raised funds, enabling them to invest in tooling."  ← pronoun, banned "enabling"
 
-═══ PATTERN FALLBACK (only if ZERO specific hooks pass) ═══
+═══ MOMENTUM OPENER (use whenever no single signal is a clean standalone hook) ═══
 
-If you cannot find ANY specific hook that clears the grounding bar, do ONE more thing:
+If no single signal is a crisp standalone hook but the account is clearly active, DO NOT return empty. Emit ONE momentum opener in "pattern": name the visible pattern concretely (e.g. "${coName} has published several papers and opened 17 roles in the last few weeks", or "${coName} just won FDA approval and is expanding indications") and tie it to a named value_prop and to ${firstName}'s world. The VOLUME and direction of activity is a real, honest reason to reach out — it says the company is moving, which is exactly when ${firstName} would care.
 
-Look at the candidate list as a whole. Is there a CONCRETE THEME across multiple signals that genuinely fits one of our_company's value_propositions? Example: "${coName} has published 5 papers on respiratory mRNA this month" — that's a theme. If we sell something related to respiratory mRNA research, that pattern IS a viable opener.
+The momentum opener must still name a real pattern grounded in the candidates (not a vague "lots going on") and connect to a named value_prop. But "several distinct signals all point to a company scaling/commercialising" IS such a pattern.
 
-Only emit a pattern hook if BOTH are true:
-- A specific theme is visible (not a vague hand-wave like "lots of activity")
-- The theme connects to a specific named value_prop
-
-If either is missing, OMIT the pattern entirely. Empty output is fine — better than a vague pattern hook.
-
-NEVER emit a pattern hook when there are already specific picks. Pattern is a last resort, not a supplement.
+Only skip the momentum opener if literally every candidate is stale or a caution signal. NEVER emit it when you already have specific picks in "top" — it's the fallback, not a supplement.
 
 ═══ OUTPUT — strict JSON, no prose, no markdown fences ═══
 
@@ -673,23 +729,24 @@ NEVER emit a pattern hook when there are already specific picks. Pattern is a la
       "score": <0-100>,
       "reason": "<plain English, ≤20 words, names the subject by name not pronoun>",
       "seller_grounding": "<which named value_prop / capability from our_company this activates>",
-      "signal_grounding": "<the specific fact from this candidate's title that proves the fit>"
+      "signal_grounding": "<the specific fact from this candidate's title that proves the fit>",
+      "contact_grounding": "<why this lands for ${firstName} specifically — what someone in their role owns that makes them care. If you cannot fill this honestly, the pick fails.>"
     }
-    // ... up to ${MAX_PICKS} items, in score-descending order
-    // If nothing clears the bar, leave "top" as an EMPTY ARRAY: []
+    // ... up to ${MAX_PICKS} items, in score-descending order.
+    // If no single signal is a clean standalone hook, leave "top" as [] and use "pattern" instead.
   ],
   "pattern": null
-  // OR — only when "top" is [] and a concrete theme fits:
+  // OR — when "top" is [] but the account is active, the MOMENTUM OPENER:
   // {
-  //   "phrase": "<short observation, like 'their recent string of respiratory mRNA papers'>",
+  //   "phrase": "<short observation, e.g. 'their recent wave of papers and open roles'>",
   //   "score": <0-100>,
   //   "reason": "<plain English, ≤20 words, same rules as above>",
   //   "seller_grounding": "<which named value_prop>",
-  //   "signal_grounding": "<the theme summary, e.g. '5 papers in 14 days all on respiratory mRNA'>"
+  //   "signal_grounding": "<the theme summary, e.g. '3 papers + 17 roles + FDA approval in the last month'>"
   // }
 }
 
-It is OK — and often correct — to return { "top": [], "pattern": null }. If nothing concrete fits, say so.`;
+Returning { "top": [], "pattern": null } is a LAST RESORT — only when every candidate is stale or a caution signal. For an active account you should return specific picks, or failing that a momentum opener. Do not refuse a clearly-active account.`;
 }
 
 /**
@@ -715,6 +772,9 @@ async function curateHooks(
     contact: { firstName: string; fullName: string; title: string | null; bio: string | null; fitSummary: string | null };
     contactCompanyName: string | null;
     sellerCompany: { name: string | null; tagline: string | null; valueProps: unknown; capabilities: unknown; whyCustomersBuy: unknown } | null;
+    buyingGroupFunctions: string[];
+    buyingGroupSeniority: string[];
+    contactPersonaFunctions: string[];
   },
 ): Promise<CurationOutcome | null> {
   if (candidates.length === 0) return { hooks: [], verdict: 'no_strong_hooks' };
@@ -723,6 +783,9 @@ async function curateHooks(
     contact: ctx.contact,
     contactCompanyName: ctx.contactCompanyName,
     sellerCompany: ctx.sellerCompany,
+    buyingGroupFunctions: ctx.buyingGroupFunctions,
+    buyingGroupSeniority: ctx.buyingGroupSeniority,
+    contactPersonaFunctions: ctx.contactPersonaFunctions,
     candidates: trimmed.map((c, i) => ({
       idx: i + 1,
       signalType: c.signal_type ?? 'unknown',
@@ -818,7 +881,7 @@ export async function GET(request: Request) {
       .select(
         'id, company_id, company_name, contact_fit_score, readiness_score, ' +
           'first_name, full_name, job_title, contact_bio, contact_fit_summary, ' +
-          'companies(company_name)',
+          'scored_against_persona_id, companies(company_name)',
       )
       .eq('user_id', user.id)
       .eq('id', contactId)
@@ -839,11 +902,12 @@ export async function GET(request: Request) {
       job_title?: string | null;
       contact_bio?: string[] | null;
       contact_fit_summary?: string | null;
+      scored_against_persona_id?: string | null;
       companies?: { company_name?: string | null } | Array<{ company_name?: string | null }> | null;
     };
     const companyId = contactRow.company_id ?? null;
     const contactFit = typeof contactRow.contact_fit_score === 'number' ? contactRow.contact_fit_score : null;
-    const contactIntent = typeof contactRow.readiness_score === 'number' ? contactRow.readiness_score : null;
+    const contactReadiness = typeof contactRow.readiness_score === 'number' ? contactRow.readiness_score : null;
     // Prefer the canonical companies.company_name (cleaner) over the
     // denormalised contacts.company_name (often "Inc."-suffixed).
     const companiesField = Array.isArray(contactRow.companies)
@@ -855,42 +919,79 @@ export async function GET(request: Request) {
     // Pull company-side scores from user_companies (post-Phase-1d the
     // per-user scoring fields live here, not on companies).
     let companyFit: number | null = null;
-    let companyIntent: number | null = null;
+    let companyReadiness: number | null = null;
+    let matchedIcpId: string | null = null;
     if (companyId) {
       const { data: uc } = await supabase
         .from('user_companies')
-        .select('company_fit_score, readiness_score')
+        .select('company_fit_score, readiness_score, matched_icp_id')
         .eq('user_id', user.id)
         .eq('company_id', companyId)
         .maybeSingle();
       if (uc) {
-        const ucRow = uc as { company_fit_score?: number | null; readiness_score?: number | null };
+        const ucRow = uc as {
+          company_fit_score?: number | null;
+          readiness_score?: number | null;
+          matched_icp_id?: string | null;
+        };
         companyFit = typeof ucRow.company_fit_score === 'number' ? ucRow.company_fit_score : null;
-        companyIntent = typeof ucRow.readiness_score === 'number' ? ucRow.readiness_score : null;
+        companyReadiness = typeof ucRow.readiness_score === 'number' ? ucRow.readiness_score : null;
+        matchedIcpId = ucRow.matched_icp_id ?? null;
       }
     }
 
-    // Apply the gate. Null scores fail the check (treated as below threshold).
-    const contactFitHigh = (contactFit ?? 0) >= HIGH_SCORE;
-    const companyFitHigh = (companyFit ?? 0) >= HIGH_SCORE;
-    const contactIntentHigh = (contactIntent ?? 0) >= HIGH_SCORE;
-    const companyIntentHigh = (companyIntent ?? 0) >= HIGH_SCORE;
-    const fitOk = contactFitHigh && companyFitHigh;
-    const intentOk = contactIntentHigh || companyIntentHigh;
+    // Buying group = the functions/seniority we actually sell INTO, inferred per
+    // ICP (table `personas`). This is the authoritative ground truth for judging
+    // whether a company signal is relevant: hiring in a function we don't sell to
+    // (e.g. HR roles when we sell into R&D) is noise, no matter how strong the
+    // signal. We also pick out the contact's own matched persona so the curation
+    // LLM knows which slice of the buying group THIS reader occupies.
+    let buyingGroupFunctions: string[] = [];
+    let buyingGroupSeniority: string[] = [];
+    let contactPersonaFunctions: string[] = [];
+    if (matchedIcpId) {
+      const { data: personas } = await supabase
+        .from('personas')
+        .select('id, functions, seniority_levels')
+        .eq('icp_id', matchedIcpId);
+      const personaRows = (personas ?? []) as Array<{
+        id: string;
+        functions?: string[] | null;
+        seniority_levels?: string[] | null;
+      }>;
+      const fnSet = new Set<string>();
+      const snSet = new Set<string>();
+      for (const p of personaRows) {
+        for (const f of personaFunctionNames(p.functions)) fnSet.add(f);
+        for (const s of p.seniority_levels ?? []) if (s) snSet.add(s);
+        if (p.id === contactRow.scored_against_persona_id) {
+          contactPersonaFunctions = personaFunctionNames(p.functions);
+        }
+      }
+      buyingGroupFunctions = [...fnSet];
+      buyingGroupSeniority = [...snSet];
+    }
 
-    if (!fitOk || !intentOk) {
+    // The gate IS the action model: only "reach out" contacts get hooks.
+    // effectiveReadiness folds company + contact readiness (max + bump) so a
+    // strong contact at a hot company qualifies even with no personal signal.
+    const effReadiness = effectiveReadiness(companyReadiness, contactReadiness);
+    const action = getActionFromScores(companyFit, contactFit, effReadiness, null);
+
+    if (action !== 'reach_out') {
       const gating: GatingScores = {
         contact_fit_score: contactFit,
         company_fit_score: companyFit,
-        contact_readiness_score: contactIntent,
-        company_readiness_score: companyIntent,
+        contact_readiness_score: contactReadiness,
+        company_readiness_score: companyReadiness,
         threshold: HIGH_SCORE,
-        reason: !companyId ? 'no_company' : !fitOk ? 'fit_below_threshold' : 'intent_below_threshold',
+        // 'monitor' = fits high but readiness low; otherwise a fit gate failed.
+        reason: !companyId ? 'no_company' : action === 'monitor' ? 'readiness_below_threshold' : 'fit_below_threshold',
       };
       return NextResponse.json({ hooks: [], gated: true, gating });
     }
 
-    // Pull signals from last 14 days — contact-scoped OR company-scoped.
+    // Pull signals from the lookback window — contact-scoped OR company-scoped.
     const cutoffIso = new Date(Date.now() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
     const filterExpr = companyId
       ? `entity_contact_id.eq.${contactId},entity_company_id.eq.${companyId}`
@@ -919,6 +1020,8 @@ export async function GET(request: Request) {
     const bestByLabel = new Map<string, SignalRow>();
     for (const s of (signals ?? []) as SignalRow[]) {
       if (!s.source_event_type || !s.title) continue;
+      // Hard rule: CRM-internal status/pipeline updates are never outreach hooks.
+      if (CRM_INTERNAL_EVENT_TYPES.has(s.source_event_type)) continue;
       const label = humanizeSignalType(s.source_event_type);
       const existing = bestByLabel.get(label);
       if (!existing) {
@@ -1012,6 +1115,9 @@ export async function GET(request: Request) {
       },
       contactCompanyName: companyName,
       sellerCompany,
+      buyingGroupFunctions,
+      buyingGroupSeniority,
+      contactPersonaFunctions,
     });
 
     // Three response paths, matching the curation outcomes:

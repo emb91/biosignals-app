@@ -380,7 +380,10 @@ function SignalCard({ item }: { item: SignalItem }) {
             {signalLabel(item.signalKey)}
           </span>
           <span className="text-[11px] text-slate-400 ml-auto shrink-0">
-            {relativeTime(item.observedAt)}
+            {/* When the event actually happened (event_at), not when we scraped
+                it (observed_at). A patent filed in April shouldn't read as "1w
+                ago" because we detected it last month. */}
+            {relativeTime(item.eventAt ?? item.observedAt)}
           </span>
         </div>
 

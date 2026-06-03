@@ -14,6 +14,8 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
+import { effectiveReadiness, getActionFromScores } from '@/lib/lead-action';
+import { personaFunctionNames } from '@/lib/persona-functions';
 
 const DAY_OFFSETS = [0, 3, 7, 11, 15, 21, 28] as const;
 
@@ -114,13 +116,64 @@ export async function POST(request: Request) {
     const { data: contact, error: contactErr } = await supabase
       .from('contacts')
       .select(
-        'id, full_name, first_name, job_title, seniority_level, business_area, contact_bio, contact_panel_summary, contact_fit_summary, resolved_current_company_name, resolved_employment_history, company_id, company_name, companies(id, company_name, domain, description, bio_summary, industry, employee_range, founded_year, headquarters_city, headquarters_country, company_type, funding_stage, therapeutic_areas, modalities, development_stages, products_services, services, technologies)'
+        'id, full_name, first_name, job_title, seniority_level, business_area, contact_bio, contact_panel_summary, contact_fit_summary, contact_fit_score, readiness_score, resolved_current_company_name, resolved_employment_history, company_id, company_name, companies(id, company_name, domain, description, bio_summary, industry, employee_range, founded_year, headquarters_city, headquarters_country, company_type, funding_stage, therapeutic_areas, modalities, development_stages, products_services, services, technologies)'
       )
       .eq('user_id', user.id)
       .eq('id', contactId)
       .maybeSingle();
     if (contactErr) return NextResponse.json({ error: contactErr.message }, { status: 500 });
     if (!contact) return NextResponse.json({ error: 'Contact not found' }, { status: 404 });
+
+    // Gate: a sequence may only be generated for a "reach out" contact (company
+    // fit high AND contact fit high AND effective readiness high). This mirrors
+    // the /hooks gate so a sequence can't be generated for a contact the picker
+    // would never have surfaced (e.g. via a direct API call). Same source of
+    // truth: lib/lead-action.getActionFromScores.
+    let matchedIcpId: string | null = null;
+    {
+      const c = contact as {
+        company_id?: string | null;
+        contact_fit_score?: number | null;
+        readiness_score?: number | null;
+      };
+      const contactFit = typeof c.contact_fit_score === 'number' ? c.contact_fit_score : null;
+      const contactReadiness = typeof c.readiness_score === 'number' ? c.readiness_score : null;
+      let companyFit: number | null = null;
+      let companyReadiness: number | null = null;
+      if (c.company_id) {
+        const { data: uc } = await supabase
+          .from('user_companies')
+          .select('company_fit_score, readiness_score, matched_icp_id')
+          .eq('user_id', user.id)
+          .eq('company_id', c.company_id)
+          .maybeSingle();
+        if (uc) {
+          const ucRow = uc as {
+            company_fit_score?: number | null;
+            readiness_score?: number | null;
+            matched_icp_id?: string | null;
+          };
+          companyFit = typeof ucRow.company_fit_score === 'number' ? ucRow.company_fit_score : null;
+          companyReadiness = typeof ucRow.readiness_score === 'number' ? ucRow.readiness_score : null;
+          matchedIcpId = ucRow.matched_icp_id ?? null;
+        }
+      }
+      const action = getActionFromScores(
+        companyFit,
+        contactFit,
+        effectiveReadiness(companyReadiness, contactReadiness),
+        null,
+      );
+      if (action !== 'reach_out') {
+        return NextResponse.json(
+          {
+            error: 'Contact is not in the reach-out state — sequence generation is gated on fit + readiness.',
+            action,
+          },
+          { status: 422 },
+        );
+      }
+    }
 
     const { data: selfCompany } = await supabase
       .from('user_company')
@@ -130,12 +183,29 @@ export async function POST(request: Request) {
       .eq('user_id', user.id)
       .maybeSingle();
 
+    // Buying group = the functions we sell into (inferred per ICP). Authoritative
+    // ground truth for judging whether the anchor signal is relevant to the
+    // people we target — not just to the company.
+    let buyingGroupFunctions: string[] = [];
+    if (matchedIcpId) {
+      const { data: personas } = await supabase
+        .from('personas')
+        .select('functions')
+        .eq('icp_id', matchedIcpId);
+      const fnSet = new Set<string>();
+      for (const p of (personas ?? []) as Array<{ functions?: unknown }>) {
+        for (const f of personaFunctionNames(p.functions)) fnSet.add(f);
+      }
+      buyingGroupFunctions = [...fnSet];
+    }
+
     const prompt = buildPrompt({
       contact: contact as Record<string, unknown>,
       selfCompany: (selfCompany ?? null) as Record<string, unknown> | null,
       anchorHookText,
       anchorSignalType,
       anchorIsContactLevel,
+      buyingGroupFunctions,
     });
 
     const completion = await completeLlm({
@@ -173,6 +243,7 @@ function buildPrompt(opts: {
   anchorHookText: string;
   anchorSignalType: string | null;
   anchorIsContactLevel: boolean;
+  buyingGroupFunctions: string[];
 }): string {
   const contactCo = (opts.contact.companies ?? null) as Record<string, unknown> | Array<Record<string, unknown>> | null;
   const co = Array.isArray(contactCo) ? contactCo[0] : contactCo;
@@ -236,9 +307,16 @@ function buildPrompt(opts: {
   //    employer. ${firstName} already knows. Treat as TIMING context for the rep ("this is why I'm reaching out now"),
   //    not message body content ("did you know your company is hiring?"). The body should talk about ${firstName}'s
   //    function and what they need, not summarise their employer's news back at them.
+  const buyingGroupHint = opts.buyingGroupFunctions.length
+    ? `The functions you actually sell into (the buying group) are: ${opts.buyingGroupFunctions.join(', ')}. `
+    : '';
   const scopeRules = opts.anchorIsContactLevel
-    ? `The anchor signal is about ${firstName} personally. You can reference it directly in message 1 as a congratulations or a relevant observation. Be specific and warm, not sycophantic.`
-    : `The anchor signal is about ${contactCompanyName || "the contact's employer"}, which is ${firstName}'s own company. ${firstName} ALREADY KNOWS about this. DO NOT open by telling them their own company's news ("I saw ${contactCompanyName} is hiring", "noticed your team is expanding", etc.). Instead, treat the signal as your private TIMING context (the reason you're reaching out now). Open by speaking to ${firstName}'s function and what someone in their role actually deals with. You may reference the company moment ONCE, later in the sequence (day 21 is a good spot), framed as a rep observation ("watching what ${contactCompanyName} is doing in X, our customers in similar spots have found Y useful"). Never paraphrase the signal back to ${firstName} as if it's news to them.`;
+    ? `The anchor signal is about ${firstName} personally (a role change, a paper they authored, etc.). You MAY reference it directly in message 1 as a brief, specific acknowledgment — warm, not sycophantic. It's still your TIMING, not an obligation: if a sharper opener exists, use that instead.`
+    : `The anchor signal is about ${contactCompanyName || "the contact's employer"} — ${firstName}'s own company — so ${firstName} ALREADY KNOWS it. Apply TWO judgments before you use it:
+
+  (1) RELEVANCE. ${buyingGroupHint}${firstName} is on the commercial / decision side, so they care about their company's TRAJECTORY — funding, approvals, expansion, hiring surges, new programs, deals, a wave of publications or patents all signal a company scaling or commercialising, which is a buying-relevant moment EVEN WHEN the signal originates in science, regulatory, clinical, or manufacturing. Do NOT discard the anchor just because it didn't come from ${firstName}'s own department. The only true noise is a trivial, isolated event in an unrelated function with no strategic read (e.g. a single HR hire). If the anchor genuinely doesn't connect to ${firstName}'s world, open on their role and the company's overall momentum instead.
+
+  (2) THE SIGNAL IS YOUR TIMING, NOT AUTOMATICALLY YOUR OPENER. It's the private reason you're reaching out now; it does NOT have to appear in any message. Open with whatever genuinely lands for ${firstName} — usually their function and the problems that hit their desk. You MAY open on the signal ONLY when it reads as a natural, relevant observation AND you have nothing sharper to lead with. Some signals (e.g. a patent filing) rarely make a good opener; a relevant hiring surge can. Use common sense grounded in the company analysis. NEVER paraphrase ${firstName}'s own company news back at them as if it's a tip ("I saw ${contactCompanyName} is hiring", "noticed your team is expanding"). If you do reference the company moment, it works best later (around day 21) as a rep observation ("watching what ${contactCompanyName} is doing in X, customers in similar spots have found Y useful").`;
 
   return `You are a sales rep at ${sellerName} writing a 7-message outreach sequence to ${firstName} (${opts.contact.job_title ?? 'unknown title'}) at ${contactCompanyName || 'their company'}.
 
@@ -267,7 +345,7 @@ Do this reasoning silently, then use it to shape every message. Do not output th
 
 SEQUENCE STRUCTURE — read carefully, it overrides anything you've been trained on:
 
-(a) The anchor signal is mentioned ONCE, in Day 0, as a brief acknowledgment. Then NEVER AGAIN. Do not keep returning to it ("as I mentioned re: your promotion…"). That reads as pestering.
+(a) The anchor signal is your TIMING, not a required line. IF it passes the relevance test and makes a natural opener, reference it ONCE (in Day 0) and never again — returning to it ("as I mentioned re: your promotion…") reads as pestering. If it's not a good opener (e.g. a patent filing, or hiring unrelated to ${firstName}'s function), it is perfectly fine to never mention it — it was only ever your reason for timing, not the content.
 
 (b) The PRODUCT is visible in EVERY message. This is NOT "don't pitch." The opposite. The whole point of outreach is to show what ${sellerName} does. But you show it by OFFERING SOMETHING CONCRETE the contact can have, never by describing features or asking for a meeting. Each message offers a tangible thing: a list, named companies, a data cut, a live view of their accounts. If a message doesn't offer something concrete, it's filler. Cut it.
 
@@ -280,7 +358,7 @@ hook + offer → specific data → what we do + why different → another data c
 
 ═══ PER-MESSAGE GUIDANCE ═══
 
-- Day 0 (80-110 words). Open like a human ("I wanted to reach out because…"). Lead with the single most specific, timely thing in ${firstName}'s world (the anchor signal), stated NEUTRALLY — do not editorialise or take a stance on it, the contact may feel differently than you. ${opts.anchorIsContactLevel ? `A direct, brief acknowledgment is fine ("congrats on the new role").` : `Reference it softly as your reason for reaching out, never as news to them.`} Then ONE plain sentence on what ${sellerName} does (the honest one-liner from our_company, not a feature list). Then offer ONE concrete thing we can hand them, tailored to their world. End with "happy to share if of interest." NO presumptions about their situation you can't back up.
+- Day 0 (80-110 words). Open like a human ("I wanted to reach out because…"). Lead with whatever is genuinely most relevant to ${firstName}'s world — that MAY be the anchor signal, but only if it passed the relevance + opener test above; otherwise open on their function and the problem someone in their exact role carries. ${opts.anchorIsContactLevel ? `For a personal signal a brief, direct acknowledgment is fine ("congrats on the new role").` : `Do NOT recap their employer's news back at them.`} Whatever you open on, state it NEUTRALLY — no editorialising or taking a stance, the contact may feel differently than you. Then ONE plain sentence on what ${sellerName} does (the honest one-liner from our_company, not a feature list). Then offer ONE concrete thing we can hand them, tailored to their world. End with "happy to share if of interest." NO presumptions about their situation you can't back up.
 
 - Day 3 (30-50 words). Offer a specific data cut we ALREADY track that fits their world. Use "several" or "a few" for counts, never a precise number you can't verify. End with "happy to share these with you if of interest."
 

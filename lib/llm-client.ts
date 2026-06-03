@@ -51,7 +51,11 @@ export type LlmFeature =
   // Outreach hook curation — Haiku scores a small candidate list (≤12 hooks)
   // against the seller's value prop and picks the top 3 with one-line
   // reasoning. Cheap ($0.002/call), fires once per Outreach-tab open.
-  | 'outreach_curate_hooks';
+  | 'outreach_curate_hooks'
+  // ICP buying-team generation — infers the distinct buying teams (personas)
+  // for an ICP. Sonnet: the multi-team split + prune-to-what-we-sell reasoning
+  // is quality-sensitive, and it fires only once per ICP at (re-)enrichment.
+  | 'icp_buying_team';
 
 /**
  * Default models per (feature, route). Override via the `model` arg.
@@ -149,17 +153,12 @@ const FEATURE_MODELS: Record<LlmFeature, { openrouter: string; anthropic: string
     openrouter: 'anthropic/claude-haiku-4-5',
     anthropic: 'claude-haiku-4-5',
   },
+  icp_buying_team: {
+    openrouter: 'anthropic/claude-sonnet-4-6',
+    anthropic: 'claude-sonnet-4-6',
+  },
 };
 
-// Features that should bypass OpenRouter and go straight to Anthropic.
-// Use this when (a) the underlying model is Anthropic anyway and (b) call
-// volume is low enough that the ~5% OpenRouter markup isn't worth a second
-// observability surface or routing branch. Currently just generate_icp_name —
-// fires once per ICP creation, needs Haiku quality, no reason to pay the markup.
-const ANTHROPIC_DIRECT_FEATURES: ReadonlySet<LlmFeature> = new Set([
-  'generate_icp_name',
-  'cik_disambiguation',
-]);
 
 const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -207,14 +206,30 @@ export class LlmCompletionError extends Error {
 }
 
 /**
- * Pick a provider for a feature, honouring overrides and env availability.
+ * Pick a provider for a feature.
+ *
+ * Routing preference: Claude / Anthropic models call Anthropic DIRECTLY;
+ * non-Anthropic models (e.g. Gemini Flash) go via OpenRouter. A feature's model
+ * vendor is read from its OpenRouter identifier (`<vendor>/<model>`). When the
+ * preferred provider's key is missing/empty we route to the other so the call
+ * still goes out — e.g. while ANTHROPIC_API_KEY is unset/empty (or the balance
+ * is dry and the key is removed), Claude features fall to OpenRouter. completeLlm
+ * additionally auto-falls-back across providers on a runtime error (so a dry
+ * Anthropic balance with a still-present key recovers via OpenRouter too).
  */
 function pickProvider(opts: LlmCompletionInput): 'openrouter' | 'anthropic' {
   if (opts.provider) return opts.provider;
-  if (ANTHROPIC_DIRECT_FEATURES.has(opts.feature)) return 'anthropic';
-  const openrouterKey = process.env.OPENROUTER_API_KEY;
-  if (openrouterKey && openrouterKey.length > 0) return 'openrouter';
-  return 'anthropic';
+
+  const hasAnthropic = !!process.env.ANTHROPIC_API_KEY;
+  const hasOpenRouter = !!process.env.OPENROUTER_API_KEY;
+
+  const isAnthropicModel = FEATURE_MODELS[opts.feature].openrouter.startsWith('anthropic/');
+  if (isAnthropicModel) {
+    if (hasAnthropic) return 'anthropic';
+    return hasOpenRouter ? 'openrouter' : 'anthropic';
+  }
+  // Non-Anthropic model → OpenRouter (fall back to Anthropic only if no OR key).
+  return hasOpenRouter ? 'openrouter' : 'anthropic';
 }
 
 export async function completeLlm(opts: LlmCompletionInput): Promise<LlmCompletionResult> {

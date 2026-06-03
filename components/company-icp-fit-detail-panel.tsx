@@ -6,12 +6,15 @@ import '@/app/leads/contacts-layout.css';
 
 export type CompanyFitComponentKey =
   | 'company_type'
-  | 'platform_category'
-  | 'therapeutic_areas'
-  | 'modalities'
+  | 'offering'
   | 'development_stages'
   | 'company_size'
-  | 'funding';
+  | 'funding'
+  // Legacy keys — kept in the union so breakdowns scored before company_fit_v2
+  // (which still carry the old shape until re-scored) don't break rendering.
+  | 'platform_category'
+  | 'therapeutic_areas'
+  | 'modalities';
 
 interface CompanyFitBreakdownComponent {
   label: string;
@@ -71,12 +74,14 @@ export interface CompanyFitDetails {
 
 const COMPANY_FIT_COMPONENT_ORDER: CompanyFitComponentKey[] = [
   'company_type',
-  'platform_category',
-  'therapeutic_areas',
-  'modalities',
+  'offering',
   'development_stages',
   'company_size',
   'funding',
+  // Legacy keys last — only render for pre-v2 breakdowns; inactive otherwise.
+  'platform_category',
+  'therapeutic_areas',
+  'modalities',
 ];
 
 export function formatCompanyFitPercent(value: number | null | undefined): string | null {

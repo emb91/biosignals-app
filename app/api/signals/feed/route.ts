@@ -306,9 +306,41 @@ export async function GET(request: Request) {
         })
       : mapped;
 
-    const total = filtered.length;
+    // Collapse patent noise: when a company has the aggregate "Patent Portfolio
+    // Surge" signal (assignee_portfolio_acceleration), suppress the individual
+    // patent_* rows it already summarises. If a company has individual patents
+    // but no aggregate, keep just one as a representative.
+    const PATENT_DETAIL_TYPES = new Set([
+      'patent_filed_or_granted',
+      'patent_application_published',
+      'patent_granted',
+    ]);
+    const companiesWithPatentAggregate = new Set(
+      filtered
+        .filter((it) => it.sourceEventType === 'assignee_portfolio_acceleration')
+        .map((it) => it.companyId),
+    );
+    const keptPatentRepByCompany = new Set<string>();
+    const collapsed = filtered.filter((it) => {
+      if (!PATENT_DETAIL_TYPES.has(it.sourceEventType)) return true;
+      if (companiesWithPatentAggregate.has(it.companyId)) return false; // summarised by the aggregate
+      const key = it.companyId ?? 'none';
+      if (keptPatentRepByCompany.has(key)) return false; // keep one representative
+      keptPatentRepByCompany.add(key);
+      return true;
+    });
+
+    // Recency = when the event actually happened (event_at), falling back to
+    // when we observed it. A patent filed in April isn't "fresh" because we
+    // scraped it last month. This also makes the feed consistent with the
+    // outreach picker, which filters on event_at. (DB pre-ordered by
+    // observed_at; we re-sort here.)
+    const effectiveDate = (it: SignalFeedItem) => Date.parse(it.eventAt ?? it.observedAt) || 0;
+    collapsed.sort((a, b) => effectiveDate(b) - effectiveDate(a));
+
+    const total = collapsed.length;
     const start = (page - 1) * pageSize;
-    const paged = filtered.slice(start, start + pageSize);
+    const paged = collapsed.slice(start, start + pageSize);
 
     return NextResponse.json({ data: paged, total, page, pageSize });
   } catch (error) {

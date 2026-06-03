@@ -1,0 +1,12 @@
+-- The personas table was renamed from the old `contacts` table (20260321) and
+-- still carries that table's UNIQUE(user_id, icp_id) constraint under its legacy
+-- name `contacts_user_icp_unique`. That cap enforces exactly ONE persona per
+-- ICP — which is wrong for the buying-group model: an ICP's buying group is
+-- several distinct teams (e.g. Business Development, Scientific / R&D,
+-- Commercial), each stored as its own persona row. Drop the constraint so an
+-- ICP can hold multiple personas.
+--
+-- Row identity remains the primary key (id). Buying-team regeneration
+-- (lib/icp-reenrichment.persistBuyingTeams) reconciles teams by PRIMARY FUNCTION
+-- so re-runs update in place rather than duplicate.
+ALTER TABLE public.personas DROP CONSTRAINT IF EXISTS contacts_user_icp_unique;
