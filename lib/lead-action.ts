@@ -35,6 +35,44 @@ export const SOURCE_CONTACT_MAX = HIGH_SCORE;
 export const DEPRIORITIZE_FIT_BELOW = HIGH_SCORE;
 export const REACH_OUT_READINESS_MIN = HIGH_SCORE;
 
+/**
+ * CRM-resolved suppression cooldown, in days. A closed-won (customer) or
+ * closed-lost (dormant) deal "nullifies" the contact's readiness — floored to
+ * ~0.01 so priority drops and the action reads as Deprioritise — but only
+ * WITHIN this window. Once it passes, the suppressor lifts and the contact can
+ * resurface on new signals (renewal/upsell for won; re-engagement for lost).
+ *
+ * Closed-lost re-opens faster (6mo) than closed-won (1yr): a lost deal can turn
+ * around on a trigger event sooner than a fresh customer needs a renewal motion.
+ * MVP values — tune as you learn. See the CRM suppression policy memory.
+ */
+export const CRM_SUPPRESSION_DAYS = { won: 365, lost: 180 } as const;
+
+/**
+ * Is a CRM-resolved (won/lost) contact still inside its suppression cooldown?
+ *
+ * `leadState` — HubSpot lead state (only 'customer' / 'dormant' suppress).
+ * `closedAtIso` — when the deal closed; we use the deal's last-modified date as
+ *   a proxy (hubspot_latest_deal_updated_at). Unknown date on a won/lost contact
+ *   → treated as suppressed (safe default: don't reach out to a known closed deal
+ *   just because we lost the timestamp).
+ * `asOfMs` — current time in ms (injectable for tests; defaults to now).
+ *
+ * Returns false for any non-closed state, so normal fit/readiness logic applies.
+ */
+export function isCrmSuppressed(
+  leadState: 'active' | 'customer' | 'dormant' | 'context_only' | 'none' | null | undefined,
+  closedAtIso: string | null | undefined,
+  asOfMs: number = Date.now(),
+): boolean {
+  if (leadState !== 'customer' && leadState !== 'dormant') return false;
+  const windowDays = leadState === 'customer' ? CRM_SUPPRESSION_DAYS.won : CRM_SUPPRESSION_DAYS.lost;
+  const closedMs = closedAtIso ? new Date(closedAtIso).getTime() : null;
+  if (closedMs == null || !Number.isFinite(closedMs)) return true;
+  const ageDays = (asOfMs - closedMs) / 86_400_000;
+  return ageDays < windowDays;
+}
+
 export type LeadLikeForAction = {
   company_fit_score?: number | null;
   fit_score?: number | null;

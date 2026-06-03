@@ -849,15 +849,37 @@ export default function LogPage() {
                                 onClick={async () => {
                                   setRetryingId(err.id);
                                   try {
-                                    router.push(`/outreach?status=failed&highlight=${encodeURIComponent(err.id)}`);
+                                    const res = await fetch('/api/outreach/lemlist/retry', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ sequenceIds: [err.id] }),
+                                    });
+                                    const j = (await res.json().catch(() => ({}))) as {
+                                      results?: Array<{ ok: boolean; error?: string }>;
+                                      error?: string;
+                                    };
+                                    const ok = res.ok && (j.results?.[0]?.ok ?? false);
+                                    if (ok) {
+                                      // Remove this row from the visible list — it's no longer failed.
+                                      setOutreachErrors((prev) => prev.filter((e) => e.id !== err.id));
+                                    } else {
+                                      alert(j.results?.[0]?.error ?? j.error ?? 'Retry failed');
+                                    }
                                   } finally {
                                     setRetryingId(null);
                                   }
                                 }}
                                 disabled={retryingId === err.id}
-                                className="inline-flex items-center gap-1 rounded-md border border-arcova-teal/40 bg-white px-2 py-0.5 text-[11px] font-semibold text-arcova-teal hover:bg-arcova-teal/5"
+                                className="inline-flex items-center gap-1 rounded-md border border-arcova-teal/40 bg-white px-2 py-0.5 text-[11px] font-semibold text-arcova-teal hover:bg-arcova-teal/5 disabled:opacity-60"
                               >
-                                Open
+                                {retryingId === err.id ? 'Retrying…' : 'Retry'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => router.push(`/outreach?status=failed&highlight=${encodeURIComponent(err.id)}`)}
+                                className="text-[10.5px] text-[#7d909a] hover:text-arcova-teal underline-offset-2 hover:underline"
+                              >
+                                Open in /outreach
                               </button>
                             </div>
                           </div>

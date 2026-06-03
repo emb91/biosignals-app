@@ -23,6 +23,12 @@ export default function SettingsPage() {
   const [lemlistSubmitting, setLemlistSubmitting] = useState(false);
   const [lemlistError, setLemlistError] = useState<string | null>(null);
   const [lemlistDisconnecting, setLemlistDisconnecting] = useState(false);
+  // Arcova template provisioning state.
+  const [provisioning, setProvisioning] = useState(false);
+  const [provisionResult, setProvisionResult] = useState<{
+    ok: boolean;
+    message: string;
+  } | null>(null);
 
   useEffect(() => {
     if (!loading && !user) router.push('/login');
@@ -40,6 +46,35 @@ export default function SettingsPage() {
   useEffect(() => {
     if (user) void refreshLemlistStatus();
   }, [user, refreshLemlistStatus]);
+
+  const handleEnsureTemplate = async () => {
+    setProvisioning(true);
+    setProvisionResult(null);
+    try {
+      const res = await fetch('/api/outreach/lemlist/ensure-template', { method: 'POST' });
+      const body = (await res.json().catch(() => ({}))) as {
+        campaignId?: string;
+        created?: boolean;
+        error?: string;
+        detail?: string;
+      };
+      if (!res.ok || !body.campaignId) {
+        setProvisionResult({
+          ok: false,
+          message: body.error ?? body.detail ?? 'Could not set up the Arcova template.',
+        });
+        return;
+      }
+      setProvisionResult({
+        ok: true,
+        message: body.created
+          ? 'Arcova Multichannel template created in lemlist (with Mon–Fri 09:00–17:00 schedule). You\'re ready to dispatch.'
+          : 'Arcova Multichannel template already exists in lemlist. You\'re ready to dispatch.',
+      });
+    } finally {
+      setProvisioning(false);
+    }
+  };
 
   const handleLemlistConnect = async () => {
     setLemlistError(null);
@@ -119,16 +154,26 @@ export default function SettingsPage() {
                       : 'Email + LinkedIn outreach in one tool. Your customers (or you) bring a lemlist account; Arcova pushes generated sequences in.'}
                   </p>
                 </div>
-                <div className="shrink-0">
+                <div className="shrink-0 flex flex-col items-end gap-2">
                   {lemlistStatus?.connected ? (
-                    <button
-                      type="button"
-                      onClick={() => void handleLemlistDisconnect()}
-                      disabled={lemlistDisconnecting}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-[rgba(13,53,71,0.15)] bg-white px-3 py-1.5 text-[12.5px] font-medium text-[#4a6470] hover:bg-[#f4f7f9] disabled:opacity-60"
-                    >
-                      {lemlistDisconnecting ? 'Disconnecting…' : 'Disconnect'}
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => void handleEnsureTemplate()}
+                        disabled={provisioning}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-arcova-teal/40 bg-arcova-teal/5 px-3 py-1.5 text-[12.5px] font-semibold text-arcova-teal hover:bg-arcova-teal/10 disabled:opacity-60"
+                      >
+                        {provisioning ? 'Setting up…' : 'Set up Arcova template'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleLemlistDisconnect()}
+                        disabled={lemlistDisconnecting}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[rgba(13,53,71,0.15)] bg-white px-3 py-1.5 text-[12.5px] font-medium text-[#4a6470] hover:bg-[#f4f7f9] disabled:opacity-60"
+                      >
+                        {lemlistDisconnecting ? 'Disconnecting…' : 'Disconnect'}
+                      </button>
+                    </>
                   ) : (
                     <button
                       type="button"
@@ -144,6 +189,16 @@ export default function SettingsPage() {
                   )}
                 </div>
               </div>
+
+              {provisionResult && (
+                <p
+                  className={`mt-3 text-[12px] leading-snug ${
+                    provisionResult.ok ? 'text-emerald-700' : 'text-red-600'
+                  }`}
+                >
+                  {provisionResult.message}
+                </p>
+              )}
             </div>
           </section>
 

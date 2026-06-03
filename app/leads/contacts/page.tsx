@@ -14,6 +14,7 @@ import {
   type SequenceDispatchStatus,
   applyOutreachOverride,
   effectiveReadiness,
+  isCrmSuppressed,
   getActionFromScores,
   getLeadAction,
   getLeadActionFromFits,
@@ -654,6 +655,59 @@ function contactPriorityScore(
   return coFit * cFit * (0.5 + 0.5 * r);
 }
 
+/** Minimal lead shape the CRM-suppression display helpers read. Structural so
+ *  it accepts both the lean list `Lead` and the `QueryLead` sort rows. */
+type CrmSuppressibleLead = {
+  hubspot_lead_state?: Lead['hubspot_lead_state'];
+  hubspot_latest_deal_updated_at?: string | null;
+  company_readiness_score?: number | null;
+  contact_readiness_score?: number | null;
+  contact_fit_score: number | null;
+  priority_score?: number | null;
+  company_fit_score?: number | null;
+  companies?: { company_fit_score?: number | null } | null;
+};
+
+function leadIsCrmSuppressed(lead: CrmSuppressibleLead): boolean {
+  return isCrmSuppressed(
+    lead.hubspot_lead_state ?? null,
+    lead.hubspot_latest_deal_updated_at ?? null,
+  );
+}
+
+/**
+ * Effective readiness for DISPLAY — folds in the CRM suppression cooldown.
+ * Within a closed-won/lost cooldown the deal is "resolved", so readiness is
+ * floored to 0.01 (it nullifies the account's other signals). Once the cooldown
+ * passes, the floor lifts and normal effective readiness (company OR contact
+ * signals) drives the contact again — that's how a closed deal resurfaces.
+ */
+function displayEffectiveReadiness(lead: CrmSuppressibleLead): number | null {
+  if (leadIsCrmSuppressed(lead)) return 0.01;
+  return effectiveReadiness(lead.company_readiness_score ?? null, lead.contact_readiness_score ?? null);
+}
+
+/**
+ * Priority for DISPLAY — the single helper the table gauge, the sort comparator
+ * and the side-panel gauge all call, so they can never diverge (there is ONE
+ * priority value on screen). Within a CRM cooldown it bypasses the stored
+ * intrinsic priority (which carries no CRM context) and recomputes from the
+ * floored readiness; otherwise it returns the stored value, falling back to the
+ * live calc only when the stored column is null.
+ */
+function displayContactPriority(lead: CrmSuppressibleLead): number | null {
+  const companyFit = lead.company_fit_score ?? lead.companies?.company_fit_score ?? null;
+  if (leadIsCrmSuppressed(lead)) {
+    return contactPriorityScore(lead.contact_fit_score, 0.01, null, companyFit);
+  }
+  return contactPriorityScore(
+    lead.contact_fit_score,
+    displayEffectiveReadiness(lead),
+    lead.priority_score ?? null,
+    companyFit,
+  );
+}
+
 /**
  * One-line plain-English explanation of the priority score. Deterministic —
  * shares the 0.7 thresholds with lib/lead-action.ts so the narrative agrees
@@ -673,6 +727,7 @@ function getPriorityExplanation(args: {
   companyReadiness: number | null | undefined;
   contactReadiness: number | null | undefined;
   crmState: 'active' | 'customer' | 'dormant' | 'context_only' | 'none' | null | undefined;
+  dealClosedAt?: string | null;
 }): string | null {
   const company = normalize01(args.companyFit);
   const contact = normalize01(args.contactFit);
@@ -683,11 +738,15 @@ function getPriorityExplanation(args: {
   const who = args.firstName?.trim() || 'this contact';
   const where = args.companyName?.trim() || 'this company';
 
-  if (args.crmState === 'customer') {
-    return `${where} is already a closed-won customer, so ${who} drops off today's outreach list — even if the persona and account fit are strong.`;
+  // CRM-resolved messaging only applies DURING the suppression cooldown. Once it
+  // passes, the deal no longer holds the contact back, so we fall through to the
+  // normal fit/readiness narrative (which is how a closed deal resurfaces).
+  const suppressed = isCrmSuppressed(args.crmState, args.dealClosedAt ?? null);
+  if (suppressed && args.crmState === 'customer') {
+    return `${where} is already a closed-won customer, so ${who} drops off today's outreach list — even if the persona and account fit are strong. They become eligible again about a year after close for renewal or expansion.`;
   }
-  if (args.crmState === 'dormant') {
-    return `The deal at ${where} closed lost, so we're holding off reaching out to ${who} today.`;
+  if (suppressed && args.crmState === 'dormant') {
+    return `The deal at ${where} closed lost, so we're holding off reaching out to ${who} for now. They can resurface after ~6 months if a new signal fires (e.g. a new decision-maker, fresh funding).`;
   }
   if (company == null && contact == null) return null;
 
@@ -734,6 +793,15 @@ function priorityScoreArcColor(pct: number | null): string {
 function getContactAction(
   lead: Lead,
 ): LeadAction {
+  // CRM-resolved (won/lost) only forces Deprioritise DURING the suppression
+  // cooldown (won 1yr / lost 6mo). Past it, treat the contact as non-resolved so
+  // normal fit/readiness logic — and any new signals — can resurface them.
+  const crmForAction = isCrmSuppressed(
+    lead.hubspot_lead_state ?? null,
+    lead.hubspot_latest_deal_updated_at ?? null,
+  )
+    ? lead.hubspot_lead_state ?? null
+    : null;
   const base = getActionFromScores(
     resolveCompanyFitForLeadAction(lead),
     lead.contact_fit_score ?? null,
@@ -742,16 +810,16 @@ function getContactAction(
     // hot companies as Monitor — keep this in sync with /api/outreach/hooks and
     // /api/outreach/sequence, which both fold company + contact readiness.
     effectiveReadiness(lead.company_readiness_score ?? null, lead.contact_readiness_score ?? null),
-    lead.hubspot_lead_state ?? null,
+    crmForAction,
   );
   // Outreach state overlays the score-driven action: a staged draft promotes
   // to "Send outreach"; a sent sequence to "Await reply". Pass crmState so a
   // closed-won / closed-lost contact still reads as Deprioritise even with a
-  // historic sequence on file.
+  // historic sequence on file (during cooldown only).
   return applyOutreachOverride(
     base,
     (lead.latest_sequence_status ?? null) as SequenceDispatchStatus,
-    lead.hubspot_lead_state ?? null,
+    crmForAction,
   );
 }
 
@@ -1135,6 +1203,13 @@ function getSortValue(lead: Lead | QueryLead, col: string): string | number {
       ).toLowerCase();
     case 'status': {
       const order = LEAD_ACTION_SORT_ORDER;
+      // Gate CRM-resolved state by the suppression cooldown (same as getContactAction).
+      const crmForAction = isCrmSuppressed(
+        (lead as Lead).hubspot_lead_state ?? null,
+        (lead as Lead).hubspot_latest_deal_updated_at ?? null,
+      )
+        ? (lead as Lead).hubspot_lead_state ?? null
+        : null;
       return order[applyOutreachOverride(
         getActionFromScores(
           resolveCompanyFitForLeadAction(lead),
@@ -1143,10 +1218,10 @@ function getSortValue(lead: Lead | QueryLead, col: string): string | number {
             (lead as Lead).company_readiness_score ?? null,
             (lead as Lead).contact_readiness_score ?? null,
           ),
-          (lead as Lead).hubspot_lead_state ?? null,
+          crmForAction,
         ),
         ((lead as Lead).latest_sequence_status ?? null) as SequenceDispatchStatus,
-        (lead as Lead).hubspot_lead_state ?? null,
+        crmForAction,
       )] ?? 0;
     }
     case 'company_fit':
@@ -1158,17 +1233,7 @@ function getSortValue(lead: Lead | QueryLead, col: string): string | number {
     case 'contact_fit':
       return lead.contact_fit_score ?? -1;
     case 'priority':
-      return (
-        contactPriorityScore(
-          lead.contact_fit_score,
-          effectiveReadiness(
-            (lead as Lead).company_readiness_score ?? null,
-            (lead as Lead).contact_readiness_score ?? null,
-          ),
-          (lead as Lead).priority_score ?? null,
-          (lead as QueryLead).company_fit_score ?? (lead as QueryLead).companies?.company_fit_score ?? null,
-        ) ?? -1
-      );
+      return displayContactPriority(lead as Lead) ?? -1;
     case 'source':
       return ((lead as QueryLead).data_provenance_type ?? '').toLowerCase();
     case 'signals':
@@ -3362,15 +3427,7 @@ export function ContactsWorkspace() {
                           {/* Priority — company_fit × contact_fit × (0.5 + 0.5 × readiness). Click opens the Priority side panel. */}
                           <div className="min-w-0 flex items-center justify-center">
                             <TableFitGaugeButton
-                              score={contactPriorityScore(
-                                lead.contact_fit_score,
-                                effectiveReadiness(
-                                  lead.company_readiness_score ?? null,
-                                  lead.contact_readiness_score ?? null,
-                                ),
-                                lead.priority_score ?? null,
-                                lead.company_fit_score ?? lead.companies?.company_fit_score ?? null,
-                              )}
+                              score={displayContactPriority(lead)}
                               title="View priority (company fit × contact fit × readiness)"
                               arcColorFn={priorityScoreArcColor}
                               onOpen={(e) => {
@@ -4749,20 +4806,14 @@ export function ContactsWorkspace() {
                             const companyFitPct = percentDisplayNumber(
                               selectedLead.company_fit_score ?? selectedLead.companies?.company_fit_score ?? null,
                             );
-                            // Effective readiness (account OR personal signal) — this is what
-                            // feeds priority, so the row must show it (not contact-only) or the
-                            // panel re-creates the "readiness 0 but priority high" mismatch.
-                            const effReadiness = effectiveReadiness(
-                              selectedLead.company_readiness_score ?? null,
-                              selectedLead.contact_readiness_score ?? null,
-                            );
+                            // Effective readiness (account OR personal signal), with the CRM
+                            // suppression cooldown folded in — this is what feeds priority, so
+                            // the row must show the same value or the panel re-creates the
+                            // "readiness 0 but priority high" mismatch. displayContactPriority
+                            // is the SAME helper the table + sort use, so they can't diverge.
+                            const effReadiness = displayEffectiveReadiness(selectedLead);
                             const readinessPct = percentDisplayNumber(effReadiness);
-                            const priorityNorm = contactPriorityScore(
-                              selectedLead.contact_fit_score,
-                              effReadiness,
-                              selectedLead.priority_score ?? null,
-                              selectedLead.company_fit_score ?? selectedLead.companies?.company_fit_score ?? null,
-                            );
+                            const priorityNorm = displayContactPriority(selectedLead);
                             const priorityPct = percentDisplayNumber(priorityNorm);
                             const ScoreRow = ({
                               label,
@@ -4838,6 +4889,7 @@ export function ContactsWorkspace() {
                                       companyReadiness: selectedLead.company_readiness_score ?? null,
                                       contactReadiness: selectedLead.contact_readiness_score ?? null,
                                       crmState: selectedLead.hubspot_lead_state ?? null,
+                                      dealClosedAt: selectedLead.hubspot_latest_deal_updated_at ?? null,
                                     });
                                     if (!blurb) return null;
                                     return (

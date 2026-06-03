@@ -50,6 +50,12 @@ interface Message {
   subject: string;
   body: string;
   channel?: Channel;
+  /** ISO timestamp written by sync-status when lemlist confirms this step fired. */
+  sent_at?: string | null;
+  /** Per-step engagement counters, populated by lemlist activity sync. */
+  opens?: number | null;
+  clicks?: number | null;
+  replies?: number | null;
 }
 
 interface Contact {
@@ -760,6 +766,21 @@ export default function OutreachPage() {
                                           : sStatus === 'queued'
                                             ? `~${sendDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
                                             : ''}
+                                      </div>
+                                    )}
+
+                                    {/* Engagement counters — only when there's anything to show. */}
+                                    {((msg.opens ?? 0) > 0 || (msg.clicks ?? 0) > 0 || (msg.replies ?? 0) > 0) && (
+                                      <div className="mt-1 flex items-center gap-2 text-[10px]">
+                                        {(msg.opens ?? 0) > 0 && (
+                                          <span className="text-emerald-700">{msg.opens} open{msg.opens === 1 ? '' : 's'}</span>
+                                        )}
+                                        {(msg.clicks ?? 0) > 0 && (
+                                          <span className="text-sky-700">{msg.clicks} click{msg.clicks === 1 ? '' : 's'}</span>
+                                        )}
+                                        {(msg.replies ?? 0) > 0 && (
+                                          <span className="text-violet-700 font-semibold">{msg.replies} repl{msg.replies === 1 ? 'y' : 'ies'}</span>
+                                        )}
                                       </div>
                                     )}
                                   </div>

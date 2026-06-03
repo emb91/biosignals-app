@@ -397,6 +397,9 @@ interface SyncSentRow {
     body: string;
     channel?: 'email' | 'linkedin';
     sent_at?: string | null;
+    opens?: number | null;
+    clicks?: number | null;
+    replies?: number | null;
   }>;
   external_ref: {
     lemlist_lead_id?: string | null;
@@ -454,19 +457,33 @@ export async function syncUserOutreachStatus(
     const leadId = row.external_ref?.lemlist_lead_id;
     if (!campaignId || !email) continue;
 
-    // Per-step send confirmations
+    // Per-step send confirmations + engagement counters (opens/clicks/replies).
     let messagesUpdate: SyncSentRow['messages'] | null = null;
     if (leadId) {
       const activities = await getLeadActivities(apiKey, leadId);
       const sentAtBySeqStep = reduceActivitiesToSentSteps(activities);
+      const engagementBySeqStep = reduceActivitiesToEngagement(activities);
       let anyChange = false;
       const updated = row.messages.map((m, i) => {
         const sentAt = sentAtBySeqStep[i];
-        if (sentAt && m.sent_at !== sentAt) {
-          anyChange = true;
-          return { ...m, sent_at: sentAt };
-        }
-        return m;
+        const eng = engagementBySeqStep[i];
+        const nextSentAt = sentAt && m.sent_at !== sentAt ? sentAt : m.sent_at;
+        const nextOpens = eng?.opens ?? m.opens ?? 0;
+        const nextClicks = eng?.clicks ?? m.clicks ?? 0;
+        const nextReplies = eng?.replies ?? m.replies ?? 0;
+        const changed =
+          nextSentAt !== m.sent_at ||
+          nextOpens !== (m.opens ?? 0) ||
+          nextClicks !== (m.clicks ?? 0) ||
+          nextReplies !== (m.replies ?? 0);
+        if (changed) anyChange = true;
+        return {
+          ...m,
+          sent_at: nextSentAt,
+          opens: nextOpens,
+          clicks: nextClicks,
+          replies: nextReplies,
+        };
       });
       if (anyChange) messagesUpdate = updated;
     }
@@ -562,6 +579,37 @@ export function reduceActivitiesToSentSteps(
     if (!existing || a.createdAt < existing) {
       out[a.sequenceStep] = a.createdAt;
     }
+  }
+  return out;
+}
+
+/** Per-step engagement counters derived from lemlist activities. */
+export interface StepEngagement {
+  opens: number;
+  clicks: number;
+  replies: number;
+}
+
+const ACTIVITY_OPEN_TYPES = new Set(['emailsOpened']);
+const ACTIVITY_CLICK_TYPES = new Set(['emailsClicked', 'emailClicked']);
+const ACTIVITY_REPLY_TYPES = new Set(['emailsReplied', 'linkedinReplied']);
+
+/**
+ * Reduce activities into per-step engagement counts. Returns a map of
+ * sequenceStep → { opens, clicks, replies }. Counts every individual
+ * activity event (a single contact opening twice counts as 2 opens —
+ * matches how lemlist itself reports it).
+ */
+export function reduceActivitiesToEngagement(
+  activities: LemlistActivity[],
+): Record<number, StepEngagement> {
+  const out: Record<number, StepEngagement> = {};
+  for (const a of activities) {
+    if (!out[a.sequenceStep]) out[a.sequenceStep] = { opens: 0, clicks: 0, replies: 0 };
+    const bucket = out[a.sequenceStep];
+    if (ACTIVITY_OPEN_TYPES.has(a.type)) bucket.opens++;
+    else if (ACTIVITY_CLICK_TYPES.has(a.type)) bucket.clicks++;
+    else if (ACTIVITY_REPLY_TYPES.has(a.type)) bucket.replies++;
   }
   return out;
 }
