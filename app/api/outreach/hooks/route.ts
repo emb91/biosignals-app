@@ -23,6 +23,7 @@ import { createClient } from '@/lib/supabase-server';
 import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { effectiveReadiness, getActionFromScores, HIGH_SCORE } from '@/lib/lead-action';
+import { personaFunctionNames } from '@/lib/persona-functions';
 
 const LOOKBACK_DAYS = 14;
 // Hard cap on hooks returned. Was 10; brought down so the picker is scannable.
@@ -929,10 +930,10 @@ export async function GET(request: Request) {
       const fnSet = new Set<string>();
       const snSet = new Set<string>();
       for (const p of personaRows) {
-        for (const f of p.functions ?? []) if (f) fnSet.add(f);
+        for (const f of personaFunctionNames(p.functions)) fnSet.add(f);
         for (const s of p.seniority_levels ?? []) if (s) snSet.add(s);
         if (p.id === contactRow.scored_against_persona_id) {
-          contactPersonaFunctions = (p.functions ?? []).filter(Boolean) as string[];
+          contactPersonaFunctions = personaFunctionNames(p.functions);
         }
       }
       buyingGroupFunctions = [...fnSet];

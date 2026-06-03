@@ -15,6 +15,7 @@ import { createClient } from '@/lib/supabase-server';
 import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { effectiveReadiness, getActionFromScores } from '@/lib/lead-action';
+import { personaFunctionNames } from '@/lib/persona-functions';
 
 const DAY_OFFSETS = [0, 3, 7, 11, 15, 21, 28] as const;
 
@@ -192,8 +193,8 @@ export async function POST(request: Request) {
         .select('functions')
         .eq('icp_id', matchedIcpId);
       const fnSet = new Set<string>();
-      for (const p of (personas ?? []) as Array<{ functions?: string[] | null }>) {
-        for (const f of p.functions ?? []) if (f) fnSet.add(f);
+      for (const p of (personas ?? []) as Array<{ functions?: unknown }>) {
+        for (const f of personaFunctionNames(p.functions)) fnSet.add(f);
       }
       buyingGroupFunctions = [...fnSet];
     }
