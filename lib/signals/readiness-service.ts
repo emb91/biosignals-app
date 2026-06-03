@@ -3,6 +3,7 @@ import { buildAccountReadinessContext } from '@/lib/signals/readiness-context';
 import { normalizeReadinessEvent } from '@/lib/signals/readiness-normalize';
 import { buildAccountReason } from '@/lib/signals/readiness-reason';
 import { scoreAccountReadiness } from '@/lib/signals/readiness-score';
+import { effectiveReadiness } from '@/lib/lead-action';
 import {
   getCompanyFitSnapshot,
   getLatestReadinessSnapshot,
@@ -202,20 +203,45 @@ export async function recomputeContactReadiness(
 ): Promise<RecomputeContactReadinessResult> {
   const [signals, contactFitRow] = await Promise.all([
     listNormalizedSignalsForContact(supabase, input.userId, input.contactId),
-    // Pull contact fit so the snapshot can store priority = fit × (0.5 + 0.5 × readiness).
-    // Best-effort: a missing row leaves priority null and the snapshot still writes.
+    // Pull contact fit + company so the snapshot can store priority. Best-effort:
+    // a missing row leaves priority null and the snapshot still writes.
     supabase
       .from('contacts')
-      .select('contact_fit_score')
+      .select('contact_fit_score, company_id')
       .eq('id', input.contactId)
       .eq('user_id', input.userId)
       .maybeSingle()
-      .then((res) => (res.error ? null : (res.data as { contact_fit_score: number | null } | null))),
+      .then((res) =>
+        res.error
+          ? null
+          : (res.data as { contact_fit_score: number | null; company_id: string | null } | null),
+      ),
   ]);
 
   const score = scoreAccountReadiness(signals, {
     targetBuyerFunctions: input.targetBuyerFunctions,
   });
+
+  // Contact-LEVEL signals are rare, so a contact's own readiness is usually ~0.
+  // Fold in the COMPANY's readiness so a well-fit contact at an active account
+  // isn't stranded at floor priority just because we haven't captured a personal
+  // signal. effectiveReadiness = max(company, contact) + small bump if both —
+  // the same logic the outreach action gate uses, so priority and action agree.
+  // NOTE: readiness_score itself stays the contact's OWN signal score below; only
+  // PRIORITY uses the effective value. (The action gate re-derives effective from
+  // company + contact readiness, so storing effective in readiness_score would
+  // double-count company momentum.)
+  let companyReadiness: number | null = null;
+  if (contactFitRow?.company_id) {
+    const { data: uc } = await supabase
+      .from('user_companies')
+      .select('readiness_score')
+      .eq('user_id', input.userId)
+      .eq('company_id', contactFitRow.company_id)
+      .maybeSingle();
+    companyReadiness = (uc as { readiness_score?: number | null } | null)?.readiness_score ?? null;
+  }
+  const effectiveContactReadiness = effectiveReadiness(companyReadiness, score.overallScore);
 
   const snapshot = await upsertContactReadinessSnapshot(supabase, {
     userId: input.userId,
@@ -231,7 +257,7 @@ export async function recomputeContactReadiness(
   // recompute (the snapshot is authoritative).
   const mirroredPriority = computeMirroredPriority(
     contactFitRow?.contact_fit_score ?? null,
-    score.overallScore,
+    effectiveContactReadiness ?? score.overallScore,
   );
   const contactMirror: Record<string, number | null> = {
     readiness_score: score.overallScore,
