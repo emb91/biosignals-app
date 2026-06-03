@@ -51,7 +51,11 @@ export type LlmFeature =
   // Outreach hook curation — Haiku scores a small candidate list (≤12 hooks)
   // against the seller's value prop and picks the top 3 with one-line
   // reasoning. Cheap ($0.002/call), fires once per Outreach-tab open.
-  | 'outreach_curate_hooks';
+  | 'outreach_curate_hooks'
+  // ICP buying-team generation — infers the distinct buying teams (personas)
+  // for an ICP. Sonnet: the multi-team split + prune-to-what-we-sell reasoning
+  // is quality-sensitive, and it fires only once per ICP at (re-)enrichment.
+  | 'icp_buying_team';
 
 /**
  * Default models per (feature, route). Override via the `model` arg.
@@ -148,6 +152,10 @@ const FEATURE_MODELS: Record<LlmFeature, { openrouter: string; anthropic: string
   outreach_curate_hooks: {
     openrouter: 'anthropic/claude-haiku-4-5',
     anthropic: 'claude-haiku-4-5',
+  },
+  icp_buying_team: {
+    openrouter: 'anthropic/claude-sonnet-4-6',
+    anthropic: 'claude-sonnet-4-6',
   },
 };
 

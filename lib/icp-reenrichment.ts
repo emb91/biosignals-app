@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
+import { completeLlm } from '@/lib/llm-client';
 import {
   BUSINESS_AREA_OPTIONS,
   COMPANY_SIZE_OPTIONS,
@@ -27,8 +28,6 @@ import {
   enrichTargetCompany,
   type TargetCompanyEnrichmentResult,
 } from '@/lib/target-company-enrichment';
-
-const BUYING_TEAM_MODEL = 'claude-sonnet-4-6';
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
@@ -414,7 +413,6 @@ async function generateBuyingTeam(input: {
   icpExampleTotalFundingUsd: number | null;
   exampleCompanyName: string | null;
 }): Promise<BuyingTeamResult[]> {
-  const client = requireAnthropicClient();
 
   const { bucket: headcountBucket, from: headcountFrom } = resolvePrimarySizeBucket(
     input.icpExampleEmployeeCount,
@@ -518,17 +516,17 @@ Return ONLY valid JSON — no markdown, no explanation:
   ]
 }`;
 
-  const message = await client.messages.create({
-    model: BUYING_TEAM_MODEL,
-    max_tokens: 768,
-    messages: [{ role: 'user', content: prompt }],
+  const completion = await completeLlm({
+    feature: 'icp_buying_team',
+    prompt,
+    maxTokens: 768,
   });
   await recordLlmUsageEvent({
-    provider: 'anthropic',
+    provider: completion.provider,
     feature: 'icp_buying_team_generation',
     route: 'lib/icp-reenrichment#generateBuyingTeam',
-    model: BUYING_TEAM_MODEL,
-    usage: message.usage,
+    model: completion.model,
+    usage: completion.usage,
     metadata: {
       icp_company_type: input.icpCompanyType,
       icp_platform_category: input.icpPlatformCategory || null,
@@ -537,10 +535,7 @@ Return ONLY valid JSON — no markdown, no explanation:
     },
   });
 
-  const text = message.content
-    .filter((block) => block.type === 'text')
-    .map((block) => (block as { type: 'text'; text: string }).text)
-    .join('');
+  const text = completion.text;
 
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) {

@@ -25,7 +25,11 @@ async function main() {
       const r = await regenerateBuyingTeamsForIcp(USER_ID, icp.id);
       console.log(`  ${(icp.name ?? icp.id).padEnd(48)} → ${r.teams} team(s)`);
     } catch (e) {
-      console.warn(`  ${(icp.name ?? icp.id).padEnd(48)} → FAIL: ${e instanceof Error ? e.message : e}`);
+      const detail =
+        e instanceof Error
+          ? e.message
+          : JSON.stringify(e, Object.getOwnPropertyNames(e ?? {}));
+      console.warn(`  ${(icp.name ?? icp.id).padEnd(48)} → FAIL: ${detail}`);
     }
   }
 
