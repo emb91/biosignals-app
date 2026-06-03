@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
+import { CRM_INTERNAL_EVENT_TYPES } from '@/lib/signals/crm-internal-events';
 
 type SignalFeedItem = {
   id: string;
@@ -322,6 +323,9 @@ export async function GET(request: Request) {
     );
     const keptPatentRepByCompany = new Set<string>();
     const collapsed = filtered.filter((it) => {
+      // CRM-internal bookkeeping (open opp, new CRM contact, closed-lost, etc.)
+      // is the seller's own pipeline status, not a market signal — never shown.
+      if (CRM_INTERNAL_EVENT_TYPES.has(it.sourceEventType)) return false;
       if (!PATENT_DETAIL_TYPES.has(it.sourceEventType)) return true;
       if (companiesWithPatentAggregate.has(it.companyId)) return false; // summarised by the aggregate
       const key = it.companyId ?? 'none';

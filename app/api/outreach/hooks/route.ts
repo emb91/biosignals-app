@@ -24,6 +24,7 @@ import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { effectiveReadiness, getActionFromScores, HIGH_SCORE } from '@/lib/lead-action';
 import { personaFunctionNames } from '@/lib/persona-functions';
+import { CRM_INTERNAL_EVENT_TYPES } from '@/lib/signals/crm-internal-events';
 
 // 30 days, not 14: month-old signals like an FDA approval or indication
 // expansion are still strong, honest outreach anchors. The panel shows them as
@@ -35,20 +36,6 @@ const LOOKBACK_DAYS = 30;
 // outreach-worthiest signals rather than a dump of every publication.
 const MAX_HOOKS = 6;
 
-// HARD RULE: CRM-internal pipeline/status events are the seller's OWN HubSpot
-// bookkeeping — a deal logged, a contact added, a deal closed/lost. They are NOT
-// market signals about the prospect and must NEVER become an outreach hook: you
-// cannot cold-open a contact about a deal your own team created in HubSpot.
-// (Prospect-ENGAGEMENT events that also live in the CRM — demo requested,
-// inbound enquiry, website/webinar/content, replied to outreach — are genuine
-// prospect actions and are deliberately NOT excluded.)
-const CRM_INTERNAL_EVENT_TYPES = new Set<string>([
-  'open_opportunity_in_crm',
-  'new_contact_added_in_crm',
-  'closed_lost_in_crm',
-  'lapsed_customer',
-  'terminated_deal',
-]);
 
 // Maximum chars for the displayed title. PubMed titles especially blow past
 // what's readable in a side-panel card. ~80 chars + ellipsis fits one line at
