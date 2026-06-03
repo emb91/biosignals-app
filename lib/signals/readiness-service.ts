@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { effectiveReadiness } from '@/lib/lead-action';
 import { buildAccountReadinessContext } from '@/lib/signals/readiness-context';
 import { normalizeReadinessEvent } from '@/lib/signals/readiness-normalize';
 import { buildAccountReason } from '@/lib/signals/readiness-reason';
@@ -219,39 +220,53 @@ export async function recomputeContactReadiness(
       ),
   ]);
 
-  // Resolve company fit via user_companies (per-user score on the contact's account).
+  // Resolve company fit + company readiness via user_companies (per-user scores
+  // on the contact's account). Company readiness feeds EFFECTIVE readiness below.
   let companyFitScore: number | null = null;
+  let companyReadinessScore: number | null = null;
   if (contactFitRow?.company_id) {
     const { data: ucRow } = await supabase
       .from('user_companies')
-      .select('company_fit_score')
+      .select('company_fit_score, readiness_score')
       .eq('user_id', input.userId)
       .eq('company_id', contactFitRow.company_id)
       .maybeSingle();
-    companyFitScore =
-      (ucRow as { company_fit_score: number | null } | null)?.company_fit_score ?? null;
+    const uc = ucRow as { company_fit_score: number | null; readiness_score: number | null } | null;
+    companyFitScore = uc?.company_fit_score ?? null;
+    companyReadinessScore = uc?.readiness_score ?? null;
   }
 
   const score = scoreAccountReadiness(signals, {
     targetBuyerFunctions: input.targetBuyerFunctions,
   });
 
+  // Priority uses EFFECTIVE readiness (max of company + contact, plus the
+  // both-present bump) — the same combine the action tree uses. A well-fit
+  // contact at a hot account should read as high priority even with no
+  // personal signal (the Althea-@-Illumina case). The snapshot's own
+  // overall_score stays the contact-level readiness; only priority folds in
+  // company momentum.
+  const effReadiness =
+    effectiveReadiness(companyReadinessScore, score.overallScore) ?? score.overallScore;
+
   const snapshot = await upsertContactReadinessSnapshot(supabase, {
     userId: input.userId,
     contactId: input.contactId,
     fitScore: contactFitRow?.contact_fit_score ?? null,
     companyFitScore,
+    priorityReadiness: effReadiness,
     score,
   });
 
   // Mirror readiness_score (always) + priority_score (when fit is known) onto
   // contacts so /api/leads can read/ORDER BY without joining the snapshot.
   // readiness_score is the canonical signal score (formerly "intent"),
-  // = snapshot overall_score. Best-effort: a mirror failure doesn't fail the
+  // = snapshot overall_score (CONTACT-level). priority_score folds in company
+  // momentum via effReadiness. Best-effort: a mirror failure doesn't fail the
   // recompute (the snapshot is authoritative).
   const mirroredPriority = computeMirroredPriority(
     contactFitRow?.contact_fit_score ?? null,
-    score.overallScore,
+    effReadiness,
     companyFitScore,
   );
   const contactMirror: Record<string, number | null> = {

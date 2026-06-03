@@ -143,6 +143,8 @@ export default function BriefingPage() {
   const [loadingDashboard, setLoadingDashboard] = useState(true);
   const [steps, setSteps] = useState<SetupStep[]>([]);
   const [topLeads, setTopLeads] = useState<TopLead[]>([]);
+  const [repliedCount, setRepliedCount] = useState<number>(0);
+  const [firstRepliedName, setFirstRepliedName] = useState<string | null>(null);
   const [showImportReady, setShowImportReady] = useState(false);
   const [enrichmentJobs, setEnrichmentJobs] = useState<EnrichmentJob[]>([]);
   const [icpCoverageRows, setIcpCoverageRows] = useState<IcpCoverageRow[]>([]);
@@ -255,6 +257,7 @@ export default function BriefingPage() {
           icpHealthRes,
           importReadyRes,
           pulseSeriesRes,
+          repliedRes,
         ] = await Promise.all([
           supabase.from('user_company').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
           fetch(ROUTES.api.icps),
@@ -266,6 +269,7 @@ export default function BriefingPage() {
           fetch('/api/pipeline/icp-cards'),
           fetch('/api/import-ready'),
           fetch('/api/today/pulse-series'),
+          fetch('/api/outreach/replied'),
         ]);
 
         if (profileError) throw profileError;
@@ -298,6 +302,16 @@ export default function BriefingPage() {
         if (syncLogRes.ok) {
           const syncJson = await syncLogRes.json() as { data: typeof hubspotSyncLog };
           setHubspotSyncLog(syncJson.data);
+        }
+
+        if (repliedRes.ok) {
+          const repliedJson = (await repliedRes.json()) as {
+            count?: number;
+            sequences?: Array<{ contact_name?: string; contact_id?: string }>;
+          };
+          setRepliedCount(repliedJson.count ?? 0);
+          const first = repliedJson.sequences?.[0];
+          setFirstRepliedName(first?.contact_name ?? null);
         }
 
         if (icpCoverageRes.ok) {
@@ -451,6 +465,21 @@ export default function BriefingPage() {
   }, [runningJobs, failedJobs, showImportReady, hubspotSyncLog, syncProblemCount]);
 
   const agenda: AgendaItem[] = [
+    // Replies are the highest-leverage thing on the page when present —
+    // a contact wrote back, the rep needs to reply before anything else.
+    ...(repliedCount > 0
+      ? [{
+          id: 'needs-reply',
+          label: '',
+          title: 'Reply to engaged contacts',
+          detail:
+            repliedCount === 1 && firstRepliedName
+              ? `${firstRepliedName} replied to a sequence — take it human from here.`
+              : `${repliedCount} contact${repliedCount === 1 ? '' : 's'} replied to a sequence. Take it human from here.`,
+          href: withQuery(ROUTES.outreach, 'status=replied'),
+          cta: 'Open replies',
+        }]
+      : []),
     ...(nextStep
       ? [{
           id: `setup-${nextStep.id}`,

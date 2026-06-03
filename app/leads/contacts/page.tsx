@@ -625,6 +625,12 @@ function normalize01(value: number | null | undefined): number | null {
  * high priority — matches what the column should answer ("who should I reach
  * out to," not "who's a good contact in isolation"). Returns 0–1 or null.
  *
+ * `readiness` MUST be EFFECTIVE readiness (effectiveReadiness(company, contact)
+ * — the stronger of account + personal signals), NOT contact readiness alone.
+ * A well-fit contact at a hot account is reachable on account momentum even
+ * with no personal signal (the Althea-@-Illumina case). Callers pass the
+ * effective value; this matches the stored priority_score the cron writes.
+ *
  * Prefers the stored `priority_score` on the lead (written by the readiness
  * cron — see lib/signals/readiness-service.ts) so all callers see the same
  * value the API sorts on. Falls back to the live computation only when the
@@ -670,10 +676,9 @@ function getPriorityExplanation(args: {
 }): string | null {
   const company = normalize01(args.companyFit);
   const contact = normalize01(args.contactFit);
-  const readiness = Math.max(
-    normalize01(args.companyReadiness) ?? 0,
-    normalize01(args.contactReadiness) ?? 0,
-  );
+  // Effective readiness — same combine the action tree + priority use, so the
+  // narrative agrees with both.
+  const readiness = effectiveReadiness(args.companyReadiness, args.contactReadiness) ?? 0;
   const HIGH = 0.7;
   const who = args.firstName?.trim() || 'this contact';
   const where = args.companyName?.trim() || 'this company';
@@ -1156,7 +1161,10 @@ function getSortValue(lead: Lead | QueryLead, col: string): string | number {
       return (
         contactPriorityScore(
           lead.contact_fit_score,
-          (lead as Lead).contact_readiness_score ?? null,
+          effectiveReadiness(
+            (lead as Lead).company_readiness_score ?? null,
+            (lead as Lead).contact_readiness_score ?? null,
+          ),
           (lead as Lead).priority_score ?? null,
           (lead as QueryLead).company_fit_score ?? (lead as QueryLead).companies?.company_fit_score ?? null,
         ) ?? -1
@@ -2126,18 +2134,10 @@ export function ContactsWorkspace() {
   // Merge in the detail fetch (full companies(...) nested + extra lead fields).
   // Detail wins where it has a value; lean fills the rest (readiness,
   // attribution, hubspot lead state, etc. live only on the lean list row).
-  // EXCEPTION: priority_score + contact_readiness_score are CRM-masked in
-  // /api/leads (the lean list) for customer/dormant rows so closed-won deals
-  // sort to the bottom and read as already-handled. The detail endpoint
-  // returns the raw stored values — letting it win would mean the side panel
-  // shows a different number than the table row. Lean wins for those two so
-  // both surfaces agree.
   const selectedLead: Lead | null = selectedLeadLean
     ? ({
         ...selectedLeadLean,
         ...(selectedLeadId ? selectedLeadDetailById[selectedLeadId] ?? {} : {}),
-        priority_score: selectedLeadLean.priority_score,
-        contact_readiness_score: selectedLeadLean.contact_readiness_score,
       } as Lead)
     : null;
 
@@ -3364,7 +3364,10 @@ export function ContactsWorkspace() {
                             <TableFitGaugeButton
                               score={contactPriorityScore(
                                 lead.contact_fit_score,
-                                lead.contact_readiness_score,
+                                effectiveReadiness(
+                                  lead.company_readiness_score ?? null,
+                                  lead.contact_readiness_score ?? null,
+                                ),
                                 lead.priority_score ?? null,
                                 lead.company_fit_score ?? lead.companies?.company_fit_score ?? null,
                               )}
@@ -4746,10 +4749,17 @@ export function ContactsWorkspace() {
                             const companyFitPct = percentDisplayNumber(
                               selectedLead.company_fit_score ?? selectedLead.companies?.company_fit_score ?? null,
                             );
-                            const readinessPct = percentDisplayNumber(selectedLead.contact_readiness_score ?? null);
+                            // Effective readiness (account OR personal signal) — this is what
+                            // feeds priority, so the row must show it (not contact-only) or the
+                            // panel re-creates the "readiness 0 but priority high" mismatch.
+                            const effReadiness = effectiveReadiness(
+                              selectedLead.company_readiness_score ?? null,
+                              selectedLead.contact_readiness_score ?? null,
+                            );
+                            const readinessPct = percentDisplayNumber(effReadiness);
                             const priorityNorm = contactPriorityScore(
                               selectedLead.contact_fit_score,
-                              selectedLead.contact_readiness_score,
+                              effReadiness,
                               selectedLead.priority_score ?? null,
                               selectedLead.company_fit_score ?? selectedLead.companies?.company_fit_score ?? null,
                             );

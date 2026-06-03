@@ -381,6 +381,123 @@ export async function ensureArcovaTemplate(
   return { campaignId: created._id, created: true };
 }
 
+// ── Per-user sync of all sent rows ─────────────────────────────────────────
+// Shared between the on-demand /api/outreach/lemlist/sync-status route and
+// the daily cron job. Caller passes a supabase client (anon or service-role)
+// + the user_id; returns how many rows had a status change.
+
+const MAX_SYNC_ROWS_PER_USER = 50;
+
+interface SyncSentRow {
+  id: string;
+  anchor_hook_text: string;
+  messages: Array<{
+    day_offset: number;
+    subject: string;
+    body: string;
+    channel?: 'email' | 'linkedin';
+    sent_at?: string | null;
+  }>;
+  external_ref: {
+    lemlist_lead_id?: string | null;
+    lemlist_campaign_id?: string | null;
+    lemlist_lead_email?: string | null;
+  } | null;
+}
+
+type SyncSupabase = {
+  from: (table: string) => unknown;
+};
+
+export async function syncUserOutreachStatus(
+  supabase: SyncSupabase,
+  userId: string,
+  apiKey: string,
+  hubspotPush?: (email: string, status: 'replied' | 'failed', anchor: string) => Promise<void>,
+): Promise<{ checked: number; changed: number }> {
+  // We type-assert here because the calling sites pass either a server-side
+  // Supabase client or the admin client; both have the same query shape.
+  const sb = supabase as unknown as {
+    from: (table: string) => {
+      select: (cols: string) => {
+        eq: (col: string, val: string) => {
+          in: (col: string, vals: string[]) => {
+            order: (col: string, opts: { ascending: boolean; nullsFirst?: boolean }) => {
+              limit: (n: number) => Promise<{ data: SyncSentRow[] | null }>;
+            };
+          };
+        };
+      };
+      update: (patch: Record<string, unknown>) => {
+        eq: (col: string, val: string) => {
+          eq: (col: string, val: string) => Promise<unknown>;
+        };
+      };
+    };
+  };
+
+  const { data: rows } = await sb
+    .from('outreach_sequences')
+    .select('id, anchor_hook_text, messages, external_ref')
+    .eq('user_id', userId)
+    .in('dispatch_status', ['sent', 'queued'])
+    .order('last_status_at', { ascending: true, nullsFirst: true })
+    .limit(MAX_SYNC_ROWS_PER_USER);
+
+  const sentRows = rows ?? [];
+  if (sentRows.length === 0) return { checked: 0, changed: 0 };
+
+  let changed = 0;
+  for (const row of sentRows) {
+    const campaignId = row.external_ref?.lemlist_campaign_id;
+    const email = row.external_ref?.lemlist_lead_email;
+    const leadId = row.external_ref?.lemlist_lead_id;
+    if (!campaignId || !email) continue;
+
+    // Per-step send confirmations
+    let messagesUpdate: SyncSentRow['messages'] | null = null;
+    if (leadId) {
+      const activities = await getLeadActivities(apiKey, leadId);
+      const sentAtBySeqStep = reduceActivitiesToSentSteps(activities);
+      let anyChange = false;
+      const updated = row.messages.map((m, i) => {
+        const sentAt = sentAtBySeqStep[i];
+        if (sentAt && m.sent_at !== sentAt) {
+          anyChange = true;
+          return { ...m, sent_at: sentAt };
+        }
+        return m;
+      });
+      if (anyChange) messagesUpdate = updated;
+    }
+
+    // Sequence-level flip
+    const state = await getLeadState(apiKey, campaignId, email);
+    const newStatus = state ? dispatchStatusFromLemlistState(state.state) : null;
+
+    if (messagesUpdate || newStatus) {
+      const patch: Record<string, unknown> = {};
+      if (messagesUpdate) patch.messages = messagesUpdate;
+      if (newStatus) {
+        patch.dispatch_status = newStatus;
+        patch.last_status_at = new Date().toISOString();
+      }
+      await sb.from('outreach_sequences').update(patch).eq('id', row.id).eq('user_id', userId);
+      changed++;
+    }
+
+    if (hubspotPush && (newStatus === 'replied' || newStatus === 'failed')) {
+      try {
+        await hubspotPush(email, newStatus, row.anchor_hook_text);
+      } catch {
+        // best-effort
+      }
+    }
+  }
+
+  return { checked: sentRows.length, changed };
+}
+
 // ── Per-step activities ────────────────────────────────────────────────────
 // lemlist's v2 activities endpoint returns one row per event (emailSent,
 // linkedinSent, etc.) with a sequenceStep (zero-indexed) + createdAt. We

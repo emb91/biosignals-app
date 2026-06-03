@@ -510,47 +510,6 @@ async function attachUserCompanyScoresBestEffort(
   }
 }
 
-/**
- * CRM-won/lost contacts are out of the active-outreach motion: mask readiness
- * to a low floor (0.01) at read time and recompute priority from the masked
- * readiness, so the gauges read as "already handled" without rewriting the
- * stored snapshot. Mirrors the override in /api/accounts.
- *
- * Pure transform — runs after all attaches have merged so hubspot_lead_state
- * and contact_readiness_score / priority_score / contact_fit_score are all
- * present on the row.
- */
-function applyCrmReadinessMask(rows: LeadRow[]): LeadRow[] {
-  return rows.map((row) => {
-    const leadState = row.hubspot_lead_state;
-    const crmDeprioritised = leadState === 'customer' || leadState === 'dormant';
-    if (!crmDeprioritised) return row;
-
-    const rawReadiness =
-      typeof row.contact_readiness_score === 'number' ? row.contact_readiness_score : null;
-    const fitRaw =
-      typeof row.contact_fit_score === 'number' && Number.isFinite(row.contact_fit_score)
-        ? row.contact_fit_score
-        : null;
-    const fitNorm = fitRaw == null ? null : fitRaw > 1 ? fitRaw / 100 : fitRaw;
-    const companyFitRaw =
-      typeof row.company_fit_score === 'number' && Number.isFinite(row.company_fit_score)
-        ? row.company_fit_score
-        : null;
-    const companyFitNorm =
-      companyFitRaw == null ? 1 : companyFitRaw > 1 ? companyFitRaw / 100 : companyFitRaw;
-
-    return {
-      ...row,
-      contact_readiness_score: rawReadiness != null ? 0.01 : rawReadiness,
-      priority_score:
-        fitNorm != null
-          ? Math.max(0, Math.min(1, companyFitNorm * fitNorm * (0.5 + 0.5 * 0.01)))
-          : null,
-    };
-  });
-}
-
 async function attachHubSpotLeadStateBestEffort(
   supabase: SupabaseClientLike,
   rows: LeadRow[],
@@ -1129,8 +1088,11 @@ export async function GET(request: Request) {
       ...companyReadinessRows[idx],
     }));
 
-    // Synchronous post-processing: provenance label + CRM readiness mask.
-    const finalRows = applyCrmReadinessMask(attachDataProvenance(merged));
+    // Synchronous post-processing: provenance label only. Priority is the
+    // stored value — the CRM-resolved (customer/dormant) state is reflected in
+    // the action tree and the CRM badge, NOT by mutating the priority score.
+    // There is exactly one priority score: contacts.priority_score.
+    const finalRows = attachDataProvenance(merged);
 
     return NextResponse.json({
       data: finalRows,

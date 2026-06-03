@@ -250,6 +250,9 @@ export async function upsertContactReadinessSnapshot(
     /** Company fit for the contact's account — folded into priority so a great
      *  contact at a poor-fit company doesn't read as high priority. */
     companyFitScore?: number | null;
+    /** EFFECTIVE readiness (max of company + contact) used for priority. When
+     *  omitted, falls back to the contact-level overall_score. */
+    priorityReadiness?: number | null;
     score: AccountReadinessScoreResult;
   }
 ): Promise<{ id: string }> {
@@ -259,7 +262,7 @@ export async function upsertContactReadinessSnapshot(
     fit_score: input.fitScore ?? null,
     priority_score: computePriorityScore(
       input.fitScore ?? null,
-      input.score.overallScore,
+      input.priorityReadiness ?? input.score.overallScore,
       input.companyFitScore ?? null,
     ),
     overall_score: input.score.overallScore,
