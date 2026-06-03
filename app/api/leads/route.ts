@@ -410,7 +410,7 @@ async function attachLatestSequenceStatusBestEffort(
   try {
     const { data, error } = await supabase
       .from('outreach_sequences')
-      .select('contact_id, dispatch_status, created_at')
+      .select('contact_id, dispatch_status, exported_to, created_at')
       .eq('user_id', userId)
       .in('contact_id', contactIds)
       .order('created_at', { ascending: false });
@@ -418,10 +418,23 @@ async function attachLatestSequenceStatusBestEffort(
       return rows.map((row) => ({ ...row, latest_sequence_status: null }));
     }
     const latest = new Map<string, string | null>();
-    for (const r of data as Array<{ contact_id: string; dispatch_status: string | null }>) {
+    for (const r of data as Array<{
+      contact_id: string;
+      dispatch_status: string | null;
+      exported_to: string | null;
+    }>) {
       // Order by created_at desc, so the first hit per contact_id is the most
       // recent one — set-if-absent preserves that.
-      if (!latest.has(r.contact_id)) latest.set(r.contact_id, r.dispatch_status ?? null);
+      if (latest.has(r.contact_id)) continue;
+      // Normalise to the four states the action override understands. Legacy
+      // 'exported' rows (CSV/clipboard pulls before the export feature was
+      // retired) imply manual dispatch — collapse to 'sent'. A null status
+      // with no export means staged-but-not-dispatched → 'draft' (matches
+      // /outreach's `dispatch_status ?? 'draft'` display).
+      let normalized = r.dispatch_status;
+      if (normalized === 'exported') normalized = 'sent';
+      if (!normalized) normalized = r.exported_to ? 'sent' : 'draft';
+      latest.set(r.contact_id, normalized);
     }
     return rows.map((row) => ({
       ...row,
@@ -520,12 +533,20 @@ function applyCrmReadinessMask(rows: LeadRow[]): LeadRow[] {
         ? row.contact_fit_score
         : null;
     const fitNorm = fitRaw == null ? null : fitRaw > 1 ? fitRaw / 100 : fitRaw;
+    const companyFitRaw =
+      typeof row.company_fit_score === 'number' && Number.isFinite(row.company_fit_score)
+        ? row.company_fit_score
+        : null;
+    const companyFitNorm =
+      companyFitRaw == null ? 1 : companyFitRaw > 1 ? companyFitRaw / 100 : companyFitRaw;
 
     return {
       ...row,
       contact_readiness_score: rawReadiness != null ? 0.01 : rawReadiness,
       priority_score:
-        fitNorm != null ? Math.max(0, Math.min(1, fitNorm * (0.5 + 0.5 * 0.01))) : null,
+        fitNorm != null
+          ? Math.max(0, Math.min(1, companyFitNorm * fitNorm * (0.5 + 0.5 * 0.01)))
+          : null,
     };
   });
 }

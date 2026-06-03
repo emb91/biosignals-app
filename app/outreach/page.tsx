@@ -649,13 +649,10 @@ export default function OutreachPage() {
                               const sStatus = stepStatus(seq, msg, new Date());
                               const sendDate = stepSendDate(seq, msg);
                               const isInvite = isLinkedInInvite(msg);
-                              const cellChannelClass = ch === 'linkedin'
-                                ? 'bg-[#0a66c2]/[0.04]'
-                                : 'bg-arcova-teal/[0.04]';
                               return (
                                 <td
                                   key={i}
-                                  className={`px-3 py-2.5 align-top cursor-pointer hover:bg-arcova-teal/5 ${cellChannelClass}`}
+                                  className="px-3 py-2.5 align-top cursor-pointer hover:bg-arcova-teal/5"
                                   onClick={() => handleCellClick(seq.id, i)}
                                 >
                                   <div className="min-w-0">

@@ -202,16 +202,35 @@ export async function recomputeContactReadiness(
 ): Promise<RecomputeContactReadinessResult> {
   const [signals, contactFitRow] = await Promise.all([
     listNormalizedSignalsForContact(supabase, input.userId, input.contactId),
-    // Pull contact fit so the snapshot can store priority = fit × (0.5 + 0.5 × readiness).
+    // Pull contact fit + the contact's company_id so we can look up company fit
+    // from user_companies (where it actually lives — contacts.company_fit_score
+    // does NOT exist). Priority = company_fit × contact_fit × (0.5 + 0.5 × r).
     // Best-effort: a missing row leaves priority null and the snapshot still writes.
     supabase
       .from('contacts')
-      .select('contact_fit_score')
+      .select('contact_fit_score, company_id')
       .eq('id', input.contactId)
       .eq('user_id', input.userId)
       .maybeSingle()
-      .then((res) => (res.error ? null : (res.data as { contact_fit_score: number | null } | null))),
+      .then((res) =>
+        res.error
+          ? null
+          : (res.data as { contact_fit_score: number | null; company_id: string | null } | null),
+      ),
   ]);
+
+  // Resolve company fit via user_companies (per-user score on the contact's account).
+  let companyFitScore: number | null = null;
+  if (contactFitRow?.company_id) {
+    const { data: ucRow } = await supabase
+      .from('user_companies')
+      .select('company_fit_score')
+      .eq('user_id', input.userId)
+      .eq('company_id', contactFitRow.company_id)
+      .maybeSingle();
+    companyFitScore =
+      (ucRow as { company_fit_score: number | null } | null)?.company_fit_score ?? null;
+  }
 
   const score = scoreAccountReadiness(signals, {
     targetBuyerFunctions: input.targetBuyerFunctions,
@@ -221,6 +240,7 @@ export async function recomputeContactReadiness(
     userId: input.userId,
     contactId: input.contactId,
     fitScore: contactFitRow?.contact_fit_score ?? null,
+    companyFitScore,
     score,
   });
 
@@ -232,6 +252,7 @@ export async function recomputeContactReadiness(
   const mirroredPriority = computeMirroredPriority(
     contactFitRow?.contact_fit_score ?? null,
     score.overallScore,
+    companyFitScore,
   );
   const contactMirror: Record<string, number | null> = {
     readiness_score: score.overallScore,
@@ -262,12 +283,17 @@ export async function recomputeContactReadiness(
 function computeMirroredPriority(
   fitScore: number | null | undefined,
   readinessScore: number | null | undefined,
+  secondFitScore?: number | null | undefined,
 ): number | null | undefined {
   if (typeof fitScore !== 'number' || !Number.isFinite(fitScore)) {
     return readinessScore == null ? undefined : null;
   }
   if (typeof readinessScore !== 'number' || !Number.isFinite(readinessScore)) return null;
-  const raw = fitScore * (0.5 + 0.5 * readinessScore);
+  // Optional second fit (company fit for contact priority). When absent we
+  // collapse to single-fit × readiness — used by account-level mirrors.
+  const second =
+    typeof secondFitScore === 'number' && Number.isFinite(secondFitScore) ? secondFitScore : 1;
+  const raw = fitScore * second * (0.5 + 0.5 * readinessScore);
   if (!Number.isFinite(raw)) return null;
   return Math.max(0, Math.min(1, raw));
 }

@@ -619,9 +619,11 @@ function normalize01(value: number | null | undefined): number | null {
 }
 
 /**
- * Contact priority = fit × (0.5 + 0.5 × readiness).
- * Hybrid model: fit is the floor, readiness is a boost — a strong-fit contact
- * scores at least half their fit even without a signal. Returns 0–1 or null.
+ * Contact priority = company_fit × contact_fit × (0.5 + 0.5 × readiness).
+ * Hybrid model: both fits act as the floor, readiness is a boost. Folding in
+ * company fit means a great contact at a poor-fit company doesn't read as
+ * high priority — matches what the column should answer ("who should I reach
+ * out to," not "who's a good contact in isolation"). Returns 0–1 or null.
  *
  * Prefers the stored `priority_score` on the lead (written by the readiness
  * cron — see lib/signals/readiness-service.ts) so all callers see the same
@@ -633,13 +635,17 @@ function contactPriorityScore(
   contactFit: number | null | undefined,
   readiness: number | null | undefined,
   stored?: number | null,
+  companyFit?: number | null | undefined,
 ): number | null {
   const storedNorm = normalize01(stored);
   if (storedNorm != null) return storedNorm;
-  const fit = normalize01(contactFit);
-  if (fit == null) return null;
+  const cFit = normalize01(contactFit);
+  if (cFit == null) return null;
+  // Company fit collapses to 1 when missing so older rows still score on
+  // contact fit alone (rather than going null and disappearing from the sort).
+  const coFit = normalize01(companyFit) ?? 1;
   const r = normalize01(readiness) ?? 0;
-  return fit * (0.5 + 0.5 * r);
+  return coFit * cFit * (0.5 + 0.5 * r);
 }
 
 /** Teal / orange / red bands for fit / readiness gauges. Matches lib/fit-gauge. */
@@ -680,9 +686,14 @@ function getContactAction(
     lead.hubspot_lead_state ?? null,
   );
   // Outreach state overlays the score-driven action: a staged draft promotes
-  // to "Send outreach"; a sent sequence to "Await reply". CRM-resolved
-  // deprioritise still wins inside applyOutreachOverride.
-  return applyOutreachOverride(base, (lead.latest_sequence_status ?? null) as SequenceDispatchStatus);
+  // to "Send outreach"; a sent sequence to "Await reply". Pass crmState so a
+  // closed-won / closed-lost contact still reads as Deprioritise even with a
+  // historic sequence on file.
+  return applyOutreachOverride(
+    base,
+    (lead.latest_sequence_status ?? null) as SequenceDispatchStatus,
+    lead.hubspot_lead_state ?? null,
+  );
 }
 
 const LEAD_EDIT_INPUT_CLASS =
@@ -1076,6 +1087,7 @@ function getSortValue(lead: Lead | QueryLead, col: string): string | number {
           (lead as Lead).hubspot_lead_state ?? null,
         ),
         ((lead as Lead).latest_sequence_status ?? null) as SequenceDispatchStatus,
+        (lead as Lead).hubspot_lead_state ?? null,
       )] ?? 0;
     }
     case 'company_fit':
@@ -1092,6 +1104,7 @@ function getSortValue(lead: Lead | QueryLead, col: string): string | number {
           lead.contact_fit_score,
           (lead as Lead).contact_readiness_score ?? null,
           (lead as Lead).priority_score ?? null,
+          (lead as QueryLead).company_fit_score ?? (lead as QueryLead).companies?.company_fit_score ?? null,
         ) ?? -1
       );
     case 'source':
@@ -3284,11 +3297,16 @@ export function ContactsWorkspace() {
                             })()}
                           </div>
 
-                          {/* Priority — fit × (0.5 + 0.5 × readiness). Click opens the Priority side panel. */}
+                          {/* Priority — company_fit × contact_fit × (0.5 + 0.5 × readiness). Click opens the Priority side panel. */}
                           <div className="min-w-0 flex items-center justify-center">
                             <TableFitGaugeButton
-                              score={contactPriorityScore(lead.contact_fit_score, lead.contact_readiness_score, lead.priority_score ?? null)}
-                              title="View priority (fit × readiness)"
+                              score={contactPriorityScore(
+                                lead.contact_fit_score,
+                                lead.contact_readiness_score,
+                                lead.priority_score ?? null,
+                                lead.company_fit_score ?? lead.companies?.company_fit_score ?? null,
+                              )}
+                              title="View priority (company fit × contact fit × readiness)"
                               arcColorFn={priorityScoreArcColor}
                               onOpen={(e) => {
                                 e.stopPropagation();
@@ -3343,9 +3361,17 @@ export function ContactsWorkspace() {
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    setSelectedLeadId(lead.id);
-                                    setSelectedPreview('action');
                                     cancelEditingLead();
+                                    // Action-driven routing:
+                                    //   send_outreach → /outreach editor (review & dispatch the staged draft)
+                                    //   reach_out      → side-panel Outreach tab (generate a fresh sequence)
+                                    //   anything else  → side-panel Action drawer (explanation)
+                                    if (action === 'send_outreach') {
+                                      router.push(ROUTES.outreach);
+                                      return;
+                                    }
+                                    setSelectedLeadId(lead.id);
+                                    setSelectedPreview(action === 'reach_out' ? 'outreach' : 'action');
                                   }}
                                   className={cn(
                                     'inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium cursor-pointer select-none',
@@ -4524,6 +4550,16 @@ export function ContactsWorkspace() {
                                       Lead with relevance to their role and therapeutic focus, and tie your message to
                                       signals or milestones when you can.
                                     </p>
+                                    <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
+                                      <button
+                                        type="button"
+                                        onClick={() => setSelectedPreview('outreach')}
+                                        className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-white px-4 py-2.5 text-sm font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/5"
+                                      >
+                                        Generate outreach sequence
+                                        <ChevronRight className="w-4 h-4" aria-hidden />
+                                      </button>
+                                    </div>
                                   </div>
                                 )}
 
@@ -4571,9 +4607,16 @@ export function ContactsWorkspace() {
                                       An outreach sequence is staged for {contactName || 'this contact'} but hasn&apos;t
                                       been dispatched yet. Review the draft and send it when you&apos;re ready.
                                     </p>
-                                    <p className="text-[13.5px] leading-[1.55] text-[#4a6470]">
-                                      Open the Outreach tab on this side panel to view, edit, and dispatch the sequence.
-                                    </p>
+                                    <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-4">
+                                      <button
+                                        type="button"
+                                        onClick={() => router.push(ROUTES.outreach)}
+                                        className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-white px-4 py-2.5 text-sm font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/5"
+                                      >
+                                        Open outreach editor
+                                        <ChevronRight className="w-4 h-4" aria-hidden />
+                                      </button>
+                                    </div>
                                   </div>
                                 )}
 
@@ -4638,11 +4681,15 @@ export function ContactsWorkspace() {
                           /* ── Priority view — numbers only; details live in Fit + Signals tabs. ── */
                           (() => {
                             const fitPct = percentDisplayNumber(selectedLead.contact_fit_score);
+                            const companyFitPct = percentDisplayNumber(
+                              selectedLead.company_fit_score ?? selectedLead.companies?.company_fit_score ?? null,
+                            );
                             const readinessPct = percentDisplayNumber(selectedLead.contact_readiness_score ?? null);
                             const priorityNorm = contactPriorityScore(
                               selectedLead.contact_fit_score,
                               selectedLead.contact_readiness_score,
                               selectedLead.priority_score ?? null,
+                              selectedLead.company_fit_score ?? selectedLead.companies?.company_fit_score ?? null,
                             );
                             const priorityPct = percentDisplayNumber(priorityNorm);
                             const ScoreRow = ({
@@ -4707,7 +4754,13 @@ export function ContactsWorkspace() {
                                 </div>
 
                                 <ScoreRow
-                                  label="Fit score"
+                                  label="Company fit"
+                                  pct={companyFitPct}
+                                  arcColor={fitScoreArcColor(companyFitPct)}
+                                  onOpen={() => setSelectedPreview('scoring')}
+                                />
+                                <ScoreRow
+                                  label="Contact fit"
                                   pct={fitPct}
                                   arcColor={fitScoreArcColor(fitPct)}
                                   onOpen={() => setSelectedPreview('scoring')}

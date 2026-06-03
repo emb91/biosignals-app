@@ -5,7 +5,7 @@
  * Day offsets: 0 (initial) → 3, 7, 11, 15, 21, 28 (six follow-ups).
  *
  * Does NOT persist — returns the messages so the rep can edit them in the
- * UI before deciding to export. Persistence happens at /api/outreach/export.
+ * UI before deciding to stage. Persistence happens at /api/outreach/lemlist/stage.
  *
  * Input:  { contactId, anchorHookText, anchorSignalEventId? }
  * Output: { messages: Array<{ day_offset, subject, body }> }
@@ -17,15 +17,19 @@ import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { effectiveReadiness, getActionFromScores } from '@/lib/lead-action';
 import { personaFunctionNames } from '@/lib/persona-functions';
 
-// Matches lemlist's default multichannel template:
-// Day 1  Email — initial
-// Day 4  Email — follow-up
-// Day 7  LinkedIn — invite (in lemlist, the connect request)
-// Day 8  LinkedIn — message (assumed-accepted nudge)
-// Day 11 Email   — re-engage (lemlist's slot is voice; we don't do voice, so email)
-// Day 14 LinkedIn — message (final LI touch)
-// Day 21 Email   — breakup
-const DAY_OFFSETS = [1, 4, 7, 8, 11, 14, 21] as const;
+// Matches lemlist's default multichannel template — but the generator only
+// writes COPY for the 6 message steps; the Day 7 LinkedIn invite is a pure
+// action (no body needed) and gets injected by the stage endpoint as an
+// empty marker, so we don't burn LLM tokens on copy nobody reads.
+//
+// Day 1  Email     — initial (LLM)
+// Day 4  Email     — follow-up (LLM)
+// Day 7  LinkedIn  — INVITE — injected by stage, no LLM copy
+// Day 8  LinkedIn  — message (LLM, assumes invite accepted)
+// Day 11 Email     — re-engage (LLM, lemlist's slot is voice; we use email)
+// Day 14 LinkedIn  — message (LLM, final LI touch)
+// Day 21 Email     — breakup (LLM)
+const DAY_OFFSETS = [1, 4, 8, 11, 14, 21] as const;
 
 function messageFromUnknown(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -90,7 +94,7 @@ function parseSequence(text: string): Message[] {
       return { day_offset: dayOffset, subject, body };
     })
     .filter((v): v is Message => v !== null)
-    .slice(0, 7);
+    .slice(0, 6);
 }
 
 export async function POST(request: Request) {
@@ -232,7 +236,7 @@ export async function POST(request: Request) {
     });
 
     const messages = parseSequence(completion.text);
-    if (messages.length < 5) {
+    if (messages.length < 4) {
       // Sanity check — if Sonnet returned fewer than 5 messages something
       // went wrong with the parse or the prompt. 5+ is acceptable, 7 ideal.
       return NextResponse.json({ error: 'Generated sequence too short', count: messages.length }, { status: 502 });
@@ -361,22 +365,21 @@ SEQUENCE STRUCTURE — read carefully, it overrides anything you've been trained
 
 ═══ THE ARC ═══
 
-Day 1 (email) → Day 4 (email) → Day 7 (LinkedIn invite) → Day 8 (LinkedIn message) → Day 11 (email) → Day 14 (LinkedIn message) → Day 21 (email)
-hook + offer → specific data → what we do + why different → product reveal + offer → another data cut → honest nudge → always-on close
+Day 1 (email) → Day 4 (email) → [Day 7 LinkedIn INVITE — pure action, no copy] → Day 8 (LinkedIn message) → Day 11 (email) → Day 14 (LinkedIn message) → Day 21 (email)
+hook + offer → specific data → [connect request action] → product reveal + offer → another data cut → honest nudge → always-on close
+
+YOU WRITE COPY FOR EXACTLY 6 MESSAGES — Day 1, Day 4, Day 8, Day 11, Day 14, Day 21. The Day 7 LinkedIn connect request is a pure action step (lemlist sends the invite without a personalised note in our template), so DO NOT generate a Day 7 entry. Your messages[] output must contain exactly 6 entries in that order.
 
 CHANNEL MIX NOTES (lemlist's default multichannel template):
-- Day 7 is a LinkedIn INVITE — the connect-request note. Keep it UNDER 280 characters total. No subject.
-- Day 8 is a LinkedIn MESSAGE — assume the invite was accepted. 50-80 words max. No subject.
-- Day 14 is a LinkedIn MESSAGE — short, casual nudge. 30-50 words. No subject.
-- All other steps (Day 1, Day 4, Day 11, Day 21) are email and follow the word ranges below.
+- Day 8 is a LinkedIn MESSAGE — assume the invite was accepted. 50-80 words max. No subject (set to empty string).
+- Day 14 is a LinkedIn MESSAGE — short, casual nudge. 30-50 words. No subject (set to empty string).
+- Day 1, Day 4, Day 11, Day 21 are EMAIL and follow the word ranges below.
 
 ═══ PER-MESSAGE GUIDANCE ═══
 
 - Day 1 (email, 80-110 words). Open like a human ("I wanted to reach out because…"). Lead with whatever is genuinely most relevant to ${firstName}'s world — that MAY be the anchor signal, but only if it passed the relevance + opener test above; otherwise open on their function and the problem someone in their exact role carries. ${opts.anchorIsContactLevel ? `For a personal signal a brief, direct acknowledgment is fine ("congrats on the new role").` : `Do NOT recap their employer's news back at them.`} Whatever you open on, state it NEUTRALLY — no editorialising or taking a stance, the contact may feel differently than you. Then ONE plain sentence on what ${sellerName} does (the honest one-liner from our_company, not a feature list). Then offer ONE concrete thing we can hand them, tailored to their world. End with "happy to share if of interest." NO presumptions about their situation you can't back up.
 
 - Day 4 (email, 30-50 words). Offer a specific data cut we ALREADY track that fits their world. Use "several" or "a few" for counts, never a precise number you can't verify. End with "happy to share these with you if of interest."
-
-- Day 7 (LinkedIn INVITE NOTE, under 280 characters). The LI connect-request note. Hard limit: 280 chars total. No subject. One sentence on why connecting makes sense for them (tie to their role + what we track), no pitch. Set subject to empty string.
 
 - Day 8 (LinkedIn message, 50-80 words). Assume the invite was accepted. THE PRODUCT REVEAL. Explain plainly what ${sellerName} tracks as standard (the real signal types from our_company), how each is enriched with the decision-maker + contact, and that it routes into their CRM. Then the ONE thing that makes us different (pull from differentiated_value — e.g. life-sci-only, built by people who read the science). Close by offering to show them their own accounts live. No subject — set subject to empty string.
 
@@ -427,9 +430,9 @@ Day 1 (email): "Kumar, congrats on the director role. I wanted to reach out beca
 
 Day 4 (email): "Kumar, quick one. We're already tracking several West Coast Series B oncology biotechs that posted VP-CMC roles in the last 30 days, all aligned to Enzene's therapeutic areas. Happy to share these with you if of interest."
 
-Day 7 (LinkedIn invite — under 280 chars): "Kumar — sent you a note last week on the CDMO RFP signal cut. We track who's signalling active capacity shopping in life-sci. Happy to share what we have for Enzene's accounts."
+[Day 7 — LinkedIn invite, sent by lemlist as a no-note connect request, no copy generated]
 
-Day 8 (LinkedIn message): "Kumar, quick context on what sits behind those lists. Most signal tools are built for generic B2B and miss what matters in biotech. Ours is life-sci only, built by a team that reads the science. We track funding, CMC and exec hires, 8-K filings, partnerships, and clinical and regulatory moves, then enrich each one with the decision-maker and their contact details, into your CRM. Happy to show you live."
+Day 8 (LinkedIn message):"Kumar, quick context on what sits behind those lists. Most signal tools are built for generic B2B and miss what matters in biotech. Ours is life-sci only, built by a team that reads the science. We track funding, CMC and exec hires, 8-K filings, partnerships, and clinical and regulatory moves, then enrich each one with the decision-maker and their contact details, into your CRM. Happy to show you live."
 
 Day 11 (email): "Kumar, follow-on. We track US biotechs currently exposed to Chinese CDMOs. Happy to share the list, filtered to your therapeutic areas, if of interest."
 

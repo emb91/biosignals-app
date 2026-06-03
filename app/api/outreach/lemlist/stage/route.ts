@@ -73,7 +73,10 @@ function sanitizeMessages(input: unknown): StagedMessage[] {
       // apply the best-practice default for that day_offset.
       const explicitChannel =
         o.channel === 'linkedin' || o.channel === 'email' ? (o.channel as 'email' | 'linkedin') : null;
-      if (dayOffset === null || !subject || !body) return null;
+      if (dayOffset === null) return null;
+      // Day 7 LI invite is a pure action — empty subject/body is allowed.
+      const isInvite = dayOffset === 7 && (explicitChannel ?? defaultChannelForDay(dayOffset)) === 'linkedin';
+      if (!isInvite && (!subject || !body)) return null;
       return {
         day_offset: dayOffset,
         subject,
@@ -113,6 +116,23 @@ export async function POST(req: Request) {
     }
     if (messages.length === 0) {
       return NextResponse.json({ error: 'messages required (sanitized empty)' }, { status: 400 });
+    }
+
+    // Inject the Day 7 LinkedIn invite action step if it isn't already present.
+    // The generator emits 6 message-copy entries (Days 1, 4, 8, 11, 14, 21);
+    // Day 7 is a pure connect-request action with no body to write. Putting
+    // it in the messages array here keeps the /outreach table view + the
+    // lemlist dispatch path symmetrical (every step is one row in messages).
+    if (!messages.some((m) => m.day_offset === 7)) {
+      const insertIdx = messages.findIndex((m) => m.day_offset > 7);
+      const inviteStep: StagedMessage = {
+        day_offset: 7,
+        subject: '',
+        body: '',
+        channel: 'linkedin',
+      };
+      const at = insertIdx === -1 ? messages.length : insertIdx;
+      messages.splice(at, 0, inviteStep);
     }
 
     const { data: contactRow } = await supabase

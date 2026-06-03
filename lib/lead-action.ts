@@ -171,14 +171,17 @@ export function formatLeadActionLabel(action: LeadAction): string {
  *   - replied / failed → fall through to the score-driven action so the user
  *     can decide whether to engage further or retry.
  * CRM-resolved deprioritise (customer / dormant) still wins — the deal cycle
- * is closed and there's nothing to chase. The score-driven base also wins when
- * there's no sequence at all (sequenceStatus = null).
+ * is closed and there's nothing to chase. SCORE-driven deprioritise does NOT
+ * win: the rep already made a judgement call to engage despite the low fit, so
+ * the funnel state is the relevant action to surface. Sequence absent
+ * (sequenceStatus = null) leaves the base action alone.
  */
 export function applyOutreachOverride(
   baseAction: LeadAction,
   sequenceStatus: SequenceDispatchStatus,
+  crmState?: 'active' | 'customer' | 'dormant' | 'context_only' | 'none' | null,
 ): LeadAction {
-  if (baseAction === 'deprioritize') return baseAction;
+  if (crmState === 'customer' || crmState === 'dormant') return 'deprioritize';
   if (sequenceStatus === 'sent') return 'await_reply';
   if (sequenceStatus === 'draft') return 'send_outreach';
   return baseAction;
@@ -217,14 +220,17 @@ export const LEAD_ACTION_PILL_CLASS: Record<LeadAction, LeadActionPillConfig> = 
     rowSelectedClassName:
       'bg-[#d5ecf3] text-[#0a4f63] ring-1 ring-[#a6d2e0] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-cyan-500/40',
   },
+  // Soft lavender — distinct from Deprioritise's slate-blue (same lightness
+  // family was reading as the same pill at a glance). Sits between Send
+  // outreach's cyan and any future "engaged" hues on the funnel.
   await_reply: {
     label: 'Await reply',
     className:
-      'bg-[#e3e8f3] text-[#3b497a] ring-1 ring-[#bcc6e0] font-medium',
+      'bg-[#ede0f8] text-[#5a3a86] ring-1 ring-[#d3bdee] font-medium',
     interactiveClassName:
-      'hover:bg-[#d6dded] hover:ring-[#abb8d6] active:brightness-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-indigo-500/40',
+      'hover:bg-[#e3d1f3] hover:ring-[#c4abe5] active:brightness-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-violet-500/40',
     rowSelectedClassName:
-      'bg-[#e3e8f3] text-[#3b497a] ring-1 ring-[#bcc6e0] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-indigo-500/40',
+      'bg-[#ede0f8] text-[#5a3a86] ring-1 ring-[#d3bdee] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-violet-500/40',
   },
   monitor: {
     label: 'Monitor',
