@@ -246,6 +246,96 @@ export async function getLeadState(
   }
 }
 
+// ── Arcova template auto-provisioning ─────────────────────────────────────
+// Customers shouldn't have to hand-build a 7-step template in lemlist's UI.
+// On first dispatch (or via Settings) we look for a campaign named "Arcova
+// Multichannel" on their account, and create one if it's missing — with the
+// canonical step shape + {{subject_N}}/{{body_N}} interpolation tokens so
+// the customVars our dispatch sends actually land in the right slots.
+
+export const ARCOVA_TEMPLATE_NAME = 'Arcova Multichannel';
+
+interface LemlistCampaignCreateResponse {
+  _id: string;
+  sequenceId?: string;
+  scheduleIds?: string[];
+}
+
+/** Step shape we send to lemlist's POST /sequences/{id}/steps. */
+type LemlistStepInput =
+  | { type: 'email'; delay: number; subject: string; message: string }
+  | { type: 'linkedinInvite'; delay: number; message?: string }
+  | { type: 'linkedinSend'; delay: number; message: string };
+
+/**
+ * Canonical 7-step Arcova template — delays are RELATIVE (days since the
+ * previous step). Mirrors the cadence the generator + stage endpoint use.
+ *
+ * Each step references the matching customVar slot — when dispatch pushes
+ * a lead with subject_1/body_1/…/body_6 vars, lemlist interpolates them
+ * into these templates per-lead.
+ */
+const ARCOVA_TEMPLATE_STEPS: LemlistStepInput[] = [
+  // Day 1 — Email #1 (first send, delay from campaign start)
+  { type: 'email',          delay: 1, subject: '{{subject_1}}', message: '{{body_1}}' },
+  // Day 4 — Email #2  (+3 days)
+  { type: 'email',          delay: 3, subject: '{{subject_2}}', message: '{{body_2}}' },
+  // Day 7 — LinkedIn invite (+3 days). Pure connect action — no personalised note for now.
+  { type: 'linkedinInvite', delay: 3 },
+  // Day 8 — LinkedIn message (+1 day)
+  { type: 'linkedinSend',   delay: 1, message: '{{body_4}}' },
+  // Day 11 — Email (+3 days)
+  { type: 'email',          delay: 3, subject: '{{subject_5}}', message: '{{body_5}}' },
+  // Day 14 — LinkedIn message (+3 days)
+  { type: 'linkedinSend',   delay: 3, message: '{{body_6}}' },
+  // Day 21 — Email breakup (+7 days)
+  { type: 'email',          delay: 7, subject: '{{subject_7}}', message: '{{body_7}}' },
+];
+
+/**
+ * Find or create the Arcova Multichannel campaign template on the user's
+ * lemlist account. Idempotent — safe to call from dispatch every time.
+ *
+ * Returns { campaignId, created } where `created` is true only when we just
+ * provisioned (so callers can surface a one-time "set up template" toast).
+ */
+export async function ensureArcovaTemplate(
+  apiKey: string,
+): Promise<{ campaignId: string; created: boolean }> {
+  // 1. Look for an existing campaign by name.
+  const campaigns = await listCampaigns(apiKey).catch(() => [] as LemlistCampaign[]);
+  const existing = campaigns.find((c) => c.name?.trim() === ARCOVA_TEMPLATE_NAME);
+  if (existing?._id) {
+    return { campaignId: existing._id, created: false };
+  }
+
+  // 2. Create a new campaign.
+  const created = await lemlistFetch<LemlistCampaignCreateResponse>(apiKey, '/campaigns', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: ARCOVA_TEMPLATE_NAME,
+      autoReview: true,
+      // Use UTC so dispatch behaviour is predictable across customers.
+      timezone: 'Etc/UTC',
+    }),
+  });
+  const sequenceId = created.sequenceId;
+  if (!sequenceId) {
+    throw new LemlistError(500, 'lemlist POST /campaigns did not return a sequenceId');
+  }
+
+  // 3. Add the 7 steps in order.
+  for (const step of ARCOVA_TEMPLATE_STEPS) {
+    await lemlistFetch<unknown>(
+      apiKey,
+      `/sequences/${encodeURIComponent(sequenceId)}/steps`,
+      { method: 'POST', body: JSON.stringify(step) },
+    );
+  }
+
+  return { campaignId: created._id, created: true };
+}
+
 export function dispatchStatusFromLemlistState(state: string | null): 'sent' | 'replied' | 'failed' | null {
   if (!state) return null;
   const s = state.toLowerCase();

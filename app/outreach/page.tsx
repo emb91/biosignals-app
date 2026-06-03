@@ -32,6 +32,7 @@ import {
 import AppSidebar from '@/components/AppSidebar';
 import { PageHeader } from '@/components/PageHeader';
 import { AgentPanel } from '@/components/AgentPanel';
+import { cn } from '@/lib/utils';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -232,6 +233,37 @@ export default function OutreachPage() {
   const [editDraft, setEditDraft] = useState<Message | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
 
+  // Mirror the AgentPanel column's bounding rect so the cell side panel can
+  // overlay it pixel-for-pixel (same pattern as /leads/contacts). The
+  // AgentPanel below renders with the marker class `.outreach-agent-col`.
+  const [agentRect, setAgentRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const el = document.querySelector<HTMLElement>('.outreach-agent-col');
+    if (!el) return;
+    const update = () => {
+      const r = el.getBoundingClientRect();
+      // Below 768px the AgentPanel is hidden — bounding rect is 0×0. Null out
+      // so the panel falls back to its CSS-class right-anchored positioning.
+      if (r.width === 0 || r.height === 0) {
+        setAgentRect(null);
+        return;
+      }
+      setAgentRect({ top: r.top, left: r.left, width: r.width, height: r.height });
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  }, []);
+  const sidePanelOpen = editorOpen || detailsOpen;
+
   // Dispatch modal
   const [dispatchOpen, setDispatchOpen] = useState(false);
   const [dispatchRowIds, setDispatchRowIds] = useState<string[]>([]);
@@ -376,6 +408,42 @@ export default function OutreachPage() {
         next.delete(id);
         return next;
       });
+    }
+  };
+
+  // Template provisioning state — "Use Arcova default template" button.
+  const [provisioning, setProvisioning] = useState(false);
+  const [provisionMessage, setProvisionMessage] = useState<string | null>(null);
+
+  const ensureArcovaTemplate = async () => {
+    setProvisioning(true);
+    setProvisionMessage(null);
+    setDispatchError(null);
+    try {
+      const res = await fetch('/api/outreach/lemlist/ensure-template', { method: 'POST' });
+      const json = (await res.json().catch(() => ({}))) as {
+        campaignId?: string;
+        created?: boolean;
+        error?: string;
+      };
+      if (!res.ok || !json.campaignId) {
+        setDispatchError(json.error ?? 'Could not provision template');
+        return;
+      }
+      // Refresh campaigns list so the new one shows in the picker, then select it.
+      const campRes = await fetch('/api/outreach/lemlist/campaigns');
+      if (campRes.ok) {
+        const cj = (await campRes.json()) as { campaigns: LemlistCampaign[] };
+        setCampaigns(cj.campaigns ?? []);
+      }
+      setSelectedCampaignId(json.campaignId);
+      setProvisionMessage(
+        json.created
+          ? 'Arcova Multichannel template created in lemlist. Selected.'
+          : 'Arcova template already exists. Selected.',
+      );
+    } finally {
+      setProvisioning(false);
     }
   };
 
@@ -738,6 +806,13 @@ export default function OutreachPage() {
         </div>
 
         <AgentPanel
+          className={cn(
+            'outreach-agent-col',
+            // Folds the agent away while a cell side panel is open — the
+            // panel overlays this slot (same pattern as /leads/contacts).
+            // `invisible` keeps the column in layout so agentRect tracks it.
+            sidePanelOpen && 'invisible',
+          )}
           page="outreach"
           pageContext={{
             sequenceCount: sequences.length,
@@ -750,9 +825,38 @@ export default function OutreachPage() {
         />
       </div>
 
-      {/* ── Cell editor side panel ─────────────────────────────────────── */}
+      {/* ── Cell editor side panel — overlays the agent column ─────────── */}
       {editorOpen && editDraft && editingSequenceId && (
-        <div className="fixed inset-y-0 right-0 z-40 flex w-full max-w-md flex-col border-l border-white/80 bg-white shadow-2xl">
+        <>
+          {/* Backdrop catches click-outside on narrow viewports where the
+              agent column is hidden and the panel falls back to full-bleed. */}
+          <button
+            type="button"
+            aria-label="Close panel"
+            onClick={closeEditor}
+            className="fixed inset-0 z-40 transition-opacity min-[1280px]:hidden"
+          />
+        <aside
+          className={cn(
+            // Glass surface + positioning mirror /leads/contacts so the panels
+            // feel like the same component. Positioned via agentRect; when no
+            // rect (narrow viewports / agent hidden), falls back to a
+            // right-anchored sheet via CSS classes.
+            'flex min-h-0 flex-col overflow-hidden rounded-[1.3125rem] border border-[rgba(255,255,255,0.88)] bg-[rgba(255,255,255,0.55)] shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2)] backdrop-blur-2xl backdrop-saturate-150',
+            'fixed z-50',
+            !agentRect && 'max-md:bottom-3.5 max-md:top-3.5 max-md:right-3.5 max-md:w-[min(calc(100vw-1.75rem),22.5rem)] md:top-[14px] md:bottom-[14px] md:right-[1.625rem] md:w-[22.5rem]',
+          )}
+          style={
+            agentRect
+              ? {
+                  top: agentRect.top,
+                  left: agentRect.left,
+                  width: agentRect.width,
+                  height: agentRect.height,
+                }
+              : undefined
+          }
+        >
           <div className="flex items-center justify-between border-b border-[rgba(13,53,71,0.08)] px-5 py-3">
             <div>
               <p className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">
@@ -852,10 +956,11 @@ export default function OutreachPage() {
               Save
             </button>
           </div>
-        </div>
+        </aside>
+        </>
       )}
 
-      {/* ── Cell details side panel (read-only — for queued/sent/replied/failed) ── */}
+      {/* ── Cell details side panel — overlays the agent column ─────────── */}
       {detailsOpen && detailsSequenceId !== null && detailsStepIdx !== null && (() => {
         const seq = sequences.find((s) => s.id === detailsSequenceId);
         const msg = seq?.messages?.[detailsStepIdx];
@@ -867,7 +972,30 @@ export default function OutreachPage() {
         const isInvite = isLinkedInInvite(msg);
         const externalRef = seq.external_ref;
         return (
-          <div className="fixed inset-y-0 right-0 z-40 flex w-full max-w-md flex-col border-l border-white/80 bg-white shadow-2xl">
+          <>
+            <button
+              type="button"
+              aria-label="Close panel"
+              onClick={closeDetails}
+              className="fixed inset-0 z-40 transition-opacity min-[1280px]:hidden"
+            />
+          <aside
+            className={cn(
+              'flex min-h-0 flex-col overflow-hidden rounded-[1.3125rem] border border-[rgba(255,255,255,0.88)] bg-[rgba(255,255,255,0.55)] shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2)] backdrop-blur-2xl backdrop-saturate-150',
+              'fixed z-50',
+              !agentRect && 'max-md:bottom-3.5 max-md:top-3.5 max-md:right-3.5 max-md:w-[min(calc(100vw-1.75rem),22.5rem)] md:top-[14px] md:bottom-[14px] md:right-[1.625rem] md:w-[22.5rem]',
+            )}
+            style={
+              agentRect
+                ? {
+                    top: agentRect.top,
+                    left: agentRect.left,
+                    width: agentRect.width,
+                    height: agentRect.height,
+                  }
+                : undefined
+            }
+          >
             <div className="flex items-center justify-between border-b border-[rgba(13,53,71,0.08)] px-5 py-3">
               <div>
                 <p className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">
@@ -965,7 +1093,8 @@ export default function OutreachPage() {
                 Close
               </button>
             </div>
-          </div>
+          </aside>
+          </>
         );
       })()}
 
@@ -1001,24 +1130,43 @@ export default function OutreachPage() {
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   Loading lemlist campaigns…
                 </div>
-              ) : campaigns && campaigns.length === 0 ? (
-                <p className="mt-2 text-[12.5px] text-[#7d909a]">
-                  No campaigns found on your lemlist account. Create one in lemlist first
-                  (Campaigns → New), then come back.
-                </p>
               ) : (
-                <select
-                  value={selectedCampaignId}
-                  onChange={(e) => setSelectedCampaignId(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-[rgba(13,53,71,0.15)] bg-white px-3 py-2 text-[13px] text-[#0d3547] focus:border-arcova-teal focus:outline-none"
-                >
-                  <option value="">Pick a campaign…</option>
-                  {(campaigns ?? []).map((c) => (
-                    <option key={c._id} value={c._id}>
-                      {c.name}
+                <>
+                  <select
+                    value={selectedCampaignId}
+                    onChange={(e) => setSelectedCampaignId(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-[rgba(13,53,71,0.15)] bg-white px-3 py-2 text-[13px] text-[#0d3547] focus:border-arcova-teal focus:outline-none"
+                  >
+                    <option value="">
+                      {campaigns && campaigns.length === 0
+                        ? 'No campaigns yet — create one below'
+                        : 'Pick a campaign…'}
                     </option>
-                  ))}
-                </select>
+                    {(campaigns ?? []).map((c) => (
+                      <option key={c._id} value={c._id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  <div className="mt-2 flex items-center justify-between gap-2">
+                    <p className="text-[11px] text-[#7d909a]">
+                      Or use the Arcova 7-step multichannel template — we&apos;ll create it in lemlist if it doesn&apos;t exist.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => void ensureArcovaTemplate()}
+                      disabled={provisioning}
+                      className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-arcova-teal/40 bg-arcova-teal/5 px-2.5 py-1 text-[11.5px] font-semibold text-arcova-teal hover:bg-arcova-teal/10 disabled:opacity-60"
+                    >
+                      {provisioning && <Loader2 className="h-3 w-3 animate-spin" />}
+                      Use Arcova default
+                    </button>
+                  </div>
+                  {provisionMessage && (
+                    <p className="mt-1 text-[11px] text-emerald-700">{provisionMessage}</p>
+                  )}
+                </>
               )}
             </div>
 
