@@ -11,6 +11,9 @@ import { ArcovaLoader } from '@/components/ArcovaLoader';
 import type { QueryLead } from '@/lib/leads-data';
 import {
   type LeadAction,
+  type SequenceDispatchStatus,
+  applyOutreachOverride,
+  effectiveReadiness,
   getActionFromScores,
   getLeadAction,
   getLeadActionFromFits,
@@ -361,6 +364,10 @@ interface Lead {
   attribution_computed_at?: string | null;
   contact_readiness_label?: string | null;
   contact_readiness_score?: number | null;
+  /** Account-level readiness mirrored from user_companies.readiness_score by the readiness cron. */
+  company_readiness_score?: number | null;
+  /** Most recent outreach_sequences.dispatch_status for this contact, surfaced by /api/leads. */
+  latest_sequence_status?: SequenceDispatchStatus;
   contact_panel_summary?: string | null;
   contact_fit_summary?: string | null;
   /** Mirrored from contact_readiness_snapshots.priority_score by the readiness cron. */
@@ -662,12 +669,20 @@ function priorityScoreArcColor(pct: number | null): string {
 function getContactAction(
   lead: Lead,
 ): LeadAction {
-  return getActionFromScores(
+  const base = getActionFromScores(
     resolveCompanyFitForLeadAction(lead),
     lead.contact_fit_score ?? null,
-    lead.contact_readiness_score ?? null,
+    // Action tree expects EFFECTIVE readiness (company OR contact, plus bump if
+    // both). Passing only contact readiness here misclassifies great contacts at
+    // hot companies as Monitor — keep this in sync with /api/outreach/hooks and
+    // /api/outreach/sequence, which both fold company + contact readiness.
+    effectiveReadiness(lead.company_readiness_score ?? null, lead.contact_readiness_score ?? null),
     lead.hubspot_lead_state ?? null,
   );
+  // Outreach state overlays the score-driven action: a staged draft promotes
+  // to "Send outreach"; a sent sequence to "Await reply". CRM-resolved
+  // deprioritise still wins inside applyOutreachOverride.
+  return applyOutreachOverride(base, (lead.latest_sequence_status ?? null) as SequenceDispatchStatus);
 }
 
 const LEAD_EDIT_INPUT_CLASS =
@@ -1050,11 +1065,17 @@ function getSortValue(lead: Lead | QueryLead, col: string): string | number {
       ).toLowerCase();
     case 'status': {
       const order = LEAD_ACTION_SORT_ORDER;
-      return order[getActionFromScores(
-        resolveCompanyFitForLeadAction(lead),
-        lead.contact_fit_score ?? null,
-        (lead as Lead).contact_readiness_score ?? null,
-        (lead as Lead).hubspot_lead_state ?? null,
+      return order[applyOutreachOverride(
+        getActionFromScores(
+          resolveCompanyFitForLeadAction(lead),
+          lead.contact_fit_score ?? null,
+          effectiveReadiness(
+            (lead as Lead).company_readiness_score ?? null,
+            (lead as Lead).contact_readiness_score ?? null,
+          ),
+          (lead as Lead).hubspot_lead_state ?? null,
+        ),
+        ((lead as Lead).latest_sequence_status ?? null) as SequenceDispatchStatus,
       )] ?? 0;
     }
     case 'company_fit':
@@ -3388,6 +3409,16 @@ export function ContactsWorkspace() {
                         setSelectedLeadId(null);
                         cancelEditingLead();
                       }}
+                      // The backdrop covers the whole viewport so we can catch
+                      // click-outside, but that also swallows wheel events over the
+                      // contact table behind it. Forward wheel deltas to the leads
+                      // scroll container so the list stays scrollable while a
+                      // contact card is open at narrow widths.
+                      onWheel={(e) => {
+                        if (leadsScrollRef.current) {
+                          leadsScrollRef.current.scrollTop += e.deltaY;
+                        }
+                      }}
                     />
                     {/* Floating agent chat bar — sits at the bottom of the AgentPanel column
                         while the user reviews a contact. The agent column itself is
@@ -4531,6 +4562,31 @@ export function ContactsWorkspace() {
                                         request. Link or enrich the company first, then return here.
                                       </p>
                                     )}
+                                  </div>
+                                )}
+
+                                {action === 'send_outreach' && (
+                                  <div className="space-y-3">
+                                    <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
+                                      An outreach sequence is staged for {contactName || 'this contact'} but hasn&apos;t
+                                      been dispatched yet. Review the draft and send it when you&apos;re ready.
+                                    </p>
+                                    <p className="text-[13.5px] leading-[1.55] text-[#4a6470]">
+                                      Open the Outreach tab on this side panel to view, edit, and dispatch the sequence.
+                                    </p>
+                                  </div>
+                                )}
+
+                                {action === 'await_reply' && (
+                                  <div className="space-y-3">
+                                    <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
+                                      Outreach has been sent to {contactName || 'this contact'}. Waiting on a reply — no
+                                      action needed right now.
+                                    </p>
+                                    <p className="text-[13.5px] leading-[1.55] text-[#4a6470]">
+                                      If they reply we&apos;ll surface it; if the deal closes or is lost in your CRM,
+                                      this action will flip to Deprioritise automatically.
+                                    </p>
                                   </div>
                                 )}
 

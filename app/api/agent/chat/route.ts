@@ -1511,14 +1511,14 @@ async function toolLoadOutreachContext(
   // Structural rules + banned phrases — pulled from the generator's prompt
   // verbatim so the agent and the generator stay in sync.
   const structuralRules = {
-    cadence: 'Day 0 → Day 3 → Day 7 → Day 11 → Day 15 → Day 21 → Day 28',
-    arc: 'hook + offer → specific data → what we do + why different → another data cut → honest nudge → our-data observation → always-on close',
+    cadence: 'Day 1 (email) → Day 4 (email) → Day 7 (LI invite) → Day 8 (LI message) → Day 11 (email) → Day 14 (LI message) → Day 21 (email breakup)',
+    arc: 'hook + offer → specific data → connect note → product reveal + offer → another data cut → honest nudge → always-on close',
     rules: [
-      'The anchor signal is TIMING, not a required line. Reference it ONCE in Day 0 only if it makes a relevant, natural opener; otherwise open on the contact role + problem.',
+      'The anchor signal is TIMING, not a required line. Reference it ONCE in Day 1 only if it makes a relevant, natural opener; otherwise open on the contact role + problem.',
       'NEVER paraphrase a company-level anchor back at the contact (they already know).',
       'The PRODUCT is visible in EVERY message via a CONCRETE OFFER (a list, named companies, a data cut, a live view). Never feature-speak. Never a meeting request.',
       'Lead with what the seller has off-the-shelf. Custom is layered on top.',
-      'Word ranges: Day 0 (80-110), Day 3 (30-50), Day 7 (70-95, PRODUCT REVEAL), Day 11 (30-60), Day 15 (40-55), Day 21 (50-75), Day 28 (30-45).',
+      'Channel-aware ranges: Day 1 email (80-110), Day 4 email (30-50), Day 7 LinkedIn INVITE (under 280 chars, no subject), Day 8 LinkedIn message (50-80, PRODUCT REVEAL, no subject), Day 11 email (30-60), Day 14 LinkedIn message (30-50, no subject), Day 21 email (30-45, breakup).',
       'NEVER invent specifics — no precise counts (use "several" / "a few"), no named companies unless in context, no statistics, no third-party citations.',
       'Only claim capabilities the seller actually has (must trace to value_propositions / capabilities / products_services).',
       'Never offer the contact homework. Offer to show or hand them something instead.',

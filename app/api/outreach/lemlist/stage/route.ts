@@ -29,32 +29,32 @@ type StagedMessage = {
 };
 
 /**
- * Best-practice default channel for B2B cold outreach. Email-first
- * (least intrusive opener), then alternate LI / Email after that. Matches
- * the defaults lemlist + La Growth Machine ship in their multichannel
- * templates. Reps can override per-step in /outreach.
+ * Channel mix copied directly from lemlist's default multichannel template
+ * (help.lemlist.com — "How to build a multichannel outreach sequence").
  *
- *   Day 0  → Email   (opener)
- *   Day 3  → LI      (warmup after first touch)
- *   Day 7  → Email   (the product reveal — needs room)
- *   Day 11 → LI
- *   Day 15 → Email   (honest nudge)
- *   Day 21 → LI
- *   Day 28 → Email   (breakup reads most natural as email)
+ *   Day 1  → Email      (#1 opener)
+ *   Day 4  → Email      (#2 follow-up — back-to-back email is lemlist's pattern)
+ *   Day 7  → LinkedIn   (connect request)
+ *   Day 8  → LinkedIn   (message — assumes invite accepted)
+ *   Day 11 → Email      (lemlist's slot is voice; we don't do voice, so email)
+ *   Day 14 → LinkedIn   (final LI touch)
+ *   Day 21 → Email      (breakup)
+ *
+ * Reps override per-step in /outreach's cell side-panel.
  */
 function defaultChannelForDay(dayOffset: number): 'email' | 'linkedin' {
   const map: Record<number, 'email' | 'linkedin'> = {
-    0: 'email',
-    3: 'linkedin',
-    7: 'email',
-    11: 'linkedin',
-    15: 'email',
-    21: 'linkedin',
-    28: 'email',
+    1: 'email',
+    4: 'email',
+    7: 'linkedin',
+    8: 'linkedin',
+    11: 'email',
+    14: 'linkedin',
+    21: 'email',
   };
   if (dayOffset in map) return map[dayOffset];
-  // Fallback: even days → email, odd days → linkedin.
-  return dayOffset % 2 === 0 ? 'email' : 'linkedin';
+  // Fallback for unexpected day offsets — default to email (safer cold channel).
+  return 'email';
 }
 
 function sanitizeMessages(input: unknown): StagedMessage[] {

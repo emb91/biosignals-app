@@ -386,6 +386,118 @@ async function attachReadinessBestEffort(
 }
 
 /**
+ * Surface the latest outreach_sequences.dispatch_status per contact so the
+ * action gate can overlay outreach state (draft → "Send outreach", sent →
+ * "Await reply") on top of the score-driven action. Picks the most recent
+ * sequence per contact: if the user iterated and staged a new draft after a
+ * previous send, the new draft wins (a fresh ask is pending). 'replied' /
+ * 'failed' are still surfaced; the override in lib/lead-action falls them
+ * through to the base action so the user can decide whether to engage.
+ */
+async function attachLatestSequenceStatusBestEffort(
+  supabase: SupabaseClientLike,
+  rows: LeadRow[],
+  userId: string,
+): Promise<LeadRow[]> {
+  const contactIds = dedupe(
+    rows
+      .map((row) => (typeof row.id === 'string' ? row.id : null))
+      .filter((v): v is string => Boolean(v)),
+  );
+  if (contactIds.length === 0) {
+    return rows.map((row) => ({ ...row, latest_sequence_status: null }));
+  }
+  try {
+    const { data, error } = await supabase
+      .from('outreach_sequences')
+      .select('contact_id, dispatch_status, created_at')
+      .eq('user_id', userId)
+      .in('contact_id', contactIds)
+      .order('created_at', { ascending: false });
+    if (error || !data) {
+      return rows.map((row) => ({ ...row, latest_sequence_status: null }));
+    }
+    const latest = new Map<string, string | null>();
+    for (const r of data as Array<{ contact_id: string; dispatch_status: string | null }>) {
+      // Order by created_at desc, so the first hit per contact_id is the most
+      // recent one — set-if-absent preserves that.
+      if (!latest.has(r.contact_id)) latest.set(r.contact_id, r.dispatch_status ?? null);
+    }
+    return rows.map((row) => ({
+      ...row,
+      latest_sequence_status:
+        typeof row.id === 'string' ? latest.get(row.id) ?? null : null,
+    }));
+  } catch {
+    return rows.map((row) => ({ ...row, latest_sequence_status: null }));
+  }
+}
+
+/**
+ * Surface the per-user company fit + readiness from user_companies so the
+ * action gate has all three axes it needs (company fit, contact fit, effective
+ * readiness). These fields moved off the canonical companies table in Phase 1d
+ * — without this attach, the lean company select carries no fit and every row
+ * gates to Deprioritise regardless of priority. company_fit_score is also
+ * written as the top-level row field so resolveCompanyFitForLeadAction picks
+ * it up directly. Best-effort: a missing row leaves both null.
+ */
+async function attachUserCompanyScoresBestEffort(
+  supabase: SupabaseClientLike,
+  rows: LeadRow[],
+  userId: string,
+): Promise<LeadRow[]> {
+  const companyIds = dedupe(
+    rows
+      .map((row) => (typeof row.company_id === 'string' ? row.company_id : null))
+      .filter((v): v is string => Boolean(v)),
+  );
+  if (companyIds.length === 0) {
+    return rows.map((row) => ({ ...row, company_readiness_score: null }));
+  }
+  try {
+    const { data, error } = await supabase
+      .from('user_companies')
+      .select('company_id, company_fit_score, readiness_score')
+      .eq('user_id', userId)
+      .in('company_id', companyIds);
+    if (error || !data) return rows.map((row) => ({ ...row, company_readiness_score: null }));
+    const scoreMap = new Map<string, { fit: number | null; readiness: number | null }>(
+      (data as Array<{
+        company_id: string;
+        company_fit_score: number | null;
+        readiness_score: number | null;
+      }>).map((r) => [
+        r.company_id,
+        {
+          fit: typeof r.company_fit_score === 'number' ? r.company_fit_score : null,
+          readiness: typeof r.readiness_score === 'number' ? r.readiness_score : null,
+        },
+      ]),
+    );
+    return rows.map((row) => {
+      const hit = typeof row.company_id === 'string' ? scoreMap.get(row.company_id) : null;
+      // Only OVERRIDE company_fit_score when we have a value; preserve any
+      // existing top-level value so we don't regress contacts whose fit was
+      // populated elsewhere.
+      const company_fit_score =
+        hit?.fit != null
+          ? hit.fit
+          : typeof row.company_fit_score === 'number'
+          ? row.company_fit_score
+          : null;
+      return {
+        ...row,
+        company_fit_score,
+        company_readiness_score: hit?.readiness ?? null,
+      };
+    });
+  } catch {
+    return rows.map((row) => ({ ...row, company_readiness_score: null }));
+  }
+}
+
+/**
  * CRM-won/lost contacts are out of the active-outreach motion: mask readiness
  * to a low floor (0.01) at read time and recompute priority from the masked
  * readiness, so the gauges read as "already handled" without rewriting the
@@ -964,7 +1076,9 @@ export async function GET(request: Request) {
       phoneRows,
       hubspotRows,
       readinessRows,
+      companyReadinessRows,
       attributionRows,
+      sequenceStatusRows,
     ] = await Promise.all([
       attachEnrichmentMetadataBestEffort(supabase, baseRows),
       attachMatchedIcpNames(supabase, baseRows),
@@ -972,7 +1086,9 @@ export async function GET(request: Request) {
       attachContactPhonesBestEffort(supabase, baseRows),
       attachHubSpotLeadStateBestEffort(supabase, baseRows),
       attachReadinessBestEffort(supabase, baseRows),
+      attachUserCompanyScoresBestEffort(supabase, baseRows, user.id),
       attachContactAttributionBestEffort(supabase, baseRows),
+      attachLatestSequenceStatusBestEffort(supabase, baseRows, user.id),
     ]);
 
     const merged: LeadRow[] = baseRows.map((_, idx) => ({
@@ -983,6 +1099,13 @@ export async function GET(request: Request) {
       ...hubspotRows[idx],
       ...readinessRows[idx],
       ...attributionRows[idx],
+      ...sequenceStatusRows[idx],
+      // Must come LAST: each attach* helper spreads the original baseRow, which
+      // carries company_fit_score = null (it lives on user_companies, not on the
+      // contacts row). If we spread anything after this helper, that null base
+      // value clobbers the per-user fit we just attached and the action gate
+      // re-collapses to Deprioritise.
+      ...companyReadinessRows[idx],
     }));
 
     // Synchronous post-processing: provenance label + CRM readiness mask.
