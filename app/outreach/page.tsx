@@ -730,7 +730,11 @@ export default function OutreachPage() {
                               return (
                                 <td
                                   key={i}
-                                  className="px-3 py-2.5 align-top cursor-pointer hover:bg-arcova-teal/5"
+                                  /* h-px is a Tailwind escape to set height:1px on the td. With table layout
+                                     this collapses to "let row dictate the height", which is exactly what we
+                                     want — and crucially, it gives child divs a definite height so h-full
+                                     resolves and the footer can pin to the bottom of the CELL (not the body). */
+                                  className="px-3 py-2.5 align-top h-px cursor-pointer hover:bg-arcova-teal/5"
                                   onClick={() => handleCellClick(seq.id, i)}
                                 >
                                   {/* Flex column so the footer pins to the bottom of the cell, lining up across the row. */}
