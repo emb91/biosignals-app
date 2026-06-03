@@ -250,10 +250,6 @@ export function OutreachPanel({ contactId, contactName }: Props) {
     setExportSuccess(null);
   }, []);
 
-  const updateMessage = useCallback((index: number, patch: Partial<Message>) => {
-    setMessages((prev) => prev.map((m, i) => (i === index ? { ...m, ...patch } : m)));
-  }, []);
-
   const stageForOutreach = useCallback(async () => {
     if (!anchorHook || messages.length === 0) return;
     setStaging(true);
@@ -492,48 +488,15 @@ export function OutreachPanel({ contactId, contactName }: Props) {
 
       {messages.length > 0 && (
         <>
-          <ul className="space-y-3">
-            {messages.map((m, i) => (
-              <li key={i} className="rounded-xl border border-gray-150 bg-white p-3">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-2">
-                  {m.day_offset === 0 ? 'Day 0 · Initial' : `Day ${m.day_offset} · Follow-up`}
-                </p>
-                <input
-                  type="text"
-                  value={m.subject}
-                  onChange={(e) => updateMessage(i, { subject: e.target.value })}
-                  className="w-full rounded-md border border-gray-200 px-2 py-1 text-sm font-medium text-gray-900 focus:border-arcova-teal focus:outline-none focus:ring-1 focus:ring-arcova-teal/30"
-                  placeholder="Subject"
-                />
-                <textarea
-                  value={m.body}
-                  onChange={(e) => updateMessage(i, { body: e.target.value })}
-                  rows={Math.min(10, Math.max(3, m.body.split('\n').length + 1))}
-                  className="mt-2 w-full rounded-md border border-gray-200 px-2 py-1.5 text-sm text-gray-700 leading-snug focus:border-arcova-teal focus:outline-none focus:ring-1 focus:ring-arcova-teal/30"
-                  placeholder="Message body"
-                />
-              </li>
-            ))}
-          </ul>
-
-          {exportSuccess && (
-            <div
-              className={`rounded-lg border px-3 py-2 text-xs ${
-                exportSuccess.startsWith('Export failed')
-                  ? 'border-red-200 bg-red-50 text-red-700'
-                  : 'border-green-200 bg-green-50 text-green-800'
-              }`}
-            >
-              {exportSuccess}
-            </div>
-          )}
-
-          <div className="flex flex-col gap-2 pt-1">
+          {/* Primary CTA pinned to the top — staging is the main action,
+              and the rep shouldn't have to scroll a 7-message preview to find
+              the button. Edits happen on /outreach where there's room. */}
+          <div className="sticky top-0 z-10 -mx-1 mb-1 bg-white/85 px-1 pt-0.5 pb-2 backdrop-blur">
             <button
               type="button"
               onClick={() => void stageForOutreach()}
               disabled={staging || exporting !== null}
-              className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-arcova-navy text-white px-3 py-2 text-sm font-semibold hover:bg-[#0d3547] transition-colors disabled:opacity-60"
+              className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-arcova-navy text-white px-3 py-2 text-sm font-semibold hover:bg-[#0d3547] transition-colors disabled:opacity-60"
             >
               {staging ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -542,44 +505,74 @@ export function OutreachPanel({ contactId, contactName }: Props) {
               )}
               {staging ? 'Staging…' : 'Stage for outreach'}
             </button>
-            <p className="text-[11px] text-gray-500 -mt-0.5">
-              Pick channel per step + send to lemlist on the next screen.
+            <p className="mt-1 text-[11px] text-gray-500">
+              Pick channel + edit copy on the next screen.
             </p>
-
-            <details className="group pt-1">
-              <summary className="cursor-pointer text-[11.5px] text-gray-500 hover:text-arcova-teal list-none flex items-center gap-1">
-                <span>Other export options</span>
-              </summary>
-              <div className="mt-2 flex flex-col gap-2">
-                <button
-                  type="button"
-                  onClick={() => exportSequence('csv')}
-                  disabled={exporting !== null}
-                  className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-arcova-teal/40 text-arcova-teal px-3 py-2 text-[12.5px] font-semibold hover:bg-arcova-teal/5 transition-colors disabled:opacity-60"
-                >
-                  {exporting === 'csv' ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Download className="w-3.5 h-3.5" />
-                  )}
-                  Save & download CSV
-                </button>
-                <button
-                  type="button"
-                  onClick={() => exportSequence('clipboard')}
-                  disabled={exporting !== null}
-                  className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-arcova-teal/40 text-arcova-teal px-3 py-2 text-[12.5px] font-semibold hover:bg-arcova-teal/5 transition-colors disabled:opacity-60"
-                >
-                  {exporting === 'clipboard' ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Copy className="w-3.5 h-3.5" />
-                  )}
-                  Save & copy to clipboard
-                </button>
-              </div>
-            </details>
           </div>
+
+          {exportSuccess && (
+            <div
+              className={`rounded-lg border px-3 py-2 text-xs ${
+                exportSuccess.startsWith('Export failed') || exportSuccess.startsWith('Stage failed')
+                  ? 'border-red-200 bg-red-50 text-red-700'
+                  : 'border-green-200 bg-green-50 text-green-800'
+              }`}
+            >
+              {exportSuccess}
+            </div>
+          )}
+
+          {/* Read-only preview cards. No inputs/textareas — keeps the panel
+              compact and signals "this is a draft, edit it in /outreach". */}
+          <ul className="space-y-2">
+            {messages.map((m, i) => (
+              <li key={i} className="rounded-xl border border-gray-150 bg-white p-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">
+                  {m.day_offset === 0 ? 'Day 0 · Initial' : `Day ${m.day_offset} · Follow-up`}
+                </p>
+                <p className="text-[13px] font-medium text-gray-900 leading-snug">
+                  {m.subject}
+                </p>
+                <p className="mt-1.5 whitespace-pre-wrap text-[12.5px] text-gray-700 leading-snug">
+                  {m.body}
+                </p>
+              </li>
+            ))}
+          </ul>
+
+          <details className="group pt-1">
+            <summary className="cursor-pointer text-[11.5px] text-gray-500 hover:text-arcova-teal list-none flex items-center gap-1">
+              <span>Other export options</span>
+            </summary>
+            <div className="mt-2 flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => exportSequence('csv')}
+                disabled={exporting !== null}
+                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-arcova-teal/40 text-arcova-teal px-3 py-2 text-[12.5px] font-semibold hover:bg-arcova-teal/5 transition-colors disabled:opacity-60"
+              >
+                {exporting === 'csv' ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Download className="w-3.5 h-3.5" />
+                )}
+                Save & download CSV
+              </button>
+              <button
+                type="button"
+                onClick={() => exportSequence('clipboard')}
+                disabled={exporting !== null}
+                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-arcova-teal/40 text-arcova-teal px-3 py-2 text-[12.5px] font-semibold hover:bg-arcova-teal/5 transition-colors disabled:opacity-60"
+              >
+                {exporting === 'clipboard' ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Copy className="w-3.5 h-3.5" />
+                )}
+                Save & copy to clipboard
+              </button>
+            </div>
+          </details>
         </>
       )}
     </div>

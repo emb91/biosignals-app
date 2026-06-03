@@ -696,6 +696,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
                   {renderNavItem({ name: 'Accounts', href: ROUTES.accounts, icon: NavIconAccount })}
                   {renderNavItem({ name: 'Health', href: ROUTES.health, icon: NavIconHealth })}
                   {renderNavItem({ name: 'Data', href: ROUTES.data, icon: NavIconData })}
+                  {renderNavItem({ name: 'Outreach', href: ROUTES.outreach, icon: NavIconOutreach })}
                   {renderAccordion({
                     label: 'About you',
                     icon: NavIconSetup,
