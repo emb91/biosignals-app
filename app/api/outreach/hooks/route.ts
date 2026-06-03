@@ -608,20 +608,23 @@ ${candidateLines}
 
 Pick the candidates that pass THE GROUNDING BAR. Up to ${MAX_PICKS}. Maybe 0. Maybe 1. Whatever is honest.
 
-═══ THE GROUNDING BAR (every pick must clear all three) ═══
+CORE PRINCIPLE: a company signal buys us the TIMING to reach out, but the angle only works if it RESONATES WITH ${firstName} — speaks to what someone in their role actually owns and cares about. A signal can be a real company buying signal and still be a bad hook for THIS person if it sits outside their remit. ${firstName} is the reader. Judge every candidate by whether it lands for them, not just whether it's good news for ${coName}.
+
+═══ THE GROUNDING BAR (every pick must clear all four) ═══
 
 For each candidate you pick, you must be able to:
 1. Name ONE specific value_propositions item or capability from our_company that the hook activates. Not "what we do generally" — a named item from the list above.
 2. Point to ONE specific fact from the candidate's TITLE that ties to it. Not "she works in research" — a concrete fact from the title text.
-3. State the connection in plain English a 13-year-old could follow.
+3. RESONANCE: explain why this lands for ${firstName} SPECIFICALLY — how it connects to what someone in their role owns. A company signal in a function unrelated to ${firstName}'s remit (e.g. an HR hiring spree when ${firstName} runs R&D) FAILS this, even if it's a real signal. Relevant-to-their-function hiring, or a broad surge that scales the whole company, passes.
+4. State the connection in plain English a 13-year-old could follow.
 
-If you can't fill (1) AND (2) AND (3) concretely without inventing, DO NOT pick the candidate. Drop it. Returning fewer picks is BETTER than picking weak ones.
+If you can't fill all four concretely without inventing, DO NOT pick the candidate. Drop it. Returning fewer picks is BETTER than picking weak ones.
 
 ═══ WHAT'S WEAK (drop these in 95% of cases) ═══
 
-- Generic publications / papers — only pick if the paper topic maps DIRECTLY to a named value_prop. Otherwise drop.
-- Patents — too long-lead.
-- Generic hiring that doesn't intersect what we sell.
+- Generic publications / papers — only pick if the paper topic maps DIRECTLY to a named value_prop AND to ${firstName}'s work.
+- Patents — too long-lead, and rarely resonate with the reader.
+- Hiring outside ${firstName}'s function / buying group — only relevant when it's in or adjacent to their remit, or a company-wide surge.
 - Old news.
 
 ═══ HOW TO WRITE THE "reason" FIELD ═══
@@ -673,7 +676,8 @@ NEVER emit a pattern hook when there are already specific picks. Pattern is a la
       "score": <0-100>,
       "reason": "<plain English, ≤20 words, names the subject by name not pronoun>",
       "seller_grounding": "<which named value_prop / capability from our_company this activates>",
-      "signal_grounding": "<the specific fact from this candidate's title that proves the fit>"
+      "signal_grounding": "<the specific fact from this candidate's title that proves the fit>",
+      "contact_grounding": "<why this lands for ${firstName} specifically — what someone in their role owns that makes them care. If you cannot fill this honestly, the pick fails.>"
     }
     // ... up to ${MAX_PICKS} items, in score-descending order
     // If nothing clears the bar, leave "top" as an EMPTY ARRAY: []
