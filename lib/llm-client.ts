@@ -167,6 +167,11 @@ const FEATURE_MODELS: Record<LlmFeature, { openrouter: string; anthropic: string
 const ANTHROPIC_DIRECT_FEATURES: ReadonlySet<LlmFeature> = new Set([
   'generate_icp_name',
   'cik_disambiguation',
+  // Claude-model features run DIRECT to Anthropic by preference (OpenRouter is
+  // reserved for non-Anthropic models); completeLlm still auto-falls back to
+  // OpenRouter if Anthropic errors (e.g. credits exhausted), which is the only
+  // reason buying-team generation survived while the Anthropic balance was dry.
+  'icp_buying_team',
 ]);
 
 const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
