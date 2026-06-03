@@ -28,7 +28,7 @@
 import { NextResponse } from 'next/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { nango, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
-import { pushOutreachStatusByEmail } from '@/lib/hubspot';
+import { pushOutreachStatusByEmail, applyReplyEffectsToHubSpot } from '@/lib/hubspot';
 
 interface LemlistWebhookPayload {
   type?: string;
@@ -99,7 +99,7 @@ export async function POST(req: Request) {
   // so we can mirror the status change into HubSpot per-user.
   let query = supabase
     .from('outreach_sequences')
-    .select('id, user_id, anchor_hook_text, external_ref');
+    .select('id, user_id, contact_id, anchor_hook_text, external_ref');
   if (leadId) {
     query = query.eq('external_ref->>lemlist_lead_id', leadId);
   } else if (leadEmail) {
@@ -109,12 +109,35 @@ export async function POST(req: Request) {
   const matches = (matchRows ?? []) as Array<{
     id: string;
     user_id: string;
+    contact_id: string | null;
     anchor_hook_text: string;
     external_ref: { lemlist_lead_email?: string } | null;
   }>;
 
   if (matches.length === 0) {
     return NextResponse.json({ ok: true, ignored: 'no matching sequence' });
+  }
+
+  // Names for the HubSpot reply task ("Reply to {name}"). Best-effort batch.
+  const contactNameById = new Map<string, string>();
+  if (status === 'replied') {
+    const ids = matches.map((m) => m.contact_id).filter((v): v is string => Boolean(v));
+    if (ids.length > 0) {
+      const { data: contactRows } = await supabase
+        .from('contacts')
+        .select('id, full_name, first_name, last_name')
+        .in('id', ids);
+      for (const c of (contactRows ?? []) as Array<{
+        id: string;
+        full_name: string | null;
+        first_name: string | null;
+        last_name: string | null;
+      }>) {
+        const name =
+          c.full_name || [c.first_name, c.last_name].filter(Boolean).join(' ') || '';
+        if (name) contactNameById.set(c.id, name);
+      }
+    }
   }
 
   const matchIds = matches.map((r) => r.id);
@@ -153,6 +176,15 @@ export async function POST(req: Request) {
           anchor: row.anchor_hook_text,
           channel: 'lemlist',
         });
+        // On a reply, also advance the contact's lifecycle stage and drop a
+        // follow-up task in the rep's HubSpot queue. Best-effort.
+        if (status === 'replied') {
+          await applyReplyEffectsToHubSpot(token, {
+            email,
+            contactName: row.contact_id ? contactNameById.get(row.contact_id) ?? null : null,
+            anchor: row.anchor_hook_text,
+          });
+        }
       } catch (err) {
         console.warn('[lemlist webhook] hubspot push failed for', email, err);
       }

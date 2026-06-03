@@ -557,7 +557,7 @@ export async function getHubSpotTokenForUser(
 
 export type OutreachHubSpotUpdate = {
   email: string;
-  status: 'sent' | 'replied' | 'failed';
+  status: 'sent' | 'replied' | 'failed' | 'paused';
   anchor?: string | null;
   channel?: string | null;
   /** ISO timestamp. Defaults to now. */
@@ -594,4 +594,112 @@ export async function pushOutreachStatusByEmail(
   if (res.ok) return 'updated';
   if (res.status === 404) return 'not_found';
   return 'error';
+}
+
+// ── Reply handling — runs when a contact REPLIES to a sequence ─────────────
+// Two effects beyond the status mirror: (1) advance the contact's lifecycle
+// stage so the active conversation is visible in HubSpot's pipeline, and
+// (2) drop a task in the rep's HubSpot queue so the reply gets a human
+// response. Both best-effort; callers never block on them.
+
+/**
+ * Advance a contact's HubSpot lifecycle stage. HubSpot only moves a contact
+ * FORWARD through the lifecycle by default (it ignores backward writes unless
+ * the portal explicitly allows them), so setting 'salesqualifiedlead' on a
+ * replied contact promotes a lead/MQL without regressing an opportunity or
+ * customer. Returns the same tri-state as the status push.
+ */
+export async function bumpContactLifecycleStage(
+  accessToken: string,
+  email: string,
+  stage: string = 'salesqualifiedlead',
+): Promise<'updated' | 'not_found' | 'error'> {
+  const res = await fetch(
+    `https://api.hubapi.com/crm/v3/objects/contacts/${encodeURIComponent(email)}?idProperty=email`,
+    {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ properties: { lifecyclestage: stage } }),
+    },
+  );
+  if (res.ok) return 'updated';
+  if (res.status === 404) return 'not_found';
+  return 'error';
+}
+
+export type ReplyTaskInput = {
+  email: string;
+  contactName?: string | null;
+  anchor?: string | null;
+  /** Due date as epoch ms. Defaults to now. */
+  dueAtMs?: number;
+};
+
+/**
+ * Create a HubSpot task for the rep to respond to a sequence reply, associated
+ * to the contact. Looks the contact up by email to get its id first (tasks
+ * associate by internal id, not email). Returns 'created', 'not_found' if the
+ * contact isn't in HubSpot, or 'error'.
+ */
+export async function createReplyFollowUpTask(
+  accessToken: string,
+  input: ReplyTaskInput,
+): Promise<'created' | 'not_found' | 'error'> {
+  // 1. Resolve the contact's internal id by email.
+  const lookup = await fetch(
+    `https://api.hubapi.com/crm/v3/objects/contacts/${encodeURIComponent(input.email)}?idProperty=email&properties=email`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (lookup.status === 404) return 'not_found';
+  if (!lookup.ok) return 'error';
+  const contact = (await lookup.json().catch(() => null)) as { id?: string } | null;
+  const contactId = contact?.id;
+  if (!contactId) return 'error';
+
+  // 2. Create the task associated to that contact. associationTypeId 204 =
+  //    HubSpot-defined task→contact association.
+  const who = input.contactName?.trim() || input.email;
+  const subject = `Reply to ${who} — outreach sequence`;
+  const bodyLines = [
+    `${who} replied to an Arcova-generated outreach sequence. Take the conversation human from here.`,
+    input.anchor ? `\nAnchor: ${input.anchor}` : '',
+  ].join('');
+
+  const res = await fetch('https://api.hubapi.com/crm/v3/objects/tasks', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      properties: {
+        hs_task_subject: subject,
+        hs_task_body: bodyLines,
+        hs_task_status: 'NOT_STARTED',
+        hs_task_priority: 'HIGH',
+        hs_timestamp: String(input.dueAtMs ?? Date.now()),
+      },
+      associations: [
+        {
+          to: { id: contactId },
+          types: [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 204 }],
+        },
+      ],
+    }),
+  });
+  if (res.ok) return 'created';
+  return 'error';
+}
+
+/**
+ * Convenience: run both reply-side effects (lifecycle bump + follow-up task)
+ * for one contact. Best-effort — settles all, never throws. The status mirror
+ * (pushOutreachStatusByEmail with status='replied') is a separate call the
+ * caller still makes.
+ */
+export async function applyReplyEffectsToHubSpot(
+  accessToken: string,
+  input: ReplyTaskInput,
+): Promise<void> {
+  await Promise.allSettled([
+    bumpContactLifecycleStage(accessToken, input.email),
+    createReplyFollowUpTask(accessToken, input),
+  ]);
 }

@@ -13,7 +13,7 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { syncUserOutreachStatus } from '@/lib/lemlist';
-import { pushOutreachStatusByEmail } from '@/lib/hubspot';
+import { pushOutreachStatusByEmail, applyReplyEffectsToHubSpot } from '@/lib/hubspot';
 import { nango, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
 
 function authorize(req: Request): boolean {
@@ -60,6 +60,12 @@ export async function GET(req: Request) {
           )) as string;
           hubspotPush = async (email, status, anchor) => {
             await pushOutreachStatusByEmail(token, { email, status, anchor, channel: 'lemlist' });
+            // On a reply, advance lifecycle + create a follow-up task. The cron
+            // callback has no contact name, so the task falls back to the email
+            // (the real-time webhook path supplies the name). Best-effort.
+            if (status === 'replied') {
+              await applyReplyEffectsToHubSpot(token, { email, anchor });
+            }
           };
         }
       } catch {
