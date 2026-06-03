@@ -3,12 +3,18 @@
 /**
  * /outreach — sequence editor + dispatch surface.
  *
+ * Page shell mirrors /leads/contacts exactly so the side panel + agent
+ * behaviour are identical: parent flex row with `p-3.5`, main content as a
+ * rounded-glass card, agent column inset by the parent's padding, side panels
+ * positioned absolutely over the agent column's bounding rect with a floating
+ * chat bar at the bottom.
+ *
  * Rows = staged contact-sequences (one per outreach_sequences row).
  * Cols = step 1..N of the sequence (subject + body + channel pill).
  *
- * Click a cell → side panel (mirrors /contacts detail-panel style) with
- * editable subject/body + per-step channel selector (Email / LinkedIn).
- * Save updates the messages jsonb in-place.
+ * Click a cell → side panel (overlays agent column, glass surface):
+ *   - draft / pending step → editor (subject + body + channel)
+ *   - sent / queued / replied / failed → read-only details
  *
  * Send to lemlist: per-row "Send" button OR bulk-select multiple → "Send
  * selected". Both open a campaign picker, then POST /api/outreach/lemlist/dispatch.
@@ -31,7 +37,9 @@ import {
 } from 'lucide-react';
 import AppSidebar from '@/components/AppSidebar';
 import { PageHeader } from '@/components/PageHeader';
-import { AgentPanel } from '@/components/AgentPanel';
+import { AgentPanel, type AgentPendingMessage } from '@/components/AgentPanel';
+import { AgentChatBar } from '@/components/AgentChatBar';
+import { cn } from '@/lib/utils';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -136,6 +144,63 @@ function truncate(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n - 1) + '…';
 }
 
+/**
+ * Heuristic: connect-request invite vs a regular LinkedIn message. lemlist
+ * treats them as different action types; we identify by channel=linkedin AND
+ * day_offset=7 (the invite slot in our default cadence).
+ */
+function isLinkedInInvite(msg: Message): boolean {
+  return msg.channel === 'linkedin' && msg.day_offset === 7;
+}
+
+type StepStatus = 'pending' | 'queued' | 'sent' | 'replied' | 'cancelled' | 'failed';
+
+function stepSendDate(seq: Sequence, msg: Message): Date | null {
+  const anchor = seq.last_status_at ?? seq.created_at;
+  if (!anchor) return null;
+  const base = new Date(anchor).getTime();
+  if (!Number.isFinite(base)) return null;
+  return new Date(base + msg.day_offset * 24 * 60 * 60 * 1000);
+}
+
+function stepStatus(seq: Sequence, msg: Message, now: Date): StepStatus {
+  const seqStatus = (seq.dispatch_status ?? 'draft').toLowerCase();
+  if (seqStatus === 'draft' || seqStatus === 'exported' || seqStatus === 'queued') {
+    return 'pending';
+  }
+  if (seqStatus === 'failed') return 'failed';
+  const sendDate = stepSendDate(seq, msg);
+  if (!sendDate) return 'pending';
+  const reached = sendDate.getTime() <= now.getTime();
+  if (seqStatus === 'replied') {
+    return reached ? 'sent' : 'cancelled';
+  }
+  return reached ? 'sent' : 'queued';
+}
+
+function stepDateIsAuthoritative(_msg: Message): boolean {
+  // No per-step lemlist activity poll yet — every send date is derived.
+  return false;
+}
+
+const STEP_PILL: Record<StepStatus, string> = {
+  pending: 'bg-[#0d3547]/8 text-[#0d3547]',
+  queued: 'bg-amber-50 text-amber-700 border border-amber-200',
+  sent: 'bg-emerald-50 text-emerald-700 border border-emerald-200',
+  replied: 'bg-violet-50 text-violet-700 border border-violet-200',
+  cancelled: 'bg-slate-50 text-slate-500 border border-slate-200',
+  failed: 'bg-red-50 text-red-600 border border-red-200',
+};
+
+const STEP_LABEL: Record<StepStatus, string> = {
+  pending: 'Staged',
+  queued: 'Queued',
+  sent: 'Sent',
+  replied: 'Replied',
+  cancelled: 'Cancelled',
+  failed: 'Failed',
+};
+
 // ── Page ───────────────────────────────────────────────────────────────────
 
 export default function OutreachPage() {
@@ -143,18 +208,74 @@ export default function OutreachPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const highlightId = searchParams.get('highlight');
+  const initialStatus = ((): StatusFilter => {
+    const s = searchParams.get('status');
+    return s === 'draft' || s === 'sent' || s === 'replied' || s === 'failed' ? s : 'all';
+  })();
 
   const [sequences, setSequences] = useState<Sequence[]>([]);
   const [loadingData, setLoadingData] = useState(true);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(initialStatus);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-  // Cell editor side panel
+  // Cell editor / details side panel state
   const [editorOpen, setEditorOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailsSequenceId, setDetailsSequenceId] = useState<string | null>(null);
+  const [detailsStepIdx, setDetailsStepIdx] = useState<number | null>(null);
   const [editingSequenceId, setEditingSequenceId] = useState<string | null>(null);
   const [editingStepIdx, setEditingStepIdx] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState<Message | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
+  const sidePanelOpen = editorOpen || detailsOpen;
+
+  // Mirror the AgentPanel column's bounding rect so the side panel can
+  // overlay it pixel-for-pixel. Identical pattern to /leads/contacts —
+  // AgentPanel below renders with the marker class `.outreach-agent-col`.
+  //
+  // IMPORTANT: this effect depends on `loading`/`loadingData`. Unlike
+  // /leads/contacts (which renders the agent column on every pass and shows
+  // its spinner inside the table area), this page early-returns a spinner
+  // while loading — so `.outreach-agent-col` does NOT exist on first mount.
+  // Without re-running once data lands, the element is never found, agentRect
+  // stays null, and the side panel falls back to the full-height CSS sheet
+  // with no floating chat bar. Re-running when loading flips false fixes it.
+  const [agentRect, setAgentRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (loading || loadingData) return; // agent column not mounted yet
+    const el = document.querySelector<HTMLElement>('.outreach-agent-col');
+    if (!el) return;
+    const update = () => {
+      const r = el.getBoundingClientRect();
+      // Below 768px the AgentPanel is hidden — bounding rect is 0×0. Null out
+      // so the panel falls back to its CSS-class right-anchored positioning.
+      if (r.width === 0 || r.height === 0) {
+        setAgentRect(null);
+        return;
+      }
+      setAgentRect({ top: r.top, left: r.left, width: r.width, height: r.height });
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  }, [loading, loadingData]);
+
+  // Floating chat bar surfaced while a side panel is open. The agent column
+  // is `invisible` in that state, so this bar is the agent's only visible
+  // input. Submit dismisses the side panel and forwards the message to
+  // AgentPanel via the pendingMessage prop.
+  const [agentChatBarValue, setAgentChatBarValue] = useState('');
+  const [agentTrigger, setAgentTrigger] = useState<AgentPendingMessage | undefined>();
+  const fireAgent = (text: string) =>
+    setAgentTrigger((prev) => ({ text, nonce: (prev?.nonce ?? 0) + 1 }));
 
   // Dispatch modal
   const [dispatchOpen, setDispatchOpen] = useState(false);
@@ -164,6 +285,8 @@ export default function OutreachPage() {
   const [selectedCampaignId, setSelectedCampaignId] = useState<string>('');
   const [dispatching, setDispatching] = useState(false);
   const [dispatchError, setDispatchError] = useState<string | null>(null);
+  const [provisioning, setProvisioning] = useState(false);
+  const [provisionMessage, setProvisionMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!loading && !user) router.push('/login');
@@ -181,9 +304,20 @@ export default function OutreachPage() {
     }
   }, []);
 
+  // Poll lemlist for reply/failure updates on mount — fallback for when the
+  // reply webhook isn't wired.
+  const syncStatusThenRefresh = useCallback(async () => {
+    try {
+      await fetch('/api/outreach/lemlist/sync-status', { method: 'POST' });
+    } catch {
+      // best-effort
+    }
+    await refresh();
+  }, [refresh]);
+
   useEffect(() => {
-    if (user) void refresh();
-  }, [user, refresh]);
+    if (user) void syncStatusThenRefresh();
+  }, [user, syncStatusThenRefresh]);
 
   const filtered = useMemo(() => {
     if (statusFilter === 'all') return sequences;
@@ -192,7 +326,6 @@ export default function OutreachPage() {
 
   const steps = useMemo(() => maxSteps(filtered), [filtered]);
 
-  // ── Selection ──────────────────────────────────────────────────────────
   const toggleSelected = (id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -208,7 +341,6 @@ export default function OutreachPage() {
     else setSelectedIds(new Set(filtered.map((s) => s.id)));
   };
 
-  // ── Cell editor ────────────────────────────────────────────────────────
   const openCellEditor = (sequenceId: string, stepIdx: number) => {
     const seq = sequences.find((s) => s.id === sequenceId);
     if (!seq) return;
@@ -220,6 +352,18 @@ export default function OutreachPage() {
     setEditorOpen(true);
   };
 
+  const openCellDetails = (sequenceId: string, stepIdx: number) => {
+    setDetailsSequenceId(sequenceId);
+    setDetailsStepIdx(stepIdx);
+    setDetailsOpen(true);
+  };
+
+  const closeDetails = () => {
+    setDetailsOpen(false);
+    setDetailsSequenceId(null);
+    setDetailsStepIdx(null);
+  };
+
   const closeEditor = () => {
     setEditorOpen(false);
     setEditingSequenceId(null);
@@ -227,13 +371,21 @@ export default function OutreachPage() {
     setEditDraft(null);
   };
 
+  const handleCellClick = (sequenceId: string, stepIdx: number) => {
+    const seq = sequences.find((s) => s.id === sequenceId);
+    if (!seq) return;
+    const msg = seq.messages?.[stepIdx];
+    if (!msg) return;
+    const status = stepStatus(seq, msg, new Date());
+    if (status === 'pending') openCellEditor(sequenceId, stepIdx);
+    else openCellDetails(sequenceId, stepIdx);
+  };
+
   const saveEdit = async () => {
     if (!editingSequenceId || editingStepIdx === null || !editDraft) return;
     const seq = sequences.find((s) => s.id === editingSequenceId);
     if (!seq) return;
-
     const nextMessages = seq.messages.map((m, i) => (i === editingStepIdx ? editDraft : m));
-
     setSavingEdit(true);
     try {
       const res = await fetch(`/api/outreach/sequences/${editingSequenceId}`, {
@@ -265,7 +417,37 @@ export default function OutreachPage() {
     }
   };
 
-  // ── Dispatch ───────────────────────────────────────────────────────────
+  const ensureArcovaTemplate = async () => {
+    setProvisioning(true);
+    setProvisionMessage(null);
+    setDispatchError(null);
+    try {
+      const res = await fetch('/api/outreach/lemlist/ensure-template', { method: 'POST' });
+      const json = (await res.json().catch(() => ({}))) as {
+        campaignId?: string;
+        created?: boolean;
+        error?: string;
+      };
+      if (!res.ok || !json.campaignId) {
+        setDispatchError(json.error ?? 'Could not provision template');
+        return;
+      }
+      const campRes = await fetch('/api/outreach/lemlist/campaigns');
+      if (campRes.ok) {
+        const cj = (await campRes.json()) as { campaigns: LemlistCampaign[] };
+        setCampaigns(cj.campaigns ?? []);
+      }
+      setSelectedCampaignId(json.campaignId);
+      setProvisionMessage(
+        json.created
+          ? 'Arcova Multichannel template created in lemlist. Selected.'
+          : 'Arcova template already exists. Selected.',
+      );
+    } finally {
+      setProvisioning(false);
+    }
+  };
+
   const openDispatch = async (ids: string[]) => {
     if (ids.length === 0) return;
     setDispatchRowIds(ids);
@@ -322,7 +504,6 @@ export default function OutreachPage() {
     }
   };
 
-  // ── Loading ────────────────────────────────────────────────────────────
   if (loading || loadingData) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-transparent">
@@ -340,14 +521,16 @@ export default function OutreachPage() {
     { value: 'failed', label: 'Failed' },
   ];
 
-  // ── Render ─────────────────────────────────────────────────────────────
   return (
-    <div className="flex h-screen bg-transparent">
+    // ── Page shell — mirrors /leads/contacts exactly so the side panel +
+    //    floating chat bar inherit the same positioning and inset math.
+    <div className="flex min-h-0 h-screen bg-transparent">
       <AppSidebar />
 
-      <div className="flex min-h-0 flex-1 overflow-hidden md:flex-row flex-col">
-        <div className="bg-transparent flex-1 overflow-auto px-6 py-8 lg:px-10">
-          <div className="w-full max-w-[1600px] mx-auto">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-3.5 overflow-hidden p-3.5 md:flex-row md:gap-2">
+        {/* Main column — rounded glass container, same shape as /contacts. */}
+        <div className="outreach-main flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[1.75rem] bg-transparent px-3 py-3 sm:px-5 sm:py-4 min-[1280px]:pr-2">
+          <div className="flex min-h-0 w-full max-w-none flex-1 flex-col">
             <PageHeader
               eyebrow="Outreach"
               title="Staged sequences"
@@ -399,7 +582,6 @@ export default function OutreachPage() {
               </div>
             </div>
 
-            {/* Empty state */}
             {filtered.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-24 text-center rounded-2xl border border-white/80 bg-white/55 backdrop-blur-xl">
                 <div className="w-16 h-16 rounded-full bg-[rgba(13,53,71,0.05)] flex items-center justify-center mb-4">
@@ -414,13 +596,12 @@ export default function OutreachPage() {
                 </p>
               </div>
             ) : (
-              /* Table */
-              <div className="rounded-2xl border border-white/80 bg-white/55 backdrop-blur-xl shadow-[0_8px_24px_-16px_rgba(13,53,71,0.2)] overflow-hidden">
-                <div className="overflow-x-auto">
+              <div className="min-h-0 flex-1 rounded-2xl border border-white/80 bg-white/55 backdrop-blur-xl shadow-[0_8px_24px_-16px_rgba(13,53,71,0.2)] overflow-hidden">
+                <div className="h-full overflow-auto">
                   <table className="w-full text-[12.5px]">
                     <thead className="bg-white/60 border-b border-[rgba(13,53,71,0.07)]">
                       <tr>
-                        <th className="sticky left-0 z-10 bg-white/80 px-3 py-2 text-left w-10">
+                        <th className="sticky left-0 z-10 bg-white px-3 py-2 text-left w-10">
                           <input
                             type="checkbox"
                             checked={allFilteredSelected}
@@ -428,7 +609,7 @@ export default function OutreachPage() {
                             className="rounded border-[rgba(13,53,71,0.2)]"
                           />
                         </th>
-                        <th className="sticky left-10 z-10 bg-white/80 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-[#7d909a] min-w-[220px]">
+                        <th className="sticky left-10 z-10 bg-white px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-[#7d909a] min-w-[220px]">
                           Contact
                         </th>
                         <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-[#7d909a] min-w-[180px]">
@@ -437,14 +618,24 @@ export default function OutreachPage() {
                         <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-[#7d909a]">
                           Status
                         </th>
-                        {Array.from({ length: steps }).map((_, i) => (
-                          <th
-                            key={i}
-                            className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-[#7d909a] min-w-[200px]"
-                          >
-                            Step {i + 1}
-                          </th>
-                        ))}
+                        {Array.from({ length: steps }).map((_, i) => {
+                          const dayOffset = filtered
+                            .map((s) => s.messages?.[i]?.day_offset)
+                            .find((d) => typeof d === 'number');
+                          return (
+                            <th
+                              key={i}
+                              className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-[#7d909a] min-w-[200px]"
+                            >
+                              Step {i + 1}
+                              {typeof dayOffset === 'number' && (
+                                <span className="ml-1 normal-case text-[10.5px] text-[#b6c2c8]">
+                                  (Day {dayOffset})
+                                </span>
+                              )}
+                            </th>
+                          );
+                        })}
                         <th className="px-3 py-2 w-20" />
                       </tr>
                     </thead>
@@ -460,7 +651,7 @@ export default function OutreachPage() {
                               highlight ? 'bg-arcova-teal/8' : ''
                             }`}
                           >
-                            <td className="sticky left-0 z-10 bg-white/80 px-3 py-2.5 align-top">
+                            <td className="sticky left-0 z-10 bg-white px-3 py-2.5 align-top">
                               <input
                                 type="checkbox"
                                 checked={selectedIds.has(seq.id)}
@@ -468,8 +659,17 @@ export default function OutreachPage() {
                                 className="rounded border-[rgba(13,53,71,0.2)]"
                               />
                             </td>
-                            <td className="sticky left-10 z-10 bg-white/80 px-3 py-2.5 align-top">
-                              <div className="font-medium text-[#0d3547]">{displayName(seq.contact)}</div>
+                            <td className="sticky left-10 z-10 bg-white px-3 py-2.5 align-top">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  router.push(`/leads/contacts?lead=${encodeURIComponent(seq.contact_id)}`)
+                                }
+                                className="text-left font-medium text-[#0d3547] hover:text-arcova-teal hover:underline underline-offset-2 transition-colors"
+                                title="Open contact"
+                              >
+                                {displayName(seq.contact)}
+                              </button>
                               {seq.contact?.job_title && (
                                 <div className="text-[11px] text-[#7d909a]">{seq.contact.job_title}</div>
                               )}
@@ -510,29 +710,58 @@ export default function OutreachPage() {
                               }
                               const ch = msg.channel ?? 'email';
                               const ChIcon = ch === 'linkedin' ? Linkedin : Mail;
+                              const sStatus = stepStatus(seq, msg, new Date());
+                              const sendDate = stepSendDate(seq, msg);
+                              const isInvite = isLinkedInInvite(msg);
                               return (
                                 <td
                                   key={i}
                                   className="px-3 py-2.5 align-top cursor-pointer hover:bg-arcova-teal/5"
-                                  onClick={() => openCellEditor(seq.id, i)}
+                                  onClick={() => handleCellClick(seq.id, i)}
                                 >
-                                  <div className="flex items-start gap-1.5">
-                                    <ChIcon
-                                      className={`mt-0.5 h-3 w-3 shrink-0 ${
-                                        ch === 'linkedin' ? 'text-[#0a66c2]' : 'text-[#7d909a]'
-                                      }`}
-                                    />
-                                    <div className="min-w-0">
-                                      <div className="font-medium text-[#0d3547] leading-tight">
-                                        {truncate(msg.subject, 50)}
+                                  <div className="min-w-0">
+                                    {isInvite ? (
+                                      <div className="font-medium text-[#0a66c2] leading-tight">
+                                        Send LinkedIn invite
                                       </div>
-                                      <div className="mt-0.5 text-[11px] text-[#7d909a] line-clamp-2 leading-snug">
-                                        {truncate(msg.body, 110)}
-                                      </div>
-                                      <div className="mt-1 text-[10px] text-[#b6c2c8]">
-                                        Day {msg.day_offset}
-                                      </div>
+                                    ) : (
+                                      <>
+                                        {msg.subject && (
+                                          <div className="font-medium text-[#0d3547] leading-tight">
+                                            {truncate(msg.subject, 50)}
+                                          </div>
+                                        )}
+                                        <div className="mt-0.5 text-[11px] text-[#7d909a] line-clamp-2 leading-snug">
+                                          {truncate(msg.body, 110)}
+                                        </div>
+                                      </>
+                                    )}
+
+                                    <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                                      <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${STEP_PILL[sStatus]}`}>
+                                        {STEP_LABEL[sStatus]}
+                                      </span>
+                                      <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                                        ch === 'linkedin'
+                                          ? 'bg-[#0a66c2]/10 text-[#0a66c2]'
+                                          : 'bg-arcova-teal/10 text-arcova-teal'
+                                      }`}>
+                                        <ChIcon className="h-3 w-3" />
+                                        {isInvite ? 'LI invite' : ch === 'linkedin' ? 'LI msg' : 'Email'}
+                                      </span>
                                     </div>
+
+                                    {sendDate && sStatus !== 'pending' && (
+                                      <div className="mt-1 text-[10px] text-[#b6c2c8]">
+                                        {sStatus === 'sent' || sStatus === 'replied'
+                                          ? stepDateIsAuthoritative(msg)
+                                            ? `Sent ${sendDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+                                            : `~Sent ${sendDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+                                          : sStatus === 'queued'
+                                            ? `~${sendDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+                                            : ''}
+                                      </div>
+                                    )}
                                   </div>
                                 </td>
                               );
@@ -570,115 +799,316 @@ export default function OutreachPage() {
           </div>
         </div>
 
-        <AgentPanel page="outreach" pageContext={{ sequenceCount: sequences.length }} />
+        {/* Agent column — inset by parent's p-3.5 padding. Marker class lets
+            agentRect track its bounding rect for the side-panel overlay. */}
+        <AgentPanel
+          className={cn(
+            'outreach-agent-col min-[1280px]:pl-1.5',
+            sidePanelOpen && 'invisible',
+          )}
+          page="outreach"
+          pendingMessage={agentTrigger}
+          pageContext={{
+            sequenceCount: sequences.length,
+            selectedSequenceId: editingSequenceId,
+            selectedStepIndex: editingStepIdx,
+          }}
+        />
+
+        {/* Side panel — overlays the agent column. Rendered INSIDE the flex
+            row (same nesting as /leads/contacts) so absolute positioning via
+            agentRect resolves against the same coordinate space. */}
+        {(editorOpen || detailsOpen) && (
+          <>
+            {/* Click-outside backdrop on narrow viewports where the agent
+                column is hidden and the panel falls back to full-bleed. */}
+            <button
+              type="button"
+              className="fixed inset-0 z-40 transition-opacity min-[1280px]:hidden"
+              aria-label="Close panel"
+              onClick={() => {
+                closeEditor();
+                closeDetails();
+              }}
+            />
+
+            {/* Floating chat bar — sits below the side panel, in the bottom
+                ~60px of the agent column. Submit dismisses the panel and
+                fires the message to the agent. */}
+            {agentRect && (
+              <div
+                className={cn(
+                  'fixed z-[51] flex items-center rounded-[1.3125rem] border border-[rgba(255,255,255,0.88)] bg-[rgba(255,255,255,0.55)] px-3 py-2.5 shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2)] backdrop-blur-2xl backdrop-saturate-150',
+                )}
+                style={{
+                  top: agentRect.top + agentRect.height - 58,
+                  left: agentRect.left,
+                  width: agentRect.width,
+                }}
+              >
+                <AgentChatBar
+                  value={agentChatBarValue}
+                  onChange={setAgentChatBarValue}
+                  onSubmit={() => {
+                    const text = agentChatBarValue.trim();
+                    if (!text) return;
+                    fireAgent(text);
+                    setAgentChatBarValue('');
+                    closeEditor();
+                    closeDetails();
+                  }}
+                  placeholder="Ask anything about your outreach…"
+                  className="w-full"
+                />
+              </div>
+            )}
+
+            {/* Editor side panel (draft/pending cells) */}
+            {editorOpen && editDraft && editingSequenceId && (
+              <aside
+                className={cn(
+                  'flex min-h-0 flex-col overflow-hidden rounded-[1.3125rem] border border-[rgba(255,255,255,0.88)] bg-[rgba(255,255,255,0.55)] shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2)] backdrop-blur-2xl backdrop-saturate-150',
+                  'fixed z-50',
+                  !agentRect && 'max-md:bottom-3.5 max-md:top-3.5 max-md:right-3.5 max-md:w-[min(calc(100vw-1.75rem),22.5rem)] md:top-[14px] md:bottom-[14px] md:right-[1.625rem] md:w-[22.5rem]',
+                )}
+                style={
+                  agentRect
+                    ? {
+                        top: agentRect.top,
+                        left: agentRect.left,
+                        width: agentRect.width,
+                        height: Math.max(0, agentRect.height - 64),
+                      }
+                    : undefined
+                }
+              >
+                <div className="flex items-center justify-between border-b border-[rgba(13,53,71,0.08)] px-5 py-3">
+                  <div>
+                    <p className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">
+                      Step {(editingStepIdx ?? 0) + 1} · Day {editDraft.day_offset}
+                    </p>
+                    <h3 className="text-base font-semibold text-[#0d3547]">Edit message</h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={closeEditor}
+                    className="rounded-md p-1 text-[#b6c2c8] hover:bg-[#f4f7f9] hover:text-[#4a6470]"
+                    aria-label="Close"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+                  <div>
+                    <label className="block text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">
+                      Channel
+                    </label>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      {(['email', 'linkedin'] as Channel[]).map((ch) => {
+                        const ChIcon = ch === 'linkedin' ? Linkedin : Mail;
+                        const active = editDraft.channel === ch;
+                        return (
+                          <button
+                            key={ch}
+                            type="button"
+                            onClick={() => setEditDraft({ ...editDraft, channel: ch })}
+                            className={`inline-flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-[12.5px] font-medium transition-colors ${
+                              active
+                                ? ch === 'linkedin'
+                                  ? 'border-[#0a66c2] bg-[#0a66c2]/8 text-[#0a66c2]'
+                                  : 'border-arcova-teal bg-arcova-teal/8 text-arcova-teal'
+                                : 'border-[rgba(13,53,71,0.15)] bg-white text-[#4a6470] hover:bg-[#f4f7f9]'
+                            }`}
+                          >
+                            <ChIcon className="h-3.5 w-3.5" />
+                            {ch === 'linkedin' ? 'LinkedIn' : 'Email'}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">
+                      Subject
+                    </label>
+                    <input
+                      type="text"
+                      value={editDraft.subject}
+                      onChange={(e) => setEditDraft({ ...editDraft, subject: e.target.value })}
+                      className="mt-1 w-full rounded-lg border border-[rgba(13,53,71,0.15)] bg-white px-3 py-2 text-[13px] text-[#0d3547] focus:border-arcova-teal focus:outline-none"
+                    />
+                    {editDraft.channel === 'linkedin' && (
+                      <p className="mt-1 text-[10.5px] text-[#b6c2c8]">
+                        LinkedIn ignores subject — kept for parity with the email step.
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">
+                      Body
+                    </label>
+                    <textarea
+                      value={editDraft.body}
+                      onChange={(e) => setEditDraft({ ...editDraft, body: e.target.value })}
+                      rows={14}
+                      className="mt-1 w-full rounded-lg border border-[rgba(13,53,71,0.15)] bg-white px-3 py-2 text-[13px] text-[#0d3547] leading-relaxed focus:border-arcova-teal focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 border-t border-[rgba(13,53,71,0.08)] px-5 py-3">
+                  <button
+                    type="button"
+                    onClick={closeEditor}
+                    disabled={savingEdit}
+                    className="rounded-lg border border-[rgba(13,53,71,0.15)] bg-white px-3 py-1.5 text-[12.5px] font-medium text-[#4a6470] hover:bg-[#f4f7f9] disabled:opacity-60"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void saveEdit()}
+                    disabled={savingEdit}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-navy px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-[#0d3547] disabled:opacity-60"
+                  >
+                    {savingEdit && <Loader2 className="h-3 w-3 animate-spin" />}
+                    Save
+                  </button>
+                </div>
+              </aside>
+            )}
+
+            {/* Details side panel (read-only — sent/queued/replied/failed) */}
+            {detailsOpen && detailsSequenceId !== null && detailsStepIdx !== null && (() => {
+              const seq = sequences.find((s) => s.id === detailsSequenceId);
+              const msg = seq?.messages?.[detailsStepIdx];
+              if (!seq || !msg) return null;
+              const ch = msg.channel ?? 'email';
+              const ChIcon = ch === 'linkedin' ? Linkedin : Mail;
+              const sStatus = stepStatus(seq, msg, new Date());
+              const sendDate = stepSendDate(seq, msg);
+              const isInvite = isLinkedInInvite(msg);
+              const externalRef = seq.external_ref;
+              return (
+                <aside
+                  className={cn(
+                    'flex min-h-0 flex-col overflow-hidden rounded-[1.3125rem] border border-[rgba(255,255,255,0.88)] bg-[rgba(255,255,255,0.55)] shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2)] backdrop-blur-2xl backdrop-saturate-150',
+                    'fixed z-50',
+                    !agentRect && 'max-md:bottom-3.5 max-md:top-3.5 max-md:right-3.5 max-md:w-[min(calc(100vw-1.75rem),22.5rem)] md:top-[14px] md:bottom-[14px] md:right-[1.625rem] md:w-[22.5rem]',
+                  )}
+                  style={
+                    agentRect
+                      ? {
+                          top: agentRect.top,
+                          left: agentRect.left,
+                          width: agentRect.width,
+                          height: Math.max(0, agentRect.height - 64),
+                        }
+                      : undefined
+                  }
+                >
+                  <div className="flex items-center justify-between border-b border-[rgba(13,53,71,0.08)] px-5 py-3">
+                    <div>
+                      <p className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">
+                        Step {detailsStepIdx + 1} · Day {msg.day_offset}
+                      </p>
+                      <h3 className="text-base font-semibold text-[#0d3547]">
+                        {isInvite ? 'LinkedIn invite' : ch === 'linkedin' ? 'LinkedIn message' : 'Email'}
+                      </h3>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={closeDetails}
+                      className="rounded-md p-1 text-[#b6c2c8] hover:bg-[#f4f7f9] hover:text-[#4a6470]"
+                      aria-label="Close"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+                    <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-[#f4f7f9]/50 p-3 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${STEP_PILL[sStatus]}`}>
+                          {STEP_LABEL[sStatus]}
+                        </span>
+                        <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                          ch === 'linkedin'
+                            ? 'bg-[#0a66c2]/10 text-[#0a66c2]'
+                            : 'bg-arcova-teal/10 text-arcova-teal'
+                        }`}>
+                          <ChIcon className="h-3 w-3" />
+                          {isInvite ? 'LI invite' : ch === 'linkedin' ? 'LI message' : 'Email'}
+                        </span>
+                      </div>
+                      {sendDate && (
+                        <div className="text-[12px] text-[#4a6470]">
+                          {sStatus === 'sent' || sStatus === 'replied' ? (
+                            <>
+                              {stepDateIsAuthoritative(msg) ? 'Sent on ' : 'Estimated sent ~'}
+                              <span className="font-medium text-[#0d3547]">{sendDate.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</span>
+                            </>
+                          ) : sStatus === 'queued' ? (
+                            <>
+                              Scheduled for <span className="font-medium text-[#0d3547]">~{sendDate.toLocaleDateString(undefined, { dateStyle: 'medium' })}</span> via lemlist (Mon–Fri only)
+                            </>
+                          ) : sStatus === 'cancelled' ? (
+                            <>Cancelled (reply received before this step fired)</>
+                          ) : null}
+                        </div>
+                      )}
+                      {externalRef?.lemlist_lead_id && (
+                        <p className="text-[11px] text-[#7d909a] break-all">
+                          Lead id: <span className="font-mono text-[#4a6470]">{externalRef.lemlist_lead_id}</span>
+                        </p>
+                      )}
+                    </div>
+
+                    {!isInvite && msg.subject && (
+                      <div>
+                        <label className="block text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">
+                          Subject
+                        </label>
+                        <div className="mt-1 rounded-lg border border-[rgba(13,53,71,0.08)] bg-[#f4f7f9]/40 px-3 py-2 text-[13px] text-[#0d3547]">
+                          {msg.subject}
+                        </div>
+                      </div>
+                    )}
+                    <div>
+                      <label className="block text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">
+                        {isInvite ? 'Invite note' : 'Body'}
+                      </label>
+                      <div className="mt-1 whitespace-pre-wrap rounded-lg border border-[rgba(13,53,71,0.08)] bg-[#f4f7f9]/40 px-3 py-2 text-[13px] text-[#0d3547] leading-relaxed">
+                        {msg.body}
+                      </div>
+                      {isInvite && (
+                        <p className="mt-1 text-[10.5px] text-[#b6c2c8]">
+                          LinkedIn caps connect-request notes at 300 characters.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-end border-t border-[rgba(13,53,71,0.08)] px-5 py-3">
+                    <button
+                      type="button"
+                      onClick={closeDetails}
+                      className="rounded-lg border border-[rgba(13,53,71,0.15)] bg-white px-3 py-1.5 text-[12.5px] font-medium text-[#4a6470] hover:bg-[#f4f7f9]"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </aside>
+              );
+            })()}
+          </>
+        )}
       </div>
 
-      {/* ── Cell editor side panel ─────────────────────────────────────── */}
-      {editorOpen && editDraft && editingSequenceId && (
-        <div className="fixed inset-y-0 right-0 z-40 flex w-full max-w-md flex-col border-l border-white/80 bg-white shadow-2xl">
-          <div className="flex items-center justify-between border-b border-[rgba(13,53,71,0.08)] px-5 py-3">
-            <div>
-              <p className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">
-                Step {(editingStepIdx ?? 0) + 1} · Day {editDraft.day_offset}
-              </p>
-              <h3 className="text-base font-semibold text-[#0d3547]">Edit message</h3>
-            </div>
-            <button
-              type="button"
-              onClick={closeEditor}
-              className="rounded-md p-1 text-[#b6c2c8] hover:bg-[#f4f7f9] hover:text-[#4a6470]"
-              aria-label="Close"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-            {/* Channel selector — mirrors /contacts detail panel field style */}
-            <div>
-              <label className="block text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">
-                Channel
-              </label>
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                {(['email', 'linkedin'] as Channel[]).map((ch) => {
-                  const ChIcon = ch === 'linkedin' ? Linkedin : Mail;
-                  const active = editDraft.channel === ch;
-                  return (
-                    <button
-                      key={ch}
-                      type="button"
-                      onClick={() => setEditDraft({ ...editDraft, channel: ch })}
-                      className={`inline-flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-[12.5px] font-medium transition-colors ${
-                        active
-                          ? ch === 'linkedin'
-                            ? 'border-[#0a66c2] bg-[#0a66c2]/8 text-[#0a66c2]'
-                            : 'border-arcova-teal bg-arcova-teal/8 text-arcova-teal'
-                          : 'border-[rgba(13,53,71,0.15)] bg-white text-[#4a6470] hover:bg-[#f4f7f9]'
-                      }`}
-                    >
-                      <ChIcon className="h-3.5 w-3.5" />
-                      {ch === 'linkedin' ? 'LinkedIn' : 'Email'}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Subject (LinkedIn ignores it, kept editable for parity) */}
-            <div>
-              <label className="block text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">
-                Subject
-              </label>
-              <input
-                type="text"
-                value={editDraft.subject}
-                onChange={(e) => setEditDraft({ ...editDraft, subject: e.target.value })}
-                className="mt-1 w-full rounded-lg border border-[rgba(13,53,71,0.15)] bg-white px-3 py-2 text-[13px] text-[#0d3547] focus:border-arcova-teal focus:outline-none"
-              />
-              {editDraft.channel === 'linkedin' && (
-                <p className="mt-1 text-[10.5px] text-[#b6c2c8]">
-                  LinkedIn ignores subject — kept for parity with the email step.
-                </p>
-              )}
-            </div>
-
-            {/* Body */}
-            <div>
-              <label className="block text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">
-                Body
-              </label>
-              <textarea
-                value={editDraft.body}
-                onChange={(e) => setEditDraft({ ...editDraft, body: e.target.value })}
-                rows={14}
-                className="mt-1 w-full rounded-lg border border-[rgba(13,53,71,0.15)] bg-white px-3 py-2 text-[13px] text-[#0d3547] leading-relaxed focus:border-arcova-teal focus:outline-none"
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center justify-end gap-2 border-t border-[rgba(13,53,71,0.08)] px-5 py-3">
-            <button
-              type="button"
-              onClick={closeEditor}
-              disabled={savingEdit}
-              className="rounded-lg border border-[rgba(13,53,71,0.15)] bg-white px-3 py-1.5 text-[12.5px] font-medium text-[#4a6470] hover:bg-[#f4f7f9] disabled:opacity-60"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => void saveEdit()}
-              disabled={savingEdit}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-navy px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-[#0d3547] disabled:opacity-60"
-            >
-              {savingEdit && <Loader2 className="h-3 w-3 animate-spin" />}
-              Save
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Dispatch (campaign picker) modal ────────────────────────────── */}
+      {/* Dispatch (campaign picker) modal */}
       {dispatchOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0d3547]/40 backdrop-blur-sm px-4">
           <div className="w-full max-w-md rounded-2xl border border-white/80 bg-white p-6 shadow-2xl">
@@ -710,24 +1140,43 @@ export default function OutreachPage() {
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   Loading lemlist campaigns…
                 </div>
-              ) : campaigns && campaigns.length === 0 ? (
-                <p className="mt-2 text-[12.5px] text-[#7d909a]">
-                  No campaigns found on your lemlist account. Create one in lemlist first
-                  (Campaigns → New), then come back.
-                </p>
               ) : (
-                <select
-                  value={selectedCampaignId}
-                  onChange={(e) => setSelectedCampaignId(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-[rgba(13,53,71,0.15)] bg-white px-3 py-2 text-[13px] text-[#0d3547] focus:border-arcova-teal focus:outline-none"
-                >
-                  <option value="">Pick a campaign…</option>
-                  {(campaigns ?? []).map((c) => (
-                    <option key={c._id} value={c._id}>
-                      {c.name}
+                <>
+                  <select
+                    value={selectedCampaignId}
+                    onChange={(e) => setSelectedCampaignId(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-[rgba(13,53,71,0.15)] bg-white px-3 py-2 text-[13px] text-[#0d3547] focus:border-arcova-teal focus:outline-none"
+                  >
+                    <option value="">
+                      {campaigns && campaigns.length === 0
+                        ? 'No campaigns yet — create one below'
+                        : 'Pick a campaign…'}
                     </option>
-                  ))}
-                </select>
+                    {(campaigns ?? []).map((c) => (
+                      <option key={c._id} value={c._id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  <div className="mt-2 flex items-center justify-between gap-2">
+                    <p className="text-[11px] text-[#7d909a]">
+                      Or use the Arcova 7-step multichannel template — we&apos;ll create it in lemlist if it doesn&apos;t exist.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => void ensureArcovaTemplate()}
+                      disabled={provisioning}
+                      className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-arcova-teal/40 bg-arcova-teal/5 px-2.5 py-1 text-[11.5px] font-semibold text-arcova-teal hover:bg-arcova-teal/10 disabled:opacity-60"
+                    >
+                      {provisioning && <Loader2 className="h-3 w-3 animate-spin" />}
+                      Use Arcova default
+                    </button>
+                  </div>
+                  {provisionMessage && (
+                    <p className="mt-1 text-[11px] text-emerald-700">{provisionMessage}</p>
+                  )}
+                </>
               )}
             </div>
 

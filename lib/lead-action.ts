@@ -4,7 +4,20 @@
  * Keeps Leads UI, CSV export, HubSpot push, and import summary aligned.
  */
 
-export type LeadAction = 'source_contact' | 'reach_out' | 'monitor' | 'deprioritize';
+export type LeadAction =
+  | 'source_contact'
+  | 'reach_out'
+  | 'send_outreach'
+  | 'await_reply'
+  | 'monitor'
+  | 'deprioritize';
+
+/**
+ * Dispatch status of the contact's most recent outreach_sequences row.
+ * Used by applyOutreachOverride to bump the score-driven action up the
+ * outreach funnel once the user has actually staged or sent something.
+ */
+export type SequenceDispatchStatus = 'draft' | 'sent' | 'replied' | 'failed' | null;
 
 /**
  * The single "high" threshold (0–1) for fit and readiness. The action model is
@@ -140,9 +153,38 @@ export function formatLeadActionLabel(action: LeadAction): string {
       return 'Source';
     case 'reach_out':
       return 'Reach out';
+    case 'send_outreach':
+      return 'Send outreach';
+    case 'await_reply':
+      return 'Await reply';
     case 'monitor':
       return 'Monitor';
   }
+}
+
+/**
+ * Outreach-state overlay on the score-driven action. Once the user has staged
+ * or sent a sequence, the action tracks the outreach funnel instead of the
+ * scoring gates:
+ *   - draft  → send_outreach (sequence ready, waiting for the user to dispatch)
+ *   - sent   → await_reply   (dispatched, waiting on the prospect)
+ *   - replied / failed → fall through to the score-driven action so the user
+ *     can decide whether to engage further or retry.
+ * CRM-resolved deprioritise (customer / dormant) still wins — the deal cycle
+ * is closed and there's nothing to chase. SCORE-driven deprioritise does NOT
+ * win: the rep already made a judgement call to engage despite the low fit, so
+ * the funnel state is the relevant action to surface. Sequence absent
+ * (sequenceStatus = null) leaves the base action alone.
+ */
+export function applyOutreachOverride(
+  baseAction: LeadAction,
+  sequenceStatus: SequenceDispatchStatus,
+  crmState?: 'active' | 'customer' | 'dormant' | 'context_only' | 'none' | null,
+): LeadAction {
+  if (crmState === 'customer' || crmState === 'dormant') return 'deprioritize';
+  if (sequenceStatus === 'sent') return 'await_reply';
+  if (sequenceStatus === 'draft') return 'send_outreach';
+  return baseAction;
 }
 
 export type LeadActionPillConfig = {
@@ -165,6 +207,30 @@ export const LEAD_ACTION_PILL_CLASS: Record<LeadAction, LeadActionPillConfig> = 
       'hover:bg-[#caece0] hover:ring-[#9dd0bf] active:brightness-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-teal-500/40',
     rowSelectedClassName:
       'bg-[#dcf5ec] text-[#0d5c54] ring-1 ring-[#aedbcc] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-teal-500/40',
+  },
+  // Send outreach + Await reply share the teal "active-funnel" hue family with
+  // Reach out, since they're successive stages of the same engagement track —
+  // tinted slightly bluer so they read as "in progress" not "act now".
+  send_outreach: {
+    label: 'Send outreach',
+    className:
+      'bg-[#d5ecf3] text-[#0a4f63] ring-1 ring-[#a6d2e0] font-medium',
+    interactiveClassName:
+      'hover:bg-[#c4e2ec] hover:ring-[#95c5d6] active:brightness-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-cyan-500/40',
+    rowSelectedClassName:
+      'bg-[#d5ecf3] text-[#0a4f63] ring-1 ring-[#a6d2e0] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-cyan-500/40',
+  },
+  // Soft lavender — distinct from Deprioritise's slate-blue (same lightness
+  // family was reading as the same pill at a glance). Sits between Send
+  // outreach's cyan and any future "engaged" hues on the funnel.
+  await_reply: {
+    label: 'Await reply',
+    className:
+      'bg-[#ede0f8] text-[#5a3a86] ring-1 ring-[#d3bdee] font-medium',
+    interactiveClassName:
+      'hover:bg-[#e3d1f3] hover:ring-[#c4abe5] active:brightness-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-violet-500/40',
+    rowSelectedClassName:
+      'bg-[#ede0f8] text-[#5a3a86] ring-1 ring-[#d3bdee] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-violet-500/40',
   },
   monitor: {
     label: 'Monitor',
@@ -196,7 +262,12 @@ export const LEAD_ACTION_PILL_CLASS: Record<LeadAction, LeadActionPillConfig> = 
 };
 
 /** Sort key for action columns (higher = more urgency). */
+// Outreach funnel stages (send → await) sort above plain Reach out, since they
+// represent committed work already in motion that the user is more likely to
+// want surfaced at the top of the table.
 export const LEAD_ACTION_SORT_ORDER: Record<LeadAction, number> = {
+  send_outreach: 5,
+  await_reply: 4,
   reach_out: 3,
   monitor: 2,
   source_contact: 1,

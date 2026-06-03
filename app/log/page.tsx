@@ -514,6 +514,16 @@ export default function LogPage() {
   const [signalEvents, setSignalEvents] = useState<SignalLogEvent[]>([]);
   const [syncSectionOpen, setSyncSectionOpen] = useState<boolean>(false);
   const [signalsSectionOpen, setSignalsSectionOpen] = useState<boolean>(false);
+  const [outreachErrors, setOutreachErrors] = useState<Array<{
+    id: string;
+    contact_name: string;
+    anchor_hook_text: string;
+    dispatch_channel: string | null;
+    dispatch_error: string | null;
+    last_status_at: string | null;
+  }>>([]);
+  const [outreachErrorsOpen, setOutreachErrorsOpen] = useState<boolean>(false);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
   const filteredEvents = events.filter((e) => matchesFilter(e, filter));
 
   useEffect(() => {
@@ -522,12 +532,18 @@ export default function LogPage() {
 
   const fetchEvents = useCallback(async () => {
     try {
-      const [syncRes, importRes, logRes, signalsRes] = await Promise.all([
+      const [syncRes, importRes, logRes, signalsRes, outreachFailRes] = await Promise.all([
         fetch('/api/hubspot/sync-events'),
         fetch('/api/import-history'),
         fetch('/api/hubspot/sync-log'),
         fetch('/api/signals/run-history'),
+        fetch('/api/outreach/failures'),
       ]);
+
+      if (outreachFailRes.ok) {
+        const j = (await outreachFailRes.json()) as { failures?: typeof outreachErrors };
+        setOutreachErrors(j.failures ?? []);
+      }
 
       const syncJson = syncRes.ok ? (await syncRes.json() as { data: SyncEvent[] }) : { data: [] };
       const importJson = importRes.ok ? (await importRes.json() as { batches: ImportBatch[] }) : { batches: [] };
@@ -773,6 +789,81 @@ export default function LogPage() {
                     ))}
                 </div>
               </>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* ── Outreach errors ──────────────────────────────────────── */}
+            <div className="mt-6 rounded-2xl border border-white/80 bg-white/45 p-3 shadow-[0_8px_24px_-16px_rgba(13,53,71,0.2)]">
+              <button
+                type="button"
+                onClick={() => setOutreachErrorsOpen((v) => !v)}
+                className="flex w-full items-center justify-between rounded-xl bg-white/60 px-3 py-2 text-left"
+              >
+                <div>
+                  <p className="text-[15px] font-semibold text-[#0d3547]">Outreach errors</p>
+                  <p className="text-[11px] text-[#7d909a]">
+                    Sequences that failed to dispatch (lemlist API rejection, missing email, etc.).
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`text-[11px] ${outreachErrors.length > 0 ? 'text-red-600 font-semibold' : 'text-[#7d909a]'}`}>
+                    {outreachErrors.length} items
+                  </span>
+                  <ChevronDown
+                    className={`h-4 w-4 text-[#7d909a] transition-transform ${outreachErrorsOpen ? 'rotate-180' : ''}`}
+                  />
+                </div>
+              </button>
+
+              {outreachErrorsOpen && (
+                <div className="mt-3">
+                  {outreachErrors.length === 0 ? (
+                    <div className="rounded-lg border border-white/80 bg-white/55 p-4 text-sm text-[#7d909a]">
+                      No failed dispatches. 🎉
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {outreachErrors.map((err) => (
+                        <div
+                          key={err.id}
+                          className="rounded-lg border border-red-200 bg-red-50/50 p-3"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-[13px] font-semibold text-[#0d3547]">{err.contact_name}</p>
+                              <p className="mt-0.5 text-[11.5px] text-[#7d909a]">
+                                Anchor: {err.anchor_hook_text}
+                              </p>
+                              <p className="mt-1.5 text-[12px] text-red-700 font-mono leading-snug break-all">
+                                {err.dispatch_error ?? 'Unknown error'}
+                              </p>
+                            </div>
+                            <div className="shrink-0 flex flex-col items-end gap-1">
+                              <span className="text-[10.5px] text-[#b6c2c8]">
+                                {err.last_status_at ? relativeTime(err.last_status_at) : ''}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  setRetryingId(err.id);
+                                  try {
+                                    router.push(`/outreach?status=failed&highlight=${encodeURIComponent(err.id)}`);
+                                  } finally {
+                                    setRetryingId(null);
+                                  }
+                                }}
+                                disabled={retryingId === err.id}
+                                className="inline-flex items-center gap-1 rounded-md border border-arcova-teal/40 bg-white px-2 py-0.5 text-[11px] font-semibold text-arcova-teal hover:bg-arcova-teal/5"
+                              >
+                                Open
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
               )}

@@ -256,22 +256,15 @@ export async function GET(request: Request) {
 
       const crmEntry = companyCrmStatuses.get(row.id) ?? null;
 
-      // CRM-deprioritised accounts: cap readiness at 0.01 so priority reflects
-      // "already handled" — fit × (0.5 + 0.5 × 0.01) ≈ fit × 0.505.
-      const crmDeprioritised =
-        crmEntry?.state === 'customer' || crmEntry?.state === 'dormant';
-
-      const rawReadiness = row.readiness_score ?? null;
-      const displayedReadiness =
-        crmDeprioritised && rawReadiness != null ? 0.01 : rawReadiness;
-
+      // One priority score, end-to-end: the stored value on user_companies.
+      // CRM state (customer/dormant) drives the action tree + CRM badge, NOT
+      // a priority/readiness mutation. Falls back to fit × 0.5 only when no
+      // stored value exists (pre-readiness-compute rows).
+      const displayedReadiness = row.readiness_score ?? null;
       const storedPriority = row.priority_score ?? null;
       const fitNorm = normalizeScore01(row.company_fit_score);
-      const basePriority = crmDeprioritised
-        ? fitNorm != null
-          ? fitNorm * (0.5 + 0.5 * 0.01)
-          : null
-        : storedPriority != null
+      const basePriority =
+        storedPriority != null
           ? storedPriority
           : fitNorm != null
             ? fitNorm * 0.5
@@ -320,7 +313,7 @@ export async function GET(request: Request) {
         data_provenance_imported_at: row.uc_added_at,
         readiness_label: row.readiness_label,
         readiness_score: displayedReadiness,
-        raw_readiness_score: rawReadiness,
+        raw_readiness_score: row.readiness_score ?? null,
         priority_score: basePriority,
         crm_status: crmEntry?.state ?? null,
         crm_deal_stage_label: crmEntry?.dealStageLabel ?? null,

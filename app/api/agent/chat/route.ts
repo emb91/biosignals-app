@@ -21,6 +21,7 @@ import {
   fetchFilteredLeads,
 } from '@/lib/leads-data';
 import { getLeadActionFromFits } from '@/lib/lead-action';
+import { personaFunctionNames } from '@/lib/persona-functions';
 import { buildWorkspaceJourneyState } from '@/lib/agent-journey-state';
 import {
   COPILOT_BATCH_CONTACT_SOURCING,
@@ -101,6 +102,11 @@ interface PageContext {
   syncEvents?: Array<Record<string, unknown>>;
   // Leads page — selected contact passed from the client.
   selectedLead?: Record<string, unknown> | null;
+  // Outreach page — the sequence row + step the rep last clicked. Used by
+  // load_outreach_context as the default sequenceId.
+  sequenceCount?: number;
+  selectedSequenceId?: string | null;
+  selectedStepIndex?: number | null;
 }
 
 interface TableFilter {
@@ -543,6 +549,25 @@ const TOOLS: Anthropic.Tool[] = [
         reasoning: { type: 'string', description: 'One sentence explaining why this ICP should be removed, grounded in the user\'s data. Shown to the user.' },
       },
       required: ['id', 'reasoning'],
+    },
+  },
+  {
+    name: 'load_outreach_context',
+    description:
+      'Load the full generator context for an outreach sequence so you can help the rep refine the copy. Returns: seller company (value props, capabilities, differentiated value), the contact (title, seniority, bio, fit summary), the contact\'s company (modalities, TAs, dev stages), the chosen anchor signal, the buying group functions, the current draft of all 7 messages, the structural cadence rules, and the banned-phrase list. Call this whenever the rep on /outreach asks about editing a sequence, improving a step, or critiquing the copy. The sequenceId is usually in pageContext.selectedSequenceId; the optional stepIndex (0-based) focuses the response on one step.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        sequenceId: {
+          type: 'string',
+          description: 'The outreach_sequences row id. Use pageContext.selectedSequenceId when available.',
+        },
+        stepIndex: {
+          type: 'number',
+          description: '0-based index of the step the rep is focused on (0 = Day 0 / initial). Optional.',
+        },
+      },
+      required: ['sequenceId'],
     },
   },
 ];
@@ -1409,6 +1434,150 @@ async function toolDeleteIcp(
   };
 }
 
+// ─── load_outreach_context tool ───────────────────────────────────────────────
+// Hands the agent the same grounding the generator had: seller, contact +
+// their company, anchor, buying group, current 7-message draft, plus the
+// structural cadence rules + banned phrases the generator was bound by.
+// The agent uses this to help reps edit copy on /outreach.
+
+async function toolLoadOutreachContext(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  input: Record<string, unknown>,
+): Promise<string> {
+  const sequenceId = typeof input.sequenceId === 'string' ? input.sequenceId : '';
+  const stepIndex =
+    typeof input.stepIndex === 'number' && Number.isFinite(input.stepIndex)
+      ? Math.floor(input.stepIndex)
+      : null;
+  if (!sequenceId) {
+    return JSON.stringify({ error: 'sequenceId required. Use pageContext.selectedSequenceId.' });
+  }
+
+  const { data: seqRow } = await supabase
+    .from('outreach_sequences')
+    .select(
+      'id, contact_id, anchor_hook_text, anchor_signal_type, messages, dispatch_status, dispatch_channel',
+    )
+    .eq('user_id', userId)
+    .eq('id', sequenceId)
+    .maybeSingle();
+  if (!seqRow) return JSON.stringify({ error: 'Sequence not found for this user.' });
+  const seq = seqRow as {
+    id: string;
+    contact_id: string;
+    anchor_hook_text: string;
+    anchor_signal_type: string | null;
+    messages: Array<{ day_offset: number; subject: string; body: string; channel?: string }>;
+    dispatch_status: string | null;
+    dispatch_channel: string | null;
+  };
+
+  const { data: contactRow } = await supabase
+    .from('contacts')
+    .select(
+      'id, first_name, last_name, full_name, email, job_title, seniority_level, business_area, contact_bio, contact_fit_summary, company_name, scored_against_persona_id, companies(company_name, description, bio_summary, industry, employee_range, funding_stage, therapeutic_areas, modalities, development_stages, products_services, services, technologies)',
+    )
+    .eq('user_id', userId)
+    .eq('id', seq.contact_id)
+    .maybeSingle();
+
+  const contact = (contactRow ?? {}) as Record<string, unknown>;
+  const co = contact.companies as Record<string, unknown> | Array<Record<string, unknown>> | null | undefined;
+  const company = Array.isArray(co) ? co[0] : co ?? null;
+
+  const { data: selfCompany } = await supabase
+    .from('user_company')
+    .select(
+      'company_name, tagline, description, products_services, value_propositions, differentiated_value, capabilities, challenges_addressed, customer_benefits, customers_we_serve, why_customers_buy',
+    )
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  let buyingGroupFunctions: string[] = [];
+  const personaId = contact.scored_against_persona_id as string | null | undefined;
+  if (personaId) {
+    const { data: personas } = await supabase
+      .from('personas')
+      .select('functions')
+      .eq('id', personaId);
+    const fnSet = new Set<string>();
+    for (const p of (personas ?? []) as Array<{ functions?: unknown }>) {
+      for (const f of personaFunctionNames(p.functions)) fnSet.add(f);
+    }
+    buyingGroupFunctions = [...fnSet];
+  }
+
+  // Structural rules + banned phrases — pulled from the generator's prompt
+  // verbatim so the agent and the generator stay in sync.
+  const structuralRules = {
+    cadence: 'Day 1 (email) → Day 4 (email) → Day 7 (LI invite — action, no copy) → Day 8 (LI message) → Day 11 (email) → Day 14 (LI message) → Day 21 (email breakup)',
+    arc: 'hook + offer → specific data → [LI connect request] → product reveal + offer → another data cut → honest nudge → always-on close',
+    copyWrittenForSteps: 'The generator writes copy for 6 steps: Day 1, Day 4, Day 8, Day 11, Day 14, Day 21. Day 7 is a pure action (the LinkedIn connect request) and has no body to edit. Do NOT propose copy for Day 7.',
+    rules: [
+      'The anchor signal is TIMING, not a required line. Reference it ONCE in Day 1 only if it makes a relevant, natural opener; otherwise open on the contact role + problem.',
+      'NEVER paraphrase a company-level anchor back at the contact (they already know).',
+      'The PRODUCT is visible in EVERY message via a CONCRETE OFFER (a list, named companies, a data cut, a live view). Never feature-speak. Never a meeting request.',
+      'Lead with what the seller has off-the-shelf. Custom is layered on top.',
+      'Channel-aware ranges: Day 1 email (80-110), Day 4 email (30-50), Day 8 LinkedIn message (50-80, PRODUCT REVEAL, no subject), Day 11 email (30-60), Day 14 LinkedIn message (30-50, no subject), Day 21 email (30-45, breakup).',
+      'NEVER invent specifics — no precise counts (use "several" / "a few"), no named companies unless in context, no statistics, no third-party citations.',
+      'Only claim capabilities the seller actually has (must trace to value_propositions / capabilities / products_services).',
+      'Never offer the contact homework. Offer to show or hand them something instead.',
+      'Take NO stance on news, regulation, or the contact\'s situation. State facts neutrally.',
+      'NO em dashes (—). NO semicolons. 8th-grade reading level. Short sentences.',
+    ],
+    bannedPhrases: [
+      'bumping this', 'circling back', 'just following up', 'checking in', 'touching base',
+      'hope this finds you well', 'hope you\'re doing well',
+      'leverage', 'synergies', 'circle up', 'loop you in',
+      'swap (noun)', 'comparing notes',
+      'any variant of "I noticed your company is…" for company-level anchors',
+    ],
+  };
+
+  return JSON.stringify({
+    sequence: {
+      id: seq.id,
+      dispatch_status: seq.dispatch_status,
+      dispatch_channel: seq.dispatch_channel,
+      anchor: {
+        hook_text: seq.anchor_hook_text,
+        signal_type: seq.anchor_signal_type,
+      },
+      messages: seq.messages,
+      focused_step_index: stepIndex,
+    },
+    contact: {
+      first_name: contact.first_name ?? null,
+      full_name: contact.full_name ?? null,
+      title: contact.job_title ?? null,
+      seniority: contact.seniority_level ?? null,
+      business_area: contact.business_area ?? null,
+      bio: contact.contact_bio ?? null,
+      fit_summary: contact.contact_fit_summary ?? null,
+    },
+    contact_company: company
+      ? {
+          name: company.company_name,
+          description: company.description,
+          bio: company.bio_summary,
+          industry: company.industry,
+          employee_range: company.employee_range,
+          funding_stage: company.funding_stage,
+          therapeutic_areas: company.therapeutic_areas,
+          modalities: company.modalities,
+          development_stages: company.development_stages,
+          products_services: company.products_services,
+          services: company.services,
+          technologies: company.technologies,
+        }
+      : null,
+    seller_company: selfCompany ?? null,
+    buying_group_functions: buyingGroupFunctions,
+    structural_rules: structuralRules,
+  });
+}
+
 // ─── Agentic loop ─────────────────────────────────────────────────────────────
 
 async function runAgentLoop(
@@ -1770,6 +1939,9 @@ async function runAgentLoop(
             if (mutation) icpMutations.push(mutation);
             break;
           }
+          case 'load_outreach_context':
+            result = await toolLoadOutreachContext(supabase, userId, toolInput);
+            break;
           default:
             result = JSON.stringify({ error: `Unknown tool: ${toolName}` });
         }

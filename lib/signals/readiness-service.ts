@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { effectiveReadiness } from '@/lib/lead-action';
 import { buildAccountReadinessContext } from '@/lib/signals/readiness-context';
 import { normalizeReadinessEvent } from '@/lib/signals/readiness-normalize';
 import { buildAccountReason } from '@/lib/signals/readiness-reason';
@@ -202,36 +203,71 @@ export async function recomputeContactReadiness(
 ): Promise<RecomputeContactReadinessResult> {
   const [signals, contactFitRow] = await Promise.all([
     listNormalizedSignalsForContact(supabase, input.userId, input.contactId),
-    // Pull contact fit so the snapshot can store priority = fit × (0.5 + 0.5 × readiness).
+    // Pull contact fit + the contact's company_id so we can look up company fit
+    // from user_companies (where it actually lives — contacts.company_fit_score
+    // does NOT exist). Priority = company_fit × contact_fit × (0.5 + 0.5 × r).
     // Best-effort: a missing row leaves priority null and the snapshot still writes.
     supabase
       .from('contacts')
-      .select('contact_fit_score')
+      .select('contact_fit_score, company_id')
       .eq('id', input.contactId)
       .eq('user_id', input.userId)
       .maybeSingle()
-      .then((res) => (res.error ? null : (res.data as { contact_fit_score: number | null } | null))),
+      .then((res) =>
+        res.error
+          ? null
+          : (res.data as { contact_fit_score: number | null; company_id: string | null } | null),
+      ),
   ]);
+
+  // Resolve company fit + company readiness via user_companies (per-user scores
+  // on the contact's account). Company readiness feeds EFFECTIVE readiness below.
+  let companyFitScore: number | null = null;
+  let companyReadinessScore: number | null = null;
+  if (contactFitRow?.company_id) {
+    const { data: ucRow } = await supabase
+      .from('user_companies')
+      .select('company_fit_score, readiness_score')
+      .eq('user_id', input.userId)
+      .eq('company_id', contactFitRow.company_id)
+      .maybeSingle();
+    const uc = ucRow as { company_fit_score: number | null; readiness_score: number | null } | null;
+    companyFitScore = uc?.company_fit_score ?? null;
+    companyReadinessScore = uc?.readiness_score ?? null;
+  }
 
   const score = scoreAccountReadiness(signals, {
     targetBuyerFunctions: input.targetBuyerFunctions,
   });
 
+  // Priority uses EFFECTIVE readiness (max of company + contact, plus the
+  // both-present bump) — the same combine the action tree uses. A well-fit
+  // contact at a hot account should read as high priority even with no
+  // personal signal (the Althea-@-Illumina case). The snapshot's own
+  // overall_score stays the contact-level readiness; only priority folds in
+  // company momentum.
+  const effReadiness =
+    effectiveReadiness(companyReadinessScore, score.overallScore) ?? score.overallScore;
+
   const snapshot = await upsertContactReadinessSnapshot(supabase, {
     userId: input.userId,
     contactId: input.contactId,
     fitScore: contactFitRow?.contact_fit_score ?? null,
+    companyFitScore,
+    priorityReadiness: effReadiness,
     score,
   });
 
   // Mirror readiness_score (always) + priority_score (when fit is known) onto
   // contacts so /api/leads can read/ORDER BY without joining the snapshot.
   // readiness_score is the canonical signal score (formerly "intent"),
-  // = snapshot overall_score. Best-effort: a mirror failure doesn't fail the
+  // = snapshot overall_score (CONTACT-level). priority_score folds in company
+  // momentum via effReadiness. Best-effort: a mirror failure doesn't fail the
   // recompute (the snapshot is authoritative).
   const mirroredPriority = computeMirroredPriority(
     contactFitRow?.contact_fit_score ?? null,
-    score.overallScore,
+    effReadiness,
+    companyFitScore,
   );
   const contactMirror: Record<string, number | null> = {
     readiness_score: score.overallScore,
@@ -262,12 +298,17 @@ export async function recomputeContactReadiness(
 function computeMirroredPriority(
   fitScore: number | null | undefined,
   readinessScore: number | null | undefined,
+  secondFitScore?: number | null | undefined,
 ): number | null | undefined {
   if (typeof fitScore !== 'number' || !Number.isFinite(fitScore)) {
     return readinessScore == null ? undefined : null;
   }
   if (typeof readinessScore !== 'number' || !Number.isFinite(readinessScore)) return null;
-  const raw = fitScore * (0.5 + 0.5 * readinessScore);
+  // Optional second fit (company fit for contact priority). When absent we
+  // collapse to single-fit × readiness — used by account-level mirrors.
+  const second =
+    typeof secondFitScore === 'number' && Number.isFinite(secondFitScore) ? secondFitScore : 1;
+  const raw = fitScore * second * (0.5 + 0.5 * readinessScore);
   if (!Number.isFinite(raw)) return null;
   return Math.max(0, Math.min(1, raw));
 }

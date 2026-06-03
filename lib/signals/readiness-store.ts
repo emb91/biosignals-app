@@ -16,20 +16,30 @@ type DatabaseClient = SupabaseClient<any, 'public', any>;
 
 /**
  * Priority = fit × (0.5 + 0.5 × readiness). Hybrid model: fit acts as the
- * floor, readiness boosts on top. Returns null when either input is missing
+ * floor, readiness boosts on top. Returns null when either fit input is missing
  * so readers can fall back cleanly. Clamped to [0, 1].
  *
- * Keep this identical to the formula in app/api/accounts/route.ts and
+ * For contact snapshots, callers pass `secondFitScore` (the company fit) so
+ * priority folds in both fits: `company_fit × contact_fit × (0.5 + 0.5 × r)`.
+ * That way a great contact at a poor-fit company doesn't read as high priority
+ * — and matches what /api/leads / the Priority column should mean ("who should
+ * I reach out to," not "who's a good contact in isolation"). Account snapshots
+ * only have one fit, so they omit `secondFitScore`.
+ *
+ * Keep this identical to the formula in lib/signals/readiness-service.ts and
  * app/leads/contacts/page.tsx — it's the single source of truth for the
  * Priority score stored on readiness snapshots.
  */
 function computePriorityScore(
   fitScore: number | null | undefined,
   readinessScore: number | null | undefined,
+  secondFitScore?: number | null | undefined,
 ): number | null {
   if (typeof fitScore !== 'number' || !Number.isFinite(fitScore)) return null;
   if (typeof readinessScore !== 'number' || !Number.isFinite(readinessScore)) return null;
-  const raw = fitScore * (0.5 + 0.5 * readinessScore);
+  const second =
+    typeof secondFitScore === 'number' && Number.isFinite(secondFitScore) ? secondFitScore : 1;
+  const raw = fitScore * second * (0.5 + 0.5 * readinessScore);
   if (!Number.isFinite(raw)) return null;
   return Math.max(0, Math.min(1, raw));
 }
@@ -237,6 +247,12 @@ export async function upsertContactReadinessSnapshot(
     userId: string;
     contactId: string;
     fitScore?: number | null;
+    /** Company fit for the contact's account — folded into priority so a great
+     *  contact at a poor-fit company doesn't read as high priority. */
+    companyFitScore?: number | null;
+    /** EFFECTIVE readiness (max of company + contact) used for priority. When
+     *  omitted, falls back to the contact-level overall_score. */
+    priorityReadiness?: number | null;
     score: AccountReadinessScoreResult;
   }
 ): Promise<{ id: string }> {
@@ -244,7 +260,11 @@ export async function upsertContactReadinessSnapshot(
     user_id: input.userId,
     contact_id: input.contactId,
     fit_score: input.fitScore ?? null,
-    priority_score: computePriorityScore(input.fitScore ?? null, input.score.overallScore),
+    priority_score: computePriorityScore(
+      input.fitScore ?? null,
+      input.priorityReadiness ?? input.score.overallScore,
+      input.companyFitScore ?? null,
+    ),
     overall_score: input.score.overallScore,
     overall_label: input.score.overallLabel,
     new_budget_score: input.score.dimensions.new_budget.score,

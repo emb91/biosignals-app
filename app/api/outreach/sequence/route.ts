@@ -5,7 +5,7 @@
  * Day offsets: 0 (initial) → 3, 7, 11, 15, 21, 28 (six follow-ups).
  *
  * Does NOT persist — returns the messages so the rep can edit them in the
- * UI before deciding to export. Persistence happens at /api/outreach/export.
+ * UI before deciding to stage. Persistence happens at /api/outreach/lemlist/stage.
  *
  * Input:  { contactId, anchorHookText, anchorSignalEventId? }
  * Output: { messages: Array<{ day_offset, subject, body }> }
@@ -17,7 +17,19 @@ import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { effectiveReadiness, getActionFromScores } from '@/lib/lead-action';
 import { personaFunctionNames } from '@/lib/persona-functions';
 
-const DAY_OFFSETS = [0, 3, 7, 11, 15, 21, 28] as const;
+// Matches lemlist's default multichannel template — but the generator only
+// writes COPY for the 6 message steps; the Day 7 LinkedIn invite is a pure
+// action (no body needed) and gets injected by the stage endpoint as an
+// empty marker, so we don't burn LLM tokens on copy nobody reads.
+//
+// Day 1  Email     — initial (LLM)
+// Day 4  Email     — follow-up (LLM)
+// Day 7  LinkedIn  — INVITE — injected by stage, no LLM copy
+// Day 8  LinkedIn  — message (LLM, assumes invite accepted)
+// Day 11 Email     — re-engage (LLM, lemlist's slot is voice; we use email)
+// Day 14 LinkedIn  — message (LLM, final LI touch)
+// Day 21 Email     — breakup (LLM)
+const DAY_OFFSETS = [1, 4, 8, 11, 14, 21] as const;
 
 function messageFromUnknown(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -82,7 +94,7 @@ function parseSequence(text: string): Message[] {
       return { day_offset: dayOffset, subject, body };
     })
     .filter((v): v is Message => v !== null)
-    .slice(0, 7);
+    .slice(0, 6);
 }
 
 export async function POST(request: Request) {
@@ -224,7 +236,7 @@ export async function POST(request: Request) {
     });
 
     const messages = parseSequence(completion.text);
-    if (messages.length < 5) {
+    if (messages.length < 4) {
       // Sanity check — if Sonnet returned fewer than 5 messages something
       // went wrong with the parse or the prompt. 5+ is acceptable, 7 ideal.
       return NextResponse.json({ error: 'Generated sequence too short', count: messages.length }, { status: 502 });
@@ -345,7 +357,7 @@ Do this reasoning silently, then use it to shape every message. Do not output th
 
 SEQUENCE STRUCTURE — read carefully, it overrides anything you've been trained on:
 
-(a) The anchor signal is your TIMING, not a required line. IF it passes the relevance test and makes a natural opener, reference it ONCE (in Day 0) and never again — returning to it ("as I mentioned re: your promotion…") reads as pestering. If it's not a good opener (e.g. a patent filing, or hiring unrelated to ${firstName}'s function), it is perfectly fine to never mention it — it was only ever your reason for timing, not the content.
+(a) The anchor signal is your TIMING, not a required line. IF it passes the relevance test and makes a natural opener, reference it ONCE (in Day 1) and never again — returning to it ("as I mentioned re: your promotion…") reads as pestering. If it's not a good opener (e.g. a patent filing, or hiring unrelated to ${firstName}'s function), it is perfectly fine to never mention it — it was only ever your reason for timing, not the content.
 
 (b) The PRODUCT is visible in EVERY message. This is NOT "don't pitch." The opposite. The whole point of outreach is to show what ${sellerName} does. But you show it by OFFERING SOMETHING CONCRETE the contact can have, never by describing features or asking for a meeting. Each message offers a tangible thing: a list, named companies, a data cut, a live view of their accounts. If a message doesn't offer something concrete, it's filler. Cut it.
 
@@ -353,24 +365,29 @@ SEQUENCE STRUCTURE — read carefully, it overrides anything you've been trained
 
 ═══ THE ARC ═══
 
-Day 0 → Day 3 → Day 7 → Day 11 → Day 15 → Day 21 → Day 28
-hook + offer → specific data → what we do + why different → another data cut → honest nudge → our-data observation → always-on close
+Day 1 (email) → Day 4 (email) → [Day 7 LinkedIn INVITE — pure action, no copy] → Day 8 (LinkedIn message) → Day 11 (email) → Day 14 (LinkedIn message) → Day 21 (email)
+hook + offer → specific data → [connect request action] → product reveal + offer → another data cut → honest nudge → always-on close
+
+YOU WRITE COPY FOR EXACTLY 6 MESSAGES — Day 1, Day 4, Day 8, Day 11, Day 14, Day 21. The Day 7 LinkedIn connect request is a pure action step (lemlist sends the invite without a personalised note in our template), so DO NOT generate a Day 7 entry. Your messages[] output must contain exactly 6 entries in that order.
+
+CHANNEL MIX NOTES (lemlist's default multichannel template):
+- Day 8 is a LinkedIn MESSAGE — assume the invite was accepted. 50-80 words max. No subject (set to empty string).
+- Day 14 is a LinkedIn MESSAGE — short, casual nudge. 30-50 words. No subject (set to empty string).
+- Day 1, Day 4, Day 11, Day 21 are EMAIL and follow the word ranges below.
 
 ═══ PER-MESSAGE GUIDANCE ═══
 
-- Day 0 (80-110 words). Open like a human ("I wanted to reach out because…"). Lead with whatever is genuinely most relevant to ${firstName}'s world — that MAY be the anchor signal, but only if it passed the relevance + opener test above; otherwise open on their function and the problem someone in their exact role carries. ${opts.anchorIsContactLevel ? `For a personal signal a brief, direct acknowledgment is fine ("congrats on the new role").` : `Do NOT recap their employer's news back at them.`} Whatever you open on, state it NEUTRALLY — no editorialising or taking a stance, the contact may feel differently than you. Then ONE plain sentence on what ${sellerName} does (the honest one-liner from our_company, not a feature list). Then offer ONE concrete thing we can hand them, tailored to their world. End with "happy to share if of interest." NO presumptions about their situation you can't back up.
+- Day 1 (email, 80-110 words). Open like a human ("I wanted to reach out because…"). Lead with whatever is genuinely most relevant to ${firstName}'s world — that MAY be the anchor signal, but only if it passed the relevance + opener test above; otherwise open on their function and the problem someone in their exact role carries. ${opts.anchorIsContactLevel ? `For a personal signal a brief, direct acknowledgment is fine ("congrats on the new role").` : `Do NOT recap their employer's news back at them.`} Whatever you open on, state it NEUTRALLY — no editorialising or taking a stance, the contact may feel differently than you. Then ONE plain sentence on what ${sellerName} does (the honest one-liner from our_company, not a feature list). Then offer ONE concrete thing we can hand them, tailored to their world. End with "happy to share if of interest." NO presumptions about their situation you can't back up.
 
-- Day 3 (30-50 words). Offer a specific data cut we ALREADY track that fits their world. Use "several" or "a few" for counts, never a precise number you can't verify. End with "happy to share these with you if of interest."
+- Day 4 (email, 30-50 words). Offer a specific data cut we ALREADY track that fits their world. Use "several" or "a few" for counts, never a precise number you can't verify. End with "happy to share these with you if of interest."
 
-- Day 7 (70-95 words). THE PRODUCT REVEAL. This is where the differentiator lands, and it lands in week one, not buried later. Explain plainly what ${sellerName} tracks as standard (the real signal types from our_company), how each is enriched with the decision-maker + contact, and that it routes into their CRM. Then the ONE thing that makes us different from generic tools (pull from differentiated_value — e.g. life-sci-only, built by people who read the science). Close by offering to show them their own accounts live.
+- Day 8 (LinkedIn message, 50-80 words). Assume the invite was accepted. THE PRODUCT REVEAL. Explain plainly what ${sellerName} tracks as standard (the real signal types from our_company), how each is enriched with the decision-maker + contact, and that it routes into their CRM. Then the ONE thing that makes us different (pull from differentiated_value — e.g. life-sci-only, built by people who read the science). Close by offering to show them their own accounts live. No subject — set subject to empty string.
 
-- Day 11 (30-60 words). Another concrete data cut, different from Day 3's. Something tied to a specific strength of THEIR company (from the company CONTEXT). Offer it. "happy to share … if of interest."
+- Day 11 (email, 30-60 words). Another concrete data cut, different from Day 4's. Something tied to a specific strength of THEIR company (from the company CONTEXT). Offer it. "happy to share … if of interest."
 
-- Day 15 (40-55 words). Honest, low-pressure. "Totally understand if these aren't useful." Then tie directly to their core job in their own words ("if [the core question their role carries] is on your plate this quarter, that's exactly what we do") and offer to show them their live pipeline. NEVER offer homework (a one-pager THEY have to read, a doc to review). Offer to show THEM something instead.
+- Day 14 (LinkedIn message, 30-50 words). Honest, low-pressure LI nudge. "Totally understand if these aren't useful." Then tie directly to their core job in their own words ("if [the core question their role carries] is on your plate this quarter, that's exactly what we do") and offer to show them their live pipeline. NEVER offer homework. Set subject to empty string.
 
-- Day 21 (50-75 words). One observation grounded ONLY in data WE track (who's showing intent, who's shopping, what's moving in their space). NO third-party statistics, NO cited external reports — only what our own signals tell us. Offer the relevant cut for their accounts.
-
-- Day 28 (30-45 words). Breakup. Warm, not bitter. Reinforce that the product is always-on: "the signals run automatically, so the moment [a relevant trigger in their world] happens, we'll have flagged it." Offer to switch it on for their accounts. Then step back.
+- Day 21 (email, 30-45 words). Breakup. Warm, not bitter. Reinforce that the product is always-on: "the signals run automatically, so the moment [a relevant trigger in their world] happens, we'll have flagged it." Offer to switch it on for their accounts. Then step back.
 
 ═══ STEP 3 — WRITING RULES (NON-NEGOTIABLE) ═══
 
@@ -398,7 +415,7 @@ BANNED PHRASES (do not use, even as a variant):
 - "I noticed ${contactCompanyName || 'your company'} is…" or any variant summarising their employer's news back at them ${opts.anchorIsContactLevel ? '' : `(the anchor's biggest trap)`}
 - "leverage", "synergies", "circle up", "loop you in"
 - "I help companies like yours" / "we work with companies like" (generic openers)
-- "as I mentioned" / "circling back on" / "following up on" / "re: your [signal]" — the signal lives in Day 0 only.
+- "as I mentioned" / "circling back on" / "following up on" / "re: your [signal]" — the signal lives in Day 1 only.
 
 VOICE:
 - Conversational, peer-to-peer. You and the contact both know this market. Don't teach them things they already know.
@@ -407,21 +424,21 @@ VOICE:
 
 ═══ GOLD-STANDARD EXAMPLE (study the shape, do not copy the content) ═══
 
-This is a real sequence to a Director of Business Development at a CDMO, from a life-sci signals company. Note: human opener, signal acknowledged once then dropped, a concrete offer in every message, product reveal + differentiator in Day 7, our-own-data only, no homework, no stance, plain language.
+This is a real sequence to a Director of Business Development at a CDMO, from a life-sci signals company. Note: human opener, signal acknowledged once then dropped, a concrete offer in every message, product reveal + differentiator on the Day 8 LinkedIn message, our-own-data only, no homework, no stance, plain language.
 
-Day 0: "Kumar, congrats on the director role. I wanted to reach out because the BIOSECURE Act is changing how US biotechs pick CDMOs, and a lot of that decision-making happens quietly, often before it reaches the press. We track buying signals across life-sci and turn them into a ranked, enriched list of who's ready to talk. One we can run: US West Coast biotechs with Chinese-CDMO exposure, matched to recent CMC hires and funding, with contacts included. A live shortlist of who's likely weighing a new partner right now. Happy to share if of interest."
+Day 1 (email): "Kumar, congrats on the director role. I wanted to reach out because the BIOSECURE Act is changing how US biotechs pick CDMOs, and a lot of that decision-making happens quietly, often before it reaches the press. We track buying signals across life-sci and turn them into a ranked, enriched list of who's ready to talk. One we can run: US West Coast biotechs with Chinese-CDMO exposure, matched to recent CMC hires and funding, with contacts included. A live shortlist of who's likely weighing a new partner right now. Happy to share if of interest."
 
-Day 3: "Kumar, quick one. We're already tracking several West Coast Series B oncology biotechs that posted VP-CMC roles in the last 30 days, all aligned to Enzene's therapeutic areas. Happy to share these with you if of interest."
+Day 4 (email): "Kumar, quick one. We're already tracking several West Coast Series B oncology biotechs that posted VP-CMC roles in the last 30 days, all aligned to Enzene's therapeutic areas. Happy to share these with you if of interest."
 
-Day 7: "Kumar, quick context on what sits behind those lists. Most signal tools are built for generic B2B, so they miss what matters in biotech. Ours is life-sci only, built by a team that reads the science. We track funding, CMC and exec hires, 8-K filings, partnerships, and clinical and regulatory moves, then enrich each one with the decision-maker and their contact details, refreshed continuously into your CRM. That means when you reach out, you already know why now and who to call. Custom signals like the BIOSECURE cut sit on top. Happy to show you live, real companies, real contacts."
+[Day 7 — LinkedIn invite, sent by lemlist as a no-note connect request, no copy generated]
 
-Day 11: "Kumar, follow-on. We track US biotechs currently exposed to Chinese CDMOs. Happy to share the list, filtered to your therapeutic areas, if of interest."
+Day 8 (LinkedIn message):"Kumar, quick context on what sits behind those lists. Most signal tools are built for generic B2B and miss what matters in biotech. Ours is life-sci only, built by a team that reads the science. We track funding, CMC and exec hires, 8-K filings, partnerships, and clinical and regulatory moves, then enrich each one with the decision-maker and their contact details, into your CRM. Happy to show you live."
 
-Day 15: "Hi Kumar, totally understand if these aren't useful. But if finding the next 5 US biotech customers is on your plate this quarter, that's exactly what we do, continuously, enriched, and routed into your CRM. Happy to show you what your live pipeline would look like."
+Day 11 (email): "Kumar, follow-on. We track US biotechs currently exposed to Chinese CDMOs. Happy to share the list, filtered to your therapeutic areas, if of interest."
 
-Day 21: "Kumar, one more. We track which biotechs are signalling active capacity shopping right now, across earnings calls, press, and filings. For a CDMO BD director that's the earliest read on who's about to move. Happy to share what we have for your accounts if of interest."
+Day 14 (LinkedIn message): "Kumar, totally understand if this isn't useful. If finding the next 5 US biotech customers is on your plate this quarter, that's what we do, continuously, enriched, routed into your CRM. Happy to show you your live pipeline."
 
-Day 28: "Kumar, closing the loop. The signals run automatically, so the moment a US West Coast biotech enters its CDMO RFP window, we'll have flagged it with the contacts ready. If you'd like that switched on for your accounts, I'm here."
+Day 21 (email): "Kumar, closing the loop. The signals run automatically, so the moment a US West Coast biotech enters its CDMO RFP window, we'll have flagged it with the contacts ready. If you'd like that switched on for your accounts, I'm here."
 
 CONTEXT:
 ${contextBlock}

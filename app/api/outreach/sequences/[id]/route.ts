@@ -36,7 +36,10 @@ function sanitizeMessages(input: unknown): EditableMessage[] {
       const subject = typeof o.subject === 'string' ? o.subject.trim() : '';
       const body = typeof o.body === 'string' ? o.body.trim() : '';
       const channel = o.channel === 'linkedin' ? 'linkedin' : 'email';
-      if (dayOffset === null || !subject || !body) return null;
+      if (dayOffset === null) return null;
+      // Day 7 LinkedIn invite is a pure action — empty subject/body is allowed.
+      const isInvite = dayOffset === 7 && channel === 'linkedin';
+      if (!isInvite && (!subject || !body)) return null;
       return { day_offset: dayOffset, subject, body, channel };
     })
     .filter((v): v is EditableMessage => v !== null);

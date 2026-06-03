@@ -19,7 +19,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Loader2, RefreshCw, Download, Copy, ChevronLeft, Send } from 'lucide-react';
+import { Loader2, RefreshCw, Copy, Check, ChevronLeft, Send } from 'lucide-react';
 import { cachedJson, invalidateCache } from '@/lib/page-fetch-cache';
 
 // Hooks are deterministic for a given contact + day (signal events flow in
@@ -164,9 +164,12 @@ export function OutreachPanel({ contactId, contactName }: Props) {
   const [sequenceLoading, setSequenceLoading] = useState(false);
   const [sequenceError, setSequenceError] = useState<string | null>(null);
 
-  // Export state
-  const [exporting, setExporting] = useState<'csv' | 'clipboard' | null>(null);
+  // Stage feedback (renders the same banner as before; legacy export paths
+  // were removed in favour of per-field manual copy).
   const [exportSuccess, setExportSuccess] = useState<string | null>(null);
+  // Per-field copy feedback: tracks which "subject"/"body" of which message was
+  // most recently copied so the icon can flip to a check briefly.
+  const [copiedField, setCopiedField] = useState<string | null>(null);
 
   // Staging state — primary path now: drop the sequence into /outreach for
   // multi-step channel selection + lemlist dispatch.
@@ -298,8 +301,10 @@ export function OutreachPanel({ contactId, contactName }: Props) {
           anchorHookText: anchorHook.title,
           anchorSignalEventId: anchorHook.source_event_id,
           anchorSignalType: anchorHook.signal_type,
-          // Default channel = email; user picks per-step in the /outreach editor.
-          messages: messages.map((m) => ({ ...m, channel: 'email' })),
+          // No channel field — server applies best-practice defaults per
+          // day_offset (email-first, then alternating). Reps override
+          // per-step in the /outreach editor's cell side-panel.
+          messages,
         }),
       });
       const json = (await res.json().catch(() => ({}))) as { id?: string; error?: string };
@@ -313,53 +318,24 @@ export function OutreachPanel({ contactId, contactName }: Props) {
     }
   }, [anchorHook, messages, contactId, router]);
 
-  const exportSequence = useCallback(
-    async (format: 'csv' | 'clipboard') => {
-      if (!anchorHook || messages.length === 0) return;
-      setExporting(format);
-      setExportSuccess(null);
-      try {
-        const res = await fetch('/api/outreach/export', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contactId,
-            anchorHookText: anchorHook.title,
-            anchorSignalEventId: anchorHook.source_event_id,
-            anchorSignalType: anchorHook.signal_type,
-            messages,
-            exportFormat: format,
-          }),
-        });
-        const json = await res.json();
-        if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
-
-        if (format === 'csv' && typeof json.csv === 'string') {
-          const blob = new Blob([json.csv], { type: 'text/csv;charset=utf-8;' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          const safeName = contactName.replace(/[^a-z0-9_-]+/gi, '-').toLowerCase();
-          const safeLabel = (anchorHook.signal_type ?? 'signal').replace(/[^a-z0-9_-]+/gi, '-').toLowerCase();
-          a.download = `outreach-${safeName}-${safeLabel}.csv`;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          URL.revokeObjectURL(url);
-          setExportSuccess('Saved + CSV downloaded.');
-        } else if (format === 'clipboard' && typeof json.clipboardText === 'string') {
-          await navigator.clipboard.writeText(json.clipboardText);
-          setExportSuccess('Saved + copied to clipboard.');
-        }
-        invalidateCache('/api/outreach');
-      } catch (e) {
-        setExportSuccess(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
-      } finally {
-        setExporting(null);
-      }
-    },
-    [anchorHook, messages, contactId, contactName],
-  );
+  // Per-field clipboard copy. We removed the bulk CSV / "save & copy" exports
+  // (they implicitly persisted the sequence with a fake dispatch_status, which
+  // muddied the action gate). Reps copy each subject/body individually now,
+  // and the only persistence path is Stage for outreach.
+  const copyField = useCallback(async (fieldId: string, value: string) => {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedField(fieldId);
+      window.setTimeout(() => {
+        setCopiedField((current) => (current === fieldId ? null : current));
+      }, 1500);
+    } catch {
+      // Clipboard may be blocked (insecure context, denied perms). Surface a
+      // soft error via the existing banner rather than failing silently.
+      setExportSuccess('Copy failed — your browser blocked clipboard access.');
+    }
+  }, []);
 
   // ── ALREADY-CONTACTED NOTICE ────────────────────────────────────────────
   // If we have a prior sequence and the user hasn't asked to override, show
@@ -547,7 +523,7 @@ export function OutreachPanel({ contactId, contactName }: Props) {
             <button
               type="button"
               onClick={() => void stageForOutreach()}
-              disabled={staging || exporting !== null}
+              disabled={staging}
               className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-arcova-navy text-white px-3 py-2 text-sm font-semibold hover:bg-[#0d3547] transition-colors disabled:opacity-60"
             >
               {staging ? (
@@ -574,57 +550,61 @@ export function OutreachPanel({ contactId, contactName }: Props) {
             </div>
           )}
 
-          {/* Read-only preview cards. No inputs/textareas — keeps the panel
-              compact and signals "this is a draft, edit it in /outreach". */}
+          {/* Read-only preview cards with a per-field copy affordance. Each
+              subject + body row exposes a small copy button so reps can pull
+              text into whatever tool they're sending from, without going
+              through a bulk CSV / clipboard export (those silently persisted a
+              sequence with a fake dispatch_status and confused the action
+              gate). The only persistence path here is Stage for outreach. */}
           <ul className="space-y-2">
-            {messages.map((m, i) => (
-              <li key={i} className="rounded-xl border border-gray-150 bg-white p-3">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">
-                  {m.day_offset === 0 ? 'Day 0 · Initial' : `Day ${m.day_offset} · Follow-up`}
-                </p>
-                <p className="text-[13px] font-medium text-gray-900 leading-snug">
-                  {m.subject}
-                </p>
-                <p className="mt-1.5 whitespace-pre-wrap text-[12.5px] text-gray-700 leading-snug">
-                  {m.body}
-                </p>
-              </li>
-            ))}
+            {messages.map((m, i) => {
+              const subjectId = `m${i}-subject`;
+              const bodyId = `m${i}-body`;
+              return (
+                <li key={i} className="rounded-xl border border-gray-150 bg-white p-3">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">
+                    {m.day_offset === 0 ? 'Day 0 · Initial' : `Day ${m.day_offset} · Follow-up`}
+                  </p>
+                  <div className="flex items-start gap-2">
+                    <p className="flex-1 text-[13px] font-medium text-gray-900 leading-snug">
+                      {m.subject}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => void copyField(subjectId, m.subject)}
+                      title="Copy subject"
+                      aria-label="Copy subject"
+                      className="shrink-0 inline-flex items-center justify-center rounded-md p-1 text-gray-400 hover:bg-arcova-teal/10 hover:text-arcova-teal transition-colors"
+                    >
+                      {copiedField === subjectId ? (
+                        <Check className="w-3.5 h-3.5" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  </div>
+                  <div className="mt-1.5 flex items-start gap-2">
+                    <p className="flex-1 whitespace-pre-wrap text-[12.5px] text-gray-700 leading-snug">
+                      {m.body}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => void copyField(bodyId, m.body)}
+                      title="Copy body"
+                      aria-label="Copy body"
+                      className="shrink-0 inline-flex items-center justify-center rounded-md p-1 text-gray-400 hover:bg-arcova-teal/10 hover:text-arcova-teal transition-colors"
+                    >
+                      {copiedField === bodyId ? (
+                        <Check className="w-3.5 h-3.5" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
-
-          <details className="group pt-1">
-            <summary className="cursor-pointer text-[11.5px] text-gray-500 hover:text-arcova-teal list-none flex items-center gap-1">
-              <span>Other export options</span>
-            </summary>
-            <div className="mt-2 flex flex-col gap-2">
-              <button
-                type="button"
-                onClick={() => exportSequence('csv')}
-                disabled={exporting !== null}
-                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-arcova-teal/40 text-arcova-teal px-3 py-2 text-[12.5px] font-semibold hover:bg-arcova-teal/5 transition-colors disabled:opacity-60"
-              >
-                {exporting === 'csv' ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Download className="w-3.5 h-3.5" />
-                )}
-                Save & download CSV
-              </button>
-              <button
-                type="button"
-                onClick={() => exportSequence('clipboard')}
-                disabled={exporting !== null}
-                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-arcova-teal/40 text-arcova-teal px-3 py-2 text-[12.5px] font-semibold hover:bg-arcova-teal/5 transition-colors disabled:opacity-60"
-              >
-                {exporting === 'clipboard' ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Copy className="w-3.5 h-3.5" />
-                )}
-                Save & copy to clipboard
-              </button>
-            </div>
-          </details>
         </>
       )}
     </div>
@@ -661,58 +641,74 @@ function ContactedNotice({
 
   const status = (sequence.dispatch_status ?? 'draft').toLowerCase();
 
-  let headline = '';
+  let headline: React.ReactNode = '';
   let body: React.ReactNode = null;
   let allowAnother = false;
   let openLabel = 'Open in /outreach';
 
   if (status === 'draft') {
-    headline = `You've already drafted a sequence for ${firstName}.`;
+    headline = (
+      <>
+        Outreach drafted for: <span className="text-gray-900">{sequence.anchor_hook_text}</span>.
+      </>
+    );
     body = (
       <>
-        Anchored on: <span className="text-gray-900">{sequence.anchor_hook_text}</span>. Open it
-        to edit copy + send to lemlist, or draft a different angle.
+        Click <span className="font-medium text-gray-900">&lsquo;Open draft&rsquo;</span> below to
+        edit the copy and send to lemlist, or draft a different angle.
       </>
     );
     allowAnother = true;
     openLabel = 'Open draft';
   } else if (status === 'sent' || status === 'queued') {
-    headline = `You're already reaching out to ${firstName}.`;
+    headline = (
+      <>
+        Outreach sent for: <span className="text-gray-900">{sequence.anchor_hook_text}</span>
+        {whenStr && ` (${whenStr})`}.
+      </>
+    );
     body = (
       <>
-        Sequence sent {whenStr && `on ${whenStr} `}anchored on:{' '}
-        <span className="text-gray-900">{sequence.anchor_hook_text}</span>. Wait for a reply
-        before pitching a new angle — or open it to track status.
+        Wait for a reply before pitching {firstName} a new angle, or click{' '}
+        <span className="font-medium text-gray-900">&lsquo;Open&rsquo;</span> below to track status.
       </>
     );
     allowAnother = true;
   } else if (status === 'replied') {
-    headline = `${firstName} replied.`;
+    headline = (
+      <>
+        {firstName} replied to: <span className="text-gray-900">{sequence.anchor_hook_text}</span>
+        {whenStr && ` (${whenStr})`}.
+      </>
+    );
     body = (
       <>
-        They responded {whenStr && `on ${whenStr} `}to the sequence anchored on:{' '}
-        <span className="text-gray-900">{sequence.anchor_hook_text}</span>. Take it human from
-        here — open to see the thread.
+        Take it human from here. Click{' '}
+        <span className="font-medium text-gray-900">&lsquo;Open&rsquo;</span> below to see the thread.
       </>
     );
     allowAnother = false;
   } else if (status === 'failed') {
-    headline = `Last dispatch to ${firstName} failed.`;
+    headline = (
+      <>
+        Dispatch failed for: <span className="text-gray-900">{sequence.anchor_hook_text}</span>.
+      </>
+    );
     body = (
       <>
-        <span className="text-red-700">{sequence.dispatch_error || 'Unknown error'}</span>. Open
-        to retry, or stage another angle.
+        <span className="text-red-700">{sequence.dispatch_error || 'Unknown error'}</span>. Click{' '}
+        <span className="font-medium text-gray-900">&lsquo;Open to retry&rsquo;</span> below, or draft a different angle.
       </>
     );
     allowAnother = true;
     openLabel = 'Open to retry';
   } else {
-    headline = `${firstName} was previously contacted.`;
-    body = (
+    headline = (
       <>
-        Anchored on: <span className="text-gray-900">{sequence.anchor_hook_text}</span>.
+        Previously contacted on: <span className="text-gray-900">{sequence.anchor_hook_text}</span>.
       </>
     );
+    body = null;
     allowAnother = true;
   }
 
