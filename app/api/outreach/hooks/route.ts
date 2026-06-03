@@ -25,7 +25,11 @@ import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { effectiveReadiness, getActionFromScores, HIGH_SCORE } from '@/lib/lead-action';
 import { personaFunctionNames } from '@/lib/persona-functions';
 
-const LOOKBACK_DAYS = 14;
+// 30 days, not 14: month-old signals like an FDA approval or indication
+// expansion are still strong, honest outreach anchors. The panel shows them as
+// recent; the picker should too. Caution/stale years-old events are excluded by
+// recency + the caution-never-a-hook rule regardless.
+const LOOKBACK_DAYS = 30;
 // Hard cap on hooks returned. Was 10; brought down so the picker is scannable.
 // Combined with tier-based ranking below, the top of the list is now the
 // outreach-worthiest signals rather than a dump of every publication.
@@ -594,19 +598,18 @@ function buildCurationPrompt(opts: {
   const firstName = opts.contact.firstName || 'the contact';
   const coName = opts.contactCompanyName || 'the company';
 
-  // The buying group = the functions/seniority we actually sell into (inferred
-  // per ICP). This is the authoritative test for whether a COMPANY signal is
-  // relevant at all. Without it, the model can only guess from the contact's
-  // title; with it, it can rule a signal in or out against the real target.
+  // The buying group = the functions/seniority we sell into (inferred per ICP).
+  // It tells us WHO cares and WHY an angle lands — it is NOT a filter that
+  // vetoes company signals by their originating department.
   const buyingGroupBlock =
     opts.buyingGroupFunctions.length > 0
-      ? `WHO WE SELL INTO (the buying group — authoritative)
+      ? `WHO WE SELL INTO (the buying group)
 - Functions we target: ${opts.buyingGroupFunctions.join(', ')}
 - Seniority we target: ${opts.buyingGroupSeniority.length ? opts.buyingGroupSeniority.join(', ') : '(any)'}
 ${opts.contactPersonaFunctions.length ? `- ${firstName} sits in this buying group as: ${opts.contactPersonaFunctions.join(', ')}` : ''}
 
-USE THIS: a COMPANY signal is only relevant if it touches a function we sell into (above) — ideally ${firstName}'s own. Hiring/activity in a function we do NOT target (e.g. HR, facilities, sales ops when we don't sell there) is NOISE — drop it even if it's a real signal. A company-wide surge across many functions still counts.`
-      : `WHO WE SELL INTO: (buying group not yet inferred for this account — judge relevance from ${firstName}'s title and what someone in their role owns.)`;
+USE THIS to judge WHO cares and WHY an angle lands — NOT as a filter on which signals count. ${firstName} sits on the commercial / decision side, so they care about their company's TRAJECTORY: funding, regulatory approvals, indication/market expansion, hiring surges, new programs, deals, partnerships, a wave of publications or patents — anything that says the company is scaling or commercialising is a buying-relevant moment for them, EVEN WHEN the signal originates in science, regulatory, clinical, or manufacturing. Do NOT discard a signal just because it didn't come from ${firstName}'s own department. The only real noise is a trivial, isolated event in an unrelated function with no strategic read (e.g. a single HR or facilities hire). When in doubt, it's relevant.`
+      : `WHO WE SELL INTO: (buying group not yet inferred for this account — judge relevance from ${firstName}'s title and what someone in their role owns, and from the company's overall trajectory.)`;
 
   return `You are picking outreach angles for a B2B sales rep.
 
@@ -622,31 +625,45 @@ ${sellerBlock}
 
 ${buyingGroupBlock}
 
-CANDIDATE SIGNALS (last 14 days)
+CANDIDATE SIGNALS (last ${LOOKBACK_DAYS} days)
 ${candidateLines}
 
 ═══ YOUR JOB ═══
 
-Pick the candidates that pass THE GROUNDING BAR. Up to ${MAX_PICKS}. Maybe 0. Maybe 1. Whatever is honest.
+The decision to reach out has ALREADY been made — this account cleared the fit + readiness gate before you were called. Your job is NOT to re-decide whether to reach out. It is to pick the BEST ANGLE(S) to open with. When the account has real recent activity (it does, or you wouldn't be here), you will almost always find at least one good angle. Returning nothing is reserved for the rare case where EVERY candidate is stale or a caution/setback — never for "no single signal is a perfect fit."
 
-CORE PRINCIPLE: a company signal buys us the TIMING to reach out, but the angle only works if it RESONATES WITH ${firstName} — speaks to what someone in their role actually owns and cares about. A signal can be a real company buying signal and still be a bad hook for THIS person if it sits outside their remit. ${firstName} is the reader. Judge every candidate by whether it lands for them, not just whether it's good news for ${coName}.
+Pick up to ${MAX_PICKS} angles, strongest first.
 
-═══ THE GROUNDING BAR (every pick must clear all four) ═══
+CORE PRINCIPLE: a signal earns us the TIMING; the email has to RESONATE with ${firstName}. The angle does not have to BE a single signal — it has to be something ${firstName} would care about given their role and where their company is heading. A company that is publishing heavily, hiring fast, getting approvals, expanding indications, raising, or signing deals is in a buying-relevant moment, and that is itself a resonant reason to open a conversation with a commercial leader — even if no single item is a perfect standalone hook.
 
-For each candidate you pick, you must be able to:
-1. Name ONE specific value_propositions item or capability from our_company that the hook activates. Not "what we do generally" — a named item from the list above.
-2. Point to ONE specific fact from the candidate's TITLE that ties to it. Not "she works in research" — a concrete fact from the title text.
-3. RESONANCE / BUYING GROUP: the signal must touch a function in WHO WE SELL INTO (above), ideally ${firstName}'s own, AND you must be able to say why it lands for ${firstName} given what their role owns. A company signal in a function we do NOT sell into (e.g. an HR hiring spree when we sell into R&D) FAILS this, even if it's a real signal. Relevant-to-the-buying-group hiring, or a broad surge that scales the whole company, passes.
-4. State the connection in plain English a 13-year-old could follow.
+═══ THINK AT THE RIGHT ALTITUDE (read this twice) ═══
 
-If you can't fill all four concretely without inventing, DO NOT pick the candidate. Drop it. Returning fewer picks is BETTER than picking weak ones.
+Reason like a SALES STRATEGIST, not a domain scientist. The question is "what does this activity MEAN about where ${coName} is as a business, and why would that make ${firstName} want to talk to us?" — NOT "does the technical content of this specific paper or patent match our product?"
 
-═══ WHAT'S WEAK (drop these in 95% of cases) ═══
+Do NOT get into the weeds of a signal's subject matter. You do not need to understand the science in a publication or the claims in a patent. What matters is what their EXISTENCE, CATEGORY, and VOLUME mean:
+- publishing heavily → active, well-resourced, scientifically productive
+- many patents → investing, building IP, scaling
+- FDA approval / indication expansion → commercialising, new revenue, new budget
+- hiring surge → growth, new initiatives, new owners of problems
+- new deal / partnership → money moving, momentum
+Stack those up and the read is simple: "this company is busy, growing, and commercialising — a great moment to start a conversation." A commercial leader cares about THAT, regardless of whether any single paper's topic maps to our product. Zoom OUT. Do not reject a clearly-active account because the molecular detail of one signal doesn't tie to a value prop.
 
-- Generic publications / papers — only pick if the paper topic maps DIRECTLY to a named value_prop AND to ${firstName}'s work.
-- Patents — too long-lead, and rarely resonate with the reader.
-- Hiring outside ${firstName}'s function / buying group — only relevant when it's in or adjacent to their remit, or a company-wide surge.
-- Old news.
+═══ THE GROUNDING BAR (every pick must clear all three) ═══
+
+For each angle you pick, you must be able to:
+1. Name ONE specific value_propositions item or capability from our_company it connects to. Not "what we do generally" — a named item from the list above.
+2. Ground it in the FACT and SCALE of the activity — "filed 34 patents", "opened 17 roles", "won FDA approval", "published several papers this month", or a theme across signals. Ground on what HAPPENED, NOT on the technical content inside it. No inventing.
+3. Say in plain English why it lands for ${firstName} given their role AND their company's trajectory. A commercial / BD / exec buyer caring about company momentum PASSES — the signal does NOT have to originate in their own function, and its subject matter does NOT have to match our product.
+
+Drop a candidate only if it is stale, a caution/setback (never a hook), or genuinely irrelevant operational noise. Otherwise it is fair game.
+
+═══ WHAT TO DROP ═══
+
+- Caution / setback signals (program discontinued, trial halted, restructuring, leadership churn) — NEVER a hook, no exceptions.
+- Genuinely old news (months/years old) when fresher activity exists.
+- A trivial, isolated event in an unrelated function with no strategic read.
+
+Publications, patents, hiring surges, approvals, expansions, deals, partnerships are ALL fair game when recent — on their own if strong, or combined into a momentum theme.
 
 ═══ HOW TO WRITE THE "reason" FIELD ═══
 
@@ -674,19 +691,13 @@ BAD examples (do not write like this):
 - "First-author paper is fresh proof-point; rep can position our pipeline as tool to accelerate next analysis."  ← "position", "proof-point"
 - "They recently raised funds, enabling them to invest in tooling."  ← pronoun, banned "enabling"
 
-═══ PATTERN FALLBACK (only if ZERO specific hooks pass) ═══
+═══ MOMENTUM OPENER (use whenever no single signal is a clean standalone hook) ═══
 
-If you cannot find ANY specific hook that clears the grounding bar, do ONE more thing:
+If no single signal is a crisp standalone hook but the account is clearly active, DO NOT return empty. Emit ONE momentum opener in "pattern": name the visible pattern concretely (e.g. "${coName} has published several papers and opened 17 roles in the last few weeks", or "${coName} just won FDA approval and is expanding indications") and tie it to a named value_prop and to ${firstName}'s world. The VOLUME and direction of activity is a real, honest reason to reach out — it says the company is moving, which is exactly when ${firstName} would care.
 
-Look at the candidate list as a whole. Is there a CONCRETE THEME across multiple signals that genuinely fits one of our_company's value_propositions? Example: "${coName} has published 5 papers on respiratory mRNA this month" — that's a theme. If we sell something related to respiratory mRNA research, that pattern IS a viable opener.
+The momentum opener must still name a real pattern grounded in the candidates (not a vague "lots going on") and connect to a named value_prop. But "several distinct signals all point to a company scaling/commercialising" IS such a pattern.
 
-Only emit a pattern hook if BOTH are true:
-- A specific theme is visible (not a vague hand-wave like "lots of activity")
-- The theme connects to a specific named value_prop
-
-If either is missing, OMIT the pattern entirely. Empty output is fine — better than a vague pattern hook.
-
-NEVER emit a pattern hook when there are already specific picks. Pattern is a last resort, not a supplement.
+Only skip the momentum opener if literally every candidate is stale or a caution signal. NEVER emit it when you already have specific picks in "top" — it's the fallback, not a supplement.
 
 ═══ OUTPUT — strict JSON, no prose, no markdown fences ═══
 
@@ -700,21 +711,21 @@ NEVER emit a pattern hook when there are already specific picks. Pattern is a la
       "signal_grounding": "<the specific fact from this candidate's title that proves the fit>",
       "contact_grounding": "<why this lands for ${firstName} specifically — what someone in their role owns that makes them care. If you cannot fill this honestly, the pick fails.>"
     }
-    // ... up to ${MAX_PICKS} items, in score-descending order
-    // If nothing clears the bar, leave "top" as an EMPTY ARRAY: []
+    // ... up to ${MAX_PICKS} items, in score-descending order.
+    // If no single signal is a clean standalone hook, leave "top" as [] and use "pattern" instead.
   ],
   "pattern": null
-  // OR — only when "top" is [] and a concrete theme fits:
+  // OR — when "top" is [] but the account is active, the MOMENTUM OPENER:
   // {
-  //   "phrase": "<short observation, like 'their recent string of respiratory mRNA papers'>",
+  //   "phrase": "<short observation, e.g. 'their recent wave of papers and open roles'>",
   //   "score": <0-100>,
   //   "reason": "<plain English, ≤20 words, same rules as above>",
   //   "seller_grounding": "<which named value_prop>",
-  //   "signal_grounding": "<the theme summary, e.g. '5 papers in 14 days all on respiratory mRNA'>"
+  //   "signal_grounding": "<the theme summary, e.g. '3 papers + 17 roles + FDA approval in the last month'>"
   // }
 }
 
-It is OK — and often correct — to return { "top": [], "pattern": null }. If nothing concrete fits, say so.`;
+Returning { "top": [], "pattern": null } is a LAST RESORT — only when every candidate is stale or a caution signal. For an active account you should return specific picks, or failing that a momentum opener. Do not refuse a clearly-active account.`;
 }
 
 /**
@@ -959,7 +970,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ hooks: [], gated: true, gating });
     }
 
-    // Pull signals from last 14 days — contact-scoped OR company-scoped.
+    // Pull signals from the lookback window — contact-scoped OR company-scoped.
     const cutoffIso = new Date(Date.now() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
     const filterExpr = companyId
       ? `entity_contact_id.eq.${contactId},entity_company_id.eq.${companyId}`
