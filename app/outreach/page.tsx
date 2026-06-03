@@ -557,8 +557,16 @@ export default function OutreachPage() {
                                   className={`px-3 py-2.5 align-top cursor-pointer hover:bg-arcova-teal/5 ${cellChannelClass}`}
                                   onClick={() => openCellEditor(seq.id, i)}
                                 >
-                                  <div className="flex items-start gap-1.5">
-                                    <span className={`mt-0.5 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide shrink-0 ${
+                                  <div className="min-w-0">
+                                    {msg.subject && (
+                                      <div className="font-medium text-[#0d3547] leading-tight">
+                                        {truncate(msg.subject, 50)}
+                                      </div>
+                                    )}
+                                    <div className="mt-0.5 text-[11px] text-[#7d909a] line-clamp-2 leading-snug">
+                                      {truncate(msg.body, 110)}
+                                    </div>
+                                    <span className={`mt-2 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
                                       ch === 'linkedin'
                                         ? 'bg-[#0a66c2]/10 text-[#0a66c2]'
                                         : 'bg-arcova-teal/10 text-arcova-teal'
@@ -566,14 +574,6 @@ export default function OutreachPage() {
                                       <ChIcon className="h-3 w-3" />
                                       {ch === 'linkedin' ? 'LI' : 'Email'}
                                     </span>
-                                    <div className="min-w-0">
-                                      <div className="font-medium text-[#0d3547] leading-tight">
-                                        {truncate(msg.subject, 50)}
-                                      </div>
-                                      <div className="mt-0.5 text-[11px] text-[#7d909a] line-clamp-2 leading-snug">
-                                        {truncate(msg.body, 110)}
-                                      </div>
-                                    </div>
                                   </div>
                                 </td>
                               );
