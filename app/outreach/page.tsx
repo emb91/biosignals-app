@@ -636,9 +636,9 @@ export default function OutreachPage() {
                 </p>
               </div>
             ) : (
-              {/* Container sizes to its content (no flex-1) — a 2-row table shouldn't
-                  fill the whole viewport. max-h-full caps it when there are many rows
-                  so the inner scroll still kicks in within the page. */}
+              // Container sizes to its content (no flex-1) — a 2-row table shouldn't
+              // fill the whole viewport. max-h-full caps it when there are many rows
+              // so the inner scroll still kicks in within the page.
               <div className="relative max-h-full rounded-2xl border border-white/80 bg-white/55 backdrop-blur-xl shadow-[0_8px_24px_-16px_rgba(13,53,71,0.2)] overflow-hidden">
                 {/* Scroll affordance — a gradient fade on the right edge of the table
                     so it's visually obvious the row extends past the visible area.
