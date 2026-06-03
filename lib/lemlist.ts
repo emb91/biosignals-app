@@ -141,6 +141,83 @@ export async function addLeadToCampaign(
   );
 }
 
+// ── Sequence shape used by our app ────────────────────────────────────────
+
+/**
+ * A single step in a generated sequence. The channel selector lives in the
+ * /outreach editor's cell side panel — defaults to 'email'.
+ */
+export interface AppSequenceStep {
+  day_offset: number;
+  subject: string;
+  body: string;
+  /** 'email' | 'linkedin'. Stored per-message; used by the channel router. */
+  channel?: 'email' | 'linkedin';
+}
+
+/**
+ * Flatten our app's 7-step sequence + anchor context into lemlist customVars.
+ *
+ * lemlist exposes anything passed alongside the reserved lead fields as
+ * {{key}} interpolation tokens in the campaign template. We emit:
+ *   subject_1, body_1, channel_1, day_offset_1, … subject_7, body_7, …
+ *   anchor_hook, anchor_signal_type
+ *
+ * The customer's lemlist template references {{subject_1}} / {{body_1}} in
+ * its step 1 email, {{subject_2}} / {{body_2}} in step 2, etc. — so the
+ * cadence shape is owned by lemlist (the template), and the content is
+ * owned by our LLM (these vars). Channel selection is informational in v1:
+ * the lemlist template decides actual send channel; channel_N is exposed
+ * so the customer can branch templates if they want.
+ */
+export function flattenSequenceToCustomVars(
+  messages: AppSequenceStep[],
+  anchor: { hookText: string; signalType?: string | null },
+): Record<string, string> {
+  const vars: Record<string, string> = {
+    anchor_hook: anchor.hookText,
+    anchor_signal_type: anchor.signalType ?? '',
+  };
+  messages.forEach((m, i) => {
+    const n = i + 1;
+    vars[`subject_${n}`] = m.subject;
+    vars[`body_${n}`] = m.body;
+    vars[`channel_${n}`] = m.channel ?? 'email';
+    vars[`day_offset_${n}`] = String(m.day_offset);
+  });
+  return vars;
+}
+
+/**
+ * One-call dispatch: take an app-shaped sequence + a chosen campaign +
+ * the contact's basic details, hand it to lemlist as a lead.
+ *
+ * Returns the lemlist lead id (when available) so we can store it in
+ * outreach_sequences.external_ref and use it for reply-webhook matching.
+ */
+export async function dispatchSequence(
+  apiKey: string,
+  args: {
+    campaignId: string;
+    contact: {
+      email: string;
+      firstName?: string;
+      lastName?: string;
+      companyName?: string;
+      linkedinUrl?: string;
+      phone?: string;
+    };
+    messages: AppSequenceStep[];
+    anchor: { hookText: string; signalType?: string | null };
+  },
+): Promise<LemlistAddLeadResult> {
+  const customVars = flattenSequenceToCustomVars(args.messages, args.anchor);
+  return addLeadToCampaign(apiKey, args.campaignId, {
+    ...args.contact,
+    customVars,
+  });
+}
+
 /** Pause a specific lead in a specific campaign (used for cross-channel pause). */
 export async function pauseLead(
   apiKey: string,

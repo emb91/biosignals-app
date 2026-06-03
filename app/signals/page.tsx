@@ -8,7 +8,7 @@ export default function SignalsRedirectPage() {
   const router = useRouter();
 
   useEffect(() => {
-    router.replace(ROUTES.contactSignals);
+    router.replace(ROUTES.contacts);
   }, [router]);
 
   return null;

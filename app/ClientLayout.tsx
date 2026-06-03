@@ -15,9 +15,7 @@ import { ROUTES } from "@/lib/routes"
 // Routes that are part of the authenticated app (no header/footer)
 const APP_ROUTES = [
   ROUTES.accounts,
-  ROUTES.accountSignals,
   ROUTES.contacts,
-  ROUTES.contactSignals,
   ROUTES.leads.accounts,
   ROUTES.leads.contacts,
   ROUTES.data,
@@ -26,6 +24,7 @@ const APP_ROUTES = [
   ROUTES.gtmBase,
   ROUTES.import,
   ROUTES.signals,
+  ROUTES.outreach,
   ROUTES.log,
   ROUTES.settings,
   ROUTES.setup.company,

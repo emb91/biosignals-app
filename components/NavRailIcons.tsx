@@ -253,6 +253,25 @@ export function NavIconMyIcps({ className }: IconProps) {
   );
 }
 
+export function NavIconOutreach({ className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={stroke.width}
+      strokeLinecap={stroke.cap}
+      strokeLinejoin={stroke.join}
+      className={cn('shrink-0', className)}
+      aria-hidden
+    >
+      {/* Paper-plane: maps to "send" / outbound */}
+      <path d="M22 2 11 13" />
+      <path d="M22 2 15 22l-4-9-9-4z" />
+    </svg>
+  );
+}
+
 export function NavIconLog({ className }: IconProps) {
   return (
     <svg

@@ -18,7 +18,8 @@
  *     anchor returns the cached draft from outreach_sequences (no re-run).
  */
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, RefreshCw, Download, Copy, ChevronLeft } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Loader2, RefreshCw, Download, Copy, ChevronLeft, Send } from 'lucide-react';
 import { invalidateCache } from '@/lib/page-fetch-cache';
 
 // Compact date format for hook chips. Shows "May 30" (current year) or
@@ -144,6 +145,11 @@ export function OutreachPanel({ contactId, contactName }: Props) {
   const [exporting, setExporting] = useState<'csv' | 'clipboard' | null>(null);
   const [exportSuccess, setExportSuccess] = useState<string | null>(null);
 
+  // Staging state — primary path now: drop the sequence into /outreach for
+  // multi-step channel selection + lemlist dispatch.
+  const [staging, setStaging] = useState(false);
+  const router = useRouter();
+
   // Reset when contact changes
   useEffect(() => {
     setView('picker');
@@ -247,6 +253,34 @@ export function OutreachPanel({ contactId, contactName }: Props) {
   const updateMessage = useCallback((index: number, patch: Partial<Message>) => {
     setMessages((prev) => prev.map((m, i) => (i === index ? { ...m, ...patch } : m)));
   }, []);
+
+  const stageForOutreach = useCallback(async () => {
+    if (!anchorHook || messages.length === 0) return;
+    setStaging(true);
+    setExportSuccess(null);
+    try {
+      const res = await fetch('/api/outreach/lemlist/stage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contactId,
+          anchorHookText: anchorHook.title,
+          anchorSignalEventId: anchorHook.source_event_id,
+          anchorSignalType: anchorHook.signal_type,
+          // Default channel = email; user picks per-step in the /outreach editor.
+          messages: messages.map((m) => ({ ...m, channel: 'email' })),
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { id?: string; error?: string };
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      invalidateCache('/api/outreach');
+      router.push(`/outreach?highlight=${encodeURIComponent(json.id ?? '')}`);
+    } catch (e) {
+      setExportSuccess(`Stage failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setStaging(false);
+    }
+  }, [anchorHook, messages, contactId, router]);
 
   const exportSequence = useCallback(
     async (format: 'csv' | 'clipboard') => {
@@ -497,30 +531,54 @@ export function OutreachPanel({ contactId, contactName }: Props) {
           <div className="flex flex-col gap-2 pt-1">
             <button
               type="button"
-              onClick={() => exportSequence('csv')}
-              disabled={exporting !== null}
-              className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-arcova-teal text-white px-3 py-2 text-sm font-semibold hover:bg-arcova-teal/90 transition-colors disabled:opacity-60"
+              onClick={() => void stageForOutreach()}
+              disabled={staging || exporting !== null}
+              className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-arcova-navy text-white px-3 py-2 text-sm font-semibold hover:bg-[#0d3547] transition-colors disabled:opacity-60"
             >
-              {exporting === 'csv' ? (
+              {staging ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
-                <Download className="w-3.5 h-3.5" />
+                <Send className="w-3.5 h-3.5" />
               )}
-              Save & download CSV
+              {staging ? 'Staging…' : 'Stage for outreach'}
             </button>
-            <button
-              type="button"
-              onClick={() => exportSequence('clipboard')}
-              disabled={exporting !== null}
-              className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-arcova-teal/40 text-arcova-teal px-3 py-2 text-sm font-semibold hover:bg-arcova-teal/5 transition-colors disabled:opacity-60"
-            >
-              {exporting === 'clipboard' ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Copy className="w-3.5 h-3.5" />
-              )}
-              Save & copy to clipboard
-            </button>
+            <p className="text-[11px] text-gray-500 -mt-0.5">
+              Pick channel per step + send to lemlist on the next screen.
+            </p>
+
+            <details className="group pt-1">
+              <summary className="cursor-pointer text-[11.5px] text-gray-500 hover:text-arcova-teal list-none flex items-center gap-1">
+                <span>Other export options</span>
+              </summary>
+              <div className="mt-2 flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => exportSequence('csv')}
+                  disabled={exporting !== null}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-arcova-teal/40 text-arcova-teal px-3 py-2 text-[12.5px] font-semibold hover:bg-arcova-teal/5 transition-colors disabled:opacity-60"
+                >
+                  {exporting === 'csv' ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Download className="w-3.5 h-3.5" />
+                  )}
+                  Save & download CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={() => exportSequence('clipboard')}
+                  disabled={exporting !== null}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-arcova-teal/40 text-arcova-teal px-3 py-2 text-[12.5px] font-semibold hover:bg-arcova-teal/5 transition-colors disabled:opacity-60"
+                >
+                  {exporting === 'clipboard' ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Copy className="w-3.5 h-3.5" />
+                  )}
+                  Save & copy to clipboard
+                </button>
+              </div>
+            </details>
           </div>
         </>
       )}

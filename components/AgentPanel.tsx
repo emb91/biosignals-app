@@ -16,7 +16,7 @@ import { BATCH_CONTACTS_KEY } from '@/lib/batch-contacts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type AgentPage = 'accounts' | 'leads' | 'today' | 'health' | 'signals' | 'imports' | 'data' | 'icps' | 'log';
+export type AgentPage = 'accounts' | 'leads' | 'today' | 'health' | 'signals' | 'imports' | 'data' | 'icps' | 'log' | 'outreach';
 
 export interface AgentTableFilter {
   columns: AccountQueryColumn[];
@@ -147,6 +147,12 @@ const PROMPTS: Record<AgentPage, string[]> = {
     'How many contacts were imported this week?',
     'Were there any errors in my last push?',
     'Show me a summary of recent activity',
+  ],
+  outreach: [
+    'Which sequences are ready to send?',
+    'Show me the drafts with the strongest anchor signals',
+    'Which sent sequences have not replied yet?',
+    'Suggest channel mix for these drafts',
   ],
 };
 

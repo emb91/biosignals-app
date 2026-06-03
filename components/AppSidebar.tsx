@@ -14,6 +14,7 @@ import {
   NavIconMyCompany,
   NavIconMyIcps,
   NavIconLog,
+  NavIconOutreach,
   NavIconSettings,
   NavIconSetup,
   NavIconSignals,
@@ -45,6 +46,7 @@ const topNavigation: NavItem[] = [
   { name: 'Import', href: ROUTES.import, icon: NavIconImport },
   { name: 'Health', href: ROUTES.health, icon: NavIconHealth },
   { name: 'Data', href: ROUTES.data, icon: NavIconData },
+  { name: 'Outreach', href: ROUTES.outreach, icon: NavIconOutreach },
 ];
 
 const bottomNavigation: NavItem[] = [
@@ -198,8 +200,8 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
             : []),
         ];
 
-  const contactsActive = pathname === ROUTES.contacts || pathname === ROUTES.contactSignals;
-  const accountsActive = pathname === ROUTES.accounts || pathname === ROUTES.accountSignals;
+  const contactsActive = pathname === ROUTES.contacts;
+  const accountsActive = pathname === ROUTES.accounts;
 
   const [contactsOpen, setContactsOpen] = useState(contactsActive);
   const [accountsOpen, setAccountsOpen] = useState(accountsActive);
@@ -346,7 +348,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
           signalsNeedAttention = dismissibleDotVisible(
             'signals',
             signalSignature,
-            pathname === ROUTES.contactSignals || pathname === ROUTES.accountSignals,
+            pathname === ROUTES.contacts || pathname === ROUTES.accounts,
           );
           setShowSignalsDot(signalsNeedAttention);
         }
@@ -374,10 +376,9 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
     if (itemName === 'Today') return showTodayDot;
     if (itemName === 'GTM base') return false;
     if (itemName === 'Import') return showImportDot;
-    if (itemName === 'Contacts') return showContactsDot;
-    if (itemName === 'Accounts') return showAccountsDot;
-    if (itemName === 'Contact signals') return showSignalsDot;
-    if (itemName === 'Account signals') return showSignalsDot;
+    if (itemName === 'Contacts') return showContactsDot || showSignalsDot;
+    if (itemName === 'Accounts') return showAccountsDot || showSignalsDot;
+    if (itemName === 'Outreach') return false;
     if (itemName === 'Customers') return false;
     if (itemName === 'Health') return showHealthDot;
     if (itemName === 'Data') return showDataDot;
@@ -691,30 +692,8 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
                   {renderNavItem({ name: 'Today', href: ROUTES.today, icon: NavIconToday })}
                   {renderNavItem({ name: 'GTM base', href: ROUTES.gtmBase, icon: NavIconGtmBase })}
                   {renderNavItem({ name: 'Import', href: ROUTES.import, icon: NavIconImport })}
-                  {renderAccordion({
-                    label: 'Contacts',
-                    icon: NavIconContact,
-                    items: [
-                      { name: 'Contacts', href: ROUTES.contacts, icon: NavIconContact, active: pathname === ROUTES.contacts },
-                      { name: 'Contact signals', href: ROUTES.contactSignals, icon: NavIconSignals, active: pathname === ROUTES.contactSignals },
-                    ],
-                    open: contactsOpen,
-                    onToggle: () => setContactsOpen((o) => !o),
-                    active: contactsActive && !contactsOpen,
-                    dotVisible: showContactsDot || showSignalsDot,
-                  })}
-                  {renderAccordion({
-                    label: 'Accounts',
-                    icon: NavIconAccount,
-                    items: [
-                      { name: 'Accounts', href: ROUTES.accounts, icon: NavIconAccount, active: pathname === ROUTES.accounts },
-                      { name: 'Account signals', href: ROUTES.accountSignals, icon: NavIconSignals, active: pathname === ROUTES.accountSignals },
-                    ],
-                    open: accountsOpen,
-                    onToggle: () => setAccountsOpen((o) => !o),
-                    active: accountsActive && !accountsOpen,
-                    dotVisible: showAccountsDot || showSignalsDot,
-                  })}
+                  {renderNavItem({ name: 'Contacts', href: ROUTES.contacts, icon: NavIconContact })}
+                  {renderNavItem({ name: 'Accounts', href: ROUTES.accounts, icon: NavIconAccount })}
                   {renderNavItem({ name: 'Health', href: ROUTES.health, icon: NavIconHealth })}
                   {renderNavItem({ name: 'Data', href: ROUTES.data, icon: NavIconData })}
                   {renderAccordion({
