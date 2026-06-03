@@ -15,6 +15,7 @@ import {
   replaceIcpSignalSelections,
 } from '@/lib/signals/selections';
 import { assignFunctionWeights, assignSignalWeights } from '@/lib/signal-weights';
+import { personaFunctionNames } from '@/lib/persona-functions';
 import { resolveCustomerSegments } from '@/lib/split-customer-segments';
 import { createAdminClient } from '@/lib/supabase-admin';
 import {
@@ -44,6 +45,8 @@ type IcpRow = {
 type PersonaRow = {
   id: string;
   name: string | null;
+  functions?: string[] | null;
+  signals?: string[] | null;
 };
 
 type SellerProfile = {
@@ -58,6 +61,7 @@ type SellerProfile = {
 };
 
 type BuyingTeamResult = {
+  name: string;
   functions: string[];
   seniority_levels: string[];
   job_titles: string[];
@@ -409,7 +413,7 @@ async function generateBuyingTeam(input: {
   icpExampleEmployeeRange: string | null;
   icpExampleTotalFundingUsd: number | null;
   exampleCompanyName: string | null;
-}): Promise<BuyingTeamResult> {
+}): Promise<BuyingTeamResult[]> {
   const client = requireAnthropicClient();
 
   const { bucket: headcountBucket, from: headcountFrom } = resolvePrimarySizeBucket(
@@ -475,9 +479,18 @@ Internal scale band for your reasoning: ${scaleBand.toUpperCase()}.
 Scale-specific rules — you MUST follow them:
 ${orgScaleInstructions(scaleBand)}
 
-TASK: Identify which business functions and seniority levels are most likely involved in buying decisions for this seller's product within target accounts like these. The answer must be consistent with the organisation scale above — for micro and small companies, that often means concentrating on founders / CEO / singular functional owners rather than imagining mature parallel departments.
+TASK: Identify the DISTINCT BUYING TEAMS most likely involved in buying decisions for this seller's product within target accounts like these. A buying team is a coherent group of stakeholders who share a function and would be approached with the same message — e.g. a "Business Development" team, a "Scientific / R&D" team, a "Commercial" team. Different teams care about different things and warrant different outreach, which is why they are separate.
 
-Then list 4–6 representative job titles that match the implied scale — founders and generalist heads for tiny companies; more specialised titles only when scale band truly supports several distinct senior buyers.
+How many teams:
+- Identify between 1 and 4 teams. Return SEPARATE teams only when they are genuinely distinct buyers who would receive different messaging.
+- The count MUST be consistent with the organisation scale above. For micro / small companies the buying team usually collapses to a SINGLE team centred on founders / CEO / a singular functional owner — return just 1 team in that case. Only return 3–4 teams when the scale band truly supports several distinct parallel departments.
+- Prune to what THIS seller actually sells into: a team only belongs here if the seller's products/services/value propositions plausibly map to it. Do not list a team the seller has no reason to sell to.
+
+For EACH team provide:
+- "name": a short label for the team (e.g. "Business Development", "Scientific / R&D", "Commercial"). Keep it to 1–3 words.
+- "functions": the 1–2 most relevant business functions for THIS team (from the allowed list). The first function is the team's primary function.
+- "seniority_levels": the 2–4 seniority levels that buy within this team (from the allowed list).
+- "job_titles": 2–4 representative real-world job titles for this team, scaled to organisation size — founders and generalist heads for tiny companies; more specialised titles only when scale truly supports them.
 
 Segment interpretation rules:
 - Treat account segments like Research Universities, Academic Libraries, Healthcare Systems, CROs, or Learned Societies as context about WHO they sell into, not as business functions themselves.
@@ -485,9 +498,7 @@ Segment interpretation rules:
 - If the target segments point to academic libraries, scholarly communications, research information teams, or information-resource ownership, "Library & Information Services" is an appropriate business function.
 - If the target segments point to university labs or research institutes, prefer existing functions like "Research & Development" or "Lab Operations" rather than inventing a generic "University" function.
 
-You MUST only use values from the allowed lists below for "functions" and "seniority_levels". Pick the 2–5 most relevant business functions AND 2–5 seniority levels, but APPLY the smallest counts implied by scale (e.g. a 5-person company might warrant only 2 business functions × 2 seniority levels reflected across job_titles).
-
-The "job_titles" field is free-text — keep titles concise and realistic for THIS organisation size (not hypothetical enterprise committees).
+You MUST only use values from the allowed lists below for "functions" and "seniority_levels". The "job_titles" field is free-text — keep titles concise and realistic for THIS organisation size (not hypothetical enterprise committees).
 
 Allowed business functions:
 ${BUSINESS_AREA_OPTIONS.map((option) => `- ${option}`).join('\n')}
@@ -497,9 +508,14 @@ ${SENIORITY_LEVEL_OPTIONS.map((option) => `- ${option}`).join('\n')}
 
 Return ONLY valid JSON — no markdown, no explanation:
 {
-  "functions": [...business functions from the allowed list...],
-  "seniority_levels": [...seniority levels from the allowed list...],
-  "job_titles": [...4–6 illustrative real-world job titles scaled to organisation size...]
+  "buying_teams": [
+    {
+      "name": "<short team label>",
+      "functions": [...1–2 business functions from the allowed list, primary first...],
+      "seniority_levels": [...seniority levels from the allowed list...],
+      "job_titles": [...2–4 illustrative real-world job titles scaled to organisation size...]
+    }
+  ]
 }`;
 
   const message = await client.messages.create({
@@ -532,11 +548,14 @@ Return ONLY valid JSON — no markdown, no explanation:
   }
 
   const parsed = JSON.parse(match[0]) as {
+    buying_teams?: unknown;
+    // legacy single-team shape (back-compat if the model ignores the new schema)
     functions?: unknown;
     seniority_levels?: unknown;
     job_titles?: unknown;
   };
 
+  const allowedNames = BUSINESS_AREA_OPTIONS as readonly string[];
   const toAllowedArray = (value: unknown, allowed: readonly string[]): string[] =>
     Array.isArray(value)
       ? (value as unknown[]).filter(
@@ -553,11 +572,38 @@ Return ONLY valid JSON — no markdown, no explanation:
           .slice(0, max)
       : [];
 
-  return {
-    functions: toAllowedArray(parsed.functions, BUSINESS_AREA_OPTIONS),
-    seniority_levels: toAllowedArray(parsed.seniority_levels, SENIORITY_LEVEL_OPTIONS),
-    job_titles: toFreeArray(parsed.job_titles, 6),
+  const toTeam = (raw: unknown): BuyingTeamResult | null => {
+    if (!raw || typeof raw !== 'object') return null;
+    const obj = raw as { name?: unknown; functions?: unknown; seniority_levels?: unknown; job_titles?: unknown };
+    const functions = toAllowedArray(obj.functions, allowedNames);
+    if (functions.length === 0) return null; // a team without a valid function is meaningless
+    const name = typeof obj.name === 'string' && obj.name.trim() ? obj.name.trim() : functions[0];
+    return {
+      name,
+      functions,
+      seniority_levels: toAllowedArray(obj.seniority_levels, SENIORITY_LEVEL_OPTIONS),
+      job_titles: toFreeArray(obj.job_titles, 4),
+    };
   };
+
+  let teams: BuyingTeamResult[] = [];
+  if (Array.isArray(parsed.buying_teams)) {
+    teams = (parsed.buying_teams as unknown[]).map(toTeam).filter((t): t is BuyingTeamResult => t !== null);
+  }
+  // Back-compat: if the model returned the old single-object shape, salvage it.
+  if (teams.length === 0) {
+    const legacy = toTeam(parsed);
+    if (legacy) teams = [legacy];
+  }
+
+  // Dedupe teams that collapsed to the same primary function — keep the first.
+  const seenPrimary = new Set<string>();
+  return teams.filter((t) => {
+    const primary = t.functions[0];
+    if (seenPrimary.has(primary)) return false;
+    seenPrimary.add(primary);
+    return true;
+  });
 }
 
 async function loadSellerProfile(
@@ -602,21 +648,19 @@ async function loadIcp(supabase: AdminClient, userId: string, icpId: string): Pr
   return data as IcpRow;
 }
 
-async function loadLinkedPersona(
+async function loadLinkedPersonas(
   supabase: AdminClient,
   userId: string,
   icpId: string,
-): Promise<PersonaRow | null> {
+): Promise<PersonaRow[]> {
   const { data, error } = await supabase
     .from('personas')
-    .select('id, name')
+    .select('id, name, functions, signals')
     .eq('user_id', userId)
-    .eq('icp_id', icpId)
-    .limit(1)
-    .maybeSingle();
+    .eq('icp_id', icpId);
 
   if (error) throw error;
-  return (data as PersonaRow | null) ?? null;
+  return (data as PersonaRow[] | null) ?? [];
 }
 
 async function markIcpReenrichmentStatus(
@@ -728,67 +772,141 @@ async function persistRefreshedIcp(params: {
   );
 }
 
-async function persistBuyingTeam(params: {
+async function persistBuyingTeams(params: {
   supabase: AdminClient;
   userId: string;
   icpId: string;
-  existingPersona: PersonaRow | null;
-  buyingTeam: BuyingTeamResult;
+  existingPersonas: PersonaRow[];
+  buyingTeams: BuyingTeamResult[];
 }) {
   const now = new Date().toISOString();
-  const weightedFunctions = assignFunctionWeights(params.buyingTeam.functions);
-  const personaName =
-    params.buyingTeam.functions.length > 0
-      ? `Buying group: ${params.buyingTeam.functions[0]}`
-      : params.existingPersona?.name?.trim() || 'Buying group';
-
-  const personaData = {
-    name: personaName,
-    functions: weightedFunctions.map((item) => JSON.stringify(item)),
-    seniority_levels: params.buyingTeam.seniority_levels,
-    job_titles: params.buyingTeam.job_titles,
-    updated_at: now,
-  };
-
-  if (params.existingPersona) {
-    // Fetch existing signals so we don't clobber a user's saved selection
-    const { data: existing } = await params.supabase
-      .from('personas')
-      .select('signals')
-      .eq('id', params.existingPersona.id)
-      .single();
-
-    const existingSignals: string[] = (existing as { signals?: string[] } | null)?.signals ?? [];
-    const signals =
-      existingSignals.length > 0
-        ? existingSignals
-        : getDefaultContactSignalSelectionIds().map((id) =>
-            JSON.stringify({ id, weight: 1 }),
-          );
-
-    const { error } = await params.supabase
-      .from('personas')
-      .update({ ...personaData, signals })
-      .eq('id', params.existingPersona.id)
-      .eq('user_id', params.userId);
-
-    if (error) throw error;
-    return;
-  }
-
   const defaultSignals = getDefaultContactSignalSelectionIds().map((id) =>
     JSON.stringify({ id, weight: 1 }),
   );
 
-  const { error } = await params.supabase.from('personas').insert({
-    user_id: params.userId,
-    icp_id: params.icpId,
-    created_at: now,
-    ...personaData,
-    signals: defaultSignals,
+  // Reconcile the freshly-inferred teams against the personas already linked to
+  // this ICP. We key by PRIMARY FUNCTION (the first function, drawn from the
+  // controlled vocabulary) so identity is stable across re-runs: a team whose
+  // primary function already exists is UPDATED in place (preserving the user's
+  // saved signal selections via SET NULL / CASCADE FKs untouched), a genuinely
+  // new team is INSERTED, and an existing persona whose function is no longer in
+  // the buying group is DELETED (contacts.scored_against_persona_id → SET NULL,
+  // contact_persona_scores / persona_signal_selections → CASCADE).
+  const existingByPrimary = new Map<string, PersonaRow>();
+  for (const persona of params.existingPersonas) {
+    const primary = personaFunctionNames(persona.functions)[0];
+    if (primary && !existingByPrimary.has(primary)) existingByPrimary.set(primary, persona);
+  }
+
+  const keptPersonaIds = new Set<string>();
+
+  for (const team of params.buyingTeams) {
+    const primary = team.functions[0];
+    if (!primary) continue;
+
+    const weightedFunctions = assignFunctionWeights(team.functions);
+    const personaData = {
+      name: `Buying group: ${team.name || primary}`,
+      functions: weightedFunctions.map((item) => JSON.stringify(item)),
+      seniority_levels: team.seniority_levels,
+      job_titles: team.job_titles,
+      updated_at: now,
+    };
+
+    const existing = existingByPrimary.get(primary);
+    if (existing) {
+      keptPersonaIds.add(existing.id);
+      const signals =
+        existing.signals && existing.signals.length > 0 ? existing.signals : defaultSignals;
+      const { error } = await params.supabase
+        .from('personas')
+        .update({ ...personaData, signals })
+        .eq('id', existing.id)
+        .eq('user_id', params.userId);
+      if (error) throw error;
+    } else {
+      const { error } = await params.supabase.from('personas').insert({
+        user_id: params.userId,
+        icp_id: params.icpId,
+        created_at: now,
+        ...personaData,
+        signals: defaultSignals,
+      });
+      if (error) throw error;
+    }
+  }
+
+  // Drop personas whose primary function is no longer part of the buying group.
+  const staleIds = params.existingPersonas
+    .filter((persona) => !keptPersonaIds.has(persona.id))
+    .map((persona) => persona.id);
+  if (staleIds.length > 0) {
+    const { error } = await params.supabase
+      .from('personas')
+      .delete()
+      .eq('user_id', params.userId)
+      .in('id', staleIds);
+    if (error) throw error;
+  }
+}
+
+/**
+ * Regenerate ONLY the buying-team personas for an ICP, from the data already
+ * stored on the icps row — no website re-scrape, no full re-enrichment. Used to
+ * backfill the multi-persona buying groups onto existing ICPs cheaply. Does NOT
+ * re-score contacts (callers batch a single rescore after looping all ICPs).
+ */
+export async function regenerateBuyingTeamsForIcp(
+  userId: string,
+  icpId: string,
+): Promise<{ teams: number }> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from('icps')
+    .select(
+      'company_type, platform_category, therapeutic_areas, modalities, development_stages, ' +
+        'customer_therapeutic_areas, customer_modalities, customer_development_stages, ' +
+        'target_customers, buyer_types, company_sizes, funding_stages, example_company_enrichment',
+    )
+    .eq('id', icpId)
+    .eq('user_id', userId)
+    .single();
+  if (error) throw error;
+
+  const row = (data ?? {}) as unknown as Record<string, unknown>;
+  const enr = (row.example_company_enrichment ?? {}) as Record<string, unknown>;
+  const arr = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+  const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+  const num = (v: unknown): number | null => (typeof v === 'number' ? v : null);
+
+  const [sellerProfile, existingPersonas] = await Promise.all([
+    loadSellerProfile(supabase, userId),
+    loadLinkedPersonas(supabase, userId, icpId),
+  ]);
+
+  const buyingTeams = await generateBuyingTeam({
+    sellerProfile,
+    icpCompanyType: str(row.company_type) || str(enr.company_type),
+    icpPlatformCategory: str(row.platform_category),
+    icpTherapeuticAreas: arr(row.therapeutic_areas),
+    icpModalities: arr(row.modalities),
+    icpDevelopmentStages: arr(row.development_stages),
+    icpCustomerTherapeuticAreas: arr(row.customer_therapeutic_areas),
+    icpCustomerModalities: arr(row.customer_modalities),
+    icpCustomerDevelopmentStages: arr(row.customer_development_stages),
+    icpTargetCustomers: arr(row.target_customers),
+    icpBuyerTypes: arr(row.buyer_types),
+    icpCompanySizes: arr(row.company_sizes),
+    icpFundingStages: arr(row.funding_stages),
+    icpExampleEmployeeCount: num(enr.employee_count),
+    icpExampleEmployeeRange: typeof enr.employee_range === 'string' ? enr.employee_range : null,
+    icpExampleTotalFundingUsd: num(enr.total_funding_usd),
+    exampleCompanyName: typeof enr.company_name === 'string' ? enr.company_name : null,
   });
 
-  if (error) throw error;
+  await persistBuyingTeams({ supabase, userId, icpId, existingPersonas, buyingTeams });
+  return { teams: buyingTeams.length };
 }
 
 export async function claimIcpReenrichment(
@@ -853,10 +971,10 @@ export async function runIcpReenrichmentJob(input: {
   const supabase = createAdminClient();
 
   try {
-    const [icp, sellerProfile, existingPersona] = await Promise.all([
+    const [icp, sellerProfile, existingPersonas] = await Promise.all([
       loadIcp(supabase, input.userId, input.icpId),
       loadSellerProfile(supabase, input.userId),
-      loadLinkedPersona(supabase, input.userId, input.icpId),
+      loadLinkedPersonas(supabase, input.userId, input.icpId),
     ]);
 
     const website = icp.example_company_url?.trim();
@@ -895,7 +1013,7 @@ export async function runIcpReenrichmentJob(input: {
     });
     const refreshedCompetitors = enrichment.competitors_enriched ?? [];
 
-    const [companySignals, icpSummary, buyingTeam] = await Promise.all([
+    const [companySignals, icpSummary, buyingTeams] = await Promise.all([
       recommendCompanySignals({
         companyType,
         platformCategory,
@@ -957,12 +1075,12 @@ export async function runIcpReenrichmentJob(input: {
       competitors: refreshedCompetitors,
     });
 
-    await persistBuyingTeam({
+    await persistBuyingTeams({
       supabase,
       userId: input.userId,
       icpId: input.icpId,
-      existingPersona,
-      buyingTeam,
+      existingPersonas,
+      buyingTeams,
     });
 
     await rescoreAllContactsForUser(input.userId);
