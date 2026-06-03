@@ -20,7 +20,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2, RefreshCw, Download, Copy, ChevronLeft, Send } from 'lucide-react';
-import { invalidateCache } from '@/lib/page-fetch-cache';
+import { cachedJson, invalidateCache } from '@/lib/page-fetch-cache';
+
+// Hooks are deterministic for a given contact + day (signal events flow in
+// at most daily). Cache for 24h — the "Re-query" button bypasses the cache
+// for the rare "I want fresh" case. Without this, switching contacts and
+// coming back triggers a wasteful re-fetch every time.
+const HOOKS_TTL_MS = 24 * 60 * 60 * 1000;
 
 // Compact date format for hook chips. Shows "May 30" (current year) or
 // "May 30 '25" (other years). Keeps the picker rows tight.
@@ -178,12 +184,18 @@ export function OutreachPanel({ contactId, contactName }: Props) {
     setHooksError(null);
     (async () => {
       try {
-        const res = await fetch(`/api/outreach/hooks?contactId=${encodeURIComponent(contactId)}`);
-        const json = await res.json();
+        const { data: json } = await cachedJson<{
+          hooks?: Hook[];
+          gated?: boolean;
+          gating?: Gating;
+          curation?: string;
+          ai_verdict?: string;
+        }>(`/api/outreach/hooks?contactId=${encodeURIComponent(contactId)}`, {
+          ttlMs: HOOKS_TTL_MS,
+        });
         if (cancelled) return;
-        if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
         setHooks(json.hooks ?? []);
-        setGating(json.gated === true && json.gating ? (json.gating as Gating) : null);
+        setGating(json.gated === true && json.gating ? json.gating : null);
         setCuration(json.curation === 'ai' || json.curation === 'mechanical' ? json.curation : null);
         setAiVerdict(
           json.ai_verdict === 'ok' || json.ai_verdict === 'no_strong_hooks'
@@ -203,12 +215,14 @@ export function OutreachPanel({ contactId, contactName }: Props) {
   }, [contactId, hooks]);
 
   const refreshHooks = useCallback(() => {
+    // Drop this contact's cache entry so the effect re-fetches from the network.
+    invalidateCache(`/api/outreach/hooks?contactId=${encodeURIComponent(contactId)}`);
     setHooks(null);
     setHooksError(null);
     setGating(null);
     setCuration(null);
     setAiVerdict(null);
-  }, []);
+  }, [contactId]);
 
   const pickHook = useCallback(
     async (hook: Hook) => {
