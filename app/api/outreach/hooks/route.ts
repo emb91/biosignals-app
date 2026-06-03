@@ -561,6 +561,9 @@ function buildCurationPrompt(opts: {
   contact: { firstName: string; fullName: string; title: string | null; bio: string | null; fitSummary: string | null };
   contactCompanyName: string | null;
   sellerCompany: { name: string | null; tagline: string | null; valueProps: unknown; capabilities: unknown; whyCustomersBuy: unknown } | null;
+  buyingGroupFunctions: string[];
+  buyingGroupSeniority: string[];
+  contactPersonaFunctions: string[];
   candidates: Array<{ idx: number; signalType: string; isContact: boolean; title: string; summary: string | null }>;
 }): string {
   const seller = opts.sellerCompany;
@@ -589,9 +592,24 @@ function buildCurationPrompt(opts: {
 
   const firstName = opts.contact.firstName || 'the contact';
   const coName = opts.contactCompanyName || 'the company';
+
+  // The buying group = the functions/seniority we actually sell into (inferred
+  // per ICP). This is the authoritative test for whether a COMPANY signal is
+  // relevant at all. Without it, the model can only guess from the contact's
+  // title; with it, it can rule a signal in or out against the real target.
+  const buyingGroupBlock =
+    opts.buyingGroupFunctions.length > 0
+      ? `WHO WE SELL INTO (the buying group — authoritative)
+- Functions we target: ${opts.buyingGroupFunctions.join(', ')}
+- Seniority we target: ${opts.buyingGroupSeniority.length ? opts.buyingGroupSeniority.join(', ') : '(any)'}
+${opts.contactPersonaFunctions.length ? `- ${firstName} sits in this buying group as: ${opts.contactPersonaFunctions.join(', ')}` : ''}
+
+USE THIS: a COMPANY signal is only relevant if it touches a function we sell into (above) — ideally ${firstName}'s own. Hiring/activity in a function we do NOT target (e.g. HR, facilities, sales ops when we don't sell there) is NOISE — drop it even if it's a real signal. A company-wide surge across many functions still counts.`
+      : `WHO WE SELL INTO: (buying group not yet inferred for this account — judge relevance from ${firstName}'s title and what someone in their role owns.)`;
+
   return `You are picking outreach angles for a B2B sales rep.
 
-CONTACT
+CONTACT (the reader — the email must resonate with THEM)
 - Name: ${firstName} (${opts.contact.fullName})
 - Title: ${opts.contact.title ?? 'unknown'}
 - At: ${coName}
@@ -600,6 +618,8 @@ CONTACT
 
 OUR COMPANY (the seller)
 ${sellerBlock}
+
+${buyingGroupBlock}
 
 CANDIDATE SIGNALS (last 14 days)
 ${candidateLines}
@@ -615,7 +635,7 @@ CORE PRINCIPLE: a company signal buys us the TIMING to reach out, but the angle 
 For each candidate you pick, you must be able to:
 1. Name ONE specific value_propositions item or capability from our_company that the hook activates. Not "what we do generally" — a named item from the list above.
 2. Point to ONE specific fact from the candidate's TITLE that ties to it. Not "she works in research" — a concrete fact from the title text.
-3. RESONANCE: explain why this lands for ${firstName} SPECIFICALLY — how it connects to what someone in their role owns. A company signal in a function unrelated to ${firstName}'s remit (e.g. an HR hiring spree when ${firstName} runs R&D) FAILS this, even if it's a real signal. Relevant-to-their-function hiring, or a broad surge that scales the whole company, passes.
+3. RESONANCE / BUYING GROUP: the signal must touch a function in WHO WE SELL INTO (above), ideally ${firstName}'s own, AND you must be able to say why it lands for ${firstName} given what their role owns. A company signal in a function we do NOT sell into (e.g. an HR hiring spree when we sell into R&D) FAILS this, even if it's a real signal. Relevant-to-the-buying-group hiring, or a broad surge that scales the whole company, passes.
 4. State the connection in plain English a 13-year-old could follow.
 
 If you can't fill all four concretely without inventing, DO NOT pick the candidate. Drop it. Returning fewer picks is BETTER than picking weak ones.
@@ -719,6 +739,9 @@ async function curateHooks(
     contact: { firstName: string; fullName: string; title: string | null; bio: string | null; fitSummary: string | null };
     contactCompanyName: string | null;
     sellerCompany: { name: string | null; tagline: string | null; valueProps: unknown; capabilities: unknown; whyCustomersBuy: unknown } | null;
+    buyingGroupFunctions: string[];
+    buyingGroupSeniority: string[];
+    contactPersonaFunctions: string[];
   },
 ): Promise<CurationOutcome | null> {
   if (candidates.length === 0) return { hooks: [], verdict: 'no_strong_hooks' };
@@ -727,6 +750,9 @@ async function curateHooks(
     contact: ctx.contact,
     contactCompanyName: ctx.contactCompanyName,
     sellerCompany: ctx.sellerCompany,
+    buyingGroupFunctions: ctx.buyingGroupFunctions,
+    buyingGroupSeniority: ctx.buyingGroupSeniority,
+    contactPersonaFunctions: ctx.contactPersonaFunctions,
     candidates: trimmed.map((c, i) => ({
       idx: i + 1,
       signalType: c.signal_type ?? 'unknown',
@@ -822,7 +848,7 @@ export async function GET(request: Request) {
       .select(
         'id, company_id, company_name, contact_fit_score, readiness_score, ' +
           'first_name, full_name, job_title, contact_bio, contact_fit_summary, ' +
-          'companies(company_name)',
+          'scored_against_persona_id, companies(company_name)',
       )
       .eq('user_id', user.id)
       .eq('id', contactId)
@@ -843,6 +869,7 @@ export async function GET(request: Request) {
       job_title?: string | null;
       contact_bio?: string[] | null;
       contact_fit_summary?: string | null;
+      scored_against_persona_id?: string | null;
       companies?: { company_name?: string | null } | Array<{ company_name?: string | null }> | null;
     };
     const companyId = contactRow.company_id ?? null;
@@ -860,18 +887,56 @@ export async function GET(request: Request) {
     // per-user scoring fields live here, not on companies).
     let companyFit: number | null = null;
     let companyReadiness: number | null = null;
+    let matchedIcpId: string | null = null;
     if (companyId) {
       const { data: uc } = await supabase
         .from('user_companies')
-        .select('company_fit_score, readiness_score')
+        .select('company_fit_score, readiness_score, matched_icp_id')
         .eq('user_id', user.id)
         .eq('company_id', companyId)
         .maybeSingle();
       if (uc) {
-        const ucRow = uc as { company_fit_score?: number | null; readiness_score?: number | null };
+        const ucRow = uc as {
+          company_fit_score?: number | null;
+          readiness_score?: number | null;
+          matched_icp_id?: string | null;
+        };
         companyFit = typeof ucRow.company_fit_score === 'number' ? ucRow.company_fit_score : null;
         companyReadiness = typeof ucRow.readiness_score === 'number' ? ucRow.readiness_score : null;
+        matchedIcpId = ucRow.matched_icp_id ?? null;
       }
+    }
+
+    // Buying group = the functions/seniority we actually sell INTO, inferred per
+    // ICP (table `personas`). This is the authoritative ground truth for judging
+    // whether a company signal is relevant: hiring in a function we don't sell to
+    // (e.g. HR roles when we sell into R&D) is noise, no matter how strong the
+    // signal. We also pick out the contact's own matched persona so the curation
+    // LLM knows which slice of the buying group THIS reader occupies.
+    let buyingGroupFunctions: string[] = [];
+    let buyingGroupSeniority: string[] = [];
+    let contactPersonaFunctions: string[] = [];
+    if (matchedIcpId) {
+      const { data: personas } = await supabase
+        .from('personas')
+        .select('id, functions, seniority_levels')
+        .eq('icp_id', matchedIcpId);
+      const personaRows = (personas ?? []) as Array<{
+        id: string;
+        functions?: string[] | null;
+        seniority_levels?: string[] | null;
+      }>;
+      const fnSet = new Set<string>();
+      const snSet = new Set<string>();
+      for (const p of personaRows) {
+        for (const f of p.functions ?? []) if (f) fnSet.add(f);
+        for (const s of p.seniority_levels ?? []) if (s) snSet.add(s);
+        if (p.id === contactRow.scored_against_persona_id) {
+          contactPersonaFunctions = (p.functions ?? []).filter(Boolean) as string[];
+        }
+      }
+      buyingGroupFunctions = [...fnSet];
+      buyingGroupSeniority = [...snSet];
     }
 
     // The gate IS the action model: only "reach out" contacts get hooks.
@@ -1015,6 +1080,9 @@ export async function GET(request: Request) {
       },
       contactCompanyName: companyName,
       sellerCompany,
+      buyingGroupFunctions,
+      buyingGroupSeniority,
+      contactPersonaFunctions,
     });
 
     // Three response paths, matching the curation outcomes:

@@ -2089,7 +2089,7 @@ export default function AccountsPage() {
                                           <>
                                             <button
                                               type="button"
-                                              onClick={() => router.push(withQuery(ROUTES.contacts, `search=${encodeURIComponent(contact.full_name || contact.email || '')}`))}
+                                              onClick={() => router.push(withQuery(ROUTES.contacts, `lead=${encodeURIComponent(contact.id)}&search=${encodeURIComponent(contact.full_name || contact.email || '')}`))}
                                               className="inline-flex items-center gap-1 rounded-full border border-arcova-teal/30 bg-white px-2.5 py-1 text-xs font-semibold text-arcova-teal hover:border-arcova-teal hover:bg-arcova-teal/10 transition-colors"
                                             >
                                               View contact

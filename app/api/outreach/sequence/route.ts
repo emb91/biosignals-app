@@ -128,6 +128,7 @@ export async function POST(request: Request) {
     // the /hooks gate so a sequence can't be generated for a contact the picker
     // would never have surfaced (e.g. via a direct API call). Same source of
     // truth: lib/lead-action.getActionFromScores.
+    let matchedIcpId: string | null = null;
     {
       const c = contact as {
         company_id?: string | null;
@@ -141,14 +142,19 @@ export async function POST(request: Request) {
       if (c.company_id) {
         const { data: uc } = await supabase
           .from('user_companies')
-          .select('company_fit_score, readiness_score')
+          .select('company_fit_score, readiness_score, matched_icp_id')
           .eq('user_id', user.id)
           .eq('company_id', c.company_id)
           .maybeSingle();
         if (uc) {
-          const ucRow = uc as { company_fit_score?: number | null; readiness_score?: number | null };
+          const ucRow = uc as {
+            company_fit_score?: number | null;
+            readiness_score?: number | null;
+            matched_icp_id?: string | null;
+          };
           companyFit = typeof ucRow.company_fit_score === 'number' ? ucRow.company_fit_score : null;
           companyReadiness = typeof ucRow.readiness_score === 'number' ? ucRow.readiness_score : null;
+          matchedIcpId = ucRow.matched_icp_id ?? null;
         }
       }
       const action = getActionFromScores(
@@ -176,12 +182,29 @@ export async function POST(request: Request) {
       .eq('user_id', user.id)
       .maybeSingle();
 
+    // Buying group = the functions we sell into (inferred per ICP). Authoritative
+    // ground truth for judging whether the anchor signal is relevant to the
+    // people we target — not just to the company.
+    let buyingGroupFunctions: string[] = [];
+    if (matchedIcpId) {
+      const { data: personas } = await supabase
+        .from('personas')
+        .select('functions')
+        .eq('icp_id', matchedIcpId);
+      const fnSet = new Set<string>();
+      for (const p of (personas ?? []) as Array<{ functions?: string[] | null }>) {
+        for (const f of p.functions ?? []) if (f) fnSet.add(f);
+      }
+      buyingGroupFunctions = [...fnSet];
+    }
+
     const prompt = buildPrompt({
       contact: contact as Record<string, unknown>,
       selfCompany: (selfCompany ?? null) as Record<string, unknown> | null,
       anchorHookText,
       anchorSignalType,
       anchorIsContactLevel,
+      buyingGroupFunctions,
     });
 
     const completion = await completeLlm({
@@ -219,6 +242,7 @@ function buildPrompt(opts: {
   anchorHookText: string;
   anchorSignalType: string | null;
   anchorIsContactLevel: boolean;
+  buyingGroupFunctions: string[];
 }): string {
   const contactCo = (opts.contact.companies ?? null) as Record<string, unknown> | Array<Record<string, unknown>> | null;
   const co = Array.isArray(contactCo) ? contactCo[0] : contactCo;
@@ -282,11 +306,14 @@ function buildPrompt(opts: {
   //    employer. ${firstName} already knows. Treat as TIMING context for the rep ("this is why I'm reaching out now"),
   //    not message body content ("did you know your company is hiring?"). The body should talk about ${firstName}'s
   //    function and what they need, not summarise their employer's news back at them.
+  const buyingGroupHint = opts.buyingGroupFunctions.length
+    ? `The functions you actually sell into (the buying group) are: ${opts.buyingGroupFunctions.join(', ')}. `
+    : '';
   const scopeRules = opts.anchorIsContactLevel
     ? `The anchor signal is about ${firstName} personally (a role change, a paper they authored, etc.). You MAY reference it directly in message 1 as a brief, specific acknowledgment — warm, not sycophantic. It's still your TIMING, not an obligation: if a sharper opener exists, use that instead.`
     : `The anchor signal is about ${contactCompanyName || "the contact's employer"} — ${firstName}'s own company — so ${firstName} ALREADY KNOWS it. Apply TWO judgments before you use it:
 
-  (1) RELEVANCE TO THE BUYING GROUP. A company signal only matters if it plausibly connects to ${firstName}'s function / the people you actually sell into. A HIRING signal counts only when the hiring is in or adjacent to ${firstName}'s function, OR it's a broad surge that says the whole company is scaling. Hiring in an unrelated function (e.g. HR roles when you sell into R&D) is NOISE — do not treat it as a reason or reference it at all. If the signal doesn't connect to ${firstName}'s world, drop it and open on their role instead.
+  (1) RELEVANCE TO THE BUYING GROUP. ${buyingGroupHint}A company signal only matters if it touches a function you sell into — ideally ${firstName}'s own. A HIRING signal counts only when the hiring is in or adjacent to one of those functions, OR it's a broad surge that says the whole company is scaling. Hiring in a function you don't sell into (e.g. HR roles when you sell into R&D) is NOISE — do not treat it as a reason or reference it at all. If the signal doesn't connect to ${firstName}'s world, drop it and open on their role instead.
 
   (2) THE SIGNAL IS YOUR TIMING, NOT AUTOMATICALLY YOUR OPENER. It's the private reason you're reaching out now; it does NOT have to appear in any message. Open with whatever genuinely lands for ${firstName} — usually their function and the problems that hit their desk. You MAY open on the signal ONLY when it reads as a natural, relevant observation AND you have nothing sharper to lead with. Some signals (e.g. a patent filing) rarely make a good opener; a relevant hiring surge can. Use common sense grounded in the company analysis. NEVER paraphrase ${firstName}'s own company news back at them as if it's a tip ("I saw ${contactCompanyName} is hiring", "noticed your team is expanding"). If you do reference the company moment, it works best later (around day 21) as a rep observation ("watching what ${contactCompanyName} is doing in X, customers in similar spots have found Y useful").`;
 
