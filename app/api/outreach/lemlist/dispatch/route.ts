@@ -18,6 +18,7 @@ import {
   getLemlistKeyForCurrentUser,
   LemlistError,
 } from '@/lib/lemlist';
+import { getHubSpotTokenForUser, pushOutreachStatusByEmail } from '@/lib/hubspot';
 
 function messageFromUnknown(error: unknown): string {
   return error instanceof Error ? error.message : 'Internal server error';
@@ -68,6 +69,10 @@ export async function POST(req: Request) {
     if (!apiKey) {
       return NextResponse.json({ error: 'lemlist not connected' }, { status: 400 });
     }
+
+    // HubSpot token is best-effort — null is fine, we just skip the CRM push.
+    // Fetched once per dispatch batch rather than per row.
+    const hubspotToken = await getHubSpotTokenForUser(user.id);
 
     // Load the staged rows + their contacts.
     const { data: seqRowsRaw, error: seqErr } = await supabase
@@ -145,6 +150,22 @@ export async function POST(req: Request) {
           })
           .eq('id', row.id)
           .eq('user_id', user.id);
+
+        // Best-effort HubSpot mirror — never block dispatch on this. Customers
+        // who haven't connected HubSpot or whose contact isn't in HubSpot
+        // simply see a silent no-op (404 from HubSpot maps to 'not_found').
+        if (hubspotToken) {
+          try {
+            await pushOutreachStatusByEmail(hubspotToken, {
+              email: contact.email,
+              status: 'sent',
+              anchor: row.anchor_hook_text,
+              channel: 'lemlist',
+            });
+          } catch (hubErr) {
+            console.warn('[dispatch] hubspot push failed for', contact.email, hubErr);
+          }
+        }
 
         results.push({ id: row.id, ok: true });
       } catch (err) {

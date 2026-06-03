@@ -27,6 +27,8 @@
  */
 import { NextResponse } from 'next/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
+import { nango, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
+import { pushOutreachStatusByEmail } from '@/lib/hubspot';
 
 interface LemlistWebhookPayload {
   type?: string;
@@ -93,20 +95,29 @@ export async function POST(req: Request) {
   );
 
   // Try by lead id first, fall back to email — lemlist's payload schema
-  // is inconsistent across event types.
-  let query = supabase.from('outreach_sequences').select('id');
+  // is inconsistent across event types. We select user_id + external_ref too
+  // so we can mirror the status change into HubSpot per-user.
+  let query = supabase
+    .from('outreach_sequences')
+    .select('id, user_id, anchor_hook_text, external_ref');
   if (leadId) {
     query = query.eq('external_ref->>lemlist_lead_id', leadId);
   } else if (leadEmail) {
     query = query.eq('external_ref->>lemlist_lead_email', leadEmail);
   }
   const { data: matchRows } = await query.limit(5);
-  const matchIds = (matchRows ?? []).map((r) => (r as { id: string }).id);
+  const matches = (matchRows ?? []) as Array<{
+    id: string;
+    user_id: string;
+    anchor_hook_text: string;
+    external_ref: { lemlist_lead_email?: string } | null;
+  }>;
 
-  if (matchIds.length === 0) {
+  if (matches.length === 0) {
     return NextResponse.json({ ok: true, ignored: 'no matching sequence' });
   }
 
+  const matchIds = matches.map((r) => r.id);
   const update: Record<string, unknown> = {
     dispatch_status: status,
     last_status_at: new Date().toISOString(),
@@ -116,6 +127,37 @@ export async function POST(req: Request) {
   }
 
   await supabase.from('outreach_sequences').update(update).in('id', matchIds);
+
+  // ── HubSpot mirror — best-effort, per-row (different users could match
+  // the same lead id in theory). Skip cleanly if user hasn't connected HubSpot.
+  await Promise.allSettled(
+    matches.map(async (row) => {
+      const email = row.external_ref?.lemlist_lead_email ?? leadEmail;
+      if (!email) return;
+      try {
+        const { data: conn } = await supabase
+          .from('nango_connections')
+          .select('nango_connection_id')
+          .eq('user_id', row.user_id)
+          .eq('integration_id', HUBSPOT_INTEGRATION_ID)
+          .maybeSingle();
+        const connRow = conn as { nango_connection_id?: string } | null;
+        if (!connRow?.nango_connection_id) return;
+        const token = (await nango.getToken(
+          HUBSPOT_INTEGRATION_ID,
+          connRow.nango_connection_id,
+        )) as string;
+        await pushOutreachStatusByEmail(token, {
+          email,
+          status,
+          anchor: row.anchor_hook_text,
+          channel: 'lemlist',
+        });
+      } catch (err) {
+        console.warn('[lemlist webhook] hubspot push failed for', email, err);
+      }
+    }),
+  );
 
   return NextResponse.json({ ok: true, updated: matchIds.length, status });
 }

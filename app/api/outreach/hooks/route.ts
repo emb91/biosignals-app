@@ -872,6 +872,21 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'contactId required' }, { status: 400 });
     }
 
+    // ── Existing-sequence lookup ───────────────────────────────────────────
+    // The side panel needs to know if we've already drafted/sent/replied for
+    // this contact so it can render a "you're already reaching out…" state
+    // instead of the hook picker. Cheap query — by (user_id, contact_id,
+    // created_at desc) using the existing index.
+    const { data: existingSeqRow } = await supabase
+      .from('outreach_sequences')
+      .select('id, anchor_hook_text, anchor_signal_type, dispatch_status, dispatch_channel, dispatch_error, last_status_at, created_at')
+      .eq('user_id', user.id)
+      .eq('contact_id', contactId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const existingSequence = existingSeqRow ?? null;
+
     // Look up the contact's company_id + name + scores + persona context.
     // The persona fields (first_name, full_name, title, bio, fit_summary)
     // are used by the curation LLM to judge which hooks make sense for this
@@ -988,7 +1003,7 @@ export async function GET(request: Request) {
         // 'monitor' = fits high but readiness low; otherwise a fit gate failed.
         reason: !companyId ? 'no_company' : action === 'monitor' ? 'readiness_below_threshold' : 'fit_below_threshold',
       };
-      return NextResponse.json({ hooks: [], gated: true, gating });
+      return NextResponse.json({ hooks: [], gated: true, gating, existing_sequence: existingSequence });
     }
 
     // Pull signals from the lookback window — contact-scoped OR company-scoped.
@@ -1077,7 +1092,7 @@ export async function GET(request: Request) {
     const mechanicalHooks = [...contactLevel, ...companyLevel].slice(0, MAX_HOOKS);
 
     if (mechanicalHooks.length === 0) {
-      return NextResponse.json({ hooks: [] });
+      return NextResponse.json({ hooks: [], existing_sequence: existingSequence });
     }
 
     // ── AI curation pass ────────────────────────────────────────────────────
@@ -1133,12 +1148,14 @@ export async function GET(request: Request) {
       return NextResponse.json({
         hooks: mechanicalHooks.slice(0, MAX_PICKS),
         curation: 'mechanical',
+        existing_sequence: existingSequence,
       });
     }
     return NextResponse.json({
       hooks: curated.hooks,
       curation: 'ai',
       ai_verdict: curated.verdict,
+      existing_sequence: existingSequence,
     });
   } catch (error) {
     console.error('Error in outreach/hooks GET:', error);

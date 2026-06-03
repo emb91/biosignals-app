@@ -113,6 +113,17 @@ type Message = {
   body: string;
 };
 
+type ExistingSequence = {
+  id: string;
+  anchor_hook_text: string;
+  anchor_signal_type: string | null;
+  dispatch_status: 'draft' | 'sent' | 'replied' | 'failed' | 'exported' | 'queued' | string | null;
+  dispatch_channel: string | null;
+  dispatch_error: string | null;
+  last_status_at: string | null;
+  created_at: string;
+};
+
 type Gating = {
   contact_fit_score: number | null;
   company_fit_score: number | null;
@@ -141,6 +152,12 @@ export function OutreachPanel({ contactId, contactName }: Props) {
   // evaluated and honestly concluded nothing concrete fits.
   const [aiVerdict, setAiVerdict] = useState<'ok' | 'no_strong_hooks' | null>(null);
 
+  // Existing sequence for this contact, if any. Drives the "you're already
+  // reaching out to this person" notice instead of the picker.
+  const [existingSequence, setExistingSequence] = useState<ExistingSequence | null>(null);
+  // User clicked "Stage another angle" — hide the notice + show the picker.
+  const [overrideExisting, setOverrideExisting] = useState(false);
+
   // Editor state
   const [anchorHook, setAnchorHook] = useState<Hook | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -168,6 +185,8 @@ export function OutreachPanel({ contactId, contactName }: Props) {
     setGating(null);
     setCuration(null);
     setAiVerdict(null);
+    setExistingSequence(null);
+    setOverrideExisting(false);
   }, [contactId]);
 
   // Auto-load signals on mount — cheap DB query, no LLM cost.
@@ -190,6 +209,7 @@ export function OutreachPanel({ contactId, contactName }: Props) {
           gating?: Gating;
           curation?: string;
           ai_verdict?: string;
+          existing_sequence?: ExistingSequence | null;
         }>(`/api/outreach/hooks?contactId=${encodeURIComponent(contactId)}`, {
           ttlMs: HOOKS_TTL_MS,
         });
@@ -202,6 +222,7 @@ export function OutreachPanel({ contactId, contactName }: Props) {
             ? json.ai_verdict
             : null,
         );
+        setExistingSequence(json.existing_sequence ?? null);
       } catch (e) {
         if (cancelled) return;
         setHooksError(e instanceof Error ? e.message : String(e));
@@ -339,6 +360,23 @@ export function OutreachPanel({ contactId, contactName }: Props) {
     },
     [anchorHook, messages, contactId, contactName],
   );
+
+  // ── ALREADY-CONTACTED NOTICE ────────────────────────────────────────────
+  // If we have a prior sequence and the user hasn't asked to override, show
+  // a state-aware notice instead of the hook picker. Click "Stage another
+  // angle" to fall through to the picker.
+  if (view === 'picker' && existingSequence && !overrideExisting) {
+    return (
+      <ContactedNotice
+        sequence={existingSequence}
+        contactName={contactName}
+        onStageAnother={() => setOverrideExisting(true)}
+        onOpenOutreach={() =>
+          router.push(`/outreach?highlight=${encodeURIComponent(existingSequence.id)}`)
+        }
+      />
+    );
+  }
 
   // ── PICKER ──────────────────────────────────────────────────────────────
   if (view === 'picker') {
@@ -589,6 +627,121 @@ export function OutreachPanel({ contactId, contactName }: Props) {
           </details>
         </>
       )}
+    </div>
+  );
+}
+
+// ── ContactedNotice ──────────────────────────────────────────────────────────
+// State-aware "you've already reached out" message. Replaces the hook picker
+// when an outreach_sequences row already exists for this contact, so reps
+// don't accidentally double-pitch.
+//
+// Five states, each with distinct copy + actions:
+//   draft   — sequence staged but not sent. "Open draft" + "Draft another".
+//   sent    — leads enrolled in lemlist. "Open" + "Stage another angle".
+//   replied — they answered. "Open" only — human takes over here.
+//   failed  — last dispatch errored. "Open to retry" + "Stage another angle".
+//   exported/queued — fallback, just a generic "previously contacted" note.
+function ContactedNotice({
+  sequence,
+  contactName,
+  onStageAnother,
+  onOpenOutreach,
+}: {
+  sequence: ExistingSequence;
+  contactName: string;
+  onStageAnother: () => void;
+  onOpenOutreach: () => void;
+}) {
+  const firstName = (contactName ?? '').trim().split(/\s+/)[0] || 'this contact';
+  const when = sequence.last_status_at ?? sequence.created_at;
+  const whenStr = when
+    ? new Date(when).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    : '';
+
+  const status = (sequence.dispatch_status ?? 'draft').toLowerCase();
+
+  let headline = '';
+  let body: React.ReactNode = null;
+  let allowAnother = false;
+  let openLabel = 'Open in /outreach';
+
+  if (status === 'draft') {
+    headline = `You've already drafted a sequence for ${firstName}.`;
+    body = (
+      <>
+        Anchored on: <span className="text-gray-900">{sequence.anchor_hook_text}</span>. Open it
+        to edit copy + send to lemlist, or draft a different angle.
+      </>
+    );
+    allowAnother = true;
+    openLabel = 'Open draft';
+  } else if (status === 'sent' || status === 'queued') {
+    headline = `You're already reaching out to ${firstName}.`;
+    body = (
+      <>
+        Sequence sent {whenStr && `on ${whenStr} `}anchored on:{' '}
+        <span className="text-gray-900">{sequence.anchor_hook_text}</span>. Wait for a reply
+        before pitching a new angle — or open it to track status.
+      </>
+    );
+    allowAnother = true;
+  } else if (status === 'replied') {
+    headline = `${firstName} replied.`;
+    body = (
+      <>
+        They responded {whenStr && `on ${whenStr} `}to the sequence anchored on:{' '}
+        <span className="text-gray-900">{sequence.anchor_hook_text}</span>. Take it human from
+        here — open to see the thread.
+      </>
+    );
+    allowAnother = false;
+  } else if (status === 'failed') {
+    headline = `Last dispatch to ${firstName} failed.`;
+    body = (
+      <>
+        <span className="text-red-700">{sequence.dispatch_error || 'Unknown error'}</span>. Open
+        to retry, or stage another angle.
+      </>
+    );
+    allowAnother = true;
+    openLabel = 'Open to retry';
+  } else {
+    headline = `${firstName} was previously contacted.`;
+    body = (
+      <>
+        Anchored on: <span className="text-gray-900">{sequence.anchor_hook_text}</span>.
+      </>
+    );
+    allowAnother = true;
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 p-3.5">
+        <p className="text-[13px] font-semibold text-[#0d3547]">{headline}</p>
+        <p className="mt-1 text-[12.5px] leading-snug text-gray-700">{body}</p>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <button
+          type="button"
+          onClick={onOpenOutreach}
+          className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-arcova-navy text-white px-3 py-2 text-sm font-semibold hover:bg-[#0d3547] transition-colors"
+        >
+          <Send className="w-3.5 h-3.5" />
+          {openLabel}
+        </button>
+        {allowAnother && (
+          <button
+            type="button"
+            onClick={onStageAnother}
+            className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-arcova-teal/40 text-arcova-teal px-3 py-2 text-[12.5px] font-semibold hover:bg-arcova-teal/5 transition-colors"
+          >
+            Stage another angle
+          </button>
+        )}
+      </div>
     </div>
   );
 }
