@@ -648,6 +648,60 @@ function contactPriorityScore(
   return coFit * cFit * (0.5 + 0.5 * r);
 }
 
+/**
+ * One-line plain-English explanation of the priority score. Deterministic —
+ * shares the 0.7 thresholds with lib/lead-action.ts so the narrative agrees
+ * with the action pill. CRM state (customer/dormant) wins first so the user
+ * sees "deal already closed" instead of low-readiness fluff.
+ *
+ * Reads off the same inputs as `contactPriorityScore`: company fit, contact
+ * fit, effective readiness (max of company + contact readiness), and HubSpot
+ * lead state. Returns null when no inputs are usable (the panel hides the
+ * blurb in that case).
+ */
+function getPriorityExplanation(args: {
+  firstName: string | null;
+  companyName: string | null;
+  companyFit: number | null | undefined;
+  contactFit: number | null | undefined;
+  companyReadiness: number | null | undefined;
+  contactReadiness: number | null | undefined;
+  crmState: 'active' | 'customer' | 'dormant' | 'context_only' | 'none' | null | undefined;
+}): string | null {
+  const company = normalize01(args.companyFit);
+  const contact = normalize01(args.contactFit);
+  const readiness = Math.max(
+    normalize01(args.companyReadiness) ?? 0,
+    normalize01(args.contactReadiness) ?? 0,
+  );
+  const HIGH = 0.7;
+  const who = args.firstName?.trim() || 'this contact';
+  const where = args.companyName?.trim() || 'this company';
+
+  if (args.crmState === 'customer') {
+    return `${where} is already a closed-won customer, so ${who} drops off today's outreach list — even if the persona and account fit are strong.`;
+  }
+  if (args.crmState === 'dormant') {
+    return `The deal at ${where} closed lost, so we're holding off reaching out to ${who} today.`;
+  }
+  if (company == null && contact == null) return null;
+
+  const companyLow = company != null && company < HIGH;
+  const contactLow = contact != null && contact < HIGH;
+  const readinessLow = readiness < HIGH;
+
+  if (companyLow) {
+    return `${where} sits below your ICP threshold, so ${who} isn't a priority today — even with a good persona match, a wrong-fit account isn't worth pursuing.`;
+  }
+  if (contactLow) {
+    return `${where} is a strong ICP match, but ${who}'s role isn't your buyer persona — source a better-fit contact at this account instead.`;
+  }
+  if (readinessLow) {
+    return `${who} is the right persona at a strong-fit account, but there's no buying signal firing yet — keep them on your radar and reach out when something moves.`;
+  }
+  return `${who} is the right persona at a strong-fit account and signals are firing — high priority to reach out today.`;
+}
+
 /** Teal / orange / red bands for fit / readiness gauges. Matches lib/fit-gauge. */
 function fitScoreArcColor(pct: number | null): string {
   if (pct == null) return 'rgba(13,53,71,0.14)';
@@ -2072,10 +2126,18 @@ export function ContactsWorkspace() {
   // Merge in the detail fetch (full companies(...) nested + extra lead fields).
   // Detail wins where it has a value; lean fills the rest (readiness,
   // attribution, hubspot lead state, etc. live only on the lean list row).
+  // EXCEPTION: priority_score + contact_readiness_score are CRM-masked in
+  // /api/leads (the lean list) for customer/dormant rows so closed-won deals
+  // sort to the bottom and read as already-handled. The detail endpoint
+  // returns the raw stored values — letting it win would mean the side panel
+  // shows a different number than the table row. Lean wins for those two so
+  // both surfaces agree.
   const selectedLead: Lead | null = selectedLeadLean
     ? ({
         ...selectedLeadLean,
         ...(selectedLeadId ? selectedLeadDetailById[selectedLeadId] ?? {} : {}),
+        priority_score: selectedLeadLean.priority_score,
+        contact_readiness_score: selectedLeadLean.contact_readiness_score,
       } as Lead)
     : null;
 
@@ -4751,6 +4813,29 @@ export function ContactsWorkspace() {
                                   <p className="mt-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">
                                     Priority score
                                   </p>
+                                  {(() => {
+                                    const blurb = getPriorityExplanation({
+                                      firstName: selectedLead.first_name,
+                                      companyName:
+                                        selectedLead.companies?.company_name ||
+                                        selectedLead.resolved_current_company_name ||
+                                        selectedLead.company_name,
+                                      companyFit:
+                                        selectedLead.company_fit_score ??
+                                        selectedLead.companies?.company_fit_score ??
+                                        null,
+                                      contactFit: selectedLead.contact_fit_score,
+                                      companyReadiness: selectedLead.company_readiness_score ?? null,
+                                      contactReadiness: selectedLead.contact_readiness_score ?? null,
+                                      crmState: selectedLead.hubspot_lead_state ?? null,
+                                    });
+                                    if (!blurb) return null;
+                                    return (
+                                      <p className="mt-3 text-[12.5px] leading-[1.55] text-[#1f475a]">
+                                        {blurb}
+                                      </p>
+                                    );
+                                  })()}
                                 </div>
 
                                 <ScoreRow

@@ -31,7 +31,8 @@ import {
 } from 'lucide-react';
 import AppSidebar from '@/components/AppSidebar';
 import { PageHeader } from '@/components/PageHeader';
-import { AgentPanel } from '@/components/AgentPanel';
+import { AgentPanel, type AgentPendingMessage } from '@/components/AgentPanel';
+import { AgentChatBar } from '@/components/AgentChatBar';
 import { cn } from '@/lib/utils';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -43,6 +44,8 @@ interface Message {
   subject: string;
   body: string;
   channel?: Channel;
+  /** ISO timestamp written by sync-status when lemlist confirms this step fired. */
+  sent_at?: string | null;
 }
 
 interface Contact {
@@ -164,7 +167,16 @@ function isLinkedInInvite(msg: Message): boolean {
 //   failed    — sequence-level dispatch failed
 type StepStatus = 'pending' | 'queued' | 'sent' | 'replied' | 'cancelled' | 'failed';
 
+/**
+ * Send date for a step. Prefer the REAL timestamp from lemlist activities
+ * (msg.sent_at, written by sync-status) and fall back to the date math
+ * (last_status_at + day_offset) for steps lemlist hasn't fired yet.
+ */
 function stepSendDate(seq: Sequence, msg: Message): Date | null {
+  if (msg.sent_at) {
+    const d = new Date(msg.sent_at);
+    if (Number.isFinite(d.getTime())) return d;
+  }
   const anchor = seq.last_status_at ?? seq.created_at;
   if (!anchor) return null;
   const base = new Date(anchor).getTime();
@@ -178,16 +190,23 @@ function stepStatus(seq: Sequence, msg: Message, now: Date): StepStatus {
     return 'pending';
   }
   if (seqStatus === 'failed') return 'failed';
+  // Authoritative: a real sent_at means lemlist confirmed it fired.
+  if (msg.sent_at) {
+    return seqStatus === 'replied' ? 'sent' : 'sent';
+  }
+  // Fallback: date math from dispatch + day_offset.
   const sendDate = stepSendDate(seq, msg);
   if (!sendDate) return 'pending';
   const reached = sendDate.getTime() <= now.getTime();
   if (seqStatus === 'replied') {
-    // We don't know which step triggered the reply; treat every step whose
-    // send-date has passed as 'sent' and label the most recent one 'replied'.
-    // The page-level logic below highlights the last-sent step as replied.
     return reached ? 'sent' : 'cancelled';
   }
   return reached ? 'sent' : 'queued';
+}
+
+/** Whether a step's date came from lemlist (true) or our date-math fallback (false). */
+function stepDateIsAuthoritative(msg: Message): boolean {
+  return !!msg.sent_at;
 }
 
 const STEP_PILL: Record<StepStatus, string> = {
@@ -263,6 +282,15 @@ export default function OutreachPage() {
     };
   }, []);
   const sidePanelOpen = editorOpen || detailsOpen;
+
+  // Floating chat bar surfaced while a side panel is open (same pattern as
+  // /leads/contacts). The agent column is `invisible` in that state, so this
+  // bar is the agent's only visible input. Submit dismisses the side panel
+  // and forwards the message to AgentPanel via the pendingMessage prop.
+  const [agentChatBarValue, setAgentChatBarValue] = useState('');
+  const [agentTrigger, setAgentTrigger] = useState<AgentPendingMessage | undefined>();
+  const fireAgent = (text: string) =>
+    setAgentTrigger((prev) => ({ text, nonce: (prev?.nonce ?? 0) + 1 }));
 
   // Dispatch modal
   const [dispatchOpen, setDispatchOpen] = useState(false);
@@ -758,13 +786,17 @@ export default function OutreachPage() {
                                       </span>
                                     </div>
 
-                                    {/* Date line — when sent (past) or scheduled (future) */}
+                                    {/* Date line — when sent (past) or scheduled (future).
+                                        Confirmed = lemlist activity returned a timestamp.
+                                        Estimated = computed from dispatch + day_offset. */}
                                     {sendDate && sStatus !== 'pending' && (
                                       <div className="mt-1 text-[10px] text-[#b6c2c8]">
                                         {sStatus === 'sent' || sStatus === 'replied'
-                                          ? `Sent ${sendDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+                                          ? stepDateIsAuthoritative(msg)
+                                            ? `Sent ${sendDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+                                            : `~Sent ${sendDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
                                           : sStatus === 'queued'
-                                            ? `Scheduled ${sendDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+                                            ? `~${sendDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
                                             : ''}
                                       </div>
                                     )}
@@ -814,6 +846,7 @@ export default function OutreachPage() {
             sidePanelOpen && 'invisible',
           )}
           page="outreach"
+          pendingMessage={agentTrigger}
           pageContext={{
             sequenceCount: sequences.length,
             // The agent uses this to call load_outreach_context. When a cell
@@ -824,6 +857,42 @@ export default function OutreachPage() {
           }}
         />
       </div>
+
+      {/* ── Floating agent chat bar — sits at the bottom of the AgentPanel
+           column while a cell side panel is open. The agent column itself is
+           `invisible` in this state, so this bar is the agent's only visible
+           surface. Submit dismisses the cell panel and forwards the message
+           to the agent, which expands back into view. Same pattern as
+           /leads/contacts. */}
+      {sidePanelOpen && agentRect && (
+        <div
+          className={cn(
+            // Glass card — same surface treatment as the side panel above it
+            // so the two read as one stacked column.
+            'fixed z-[51] flex items-center rounded-[1.3125rem] border border-[rgba(255,255,255,0.88)] bg-[rgba(255,255,255,0.55)] px-3 py-2.5 shadow-[0_24px_60px_-32px_rgba(13,53,71,0.2)] backdrop-blur-2xl backdrop-saturate-150',
+          )}
+          style={{
+            top: agentRect.top + agentRect.height - 58,
+            left: agentRect.left,
+            width: agentRect.width,
+          }}
+        >
+          <AgentChatBar
+            value={agentChatBarValue}
+            onChange={setAgentChatBarValue}
+            onSubmit={() => {
+              const text = agentChatBarValue.trim();
+              if (!text) return;
+              fireAgent(text);
+              setAgentChatBarValue('');
+              closeEditor();
+              closeDetails();
+            }}
+            placeholder="Ask anything about your outreach…"
+            className="w-full"
+          />
+        </div>
+      )}
 
       {/* ── Cell editor side panel — overlays the agent column ─────────── */}
       {editorOpen && editDraft && editingSequenceId && (
@@ -852,7 +921,10 @@ export default function OutreachPage() {
                   top: agentRect.top,
                   left: agentRect.left,
                   width: agentRect.width,
-                  height: agentRect.height,
+                  // Leave ~64px at the bottom so the floating agent chat bar
+                  // sits below the side panel rather than being covered by it
+                  // (matches /leads/contacts).
+                  height: Math.max(0, agentRect.height - 64),
                 }
               : undefined
           }
@@ -1035,20 +1107,21 @@ export default function OutreachPage() {
                   <div className="text-[12px] text-[#4a6470]">
                     {sStatus === 'sent' || sStatus === 'replied' ? (
                       <>
-                        Sent on <span className="font-medium text-[#0d3547]">{sendDate.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</span>
+                        {stepDateIsAuthoritative(msg) ? 'Sent on ' : 'Estimated sent ~'}
+                        <span className="font-medium text-[#0d3547]">{sendDate.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</span>
                       </>
                     ) : sStatus === 'queued' ? (
                       <>
-                        Scheduled for <span className="font-medium text-[#0d3547]">{sendDate.toLocaleDateString(undefined, { dateStyle: 'medium' })}</span> via lemlist
+                        Scheduled for <span className="font-medium text-[#0d3547]">~{sendDate.toLocaleDateString(undefined, { dateStyle: 'medium' })}</span> via lemlist (Mon–Fri only)
                       </>
                     ) : sStatus === 'cancelled' ? (
                       <>Cancelled (reply received before this step fired)</>
                     ) : null}
                   </div>
                 )}
-                {sStatus === 'sent' && (
+                {sStatus === 'sent' && !stepDateIsAuthoritative(msg) && (
                   <p className="text-[11px] text-[#7d909a]">
-                    Date computed from dispatch time + day offset. Actual send time may shift a few hours based on lemlist&apos;s sending window.
+                    Estimated from dispatch time + day offset. The next sync from lemlist will replace this with the exact send time.
                   </p>
                 )}
                 {externalRef?.lemlist_lead_id && (

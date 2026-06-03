@@ -254,11 +254,41 @@ export async function getLeadState(
 // the customVars our dispatch sends actually land in the right slots.
 
 export const ARCOVA_TEMPLATE_NAME = 'Arcova Multichannel';
+export const ARCOVA_SCHEDULE_NAME = 'Arcova Mon-Fri';
 
 interface LemlistCampaignCreateResponse {
   _id: string;
   sequenceId?: string;
   scheduleIds?: string[];
+}
+
+interface LemlistScheduleCreateResponse {
+  _id: string;
+  name?: string;
+}
+
+/**
+ * Provision a Mon-Fri business-hours schedule, idempotent on name.
+ * weekdays: 1=Monday … 7=Sunday — we ship [1..5] so no weekend sends.
+ */
+async function ensureArcovaSchedule(apiKey: string): Promise<string> {
+  // No "list schedules" endpoint exposed in the v2 docs, so we always POST
+  // and rely on lemlist returning the existing one for duplicate names.
+  // If lemlist creates duplicates instead, that's a cosmetic issue — the
+  // campaign only ends up associated with one schedule via the associate call.
+  const created = await lemlistFetch<LemlistScheduleCreateResponse>(apiKey, '/schedules', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: ARCOVA_SCHEDULE_NAME,
+      timezone: 'Etc/UTC',
+      start: '09:00',
+      end: '17:00',
+      weekdays: [1, 2, 3, 4, 5],
+      secondsToWait: 600,
+      public: false,
+    }),
+  });
+  return created._id;
 }
 
 /** Step shape we send to lemlist's POST /sequences/{id}/steps. */
@@ -333,7 +363,90 @@ export async function ensureArcovaTemplate(
     );
   }
 
+  // 4. Associate a Mon-Fri schedule so leads aren't sent to on weekends.
+  // Best-effort: if schedule creation/association fails we don't blow up
+  // the whole provisioning — the campaign still works on lemlist's default
+  // schedule, which the customer can fix in the lemlist UI.
+  try {
+    const scheduleId = await ensureArcovaSchedule(apiKey);
+    await lemlistFetch<unknown>(
+      apiKey,
+      `/campaigns/${encodeURIComponent(created._id)}/schedules/${encodeURIComponent(scheduleId)}`,
+      { method: 'POST' },
+    );
+  } catch (err) {
+    console.warn('[lemlist] schedule provisioning failed (campaign still usable):', err);
+  }
+
   return { campaignId: created._id, created: true };
+}
+
+// ── Per-step activities ────────────────────────────────────────────────────
+// lemlist's v2 activities endpoint returns one row per event (emailSent,
+// linkedinSent, etc.) with a sequenceStep (zero-indexed) + createdAt. We
+// fetch this per lead from the sync-status route to produce real per-step
+// "sent at" timestamps for the /outreach table, replacing the date-math
+// approximation.
+
+export interface LemlistActivity {
+  _id: string;
+  type: string;
+  leadId: string;
+  campaignId: string;
+  sequenceStep: number;
+  createdAt: string;
+}
+
+const ACTIVITY_SENT_TYPES = new Set([
+  'emailsSent',
+  'linkedinSent',
+  'linkedinInviteSent',
+  'linkedinInviteAccepted',
+  'linkedinMessageSent',
+]);
+
+/** Pull all activities for a single lead. ≤100 per page; we page until empty. */
+export async function getLeadActivities(
+  apiKey: string,
+  leadId: string,
+  opts: { maxPages?: number } = {},
+): Promise<LemlistActivity[]> {
+  const maxPages = opts.maxPages ?? 5;
+  const out: LemlistActivity[] = [];
+  for (let page = 0; page < maxPages; page++) {
+    try {
+      const data = await lemlistFetch<{ activities?: LemlistActivity[] } | LemlistActivity[]>(
+        apiKey,
+        `/activities?version=v2&leadId=${encodeURIComponent(leadId)}&offset=${page * 100}&limit=100`,
+      );
+      const batch = Array.isArray(data) ? data : (data.activities ?? []);
+      if (batch.length === 0) break;
+      out.push(...batch);
+      if (batch.length < 100) break;
+    } catch {
+      break;
+    }
+  }
+  return out;
+}
+
+/**
+ * Reduce activities into per-step send timestamps. Returns a map of
+ * sequenceStep → ISO datetime of the FIRST "sent" event for that step.
+ * Step is zero-indexed (matches lemlist's sequenceStep field).
+ */
+export function reduceActivitiesToSentSteps(
+  activities: LemlistActivity[],
+): Record<number, string> {
+  const out: Record<number, string> = {};
+  for (const a of activities) {
+    if (!ACTIVITY_SENT_TYPES.has(a.type)) continue;
+    const existing = out[a.sequenceStep];
+    if (!existing || a.createdAt < existing) {
+      out[a.sequenceStep] = a.createdAt;
+    }
+  }
+  return out;
 }
 
 export function dispatchStatusFromLemlistState(state: string | null): 'sent' | 'replied' | 'failed' | null {
