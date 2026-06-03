@@ -16,6 +16,7 @@ import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { effectiveReadiness, getActionFromScores } from '@/lib/lead-action';
 import { personaFunctionNames } from '@/lib/persona-functions';
+import { fetchOutreachTone, renderToneBlock, type OutreachTone } from '@/lib/outreach-tone';
 
 // Matches lemlist's default multichannel template — but the generator only
 // writes COPY for the 6 message steps; the Day 7 LinkedIn invite is a pure
@@ -221,6 +222,10 @@ export async function POST(request: Request) {
       .eq('user_id', user.id)
       .maybeSingle();
 
+    // Tone-of-voice settings (Settings → Outreach voice). Best-effort: null =>
+    // no tone block, identical to prior behaviour.
+    const tone = await fetchOutreachTone(supabase, user.id);
+
     // Buying group = the functions we sell into (inferred per ICP). Authoritative
     // ground truth for judging whether the anchor signal is relevant to the
     // people we target — not just to the company.
@@ -244,6 +249,7 @@ export async function POST(request: Request) {
       anchorSignalType,
       anchorIsContactLevel,
       buyingGroupFunctions,
+      tone,
     });
 
     const completion = await completeLlm({
@@ -282,7 +288,12 @@ function buildPrompt(opts: {
   anchorSignalType: string | null;
   anchorIsContactLevel: boolean;
   buyingGroupFunctions: string[];
+  tone: OutreachTone | null;
 }): string {
+  // Rendered tone block (empty string when the user hasn't set any). Injected
+  // late in the prompt — after the generic VOICE rules + gold-standard example
+  // — so recency weights the customer's stated voice above the defaults.
+  const toneBlock = renderToneBlock(opts.tone);
   const contactCo = (opts.contact.companies ?? null) as Record<string, unknown> | Array<Record<string, unknown>> | null;
   const co = Array.isArray(contactCo) ? contactCo[0] : contactCo;
   const firstName = (opts.contact.first_name as string | null) ?? '';
@@ -473,7 +484,7 @@ Day 11 (email): "Kumar, follow-on. We track US biotechs currently exposed to Chi
 Day 14 (LinkedIn message): "Kumar, totally understand if this isn't useful. If finding the next 5 US biotech customers is on your plate this quarter, that's what we do, continuously, enriched, routed into your CRM. Happy to show you your live pipeline."
 
 Day 21 (email): "Kumar, closing the loop. The signals run automatically, so the moment a US West Coast biotech enters its CDMO RFP window, we'll have flagged it with the contacts ready. If you'd like that switched on for your accounts, I'm here."
-
+${toneBlock ? `\n${toneBlock}\n` : ''}
 CONTEXT:
 ${contextBlock}
 

@@ -13,6 +13,8 @@ interface LemlistStatus {
   updatedAt: string | null;
 }
 
+const TONE_EXAMPLE_SLOTS = 3;
+
 export default function SettingsPage() {
   const { user, loading, logout } = useAuth();
   const router = useRouter();
@@ -30,6 +32,18 @@ export default function SettingsPage() {
     message: string;
   } | null>(null);
 
+  // Tone of voice — guidance + worked examples that shape generated outreach.
+  const [toneGuidance, setToneGuidance] = useState('');
+  const [toneExamples, setToneExamples] = useState<string[]>([]);
+  const [toneModalOpen, setToneModalOpen] = useState(false);
+  const [toneSaving, setToneSaving] = useState(false);
+  // Draft state while the modal is open (committed to the above on save).
+  const [toneGuidanceDraft, setToneGuidanceDraft] = useState('');
+  const [toneExampleDrafts, setToneExampleDrafts] = useState<string[]>(
+    Array(TONE_EXAMPLE_SLOTS).fill(''),
+  );
+  const toneConfigured = toneGuidance.trim().length > 0 || toneExamples.length > 0;
+
   useEffect(() => {
     if (!loading && !user) router.push('/login');
   }, [loading, router, user]);
@@ -46,6 +60,51 @@ export default function SettingsPage() {
   useEffect(() => {
     if (user) void refreshLemlistStatus();
   }, [user, refreshLemlistStatus]);
+
+  const refreshTone = useCallback(async () => {
+    try {
+      const res = await fetch('/api/outreach/tone');
+      if (res.ok) {
+        const data = (await res.json()) as { guidance?: string; examples?: string[] };
+        setToneGuidance(data.guidance ?? '');
+        setToneExamples(data.examples ?? []);
+      }
+    } catch {
+      // best-effort
+    }
+  }, []);
+
+  useEffect(() => {
+    if (user) void refreshTone();
+  }, [user, refreshTone]);
+
+  const openToneModal = () => {
+    setToneGuidanceDraft(toneGuidance);
+    // Pad/truncate the saved examples to the fixed slot count for the form.
+    const padded = [...toneExamples];
+    while (padded.length < TONE_EXAMPLE_SLOTS) padded.push('');
+    setToneExampleDrafts(padded.slice(0, TONE_EXAMPLE_SLOTS));
+    setToneModalOpen(true);
+  };
+
+  const handleToneSave = async () => {
+    setToneSaving(true);
+    try {
+      const examples = toneExampleDrafts.map((e) => e.trim()).filter(Boolean);
+      const res = await fetch('/api/outreach/tone', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ guidance: toneGuidanceDraft.trim(), examples }),
+      });
+      if (res.ok) {
+        setToneGuidance(toneGuidanceDraft.trim());
+        setToneExamples(examples);
+        setToneModalOpen(false);
+      }
+    } finally {
+      setToneSaving(false);
+    }
+  };
 
   const handleEnsureTemplate = async () => {
     setProvisioning(true);
@@ -202,6 +261,57 @@ export default function SettingsPage() {
             </div>
           </section>
 
+          {/* ── Outreach voice ───────────────────────────────────────────── */}
+          <section className="mt-8">
+            <h2 className="text-sm font-semibold uppercase tracking-[0.08em] text-[#7d909a]">
+              Outreach voice
+            </h2>
+            <p className="mt-1 text-sm text-[#7d909a]">
+              Tell Arcova how your outreach should sound. This guidance and your examples are woven
+              into every generated hook and sequence, so the copy reads like you.
+            </p>
+
+            <div className="mt-4 rounded-2xl border border-white/80 bg-white/70 p-5 shadow-[0_8px_24px_-12px_rgba(13,53,71,0.15)] backdrop-blur-xl">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-semibold text-[#0d3547]">Tone of voice</h3>
+                    {toneConfigured && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-px text-[10.5px] font-semibold text-emerald-600 border border-emerald-200">
+                        <CheckCircle2 className="h-3 w-3" /> Set
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-1 text-sm text-[#7d909a]">
+                    {toneConfigured
+                      ? toneGuidance.trim()
+                        ? `"${toneGuidance.trim().slice(0, 120)}${toneGuidance.trim().length > 120 ? '…' : ''}"`
+                        : `${toneExamples.length} example${toneExamples.length === 1 ? '' : 's'} saved.`
+                      : 'Not set yet — generated copy uses Arcova’s default voice. Add guidance and a few examples to make it yours.'}
+                  </p>
+                  {toneConfigured && toneExamples.length > 0 && (
+                    <p className="mt-0.5 text-[12px] text-[#b6c2c8]">
+                      {toneExamples.length} example{toneExamples.length === 1 ? '' : 's'} on file.
+                    </p>
+                  )}
+                </div>
+                <div className="shrink-0">
+                  <button
+                    type="button"
+                    onClick={openToneModal}
+                    className={
+                      toneConfigured
+                        ? 'inline-flex items-center gap-1.5 rounded-lg border border-[rgba(13,53,71,0.15)] bg-white px-3 py-1.5 text-[12.5px] font-medium text-[#4a6470] hover:bg-[#f4f7f9]'
+                        : 'inline-flex items-center gap-1.5 rounded-lg bg-arcova-navy px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-[#0d3547]'
+                    }
+                  >
+                    {toneConfigured ? 'Edit voice' : 'Set up voice'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+
           {/* ── Existing settings ─────────────────────────────────────────── */}
           <div className="mt-8 space-y-4">
             <Link
@@ -296,6 +406,84 @@ export default function SettingsPage() {
               >
                 {lemlistSubmitting && <Loader2 className="h-3 w-3 animate-spin" />}
                 {lemlistSubmitting ? 'Testing…' : 'Test & connect'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Tone of voice modal ────────────────────────────────────────── */}
+      {toneModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0d3547]/40 backdrop-blur-sm px-4">
+          <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl border border-white/80 bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-semibold text-[#0d3547]">Tone of voice</h3>
+                <p className="mt-1 text-sm text-[#7d909a]">
+                  Guidance and examples shape every generated hook and sequence. Be specific — the
+                  more concrete, the better the match.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setToneModalOpen(false)}
+                className="rounded-md p-1 text-[#b6c2c8] hover:bg-[#f4f7f9] hover:text-[#4a6470]"
+                aria-label="Close"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <label className="mt-4 block text-[11px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">
+              Guidance
+            </label>
+            <textarea
+              value={toneGuidanceDraft}
+              onChange={(e) => setToneGuidanceDraft(e.target.value)}
+              rows={5}
+              placeholder="e.g. Warm but direct. Short sentences, no jargon. Lead with a concrete offer, never a feature list. Sign off with just my first name. Never use exclamation marks."
+              className="mt-1 w-full rounded-lg border border-[rgba(13,53,71,0.15)] bg-white px-3 py-2 text-[13px] text-[#0d3547] leading-relaxed placeholder:text-[#b6c2c8] focus:border-arcova-teal focus:outline-none"
+            />
+
+            <label className="mt-4 block text-[11px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">
+              Example messages (optional)
+            </label>
+            <p className="mt-0.5 text-[12px] text-[#b6c2c8]">
+              Paste a few messages you’d be happy to send. The model mirrors their phrasing and
+              cadence — it won’t reuse the content.
+            </p>
+            <div className="mt-2 space-y-2">
+              {toneExampleDrafts.map((ex, i) => (
+                <textarea
+                  key={i}
+                  value={ex}
+                  onChange={(e) =>
+                    setToneExampleDrafts((prev) => prev.map((v, j) => (j === i ? e.target.value : v)))
+                  }
+                  rows={3}
+                  placeholder={`Example ${i + 1}`}
+                  className="w-full rounded-lg border border-[rgba(13,53,71,0.15)] bg-white px-3 py-2 text-[12.5px] text-[#0d3547] leading-relaxed placeholder:text-[#b6c2c8] focus:border-arcova-teal focus:outline-none"
+                />
+              ))}
+            </div>
+
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setToneModalOpen(false)}
+                disabled={toneSaving}
+                className="rounded-lg border border-[rgba(13,53,71,0.15)] bg-white px-3 py-1.5 text-[12.5px] font-medium text-[#4a6470] hover:bg-[#f4f7f9] disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleToneSave()}
+                disabled={toneSaving}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-navy px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-[#0d3547] disabled:opacity-60"
+              >
+                {toneSaving && <Loader2 className="h-3 w-3 animate-spin" />}
+                {toneSaving ? 'Saving…' : 'Save voice'}
               </button>
             </div>
           </div>

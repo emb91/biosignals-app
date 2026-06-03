@@ -34,6 +34,7 @@ import {
   AlertCircle,
   Clock,
   MessageSquareReply,
+  PauseCircle,
 } from 'lucide-react';
 import AppSidebar from '@/components/AppSidebar';
 import { PageHeader } from '@/components/PageHeader';
@@ -95,7 +96,7 @@ interface LemlistCampaign {
   name: string;
 }
 
-type StatusFilter = 'all' | 'draft' | 'sent' | 'replied' | 'failed';
+type StatusFilter = 'all' | 'draft' | 'sent' | 'replied' | 'failed' | 'paused';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -106,6 +107,7 @@ const STATUS_LABEL: Record<string, string> = {
   failed: 'Failed',
   exported: 'Exported',
   queued: 'Queued',
+  paused: 'Paused',
 };
 
 const STATUS_PILL: Record<string, string> = {
@@ -115,6 +117,7 @@ const STATUS_PILL: Record<string, string> = {
   failed: 'bg-red-50 text-red-500 border-red-200',
   exported: 'bg-slate-50 text-slate-600 border-slate-200',
   queued: 'bg-amber-50 text-amber-700 border-amber-200',
+  paused: 'bg-slate-100 text-slate-600 border-slate-300',
 };
 
 const STATUS_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -124,6 +127,7 @@ const STATUS_ICON: Record<string, React.ComponentType<{ className?: string }>> =
   failed: AlertCircle,
   exported: CheckCircle2,
   queued: Clock,
+  paused: PauseCircle,
 };
 
 function relTime(iso: string | null): string {
@@ -423,6 +427,35 @@ export default function OutreachPage() {
     }
   };
 
+  // Pause a live (dispatched) sequence — stops lemlist from firing further
+  // steps. Reversible on lemlist's side; we mark the row 'paused' locally.
+  const [pausingId, setPausingId] = useState<string | null>(null);
+  const pauseSequence = async (id: string) => {
+    if (!confirm('Pause this sequence? lemlist will stop sending its remaining steps.')) return;
+    setPausingId(id);
+    try {
+      const res = await fetch('/api/outreach/lemlist/pause', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sequenceId: id }),
+      });
+      if (res.ok) {
+        setSequences((prev) =>
+          prev.map((s) =>
+            s.id === id
+              ? { ...s, dispatch_status: 'paused', last_status_at: new Date().toISOString() }
+              : s,
+          ),
+        );
+      } else {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        alert(body.error ?? 'Could not pause the sequence.');
+      }
+    } finally {
+      setPausingId(null);
+    }
+  };
+
   const ensureArcovaTemplate = async () => {
     setProvisioning(true);
     setProvisionMessage(null);
@@ -524,6 +557,7 @@ export default function OutreachPage() {
     { value: 'draft', label: 'Drafts' },
     { value: 'sent', label: 'Sent' },
     { value: 'replied', label: 'Replied' },
+    { value: 'paused', label: 'Paused' },
     { value: 'failed', label: 'Failed' },
   ];
 
@@ -817,6 +851,21 @@ export default function OutreachPage() {
                                     title="Send to lemlist"
                                   >
                                     <Send className="h-3 w-3" />
+                                  </button>
+                                ) : null}
+                                {status === 'sent' ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => void pauseSequence(seq.id)}
+                                    disabled={pausingId === seq.id}
+                                    className="rounded-md p-1.5 text-[#b6c2c8] hover:bg-amber-50 hover:text-amber-600 disabled:opacity-50"
+                                    title="Pause — stop lemlist sending the rest of this sequence"
+                                  >
+                                    {pausingId === seq.id ? (
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                    ) : (
+                                      <PauseCircle className="h-3 w-3" />
+                                    )}
                                   </button>
                                 ) : null}
                                 <button
