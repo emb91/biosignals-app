@@ -40,6 +40,7 @@ import { formatProvenanceImportedAt } from '@/lib/data-provenance';
 import {
   getAccountRowAction,
   hasContactBuyingSignal,
+  isCrmSuppressed,
   LEAD_ACTION_PILL_CLASS,
   LEAD_ACTION_SORT_ORDER,
   SOURCE_COMPANY_MIN,
@@ -102,6 +103,7 @@ type AccountRow = {
   priority_score?: number | null;
   crm_status?: 'customer' | 'active' | 'dormant' | 'context_only' | 'none' | null;
   crm_deal_stage_label?: string | null;
+  crm_closed_at?: string | null;
   user_overrides?: Record<string, unknown> | null;
 };
 
@@ -2160,13 +2162,17 @@ export default function AccountsPage() {
                           companyId={selectedAccount.id}
                           effectiveReadinessScore={selectedAccount.readiness_score ?? null}
                           crmCappedReason={(() => {
-                            const rawPct = percentDisplayNumber(selectedAccount.raw_readiness_score ?? selectedAccount.readiness_score ?? null);
                             const companyLabel = selectedAccount.company_name || 'This account';
+                            // Only explain the CRM cap while the suppression cooldown is active;
+                            // past it the account is no longer held back by the old deal.
+                            if (!isCrmSuppressed(selectedAccount.crm_status ?? null, selectedAccount.crm_closed_at ?? null)) {
+                              return null;
+                            }
                             if (selectedAccount.crm_status === 'customer') {
-                              return `${companyLabel} is a closed-won account. Readiness is low as you have already sold to this company.`;
+                              return `${companyLabel} is a closed-won account. Readiness is low as you have already sold to this company — it becomes eligible again about a year after close for renewal or expansion.`;
                             }
                             if (selectedAccount.crm_status === 'dormant') {
-                              return `${companyLabel} is a closed-lost account. Readiness is low because the last deal was lost.`;
+                              return `${companyLabel} is a closed-lost account. Readiness is low because the last deal was lost — it can resurface after ~6 months if a new signal fires.`;
                             }
                             return null;
                           })()}
