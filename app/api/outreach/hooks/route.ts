@@ -35,6 +35,21 @@ const LOOKBACK_DAYS = 30;
 // outreach-worthiest signals rather than a dump of every publication.
 const MAX_HOOKS = 6;
 
+// HARD RULE: CRM-internal pipeline/status events are the seller's OWN HubSpot
+// bookkeeping — a deal logged, a contact added, a deal closed/lost. They are NOT
+// market signals about the prospect and must NEVER become an outreach hook: you
+// cannot cold-open a contact about a deal your own team created in HubSpot.
+// (Prospect-ENGAGEMENT events that also live in the CRM — demo requested,
+// inbound enquiry, website/webinar/content, replied to outreach — are genuine
+// prospect actions and are deliberately NOT excluded.)
+const CRM_INTERNAL_EVENT_TYPES = new Set<string>([
+  'open_opportunity_in_crm',
+  'new_contact_added_in_crm',
+  'closed_lost_in_crm',
+  'lapsed_customer',
+  'terminated_deal',
+]);
+
 // Maximum chars for the displayed title. PubMed titles especially blow past
 // what's readable in a side-panel card. ~80 chars + ellipsis fits one line at
 // the current type scale.
@@ -96,6 +111,7 @@ const SIGNAL_TYPE_LABEL: Record<string, string> = {
   ats_jobs_data_informatics_hiring: 'Data / informatics hiring',
   ats_jobs_executive_hiring: 'Executive hiring',
   ats_jobs_hiring_expansion: 'Hiring surge',
+  ats_jobs_surge: 'Hiring surge',
   // Clinical trials
   clinical_trial_registered: 'Trial registered',
   clinical_trial_recruiting: 'Trial recruiting',
@@ -137,8 +153,13 @@ function humanizeSignalType(raw: string | null): string {
   if (!raw) return 'Signal';
   const mapped = SIGNAL_TYPE_LABEL[raw];
   if (mapped) return mapped;
+  // Strip the internal `ats_jobs_` source/workflow prefix — the user cares about
+  // the hiring, not that we read it from an applicant-tracking system. A bare
+  // "surge" (or nothing left) is just a hiring surge.
+  let key = raw.replace(/^ats_jobs_/, '');
+  if (key === '' || key === 'surge' || key === 'hiring_expansion') key = 'hiring surge';
   // Fallback: turn `foo_bar_baz` into `Foo bar baz` so unknown types still render.
-  return raw
+  return key
     .replace(/[_-]+/g, ' ')
     .replace(/\b\w/, (c) => c.toUpperCase());
 }
@@ -999,6 +1020,8 @@ export async function GET(request: Request) {
     const bestByLabel = new Map<string, SignalRow>();
     for (const s of (signals ?? []) as SignalRow[]) {
       if (!s.source_event_type || !s.title) continue;
+      // Hard rule: CRM-internal status/pipeline updates are never outreach hooks.
+      if (CRM_INTERNAL_EVENT_TYPES.has(s.source_event_type)) continue;
       const label = humanizeSignalType(s.source_event_type);
       const existing = bestByLabel.get(label);
       if (!existing) {
