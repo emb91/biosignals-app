@@ -433,7 +433,7 @@ export default function OutreachPage() {
                   <table className="w-full text-[12.5px]">
                     <thead className="bg-white/60 border-b border-[rgba(13,53,71,0.07)]">
                       <tr>
-                        <th className="sticky left-0 z-10 bg-white/80 px-3 py-2 text-left w-10">
+                        <th className="sticky left-0 z-10 bg-white px-3 py-2 text-left w-10">
                           <input
                             type="checkbox"
                             checked={allFilteredSelected}
@@ -441,7 +441,7 @@ export default function OutreachPage() {
                             className="rounded border-[rgba(13,53,71,0.2)]"
                           />
                         </th>
-                        <th className="sticky left-10 z-10 bg-white/80 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-[#7d909a] min-w-[220px]">
+                        <th className="sticky left-10 z-10 bg-white px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-[#7d909a] min-w-[220px]">
                           Contact
                         </th>
                         <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-[#7d909a] min-w-[180px]">
@@ -486,7 +486,7 @@ export default function OutreachPage() {
                               highlight ? 'bg-arcova-teal/8' : ''
                             }`}
                           >
-                            <td className="sticky left-0 z-10 bg-white/80 px-3 py-2.5 align-top">
+                            <td className="sticky left-0 z-10 bg-white px-3 py-2.5 align-top">
                               <input
                                 type="checkbox"
                                 checked={selectedIds.has(seq.id)}
@@ -494,8 +494,17 @@ export default function OutreachPage() {
                                 className="rounded border-[rgba(13,53,71,0.2)]"
                               />
                             </td>
-                            <td className="sticky left-10 z-10 bg-white/80 px-3 py-2.5 align-top">
-                              <div className="font-medium text-[#0d3547]">{displayName(seq.contact)}</div>
+                            <td className="sticky left-10 z-10 bg-white px-3 py-2.5 align-top">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  router.push(`/leads/contacts?lead=${encodeURIComponent(seq.contact_id)}`)
+                                }
+                                className="text-left font-medium text-[#0d3547] hover:text-arcova-teal hover:underline underline-offset-2 transition-colors"
+                                title="Open contact"
+                              >
+                                {displayName(seq.contact)}
+                              </button>
                               {seq.contact?.job_title && (
                                 <div className="text-[11px] text-[#7d909a]">{seq.contact.job_title}</div>
                               )}
