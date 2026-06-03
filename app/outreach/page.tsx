@@ -523,12 +523,12 @@ export default function OutreachPage() {
                               }
                               const ch = msg.channel ?? 'email';
                               const ChIcon = ch === 'linkedin' ? Linkedin : Mail;
-                              // Stronger visual: colored left border + tinted
-                              // background so the channel is immediately legible
-                              // when scanning the row.
+                              // Tinted background (no left border — visually
+                              // noisy with 7 stacked columns) + the pill
+                              // carries the channel identity.
                               const cellChannelClass = ch === 'linkedin'
-                                ? 'border-l-2 border-[#0a66c2]/60 bg-[#0a66c2]/[0.04]'
-                                : 'border-l-2 border-arcova-teal/50 bg-arcova-teal/[0.04]';
+                                ? 'bg-[#0a66c2]/[0.04]'
+                                : 'bg-arcova-teal/[0.04]';
                               return (
                                 <td
                                   key={i}
