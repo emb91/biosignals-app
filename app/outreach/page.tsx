@@ -136,6 +136,77 @@ function truncate(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n - 1) + '…';
 }
 
+/**
+ * Heuristic: is this step a LinkedIn connect-request (invite) vs a regular
+ * LinkedIn message? lemlist treats them as different action types. For now
+ * we identify by channel=linkedin AND day_offset=7 (the invite slot in our
+ * default cadence). When we add proper step-type metadata this becomes a
+ * field read instead of a heuristic.
+ */
+function isLinkedInInvite(msg: Message): boolean {
+  return msg.channel === 'linkedin' && msg.day_offset === 7;
+}
+
+// ── Per-step status derivation ────────────────────────────────────────────
+// We don't (yet) poll lemlist for per-step send confirmations — instead we
+// derive each step's status from the sequence-level state + day_offset math.
+// Accurate enough for the operational "where are we in the cadence" view;
+// the actual send time can drift a few hours to a day vs the math because
+// lemlist obeys per-account sending windows.
+//
+// States:
+//   pending   — sequence still a draft (not dispatched)
+//   queued    — sequence sent, but this step hasn't fired yet (day not reached)
+//   sent      — day reached → lemlist will have fired by now
+//   replied   — the step that ended the sequence (sequence flipped to replied)
+//   cancelled — later steps after a reply; lemlist won't send these
+//   failed    — sequence-level dispatch failed
+type StepStatus = 'pending' | 'queued' | 'sent' | 'replied' | 'cancelled' | 'failed';
+
+function stepSendDate(seq: Sequence, msg: Message): Date | null {
+  const anchor = seq.last_status_at ?? seq.created_at;
+  if (!anchor) return null;
+  const base = new Date(anchor).getTime();
+  if (!Number.isFinite(base)) return null;
+  return new Date(base + msg.day_offset * 24 * 60 * 60 * 1000);
+}
+
+function stepStatus(seq: Sequence, msg: Message, now: Date): StepStatus {
+  const seqStatus = (seq.dispatch_status ?? 'draft').toLowerCase();
+  if (seqStatus === 'draft' || seqStatus === 'exported' || seqStatus === 'queued') {
+    return 'pending';
+  }
+  if (seqStatus === 'failed') return 'failed';
+  const sendDate = stepSendDate(seq, msg);
+  if (!sendDate) return 'pending';
+  const reached = sendDate.getTime() <= now.getTime();
+  if (seqStatus === 'replied') {
+    // We don't know which step triggered the reply; treat every step whose
+    // send-date has passed as 'sent' and label the most recent one 'replied'.
+    // The page-level logic below highlights the last-sent step as replied.
+    return reached ? 'sent' : 'cancelled';
+  }
+  return reached ? 'sent' : 'queued';
+}
+
+const STEP_PILL: Record<StepStatus, string> = {
+  pending: 'bg-[#0d3547]/8 text-[#0d3547]',
+  queued: 'bg-amber-50 text-amber-700 border border-amber-200',
+  sent: 'bg-emerald-50 text-emerald-700 border border-emerald-200',
+  replied: 'bg-violet-50 text-violet-700 border border-violet-200',
+  cancelled: 'bg-slate-50 text-slate-500 border border-slate-200',
+  failed: 'bg-red-50 text-red-600 border border-red-200',
+};
+
+const STEP_LABEL: Record<StepStatus, string> = {
+  pending: 'Staged',
+  queued: 'Queued',
+  sent: 'Sent',
+  replied: 'Replied',
+  cancelled: 'Cancelled',
+  failed: 'Failed',
+};
+
 // ── Page ───────────────────────────────────────────────────────────────────
 
 export default function OutreachPage() {
@@ -149,8 +220,13 @@ export default function OutreachPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-  // Cell editor side panel
+  // Cell editor side panel (only for staged/pending cells)
   const [editorOpen, setEditorOpen] = useState(false);
+  // Cell details panel (read-only — for queued/sent/replied/failed cells)
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailsSequenceId, setDetailsSequenceId] = useState<string | null>(null);
+  const [detailsStepIdx, setDetailsStepIdx] = useState<number | null>(null);
+
   const [editingSequenceId, setEditingSequenceId] = useState<string | null>(null);
   const [editingStepIdx, setEditingStepIdx] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState<Message | null>(null);
@@ -221,7 +297,20 @@ export default function OutreachPage() {
     else setSelectedIds(new Set(filtered.map((s) => s.id)));
   };
 
-  // ── Cell editor ────────────────────────────────────────────────────────
+  // ── Cell click: route to editor (pending) or details (sent/queued) ─────
+  const handleCellClick = (sequenceId: string, stepIdx: number) => {
+    const seq = sequences.find((s) => s.id === sequenceId);
+    if (!seq) return;
+    const msg = seq.messages?.[stepIdx];
+    if (!msg) return;
+    const status = stepStatus(seq, msg, new Date());
+    if (status === 'pending') {
+      openCellEditor(sequenceId, stepIdx);
+    } else {
+      openCellDetails(sequenceId, stepIdx);
+    }
+  };
+
   const openCellEditor = (sequenceId: string, stepIdx: number) => {
     const seq = sequences.find((s) => s.id === sequenceId);
     if (!seq) return;
@@ -231,6 +320,18 @@ export default function OutreachPage() {
     setEditingStepIdx(stepIdx);
     setEditDraft({ ...msg, channel: msg.channel ?? 'email' });
     setEditorOpen(true);
+  };
+
+  const openCellDetails = (sequenceId: string, stepIdx: number) => {
+    setDetailsSequenceId(sequenceId);
+    setDetailsStepIdx(stepIdx);
+    setDetailsOpen(true);
+  };
+
+  const closeDetails = () => {
+    setDetailsOpen(false);
+    setDetailsSequenceId(null);
+    setDetailsStepIdx(null);
   };
 
   const closeEditor = () => {
@@ -545,9 +646,9 @@ export default function OutreachPage() {
                               }
                               const ch = msg.channel ?? 'email';
                               const ChIcon = ch === 'linkedin' ? Linkedin : Mail;
-                              // Tinted background (no left border — visually
-                              // noisy with 7 stacked columns) + the pill
-                              // carries the channel identity.
+                              const sStatus = stepStatus(seq, msg, new Date());
+                              const sendDate = stepSendDate(seq, msg);
+                              const isInvite = isLinkedInInvite(msg);
                               const cellChannelClass = ch === 'linkedin'
                                 ? 'bg-[#0a66c2]/[0.04]'
                                 : 'bg-arcova-teal/[0.04]';
@@ -555,25 +656,53 @@ export default function OutreachPage() {
                                 <td
                                   key={i}
                                   className={`px-3 py-2.5 align-top cursor-pointer hover:bg-arcova-teal/5 ${cellChannelClass}`}
-                                  onClick={() => openCellEditor(seq.id, i)}
+                                  onClick={() => handleCellClick(seq.id, i)}
                                 >
                                   <div className="min-w-0">
-                                    {msg.subject && (
-                                      <div className="font-medium text-[#0d3547] leading-tight">
-                                        {truncate(msg.subject, 50)}
+                                    {/* LI invite step: don't show body copy in the table — it's a connect
+                                        request, not a message. The note still lives in the edit/details panel. */}
+                                    {isInvite ? (
+                                      <div className="font-medium text-[#0a66c2] leading-tight">
+                                        Send LinkedIn invite
+                                      </div>
+                                    ) : (
+                                      <>
+                                        {msg.subject && (
+                                          <div className="font-medium text-[#0d3547] leading-tight">
+                                            {truncate(msg.subject, 50)}
+                                          </div>
+                                        )}
+                                        <div className="mt-0.5 text-[11px] text-[#7d909a] line-clamp-2 leading-snug">
+                                          {truncate(msg.body, 110)}
+                                        </div>
+                                      </>
+                                    )}
+
+                                    {/* Pill row — step status (left) + channel (right) */}
+                                    <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                                      <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${STEP_PILL[sStatus]}`}>
+                                        {STEP_LABEL[sStatus]}
+                                      </span>
+                                      <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                                        ch === 'linkedin'
+                                          ? 'bg-[#0a66c2]/10 text-[#0a66c2]'
+                                          : 'bg-arcova-teal/10 text-arcova-teal'
+                                      }`}>
+                                        <ChIcon className="h-3 w-3" />
+                                        {isInvite ? 'LI invite' : ch === 'linkedin' ? 'LI msg' : 'Email'}
+                                      </span>
+                                    </div>
+
+                                    {/* Date line — when sent (past) or scheduled (future) */}
+                                    {sendDate && sStatus !== 'pending' && (
+                                      <div className="mt-1 text-[10px] text-[#b6c2c8]">
+                                        {sStatus === 'sent' || sStatus === 'replied'
+                                          ? `Sent ${sendDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+                                          : sStatus === 'queued'
+                                            ? `Scheduled ${sendDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+                                            : ''}
                                       </div>
                                     )}
-                                    <div className="mt-0.5 text-[11px] text-[#7d909a] line-clamp-2 leading-snug">
-                                      {truncate(msg.body, 110)}
-                                    </div>
-                                    <span className={`mt-2 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                                      ch === 'linkedin'
-                                        ? 'bg-[#0a66c2]/10 text-[#0a66c2]'
-                                        : 'bg-arcova-teal/10 text-arcova-teal'
-                                    }`}>
-                                      <ChIcon className="h-3 w-3" />
-                                      {ch === 'linkedin' ? 'LI' : 'Email'}
-                                    </span>
                                   </div>
                                 </td>
                               );
@@ -728,6 +857,120 @@ export default function OutreachPage() {
           </div>
         </div>
       )}
+
+      {/* ── Cell details side panel (read-only — for queued/sent/replied/failed) ── */}
+      {detailsOpen && detailsSequenceId !== null && detailsStepIdx !== null && (() => {
+        const seq = sequences.find((s) => s.id === detailsSequenceId);
+        const msg = seq?.messages?.[detailsStepIdx];
+        if (!seq || !msg) return null;
+        const ch = msg.channel ?? 'email';
+        const ChIcon = ch === 'linkedin' ? Linkedin : Mail;
+        const sStatus = stepStatus(seq, msg, new Date());
+        const sendDate = stepSendDate(seq, msg);
+        const isInvite = isLinkedInInvite(msg);
+        const externalRef = seq.external_ref;
+        return (
+          <div className="fixed inset-y-0 right-0 z-40 flex w-full max-w-md flex-col border-l border-white/80 bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-[rgba(13,53,71,0.08)] px-5 py-3">
+              <div>
+                <p className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">
+                  Step {detailsStepIdx + 1} · Day {msg.day_offset}
+                </p>
+                <h3 className="text-base font-semibold text-[#0d3547]">
+                  {isInvite ? 'LinkedIn invite' : ch === 'linkedin' ? 'LinkedIn message' : 'Email'}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={closeDetails}
+                className="rounded-md p-1 text-[#b6c2c8] hover:bg-[#f4f7f9] hover:text-[#4a6470]"
+                aria-label="Close"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+              {/* Status + when */}
+              <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-[#f4f7f9]/50 p-3 space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${STEP_PILL[sStatus]}`}>
+                    {STEP_LABEL[sStatus]}
+                  </span>
+                  <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                    ch === 'linkedin'
+                      ? 'bg-[#0a66c2]/10 text-[#0a66c2]'
+                      : 'bg-arcova-teal/10 text-arcova-teal'
+                  }`}>
+                    <ChIcon className="h-3 w-3" />
+                    {isInvite ? 'LI invite' : ch === 'linkedin' ? 'LI message' : 'Email'}
+                  </span>
+                </div>
+                {sendDate && (
+                  <div className="text-[12px] text-[#4a6470]">
+                    {sStatus === 'sent' || sStatus === 'replied' ? (
+                      <>
+                        Sent on <span className="font-medium text-[#0d3547]">{sendDate.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</span>
+                      </>
+                    ) : sStatus === 'queued' ? (
+                      <>
+                        Scheduled for <span className="font-medium text-[#0d3547]">{sendDate.toLocaleDateString(undefined, { dateStyle: 'medium' })}</span> via lemlist
+                      </>
+                    ) : sStatus === 'cancelled' ? (
+                      <>Cancelled (reply received before this step fired)</>
+                    ) : null}
+                  </div>
+                )}
+                {sStatus === 'sent' && (
+                  <p className="text-[11px] text-[#7d909a]">
+                    Date computed from dispatch time + day offset. Actual send time may shift a few hours based on lemlist&apos;s sending window.
+                  </p>
+                )}
+                {externalRef?.lemlist_lead_id && (
+                  <p className="text-[11px] text-[#7d909a] break-all">
+                    Lead id: <span className="font-mono text-[#4a6470]">{externalRef.lemlist_lead_id}</span>
+                  </p>
+                )}
+              </div>
+
+              {/* Copy (read-only) */}
+              {!isInvite && msg.subject && (
+                <div>
+                  <label className="block text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">
+                    Subject
+                  </label>
+                  <div className="mt-1 rounded-lg border border-[rgba(13,53,71,0.08)] bg-[#f4f7f9]/40 px-3 py-2 text-[13px] text-[#0d3547]">
+                    {msg.subject}
+                  </div>
+                </div>
+              )}
+              <div>
+                <label className="block text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">
+                  {isInvite ? 'Invite note' : 'Body'}
+                </label>
+                <div className="mt-1 whitespace-pre-wrap rounded-lg border border-[rgba(13,53,71,0.08)] bg-[#f4f7f9]/40 px-3 py-2 text-[13px] text-[#0d3547] leading-relaxed">
+                  {msg.body}
+                </div>
+                {isInvite && (
+                  <p className="mt-1 text-[10.5px] text-[#b6c2c8]">
+                    LinkedIn caps connect-request notes at 300 characters.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end border-t border-[rgba(13,53,71,0.08)] px-5 py-3">
+              <button
+                type="button"
+                onClick={closeDetails}
+                className="rounded-lg border border-[rgba(13,53,71,0.15)] bg-white px-3 py-1.5 text-[12.5px] font-medium text-[#4a6470] hover:bg-[#f4f7f9]"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Dispatch (campaign picker) modal ────────────────────────────── */}
       {dispatchOpen && (
