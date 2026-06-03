@@ -298,8 +298,10 @@ export function OutreachPanel({ contactId, contactName }: Props) {
           anchorHookText: anchorHook.title,
           anchorSignalEventId: anchorHook.source_event_id,
           anchorSignalType: anchorHook.signal_type,
-          // Default channel = email; user picks per-step in the /outreach editor.
-          messages: messages.map((m) => ({ ...m, channel: 'email' })),
+          // No channel field — server applies best-practice defaults per
+          // day_offset (email-first, then alternating). Reps override
+          // per-step in the /outreach editor's cell side-panel.
+          messages,
         }),
       });
       const json = (await res.json().catch(() => ({}))) as { id?: string; error?: string };

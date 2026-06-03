@@ -218,6 +218,43 @@ export async function dispatchSequence(
   });
 }
 
+/**
+ * Look up a lead's current state in a lemlist campaign. Used by the /outreach
+ * page to poll for replies as a fallback when the reply webhook isn't wired.
+ *
+ * lemlist's lead state values include: paused, deleted, sent, opened, clicked,
+ * replied, bounced, optedOut, etc. We collapse them into our 4-state model
+ * (sent/replied/failed) for the dispatch_status column.
+ */
+export async function getLeadState(
+  apiKey: string,
+  campaignId: string,
+  email: string,
+): Promise<{ state: string | null } | null> {
+  try {
+    const data = await lemlistFetch<{ state?: string; emailsReplied?: number; linkedinReplied?: number }>(
+      apiKey,
+      `/campaigns/${encodeURIComponent(campaignId)}/leads/${encodeURIComponent(email)}`,
+    );
+    // Some responses surface emailsReplied / linkedinReplied counters even when
+    // 'state' isn't authoritative — treat any positive count as a reply.
+    const replied = (data.emailsReplied ?? 0) > 0 || (data.linkedinReplied ?? 0) > 0;
+    if (replied) return { state: 'replied' };
+    return { state: data.state ?? null };
+  } catch {
+    return null;
+  }
+}
+
+export function dispatchStatusFromLemlistState(state: string | null): 'sent' | 'replied' | 'failed' | null {
+  if (!state) return null;
+  const s = state.toLowerCase();
+  if (s.includes('replied')) return 'replied';
+  if (s === 'bounced' || s === 'optedout' || s === 'failed') return 'failed';
+  // Anything else (sent, opened, clicked, paused, etc.) stays as 'sent' in our model.
+  return null;
+}
+
 /** Pause a specific lead in a specific campaign (used for cross-channel pause). */
 export async function pauseLead(
   apiKey: string,

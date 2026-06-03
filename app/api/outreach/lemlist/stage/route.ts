@@ -28,6 +28,35 @@ type StagedMessage = {
   channel: 'email' | 'linkedin';
 };
 
+/**
+ * Best-practice default channel for B2B cold outreach. Email-first
+ * (least intrusive opener), then alternate LI / Email after that. Matches
+ * the defaults lemlist + La Growth Machine ship in their multichannel
+ * templates. Reps can override per-step in /outreach.
+ *
+ *   Day 0  → Email   (opener)
+ *   Day 3  → LI      (warmup after first touch)
+ *   Day 7  → Email   (the product reveal — needs room)
+ *   Day 11 → LI
+ *   Day 15 → Email   (honest nudge)
+ *   Day 21 → LI
+ *   Day 28 → Email   (breakup reads most natural as email)
+ */
+function defaultChannelForDay(dayOffset: number): 'email' | 'linkedin' {
+  const map: Record<number, 'email' | 'linkedin'> = {
+    0: 'email',
+    3: 'linkedin',
+    7: 'email',
+    11: 'linkedin',
+    15: 'email',
+    21: 'linkedin',
+    28: 'email',
+  };
+  if (dayOffset in map) return map[dayOffset];
+  // Fallback: even days → email, odd days → linkedin.
+  return dayOffset % 2 === 0 ? 'email' : 'linkedin';
+}
+
 function sanitizeMessages(input: unknown): StagedMessage[] {
   if (!Array.isArray(input)) return [];
   return input
@@ -40,9 +69,17 @@ function sanitizeMessages(input: unknown): StagedMessage[] {
           : null;
       const subject = typeof o.subject === 'string' ? o.subject.trim() : '';
       const body = typeof o.body === 'string' ? o.body.trim() : '';
-      const channel = o.channel === 'linkedin' ? 'linkedin' : 'email';
+      // If the caller specified a channel explicitly, respect it; otherwise
+      // apply the best-practice default for that day_offset.
+      const explicitChannel =
+        o.channel === 'linkedin' || o.channel === 'email' ? (o.channel as 'email' | 'linkedin') : null;
       if (dayOffset === null || !subject || !body) return null;
-      return { day_offset: dayOffset, subject, body, channel };
+      return {
+        day_offset: dayOffset,
+        subject,
+        body,
+        channel: explicitChannel ?? defaultChannelForDay(dayOffset),
+      };
     })
     .filter((v): v is StagedMessage => v !== null);
 }

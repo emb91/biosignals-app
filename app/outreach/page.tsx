@@ -181,9 +181,22 @@ export default function OutreachPage() {
     }
   }, []);
 
+  // Poll lemlist for reply/failure status updates whenever the page mounts.
+  // Acts as a fallback when the reply webhook isn't wired — slower than the
+  // webhook (only fires on page open), but ensures /outreach shows reality
+  // even if the customer hasn't done the lemlist webhook setup yet.
+  const syncStatusThenRefresh = useCallback(async () => {
+    try {
+      await fetch('/api/outreach/lemlist/sync-status', { method: 'POST' });
+    } catch {
+      // best-effort
+    }
+    await refresh();
+  }, [refresh]);
+
   useEffect(() => {
-    if (user) void refresh();
-  }, [user, refresh]);
+    if (user) void syncStatusThenRefresh();
+  }, [user, syncStatusThenRefresh]);
 
   const filtered = useMemo(() => {
     if (statusFilter === 'all') return sequences;
@@ -510,18 +523,27 @@ export default function OutreachPage() {
                               }
                               const ch = msg.channel ?? 'email';
                               const ChIcon = ch === 'linkedin' ? Linkedin : Mail;
+                              // Stronger visual: colored left border + tinted
+                              // background so the channel is immediately legible
+                              // when scanning the row.
+                              const cellChannelClass = ch === 'linkedin'
+                                ? 'border-l-2 border-[#0a66c2]/60 bg-[#0a66c2]/[0.04]'
+                                : 'border-l-2 border-arcova-teal/50 bg-arcova-teal/[0.04]';
                               return (
                                 <td
                                   key={i}
-                                  className="px-3 py-2.5 align-top cursor-pointer hover:bg-arcova-teal/5"
+                                  className={`px-3 py-2.5 align-top cursor-pointer hover:bg-arcova-teal/5 ${cellChannelClass}`}
                                   onClick={() => openCellEditor(seq.id, i)}
                                 >
                                   <div className="flex items-start gap-1.5">
-                                    <ChIcon
-                                      className={`mt-0.5 h-3 w-3 shrink-0 ${
-                                        ch === 'linkedin' ? 'text-[#0a66c2]' : 'text-[#7d909a]'
-                                      }`}
-                                    />
+                                    <span className={`mt-0.5 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide shrink-0 ${
+                                      ch === 'linkedin'
+                                        ? 'bg-[#0a66c2]/10 text-[#0a66c2]'
+                                        : 'bg-arcova-teal/10 text-arcova-teal'
+                                    }`}>
+                                      <ChIcon className="h-3 w-3" />
+                                      {ch === 'linkedin' ? 'LI' : 'Email'}
+                                    </span>
                                     <div className="min-w-0">
                                       <div className="font-medium text-[#0d3547] leading-tight">
                                         {truncate(msg.subject, 50)}
@@ -570,7 +592,17 @@ export default function OutreachPage() {
           </div>
         </div>
 
-        <AgentPanel page="outreach" pageContext={{ sequenceCount: sequences.length }} />
+        <AgentPanel
+          page="outreach"
+          pageContext={{
+            sequenceCount: sequences.length,
+            // The agent uses this to call load_outreach_context. When a cell
+            // is open the agent gets a focused step; otherwise it sees the
+            // whole sequence the rep last clicked.
+            selectedSequenceId: editingSequenceId,
+            selectedStepIndex: editingStepIdx,
+          }}
+        />
       </div>
 
       {/* ── Cell editor side panel ─────────────────────────────────────── */}
