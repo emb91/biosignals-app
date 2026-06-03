@@ -602,7 +602,15 @@ export default function OutreachPage() {
                 </p>
               </div>
             ) : (
-              <div className="min-h-0 flex-1 rounded-2xl border border-white/80 bg-white/55 backdrop-blur-xl shadow-[0_8px_24px_-16px_rgba(13,53,71,0.2)] overflow-hidden">
+              <div className="relative min-h-0 flex-1 rounded-2xl border border-white/80 bg-white/55 backdrop-blur-xl shadow-[0_8px_24px_-16px_rgba(13,53,71,0.2)] overflow-hidden">
+                {/* Scroll affordance — a gradient fade on the right edge of the table
+                    so it's visually obvious the row extends past the visible area.
+                    `pointer-events-none` so it doesn't intercept the table clicks. */}
+                <div className="pointer-events-none absolute inset-y-0 right-0 z-20 w-12 bg-gradient-to-l from-white/95 to-transparent" />
+                {/* Small "Scroll →" hint top-right */}
+                <div className="pointer-events-none absolute top-2 right-2 z-30 rounded-full border border-[rgba(13,53,71,0.1)] bg-white/85 px-2 py-0.5 text-[10px] font-semibold text-arcova-teal shadow-sm">
+                  Scroll →
+                </div>
                 <div className="h-full overflow-auto">
                   <table className="w-full text-[12.5px]">
                     <thead className="bg-white/60 border-b border-[rgba(13,53,71,0.07)]">
@@ -725,64 +733,69 @@ export default function OutreachPage() {
                                   className="px-3 py-2.5 align-top cursor-pointer hover:bg-arcova-teal/5"
                                   onClick={() => handleCellClick(seq.id, i)}
                                 >
-                                  <div className="min-w-0">
-                                    {isInvite ? (
-                                      <div className="font-medium text-[#0a66c2] leading-tight">
-                                        Send LinkedIn invite
-                                      </div>
-                                    ) : (
-                                      <>
-                                        {msg.subject && (
-                                          <div className="font-medium text-[#0d3547] leading-tight">
-                                            {truncate(msg.subject, 50)}
-                                          </div>
-                                        )}
-                                        <div className="mt-0.5 text-[11px] text-[#7d909a] line-clamp-2 leading-snug">
-                                          {truncate(msg.body, 110)}
+                                  {/* Flex column so the footer pins to the bottom of the cell, lining up across the row. */}
+                                  <div className="flex h-full min-w-0 flex-col">
+                                    {/* Body: subject + body preview (or invite label) */}
+                                    <div className="min-w-0 flex-1">
+                                      {isInvite ? (
+                                        <div className="font-medium text-[#0a66c2] leading-tight">
+                                          Send LinkedIn invite
                                         </div>
-                                      </>
-                                    )}
-
-                                    <div className="mt-2 flex items-center gap-1.5 flex-wrap">
-                                      <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${STEP_PILL[sStatus]}`}>
-                                        {STEP_LABEL[sStatus]}
-                                      </span>
-                                      <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                                        ch === 'linkedin'
-                                          ? 'bg-[#0a66c2]/10 text-[#0a66c2]'
-                                          : 'bg-arcova-teal/10 text-arcova-teal'
-                                      }`}>
-                                        <ChIcon className="h-3 w-3" />
-                                        {isInvite ? 'LI invite' : ch === 'linkedin' ? 'LI msg' : 'Email'}
-                                      </span>
+                                      ) : (
+                                        <>
+                                          {msg.subject && (
+                                            <div className="font-medium text-[#0d3547] leading-tight">
+                                              {truncate(msg.subject, 50)}
+                                            </div>
+                                          )}
+                                          <div className="mt-0.5 text-[11px] text-[#7d909a] line-clamp-2 leading-snug">
+                                            {truncate(msg.body, 110)}
+                                          </div>
+                                        </>
+                                      )}
                                     </div>
 
-                                    {sendDate && sStatus !== 'pending' && (
-                                      <div className="mt-1 text-[10px] text-[#b6c2c8]">
-                                        {sStatus === 'sent' || sStatus === 'replied'
-                                          ? stepDateIsAuthoritative(msg)
-                                            ? `Sent ${sendDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
-                                            : `~Sent ${sendDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
-                                          : sStatus === 'queued'
-                                            ? `~${sendDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
-                                            : ''}
+                                    {/* Footer: pills + send date + engagement, pinned at the bottom of every cell so they line up across the row. */}
+                                    <div className="mt-3 space-y-1">
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${STEP_PILL[sStatus]}`}>
+                                          {STEP_LABEL[sStatus]}
+                                        </span>
+                                        <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                                          ch === 'linkedin'
+                                            ? 'bg-[#0a66c2]/10 text-[#0a66c2]'
+                                            : 'bg-arcova-teal/10 text-arcova-teal'
+                                        }`}>
+                                          <ChIcon className="h-3 w-3" />
+                                          {isInvite ? 'LI invite' : ch === 'linkedin' ? 'LI msg' : 'Email'}
+                                        </span>
+                                        {sendDate && sStatus !== 'pending' && (
+                                          <span className="text-[10px] text-[#b6c2c8]">
+                                            {sStatus === 'sent' || sStatus === 'replied'
+                                              ? stepDateIsAuthoritative(msg)
+                                                ? `Sent ${sendDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+                                                : `~Sent ${sendDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+                                              : sStatus === 'queued'
+                                                ? `~${sendDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+                                                : ''}
+                                          </span>
+                                        )}
                                       </div>
-                                    )}
 
-                                    {/* Engagement counters — only when there's anything to show. */}
-                                    {((msg.opens ?? 0) > 0 || (msg.clicks ?? 0) > 0 || (msg.replies ?? 0) > 0) && (
-                                      <div className="mt-1 flex items-center gap-2 text-[10px]">
-                                        {(msg.opens ?? 0) > 0 && (
-                                          <span className="text-emerald-700">{msg.opens} open{msg.opens === 1 ? '' : 's'}</span>
-                                        )}
-                                        {(msg.clicks ?? 0) > 0 && (
-                                          <span className="text-sky-700">{msg.clicks} click{msg.clicks === 1 ? '' : 's'}</span>
-                                        )}
-                                        {(msg.replies ?? 0) > 0 && (
-                                          <span className="text-violet-700 font-semibold">{msg.replies} repl{msg.replies === 1 ? 'y' : 'ies'}</span>
-                                        )}
-                                      </div>
-                                    )}
+                                      {((msg.opens ?? 0) > 0 || (msg.clicks ?? 0) > 0 || (msg.replies ?? 0) > 0) && (
+                                        <div className="flex items-center gap-2 text-[10px]">
+                                          {(msg.opens ?? 0) > 0 && (
+                                            <span className="text-emerald-700">{msg.opens} open{msg.opens === 1 ? '' : 's'}</span>
+                                          )}
+                                          {(msg.clicks ?? 0) > 0 && (
+                                            <span className="text-sky-700">{msg.clicks} click{msg.clicks === 1 ? '' : 's'}</span>
+                                          )}
+                                          {(msg.replies ?? 0) > 0 && (
+                                            <span className="text-violet-700 font-semibold">{msg.replies} repl{msg.replies === 1 ? 'y' : 'ies'}</span>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
                                   </div>
                                 </td>
                               );

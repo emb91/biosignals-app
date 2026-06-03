@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
+import { isCrmSuppressed } from '@/lib/lead-action';
 import {
   type DataProvenanceChannel,
   formatDataProvenanceTypeOnly,
@@ -100,6 +101,8 @@ export type AccountCrmEntry = {
   state: AccountCrmStatus;
   /** Formatted deal stage label for the winning contact's deal (e.g. "Buy-in", "Contract"). */
   dealStageLabel: string | null;
+  /** Close-date proxy (winning deal's last-modified) — drives the CRM suppression cooldown. */
+  closedAt: string | null;
 };
 
 async function fetchCompanyCrmStatuses(
@@ -143,6 +146,7 @@ async function fetchCompanyCrmStatuses(
         companyStatus.set(companyId, {
           state: resolved.state,
           dealStageLabel: formatHubSpotStageLabel(resolved.dealStage),
+          closedAt: resolved.modifiedAt ?? null,
         });
       }
     }
@@ -256,15 +260,23 @@ export async function GET(request: Request) {
 
       const crmEntry = companyCrmStatuses.get(row.id) ?? null;
 
-      // One priority score, end-to-end: the stored value on user_companies.
-      // CRM state (customer/dormant) drives the action tree + CRM badge, NOT
-      // a priority/readiness mutation. Falls back to fit × 0.5 only when no
-      // stored value exists (pre-readiness-compute rows).
-      const displayedReadiness = row.readiness_score ?? null;
-      const storedPriority = row.priority_score ?? null;
+      // CRM suppression cooldown (same rule as the contacts view): a closed-won
+      // (1yr) or closed-lost (6mo) account has its readiness floored to 0.01 so
+      // priority drops and the action reads Deprioritise — but only WITHIN the
+      // cooldown. Past it, the floor lifts and the stored priority/readiness
+      // (driven by real signals) resurfaces the account. The stored DB value
+      // stays intrinsic; suppression is applied here at read time so it can't
+      // go stale when CRM state changes.
+      const suppressed = isCrmSuppressed(crmEntry?.state ?? null, crmEntry?.closedAt ?? null);
       const fitNorm = normalizeScore01(row.company_fit_score);
-      const basePriority =
-        storedPriority != null
+      const storedPriority = row.priority_score ?? null;
+
+      const displayedReadiness = suppressed ? 0.01 : row.readiness_score ?? null;
+      const basePriority = suppressed
+        ? fitNorm != null
+          ? fitNorm * (0.5 + 0.5 * 0.01)
+          : null
+        : storedPriority != null
           ? storedPriority
           : fitNorm != null
             ? fitNorm * 0.5
@@ -317,6 +329,7 @@ export async function GET(request: Request) {
         priority_score: basePriority,
         crm_status: crmEntry?.state ?? null,
         crm_deal_stage_label: crmEntry?.dealStageLabel ?? null,
+        crm_closed_at: crmEntry?.closedAt ?? null,
       };
     });
 

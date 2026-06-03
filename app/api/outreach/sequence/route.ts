@@ -59,6 +59,31 @@ function tolerantJsonParse(text: string): unknown {
 // Deterministic safety net: strip punctuation/phrases the model keeps slipping
 // in despite the prompt. Cheaper than re-running on every regression and means
 // the rep doesn't see "—" or "circling back" in the editor.
+/**
+ * Force sentence case on a subject line: capitalize the first letter, keep
+ * acronyms (>=2 consecutive uppercase letters) intact, lowercase every other
+ * standalone capitalized word. This is a safety net — the prompt also tells
+ * the model to use sentence case, but Sonnet defaults to Title Case for
+ * subjects and the prompt instruction alone isn't reliable.
+ *
+ * "Quick Question About CMC Capacity" → "Quick question about CMC capacity"
+ * "Following Up On BIOSECURE" → "Following up on BIOSECURE"
+ */
+function toSentenceCase(subject: string): string {
+  if (!subject) return subject;
+  // Word-level pass. A "word" is letters/digits with optional internal hyphens/apostrophes.
+  const out = subject.replace(/[A-Za-z][\w'-]*/g, (word, offset: number) => {
+    // Preserve all-caps acronyms (2+ uppercase letters in a row): CMC, BIOSECURE, VP, etc.
+    const isAcronym = word.length >= 2 && word === word.toUpperCase() && /[A-Z]{2,}/.test(word);
+    if (isAcronym) return word;
+    // First word in the subject: capitalize the first letter, lowercase the rest.
+    if (offset === 0) return word[0].toUpperCase() + word.slice(1).toLowerCase();
+    // Everything else: lowercase.
+    return word.toLowerCase();
+  });
+  return out;
+}
+
 function scrubAiTropes(text: string): string {
   if (!text) return text;
   let out = text;
@@ -88,7 +113,8 @@ function parseSequence(text: string): Message[] {
       const dayOffset = typeof o.day_offset === 'number' && Number.isFinite(o.day_offset)
         ? Math.floor(o.day_offset)
         : DAY_OFFSETS[i] ?? i * 4;
-      const subject = typeof o.subject === 'string' ? scrubAiTropes(o.subject.trim()) : '';
+      const subject =
+        typeof o.subject === 'string' ? toSentenceCase(scrubAiTropes(o.subject.trim())) : '';
       const body = typeof o.body === 'string' ? scrubAiTropes(o.body.trim()) : '';
       if (!subject || !body) return null;
       return { day_offset: dayOffset, subject, body };
@@ -402,6 +428,14 @@ PRODUCT + HONESTY (the rules we learned the hard way):
 PUNCTUATION:
 - NO em dashes (—). Use commas, periods, or parentheses. Zero exceptions.
 - NO semicolons unless truly unavoidable.
+
+SUBJECT LINES:
+- SENTENCE CASE ONLY. Capitalize the first word, leave proper nouns + acronyms as-is, lowercase everything else.
+  - "Quick question about CMC capacity" ✓
+  - "Following up on the BIOSECURE shift" ✓
+  - "Quick Question About CMC Capacity" ✗
+  - "A Note On Your VP-CMC Search" ✗
+- Short (under 60 chars). Lowercase reads as a peer, Title Case reads as marketing.
 
 PLAIN LANGUAGE (8th-grade reading level):
 - Short sentences. A 13-year-old should follow every line.

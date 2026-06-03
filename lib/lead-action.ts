@@ -376,6 +376,8 @@ export function getAccountRowAction(account: {
   max_contact_readiness_score?: number | null;
   readiness_score?: number | null;
   crm_status?: 'active' | 'customer' | 'dormant' | 'context_only' | 'none' | null;
+  /** Close-date proxy for the account's winning deal — drives the suppression cooldown. */
+  crm_closed_at?: string | null;
   contact_count?: number | null;
 }): LeadAction {
   // No contacts on file → always source, regardless of CRM state.
@@ -383,12 +385,19 @@ export function getAccountRowAction(account: {
     return 'source_contact';
   }
 
-  // If neither readiness nor a CRM signal exists, fall back to the legacy
+  // CRM-resolved (won/lost) only forces Deprioritise DURING the suppression
+  // cooldown (won 1yr / lost 6mo). Past it, treat the account as non-resolved so
+  // new signals can resurface it for renewal / re-engagement.
+  const crmForAction = isCrmSuppressed(account.crm_status ?? null, account.crm_closed_at ?? null)
+    ? account.crm_status ?? null
+    : null;
+
+  // If neither readiness nor an ACTIVE CRM signal exists, fall back to the legacy
   // intent-based logic so accounts still get a meaningful action before the
   // readiness pipeline has run for them.
   if (
     account.readiness_score == null &&
-    (account.crm_status == null || account.crm_status === 'none')
+    (crmForAction == null || crmForAction === 'none')
   ) {
     return getLeadActionFromFits(
       score01ForAction(account.company_fit_score ?? null),
@@ -400,6 +409,6 @@ export function getAccountRowAction(account: {
     account.company_fit_score ?? null,
     account.best_contact_fit ?? null,
     account.readiness_score ?? null,
-    account.crm_status ?? null,
+    crmForAction,
   );
 }
