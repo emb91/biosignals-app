@@ -661,58 +661,74 @@ function ContactedNotice({
 
   const status = (sequence.dispatch_status ?? 'draft').toLowerCase();
 
-  let headline = '';
+  let headline: React.ReactNode = '';
   let body: React.ReactNode = null;
   let allowAnother = false;
   let openLabel = 'Open in /outreach';
 
   if (status === 'draft') {
-    headline = `You've already drafted a sequence for ${firstName}.`;
+    headline = (
+      <>
+        Outreach drafted for: <span className="text-gray-900">{sequence.anchor_hook_text}</span>.
+      </>
+    );
     body = (
       <>
-        Anchored on: <span className="text-gray-900">{sequence.anchor_hook_text}</span>. Open it
-        to edit copy + send to lemlist, or draft a different angle.
+        Click <span className="font-medium text-gray-900">&lsquo;Open draft&rsquo;</span> below to
+        edit the copy and send to lemlist, or draft a different angle.
       </>
     );
     allowAnother = true;
     openLabel = 'Open draft';
   } else if (status === 'sent' || status === 'queued') {
-    headline = `You're already reaching out to ${firstName}.`;
+    headline = (
+      <>
+        Outreach sent for: <span className="text-gray-900">{sequence.anchor_hook_text}</span>
+        {whenStr && ` (${whenStr})`}.
+      </>
+    );
     body = (
       <>
-        Sequence sent {whenStr && `on ${whenStr} `}anchored on:{' '}
-        <span className="text-gray-900">{sequence.anchor_hook_text}</span>. Wait for a reply
-        before pitching a new angle — or open it to track status.
+        Wait for a reply before pitching {firstName} a new angle, or click{' '}
+        <span className="font-medium text-gray-900">&lsquo;Open&rsquo;</span> below to track status.
       </>
     );
     allowAnother = true;
   } else if (status === 'replied') {
-    headline = `${firstName} replied.`;
+    headline = (
+      <>
+        {firstName} replied to: <span className="text-gray-900">{sequence.anchor_hook_text}</span>
+        {whenStr && ` (${whenStr})`}.
+      </>
+    );
     body = (
       <>
-        They responded {whenStr && `on ${whenStr} `}to the sequence anchored on:{' '}
-        <span className="text-gray-900">{sequence.anchor_hook_text}</span>. Take it human from
-        here — open to see the thread.
+        Take it human from here. Click{' '}
+        <span className="font-medium text-gray-900">&lsquo;Open&rsquo;</span> below to see the thread.
       </>
     );
     allowAnother = false;
   } else if (status === 'failed') {
-    headline = `Last dispatch to ${firstName} failed.`;
+    headline = (
+      <>
+        Dispatch failed for: <span className="text-gray-900">{sequence.anchor_hook_text}</span>.
+      </>
+    );
     body = (
       <>
-        <span className="text-red-700">{sequence.dispatch_error || 'Unknown error'}</span>. Open
-        to retry, or stage another angle.
+        <span className="text-red-700">{sequence.dispatch_error || 'Unknown error'}</span>. Click{' '}
+        <span className="font-medium text-gray-900">&lsquo;Open to retry&rsquo;</span> below, or draft a different angle.
       </>
     );
     allowAnother = true;
     openLabel = 'Open to retry';
   } else {
-    headline = `${firstName} was previously contacted.`;
-    body = (
+    headline = (
       <>
-        Anchored on: <span className="text-gray-900">{sequence.anchor_hook_text}</span>.
+        Previously contacted on: <span className="text-gray-900">{sequence.anchor_hook_text}</span>.
       </>
     );
+    body = null;
     allowAnother = true;
   }
 
