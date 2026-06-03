@@ -450,14 +450,27 @@ export default function OutreachPage() {
                         <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-[#7d909a]">
                           Status
                         </th>
-                        {Array.from({ length: steps }).map((_, i) => (
-                          <th
-                            key={i}
-                            className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-[#7d909a] min-w-[200px]"
-                          >
-                            Step {i + 1}
-                          </th>
-                        ))}
+                        {Array.from({ length: steps }).map((_, i) => {
+                          // Day label comes from whichever filtered row has a
+                          // message at this step index — they should all
+                          // share the same cadence, but fall back gracefully.
+                          const dayOffset = filtered
+                            .map((s) => s.messages?.[i]?.day_offset)
+                            .find((d) => typeof d === 'number');
+                          return (
+                            <th
+                              key={i}
+                              className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-[#7d909a] min-w-[200px]"
+                            >
+                              Step {i + 1}
+                              {typeof dayOffset === 'number' && (
+                                <span className="ml-1 normal-case text-[10.5px] text-[#b6c2c8]">
+                                  (Day {dayOffset})
+                                </span>
+                              )}
+                            </th>
+                          );
+                        })}
                         <th className="px-3 py-2 w-20" />
                       </tr>
                     </thead>
@@ -550,9 +563,6 @@ export default function OutreachPage() {
                                       </div>
                                       <div className="mt-0.5 text-[11px] text-[#7d909a] line-clamp-2 leading-snug">
                                         {truncate(msg.body, 110)}
-                                      </div>
-                                      <div className="mt-1 text-[10px] text-[#b6c2c8]">
-                                        Day {msg.day_offset}
                                       </div>
                                     </div>
                                   </div>
