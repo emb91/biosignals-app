@@ -27,6 +27,7 @@ import { processQueuedRowsInBackground, type QueuedRow } from '@/lib/import-queu
 import { getLeadActionFromFits, formatLeadActionLabel } from '@/lib/lead-action';
 import { syncHubSpotContactsIntoReadiness } from '@/lib/signals/readiness-hubspot-contacts';
 import { syncHubSpotDealsIntoReadiness } from '@/lib/signals/readiness-hubspot-deals';
+import { denormalizeCrmSuppressionState } from '@/lib/crm-suppression-denormalize';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -470,6 +471,10 @@ export async function GET(request: Request) {
         userId: conn.user_id,
         nangoConnectionId: conn.nango_connection_id,
       });
+
+      // 5. Refresh the CRM suppression sort key (closed-won/lost → bottom of the
+      // contacts + accounts lists). Also re-evaluates cooldown expiry daily.
+      await denormalizeCrmSuppressionState(admin, conn.user_id);
 
       const now = new Date().toISOString();
       await Promise.all([

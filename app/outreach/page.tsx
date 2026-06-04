@@ -35,12 +35,14 @@ import {
   Clock,
   MessageSquareReply,
   PauseCircle,
+  Download,
 } from 'lucide-react';
 import AppSidebar from '@/components/AppSidebar';
 import { PageHeader } from '@/components/PageHeader';
 import { AgentPanel, type AgentPendingMessage } from '@/components/AgentPanel';
 import { AgentChatBar } from '@/components/AgentChatBar';
 import { cn } from '@/lib/utils';
+import { invalidateCache } from '@/lib/page-fetch-cache';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -416,6 +418,7 @@ export default function OutreachPage() {
 
   const deleteSequence = async (id: string) => {
     if (!confirm('Delete this sequence? This does not remove it from lemlist.')) return;
+    const contactId = sequences.find((s) => s.id === id)?.contact_id ?? null;
     const res = await fetch(`/api/outreach/sequences/${id}`, { method: 'DELETE' });
     if (res.ok) {
       setSequences((prev) => prev.filter((s) => s.id !== id));
@@ -424,6 +427,13 @@ export default function OutreachPage() {
         next.delete(id);
         return next;
       });
+      // The contact's OutreachPanel shows a "you already drafted outreach"
+      // notice driven by the (client-cached) /api/outreach/hooks response. Drop
+      // that cache entry so the panel re-fetches and the stale "Open draft" —
+      // which would now point at a deleted sequence — disappears.
+      if (contactId) {
+        invalidateCache(`/api/outreach/hooks?contactId=${encodeURIComponent(contactId)}`);
+      }
     }
   };
 
@@ -610,14 +620,45 @@ export default function OutreachPage() {
 
               <div className="ml-auto flex items-center gap-2">
                 {selectedIds.size > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => void openDispatch(Array.from(selectedIds))}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-navy px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-[#0d3547]"
-                  >
-                    <Send className="h-3.5 w-3.5" />
-                    Send {selectedIds.size} to lemlist
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const ids = Array.from(selectedIds);
+                        try {
+                          const res = await fetch('/api/outreach/download-csv', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ sequenceIds: ids }),
+                          });
+                          if (!res.ok) return;
+                          const blob = await res.blob();
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = `arcova-outreach-${new Date().toISOString().slice(0, 10)}.csv`;
+                          document.body.appendChild(a);
+                          a.click();
+                          a.remove();
+                          URL.revokeObjectURL(url);
+                        } catch {
+                          // best-effort
+                        }
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-arcova-teal/40 bg-white px-3 py-1.5 text-[12.5px] font-semibold text-arcova-teal hover:bg-arcova-teal/5"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      Download {selectedIds.size} as CSV
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void openDispatch(Array.from(selectedIds))}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-navy px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-[#0d3547]"
+                    >
+                      <Send className="h-3.5 w-3.5" />
+                      Send {selectedIds.size} to lemlist
+                    </button>
+                  </>
                 )}
               </div>
             </div>

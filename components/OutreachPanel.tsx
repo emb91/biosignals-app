@@ -534,7 +534,7 @@ export function OutreachPanel({ contactId, contactName }: Props) {
               {staging ? 'Staging…' : 'Stage for outreach'}
             </button>
             <p className="mt-1 text-[11px] text-gray-500">
-              Pick channel + edit copy on the next screen.
+              Stage for outreach. You can edit this on the next page.
             </p>
           </div>
 
