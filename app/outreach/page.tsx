@@ -241,6 +241,15 @@ export default function OutreachPage() {
   const [savingEdit, setSavingEdit] = useState(false);
   const sidePanelOpen = editorOpen || detailsOpen;
 
+  // Opt-in CTA link (from Settings → Call-to-action). When set, the cell editor
+  // shows a checkbox to drop "{label}: {url}" into the message body. Empty url
+  // greys the checkbox with a prompt to add it in Settings.
+  const [ctaUrl, setCtaUrl] = useState('');
+  const [ctaLabel, setCtaLabel] = useState('');
+  // The exact text inserted/removed when the checkbox is toggled. Stable so we
+  // can derive "is it currently in the body?" without a separate flag.
+  const ctaText = ctaUrl ? `${ctaLabel ? `${ctaLabel}: ` : ''}${ctaUrl}` : '';
+
   // Mirror the AgentPanel column's bounding rect so the side panel can
   // overlay it pixel-for-pixel. Identical pattern to /leads/contacts —
   // AgentPanel below renders with the marker class `.outreach-agent-col`.
@@ -330,6 +339,23 @@ export default function OutreachPage() {
   useEffect(() => {
     if (user) void syncStatusThenRefresh();
   }, [user, syncStatusThenRefresh]);
+
+  // Load the user's CTA link (for the cell-editor checkbox). Best-effort.
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      try {
+        const res = await fetch('/api/outreach/tone');
+        if (res.ok) {
+          const data = (await res.json()) as { ctaUrl?: string; ctaLabel?: string };
+          setCtaUrl(data.ctaUrl ?? '');
+          setCtaLabel(data.ctaLabel ?? '');
+        }
+      } catch {
+        // best-effort
+      }
+    })();
+  }, [user]);
 
   const filtered = useMemo(() => {
     if (statusFilter === 'all') return sequences;
@@ -1118,6 +1144,63 @@ export default function OutreachPage() {
                                 className="mt-1 w-full rounded-lg border border-[rgba(13,53,71,0.15)] bg-white px-3 py-2 text-[13px] text-[#0d3547] leading-relaxed focus:border-arcova-teal focus:outline-none"
                               />
                             </div>
+
+                            {/* CTA insert — opt-in per message. Enabled only when
+                                a CTA link is set in Settings; otherwise greyed with
+                                a prompt. Checked state derives from the body so it
+                                survives reopening the editor. */}
+                            {(() => {
+                              const ctaInBody = ctaText !== '' && editDraft.body.includes(ctaText);
+                              const toggleCta = (checked: boolean) => {
+                                if (!ctaText) return;
+                                // Idempotent remove, then re-add if checking.
+                                let body = editDraft.body
+                                  .replace(`\n\n${ctaText}`, '')
+                                  .replace(ctaText, '')
+                                  .trimEnd();
+                                if (checked) body = `${body}\n\n${ctaText}`;
+                                setEditDraft({ ...editDraft, body });
+                              };
+                              return (
+                                <div className="rounded-lg border border-[rgba(13,53,71,0.1)] bg-[#f4f7f9]/40 px-3 py-2.5">
+                                  <label
+                                    className={`flex items-start gap-2 ${ctaUrl ? 'cursor-pointer' : 'cursor-not-allowed'}`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={ctaInBody}
+                                      disabled={!ctaUrl}
+                                      onChange={(e) => toggleCta(e.target.checked)}
+                                      className="mt-0.5 rounded border-[rgba(13,53,71,0.25)] disabled:opacity-40"
+                                    />
+                                    <span className="min-w-0">
+                                      <span
+                                        className={`block text-[12.5px] font-medium ${ctaUrl ? 'text-[#0d3547]' : 'text-[#b6c2c8]'}`}
+                                      >
+                                        Add my call-to-action link
+                                      </span>
+                                      {ctaUrl ? (
+                                        <span className="mt-0.5 block break-all text-[11px] text-[#7d909a]">
+                                          {ctaText}
+                                        </span>
+                                      ) : (
+                                        <span className="mt-0.5 block text-[11px] text-[#b6c2c8]">
+                                          Add your CTA in{' '}
+                                          <button
+                                            type="button"
+                                            onClick={() => router.push('/settings')}
+                                            className="font-semibold text-arcova-teal underline-offset-2 hover:underline"
+                                          >
+                                            Settings
+                                          </button>{' '}
+                                          to enable this.
+                                        </span>
+                                      )}
+                                    </span>
+                                  </label>
+                                </div>
+                              );
+                            })()}
                           </>
                         )}
                       </div>

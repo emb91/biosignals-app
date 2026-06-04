@@ -112,6 +112,18 @@ The Arcova loop:
 - Decide the production source of truth for current company and current role.
 - Revisit Apollo phone reveal via webhook flow once credit impact is clear.
 
+### Contacts canonical split — mirror companies Phase 1d (planned refactor)
+
+**Problem.** Contacts are fully per-user: `contacts` carries `user_id` AND the entire enriched payload (linkedin_url, profile/linkedin enrichment, employment history, bio, photo, discovered emails/phones). There is NO canonical shared person record and NO `user_contacts` layer — and no global person/profile enrichment cache (companies have `company_resolution_cache`; people have nothing). So when two users have the same person (same LinkedIn), each is enriched and **paid for separately**. Confirmed live: `afernandes@illumina.com` exists as two independently-enriched rows across two accounts (emma@arcova.bio + a test account). This contradicts the deliberate "enrich once, pay once" model that companies already follow.
+
+**Target shape (mirror companies / user_companies):**
+- **Canonical person record** — keyed on `linkedin_url` (today's `UNIQUE(user_id, linkedin_url)` becomes global `UNIQUE(linkedin_url)`); NO `user_id`. Holds the PAID enrichment: identity, job title, seniority, business area, employment history, bio, photo, location, linkedin-resolution + profile-enrichment status, enrichment-discovered emails/phones. Enriched once, shared.
+- **`user_contacts` per-user layer** — `(user_id, person_id)` + per-user fields: contact-fit score/breakdown + `scored_against_persona_id` (depends on the user's personas), readiness + priority mirror, attribution, CRM links, user-added emails/phones (`contact_emails.category='user'`), user edits/overrides, `archived_at`, the user's company association.
+
+**Scope.** Large — Phase-1d-sized. Touches: enrichment pipeline, import/dedup, contact-fit + readiness, `/api/leads` + `/api/leads/[id]`, contacts page, outreach, HubSpot sync, attribution. Every reader of `contacts` is affected.
+
+**Timing.** The double-pay only bites when multiple users overlap on the same person. Today that's just the main account + one test account, so current cost is negligible — this is a **"before multi-tenant scale"** refactor, not an emergency. Do it as a deliberate staged migration (field-by-field canonical-vs-per-user split first), the way the companies split was done. See [[project_scoring_model]] / Phase 1d for the precedent.
+
 ## Product workflow
 
 - Bring company, role, fit, and intent into the main Leads working view once the second-pass resolver is ready.

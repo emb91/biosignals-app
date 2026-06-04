@@ -469,9 +469,16 @@ VOICE:
 - First name only ("${firstName}"). Never "Hi ${fullName}" or "Dear ${firstName}".
 - Subject lines: 3-6 words, lowercase except proper nouns, all different from each other.
 
-═══ GOLD-STANDARD EXAMPLE (study the shape, do not copy the content) ═══
+═══ STYLE REFERENCE — COPY THE STYLE, NOT THE CONTENT ═══
 
-This is a real sequence to a Director of Business Development at a CDMO, from a life-sci signals company. Note: human opener, signal acknowledged once then dropped, a concrete offer in every message, product reveal + differentiator on the Day 8 LinkedIn message, our-own-data only, no homework, no stance, plain language.
+The sequence below is from a DIFFERENT company in a DIFFERENT niche. It is here ONLY to calibrate STYLE. Mirror:
+- message LENGTH and the email-vs-LinkedIn word ranges
+- the human, first-name opener and conversational, peer-to-peer register
+- short, plain sentences (8th-grade reading level)
+- exactly ONE concrete offer per message, and the soft "happy to share if of interest" style of close
+- the ARC across the sequence: hook+offer → specific data → product reveal → another data cut → honest nudge → always-on close
+
+Do NOT borrow any of its CONTENT. The product, the buying-signal mechanics, the company names (Enzene), the BIOSECURE / CDMO / CMC / Chinese-CDMO specifics, the therapeutic areas, and its exact phrases are NOT yours — they belong to that other company. Every product claim, offer, capability, and detail in YOUR sequence must come solely from our_company and the contact's company in the CONTEXT below. If a detail isn't in CONTEXT, it does not exist. Match how this reads; invent nothing from it.
 
 Day 1 (email): "Kumar, congrats on the director role. I wanted to reach out because the BIOSECURE Act is changing how US biotechs pick CDMOs, and a lot of that decision-making happens quietly, often before it reaches the press. We track buying signals across life-sci and turn them into a ranked, enriched list of who's ready to talk. One we can run: US West Coast biotechs with Chinese-CDMO exposure, matched to recent CMC hires and funding, with contacts included. A live shortlist of who's likely weighing a new partner right now. Happy to share if of interest."
 
