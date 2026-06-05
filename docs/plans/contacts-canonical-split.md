@@ -245,3 +245,23 @@ a runnable instance) before the flip, or the cutover ships unverified.
 4. Phase 5 flip (rename + FK re-point + RPC repoint) — the one behaviour-changing step.
 5. Phase 6 app verification.
 6. Phase 7 contract.
+
+---
+
+# Execution status (2026-06-05) — Phases 0,4,5 DONE; 6 = your verification; 7 deferred
+
+**DONE (DB migrations applied LIVE + code committed on branch `feat/contacts-split-cutover`):**
+- **Phase 0** — archived the 1 LinkedIn-less contact (David Walling) + deleted its 5 orphan child rows. All 18 active contacts now have a linkedin_url.
+- **Phase 4a** — INSTEAD OF insert/update/delete triggers on the view. 16 routing + isolation checks pass in SQL.
+- **Phase 4b** — `import_upsert_contact` RPC (replaces the now-impossible `.upsert(onConflict)` on the view) + `apply_person_enrichment` RPC (enrichment writes canonical `people` directly, not per-user overrides). import-ingestion.ts + enrichment-pipeline.ts rewired. SQL-tested; tsc clean.
+- **Phase 5** — repointed 11 child FKs → user_contacts; rewrote list_user_accounts + refresh_contact_priority_scores to read user_contacts (byte-parity verified); **renamed contacts→contacts_legacy, contacts_compat→contacts**. Post-flip reads/writes/RLS verified in SQL.
+
+**Cost-win status:** the split now dedupes the canonical person; the refresh/re-enrichment path skips automatically because `profile_enrichment_status` is a shared `people` column. The *upstream contact-discovery* pre-pay check (don't call the provider at all when the linked person is already enriched) is a follow-up — it lives in the paid-API hot path and needs runtime testing, so it was NOT wired blind.
+
+**⚠ DB is migrated LIVE but the matching code is only on the branch.** Running `main` against the migrated DB will break import (it still calls the old upsert). The branch must be deployed/merged for the app to work.
+
+**Phase 6 (yours):** check out `feat/contacts-split-cutover`, run the app, and exercise: /leads/contacts (read + edit a field), /accounts, contact panel, import a CSV, run an enrichment refresh, HubSpot push/pull, archive/restore. Watch for PostgREST view-write quirks.
+
+**Rollback (if Phase 6 fails):** `ALTER VIEW public.contacts RENAME TO contacts_compat; ALTER TABLE public.contacts_legacy RENAME TO contacts; NOTIFY pgrst,'reload schema';` then redeploy main. NOTE: writes that landed in people/user_contacts during the soak window are not in contacts_legacy — re-sync or re-import if reverting after writes.
+
+**Phase 7 (deferred, per request):** drop contacts_legacy + dead columns. Left in place as the rollback target.
