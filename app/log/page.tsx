@@ -76,6 +76,23 @@ interface SignalLogEvent {
   limitValue: number | null;
 }
 
+// A single board-wide signal event, rendered as a plain sentence.
+interface SignalActivityItem {
+  id: string;
+  sentence: string;
+  scope: 'company' | 'contact';
+  signalKey: string;
+  companyId: string | null;
+  companyName: string;
+  contactId: string | null;
+  contactName: string;
+  eventAt: string | null;
+  observedAt: string | null;
+  evidence: string | null;
+  /** How many same-company same-type events collapsed into this row. */
+  count: number;
+}
+
 function signalEventStatus(event: SignalLogEvent): StatusLevel {
   const failedCount = event.failed ?? 0;
   const statusText = (event.status || '').toLowerCase();
@@ -512,6 +529,11 @@ export default function LogPage() {
   const [expandedSignalIds, setExpandedSignalIds] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<FilterType>('all');
   const [signalEvents, setSignalEvents] = useState<SignalLogEvent[]>([]);
+  // Board-wide signal-event activity ("Illumina filed a new patent"), distinct
+  // from the run diagnostics in signalEvents.
+  const [signalActivity, setSignalActivity] = useState<SignalActivityItem[]>([]);
+  const [loadingActivity, setLoadingActivity] = useState(true);
+  const [activitySectionOpen, setActivitySectionOpen] = useState<boolean>(true);
   const [syncSectionOpen, setSyncSectionOpen] = useState<boolean>(false);
   const [signalsSectionOpen, setSignalsSectionOpen] = useState<boolean>(false);
   const [outreachErrors, setOutreachErrors] = useState<Array<{
@@ -532,18 +554,25 @@ export default function LogPage() {
 
   const fetchEvents = useCallback(async () => {
     try {
-      const [syncRes, importRes, logRes, signalsRes, outreachFailRes] = await Promise.all([
+      const [syncRes, importRes, logRes, signalsRes, outreachFailRes, activityRes] = await Promise.all([
         fetch('/api/hubspot/sync-events'),
         fetch('/api/import-history'),
         fetch('/api/hubspot/sync-log'),
         fetch('/api/signals/run-history'),
         fetch('/api/outreach/failures'),
+        fetch('/api/signals/activity'),
       ]);
 
       if (outreachFailRes.ok) {
         const j = (await outreachFailRes.json()) as { failures?: typeof outreachErrors };
         setOutreachErrors(j.failures ?? []);
       }
+
+      if (activityRes.ok) {
+        const j = (await activityRes.json()) as { items?: SignalActivityItem[] };
+        setSignalActivity(j.items ?? []);
+      }
+      setLoadingActivity(false);
 
       const syncJson = syncRes.ok ? (await syncRes.json() as { data: SyncEvent[] }) : { data: [] };
       const importJson = importRes.ok ? (await importRes.json() as { batches: ImportBatch[] }) : { batches: [] };
@@ -869,6 +898,78 @@ export default function LogPage() {
               )}
             </div>
 
+            {/* ── Signal activity (board-wide signal events) ───────────── */}
+            <div className="mt-6 rounded-2xl border border-white/80 bg-white/45 p-3 shadow-[0_8px_24px_-16px_rgba(13,53,71,0.2)]">
+              <button
+                type="button"
+                onClick={() => setActivitySectionOpen((v) => !v)}
+                className="flex w-full items-center justify-between rounded-xl bg-white/60 px-3 py-2 text-left"
+              >
+                <div>
+                  <p className="text-[15px] font-semibold text-[#0d3547]">Signal activity</p>
+                  <p className="text-[11px] text-[#7d909a]">
+                    What we&apos;ve picked up across your accounts in the last 30 days.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-[#7d909a]">{signalActivity.length} items</span>
+                  <ChevronDown
+                    className={`h-4 w-4 text-[#7d909a] transition-transform ${activitySectionOpen ? 'rotate-180' : ''}`}
+                  />
+                </div>
+              </button>
+
+              {activitySectionOpen && (
+                <div className="mt-3">
+                  {loadingActivity ? (
+                    <div className="py-6 text-sm text-[#7d909a]">Loading signals…</div>
+                  ) : signalActivity.length === 0 ? (
+                    <div className="rounded-lg border border-white/80 bg-white/55 p-4 text-sm text-[#7d909a]">
+                      No signals picked up in the last 30 days.
+                    </div>
+                  ) : (
+                    <div className="overflow-hidden rounded-lg border border-white/80 bg-white/55">
+                      {signalActivity.map((item, i) => {
+                        const when = item.observedAt ?? item.eventAt;
+                        return (
+                          <div
+                            key={item.id}
+                            className={`flex items-center gap-2.5 px-3.5 py-2 ${
+                              i > 0 ? 'border-t border-[rgba(13,53,71,0.06)]' : ''
+                            }`}
+                          >
+                            <span
+                              className={`shrink-0 rounded px-1.5 py-px text-[10px] font-semibold tracking-wide border ${
+                                item.scope === 'company'
+                                  ? 'bg-arcova-teal/10 text-arcova-teal border-arcova-teal/20'
+                                  : 'bg-[#0d3547]/8 text-[#0d3547] border-[#0d3547]/12'
+                              }`}
+                            >
+                              {item.scope === 'company' ? 'Company' : 'Contact'}
+                            </span>
+                            <span className="flex-1 min-w-0 truncate text-[12.5px] text-[#0d3547]">
+                              {item.sentence}
+                              {item.count > 1 && (
+                                <span className="ml-1.5 text-[11px] font-medium text-[#7d909a]">
+                                  ×{item.count}
+                                </span>
+                              )}
+                            </span>
+                            {when && (
+                              <span className="shrink-0 text-[10.5px] text-[#b6c2c8]">
+                                {relativeTime(when)}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* ── Signal runs (monitor diagnostics) ─────────────────────── */}
             <div className="mt-6 rounded-2xl border border-white/80 bg-white/45 p-3 shadow-[0_8px_24px_-16px_rgba(13,53,71,0.2)]">
               <button
                 type="button"
@@ -876,7 +977,10 @@ export default function LogPage() {
                 className="flex w-full items-center justify-between rounded-xl bg-white/60 px-3 py-2 text-left"
               >
                 <div>
-                  <p className="text-[15px] font-semibold text-[#0d3547]">Signals log</p>
+                  <p className="text-[15px] font-semibold text-[#0d3547]">Signal runs</p>
+                  <p className="text-[11px] text-[#7d909a]">
+                    Monitor runs — how many records each signal pull processed.
+                  </p>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] text-[#7d909a]">{signalEvents.length} items</span>
