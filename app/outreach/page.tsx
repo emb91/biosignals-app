@@ -85,11 +85,6 @@ interface Sequence {
   contact: Contact | null;
 }
 
-interface LemlistCampaign {
-  _id: string;
-  name: string;
-}
-
 type StatusFilter = 'all' | 'draft' | 'sent' | 'replied' | 'failed';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -281,13 +276,8 @@ export default function OutreachPage() {
   // Dispatch modal
   const [dispatchOpen, setDispatchOpen] = useState(false);
   const [dispatchRowIds, setDispatchRowIds] = useState<string[]>([]);
-  const [campaigns, setCampaigns] = useState<LemlistCampaign[] | null>(null);
-  const [campaignsLoading, setCampaignsLoading] = useState(false);
-  const [selectedCampaignId, setSelectedCampaignId] = useState<string>('');
   const [dispatching, setDispatching] = useState(false);
   const [dispatchError, setDispatchError] = useState<string | null>(null);
-  const [provisioning, setProvisioning] = useState(false);
-  const [provisionMessage, setProvisionMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!loading && !user) router.push('/login');
@@ -426,68 +416,24 @@ export default function OutreachPage() {
     }
   };
 
-  const ensureArcovaTemplate = async () => {
-    setProvisioning(true);
-    setProvisionMessage(null);
-    setDispatchError(null);
-    try {
-      const res = await fetch('/api/outreach/lemlist/ensure-template', { method: 'POST' });
-      const json = (await res.json().catch(() => ({}))) as {
-        campaignId?: string;
-        created?: boolean;
-        error?: string;
-      };
-      if (!res.ok || !json.campaignId) {
-        setDispatchError(json.error ?? 'Could not provision template');
-        return;
-      }
-      const campRes = await fetch('/api/outreach/lemlist/campaigns');
-      if (campRes.ok) {
-        const cj = (await campRes.json()) as { campaigns: LemlistCampaign[] };
-        setCampaigns(cj.campaigns ?? []);
-      }
-      setSelectedCampaignId(json.campaignId);
-      setProvisionMessage(
-        json.created
-          ? 'Arcova Multichannel template created in lemlist. Selected.'
-          : 'Arcova template already exists. Selected.',
-      );
-    } finally {
-      setProvisioning(false);
-    }
-  };
-
-  const openDispatch = async (ids: string[]) => {
+  const openDispatch = (ids: string[]) => {
     if (ids.length === 0) return;
     setDispatchRowIds(ids);
     setDispatchOpen(true);
     setDispatchError(null);
-    setSelectedCampaignId('');
-    setCampaignsLoading(true);
-    try {
-      const res = await fetch('/api/outreach/lemlist/campaigns');
-      if (!res.ok) {
-        const j = (await res.json().catch(() => ({}))) as { error?: string };
-        setDispatchError(j.error ?? 'Could not load campaigns');
-        setCampaigns([]);
-      } else {
-        const json = (await res.json()) as { campaigns: LemlistCampaign[] };
-        setCampaigns(json.campaigns ?? []);
-      }
-    } finally {
-      setCampaignsLoading(false);
-    }
   };
 
   const doDispatch = async () => {
-    if (!selectedCampaignId || dispatchRowIds.length === 0) return;
+    if (dispatchRowIds.length === 0) return;
     setDispatching(true);
     setDispatchError(null);
     try {
+      // No campaign choice — dispatch always targets the auto-ensured Arcova
+      // template (the server creates it on first send if it doesn't exist).
       const res = await fetch('/api/outreach/lemlist/dispatch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sequenceIds: dispatchRowIds, campaignId: selectedCampaignId }),
+        body: JSON.stringify({ sequenceIds: dispatchRowIds }),
       });
       const json = (await res.json().catch(() => ({}))) as {
         results?: Array<{ id: string; ok: boolean; error?: string }>;
@@ -1125,8 +1071,9 @@ export default function OutreachPage() {
               <div>
                 <h3 className="text-lg font-semibold text-[#0d3547]">Send to lemlist</h3>
                 <p className="mt-1 text-sm text-[#7d909a]">
-                  Pick the lemlist campaign that will run this sequence. Your contacts will be added
-                  as leads with personalized custom vars.
+                  {dispatchRowIds.length} sequence{dispatchRowIds.length === 1 ? '' : 's'} will run
+                  through the Arcova multichannel template. Your contacts are added as leads with
+                  personalized custom vars.
                 </p>
               </div>
               <button
@@ -1139,59 +1086,6 @@ export default function OutreachPage() {
                 <X className="h-4 w-4" />
               </button>
             </div>
-
-            <div className="mt-4">
-              <label className="block text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">
-                Campaign
-              </label>
-              {campaignsLoading ? (
-                <div className="mt-2 flex items-center gap-2 text-[12.5px] text-[#7d909a]">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  Loading lemlist campaigns…
-                </div>
-              ) : (
-                <>
-                  <select
-                    value={selectedCampaignId}
-                    onChange={(e) => setSelectedCampaignId(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-[rgba(13,53,71,0.15)] bg-white px-3 py-2 text-[13px] text-[#0d3547] focus:border-arcova-teal focus:outline-none"
-                  >
-                    <option value="">
-                      {campaigns && campaigns.length === 0
-                        ? 'No campaigns yet — create one below'
-                        : 'Pick a campaign…'}
-                    </option>
-                    {(campaigns ?? []).map((c) => (
-                      <option key={c._id} value={c._id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-
-                  <div className="mt-2 flex items-center justify-between gap-2">
-                    <p className="text-[11px] text-[#7d909a]">
-                      Or use the Arcova 7-step multichannel template — we&apos;ll create it in lemlist if it doesn&apos;t exist.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => void ensureArcovaTemplate()}
-                      disabled={provisioning}
-                      className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-arcova-teal/40 bg-arcova-teal/5 px-2.5 py-1 text-[11.5px] font-semibold text-arcova-teal hover:bg-arcova-teal/10 disabled:opacity-60"
-                    >
-                      {provisioning && <Loader2 className="h-3 w-3 animate-spin" />}
-                      Use Arcova default
-                    </button>
-                  </div>
-                  {provisionMessage && (
-                    <p className="mt-1 text-[11px] text-emerald-700">{provisionMessage}</p>
-                  )}
-                </>
-              )}
-            </div>
-
-            <p className="mt-3 text-[11px] text-[#7d909a]">
-              Dispatching {dispatchRowIds.length} sequence{dispatchRowIds.length === 1 ? '' : 's'}.
-            </p>
 
             {dispatchError && (
               <p className="mt-3 text-[12.5px] text-red-500">{dispatchError}</p>
@@ -1209,11 +1103,11 @@ export default function OutreachPage() {
               <button
                 type="button"
                 onClick={() => void doDispatch()}
-                disabled={dispatching || !selectedCampaignId}
+                disabled={dispatching}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-navy px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-[#0d3547] disabled:opacity-60"
               >
                 {dispatching && <Loader2 className="h-3 w-3 animate-spin" />}
-                {dispatching ? 'Sending…' : 'Send'}
+                {dispatching ? 'Sending…' : `Send ${dispatchRowIds.length}`}
               </button>
             </div>
           </div>
