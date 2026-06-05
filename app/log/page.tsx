@@ -73,6 +73,8 @@ interface SignalActivityItem {
   contactName: string;
   eventAt: string | null;
   observedAt: string | null;
+  /** The date to show = the signal's own event date (when the patent was filed). */
+  displayAt: string | null;
   evidence: string | null;
   /** How many same-company same-type events collapsed into this row. */
   count: number;
@@ -95,6 +97,18 @@ function absoluteTime(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
     dateStyle: 'medium',
     timeStyle: 'short',
+  });
+}
+
+// Compact signal date, e.g. "15 Apr" (current year) or "15 Apr 2025".
+function signalDateLabel(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    ...(sameYear ? {} : { year: 'numeric' }),
   });
 }
 
@@ -801,7 +815,7 @@ export default function LogPage() {
                 <div>
                   <p className="text-[15px] font-semibold text-[#0d3547]">Signals log</p>
                   <p className="text-[11px] text-[#7d909a]">
-                    What we&apos;ve picked up across your accounts in the last 30 days.
+                    What&apos;s happened across your accounts in the last 30 days, by the date each signal occurred.
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -823,7 +837,9 @@ export default function LogPage() {
                   ) : (
                     <div className="overflow-hidden rounded-lg border border-white/80 bg-white/55">
                       {signalActivity.map((item, i) => {
-                        const when = item.observedAt ?? item.eventAt;
+                        // The signal's own event date (when the patent was filed),
+                        // falling back to ingest date only when there's no event date.
+                        const when = item.displayAt ?? item.eventAt ?? item.observedAt;
                         return (
                           <div
                             key={item.id}
@@ -849,8 +865,11 @@ export default function LogPage() {
                               )}
                             </span>
                             {when && (
-                              <span className="shrink-0 text-[10.5px] text-[#b6c2c8]">
-                                {relativeTime(when)}
+                              <span
+                                className="shrink-0 text-[10.5px] text-[#b6c2c8]"
+                                title={absoluteTime(when)}
+                              >
+                                {signalDateLabel(when)}
                               </span>
                             )}
                           </div>
