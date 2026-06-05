@@ -85,9 +85,11 @@ function parseSequence(text: string): Message[] {
     .map((m, i): Message | null => {
       if (!m || typeof m !== 'object') return null;
       const o = m as Record<string, unknown>;
-      const dayOffset = typeof o.day_offset === 'number' && Number.isFinite(o.day_offset)
-        ? Math.floor(o.day_offset)
-        : DAY_OFFSETS[i] ?? i * 4;
+      // Cadence is owned by the lemlist template, NOT the LLM — pin each step to
+      // its canonical day_offset by position so a stray model value can't push a
+      // step off-cadence and make the stage endpoint's channel map (keyed on the
+      // exact day) misfire to email. The model's day_offset is ignored.
+      const dayOffset = DAY_OFFSETS[i] ?? DAY_OFFSETS[DAY_OFFSETS.length - 1];
       const subject = typeof o.subject === 'string' ? scrubAiTropes(o.subject.trim()) : '';
       const body = typeof o.body === 'string' ? scrubAiTropes(o.body.trim()) : '';
       if (!subject || !body) return null;
@@ -444,16 +446,17 @@ CONTEXT:
 ${contextBlock}
 
 ═══ OUTPUT ═══
-Strict JSON, no prose, no markdown fences:
+Strict JSON, no prose, no markdown fences. EXACTLY 6 messages on these exact
+day_offsets — Day 7 is the LinkedIn invite (a pure action, no copy) and is NOT
+in this list; it gets injected automatically:
 {
   "messages": [
-    { "day_offset": 0,  "subject": "...", "body": "..." },
-    { "day_offset": 3,  "subject": "...", "body": "..." },
-    { "day_offset": 7,  "subject": "...", "body": "..." },
+    { "day_offset": 1,  "subject": "...", "body": "..." },
+    { "day_offset": 4,  "subject": "...", "body": "..." },
+    { "day_offset": 8,  "subject": "...", "body": "..." },
     { "day_offset": 11, "subject": "...", "body": "..." },
-    { "day_offset": 15, "subject": "...", "body": "..." },
-    { "day_offset": 21, "subject": "...", "body": "..." },
-    { "day_offset": 28, "subject": "...", "body": "..." }
+    { "day_offset": 14, "subject": "...", "body": "..." },
+    { "day_offset": 21, "subject": "...", "body": "..." }
   ]
 }`;
 }
