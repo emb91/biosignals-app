@@ -347,7 +347,7 @@ export default function SettingsPage() {
                       ? toneGuidance.trim()
                         ? `"${toneGuidance.trim().slice(0, 120)}${toneGuidance.trim().length > 120 ? '…' : ''}"`
                         : `${toneExamples.length} example${toneExamples.length === 1 ? '' : 's'} saved.`
-                      : 'Not set yet — generated copy uses Arcova\'s default voice. Add guidance and examples to make it yours.'}
+                      : 'Add guidance and examples to set your tone of voice for outreach. Otherwise generated copy will use Arcova\'s default voice.'}
                   </p>
                   {toneConfigured && toneExamples.length > 0 && (
                     <p className="mt-0.5 text-[12px] text-[#b6c2c8]">
