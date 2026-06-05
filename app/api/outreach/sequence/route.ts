@@ -43,6 +43,9 @@ type Message = {
   day_offset: number;
   subject: string;
   body: string;
+  /** Display channel so the pre-stage preview is correct. Days 8 + 14 are
+   *  LinkedIn messages; the stage endpoint also assigns this per day. */
+  channel: 'email' | 'linkedin';
 };
 
 function tolerantJsonParse(text: string): unknown {
@@ -95,8 +98,14 @@ function parseSequence(text: string): Message[] {
       const dayOffset = DAY_OFFSETS[i] ?? DAY_OFFSETS[DAY_OFFSETS.length - 1];
       const subject = typeof o.subject === 'string' ? scrubAiTropes(o.subject.trim()) : '';
       const body = typeof o.body === 'string' ? scrubAiTropes(o.body.trim()) : '';
-      if (!subject || !body) return null;
-      return { day_offset: dayOffset, subject, body };
+      // Only the BODY is required. Day 8 + Day 14 are LinkedIn messages with an
+      // empty subject by design — requiring a subject silently dropped them,
+      // leaving only the 4 email steps. The stage endpoint assigns the channel
+      // per day (8/14 → LinkedIn), so an empty subject is expected, not invalid.
+      if (!body) return null;
+      const channel: 'email' | 'linkedin' =
+        dayOffset === 8 || dayOffset === 14 ? 'linkedin' : 'email';
+      return { day_offset: dayOffset, subject, body, channel };
     })
     .filter((v): v is Message => v !== null)
     .slice(0, 6);
