@@ -61,21 +61,6 @@ interface ImportBatch {
   created_at: string;
 }
 
-interface SignalLogEvent {
-  id: string;
-  signalKey: string;
-  scope: 'company' | 'contact';
-  runner: 'clinical_trials' | 'external_contact' | 'external_company' | string;
-  status: 'success' | 'failed' | string;
-  createdAt: string;
-  processed: number | null;
-  failed: number | null;
-  skippedRunning: number | null;
-  companyIds: string[];
-  contactIds: string[];
-  limitValue: number | null;
-}
-
 // A single board-wide signal event, rendered as a plain sentence.
 interface SignalActivityItem {
   id: string;
@@ -91,82 +76,6 @@ interface SignalActivityItem {
   evidence: string | null;
   /** How many same-company same-type events collapsed into this row. */
   count: number;
-}
-
-function signalEventStatus(event: SignalLogEvent): StatusLevel {
-  const failedCount = event.failed ?? 0;
-  const statusText = (event.status || '').toLowerCase();
-  if (statusText === 'failed' || failedCount > 0) return 'warning';
-  return 'done';
-}
-
-function SignalEventCard({
-  event,
-  collapsed,
-  onToggle,
-}: {
-  event: SignalLogEvent;
-  collapsed: boolean;
-  onToggle: () => void;
-}) {
-  const status = signalEventStatus(event);
-  return (
-    <div
-      className={`rounded-lg border border-white/80 bg-white/55 backdrop-blur-xl ${
-        collapsed ? 'shadow-[0_2px_8px_-4px_rgba(13,53,71,0.1)]' : 'shadow-[0_8px_24px_-12px_rgba(13,53,71,0.15)]'
-      }`}
-    >
-      <div
-        className={`flex items-center gap-2.5 px-3.5 py-1.5 cursor-pointer transition-colors hover:bg-white/40 ${
-          !collapsed ? 'border-b border-[rgba(13,53,71,0.07)]' : ''
-        }`}
-        onClick={onToggle}
-      >
-        <span
-          className={`shrink-0 rounded px-1.5 py-px text-[10px] font-semibold tracking-wide border ${
-            event.scope === 'company'
-              ? 'bg-arcova-teal/10 text-arcova-teal border-arcova-teal/20'
-              : 'bg-[#0d3547]/8 text-[#0d3547] border-[#0d3547]/12'
-          }`}
-        >
-          {event.scope === 'company' ? 'Company' : 'Contact'}
-        </span>
-        <span className="flex-1 min-w-0 truncate text-[12.5px] font-medium text-[#0d3547]">
-          {formatSignalTypeLabel(event.signalKey)}
-        </span>
-        {collapsed && (
-          <span className="hidden sm:block shrink-0 text-[11px] text-[#7d909a]">
-            {formatSignalTypeLabel(event.runner)} · {event.processed ?? 0} processed
-          </span>
-        )}
-        <span className="shrink-0 text-[10.5px] text-[#b6c2c8]">{relativeTime(event.createdAt)}</span>
-        <span className={`shrink-0 rounded px-1.5 py-px text-[10px] font-semibold ${STATUS_PILL[status]}`}>
-          {STATUS_LABEL[status]}
-        </span>
-        <ChevronDown
-          className={`h-3 w-3 shrink-0 text-[#b6c2c8] transition-transform duration-200 ${!collapsed ? 'rotate-180' : ''}`}
-        />
-      </div>
-
-      {!collapsed && (
-        <div className="px-3.5 py-2.5 space-y-2">
-          <div className="flex flex-wrap gap-x-5 gap-y-1">
-            <InlineStat label="Processed" value={event.processed} />
-            <InlineStat label="Failed" value={event.failed} highlight />
-            <InlineStat label="Skipped running" value={event.skippedRunning} />
-            <InlineStat label="Limit" value={event.limitValue} />
-          </div>
-          <p className="text-[11px] text-[#7d909a]">
-            Runner: {formatSignalTypeLabel(event.runner)} · Status: {STATUS_LABEL[status]}
-          </p>
-          <p className="text-[11px] text-[#7d909a]">
-            Scope IDs: {event.scope === 'company' ? event.companyIds.length : event.contactIds.length}
-          </p>
-          <p className="text-[11px] text-[#b6c2c8]">{absoluteTime(event.createdAt)}</p>
-        </div>
-      )}
-    </div>
-  );
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -524,18 +433,13 @@ export default function LogPage() {
   const router = useRouter();
   const [events, setEvents] = useState<SyncEvent[]>([]);
   const [loadingData, setLoadingData] = useState(true);
-  const [loadingSignals, setLoadingSignals] = useState(true);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
-  const [expandedSignalIds, setExpandedSignalIds] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<FilterType>('all');
-  const [signalEvents, setSignalEvents] = useState<SignalLogEvent[]>([]);
-  // Board-wide signal-event activity ("Illumina filed a new patent"), distinct
-  // from the run diagnostics in signalEvents.
+  // Board-wide signal-event activity ("Illumina filed a new patent").
   const [signalActivity, setSignalActivity] = useState<SignalActivityItem[]>([]);
   const [loadingActivity, setLoadingActivity] = useState(true);
   const [activitySectionOpen, setActivitySectionOpen] = useState<boolean>(true);
   const [syncSectionOpen, setSyncSectionOpen] = useState<boolean>(false);
-  const [signalsSectionOpen, setSignalsSectionOpen] = useState<boolean>(false);
   const [outreachErrors, setOutreachErrors] = useState<Array<{
     id: string;
     contact_name: string;
@@ -554,11 +458,10 @@ export default function LogPage() {
 
   const fetchEvents = useCallback(async () => {
     try {
-      const [syncRes, importRes, logRes, signalsRes, outreachFailRes, activityRes] = await Promise.all([
+      const [syncRes, importRes, logRes, outreachFailRes, activityRes] = await Promise.all([
         fetch('/api/hubspot/sync-events'),
         fetch('/api/import-history'),
         fetch('/api/hubspot/sync-log'),
-        fetch('/api/signals/run-history'),
         fetch('/api/outreach/failures'),
         fetch('/api/signals/activity'),
       ]);
@@ -577,9 +480,6 @@ export default function LogPage() {
       const syncJson = syncRes.ok ? (await syncRes.json() as { data: SyncEvent[] }) : { data: [] };
       const importJson = importRes.ok ? (await importRes.json() as { batches: ImportBatch[] }) : { batches: [] };
       const logJson = logRes.ok ? (await logRes.json() as { data: { synced_at: string | null; contacts_synced: number | null; contacts_errors: number | null; contacts_skipped: number | null; skipped_contacts: unknown[]; last_error_details: string[]; last_pull_batch: { processed_rows: number } | null } | null }) : { data: null };
-      const signalsJson = signalsRes.ok
-        ? (await signalsRes.json() as { data: Array<Record<string, unknown>> })
-        : { data: [] as Array<Record<string, unknown>> };
 
       const syncEvents: SyncEvent[] = (syncJson.data ?? []).map((e) => ({
         ...e,
@@ -680,29 +580,8 @@ export default function LogPage() {
 
       const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
       setEvents(merged.filter((e) => new Date(e.created_at).getTime() >= cutoff));
-      setSignalEvents(
-        (signalsJson.data ?? []).map((row) => ({
-          id: String(row.id ?? ''),
-          signalKey: String(row.signal_key ?? 'unknown_signal'),
-          scope: row.scope === 'contact' ? 'contact' : 'company',
-          runner: String(row.runner ?? 'unknown_runner'),
-          status: String(row.status ?? 'unknown'),
-          createdAt: String(row.created_at ?? new Date().toISOString()),
-          processed: typeof row.processed === 'number' ? row.processed : null,
-          failed: typeof row.failed === 'number' ? row.failed : null,
-          skippedRunning: typeof row.skipped_running === 'number' ? row.skipped_running : null,
-          companyIds: Array.isArray(row.company_ids)
-            ? row.company_ids.filter((v): v is string => typeof v === 'string')
-            : [],
-          contactIds: Array.isArray(row.contact_ids)
-            ? row.contact_ids.filter((v): v is string => typeof v === 'string')
-            : [],
-          limitValue: typeof row.limit_value === 'number' ? row.limit_value : null,
-        })),
-      );
     } finally {
       setLoadingData(false);
-      setLoadingSignals(false);
     }
   }, []);
 
@@ -712,14 +591,6 @@ export default function LogPage() {
 
   const toggle = (id: string) =>
     setExpandedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-
-  const toggleSignal = (id: string) =>
-    setExpandedSignalIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -920,7 +791,7 @@ export default function LogPage() {
               )}
             </div>
 
-            {/* ── Signal activity (board-wide signal events) ───────────── */}
+            {/* ── Signals log (board-wide signal events) ───────────────── */}
             <div className="mt-6 rounded-2xl border border-white/80 bg-white/45 p-3 shadow-[0_8px_24px_-16px_rgba(13,53,71,0.2)]">
               <button
                 type="button"
@@ -928,7 +799,7 @@ export default function LogPage() {
                 className="flex w-full items-center justify-between rounded-xl bg-white/60 px-3 py-2 text-left"
               >
                 <div>
-                  <p className="text-[15px] font-semibold text-[#0d3547]">Signal activity</p>
+                  <p className="text-[15px] font-semibold text-[#0d3547]">Signals log</p>
                   <p className="text-[11px] text-[#7d909a]">
                     What we&apos;ve picked up across your accounts in the last 30 days.
                   </p>
@@ -991,50 +862,6 @@ export default function LogPage() {
               )}
             </div>
 
-            {/* ── Signal runs (monitor diagnostics) ─────────────────────── */}
-            <div className="mt-6 rounded-2xl border border-white/80 bg-white/45 p-3 shadow-[0_8px_24px_-16px_rgba(13,53,71,0.2)]">
-              <button
-                type="button"
-                onClick={() => setSignalsSectionOpen((v) => !v)}
-                className="flex w-full items-center justify-between rounded-xl bg-white/60 px-3 py-2 text-left"
-              >
-                <div>
-                  <p className="text-[15px] font-semibold text-[#0d3547]">Signal runs</p>
-                  <p className="text-[11px] text-[#7d909a]">
-                    Monitor runs — how many records each signal pull processed.
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-[#7d909a]">{signalEvents.length} items</span>
-                  <ChevronDown
-                    className={`h-4 w-4 text-[#7d909a] transition-transform ${signalsSectionOpen ? 'rotate-180' : ''}`}
-                  />
-                </div>
-              </button>
-
-              {signalsSectionOpen && (
-                <div className="mt-3">
-                  {loadingSignals ? (
-                    <div className="py-6 text-sm text-[#7d909a]">Loading signals...</div>
-                  ) : signalEvents.length === 0 ? (
-                    <div className="rounded-lg border border-white/80 bg-white/55 p-4 text-sm text-[#7d909a]">
-                      No signal events yet.
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {signalEvents.map((event) => (
-                        <SignalEventCard
-                          key={event.id}
-                          event={event}
-                          collapsed={!expandedSignalIds.has(event.id)}
-                          onToggle={() => toggleSignal(event.id)}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
           </div>
         </div>
 
