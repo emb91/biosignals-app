@@ -9,8 +9,11 @@
  * Does NOT persist — returns the messages so the rep can edit them in the
  * UI before deciding to stage. Persistence happens at /api/outreach/lemlist/stage.
  *
- * Input:  { contactId, anchorHookText, anchorSignalEventId? }
- * Output: { messages: Array<{ day_offset, subject, body }> }
+ * Input:  { contactId, userAngle?, manualOverride? }
+ * Output: { messages: Array<{ day_offset, subject, body, channel }> }
+ *
+ * Signals are fetched server-side (all of the contact's recent ones) and passed
+ * as background for the model's silent relevance reasoning — never recited in copy.
  */
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
@@ -19,6 +22,7 @@ import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { effectiveReadiness, getActionFromScores } from '@/lib/lead-action';
 import { personaFunctionNames } from '@/lib/persona-functions';
 import { fetchOutreachTone, renderToneBlock } from '@/lib/outreach-tone';
+import { fetchContactSignals, renderSignalContext, type ContactSignal } from '@/lib/outreach-signals';
 
 // Matches lemlist's default multichannel template — but the generator only
 // writes COPY for the 6 message steps; the Day 7 LinkedIn invite is a pure
@@ -124,17 +128,19 @@ export async function POST(request: Request) {
 
     const body = (await request.json().catch(() => ({}))) as {
       contactId?: unknown;
-      anchorHookText?: unknown;
-      anchorSignalEventId?: unknown;
-      anchorSignalType?: unknown;
-      anchorIsContactLevel?: unknown;
+      userAngle?: unknown;
+      manualOverride?: unknown;
     };
     const contactId = typeof body.contactId === 'string' ? body.contactId.trim() : '';
-    const anchorHookText = typeof body.anchorHookText === 'string' ? body.anchorHookText.trim() : '';
-    const anchorSignalType = typeof body.anchorSignalType === 'string' ? body.anchorSignalType.trim() : null;
-    const anchorIsContactLevel = body.anchorIsContactLevel === true;
-    if (!contactId || !anchorHookText) {
-      return NextResponse.json({ error: 'contactId and anchorHookText required' }, { status: 400 });
+    // Optional deliberate rep steer (e.g. "I'm launching product X"). Unlike a
+    // signal, this IS woven into the copy.
+    const userAngle = typeof body.userAngle === 'string' ? body.userAngle.trim().slice(0, 600) : '';
+    // Manual override: lets the rep force-generate for a contact that isn't in
+    // the reach-out state (low readiness). The button is always clickable; the
+    // override is the human deciding to reach out anyway.
+    const manualOverride = body.manualOverride === true;
+    if (!contactId) {
+      return NextResponse.json({ error: 'contactId required' }, { status: 400 });
     }
 
     // Reload the same context as /hooks so the sequence is grounded in
@@ -190,7 +196,7 @@ export async function POST(request: Request) {
         effectiveReadiness(companyReadiness, contactReadiness),
         null,
       );
-      if (action !== 'reach_out') {
+      if (action !== 'reach_out' && !manualOverride) {
         return NextResponse.json(
           {
             error: 'Contact is not in the reach-out state — sequence generation is gated on fit + readiness.',
@@ -249,12 +255,17 @@ export async function POST(request: Request) {
       buyingGroupFunctions = [...fnSet];
     }
 
+    // All of the contact's (+ company's) recent signals — passed as background
+    // for the model's silent relevance/angle reasoning, never recited (see the
+    // signals briefing + lib/outreach-signals).
+    const contactCompanyId = (contact as { company_id?: string | null }).company_id ?? null;
+    const signals = await fetchContactSignals(supabase, user.id, contactId, contactCompanyId);
+
     const prompt = buildPrompt({
       contact: contact as Record<string, unknown>,
       selfCompany: (selfCompany ?? null) as Record<string, unknown> | null,
-      anchorHookText,
-      anchorSignalType,
-      anchorIsContactLevel,
+      signals,
+      userAngle,
       buyingGroupFunctions,
       bookingLink,
       toneBlock,
@@ -272,7 +283,12 @@ export async function POST(request: Request) {
       route: 'app/api/outreach/sequence',
       model: completion.model,
       usage: completion.usage,
-      metadata: { contact_id: contactId, hook: anchorHookText.slice(0, 120) },
+      metadata: {
+        contact_id: contactId,
+        signals: signals.length,
+        manual_override: manualOverride,
+        has_angle: userAngle.length > 0,
+      },
     });
 
     const messages = parseSequence(completion.text);
@@ -292,9 +308,10 @@ export async function POST(request: Request) {
 function buildPrompt(opts: {
   contact: Record<string, unknown>;
   selfCompany: Record<string, unknown> | null;
-  anchorHookText: string;
-  anchorSignalType: string | null;
-  anchorIsContactLevel: boolean;
+  /** All the contact's recent signals — background for relevance reasoning, never recited. */
+  signals: ContactSignal[];
+  /** Optional deliberate rep steer — woven INTO the copy (unlike signals). */
+  userAngle: string;
   buyingGroupFunctions: string[];
   /** Settings CTA URL — empty string omits all booking-link instructions. */
   bookingLink: string;
@@ -377,26 +394,18 @@ function buildPrompt(opts: {
     2,
   );
 
-  const signalScope = opts.anchorIsContactLevel ? 'CONTACT-LEVEL' : 'COMPANY-LEVEL';
-
-  // Two very different framings depending on signal scope:
-  //  • Contact-level (job change, promotion, new role): about ${firstName} personally — fine to reference directly.
-  //  • Company-level (hiring, funding, patents, trials, M&A): about ${contactCompanyName}, which is ${firstName}'s own
-  //    employer. ${firstName} already knows. Treat as TIMING context for the rep ("this is why I'm reaching out now"),
-  //    not message body content ("did you know your company is hiring?"). The body should talk about ${firstName}'s
-  //    function and what they need, not summarise their employer's news back at them.
+  const signalContext = renderSignalContext(opts.signals);
   const buyingGroupHint = opts.buyingGroupFunctions.length
     ? `The functions you actually sell into (the buying group) are: ${opts.buyingGroupFunctions.join(', ')}. `
     : '';
-  const scopeRules = opts.anchorIsContactLevel
-    ? `The anchor signal is about ${firstName} personally (a role change, a paper they authored, etc.). You MAY reference it directly in message 1 as a brief, specific acknowledgment — warm, not sycophantic. It's still your TIMING, not an obligation: if a sharper opener exists, use that instead.`
-    : `The anchor signal is about ${contactCompanyName || "the contact's employer"} — ${firstName}'s own company — so ${firstName} ALREADY KNOWS it. Apply TWO judgments before you use it:
+  // Relevance rule applied to the SIGNALS list — judged against what the seller
+  // sells, never recited back to the contact.
+  const relevanceRule = `${buyingGroupHint}${firstName} is on the commercial / decision side, so they care about their company's TRAJECTORY — funding, approvals, expansion, hiring surges, new programs, deals, waves of publications or patents all signal a company scaling or commercialising, a buying-relevant moment EVEN WHEN the signal originates in science, regulatory, clinical or manufacturing. Look across ALL the signals listed above and pick the one (if any) that genuinely connects to what ${sellerName} sells and to ${firstName}'s world; let it quietly shape your ANGLE or which concrete offer you lead with. THE DETAIL MATTERS — a "new genomics-method paper" points at a tools buyer, an "NGS patient trial" points at a CRO; only the specifics tell you which thread fits this seller. NEVER paraphrase ${firstName}'s own company news back at them as a tip ("I saw ${contactCompanyName} is hiring"). If nothing connects, ignore the signals entirely and write to ${firstName}'s role and the company's overall momentum.`;
+  // Optional deliberate rep steer — unlike signals, this IS woven into the copy.
+  const repAngle = opts.userAngle
+    ? `\n═══ THE REP'S ANGLE (use this) ═══\nThe rep specifically wants this sequence to lead with / work in: "${opts.userAngle}"\nUnlike the signals above, this is a deliberate human steer, so weave it in naturally where it fits (it need not appear in every message, but it should shape the overall thrust). Keep it honest and grounded in what ${sellerName} actually offers.\n`
+    : '';
 
-  (1) RELEVANCE. ${buyingGroupHint}${firstName} is on the commercial / decision side, so they care about their company's TRAJECTORY — funding, approvals, expansion, hiring surges, new programs, deals, a wave of publications or patents all signal a company scaling or commercialising, which is a buying-relevant moment EVEN WHEN the signal originates in science, regulatory, clinical, or manufacturing. Do NOT discard the anchor just because it didn't come from ${firstName}'s own department. The only true noise is a trivial, isolated event in an unrelated function with no strategic read (e.g. a single HR hire). If the anchor genuinely doesn't connect to ${firstName}'s world, open on their role and the company's overall momentum instead.
-
-  (2) THE SIGNAL IS YOUR TIMING, NOT AUTOMATICALLY YOUR OPENER. It's the private reason you're reaching out now; it does NOT have to appear in any message. Open with whatever genuinely lands for ${firstName} — usually their function and the problems that hit their desk. You MAY open on the signal ONLY when it reads as a natural, relevant observation AND you have nothing sharper to lead with. Some signals (e.g. a patent filing) rarely make a good opener; a relevant hiring surge can. Use common sense grounded in the company analysis. NEVER paraphrase ${firstName}'s own company news back at them as if it's a tip ("I saw ${contactCompanyName} is hiring", "noticed your team is expanding"). If you do reference the company moment, it works best later (around day 21) as a rep observation ("watching what ${contactCompanyName} is doing in X, customers in similar spots have found Y useful").`;
-
-  const signalCategories = opts.anchorSignalType || 'unspecified';
   const hasBooking = opts.bookingLink.trim().length > 0;
 
   // Option 2: booking link comes from the user's Settings CTA URL. When unset,
@@ -416,18 +425,18 @@ function buildPrompt(opts: {
 
   return `You are a sales rep at ${sellerName}, writing a 7-step outreach sequence to ${firstName} (${opts.contact.job_title ?? 'unknown title'}) at ${contactCompanyName || 'their company'}. You write the way a friendly, slightly informal founder types a quick note to a peer. Not like marketing. Not like AI.
 
-SIGNAL CONTEXT (optional, mostly inert):
-${signalCategories}  ← the category that triggered this contact's enrolment. Raw detail is in the anchor below if you ever want to look: "${opts.anchorHookText}"
-This is background only. It explains WHY this account was picked and timed, nothing more. Do NOT reference it in the copy and do not treat it as something the contact wants to hear about. At most, a category may quietly nudge which angle or offer feels most relevant. The default is to ignore it and write to the persona.
-
+SIGNAL CONTEXT (background only — choose who & when, NEVER what to say):
+These are the account's recent detected signals. They explain WHY this account was picked and timed, nothing more. Read the detail, but do NOT reference any of it in the copy and never treat it as something the contact wants to hear about. At most, a signal may quietly nudge which angle or offer feels most relevant (the detail tells you which seller it fits). Default: ignore them and write to the persona.
+${signalContext}
+${repAngle}
 ═══ STEP 1 — THINK BEFORE WRITING ═══
 Do this reasoning silently, then use it to shape every message. Do not output the reasoning.
 
 1. WHAT FUNCTION DOES ${firstName} WORK IN?
    Use the CONTEXT (title, seniority, business_area, bio). What do they own day-to-day? What are they measured on? What problems land on their desk versus someone else's?
 
-2. DOES THE SIGNAL CATEGORY ADD ANYTHING? (usually no)
-   ${scopeRules}
+2. DO ANY OF THE SIGNALS ADD ANYTHING? (usually no)
+   ${relevanceRule}
    The signal category is qualification context only — it tells us this account has budget or momentum, which is why it was enrolled now. It is almost never worth surfacing. Never recite the contact's own company news back to them (that they filed a patent, published a paper, are hiring); it's creepy and generic. Only let a category subtly shape your angle or which offer you lead with if it genuinely helps. Otherwise write to the persona and ignore the signal entirely.
 
 3. WHICH 2-3 ITEMS FROM our_company ACTUALLY MAP TO ${firstName}'S ROLE?
