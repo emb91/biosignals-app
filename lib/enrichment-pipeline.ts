@@ -29,6 +29,7 @@ import { createAdminClient } from '@/lib/supabase-admin';
 
 type MinimalSupabase = {
   from: (table: string) => any;
+  rpc: (fn: string, args?: Record<string, unknown>) => any;
 };
 
 type RawUploadRow = {
@@ -125,18 +126,15 @@ function formatSupabaseErrorMessage(error: unknown): string | null {
   return parts.length > 0 ? parts.join(' | ') : null;
 }
 
-function isMissingColumnError(error: unknown, columnName: string): boolean {
-  const message = formatSupabaseErrorMessage(error) || '';
-  return message.includes('column') && message.includes('does not exist') && message.includes(columnName);
-}
-
-const OPTIONAL_CONTACT_REFRESH_JOB_FIELDS = new Set([
-  'enrichment_refresh_status',
-  'enrichment_refresh_last_error',
-  'enrichment_refresh_started_at',
-  'enrichment_refresh_finished_at',
-]);
-
+/**
+ * Write enrichment results to the CANONICAL `people` row (shared across users),
+ * not through the `contacts` view — the view's triggers would route editable
+ * fields (job_title, company_name, ...) to the per-user override jsonb, starving
+ * other users who link the same person of the enriched values. apply_person_enrichment
+ * merges only the keys present in the payload onto the existing person row.
+ * (Every enrichment payload is people-only columns; per-user scoring is written
+ * separately by the contact-fit sync.)
+ */
 async function updateContactWithOptionalRefreshJobFields(
   supabase: MinimalSupabase,
   params: {
@@ -147,31 +145,14 @@ async function updateContactWithOptionalRefreshJobFields(
 ): Promise<void> {
   const { contactId, userId, payload } = params;
 
-  const executeUpdate = async (updatePayload: Record<string, unknown>) =>
-    supabase
-      .from('contacts')
-      .update(updatePayload)
-      .eq('user_id', userId)
-      .eq('id', contactId);
+  const { error } = await supabase.rpc('apply_person_enrichment', {
+    p_user_id: userId,
+    p_contact_id: contactId,
+    p_payload: payload,
+  });
 
-  const { error } = await executeUpdate(payload);
-  if (!error) return;
-
-  const missingOptionalColumn = [...OPTIONAL_CONTACT_REFRESH_JOB_FIELDS].some((field) =>
-    isMissingColumnError(error, field),
-  );
-
-  if (!missingOptionalColumn) {
+  if (error) {
     throw error;
-  }
-
-  const fallbackPayload = Object.fromEntries(
-    Object.entries(payload).filter(([key]) => !OPTIONAL_CONTACT_REFRESH_JOB_FIELDS.has(key)),
-  );
-
-  const { error: fallbackError } = await executeUpdate(fallbackPayload);
-  if (fallbackError) {
-    throw fallbackError;
   }
 }
 
