@@ -65,9 +65,7 @@ export async function PUT(req: Request) {
   };
 
   // Build a partial payload — only include columns whose key is present in the
-  // request, so a CTA-only save doesn't wipe tone, and vice versa. (Supabase
-  // upsert SETs only the provided columns on conflict; omitted ones are left
-  // untouched.)
+  // request, so a CTA-only save doesn't wipe tone, and vice versa.
   const payload: Record<string, unknown> = {
     user_id: user.id,
     updated_at: new Date().toISOString(),

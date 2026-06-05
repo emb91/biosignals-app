@@ -6,7 +6,7 @@
  * mirrors their voice instead of the model's default. Pure helpers — the
  * caller fetches with its own authed supabase client.
  *
- * Each example now carries an optional subject line alongside the body — the
+ * Each example carries an optional subject line alongside the body — the
  * subject communicates positioning and register as much as the body text does.
  */
 
