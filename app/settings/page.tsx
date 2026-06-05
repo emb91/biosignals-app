@@ -42,11 +42,9 @@ export default function SettingsPage() {
 
   // Call-to-action link.
   const [ctaUrl, setCtaUrl] = useState('');
-  const [ctaLabel, setCtaLabel] = useState('');
   const [ctaModalOpen, setCtaModalOpen] = useState(false);
   const [ctaSaving, setCtaSaving] = useState(false);
   const [ctaUrlDraft, setCtaUrlDraft] = useState('');
-  const [ctaLabelDraft, setCtaLabelDraft] = useState('');
   const ctaConfigured = ctaUrl.trim().length > 0;
 
   // Tone of voice — guidance + worked examples that shape generated outreach.
@@ -87,12 +85,10 @@ export default function SettingsPage() {
           guidance?: string;
           examples?: ToneExample[];
           ctaUrl?: string;
-          ctaLabel?: string;
         };
         setToneGuidance(data.guidance ?? '');
         setToneExamples(data.examples ?? []);
         setCtaUrl(data.ctaUrl ?? '');
-        setCtaLabel(data.ctaLabel ?? '');
       }
     } catch { /* best-effort */ }
   }, []);
@@ -135,7 +131,6 @@ export default function SettingsPage() {
 
   const openCtaModal = () => {
     setCtaUrlDraft(ctaUrl);
-    setCtaLabelDraft(ctaLabel);
     setCtaModalOpen(true);
   };
 
@@ -145,12 +140,11 @@ export default function SettingsPage() {
       const res = await fetch('/api/outreach/tone', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ctaUrl: ctaUrlDraft.trim(), ctaLabel: ctaLabelDraft.trim() }),
+        body: JSON.stringify({ ctaUrl: ctaUrlDraft.trim() }),
       });
       if (res.ok) {
-        const data = (await res.json()) as { ctaUrl?: string; ctaLabel?: string };
+        const data = (await res.json()) as { ctaUrl?: string };
         setCtaUrl(data.ctaUrl ?? ctaUrlDraft.trim());
-        setCtaLabel(data.ctaLabel ?? ctaLabelDraft.trim());
         setCtaModalOpen(false);
       }
     } finally {
@@ -347,7 +341,7 @@ export default function SettingsPage() {
                       ? toneGuidance.trim()
                         ? `"${toneGuidance.trim().slice(0, 120)}${toneGuidance.trim().length > 120 ? '…' : ''}"`
                         : `${toneExamples.length} example${toneExamples.length === 1 ? '' : 's'} saved.`
-                      : 'Add guidance and examples to set your tone of voice for outreach. Otherwise generated copy will use Arcova\'s default voice.'}
+                      : 'Add guidance and examples to set your tone of voice for outreach.'}
                   </p>
                   {toneConfigured && toneExamples.length > 0 && (
                     <p className="mt-0.5 text-[12px] text-[#b6c2c8]">
@@ -374,7 +368,7 @@ export default function SettingsPage() {
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <h3 className="text-base font-semibold text-[#0d3547]">Call-to-action link</h3>
+                    <h3 className="text-base font-semibold text-[#0d3547]">Booking link</h3>
                     {ctaConfigured && (
                       <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-px text-[10.5px] font-semibold text-emerald-600 border border-emerald-200">
                         <CheckCircle2 className="h-3 w-3" /> Set
@@ -383,8 +377,8 @@ export default function SettingsPage() {
                   </div>
                   <p className="mt-1 text-sm text-[#7d909a]">
                     {ctaConfigured
-                      ? `${ctaLabel ? `"${ctaLabel}" → ` : ''}${ctaUrl}`
-                      : 'An opt-in link you can drop into any outreach message — e.g. your Calendly.'}
+                      ? ctaUrl
+                      : 'A booking link added to every generated outreach message, e.g. your Calendly.'}
                   </p>
                 </div>
                 <div className="shrink-0">
@@ -545,18 +539,15 @@ export default function SettingsPage() {
           <div className="w-full max-w-md rounded-2xl border border-white/80 bg-white p-6 shadow-2xl">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h3 className="text-lg font-semibold text-[#0d3547]">Call-to-action link</h3>
+                <h3 className="text-lg font-semibold text-[#0d3547]">Booking link</h3>
                 <p className="mt-1 text-sm text-[#7d909a]">
-                  A link you can drop into any outreach message. The phrase + link appear together,
-                  e.g. <span className="font-medium text-[#4a6470]">Book a call with me: calendly.com/you</span>.
+                  Added to every generated outreach message, on its own line before the sign-off.
                 </p>
               </div>
               <button type="button" onClick={() => setCtaModalOpen(false)} className="rounded-md p-1 text-[#b6c2c8] hover:bg-[#f4f7f9] hover:text-[#4a6470]" aria-label="Close">
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <label className="mt-4 block text-[11px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">Lead-in phrase</label>
-            <input type="text" value={ctaLabelDraft} onChange={(e) => setCtaLabelDraft(e.target.value)} placeholder="Book a call with me" className="mt-1 w-full rounded-lg border border-[rgba(13,53,71,0.15)] bg-white px-3 py-2 text-[13px] text-[#0d3547] placeholder:text-[#b6c2c8] focus:border-arcova-teal focus:outline-none" />
             <label className="mt-4 block text-[11px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">Link</label>
             <input type="url" value={ctaUrlDraft} onChange={(e) => setCtaUrlDraft(e.target.value)} placeholder="calendly.com/yourname" className="mt-1 w-full rounded-lg border border-[rgba(13,53,71,0.15)] bg-white px-3 py-2 text-[13px] text-[#0d3547] placeholder:text-[#b6c2c8] focus:border-arcova-teal focus:outline-none" />
             <div className="mt-5 flex items-center justify-end gap-2">
