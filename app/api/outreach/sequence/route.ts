@@ -1,14 +1,19 @@
 /**
  * POST /api/outreach/sequence
  *
- * Generates a 7-message outreach sequence anchored to a chosen hook.
- * Day offsets: 0 (initial) → 3, 7, 11, 15, 21, 28 (six follow-ups).
+ * Generates a 6-message outreach sequence anchored to a chosen hook.
+ * Day offsets: 1, 4, 8, 11, 14, 21 (Day 7 LinkedIn invite is injected at stage,
+ * no copy). Booking link comes from the user's Settings CTA URL; tone of voice
+ * from Settings overlays the house voice. See outbound-sequence-prompt-v2.
  *
  * Does NOT persist — returns the messages so the rep can edit them in the
  * UI before deciding to stage. Persistence happens at /api/outreach/lemlist/stage.
  *
- * Input:  { contactId, anchorHookText, anchorSignalEventId? }
- * Output: { messages: Array<{ day_offset, subject, body }> }
+ * Input:  { contactId, userAngle?, manualOverride? }
+ * Output: { messages: Array<{ day_offset, subject, body, channel }> }
+ *
+ * Signals are fetched server-side (all of the contact's recent ones) and passed
+ * as background for the model's silent relevance reasoning — never recited in copy.
  */
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
@@ -16,6 +21,8 @@ import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { effectiveReadiness, getActionFromScores } from '@/lib/lead-action';
 import { personaFunctionNames } from '@/lib/persona-functions';
+import { fetchOutreachTone, renderToneBlock } from '@/lib/outreach-tone';
+import { fetchContactSignals, renderSignalContext, type ContactSignal } from '@/lib/outreach-signals';
 
 // Matches lemlist's default multichannel template — but the generator only
 // writes COPY for the 6 message steps; the Day 7 LinkedIn invite is a pure
@@ -40,6 +47,9 @@ type Message = {
   day_offset: number;
   subject: string;
   body: string;
+  /** Display channel so the pre-stage preview is correct. Days 8 + 14 are
+   *  LinkedIn messages; the stage endpoint also assigns this per day. */
+  channel: 'email' | 'linkedin';
 };
 
 function tolerantJsonParse(text: string): unknown {
@@ -92,8 +102,14 @@ function parseSequence(text: string): Message[] {
       const dayOffset = DAY_OFFSETS[i] ?? DAY_OFFSETS[DAY_OFFSETS.length - 1];
       const subject = typeof o.subject === 'string' ? scrubAiTropes(o.subject.trim()) : '';
       const body = typeof o.body === 'string' ? scrubAiTropes(o.body.trim()) : '';
-      if (!subject || !body) return null;
-      return { day_offset: dayOffset, subject, body };
+      // Only the BODY is required. Day 8 + Day 14 are LinkedIn messages with an
+      // empty subject by design — requiring a subject silently dropped them,
+      // leaving only the 4 email steps. The stage endpoint assigns the channel
+      // per day (8/14 → LinkedIn), so an empty subject is expected, not invalid.
+      if (!body) return null;
+      const channel: 'email' | 'linkedin' =
+        dayOffset === 8 || dayOffset === 14 ? 'linkedin' : 'email';
+      return { day_offset: dayOffset, subject, body, channel };
     })
     .filter((v): v is Message => v !== null)
     .slice(0, 6);
@@ -112,17 +128,19 @@ export async function POST(request: Request) {
 
     const body = (await request.json().catch(() => ({}))) as {
       contactId?: unknown;
-      anchorHookText?: unknown;
-      anchorSignalEventId?: unknown;
-      anchorSignalType?: unknown;
-      anchorIsContactLevel?: unknown;
+      userAngle?: unknown;
+      manualOverride?: unknown;
     };
     const contactId = typeof body.contactId === 'string' ? body.contactId.trim() : '';
-    const anchorHookText = typeof body.anchorHookText === 'string' ? body.anchorHookText.trim() : '';
-    const anchorSignalType = typeof body.anchorSignalType === 'string' ? body.anchorSignalType.trim() : null;
-    const anchorIsContactLevel = body.anchorIsContactLevel === true;
-    if (!contactId || !anchorHookText) {
-      return NextResponse.json({ error: 'contactId and anchorHookText required' }, { status: 400 });
+    // Optional deliberate rep steer (e.g. "I'm launching product X"). Unlike a
+    // signal, this IS woven into the copy.
+    const userAngle = typeof body.userAngle === 'string' ? body.userAngle.trim().slice(0, 600) : '';
+    // Manual override: lets the rep force-generate for a contact that isn't in
+    // the reach-out state (low readiness). The button is always clickable; the
+    // override is the human deciding to reach out anyway.
+    const manualOverride = body.manualOverride === true;
+    if (!contactId) {
+      return NextResponse.json({ error: 'contactId required' }, { status: 400 });
     }
 
     // Reload the same context as /hooks so the sequence is grounded in
@@ -178,7 +196,7 @@ export async function POST(request: Request) {
         effectiveReadiness(companyReadiness, contactReadiness),
         null,
       );
-      if (action !== 'reach_out') {
+      if (action !== 'reach_out' && !manualOverride) {
         return NextResponse.json(
           {
             error: 'Contact is not in the reach-out state — sequence generation is gated on fit + readiness.',
@@ -192,10 +210,34 @@ export async function POST(request: Request) {
     const { data: selfCompany } = await supabase
       .from('user_company')
       .select(
-        'company_name, tagline, description, products_services, value_propositions, differentiated_value, capabilities, challenges_addressed, customer_benefits, customers_we_serve, why_customers_buy'
+        // Lean heavily on the rich structured context already captured in setup —
+        // positioning, targeting (good/bad fit, buyer prerequisites), and substance.
+        'company_name, tagline, description, products_services, services, value_propositions, ' +
+          'differentiated_value, unique_characteristics, business_model, market_summary, status_quo, ' +
+          'capabilities, challenges_addressed, customer_benefits, customers_we_serve, why_customers_buy, ' +
+          'target_customers, good_fit, bad_fit, buyer_prerequisites, buyer_disqualifiers, ' +
+          'competitors, industries, technologies, specialties, ' +
+          'therapeutic_areas, modalities, development_stages, platform_category, ' +
+          'customer_therapeutic_areas, customer_modalities, customer_development_stages'
       )
       .eq('user_id', user.id)
       .maybeSingle();
+
+    // Tone of voice (Settings) → optional prompt block; empty string when unset
+    // (the prompt's house voice carries it). Booking link = Settings CTA URL;
+    // empty → the prompt omits the booking-link sections entirely (Option 2).
+    const tone = await fetchOutreachTone(supabase, user.id);
+    const toneBlock = renderToneBlock(tone);
+    let bookingLink = '';
+    {
+      const { data: settings } = await supabase
+        .from('user_outreach_settings')
+        .select('cta_url')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      const url = (settings as { cta_url?: string | null } | null)?.cta_url ?? '';
+      bookingLink = typeof url === 'string' ? url.trim() : '';
+    }
 
     // Buying group = the functions we sell into (inferred per ICP). Authoritative
     // ground truth for judging whether the anchor signal is relevant to the
@@ -213,13 +255,20 @@ export async function POST(request: Request) {
       buyingGroupFunctions = [...fnSet];
     }
 
+    // All of the contact's (+ company's) recent signals — passed as background
+    // for the model's silent relevance/angle reasoning, never recited (see the
+    // signals briefing + lib/outreach-signals).
+    const contactCompanyId = (contact as { company_id?: string | null }).company_id ?? null;
+    const signals = await fetchContactSignals(supabase, user.id, contactId, contactCompanyId);
+
     const prompt = buildPrompt({
       contact: contact as Record<string, unknown>,
       selfCompany: (selfCompany ?? null) as Record<string, unknown> | null,
-      anchorHookText,
-      anchorSignalType,
-      anchorIsContactLevel,
+      signals,
+      userAngle,
       buyingGroupFunctions,
+      bookingLink,
+      toneBlock,
     });
 
     const completion = await completeLlm({
@@ -234,7 +283,12 @@ export async function POST(request: Request) {
       route: 'app/api/outreach/sequence',
       model: completion.model,
       usage: completion.usage,
-      metadata: { contact_id: contactId, hook: anchorHookText.slice(0, 120) },
+      metadata: {
+        contact_id: contactId,
+        signals: signals.length,
+        manual_override: manualOverride,
+        has_angle: userAngle.length > 0,
+      },
     });
 
     const messages = parseSequence(completion.text);
@@ -254,10 +308,15 @@ export async function POST(request: Request) {
 function buildPrompt(opts: {
   contact: Record<string, unknown>;
   selfCompany: Record<string, unknown> | null;
-  anchorHookText: string;
-  anchorSignalType: string | null;
-  anchorIsContactLevel: boolean;
+  /** All the contact's recent signals — background for relevance reasoning, never recited. */
+  signals: ContactSignal[];
+  /** Optional deliberate rep steer — woven INTO the copy (unlike signals). */
+  userAngle: string;
   buyingGroupFunctions: string[];
+  /** Settings CTA URL — empty string omits all booking-link instructions. */
+  bookingLink: string;
+  /** Rendered tone-of-voice block — empty string when the user hasn't set one. */
+  toneBlock: string;
 }): string {
   const contactCo = (opts.contact.companies ?? null) as Record<string, unknown> | Array<Record<string, unknown>> | null;
   const co = Array.isArray(contactCo) ? contactCo[0] : contactCo;
@@ -299,13 +358,35 @@ function buildPrompt(opts: {
             tagline: opts.selfCompany.tagline,
             description: opts.selfCompany.description,
             products_services: opts.selfCompany.products_services,
+            services: opts.selfCompany.services,
             value_propositions: opts.selfCompany.value_propositions,
             differentiated_value: opts.selfCompany.differentiated_value,
+            unique_characteristics: opts.selfCompany.unique_characteristics,
+            business_model: opts.selfCompany.business_model,
+            market_summary: opts.selfCompany.market_summary,
+            status_quo: opts.selfCompany.status_quo,
             capabilities: opts.selfCompany.capabilities,
             challenges_addressed: opts.selfCompany.challenges_addressed,
             customer_benefits: opts.selfCompany.customer_benefits,
             customers_we_serve: opts.selfCompany.customers_we_serve,
             why_customers_buy: opts.selfCompany.why_customers_buy,
+            // Targeting — sharpens who-we-sell-to relevance the v2 prompt cares about.
+            target_customers: opts.selfCompany.target_customers,
+            good_fit: opts.selfCompany.good_fit,
+            bad_fit: opts.selfCompany.bad_fit,
+            buyer_prerequisites: opts.selfCompany.buyer_prerequisites,
+            buyer_disqualifiers: opts.selfCompany.buyer_disqualifiers,
+            competitors: opts.selfCompany.competitors,
+            industries: opts.selfCompany.industries,
+            technologies: opts.selfCompany.technologies,
+            specialties: opts.selfCompany.specialties,
+            therapeutic_areas: opts.selfCompany.therapeutic_areas,
+            modalities: opts.selfCompany.modalities,
+            development_stages: opts.selfCompany.development_stages,
+            platform_category: opts.selfCompany.platform_category,
+            customer_therapeutic_areas: opts.selfCompany.customer_therapeutic_areas,
+            customer_modalities: opts.selfCompany.customer_modalities,
+            customer_development_stages: opts.selfCompany.customer_development_stages,
           }
         : null,
     },
@@ -313,150 +394,212 @@ function buildPrompt(opts: {
     2,
   );
 
-  const signalScope = opts.anchorIsContactLevel ? 'CONTACT-LEVEL' : 'COMPANY-LEVEL';
-
-  // Two very different framings depending on signal scope:
-  //  • Contact-level (job change, promotion, new role): about ${firstName} personally — fine to reference directly.
-  //  • Company-level (hiring, funding, patents, trials, M&A): about ${contactCompanyName}, which is ${firstName}'s own
-  //    employer. ${firstName} already knows. Treat as TIMING context for the rep ("this is why I'm reaching out now"),
-  //    not message body content ("did you know your company is hiring?"). The body should talk about ${firstName}'s
-  //    function and what they need, not summarise their employer's news back at them.
+  const signalContext = renderSignalContext(opts.signals);
   const buyingGroupHint = opts.buyingGroupFunctions.length
     ? `The functions you actually sell into (the buying group) are: ${opts.buyingGroupFunctions.join(', ')}. `
     : '';
-  const scopeRules = opts.anchorIsContactLevel
-    ? `The anchor signal is about ${firstName} personally (a role change, a paper they authored, etc.). You MAY reference it directly in message 1 as a brief, specific acknowledgment — warm, not sycophantic. It's still your TIMING, not an obligation: if a sharper opener exists, use that instead.`
-    : `The anchor signal is about ${contactCompanyName || "the contact's employer"} — ${firstName}'s own company — so ${firstName} ALREADY KNOWS it. Apply TWO judgments before you use it:
+  // Relevance rule applied to the SIGNALS list — judged against what the seller
+  // sells, never recited back to the contact.
+  const relevanceRule = `${buyingGroupHint}${firstName} is on the commercial / decision side, so they care about their company's TRAJECTORY — funding, approvals, expansion, hiring surges, new programs, deals, waves of publications or patents all signal a company scaling or commercialising, a buying-relevant moment EVEN WHEN the signal originates in science, regulatory, clinical or manufacturing. Look across ALL the signals listed above and pick the one (if any) that genuinely connects to what ${sellerName} sells and to ${firstName}'s world; let it quietly shape your ANGLE or which concrete offer you lead with. THE DETAIL MATTERS — a "new genomics-method paper" points at a tools buyer, an "NGS patient trial" points at a CRO; only the specifics tell you which thread fits this seller. NEVER paraphrase ${firstName}'s own company news back at them as a tip ("I saw ${contactCompanyName} is hiring"). If nothing connects, ignore the signals entirely and write to ${firstName}'s role and the company's overall momentum.`;
+  // Optional deliberate rep steer — unlike signals, this IS woven into the copy.
+  const repAngle = opts.userAngle
+    ? `\n═══ THE REP'S ANGLE (use this) ═══\nThe rep specifically wants this sequence to lead with / work in: "${opts.userAngle}"\nUnlike the signals above, this is a deliberate human steer, so weave it in naturally where it fits (it need not appear in every message, but it should shape the overall thrust). Keep it honest and grounded in what ${sellerName} actually offers.\n`
+    : '';
 
-  (1) RELEVANCE. ${buyingGroupHint}${firstName} is on the commercial / decision side, so they care about their company's TRAJECTORY — funding, approvals, expansion, hiring surges, new programs, deals, a wave of publications or patents all signal a company scaling or commercialising, which is a buying-relevant moment EVEN WHEN the signal originates in science, regulatory, clinical, or manufacturing. Do NOT discard the anchor just because it didn't come from ${firstName}'s own department. The only true noise is a trivial, isolated event in an unrelated function with no strategic read (e.g. a single HR hire). If the anchor genuinely doesn't connect to ${firstName}'s world, open on their role and the company's overall momentum instead.
+  const hasBooking = opts.bookingLink.trim().length > 0;
 
-  (2) THE SIGNAL IS YOUR TIMING, NOT AUTOMATICALLY YOUR OPENER. It's the private reason you're reaching out now; it does NOT have to appear in any message. Open with whatever genuinely lands for ${firstName} — usually their function and the problems that hit their desk. You MAY open on the signal ONLY when it reads as a natural, relevant observation AND you have nothing sharper to lead with. Some signals (e.g. a patent filing) rarely make a good opener; a relevant hiring surge can. Use common sense grounded in the company analysis. NEVER paraphrase ${firstName}'s own company news back at them as if it's a tip ("I saw ${contactCompanyName} is hiring", "noticed your team is expanding"). If you do reference the company moment, it works best later (around day 21) as a rep observation ("watching what ${contactCompanyName} is doing in X, customers in similar spots have found Y useful").`;
+  // Option 2: booking link comes from the user's Settings CTA URL. When unset,
+  // every booking-link instruction is swapped for a "no link" variant so
+  // generation still runs cleanly, just without a CTA.
+  const ctaRule = hasBooking
+    ? `(c) The booking link ${opts.bookingLink} appears in EVERY message, on its own line, just before the sign-off. No exceptions. The framing escalates: early touches offer a list or sample cut, later touches offer a short demo, but the link is always there, always paired with an easy out. A soft, low-pressure demo offer is encouraged; a hard "got 15 minutes Thursday?" is not.`
+    : `(c) Do NOT include any booking link or scheduling URL in any message — none is configured. Still make a concrete offer and a soft, low-pressure demo mention where natural, but end each message at the sign-off with no link.`;
+  const ctaArc = hasBooking ? ' Booking link, then sign-off.' : ' Then sign-off.';
+  const ctaArcShort = hasBooking ? ' Booking link.' : '';
+  const outputCta = hasBooking
+    ? 'The body must include the booking link on its own line and the sign-off.'
+    : 'The body ends with the sign-off; do NOT include any booking or scheduling link.';
+  const leakCta = hasBooking
+    ? `The booking link is ${opts.bookingLink}, not the example's link.`
+    : `There is NO booking link configured, so NO calendar/scheduling URL may appear in any message (the example's calendly link must not be copied).`;
 
-  return `You are a sales rep at ${sellerName} writing a 7-message outreach sequence to ${firstName} (${opts.contact.job_title ?? 'unknown title'}) at ${contactCompanyName || 'their company'}.
+  return `You are a sales rep at ${sellerName}, writing a 7-step outreach sequence to ${firstName} (${opts.contact.job_title ?? 'unknown title'}) at ${contactCompanyName || 'their company'}. You write the way a friendly, slightly informal founder types a quick note to a peer. Not like marketing. Not like AI.
 
-ANCHOR SIGNAL (${signalScope}${opts.anchorSignalType ? `, type: ${opts.anchorSignalType}` : ''}):
-"${opts.anchorHookText}"
-
+SIGNAL CONTEXT (background only — choose who & when, NEVER what to say):
+These are the account's recent detected signals. They explain WHY this account was picked and timed, nothing more. Read the detail, but do NOT reference any of it in the copy and never treat it as something the contact wants to hear about. At most, a signal may quietly nudge which angle or offer feels most relevant (the detail tells you which seller it fits). Default: ignore them and write to the persona.
+${signalContext}
+${repAngle}
 ═══ STEP 1 — THINK BEFORE WRITING ═══
 Do this reasoning silently, then use it to shape every message. Do not output the reasoning.
 
-1. WHAT FUNCTION DOES ${firstName.toUpperCase()} WORK IN?
-   Use the CONTEXT (title, seniority, business_area, bio). What do they own day-to-day? What are they measured on? What problems land on their desk vs. someone else's?
+1. WHAT FUNCTION DOES ${firstName} WORK IN?
+   Use the CONTEXT (title, seniority, business_area, bio). What do they own day-to-day? What are they measured on? What problems land on their desk versus someone else's?
 
-2. HOW DOES THE SIGNAL RELATE TO ${firstName.toUpperCase()}?
-   ${scopeRules}
+2. DO ANY OF THE SIGNALS ADD ANYTHING? (usually no)
+   ${relevanceRule}
+   The signal category is qualification context only — it tells us this account has budget or momentum, which is why it was enrolled now. It is almost never worth surfacing. Never recite the contact's own company news back to them (that they filed a patent, published a paper, are hiring); it's creepy and generic. Only let a category subtly shape your angle or which offer you lead with if it genuinely helps. Otherwise write to the persona and ignore the signal entirely.
 
-3. WHICH 2-3 ITEMS FROM our_company ACTUALLY MAP TO ${firstName.toUpperCase()}'S ROLE?
-   Don't pick our most flattering value-prop. Pick the ones a person in this exact function would care about. Ignore the rest.
+3. WHICH 2-3 ITEMS FROM our_company ACTUALLY MAP TO ${firstName}'S ROLE?
+   Don't pick our most flattering value-prop. Pick the ones a person in this exact function would care about. Ignore the rest. Use our_company.good_fit / bad_fit / buyer_prerequisites to judge what actually resonates with someone in their seat.
 
-4. WHAT WOULD MAKE ${firstName.toUpperCase()} ROLL THEIR EYES?
+4. WHAT WOULD MAKE ${firstName} ROLL THEIR EYES OR SMELL A BOT?
    - Being told their own company's news as if it's a tip
+   - Being lectured about their own job, market or product ("selling X comes down to Y", "here's where your platform wins")
    - Generic "I help companies like yours…" openers
-   - A pitch in message 1
-   - Anything that reads like AI wrote it
+   - A hard pitch in message 1
+   - Tidy, balanced, over-polished sentences, rule-of-three lists, and "we don't do X, we do Y" framing — all classic AI tells
+   - Opening with just their name and a comma, with no greeting
 
-═══ STEP 2 — WRITE THE 7 MESSAGES ═══
+═══ STEP 2 — WRITE THE 6 MESSAGES ═══
 
-SEQUENCE STRUCTURE — read carefully, it overrides anything you've been trained on:
+VOICE — THE MOST IMPORTANT SECTION. Match this in every message, or it will read as AI.
 
-(a) The anchor signal is your TIMING, not a required line. IF it passes the relevance test and makes a natural opener, reference it ONCE (in Day 1) and never again — returning to it ("as I mentioned re: your promotion…") reads as pestering. If it's not a good opener (e.g. a patent filing, or hiring unrelated to ${firstName}'s function), it is perfectly fine to never mention it — it was only ever your reason for timing, not the content.
+1. Greeting always. Start every message with "Hi ${firstName}," on its own line, then the body. Never open with "${firstName}, ...".
+2. Be honest about the outreach. Say where you are in the sequence, warmly: "Hope you don't mind me reaching out cold." "Just wanted to follow up in case my last message got missed." "Thanks for connecting." "I know I've sent you a couple of emails already." "I'll leave it here so I'm not filling up your inbox." Never pretend this is the first or only touch.
+3. Give them an out, every time. Add a low-pressure aside that makes saying no easy: "(totally fair)", "if that would be interesting for you", "if it's not a priority right now, that's totally fair", "or let me know if nothing suits".
+4. Be humble, not slick. Assume they have never heard of ${sellerName}. Plainness beats polish. A little natural repetition reads human and is fine.
+5. Let sentences breathe. Real people write slightly long, comma-joined sentences when they're being friendly. Do not make every line crisp, parallel or balanced. No "we don't do X, we do Y" antithesis. No tidy rule-of-three lists.
+6. Never lecture the expert. The reader knows their own job, market and product better than you. Naming a shared frustration is good ("it can be hard to know which prospects are ready, and at the right time"). Instructing them is not.
+7. Explain plainly, with examples, drawn from our_company. Not feature-speak.
+8. Make the payoff concrete and company-specific, but DON'T OVER-PROMISE. "For ${contactCompanyName}, this can mean months of lead time ahead of competitors." Hedge with "can", "often", "usually" — never absolute guarantees. Name real filters when you can, from our_company / company context.
+9. Warm, varied sign-offs. Rotate naturally: "Cheers, ${firstName}", "Kind regards, ${firstName} (from ${sellerName})", "All the best, ${firstName}". Casual and first-name-only on LinkedIn, fuller on email. Never identical every time. (Replace ${firstName} here with the SELLER's name, from CONTEXT.our_company.name.)
+10. British spelling (programmes, organise), contractions throughout, "e.g." inline is fine.
 
-(b) The PRODUCT is visible in EVERY message. This is NOT "don't pitch." The opposite. The whole point of outreach is to show what ${sellerName} does. But you show it by OFFERING SOMETHING CONCRETE the contact can have, never by describing features or asking for a meeting. Each message offers a tangible thing: a list, named companies, a data cut, a live view of their accounts. If a message doesn't offer something concrete, it's filler. Cut it.
-
-(c) Lead with what we ALREADY HAVE (off-the-shelf), then layer custom on top. Our standard product (the buying signals we track + enriched contacts + CRM routing) is what wows. Custom signals are the layer that sits on top. Wow them with the off-the-shelf first.
+THE OFFER AND THE CTA:
+(a) The product is visible in EVERY message, shown by OFFERING SOMETHING CONCRETE the contact can have (a list, a sample cut, a quick demo), never by describing features. If a message offers nothing concrete, it's filler. Cut it.
+(b) Lead with what we ALREADY HAVE (off-the-shelf), then layer custom on top.
+${ctaRule}
 
 ═══ THE ARC ═══
-
 Day 1 (email) → Day 4 (email) → [Day 7 LinkedIn INVITE — pure action, no copy] → Day 8 (LinkedIn message) → Day 11 (email) → Day 14 (LinkedIn message) → Day 21 (email)
-hook + offer → specific data → [connect request action] → product reveal + offer → another data cut → honest nudge → always-on close
+warm cold open + offer → honest follow-up + a data cut → [connect request action] → product nuance + demo offer → another data cut → low-pressure nudge → always-on close
 
-YOU WRITE COPY FOR EXACTLY 6 MESSAGES — Day 1, Day 4, Day 8, Day 11, Day 14, Day 21. The Day 7 LinkedIn connect request is a pure action step (lemlist sends the invite without a personalised note in our template), so DO NOT generate a Day 7 entry. Your messages[] output must contain exactly 6 entries in that order.
+YOU WRITE COPY FOR EXACTLY 6 MESSAGES — Day 1, 4, 8, 11, 14, 21. The Day 7 LinkedIn connect request is a pure action step, so DO NOT generate a Day 7 entry. Your messages[] output must contain exactly 6 entries in that order.
 
-CHANNEL MIX NOTES (lemlist's default multichannel template):
-- Day 8 is a LinkedIn MESSAGE — assume the invite was accepted. 50-80 words max. No subject (set to empty string).
-- Day 14 is a LinkedIn MESSAGE — short, casual nudge. 30-50 words. No subject (set to empty string).
-- Day 1, Day 4, Day 11, Day 21 are EMAIL and follow the word ranges below.
-
-═══ PER-MESSAGE GUIDANCE ═══
-
-- Day 1 (email, 80-110 words). Open like a human ("I wanted to reach out because…"). Lead with whatever is genuinely most relevant to ${firstName}'s world — that MAY be the anchor signal, but only if it passed the relevance + opener test above; otherwise open on their function and the problem someone in their exact role carries. ${opts.anchorIsContactLevel ? `For a personal signal a brief, direct acknowledgment is fine ("congrats on the new role").` : `Do NOT recap their employer's news back at them.`} Whatever you open on, state it NEUTRALLY — no editorialising or taking a stance, the contact may feel differently than you. Then ONE plain sentence on what ${sellerName} does (the honest one-liner from our_company, not a feature list). Then offer ONE concrete thing we can hand them, tailored to their world. End with "happy to share if of interest." NO presumptions about their situation you can't back up.
-
-- Day 4 (email, 30-50 words). Offer a specific data cut we ALREADY track that fits their world. Use "several" or "a few" for counts, never a precise number you can't verify. End with "happy to share these with you if of interest."
-
-- Day 8 (LinkedIn message, 50-80 words). Assume the invite was accepted. THE PRODUCT REVEAL. Explain plainly what ${sellerName} tracks as standard (the real signal types from our_company), how each is enriched with the decision-maker + contact, and that it routes into their CRM. Then the ONE thing that makes us different (pull from differentiated_value — e.g. life-sci-only, built by people who read the science). Close by offering to show them their own accounts live. No subject — set subject to empty string.
-
-- Day 11 (email, 30-60 words). Another concrete data cut, different from Day 4's. Something tied to a specific strength of THEIR company (from the company CONTEXT). Offer it. "happy to share … if of interest."
-
-- Day 14 (LinkedIn message, 30-50 words). Honest, low-pressure LI nudge. "Totally understand if these aren't useful." Then tie directly to their core job in their own words ("if [the core question their role carries] is on your plate this quarter, that's exactly what we do") and offer to show them their live pipeline. NEVER offer homework. Set subject to empty string.
-
-- Day 21 (email, 30-45 words). Breakup. Warm, not bitter. Reinforce that the product is always-on: "the signals run automatically, so the moment [a relevant trigger in their world] happens, we'll have flagged it." Offer to switch it on for their accounts. Then step back.
+CHANNEL + LENGTH (treat the gold-standard example as the real guide; ranges are approximate):
+- Day 1 — EMAIL, ~90-120 words. Warm cold open. One plain sentence on what ${sellerName} does. Offer a list of accounts in their territory.${ctaArc}
+- Day 4 — EMAIL, ~50-80 words. Honest follow-up ("in case my last message got missed"). Offer a specific data cut we ALREADY track, with real filters. Use "a few" / "several", never a precise number you can't verify.${ctaArc}
+- Day 8 — LINKEDIN MESSAGE, ~80-120 words, no subject. "Thanks for connecting." Share the ONE thing that sets us apart (from differentiated_value), explained plainly with an e.g. Spell out the company-specific payoff, hedged. Offer a live demo.${ctaArc}
+- Day 11 — EMAIL, ~25-50 words. Another concrete data cut, different from Day 4's, tied to a strength of THEIR company.${ctaArc}
+- Day 14 — LINKEDIN MESSAGE, ~40-70 words, no subject. Honest, low-pressure nudge. Never offer homework. Offer the demo.${ctaArcShort}
+- Day 21 — EMAIL, ~40-70 words. Warm breakup, not bitter. Reinforce that we monitor signals always-on.${ctaArc}
 
 ═══ STEP 3 — WRITING RULES (NON-NEGOTIABLE) ═══
 
-PRODUCT + HONESTY (the rules we learned the hard way):
-- The product MUST be visible in every message, shown through a concrete offer (a list, named companies, a data cut, a live view), never through feature-speak or a meeting request.
-- NEVER invent specifics. No precise counts you can't verify (use "several" / "a few"). No named companies unless they're in CONTEXT. No made-up statistics, ever.
-- NEVER cite third-party stats or external reports. Only claim what OUR OWN data and signals tell us. It is always safer to talk about what we track than to quote someone else's number.
-- ONLY claim capabilities ${sellerName} actually has. Every capability you mention must trace to value_propositions / capabilities / products_services in CONTEXT. If it's not there, we don't do it.
-- Never offer the contact homework (a doc/one-pager for THEM to read). Offer to show or hand THEM something instead.
-- Take NO stance on news, regulation, or the contact's situation. State facts neutrally. The contact may feel differently than you.
+PRODUCT + HONESTY:
+- CONTENT SOURCE (critical): every concrete claim — product, positioning, services, proof points, signal types, filters, and the offer you extend — must come from CONTEXT.our_company for THIS seller. NONE of it may be borrowed from the gold-standard example. The example is voice only. If our_company sells lab services, the messages are about lab services, not about signal tracking.
+- The product MUST be visible in every message, shown through a concrete offer.
+- NEVER invent specifics. No named companies unless they're in CONTEXT. No made-up statistics, ever.
+- NEVER cite third-party stats or external reports. Only claim what OUR OWN data tells us.
+- ONLY claim capabilities ${sellerName} actually has (must trace to value_propositions / capabilities / products_services in CONTEXT).
+- Don't over-promise. Hedge outcomes with "can", "often", "usually".
+- Offer to show or hand THEM something. Never set the contact homework.
+- Take NO stance on news, regulation, or the contact's situation.
 
-PUNCTUATION:
-- NO em dashes (—). Use commas, periods, or parentheses. Zero exceptions.
-- NO semicolons unless truly unavoidable.
+PUNCTUATION: NO em dashes (—) ever. Use commas and full stops. NO semicolons unless truly unavoidable.
 
-PLAIN LANGUAGE (8th-grade reading level):
-- Short sentences. A 13-year-old should follow every line.
-- No essay-style headers inside the body ("What we do:"). Write in sentences.
-- Industry shorthand the contact uses is fine (TA, CMC, CDMO). Spell out any Act / programme / initiative in full the first time ("the BIOSECURE Act").
+SUBJECT LINES (emails only — Day 8 and Day 14 have none): SENTENCE CASE. Capitalise the first word and proper nouns only. 3 to 5 words, under 50 characters. No title case, no all-lowercase.
 
-BANNED PHRASES (do not use, even as a variant):
-- "bumping this", "circling back", "just following up", "checking in", "touching base", "wanted to follow up"
-- "hope this finds you well", "hope you're doing well", "trust this email finds you"
-- "swap" (noun), "comparing notes", "domain-credible", "telegraphs", "tends to outpace", "one pattern worth flagging"
-- "I noticed ${contactCompanyName || 'your company'} is…" or any variant summarising their employer's news back at them ${opts.anchorIsContactLevel ? '' : `(the anchor's biggest trap)`}
-- "leverage", "synergies", "circle up", "loop you in"
-- "I help companies like yours" / "we work with companies like" (generic openers)
-- "as I mentioned" / "circling back on" / "following up on" / "re: your [signal]" — the signal lives in Day 1 only.
+PLAIN LANGUAGE (8th-grade reading level): short sentences, everyday words. Spell out any Act or programme in full the first time.
 
-VOICE:
-- Conversational, peer-to-peer. You and the contact both know this market. Don't teach them things they already know.
-- First name only ("${firstName}"). Never "Hi ${fullName}" or "Dear ${firstName}".
-- Subject lines: 3-6 words, lowercase except proper nouns, all different from each other.
+BANNED PHRASES (empty filler only): "bumping this", "circling back", "touching base", "hope this finds you well", "leverage", "synergies", "I help companies like yours", "I noticed ${contactCompanyName} is…". NOTE: honest, specific follow-up framing like "just wanted to follow up in case my last message got missed" is GOOD and encouraged — only the contentless versions are banned.
 
-═══ GOLD-STANDARD EXAMPLE (study the shape, do not copy the content) ═══
+═══ GOLD-STANDARD EXAMPLE — FOR VOICE ONLY, NOT CONTENT ═══
+Use the example below ONLY to learn tone, rhythm, warmth, sentence shape, greeting and sign-off style, and the structure of the arc. It is written for a DIFFERENT seller (Arcova), selling a DIFFERENT product, to a DIFFERENT person. Borrow its MUSIC, never its words.
 
-This is a real sequence to a Director of Business Development at a CDMO, from a life-sci signals company. Note: human opener, signal acknowledged once then dropped, a concrete offer in every message, product reveal + differentiator on the Day 8 LinkedIn message, our-own-data only, no homework, no stance, plain language.
+EVERYTHING CONCRETE IN IT BELONGS TO ARCOVA AND MUST NOT APPEAR IN YOUR OUTPUT, including:
+- the company and product category (signal tracking, lead enrichment, CRM routing, 24/7 monitoring)
+- the specific signals and filters (lab buildouts, diagnostic programmes, trials, modality, therapeutic area, Series A)
+- the offers (pulling a list of accounts, showing accounts live)
+- the booking link, and the names Arcova / Emma / Althea / Illumina
 
-Day 1 (email): "Kumar, congrats on the director role. I wanted to reach out because the BIOSECURE Act is changing how US biotechs pick CDMOs, and a lot of that decision-making happens quietly, often before it reaches the press. We track buying signals across life-sci and turn them into a ranked, enriched list of who's ready to talk. One we can run: US West Coast biotechs with Chinese-CDMO exposure, matched to recent CMC hires and funding, with contacts included. A live shortlist of who's likely weighing a new partner right now. Happy to share if of interest."
+Pull 100% of your substance — what ${sellerName} does, its positioning, services, proof points, the concrete thing you offer${hasBooking ? ', and the booking link' : ''} — from CONTEXT.our_company${hasBooking ? ' and the configured booking link' : ''}. If a detail is not in CONTEXT for THIS seller, do not use it. The example below is illustrative only.
 
-Day 4 (email): "Kumar, quick one. We're already tracking several West Coast Series B oncology biotechs that posted VP-CMC roles in the last 30 days, all aligned to Enzene's therapeutic areas. Happy to share these with you if of interest."
+Worked example (Arcova → Althea, Senior Manager of Sales at Illumina; seller name in sign-offs is Emma):
 
-[Day 7 — LinkedIn invite, sent by lemlist as a no-note connect request, no copy generated]
+--- Day 1 · EMAIL · subject: "Labs ready to buy" ---
+Hi Althea,
 
-Day 8 (LinkedIn message):"Kumar, quick context on what sits behind those lists. Most signal tools are built for generic B2B and miss what matters in biotech. Ours is life-sci only, built by a team that reads the science. We track funding, CMC and exec hires, 8-K filings, partnerships, and clinical and regulatory moves, then enrich each one with the decision-maker and their contact details, into your CRM. Happy to show you live."
+Hope you don't mind me reaching out to you cold. I just know that it can be hard to know which prospects are ready to buy, and at the right time, which is something we do really well.
 
-Day 11 (email): "Kumar, follow-on. We track US biotechs currently exposed to Chinese CDMOs. Happy to share the list, filtered to your therapeutic areas, if of interest."
+We track the early signals that point to their 'readiness' to buy, including e.g. new lab buildouts, diagnostic programmes starting up, research grants, and then match these up with the right contact, and route them straight into your CRM.
 
-Day 14 (LinkedIn message): "Kumar, totally understand if this isn't useful. If finding the next 5 US biotech customers is on your plate this quarter, that's what we do, continuously, enriched, routed into your CRM. Happy to show you your live pipeline."
+I can pull a list of accounts in your territory showing those signals right now, and I'd be more than happy to demo for you if of interest.
 
-Day 21 (email): "Kumar, closing the loop. The signals run automatically, so the moment a US West Coast biotech enters its CDMO RFP window, we'll have flagged it with the contacts ready. If you'd like that switched on for your accounts, I'm here."
+https://calendly.com/emma-arcova/30min
 
+Kind regards,
+Emma (from Arcova)
+
+--- Day 4 · EMAIL · subject: "In case it got buried" ---
+Hi Althea,
+
+Just wanted to follow up in case my last message got missed. In case you're not all over Arcova and what we do (totally fair), we keep an eye on research institutes and diagnostic labs across the US that show signs of buying, and cross-check against modality and therapeutic area.
+
+Happy to share how it works if that would be interesting for you.
+
+https://calendly.com/emma-arcova/30min
+
+Cheers,
+Emma (from Arcova)
+
+--- Day 8 · LINKEDIN MESSAGE · no subject ---
+Hi Althea,
+
+Thanks for connecting. I know I've sent you a couple of emails already, but in case you missed them I just wanted to share some of the nuance that sets us apart.
+
+While some data providers show info on some prospect signals (e.g. hiring), Arcova looks deeper into whether that actually translates into a buying signal, e.g. if a lab is registering a trial it often means they're about to scale.
+
+For Illumina, this can mean months of lead time ahead of competitors.
+
+I'd be more than happy to show you how this works live. If you're interested, please feel free to book a demo with me.
+
+https://calendly.com/emma-arcova/30min
+
+Cheers,
+Emma
+
+--- Day 11 · EMAIL · subject: "Clinical labs scaling sequencing" ---
+Hi Althea,
+
+We're tracking oncology labs all across the US that have recently raised Series A. Happy to share some of these leads if of any use.
+
+https://calendly.com/emma-arcova/30min
+
+Kind regards,
+Emma (from Arcova)
+
+--- Day 14 · LINKEDIN MESSAGE · no subject ---
+Hi Althea,
+
+If automating your GTM motion isn't a priority right now, that's totally fair. If it is, I'd love to demo how we work. Please feel free to book with me at a time that works, or let me know if nothing suits.
+
+https://calendly.com/emma-arcova/30min
+
+--- Day 21 · EMAIL · subject: "Leaving the door open" ---
+Hi Althea,
+
+I'll leave it here so I'm not filling up your inbox. We monitor signals across US life science companies 24/7, so if you're ever interested in automating some of your go-to-market operations, please feel free to reach out.
+
+https://calendly.com/emma-arcova/30min
+
+All the best,
+Emma (from Arcova)
+
+═══ INPUTS ═══
+${opts.toneBlock}
 CONTEXT:
 ${contextBlock}
 
+═══ STEP 4 — LEAK CHECK BEFORE YOU OUTPUT ═══
+Re-read all 6 messages silently and confirm each one:
+- Every product detail, service, signal type, filter and offer traces to CONTEXT.our_company for THIS seller. Nothing was borrowed from the Arcova example.
+- It contains NONE of these unless they genuinely appear in CONTEXT for this seller: signal tracking, enrichment, CRM routing, 24/7 monitoring, modality, therapeutic area, lab buildouts, Series A, or the names Arcova / Emma / Althea / Illumina.
+- ${leakCta}
+- The VOICE still matches the example: warm, honest about the outreach, humble, gives an out, greeting plus varied sign-off, concrete offer, no em dashes, no over-promising.
+If anything leaked from the example, rewrite it from CONTEXT before producing the JSON.
+
 ═══ OUTPUT ═══
-Strict JSON, no prose, no markdown fences. EXACTLY 6 messages on these exact
-day_offsets — Day 7 is the LinkedIn invite (a pure action, no copy) and is NOT
-in this list; it gets injected automatically:
-{
-  "messages": [
-    { "day_offset": 1,  "subject": "...", "body": "..." },
-    { "day_offset": 4,  "subject": "...", "body": "..." },
-    { "day_offset": 8,  "subject": "...", "body": "..." },
-    { "day_offset": 11, "subject": "...", "body": "..." },
-    { "day_offset": 14, "subject": "...", "body": "..." },
-    { "day_offset": 21, "subject": "...", "body": "..." }
-  ]
-}`;
+Strict JSON, no prose, no markdown fences. EXACTLY 6 messages on these exact day_offsets: 1, 4, 8, 11, 14, 21, in that order. Emails have a subject; LinkedIn messages (Day 8, Day 14) have an empty subject. ${outputCta}
+{ "messages": [ { "day_offset": 1, "subject": "...", "body": "..." }, { "day_offset": 4, "subject": "...", "body": "..." }, { "day_offset": 8, "subject": "", "body": "..." }, { "day_offset": 11, "subject": "...", "body": "..." }, { "day_offset": 14, "subject": "", "body": "..." }, { "day_offset": 21, "subject": "...", "body": "..." } ] }`;
 }
