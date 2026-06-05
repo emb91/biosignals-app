@@ -40,6 +40,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { AgentPanel, type AgentPendingMessage } from '@/components/AgentPanel';
 import { AgentChatBar } from '@/components/AgentChatBar';
 import { cn } from '@/lib/utils';
+import { invalidateCache } from '@/lib/page-fetch-cache';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -396,6 +397,7 @@ export default function OutreachPage() {
 
   const deleteSequence = async (id: string) => {
     if (!confirm('Delete this sequence? This does not remove it from lemlist.')) return;
+    const contactId = sequences.find((s) => s.id === id)?.contact_id ?? null;
     const res = await fetch(`/api/outreach/sequences/${id}`, { method: 'DELETE' });
     if (res.ok) {
       setSequences((prev) => prev.filter((s) => s.id !== id));
@@ -404,6 +406,13 @@ export default function OutreachPage() {
         next.delete(id);
         return next;
       });
+      // The contact's OutreachPanel shows a "you already drafted outreach"
+      // notice driven by the (client-cached) /api/outreach/hooks response. Drop
+      // that cache entry so the panel re-fetches and the stale "Open draft" —
+      // which would now point at a deleted sequence — disappears.
+      if (contactId) {
+        invalidateCache(`/api/outreach/hooks?contactId=${encodeURIComponent(contactId)}`);
+      }
     }
   };
 

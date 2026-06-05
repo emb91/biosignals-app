@@ -35,6 +35,44 @@ export const SOURCE_CONTACT_MAX = HIGH_SCORE;
 export const DEPRIORITIZE_FIT_BELOW = HIGH_SCORE;
 export const REACH_OUT_READINESS_MIN = HIGH_SCORE;
 
+/**
+ * CRM-resolved suppression cooldown, in days. A closed-won (customer) or
+ * closed-lost (dormant) deal "nullifies" the contact's readiness — floored to
+ * ~0.01 so priority drops and the action reads as Deprioritise — but only
+ * WITHIN this window. Once it passes, the suppressor lifts and the contact can
+ * resurface on new signals (renewal/upsell for won; re-engagement for lost).
+ *
+ * Closed-lost re-opens faster (6mo) than closed-won (1yr): a lost deal can turn
+ * around on a trigger event sooner than a fresh customer needs a renewal motion.
+ * MVP values — tune as you learn. See the CRM suppression policy memory.
+ */
+export const CRM_SUPPRESSION_DAYS = { won: 365, lost: 180 } as const;
+
+/**
+ * Is a CRM-resolved (won/lost) contact still inside its suppression cooldown?
+ *
+ * `leadState` — HubSpot lead state (only 'customer' / 'dormant' suppress).
+ * `closedAtIso` — when the deal closed; we use the deal's last-modified date as
+ *   a proxy (hubspot_latest_deal_updated_at). Unknown date on a won/lost contact
+ *   → treated as suppressed (safe default: don't reach out to a known closed deal
+ *   just because we lost the timestamp).
+ * `asOfMs` — current time in ms (injectable for tests; defaults to now).
+ *
+ * Returns false for any non-closed state, so normal fit/readiness logic applies.
+ */
+export function isCrmSuppressed(
+  leadState: 'active' | 'customer' | 'dormant' | 'context_only' | 'none' | null | undefined,
+  closedAtIso: string | null | undefined,
+  asOfMs: number = Date.now(),
+): boolean {
+  if (leadState !== 'customer' && leadState !== 'dormant') return false;
+  const windowDays = leadState === 'customer' ? CRM_SUPPRESSION_DAYS.won : CRM_SUPPRESSION_DAYS.lost;
+  const closedMs = closedAtIso ? new Date(closedAtIso).getTime() : null;
+  if (closedMs == null || !Number.isFinite(closedMs)) return true;
+  const ageDays = (asOfMs - closedMs) / 86_400_000;
+  return ageDays < windowDays;
+}
+
 export type LeadLikeForAction = {
   company_fit_score?: number | null;
   fit_score?: number | null;
@@ -338,6 +376,8 @@ export function getAccountRowAction(account: {
   max_contact_readiness_score?: number | null;
   readiness_score?: number | null;
   crm_status?: 'active' | 'customer' | 'dormant' | 'context_only' | 'none' | null;
+  /** Close-date proxy for the account's winning deal — drives the suppression cooldown. */
+  crm_closed_at?: string | null;
   contact_count?: number | null;
 }): LeadAction {
   // No contacts on file → always source, regardless of CRM state.
@@ -345,12 +385,19 @@ export function getAccountRowAction(account: {
     return 'source_contact';
   }
 
-  // If neither readiness nor a CRM signal exists, fall back to the legacy
+  // CRM-resolved (won/lost) only forces Deprioritise DURING the suppression
+  // cooldown (won 1yr / lost 6mo). Past it, treat the account as non-resolved so
+  // new signals can resurface it for renewal / re-engagement.
+  const crmForAction = isCrmSuppressed(account.crm_status ?? null, account.crm_closed_at ?? null)
+    ? account.crm_status ?? null
+    : null;
+
+  // If neither readiness nor an ACTIVE CRM signal exists, fall back to the legacy
   // intent-based logic so accounts still get a meaningful action before the
   // readiness pipeline has run for them.
   if (
     account.readiness_score == null &&
-    (account.crm_status == null || account.crm_status === 'none')
+    (crmForAction == null || crmForAction === 'none')
   ) {
     return getLeadActionFromFits(
       score01ForAction(account.company_fit_score ?? null),
@@ -362,6 +409,6 @@ export function getAccountRowAction(account: {
     account.company_fit_score ?? null,
     account.best_contact_fit ?? null,
     account.readiness_score ?? null,
-    account.crm_status ?? null,
+    crmForAction,
   );
 }
