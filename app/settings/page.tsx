@@ -257,7 +257,6 @@ export default function SettingsPage() {
       <main className="bg-transparent min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
         <div className="mx-auto max-w-3xl">
           <h1 className="text-2xl font-semibold text-slate-950">Settings</h1>
-          <p className="mt-2 text-sm text-slate-500">Workspace controls and low-frequency recovery tools.</p>
 
           {/* ── Outreach connections ─────────────────────────────────────── */}
           <section className="mt-8">
