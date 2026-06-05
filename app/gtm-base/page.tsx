@@ -36,6 +36,11 @@ type DashboardStats = {
   totalClosedWonAmount: number;
   averageClosedWonDealSize: number;
   icpBreakdown: IcpRow[];
+  // Outreach activity — surfaced as a small tile, not a full analytics view.
+  outreachSequencesDispatched: number;
+  outreachSequencesReplied: number;
+  outreachTotalOpens: number;
+  outreachTotalReplies: number;
 };
 
 const emptyStats: DashboardStats = {
@@ -50,6 +55,8 @@ const emptyStats: DashboardStats = {
   periodArcovaTouchedContacts: 0, periodEngagedArcovaEnrichedContacts: 0,
   periodWonAfterArcovaTouch: 0,
   averageClosedWonDealSize: 0, icpBreakdown: [],
+  outreachSequencesDispatched: 0, outreachSequencesReplied: 0,
+  outreachTotalOpens: 0, outreachTotalReplies: 0,
 };
 
 /* ─── Helpers ─── */
@@ -485,6 +492,7 @@ export default function DashboardPage() {
           { data: crmDealContactLinks, error: crmDealContactLinksError },
           { data: crmDeals, error: crmDealsError },
           customerCountResponse,
+          outreachStatsResponse,
         ] = await Promise.all([
           supabase.from('user_companies').select('company_id', { count: 'exact', head: true }).eq('user_id', user.id),
           supabase.from('contacts').select('id', { count: 'exact', head: true }).eq('user_id', user.id),
@@ -504,6 +512,7 @@ export default function DashboardPage() {
             .select('hubspot_deal_id, deal_stage, amount, close_date, hs_lastmodifieddate, synced_at')
             .eq('user_id', user.id),
           fetch('/api/leads?page=1&pageSize=1&lifecycle=customers'),
+          fetch('/api/outreach/stats'),
         ]);
 
         const error = companyCountError || contactCountError || icpCountError || icpsError ||
@@ -513,6 +522,18 @@ export default function DashboardPage() {
         if (!customerCountResponse.ok) throw new Error('Failed to load customer totals.');
 
         const customerCountResult = await customerCountResponse.json();
+
+        // Outreach stats are best-effort — a failure here shouldn't break the
+        // whole dashboard. Default to zeros if the call errored.
+        type OutreachStats = {
+          sequencesDispatched?: number;
+          sequencesReplied?: number;
+          totalOpens?: number;
+          totalReplies?: number;
+        };
+        const outreachStats: OutreachStats = outreachStatsResponse.ok
+          ? ((await outreachStatsResponse.json().catch(() => ({}))) as OutreachStats)
+          : {};
 
         const icpIds = (icps ?? []).map((icp) => icp.id).filter((id): id is string => typeof id === 'string' && id.length > 0);
         const icpNames = new Map<string, string>((icps ?? []).map((icp) => [icp.id as string, (icp.name as string) ?? '']));
@@ -680,6 +701,10 @@ export default function DashboardPage() {
           totalClosedWonAmount,
           averageClosedWonDealSize,
           icpBreakdown,
+          outreachSequencesDispatched: outreachStats.sequencesDispatched ?? 0,
+          outreachSequencesReplied: outreachStats.sequencesReplied ?? 0,
+          outreachTotalOpens: outreachStats.totalOpens ?? 0,
+          outreachTotalReplies: outreachStats.totalReplies ?? 0,
         });
       } catch (err) {
         console.error('Error loading dashboard data:', err);
@@ -970,6 +995,38 @@ export default function DashboardPage() {
                   <p className="mt-0.5 text-[11.5px] leading-snug text-arcova-navy/50">most teams source contacts once. Arcova keeps them alive.</p>
                 </div>
               </SubCard>
+            </div>
+          </section>
+
+          {/* ── 02.5 OUTREACH ACTIVITY ── small tile alongside the engine. ── */}
+          <section className={cn(glassCard, 'flex flex-wrap items-center gap-6 px-7 py-5')}>
+            <div className="min-w-0">
+              <p className="text-[10.5px] font-semibold uppercase tracking-[0.18em] text-arcova-navy/50">
+                Outreach activity
+              </p>
+              <p className="mt-0.5 text-[12.5px] text-arcova-navy/60">
+                What you&apos;ve dispatched via lemlist and how it&apos;s landing.
+              </p>
+            </div>
+            <div className="ml-auto flex items-center gap-7">
+              <div>
+                <div className="font-manrope text-[26px] font-medium tabular-nums text-arcova-navy leading-none">
+                  {stats.outreachSequencesDispatched.toLocaleString()}
+                </div>
+                <p className="mt-1 text-[10.5px] font-medium uppercase tracking-[0.1em] text-arcova-navy/50">Sent</p>
+              </div>
+              <div>
+                <div className="font-manrope text-[26px] font-medium tabular-nums text-emerald-700 leading-none">
+                  {stats.outreachTotalOpens.toLocaleString()}
+                </div>
+                <p className="mt-1 text-[10.5px] font-medium uppercase tracking-[0.1em] text-arcova-navy/50">Opens</p>
+              </div>
+              <div>
+                <div className="font-manrope text-[26px] font-medium tabular-nums text-violet-700 leading-none">
+                  {stats.outreachTotalReplies.toLocaleString()}
+                </div>
+                <p className="mt-1 text-[10.5px] font-medium uppercase tracking-[0.1em] text-arcova-navy/50">Replies</p>
+              </div>
             </div>
           </section>
 

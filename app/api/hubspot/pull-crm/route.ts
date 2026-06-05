@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase-server';
 import { nango, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
 import { syncHubSpotContactsIntoReadiness } from '@/lib/signals/readiness-hubspot-contacts';
 import { syncHubSpotDealsIntoReadiness } from '@/lib/signals/readiness-hubspot-deals';
+import { denormalizeCrmSuppressionState } from '@/lib/crm-suppression-denormalize';
 
 export async function POST() {
   const supabase = await createClient();
@@ -48,6 +49,9 @@ export async function POST() {
     const attributionResult = await recomputeContactAttributionSnapshots(admin, {
       userId: user.id,
     });
+    // Refresh the CRM suppression sort key now that deal/contact links are fresh,
+    // so the contacts + accounts lists sort closed-won/lost rows to the bottom.
+    await denormalizeCrmSuppressionState(admin, user.id);
     const now = new Date().toISOString();
 
     await admin.from('hubspot_sync_events').insert({

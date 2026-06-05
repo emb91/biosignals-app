@@ -20,6 +20,41 @@ import {
   resolveContactDataProvenance,
 } from '@/lib/data-provenance';
 import { HUBSPOT_CLOSED_DEAL_STAGES } from '@/lib/hubspot-deals';
+import { effectiveReadiness } from '@/lib/lead-action';
+
+/** Normalise a 0-1 or 0-100 score to a 0-1 fraction (null if unusable). */
+function norm01Score(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  if (value > 1 && value <= 100) return value / 100;
+  if (value >= 0 && value <= 1) return value;
+  return null;
+}
+
+/**
+ * Recompute each contact's priority_score LIVE from the freshly-attached
+ * company_fit + contact_fit + effective readiness, overwriting the stored
+ * (mirrored) value which can go stale when company_fit changes without a
+ * readiness recompute. Same formula as lib/signals/readiness-store and the
+ * client's contactPriorityScore:
+ *   priority = company_fit × contact_fit × (0.5 + 0.5 × effectiveReadiness)
+ * Mirrors the live-priority fix applied to the accounts RPC (list_user_accounts).
+ * Contacts without a contact_fit keep their stored value (no fresh inputs).
+ */
+function recomputeContactPriorityLive(
+  rows: Array<Record<string, unknown>>,
+): Array<Record<string, unknown>> {
+  return rows.map((row) => {
+    const contactFit = norm01Score(row.contact_fit_score);
+    if (contactFit == null) return row;
+    const companyFit = norm01Score(row.company_fit_score) ?? 1;
+    const eff = effectiveReadiness(
+      row.company_readiness_score as number | null,
+      row.contact_readiness_score as number | null,
+    ) ?? 0;
+    const live = Math.max(0, Math.min(1, companyFit * contactFit * (0.5 + 0.5 * eff)));
+    return { ...row, priority_score: live };
+  });
+}
 
 function isMissingColumnError(error: unknown): boolean {
   const message =
@@ -859,11 +894,17 @@ export async function GET(request: Request) {
         query = query.or(filter);
       }
 
-      // priority_score (mirrored from contact_readiness_snapshots) is the
-      // primary sort so paginated pages are ordered globally by priority.
-      // overall_fit_score / fit_score are tiebreakers for contacts without
-      // a readiness snapshot yet, then created_at as the final fallback.
+      // CRM-suppressed (closed-won/lost within cooldown) contacts sink to the
+      // bottom GLOBALLY — this must be the first sort key so pagination doesn't
+      // strand a closed deal's high intrinsic priority on page 1 (the read-time
+      // display suppression only sees one page). Maintained by
+      // denormalizeCrmSuppressionState on every HubSpot sync.
+      //
+      // Then priority_score (mirrored from contact_readiness_snapshots) orders
+      // within each group; overall_fit_score / fit_score are tiebreakers for
+      // contacts without a readiness snapshot yet, then created_at.
       return query
+        .order('crm_is_suppressed', { ascending: true })
         .order('priority_score', { ascending: false, nullsFirst: false })
         .order('overall_fit_score', { ascending: false, nullsFirst: false })
         .order('fit_score', { ascending: false, nullsFirst: false })
@@ -1088,11 +1129,14 @@ export async function GET(request: Request) {
       ...companyReadinessRows[idx],
     }));
 
-    // Synchronous post-processing: provenance label only. Priority is the
-    // stored value — the CRM-resolved (customer/dormant) state is reflected in
-    // the action tree and the CRM badge, NOT by mutating the priority score.
-    // There is exactly one priority score: contacts.priority_score.
-    const finalRows = attachDataProvenance(merged);
+    // Synchronous post-processing: provenance label + LIVE priority recompute.
+    // priority_score is recomputed from the freshly-attached company_fit +
+    // contact_fit + readiness so it can't drift from the displayed fit/action
+    // (the stored mirror goes stale when company_fit changes without a readiness
+    // recompute — same bug that showed Moderna as "Reach out" but priority 0 on
+    // the accounts side). CRM-resolved (customer/dormant) suppression is applied
+    // at display time + reflected in the action tree / CRM badge, not here.
+    const finalRows = recomputeContactPriorityLive(attachDataProvenance(merged));
 
     return NextResponse.json({
       data: finalRows,
