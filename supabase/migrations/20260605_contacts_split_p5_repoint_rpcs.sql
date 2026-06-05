@@ -1,0 +1,9 @@
+-- Phase 5c: repoint contact-reading RPCs from the `contacts` table to the
+-- `user_contacts` base table so they bind to a stable OID across the rename
+-- flip, read live per-user data, and never fire the view's INSTEAD OF triggers.
+-- (Full bodies applied via Supabase MCP migration `contacts_split_p5_repoint_rpcs`.)
+-- list_user_accounts: contact_agg now reads FROM user_contacts (was: contacts).
+-- refresh_contact_priority_scores: reads + UPDATEs user_contacts directly
+--   (joins user_companies for company fit/readiness), instead of contacts.
+-- See git history / DB for the verbatim definitions; behaviour is byte-identical
+-- (verified: list_user_accounts parity exact, refresh changed 0/18 priorities).
