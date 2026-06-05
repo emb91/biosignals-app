@@ -7,14 +7,20 @@
  * the returned lemlist lead id in external_ref. On failure, marks 'failed'
  * with dispatch_error so the row is visible + retriable in /outreach.
  *
- * Input: { sequenceIds: string[], campaignId: string }
+ * Input: { sequenceIds: string[] }
  * Output: { results: Array<{ id, ok, error? }> }
+ *
+ * The destination is ALWAYS the auto-ensured "Arcova Multichannel" template —
+ * there is no campaign choice. ensureArcovaTemplate is idempotent, so the first
+ * dispatch silently creates it; subsequent ones reuse it. (No "Set up template"
+ * step, no campaign picker — the Arcova template is the one and only path.)
  */
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 import {
   AppSequenceStep,
   dispatchSequence,
+  ensureArcovaTemplate,
   getLemlistKeyForCurrentUser,
   LemlistError,
 } from '@/lib/lemlist';
@@ -51,16 +57,14 @@ export async function POST(req: Request) {
 
     const body = (await req.json().catch(() => ({}))) as {
       sequenceIds?: unknown;
-      campaignId?: unknown;
     };
     const sequenceIds = Array.isArray(body.sequenceIds)
       ? (body.sequenceIds.filter((v) => typeof v === 'string') as string[])
       : [];
-    const campaignId = typeof body.campaignId === 'string' ? body.campaignId.trim() : '';
 
-    if (sequenceIds.length === 0 || !campaignId) {
+    if (sequenceIds.length === 0) {
       return NextResponse.json(
-        { error: 'sequenceIds (non-empty) and campaignId required' },
+        { error: 'sequenceIds (non-empty) required' },
         { status: 400 },
       );
     }
@@ -68,6 +72,23 @@ export async function POST(req: Request) {
     const apiKey = await getLemlistKeyForCurrentUser();
     if (!apiKey) {
       return NextResponse.json({ error: 'lemlist not connected' }, { status: 400 });
+    }
+
+    // Always dispatch into the Arcova template — auto-created on first send.
+    let campaignId: string;
+    try {
+      ({ campaignId } = await ensureArcovaTemplate(apiKey));
+    } catch (err) {
+      if (err instanceof LemlistError) {
+        return NextResponse.json(
+          { error: 'lemlist API error', detail: err.body },
+          { status: err.status === 401 ? 401 : 500 },
+        );
+      }
+      return NextResponse.json(
+        { error: err instanceof Error ? err.message : 'Could not prepare the Arcova template' },
+        { status: 500 },
+      );
     }
 
     // HubSpot token is best-effort — null is fine, we just skip the CRM push.

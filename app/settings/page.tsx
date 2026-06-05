@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import Nango from '@nangohq/frontend';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
@@ -13,6 +14,11 @@ interface LemlistStatus {
   updatedAt: string | null;
 }
 
+interface HubSpotStatus {
+  connected: boolean;
+  hubDomain: string | null;
+}
+
 export default function SettingsPage() {
   const { user, loading, logout } = useAuth();
   const router = useRouter();
@@ -23,6 +29,10 @@ export default function SettingsPage() {
   const [lemlistSubmitting, setLemlistSubmitting] = useState(false);
   const [lemlistError, setLemlistError] = useState<string | null>(null);
   const [lemlistDisconnecting, setLemlistDisconnecting] = useState(false);
+
+  // HubSpot connection state. Mirrors the /import Nango Connect flow.
+  const [hubspotStatus, setHubspotStatus] = useState<HubSpotStatus | null>(null);
+  const [hubspotDisconnecting, setHubspotDisconnecting] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) router.push('/login');
@@ -37,9 +47,53 @@ export default function SettingsPage() {
     }
   }, []);
 
+  const refreshHubSpotStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/hubspot/status');
+      if (res.ok) setHubspotStatus(await res.json());
+    } catch {
+      // best-effort
+    }
+  }, []);
+
   useEffect(() => {
-    if (user) void refreshLemlistStatus();
-  }, [user, refreshLemlistStatus]);
+    if (user) {
+      void refreshLemlistStatus();
+      void refreshHubSpotStatus();
+    }
+  }, [user, refreshLemlistStatus, refreshHubSpotStatus]);
+
+  const handleConnectHubSpot = async () => {
+    if (!user) return;
+    const sessionRes = await fetch('/api/nango/session', { method: 'POST' });
+    if (!sessionRes.ok) return;
+    const { sessionToken } = await sessionRes.json();
+    const nangoClient = new Nango();
+    const connectUI = nangoClient.openConnectUI({
+      onEvent: async (event) => {
+        if (event.type === 'connect') {
+          const { connectionId, providerConfigKey } = event.payload;
+          await fetch('/api/nango/connection', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ integrationId: providerConfigKey, connectionId }),
+          });
+          void refreshHubSpotStatus();
+        }
+      },
+    });
+    connectUI.setSessionToken(sessionToken);
+  };
+
+  const handleDisconnectHubSpot = async () => {
+    setHubspotDisconnecting(true);
+    try {
+      await fetch('/api/hubspot/disconnect', { method: 'DELETE' });
+      await refreshHubSpotStatus();
+    } finally {
+      setHubspotDisconnecting(false);
+    }
+  };
 
   const handleLemlistConnect = async () => {
     setLemlistError(null);
@@ -91,16 +145,53 @@ export default function SettingsPage() {
           <h1 className="text-2xl font-semibold text-slate-950">Settings</h1>
           <p className="mt-2 text-sm text-slate-500">Workspace controls and low-frequency recovery tools.</p>
 
-          {/* ── Outreach connections ─────────────────────────────────────── */}
-          <section className="mt-8">
-            <h2 className="text-sm font-semibold uppercase tracking-[0.08em] text-[#7d909a]">
-              Outreach connections
-            </h2>
-            <p className="mt-1 text-sm text-[#7d909a]">
-              Connect the tool that runs your sequences. You bring your own account; we never touch your LinkedIn login.
-            </p>
+          {/* ── Connections (no section header, cards sit directly under the page intro) ── */}
+          <section className="mt-8 space-y-4">
+            {/* HubSpot above lemlist — CRM is the system of record. */}
+            <div className="rounded-2xl border border-white/80 bg-white/70 p-5 shadow-[0_8px_24px_-12px_rgba(13,53,71,0.15)] backdrop-blur-xl">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-semibold text-[#0d3547]">HubSpot</h3>
+                    {hubspotStatus?.connected && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-px text-[10.5px] font-semibold text-emerald-600 border border-emerald-200">
+                        <CheckCircle2 className="h-3 w-3" /> Connected
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-1 text-sm text-[#7d909a]">
+                    {hubspotStatus?.connected
+                      ? hubspotStatus.hubDomain
+                        ? `Connected to ${hubspotStatus.hubDomain}. Contacts and deals stay in sync; outreach status mirrors to HubSpot.`
+                        : 'Connected. Contacts and deals stay in sync; outreach status mirrors to HubSpot.'
+                      : 'Pull contacts in, push enriched data + outreach status back. OAuth via Nango — your credentials never touch our servers.'}
+                  </p>
+                </div>
+                <div className="shrink-0">
+                  {hubspotStatus?.connected ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleDisconnectHubSpot()}
+                      disabled={hubspotDisconnecting}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[rgba(13,53,71,0.15)] bg-white px-3 py-1.5 text-[12.5px] font-medium text-[#4a6470] hover:bg-[#f4f7f9] disabled:opacity-60"
+                    >
+                      {hubspotDisconnecting ? 'Disconnecting…' : 'Disconnect'}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void handleConnectHubSpot()}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-navy px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-[#0d3547]"
+                    >
+                      Connect HubSpot
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
 
-            <div className="mt-4 rounded-2xl border border-white/80 bg-white/70 p-5 shadow-[0_8px_24px_-12px_rgba(13,53,71,0.15)] backdrop-blur-xl">
+            {/* lemlist */}
+            <div className="rounded-2xl border border-white/80 bg-white/70 p-5 shadow-[0_8px_24px_-12px_rgba(13,53,71,0.15)] backdrop-blur-xl">
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
