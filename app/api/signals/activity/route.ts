@@ -36,21 +36,41 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url);
   const daysRaw = parseInt(url.searchParams.get('days') ?? '', 10);
-  const days = Number.isFinite(daysRaw) ? Math.min(90, Math.max(1, daysRaw)) : DEFAULT_DAYS;
-  const cutoffIso = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const days = Number.isFinite(daysRaw) ? Math.min(365, Math.max(1, daysRaw)) : DEFAULT_DAYS;
+  const cutoffMs = Date.now() - days * 24 * 60 * 60 * 1000;
 
+  // The log is dated by the SIGNAL'S OWN event date (when the patent was filed,
+  // the paper published), NOT when we ingested it. So we window + sort on
+  // event_at, falling back to observed_at only for signals that have no event
+  // date at all. Because event_at predates observed_at, we can't filter at the
+  // DB layer cheaply (a row's event can be old while its ingest is recent) —
+  // pull the user's recent signals and apply the date logic in JS. The
+  // per-user set is small.
   const { data: rowsRaw, error } = await supabase
     .from('normalized_signals')
     .select('id, signal_key, signal_scope, company_id, contact_id, event_at, observed_at, evidence_excerpt')
     .eq('user_id', user.id)
-    .gte('observed_at', cutoffIso)
-    .order('observed_at', { ascending: false })
+    .order('event_at', { ascending: false, nullsFirst: false })
     .limit(MAX_ROWS);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
-  const rows = (rowsRaw ?? []) as SignalRow[];
+  const allRows = (rowsRaw ?? []) as SignalRow[];
+
+  // Effective signal date = event_at, else observed_at. Window + order by it.
+  const signalDateMs = (r: SignalRow): number | null => {
+    const iso = r.event_at ?? r.observed_at;
+    if (!iso) return null;
+    const ms = new Date(iso).getTime();
+    return Number.isFinite(ms) ? ms : null;
+  };
+  const rows = allRows
+    .map((r) => ({ r, ms: signalDateMs(r) }))
+    .filter((x): x is { r: SignalRow; ms: number } => x.ms != null && x.ms >= cutoffMs)
+    .sort((a, b) => b.ms - a.ms)
+    .map((x) => x.r);
+
   if (rows.length === 0) {
     return NextResponse.json({ items: [], days });
   }
@@ -120,6 +140,8 @@ export async function GET(req: Request) {
     contactName: string;
     eventAt: string | null;
     observedAt: string | null;
+    /** The date to show = the signal's own event date (else ingest date). */
+    displayAt: string | null;
     evidence: string | null;
     count: number;
   };
@@ -155,12 +177,14 @@ export async function GET(req: Request) {
       contactName,
       eventAt: r.event_at,
       observedAt: r.observed_at,
+      displayAt: r.event_at ?? r.observed_at,
       evidence: r.evidence_excerpt,
       count: 1,
     });
   }
 
-  // Map preserves insertion order = observed_at desc, so the list stays recent-first.
+  // `rows` is already sorted by signal date desc, so insertion order keeps the
+  // list newest-first by the signal's own event date.
   const items = [...groups.values()];
 
   return NextResponse.json({ items, days });
