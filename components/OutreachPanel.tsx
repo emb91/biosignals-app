@@ -19,7 +19,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Loader2, RefreshCw, Copy, Check, ChevronLeft, Send } from 'lucide-react';
+import { Loader2, Copy, Check, ChevronLeft, Send } from 'lucide-react';
 import { cachedJson, invalidateCache } from '@/lib/page-fetch-cache';
 
 // Hooks are deterministic for a given contact + day (signal events flow in
@@ -27,17 +27,6 @@ import { cachedJson, invalidateCache } from '@/lib/page-fetch-cache';
 // for the rare "I want fresh" case. Without this, switching contacts and
 // coming back triggers a wasteful re-fetch every time.
 const HOOKS_TTL_MS = 24 * 60 * 60 * 1000;
-
-// Compact date format for hook chips. Shows "May 30" (current year) or
-// "May 30 '25" (other years). Keeps the picker rows tight.
-function formatHookDate(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  const now = new Date();
-  const sameYear = d.getFullYear() === now.getFullYear();
-  const monthDay = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  return sameYear ? monthDay : `${monthDay} '${String(d.getFullYear()).slice(2)}`;
-}
 
 type HookCategory =
   | 'funding'
@@ -141,30 +130,24 @@ type Props = {
 export function OutreachPanel({ contactId, contactName }: Props) {
   const [view, setView] = useState<'picker' | 'editor'>('picker');
 
-  // Picker state
-  const [hooks, setHooks] = useState<Hook[] | null>(null);
+  // Readiness-gate state. gateLoaded is the "fetched once" sentinel (the panel
+  // only needs the gate + existing-sequence now, not curated hooks).
+  const [gateLoaded, setGateLoaded] = useState(false);
   const [hooksLoading, setHooksLoading] = useState(false);
   const [hooksError, setHooksError] = useState<string | null>(null);
   const [gating, setGating] = useState<Gating | null>(null);
-  // 'ai' when the curation LLM ranked these; 'mechanical' when we fell back.
-  const [curation, setCuration] = useState<'ai' | 'mechanical' | null>(null);
-  // 'ok' when AI found grounded picks (or pattern); 'no_strong_hooks' when AI
-  // evaluated and honestly concluded nothing concrete fits.
-  const [aiVerdict, setAiVerdict] = useState<'ok' | 'no_strong_hooks' | null>(null);
 
   // Existing sequence for this contact, if any. Drives the "you're already
-  // reaching out to this person" notice instead of the picker.
+  // reaching out to this person" notice instead of the generate view.
   const [existingSequence, setExistingSequence] = useState<ExistingSequence | null>(null);
-  // User clicked "Stage another angle" — hide the notice + show the picker.
+  // User clicked "Stage another angle" — hide the notice + show the generate view.
   const [overrideExisting, setOverrideExisting] = useState(false);
 
   // Optional deliberate angle the rep wants the copy to lead with (e.g. a new
   // product). Woven into generation; signals stay background-only.
   const [userAngle, setUserAngle] = useState('');
 
-  // Editor state. anchorHook is retained as null — the hook-picking step is gone;
-  // signals are now passed server-side as background and never chosen by the rep.
-  const [anchorHook, setAnchorHook] = useState<Hook | null>(null);
+  // Editor state.
   const [messages, setMessages] = useState<Message[]>([]);
   const [sequenceLoading, setSequenceLoading] = useState(false);
   const [sequenceError, setSequenceError] = useState<string | null>(null);
@@ -184,17 +167,15 @@ export function OutreachPanel({ contactId, contactName }: Props) {
   // Reset when contact changes
   useEffect(() => {
     setView('picker');
-    setHooks(null);
-    setAnchorHook(null);
+    setGateLoaded(false);
     setMessages([]);
     setSequenceError(null);
     setHooksError(null);
     setExportSuccess(null);
     setGating(null);
-    setCuration(null);
-    setAiVerdict(null);
     setExistingSequence(null);
     setOverrideExisting(false);
+    setUserAngle('');
   }, [contactId]);
 
   // Auto-load signals on mount — cheap DB query, no LLM cost.
@@ -205,31 +186,24 @@ export function OutreachPanel({ contactId, contactName }: Props) {
   // double-firing — when hooks is reset to null (mount, contact change, manual
   // refresh) we re-run; otherwise we skip.
   useEffect(() => {
-    if (hooks !== null) return;
+    if (gateLoaded) return;
     let cancelled = false;
     setHooksLoading(true);
     setHooksError(null);
     (async () => {
       try {
+        // gateOnly=1: we only need the readiness gate + existing-sequence state,
+        // not curated hooks (the rep no longer picks one). Skips the LLM in /hooks.
         const { data: json } = await cachedJson<{
-          hooks?: Hook[];
           gated?: boolean;
           gating?: Gating;
-          curation?: string;
-          ai_verdict?: string;
           existing_sequence?: ExistingSequence | null;
-        }>(`/api/outreach/hooks?contactId=${encodeURIComponent(contactId)}`, {
+        }>(`/api/outreach/hooks?contactId=${encodeURIComponent(contactId)}&gateOnly=1`, {
           ttlMs: HOOKS_TTL_MS,
         });
         if (cancelled) return;
-        setHooks(json.hooks ?? []);
+        setGateLoaded(true);
         setGating(json.gated === true && json.gating ? json.gating : null);
-        setCuration(json.curation === 'ai' || json.curation === 'mechanical' ? json.curation : null);
-        setAiVerdict(
-          json.ai_verdict === 'ok' || json.ai_verdict === 'no_strong_hooks'
-            ? json.ai_verdict
-            : null,
-        );
         setExistingSequence(json.existing_sequence ?? null);
       } catch (e) {
         if (cancelled) return;
@@ -241,17 +215,7 @@ export function OutreachPanel({ contactId, contactName }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [contactId, hooks]);
-
-  const refreshHooks = useCallback(() => {
-    // Drop this contact's cache entry so the effect re-fetches from the network.
-    invalidateCache(`/api/outreach/hooks?contactId=${encodeURIComponent(contactId)}`);
-    setHooks(null);
-    setHooksError(null);
-    setGating(null);
-    setCuration(null);
-    setAiVerdict(null);
-  }, [contactId]);
+  }, [contactId, gateLoaded]);
 
   // Generate a sequence directly — no hook to pick. The server fetches all of the
   // contact's signals as background. `override` bypasses the reach-out gate (used
@@ -295,7 +259,6 @@ export function OutreachPanel({ contactId, contactName }: Props) {
 
   const backToPicker = useCallback(() => {
     setView('picker');
-    setAnchorHook(null);
     setMessages([]);
     setSequenceError(null);
     setExportSuccess(null);
@@ -449,17 +412,16 @@ export function OutreachPanel({ contactId, contactName }: Props) {
         Pick a different signal
       </button>
 
-      {anchorHook && (() => {
-        // One plain sentence. No "Anchor" label, no pill, no date, no
-        // snake_case signal_type. Just: "Generating a sequence for Chong on
-        // {whatever this hook is about}." First name only because that's how
-        // the rep refers to the contact in their head.
+      {(() => {
         const firstName = (contactName ?? '').trim().split(/\s+/)[0] || 'this contact';
         return (
           <p className="text-[13px] leading-snug text-gray-700">
-            Generating a sequence for{' '}
-            <span className="font-semibold text-gray-900">{firstName}</span> on:{' '}
-            <span className="text-gray-900">{anchorHook.title}</span>
+            Sequence for <span className="font-semibold text-gray-900">{firstName}</span>
+            {userAngle.trim() ? (
+              <>
+                {' '}— angle: <span className="text-gray-900">{userAngle.trim()}</span>
+              </>
+            ) : null}
           </p>
         );
       })()}
@@ -705,43 +667,3 @@ function ContactedNotice({
   );
 }
 
-// ── GatedNotice ──────────────────────────────────────────────────────────────
-// Shown when the contact is below the outreach threshold. Tells the rep why
-// in one line + lists the four scores so they can see the gap at a glance.
-// Intentionally compact: this is friction-on-purpose, not an empty state to
-// dress up. We want the rep to pick a stronger contact.
-function GatedNotice({ gating }: { gating: Gating }) {
-  const fmt = (v: number | null) => (typeof v === 'number' ? v.toFixed(2) : '—');
-  const reasonLine =
-    gating.reason === 'no_company'
-      ? 'No company linked to this contact.'
-      : gating.reason === 'fit_below_threshold'
-      ? `Both contact fit and company fit need to be ≥ ${gating.threshold.toFixed(2)}.`
-      : `Readiness needs to be ≥ ${gating.threshold.toFixed(2)} (from company or contact signals).`;
-  return (
-    <div className="rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2.5">
-      <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-700">
-        Below outreach threshold
-      </p>
-      <p className="mt-1 text-[12px] leading-snug text-amber-900">{reasonLine}</p>
-      <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px] text-amber-900/80">
-        <div className="flex justify-between">
-          <dt>Contact fit</dt>
-          <dd className="font-mono">{fmt(gating.contact_fit_score)}</dd>
-        </div>
-        <div className="flex justify-between">
-          <dt>Company fit</dt>
-          <dd className="font-mono">{fmt(gating.company_fit_score)}</dd>
-        </div>
-        <div className="flex justify-between">
-          <dt>Contact readiness</dt>
-          <dd className="font-mono">{fmt(gating.contact_readiness_score)}</dd>
-        </div>
-        <div className="flex justify-between">
-          <dt>Company readiness</dt>
-          <dd className="font-mono">{fmt(gating.company_readiness_score)}</dd>
-        </div>
-      </dl>
-    </div>
-  );
-}

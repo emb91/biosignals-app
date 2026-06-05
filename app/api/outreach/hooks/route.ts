@@ -868,6 +868,10 @@ export async function GET(request: Request) {
 
     const url = new URL(request.url);
     const contactId = (url.searchParams.get('contactId') ?? '').trim();
+    // gateOnly: the outreach panel no longer picks hooks — it only needs the
+    // readiness gate + existing-sequence state. Returning before the signal fetch
+    // + LLM curation saves an LLM call on every panel open.
+    const gateOnly = url.searchParams.get('gateOnly') === '1';
     if (!contactId) {
       return NextResponse.json({ error: 'contactId required' }, { status: 400 });
     }
@@ -1004,6 +1008,11 @@ export async function GET(request: Request) {
         reason: !companyId ? 'no_company' : action === 'monitor' ? 'readiness_below_threshold' : 'fit_below_threshold',
       };
       return NextResponse.json({ hooks: [], gated: true, gating, existing_sequence: existingSequence });
+    }
+
+    // Not gated (reach_out). gateOnly callers stop here — no signal fetch, no LLM.
+    if (gateOnly) {
+      return NextResponse.json({ hooks: [], gated: false, existing_sequence: existingSequence });
     }
 
     // Pull signals from the lookback window — contact-scoped OR company-scoped.
