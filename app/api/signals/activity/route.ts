@@ -55,6 +55,41 @@ function decodeEntities(s: string): string {
     .trim();
 }
 
+// Some signal types store a GENERIC source title like "cmc_hiring detected at
+// Moderna" instead of the specific thing (the actual job role). Detect that so
+// we can swap in a better label.
+function isGenericTitle(t: string | null | undefined): boolean {
+  return !!t && /\bdetected at\b/i.test(t);
+}
+
+// Pull the specific role out of a hiring summary's "e.g. {role}" example, e.g.
+//   "…E.g. Scientist, Process Development (Formulation)."        → "Scientist, Process Development (Formulation)"
+//   "1 open … role detected … (e.g. Senior Engineer I, …)."      → "Senior Engineer I, …"
+function roleFromSummary(summary: string | null | undefined): string | null {
+  if (!summary) return null;
+  const m = summary.match(/\be\.?\s*g\.?[:.]?\s+(.+)$/i);
+  if (!m) return null;
+  let role = m[1].trim().replace(/\.+$/, '').trim();
+  // Drop a trailing ")" left unbalanced by stripping the wrapping "(e.g. …)".
+  if (role.endsWith(')') && (role.split('(').length - 1) < (role.split(')').length - 1)) {
+    role = role.slice(0, -1).trim();
+  }
+  return role || null;
+}
+
+// Last-resort: derive a role from a LinkedIn job URL slug
+// (".../jobs/view/{role}-at-{company}-{id}") → title-cased words.
+function roleFromUrl(rawUrl: string | null | undefined): string | null {
+  if (!rawUrl) return null;
+  const slug = rawUrl.match(/\/jobs\/view\/([^?]+)/i)?.[1];
+  if (!slug) return null;
+  const rolePart = slug.split('-at-')[0];
+  if (!rolePart || rolePart === slug) return null; // no "-at-" → can't isolate the role
+  const words = rolePart.split('-').filter(Boolean);
+  if (words.length === 0) return null;
+  return words.map((w) => (w.length <= 2 ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1))).join(' ');
+}
+
 export async function GET(req: Request) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -205,13 +240,23 @@ export async function GET(req: Request) {
   };
   const groups = new Map<string, Item>();
 
-  // Build a child (title + publication details) from a signal row + its source.
+  // Build a child (title + detail) from a signal row + its source. For signals
+  // whose source title is generic ("cmc_hiring detected at Moderna"), swap in
+  // the specific thing — the actual job role, parsed from the summary's
+  // "e.g. {role}" example or the LinkedIn URL slug — so two different postings
+  // read distinctly instead of as identical rows.
   const toChild = (r: SignalRow): Child => {
     const src = r.source_event_id ? sourceById.get(r.source_event_id) : null;
     const rawDetail = src?.summary || src?.excerpt || r.evidence_excerpt || null;
+
+    const specificTitle = src?.title && !isGenericTitle(src.title) ? decodeEntities(src.title) : null;
+    const derivedTitle = specificTitle ?? roleFromSummary(src?.summary) ?? roleFromUrl(src?.source_url);
+    // Fall back to the (generic) source title only if nothing better was found.
+    const title = derivedTitle ?? (src?.title ? decodeEntities(src.title) : null);
+
     return {
       id: r.id,
-      title: src?.title ? decodeEntities(src.title) : null,
+      title,
       detail: rawDetail ? decodeEntities(rawDetail).slice(0, 280) : null,
       source: src?.source ?? null,
       url: src?.source_url ?? null,
