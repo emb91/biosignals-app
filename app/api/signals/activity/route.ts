@@ -24,9 +24,35 @@ interface SignalRow {
   signal_scope: 'company' | 'contact' | string;
   company_id: string | null;
   contact_id: string | null;
+  source_event_id: string | null;
   event_at: string | null;
   observed_at: string | null;
   evidence_excerpt: string | null;
+}
+
+/** One underlying event shown when a grouped row is expanded. */
+type Child = {
+  id: string;
+  title: string | null;
+  detail: string | null;
+  source: string | null;
+  url: string | null;
+  eventAt: string | null;
+};
+
+// Decode the handful of HTML entities that show up in scraped titles/abstracts
+// (numeric refs + a few named ones) so they render as text, not "&#x2009;".
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .trim();
 }
 
 export async function GET(req: Request) {
@@ -48,7 +74,7 @@ export async function GET(req: Request) {
   // per-user set is small.
   const { data: rowsRaw, error } = await supabase
     .from('normalized_signals')
-    .select('id, signal_key, signal_scope, company_id, contact_id, event_at, observed_at, evidence_excerpt')
+    .select('id, signal_key, signal_scope, company_id, contact_id, source_event_id, event_at, observed_at, evidence_excerpt')
     .eq('user_id', user.id)
     .order('event_at', { ascending: false, nullsFirst: false })
     .limit(MAX_ROWS);
@@ -75,11 +101,13 @@ export async function GET(req: Request) {
     return NextResponse.json({ items: [], days });
   }
 
-  // Resolve company + contact names, and the user's archived companies to filter.
+  // Resolve company + contact names, source events (per-event detail), and the
+  // user's archived companies to filter.
   const companyIds = [...new Set(rows.map((r) => r.company_id).filter((v): v is string => !!v))];
   const contactIds = [...new Set(rows.map((r) => r.contact_id).filter((v): v is string => !!v))];
+  const sourceEventIds = [...new Set(rows.map((r) => r.source_event_id).filter((v): v is string => !!v))];
 
-  const [companiesRes, contactsRes, archivedRes] = await Promise.all([
+  const [companiesRes, contactsRes, archivedRes, sourceRes] = await Promise.all([
     companyIds.length
       ? supabase.from('companies').select('id, company_name').in('id', companyIds)
       : Promise.resolve({ data: [] as Array<{ id: string; company_name: string | null }> }),
@@ -104,7 +132,35 @@ export async function GET(req: Request) {
       .select('company_id')
       .eq('user_id', user.id)
       .not('archived_at', 'is', null),
+    sourceEventIds.length
+      ? supabase
+          .from('signal_source_events')
+          .select('id, title, summary, excerpt, source, source_url, event_at')
+          .in('id', sourceEventIds)
+      : Promise.resolve({
+          data: [] as Array<{
+            id: string;
+            title: string | null;
+            summary: string | null;
+            excerpt: string | null;
+            source: string | null;
+            source_url: string | null;
+            event_at: string | null;
+          }>,
+        }),
   ]);
+
+  const sourceById = new Map(
+    ((sourceRes.data ?? []) as Array<{
+      id: string;
+      title: string | null;
+      summary: string | null;
+      excerpt: string | null;
+      source: string | null;
+      source_url: string | null;
+      event_at: string | null;
+    }>).map((s) => [s.id, s]),
+  );
 
   const companyName = new Map<string, string>(
     ((companiesRes.data ?? []) as Array<{ id: string; company_name: string | null }>).map((c) => [
@@ -144,8 +200,24 @@ export async function GET(req: Request) {
     displayAt: string | null;
     evidence: string | null;
     count: number;
+    /** Per-event detail, shown when the row is expanded. */
+    children: Child[];
   };
   const groups = new Map<string, Item>();
+
+  // Build a child (title + publication details) from a signal row + its source.
+  const toChild = (r: SignalRow): Child => {
+    const src = r.source_event_id ? sourceById.get(r.source_event_id) : null;
+    const rawDetail = src?.summary || src?.excerpt || r.evidence_excerpt || null;
+    return {
+      id: r.id,
+      title: src?.title ? decodeEntities(src.title) : null,
+      detail: rawDetail ? decodeEntities(rawDetail).slice(0, 280) : null,
+      source: src?.source ?? null,
+      url: src?.source_url ?? null,
+      eventAt: src?.event_at ?? r.event_at ?? r.observed_at,
+    };
+  };
 
   for (const r of rows) {
     // Drop signals on archived companies or archived contacts.
@@ -164,6 +236,7 @@ export async function GET(req: Request) {
     const existing = groups.get(groupKey);
     if (existing) {
       existing.count += 1;
+      existing.children.push(toChild(r));
       continue;
     }
     groups.set(groupKey, {
@@ -180,6 +253,7 @@ export async function GET(req: Request) {
       displayAt: r.event_at ?? r.observed_at,
       evidence: r.evidence_excerpt,
       count: 1,
+      children: [toChild(r)],
     });
   }
 
