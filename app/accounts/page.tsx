@@ -43,6 +43,7 @@ import {
   isCrmSuppressed,
   LEAD_ACTION_PILL_CLASS,
   LEAD_ACTION_SORT_ORDER,
+  type SequenceDispatchStatus,
   SOURCE_COMPANY_MIN,
   SOURCE_CONTACT_MAX,
 } from '@/lib/lead-action';
@@ -104,6 +105,9 @@ type AccountRow = {
   crm_status?: 'customer' | 'active' | 'dormant' | 'context_only' | 'none' | null;
   crm_deal_stage_label?: string | null;
   crm_closed_at?: string | null;
+  /** Aggregate outreach funnel state across the account's contacts — drives the
+   *  Send outreach / Await reply action overlay (mirrors the contact action). */
+  latest_sequence_status?: SequenceDispatchStatus;
   user_overrides?: Record<string, unknown> | null;
 };
 

@@ -379,8 +379,15 @@ export function getAccountRowAction(account: {
   /** Close-date proxy for the account's winning deal — drives the suppression cooldown. */
   crm_closed_at?: string | null;
   contact_count?: number | null;
+  /**
+   * Highest-actionability outreach state across the account's contacts
+   * ('draft' if any contact has a staged sequence, else 'sent' if any was
+   * dispatched, else null). Mirrors the contact action's outreach overlay so an
+   * account surfaces "Send outreach" / "Await reply" the same way a contact does.
+   */
+  latest_sequence_status?: SequenceDispatchStatus;
 }): LeadAction {
-  // No contacts on file → always source, regardless of CRM state.
+  // No contacts on file → always source, regardless of CRM / outreach state.
   if (typeof account.contact_count === 'number' && account.contact_count === 0) {
     return 'source_contact';
   }
@@ -395,20 +402,22 @@ export function getAccountRowAction(account: {
   // If neither readiness nor an ACTIVE CRM signal exists, fall back to the legacy
   // intent-based logic so accounts still get a meaningful action before the
   // readiness pipeline has run for them.
-  if (
-    account.readiness_score == null &&
-    (crmForAction == null || crmForAction === 'none')
-  ) {
-    return getLeadActionFromFits(
-      score01ForAction(account.company_fit_score ?? null),
-      score01ForAction(account.best_contact_fit ?? null),
-      account.max_contact_readiness_score ?? null,
-    );
-  }
-  return getActionFromScores(
-    account.company_fit_score ?? null,
-    account.best_contact_fit ?? null,
-    account.readiness_score ?? null,
-    crmForAction,
-  );
+  const base =
+    account.readiness_score == null && (crmForAction == null || crmForAction === 'none')
+      ? getLeadActionFromFits(
+          score01ForAction(account.company_fit_score ?? null),
+          score01ForAction(account.best_contact_fit ?? null),
+          account.max_contact_readiness_score ?? null,
+        )
+      : getActionFromScores(
+          account.company_fit_score ?? null,
+          account.best_contact_fit ?? null,
+          account.readiness_score ?? null,
+          crmForAction,
+        );
+
+  // Mirror the contact action pipeline: overlay the outreach funnel state so a
+  // staged/sent sequence at the account promotes to Send outreach / Await reply.
+  // (Identical to contacts' applyOutreachOverride; null status leaves base as-is.)
+  return applyOutreachOverride(base, account.latest_sequence_status ?? null, crmForAction);
 }
