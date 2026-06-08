@@ -104,6 +104,15 @@ function roleFromUrl(rawUrl: string | null | undefined): string | null {
   return words.map((w) => (w.length <= 2 ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1))).join(' ');
 }
 
+// Patent title fallback when metadata.patent_title is missing — the summary is
+// "Patent filing/grant activity detected for {Company}: {Title}."
+function patentTitleFromSummary(summary: string | null | undefined): string | null {
+  if (!summary) return null;
+  const idx = summary.indexOf(': ');
+  if (idx === -1) return null;
+  return summary.slice(idx + 2).replace(/\.+$/, '').trim() || null;
+}
+
 export async function GET(req: Request) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -325,6 +334,67 @@ export async function GET(req: Request) {
   // `rows` is already sorted by signal date desc, so insertion order keeps the
   // list newest-first by the signal's own event date.
   const items = [...groups.values()];
+
+  // Patent-velocity rows (assignee_portfolio_acceleration) summarise "N patents
+  // in the last 90 days" but don't store the list. The individual patents ARE
+  // stored as their own events (with patent_title + Google Patents URL), so
+  // fetch the company's recent patents and list them as the row's children —
+  // one bullet (title + link) per patent. No monitor change / re-scrape needed.
+  const velocityItems = items.filter(
+    (it) => it.signalKey === 'assignee_portfolio_acceleration' && it.companyId,
+  );
+  if (velocityItems.length > 0) {
+    const velCompanyIds = [...new Set(velocityItems.map((it) => it.companyId).filter((v): v is string => !!v))];
+    // Generous 120-day window so the 90-day velocity window is fully covered.
+    const patentCutoff = new Date(Date.now() - 120 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: patentRows } = await supabase
+      .from('signal_source_events')
+      .select('entity_company_id, source_url, event_at, summary, metadata')
+      .eq('user_id', user.id)
+      .in('entity_company_id', velCompanyIds)
+      .in('source_event_type', ['patent_filed_or_granted', 'patent_application_published', 'patent_granted'])
+      .gte('event_at', patentCutoff)
+      .order('event_at', { ascending: false });
+
+    const patentsByCompany = new Map<string, Child[]>();
+    const seenPatent = new Map<string, Set<string>>();
+    for (const p of (patentRows ?? []) as Array<{
+      entity_company_id: string | null;
+      source_url: string | null;
+      event_at: string | null;
+      summary: string | null;
+      metadata: Record<string, unknown> | null;
+    }>) {
+      const cid = p.entity_company_id;
+      if (!cid) continue;
+      const meta = p.metadata ?? {};
+      const patentId = (typeof meta.patent_id === 'string' && meta.patent_id) || p.source_url || '';
+      // Dedup the same patent across filed/published/granted events.
+      if (!seenPatent.has(cid)) seenPatent.set(cid, new Set());
+      if (patentId && seenPatent.get(cid)!.has(patentId)) continue;
+      if (patentId) seenPatent.get(cid)!.add(patentId);
+
+      const title =
+        (typeof meta.patent_title === 'string' && meta.patent_title) ||
+        patentTitleFromSummary(p.summary) ||
+        'Patent';
+      const arr = patentsByCompany.get(cid) ?? [];
+      arr.push({
+        id: `${cid}:patent:${patentId || arr.length}`,
+        title: decodeEntities(title),
+        detail: typeof meta.patent_id === 'string' ? meta.patent_id : null,
+        source: 'patentsview',
+        url: p.source_url,
+        eventAt: (typeof meta.patent_date === 'string' && meta.patent_date) || p.event_at,
+      });
+      patentsByCompany.set(cid, arr);
+    }
+
+    for (const it of velocityItems) {
+      const kids = it.companyId ? patentsByCompany.get(it.companyId) : null;
+      if (kids && kids.length > 0) it.children = kids;
+    }
+  }
 
   return NextResponse.json({ items, days });
 }
