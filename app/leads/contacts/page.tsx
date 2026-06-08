@@ -1599,17 +1599,20 @@ export function ContactsWorkspace() {
     try {
       const res = await fetch('/api/hubspot/pull-crm', { method: 'POST' });
       const text = await res.text();
-      const data = text ? JSON.parse(text) : null;
+      let data: Record<string, unknown> | null = null;
+      try { data = text ? JSON.parse(text) : null; } catch { /* unparseable body */ }
       if (!res.ok) {
-        console.error('HubSpot CRM pull failed:', data?.error || text || 'Unknown error');
+        const msg = (data?.error as string) || text || `HTTP ${res.status}`;
+        setHubspotPullResult({ fetchedContacts: 0, mirroredContacts: 0, contactEventsEmitted: 0, contactContextOnlyEvents: 0, contactRecomputedCompanies: 0, contactSkippedUnresolvedCompanies: 0, fetchedDeals: 0, mirroredDeals: 0, emittedEvents: 0, recomputedCompanies: 0, skippedUnresolvedCompanies: 0, error: msg });
         return;
       }
       if (data?.result) {
-        setHubspotPullResult(data.result);
+        setHubspotPullResult(data.result as Parameters<typeof setHubspotPullResult>[0]);
         await fetchLeads(true);
       }
     } catch (err) {
-      console.error('HubSpot CRM pull error:', err);
+      const msg = err instanceof Error ? err.message : String(err);
+      setHubspotPullResult({ fetchedContacts: 0, mirroredContacts: 0, contactEventsEmitted: 0, contactContextOnlyEvents: 0, contactRecomputedCompanies: 0, contactSkippedUnresolvedCompanies: 0, fetchedDeals: 0, mirroredDeals: 0, emittedEvents: 0, recomputedCompanies: 0, skippedUnresolvedCompanies: 0, error: msg });
     } finally {
       setPullingHubspotCrm(false);
     }
@@ -3057,44 +3060,53 @@ export function ContactsWorkspace() {
   );
 
   const hubspotSyncBanner = hubspotSyncResult ? (
-    <div className="mb-4 shrink-0 rounded-lg border border-gray-200 bg-white pl-4 pr-4 pt-3.5 pb-3.5 flex items-start justify-between gap-4">
+    <div className={`mb-4 shrink-0 rounded-lg border bg-white pl-4 pr-4 pt-3.5 pb-3.5 flex items-start justify-between gap-4 ${hubspotSyncResult.error ? 'border-rose-200' : 'border-gray-200'}`}>
       <div className="flex items-start gap-3 min-w-0">
         <svg className="w-4 h-4 shrink-0 mt-0.5 text-[#ff7a59]" viewBox="0 0 24 24" fill="currentColor">
           <path d="M18.164 7.932V5.085a2.198 2.198 0 0 0 1.268-1.978V3.06A2.199 2.199 0 0 0 17.235.862h-.047a2.199 2.199 0 0 0-2.197 2.197v.047a2.199 2.199 0 0 0 1.268 1.978v2.847a6.232 6.232 0 0 0-2.962 1.302L5.028 3.617a2.44 2.44 0 0 0 .072-.573A2.455 2.455 0 1 0 2.645 5.5a2.43 2.43 0 0 0 1.194-.315l8.122 4.707a6.248 6.248 0 0 0 0 4.208L4.123 18.5a2.432 2.432 0 0 0-1.478-.498 2.455 2.455 0 1 0 2.455 2.455 2.43 2.43 0 0 0-.388-1.337l7.91-4.583a6.266 6.266 0 0 0 8.976-5.628 6.25 6.25 0 0 0-3.434-5.977zm-1.023 9.565a3.59 3.59 0 1 1 0-7.181 3.59 3.59 0 0 1 0 7.181z"/>
         </svg>
         <div className="min-w-0">
-          <div className="flex items-center gap-3 flex-wrap">
-            <span className="text-sm font-semibold text-gray-900">
-              {hubspotSyncResult.contacts.upserted} contact{hubspotSyncResult.contacts.upserted !== 1 ? 's' : ''} synced
-            </span>
-            {hubspotSyncResult.contacts.errors > 0 && (
-              <span className="text-xs font-medium text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full">
-                {hubspotSyncResult.contacts.errors} error{hubspotSyncResult.contacts.errors !== 1 ? 's' : ''}
-              </span>
-            )}
-            {hubspotSyncResult.skipped > 0 && (
-              <button
-                onClick={() => setSyncResultExpanded((v) => !v)}
-                className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full flex items-center gap-1 hover:bg-gray-200 transition-colors"
-              >
-                <svg className={`w-2.5 h-2.5 transition-transform ${syncResultExpanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
-                {hubspotSyncResult.skipped} skipped
-              </button>
-            )}
-          </div>
-          {syncResultExpanded && hubspotSyncResult.skippedContacts.length > 0 && (
-            <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
-              <p className="text-xs font-medium text-gray-900">Not synced yet</p>
-              <ul className="mt-1.5 space-y-1.5">
-              {hubspotSyncResult.skippedContacts.map((c, i) => (
-                <li key={i} className="text-xs text-gray-600">
-                  <span className="font-medium text-gray-800">{c.name}</span>
-                  {c.company && <span className="text-gray-400"> · {c.company}</span>}
-                  <span className="ml-1.5 text-gray-600">: {c.reason.toLowerCase()}</span>
-                </li>
-              ))}
-              </ul>
+          {hubspotSyncResult.error ? (
+            <div>
+              <span className="text-sm font-semibold text-rose-700">HubSpot sync failed</span>
+              <p className="mt-0.5 text-xs text-rose-600 break-words">{hubspotSyncResult.error}</p>
             </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-sm font-semibold text-gray-900">
+                  {hubspotSyncResult.contacts.upserted} contact{hubspotSyncResult.contacts.upserted !== 1 ? 's' : ''} synced
+                </span>
+                {hubspotSyncResult.contacts.errors > 0 && (
+                  <span className="text-xs font-medium text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full">
+                    {hubspotSyncResult.contacts.errors} error{hubspotSyncResult.contacts.errors !== 1 ? 's' : ''}
+                  </span>
+                )}
+                {hubspotSyncResult.skipped > 0 && (
+                  <button
+                    onClick={() => setSyncResultExpanded((v) => !v)}
+                    className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full flex items-center gap-1 hover:bg-gray-200 transition-colors"
+                  >
+                    <svg className={`w-2.5 h-2.5 transition-transform ${syncResultExpanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                    {hubspotSyncResult.skipped} skipped
+                  </button>
+                )}
+              </div>
+              {syncResultExpanded && hubspotSyncResult.skippedContacts.length > 0 && (
+                <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                  <p className="text-xs font-medium text-gray-900">Not synced yet</p>
+                  <ul className="mt-1.5 space-y-1.5">
+                  {hubspotSyncResult.skippedContacts.map((c, i) => (
+                    <li key={i} className="text-xs text-gray-600">
+                      <span className="font-medium text-gray-800">{c.name}</span>
+                      {c.company && <span className="text-gray-400"> · {c.company}</span>}
+                      <span className="ml-1.5 text-gray-600">: {c.reason.toLowerCase()}</span>
+                    </li>
+                  ))}
+                  </ul>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -3109,36 +3121,43 @@ export function ContactsWorkspace() {
   ) : null;
 
   const hubspotPullBanner = hubspotPullResult ? (
-    <div className="mb-4 shrink-0 rounded-lg border border-gray-200 bg-white px-4 py-3.5 flex items-start justify-between gap-4">
+    <div className={`mb-4 shrink-0 rounded-lg border bg-white px-4 py-3.5 flex items-start justify-between gap-4 ${hubspotPullResult.error ? 'border-rose-200' : 'border-gray-200'}`}>
       <div className="min-w-0">
-        <div className="flex items-center gap-3 flex-wrap">
-          <span className="text-sm font-semibold text-gray-900">
-            HubSpot CRM pulled
-          </span>
-          <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
-            {hubspotPullResult.fetchedContacts} contacts fetched
-          </span>
-          <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
-            {hubspotPullResult.contactEventsEmitted} contact signals
-          </span>
-          <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
-            {hubspotPullResult.fetchedDeals} deals fetched
-          </span>
-          <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
-            {hubspotPullResult.mirroredDeals} deals mirrored
-          </span>
-          <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
-            {hubspotPullResult.emittedEvents} deal signals
-          </span>
-          <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
-            {hubspotPullResult.contactRecomputedCompanies + hubspotPullResult.recomputedCompanies} accounts updated
-          </span>
-          {(hubspotPullResult.contactContextOnlyEvents > 0 || hubspotPullResult.contactSkippedUnresolvedCompanies > 0 || hubspotPullResult.skippedUnresolvedCompanies > 0) && (
-            <span className="text-xs font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">
-              {hubspotPullResult.contactContextOnlyEvents} context-only · {hubspotPullResult.contactSkippedUnresolvedCompanies + hubspotPullResult.skippedUnresolvedCompanies} unresolved
+        {hubspotPullResult.error ? (
+          <div>
+            <span className="text-sm font-semibold text-rose-700">HubSpot CRM pull failed</span>
+            <p className="mt-0.5 text-xs text-rose-600 break-words">{hubspotPullResult.error}</p>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="text-sm font-semibold text-gray-900">
+              HubSpot CRM pulled
             </span>
-          )}
-        </div>
+            <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
+              {hubspotPullResult.fetchedContacts} contacts fetched
+            </span>
+            <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
+              {hubspotPullResult.contactEventsEmitted} contact signals
+            </span>
+            <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
+              {hubspotPullResult.fetchedDeals} deals fetched
+            </span>
+            <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
+              {hubspotPullResult.mirroredDeals} deals mirrored
+            </span>
+            <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
+              {hubspotPullResult.emittedEvents} deal signals
+            </span>
+            <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
+              {hubspotPullResult.contactRecomputedCompanies + hubspotPullResult.recomputedCompanies} accounts updated
+            </span>
+            {(hubspotPullResult.contactContextOnlyEvents > 0 || hubspotPullResult.contactSkippedUnresolvedCompanies > 0 || hubspotPullResult.skippedUnresolvedCompanies > 0) && (
+              <span className="text-xs font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">
+                {hubspotPullResult.contactContextOnlyEvents} context-only · {hubspotPullResult.contactSkippedUnresolvedCompanies + hubspotPullResult.skippedUnresolvedCompanies} unresolved
+              </span>
+            )}
+          </div>
+        )}
       </div>
       <button
         onClick={() => setHubspotPullResult(null)}
