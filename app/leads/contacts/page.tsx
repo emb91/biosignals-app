@@ -1690,7 +1690,15 @@ export function ContactsWorkspace() {
     if (!id || leads.length === 0) return;
     if (leads.some((l) => l.id === id)) {
       setSelectedLeadId(id);
-      setSelectedPreview('contact');
+      // Allow deep-linking straight to a panel tab (e.g. the accounts page sends
+      // ?lead=<id>&tab=outreach when you click Reach out on an account).
+      const tab = searchParams.get('tab');
+      const validTabs = ['contact', 'hubspot', 'scoring', 'action', 'signals', 'priority', 'outreach'] as const;
+      setSelectedPreview(
+        (validTabs as readonly string[]).includes(tab ?? '')
+          ? (tab as (typeof validTabs)[number])
+          : 'contact',
+      );
     }
   }, [searchParams, leads]);
 
