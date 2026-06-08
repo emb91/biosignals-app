@@ -43,8 +43,13 @@ import type { BuyerFunction, SignalKey } from '@/lib/signals/readiness-types';
 const APIFY_ACTOR = 'curious_coder~linkedin-jobs-scraper';
 /** Timeout for the batch call. One run covers all companies. */
 const ACTOR_TIMEOUT_MS = 120_000;
-/** Target results per company search URL. */
-const RESULTS_PER_COMPANY = 25;
+/**
+ * Target results per company. The actor returns min(count, actually-available),
+ * so a higher value only matters for companies that genuinely have more roles —
+ * it doesn't over-scrape small ones. 100 matches the all_roles display cap and
+ * keeps single-company runs from being starved.
+ */
+const RESULTS_PER_COMPANY = 100;
 /**
  * Hard ceiling on the actor's GLOBAL `count` for a single call. The actor's
  * `count` is a TOTAL cap across ALL search URLs (verified against its input
@@ -891,7 +896,7 @@ export async function runHiringMonitor(input: HiringMonitorInput): Promise<Hirin
             // Every scraped posting (title + LinkedIn URL), so the /log surge
             // row can list the full set of open roles, not just the matched
             // ones. Capped to keep the metadata blob bounded.
-            all_roles: postings.slice(0, 50).map((p) => ({ title: p.title, url: p.job_url })),
+            all_roles: postings.slice(0, 100).map((p) => ({ title: p.title, url: p.job_url })),
             buyer_functions_activated: buyerFunctionsFromMix,
             categories: Object.fromEntries(categoryMatches.map((c) => [c.key, c.count])),
             week: currentWeekKey,
