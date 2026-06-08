@@ -19,6 +19,50 @@ import type { TodayPriority } from '@/lib/priorities/types';
 // Defaults to Haiku 4.5 on both routes — plenty for structured-output audits
 // that ask for JSON not deep reasoning.
 
+// Only the CRITERIA columns the audit actually reasons over. Deliberately
+// EXCLUDES the heavy jsonb blobs (`example_company_enrichment`, `competitors`)
+// and the re-enrichment status columns — pulling `*` made each call ~99k input
+// tokens (the example_company_enrichment blob dominated) for a task that only
+// compares ICP criteria. This is the single biggest lever on this feature's cost.
+const AUDIT_ICP_COLUMNS =
+  'id, name, therapeutic_areas, funding_stages, company_type, modalities, ' +
+  'development_stages, company_sizes, example_companies, signals, li_follower_sizes, ' +
+  'icp_summary, example_company_url, customer_therapeutic_areas, customer_modalities, ' +
+  'customer_development_stages, platform_category, target_customers, buyer_types, ' +
+  'created_at, updated_at';
+
+// The user's own company profile for "gap" detection — the offering/market
+// fields only. Excludes the heavy jsonb blobs (apollo_firmographics,
+// apify_firmographics, competitors_enriched) that the audit never reads.
+const AUDIT_COMPANY_COLUMNS =
+  'id, company_name, description, products_services, services, target_customers, ' +
+  'value_propositions, industries, technologies, customers_we_serve, why_customers_buy, ' +
+  'differentiated_value, capabilities, good_fit, bad_fit, therapeutic_areas, modalities, ' +
+  'development_stages, company_type, customer_therapeutic_areas, customer_modalities, ' +
+  'customer_development_stages, platform_category, buyer_prerequisites, buyer_disqualifiers, ' +
+  'updated_at, created_at';
+
+// The criteria fields whose CONTENT defines whether an audit needs re-running.
+// The hash is built from these values (not the row's `updated_at`) so that
+// re-enrichment status writes — which bump `updated_at` without changing any
+// criterion — no longer bust the cache and trigger a needless (paid) re-audit.
+const AUDIT_HASH_FIELDS = [
+  'name', 'therapeutic_areas', 'funding_stages', 'company_type', 'modalities',
+  'development_stages', 'company_sizes', 'example_companies', 'signals',
+  'li_follower_sizes', 'icp_summary', 'customer_therapeutic_areas',
+  'customer_modalities', 'customer_development_stages', 'platform_category',
+  'target_customers', 'buyer_types',
+] as const;
+
+/** Stable, order-insensitive signature of one ICP's audit-relevant criteria. */
+function canonicalIcpCriteria(row: Record<string, unknown>): string {
+  return AUDIT_HASH_FIELDS.map((f) => {
+    const v = row[f];
+    if (Array.isArray(v)) return `${f}=[${[...v].map((x) => String(x)).sort().join(',')}]`;
+    return `${f}=${v == null ? '' : String(v)}`;
+  }).join(';');
+}
+
 export type IcpPriorityKind =
   | 'overlap'
   | 'gap'
@@ -72,6 +116,9 @@ function hashAuditInputs(args: {
   icps: Array<Record<string, unknown>>;
   dismissedIds: string[];
 }): string {
+  // Company key still uses updated_at (one row, low churn, and its profile edits
+  // genuinely should re-audit). ICP keys use CRITERIA CONTENT, not updated_at —
+  // so re-enrichment status churn doesn't bust the cache.
   const companyKey =
     args.myCompany
       ? [
@@ -80,7 +127,7 @@ function hashAuditInputs(args: {
         ].join(':')
       : 'none';
   const icpKeys = args.icps
-    .map((row) => [row['id'], row['updated_at'] ?? row['created_at']].join(':'))
+    .map((row) => `${row['id']}:${canonicalIcpCriteria(row)}`)
     .sort()
     .join('|');
   const dismissals = [...args.dismissedIds].sort().join(',');
@@ -101,7 +148,7 @@ export async function getIcpAuditHash(
     supabase.from('user_company').select('id, updated_at, created_at').eq('user_id', userId).maybeSingle(),
     supabase
       .from('icps')
-      .select('id, updated_at, created_at')
+      .select(AUDIT_ICP_COLUMNS)
       .eq('user_id', userId)
       .order('created_at', { ascending: true }),
     supabase
@@ -129,10 +176,10 @@ export async function computeIcpAuditPriorities(
 ): Promise<IcpPriority[]> {
   try {
     const [companyRes, icpsRes, dismissalsRes] = await Promise.all([
-      supabase.from('user_company').select('*').eq('user_id', userId).maybeSingle(),
+      supabase.from('user_company').select(AUDIT_COMPANY_COLUMNS).eq('user_id', userId).maybeSingle(),
       supabase
         .from('icps')
-        .select('*')
+        .select(AUDIT_ICP_COLUMNS)
         .eq('user_id', userId)
         .order('created_at', { ascending: true }),
       supabase
@@ -142,8 +189,10 @@ export async function computeIcpAuditPriorities(
         .eq('source', 'icp-audit'),
     ]);
 
-    const myCompany = companyRes.data ?? null;
-    const icps = icpsRes.data ?? [];
+    // Cast: select() with a runtime column-list string can't infer row types,
+    // so Supabase returns GenericStringError[]. The columns are real (AUDIT_ICP_COLUMNS).
+    const myCompany = (companyRes.data as Record<string, unknown> | null) ?? null;
+    const icps = (icpsRes.data as Array<Record<string, unknown>> | null) ?? [];
     const dismissedIds = new Set<string>(
       ((dismissalsRes.data ?? []) as Array<{ priority_id: string }>).map((r) => r.priority_id),
     );
@@ -219,7 +268,7 @@ ${JSON.stringify(icps, null, 2)}`;
       return [];
     }
 
-    const validIcpIds = new Set(icps.map((row: { id: string }) => row.id));
+    const validIcpIds = new Set(icps.map((row) => row.id as string));
     const rawList = Array.isArray(parsed.priorities) ? parsed.priorities : [];
 
     const priorities: IcpPriority[] = rawList
@@ -261,7 +310,7 @@ ${JSON.stringify(icps, null, 2)}`;
         // full names are already mentioned in the headline. Falls back to "ICP ?" if the id
         // somehow doesn't resolve (shouldn't happen because of the validIcpIds filter above).
         const icpLabels = icpIds.map((id) => {
-          const idx = (icps as Array<{ id: string }>).findIndex((icp) => icp.id === id);
+          const idx = icps.findIndex((icp) => (icp.id as string) === id);
           return idx >= 0 ? `ICP ${idx + 1}` : 'ICP ?';
         });
         if (!headline || !ctaLabel || !ctaSeed) return null;
