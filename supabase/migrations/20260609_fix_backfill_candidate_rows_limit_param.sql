@@ -1,0 +1,6 @@
+-- Fix: backfill_candidate_rows hardcoded LIMIT $4, but when p_date_col is null
+-- the EXECUTE binds only 3 params ($1 targets, $2 min_similarity, $3 limit), so
+-- $4 was unbound ("there is no parameter $4") and patent_event_assignees (no
+-- date col) backfill failed — new companies never got patent signals backfilled.
+-- The limit placeholder now matches the bound-param count ($4 with date, $3 without).
+-- Full body applied via Supabase MCP migration fix_backfill_candidate_rows_limit_param.
