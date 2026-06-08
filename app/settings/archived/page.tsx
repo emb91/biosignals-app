@@ -56,14 +56,12 @@ function ArchivedRecordCard({
   group,
   collapsed,
   onToggle,
-  onRestoreGroup,
   onRestoreContact,
   restoring,
 }: {
   group: ArchivedGroup;
   collapsed: boolean;
   onToggle: () => void;
-  onRestoreGroup: (group: ArchivedGroup) => void;
   onRestoreContact: (contact: ArchivedContact, group: ArchivedGroup) => void;
   restoring: boolean;
 }) {
@@ -137,23 +135,6 @@ function ArchivedRecordCard({
 
           <p className="text-[11px] text-[#b6c2c8]">{absoluteTime(group.archivedAt)}</p>
 
-          {/* Account-level restore: only an archived ACCOUNT restores as a group
-              (it brings its cascade-archived contacts back too). A contact-only
-              group restores via the single per-contact button below. */}
-          {isAccountGroup && (
-            <div className="flex items-center justify-end">
-              <button
-                type="button"
-                onClick={() => onRestoreGroup(group)}
-                disabled={restoring}
-                className="inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-[11px] font-semibold border border-[rgba(45,138,138,0.18)] bg-[rgba(45,138,138,0.08)] text-[#2d8a8a] disabled:opacity-60"
-              >
-                <ArchiveRestore className="h-3 w-3" />
-                {restoring ? 'Restoring…' : 'Restore'}
-              </button>
-            </div>
-          )}
-
           <div>
             <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">
               {isAccountGroup
@@ -174,16 +155,18 @@ function ArchivedRecordCard({
                     </span>
                     {contact.email && <span className="text-[#7d909a]"> · {contact.email}</span>}
                   </div>
-                  {!group.account && (
-                    <button
-                      type="button"
-                      onClick={() => onRestoreContact(contact, group)}
-                      disabled={restoring}
-                      className="shrink-0 rounded px-2 py-1 text-[10.5px] font-semibold text-[#2d8a8a] transition hover:bg-[rgba(45,138,138,0.08)] disabled:opacity-60"
-                    >
-                      Restore
-                    </button>
-                  )}
+                  {/* One consistent inline Restore per row, both card types. For an
+                      account group it restores the account (+ its contacts); for a
+                      contact-only group it restores that contact. */}
+                  <button
+                    type="button"
+                    onClick={() => onRestoreContact(contact, group)}
+                    disabled={restoring}
+                    className="inline-flex shrink-0 items-center gap-1 rounded border border-[rgba(45,138,138,0.18)] bg-[rgba(45,138,138,0.08)] px-2 py-1 text-[10.5px] font-semibold text-[#2d8a8a] transition hover:bg-[rgba(45,138,138,0.14)] disabled:opacity-60"
+                  >
+                    <ArchiveRestore className="h-3 w-3" />
+                    {restoring ? 'Restoring…' : 'Restore'}
+                  </button>
                 </li>
               ))}
             </ul>
@@ -378,16 +361,14 @@ export default function ArchivedRecordsPage() {
                     group={group}
                     collapsed={!expandedKeys.has(group.key)}
                     onToggle={() => toggle(group.key)}
-                    onRestoreGroup={(selectedGroup) => {
-                      if (!confirmRestoreGroup(selectedGroup)) return;
-                      void restoreRecord(
-                        selectedGroup.account ? 'account' : 'contact',
-                        selectedGroup.account?.id ?? selectedGroup.contacts[0]?.id ?? '',
-                        selectedGroup.key,
-                      );
-                    }}
                     onRestoreContact={(contact, selectedGroup) => {
-                      if (!confirmRestoreContact(contact)) return;
+                      // An account group restores as a whole (account + its
+                      // contacts), so confirm with the account; a contact-only
+                      // group restores just that contact.
+                      const confirmed = selectedGroup.account
+                        ? confirmRestoreGroup(selectedGroup)
+                        : confirmRestoreContact(contact);
+                      if (!confirmed) return;
                       void restoreRecord(
                         selectedGroup.account ? 'account' : 'contact',
                         selectedGroup.account?.id ?? contact.id,
