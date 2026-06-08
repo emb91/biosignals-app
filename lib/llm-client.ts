@@ -66,7 +66,8 @@ export type LlmFeature =
   // `web` plugin so they keep working when Anthropic credits are dry.
   | 'company_monitor_funding'
   | 'company_monitor_taxonomy'
-  | 'my_company_enrichment_analysis';
+  | 'my_company_enrichment_analysis'
+  | 'my_company_enrichment_bullet_condense';
 
 /**
  * Default models per (feature, route). Override via the `model` arg.
@@ -193,6 +194,11 @@ const FEATURE_MODELS: Record<LlmFeature, { openrouter: string; anthropic: string
   my_company_enrichment_analysis: {
     openrouter: 'anthropic/claude-sonnet-4-6',
     anthropic: 'claude-sonnet-4-6',
+  },
+  // Plain condense pass (no web search) — Haiku is plenty.
+  my_company_enrichment_bullet_condense: {
+    openrouter: 'anthropic/claude-haiku-4-5',
+    anthropic: 'claude-haiku-4-5',
   },
 };
 

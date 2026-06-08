@@ -42,6 +42,47 @@ import {
   resolveCompanyIdentity,
   type CompanyIdentityContext,
 } from '@/lib/company-identity-resolver';
+import { completeLlm } from '@/lib/llm-client';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
+
+/**
+ * Condense the raw LinkedIn "About" text into a clean 1–2 sentence summary
+ * for the side-panel "Profile summary". Without this, the panel shows the full
+ * raw dump (including LinkedIn boilerplate like adverse-event / recruitment-scam
+ * notices). Uses completeLlm — Anthropic-direct preferred, OpenRouter fallback —
+ * so it works even when Anthropic credits are dry. Non-fatal: returns null on
+ * any failure (the panel falls back to the raw description).
+ */
+async function summariseCompanyBio(description: string): Promise<string | null> {
+  if (!description.trim()) return null;
+  try {
+    const result = await completeLlm({
+      feature: 'company_bio_summarization',
+      maxTokens: 160,
+      prompt:
+        'Summarise what this company does in 1–2 plain sentences (max ~40 words) for a B2B ' +
+        'sales context. Be factual and specific — name the category, products, or focus. ' +
+        'Ignore any boilerplate (adverse-event reporting, recruitment-scam warnings, social ' +
+        'links). No preamble.\n\n' +
+        description,
+    });
+    await recordLlmUsageEvent({
+      provider: result.provider,
+      feature: 'company_bio_summarization',
+      route: 'lib/company-enrichment#summariseCompanyBio',
+      model: result.model,
+      usage: result.usage,
+    }).catch(() => undefined);
+    const sentence = result.text.trim().replace(/^[-•*\d.)]\s*/, '');
+    return sentence || null;
+  } catch (err) {
+    console.warn(
+      '[company-enrichment] bio summarisation failed (non-fatal):',
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
+}
 
 export type CompanyEnrichmentResult = {
   company_id: string;
@@ -228,8 +269,16 @@ export async function runCompanyEnrichmentById(
     );
     const employeeRange = pickString(apifyFirmographics.employee_range, company.employee_range);
 
+    // Clean profile summary from the raw LinkedIn About (OpenRouter-capable,
+    // so it works even with no Anthropic credits). Falls back to the existing
+    // bio_summary if we couldn't generate a fresh one.
+    const rawDescription = pickString(apifyFirmographics.description, company.description);
+    const bioSummary =
+      (rawDescription ? await summariseCompanyBio(rawDescription) : null) ?? company.bio_summary;
+
     const payload: Record<string, unknown> = {
       domain: resolvedDomain,
+      bio_summary: bioSummary,
       company_name: pickString(
         company.company_name,
         typeof apollo.company_name === 'string' ? apollo.company_name : null,

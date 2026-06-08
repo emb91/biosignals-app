@@ -7,6 +7,14 @@ import {
 } from '@/lib/company-enrichment';
 import { syncCompanyFitForCompany } from '@/lib/company-fit';
 
+// The enrichment runs in an after() job (Apollo + Apify + the parallelized
+// funding/taxonomy/narrative web-search modules). Give it a generous ceiling so
+// the platform doesn't kill it mid-run and leave the row stuck at 'running'.
+// With the modules parallelized this completes in ~50-60s; 300s is ample
+// headroom. (Vercel: 300s requires Pro/Enterprise; lower tiers cap lower —
+// adjust to your plan's max.)
+export const maxDuration = 300;
+
 /**
  * POST /api/companies/[id]/enrich
  *

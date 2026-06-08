@@ -1946,7 +1946,6 @@ export default function AccountsPage() {
                         const hasFirmographics = !!(
                           selectedAccount.employee_count != null ||
                           selectedAccount.employee_range ||
-                          selectedAccount.company_size_bucket ||
                           selectedAccount.founded_year != null ||
                           selectedAccount.headquarters_city ||
                           selectedAccount.headquarters_state ||
@@ -2179,12 +2178,8 @@ export default function AccountsPage() {
                                           <p className="text-gray-900 text-sm mt-0.5">{selectedAccount.employee_count != null ? selectedAccount.employee_count.toLocaleString() : selectedAccount.employee_range}</p>
                                         </div>
                                       )}
-                                      {selectedAccount.company_size_bucket && (
-                                        <div>
-                                          <p className="text-gray-400 text-xs">Size bucket</p>
-                                          <p className="text-gray-900 text-sm mt-0.5">{selectedAccount.company_size_bucket}</p>
-                                        </div>
-                                      )}
+                                      {/* Size bucket intentionally NOT shown here — it's an ICP
+                                          criterion, not an account firmographic. */}
                                       {selectedAccount.founded_year != null && (
                                         <div>
                                           <p className="text-gray-400 text-xs">Founded</p>
