@@ -408,6 +408,14 @@ export async function GET(request: Request) {
         // Aggregate outreach funnel state → drives the Send outreach / Await
         // reply action overlay in getAccountRowAction (mirrors contacts).
         latest_sequence_status: companySequenceStatuses.get(row.id) ?? null,
+        // Dedicated company-enrichment job state → drives the table-row
+        // "enriching…" animation + the side panel banner. Now carried on the
+        // lean list (the RPC returns it) so the table can show progress, not
+        // just the side panel.
+        enrichment_refresh_status: row.enrichment_refresh_status ?? null,
+        enrichment_refresh_last_error: row.enrichment_refresh_last_error ?? null,
+        enrichment_refresh_started_at: row.enrichment_refresh_started_at ?? null,
+        enrichment_refresh_finished_at: row.enrichment_refresh_finished_at ?? null,
       };
     });
 

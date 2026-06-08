@@ -913,7 +913,7 @@ export async function GET(request: Request) {
     };
 
     const baseLeadSelect =
-      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, email_status, email_status_reasoning, linkedin_url, profile_photo_url, headline, location, city, country, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, readiness_score, overall_fit_score, contact_fit_score, contact_panel_summary, contact_fit_summary, priority_score, source, created_at, updated_at, company_id, upload_batches(filename, created_at)';
+      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, email_status, email_status_reasoning, linkedin_url, profile_photo_url, profile_photo_cached, headline, location, city, country, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, readiness_score, overall_fit_score, contact_fit_score, contact_panel_summary, contact_fit_summary, priority_score, source, created_at, updated_at, company_id, upload_batches(filename, created_at)';
     // LEAN nested companies select — the contact LIST view only needs minimal
     // company context. The side panel + agent fetch full company detail via
     // GET /api/leads/[id]. Trimming here saves ~30 fields × 50 rows per list
@@ -939,7 +939,7 @@ export async function GET(request: Request) {
     const tertiarySelect =
       `${baseLeadSelect}, ${companySelectStable}`;
     const fallbackSelect =
-      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, linkedin_url, profile_photo_url, headline, location, city, country, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, readiness_score, overall_fit_score, contact_fit_score, contact_panel_summary, contact_fit_summary, source, created_at, updated_at, company_id, upload_batches(filename, created_at)';
+      'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, company_name, company_domain, company_linkedin_url, email, linkedin_url, profile_photo_url, profile_photo_cached, headline, location, city, country, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, contact_bio, contact_discovery_status, linkedin_resolution_status, profile_enrichment_status, fit_score, readiness_score, overall_fit_score, contact_fit_score, contact_panel_summary, contact_fit_summary, source, created_at, updated_at, company_id, upload_batches(filename, created_at)';
 
     let { data, error, count } = await runQuery(primarySelect);
 

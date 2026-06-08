@@ -70,3 +70,57 @@ export async function POST(
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
+
+/**
+ * DELETE /api/companies/[id]/enrich
+ *
+ * Stops a running company enrichment (mirrors the contacts stop control).
+ * Flips the row to `cancelled`. The background after() job re-checks this
+ * flag right before it would mark the row `succeeded` and bails if cancelled,
+ * so a stop sticks even though we can't truly abort an in-flight scrape.
+ */
+export async function DELETE(
+  _request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { id } = await params;
+
+    const authClient = await createClient();
+    const { data: { user }, error: authError } = await authClient.auth.getUser();
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    if (!id) {
+      return NextResponse.json({ error: 'company id required' }, { status: 400 });
+    }
+
+    const supabase = createAdminClient();
+    // Only cancel a row that's actually running — don't clobber a succeeded /
+    // failed terminal state if the job already finished (409-style no-op).
+    const { data: row } = await supabase
+      .from('companies')
+      .select('enrichment_refresh_status')
+      .eq('id', id)
+      .maybeSingle();
+    const status = (row as { enrichment_refresh_status?: string | null } | null)?.enrichment_refresh_status ?? null;
+    if (status !== 'running') {
+      return NextResponse.json({ success: true, company_id: id, status, alreadyFinished: true });
+    }
+
+    const finishedAt = new Date().toISOString();
+    await supabase
+      .from('companies')
+      .update({
+        enrichment_refresh_status: 'cancelled',
+        enrichment_refresh_finished_at: finishedAt,
+        updated_at: finishedAt,
+      })
+      .eq('id', id);
+
+    return NextResponse.json({ success: true, company_id: id, status: 'cancelled' });
+  } catch (error) {
+    console.error('[api/companies/enrich] DELETE error:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+}

@@ -196,7 +196,7 @@ export async function POST(request: Request) {
 
     const duplicateIds: string[] = [];
     const duplicateReasons = new Map<string, string>();
-    const invalidEmailIds: string[] = [];
+    const clearedEmailIds: string[] = [];
     const pendingRows = insertedRows.filter((row) => {
       const rawData = row.raw_data as Record<string, unknown>;
       const rowNorm: NormalisedRow = {
@@ -213,8 +213,12 @@ export async function POST(request: Request) {
       };
 
       if (rowNorm.email && !looksLikeEmail(rowNorm.email)) {
-        invalidEmailIds.push(row.id as string);
-        return false;
+        // Treat an invalid email the same as no email: drop it from the
+        // enrichment payload but let the row proceed (LinkedIn / name+company
+        // can still resolve the contact).
+        rowNorm.email = '';
+        (row as { email: string | null }).email = null;
+        clearedEmailIds.push(row.id as string);
       }
 
       let dupeReason: string | null = null;
@@ -258,15 +262,13 @@ export async function POST(request: Request) {
       }
     }
 
-    if (invalidEmailIds.length > 0) {
+    if (clearedEmailIds.length > 0) {
+      // Persist the email-stripped state on raw_uploads so logs reflect what
+      // actually got fed into enrichment.
       await supabase
         .from('raw_uploads')
-        .update({
-          status: 'failed',
-          failure_reason: 'Invalid email address',
-          enriched_at: new Date().toISOString(),
-        })
-        .in('id', invalidEmailIds);
+        .update({ email: null })
+        .in('id', clearedEmailIds);
     }
 
     if (quotaHeldIds.length > 0) {
@@ -287,7 +289,7 @@ export async function POST(request: Request) {
 
     await supabase
       .from('upload_batches')
-      .update({ duplicate_rows: duplicateIds.length, failed_rows: quotaHeldIds.length + invalidEmailIds.length })
+      .update({ duplicate_rows: duplicateIds.length, failed_rows: quotaHeldIds.length })
       .eq('id', batchId);
 
     if (rowsToEnrich.length === 0) {
@@ -325,11 +327,8 @@ export async function POST(request: Request) {
       heldBackByQuota: quotaHeldIds.length,
       beingEnriched: pendingIds.length,
       complete: 0,
-      failed: invalidEmailIds.length,
-      warning:
-        invalidEmailIds.length > 0
-          ? `${invalidEmailIds.length} row${invalidEmailIds.length === 1 ? '' : 's'} were skipped because the email address looked invalid. Fix those emails and re-import to include them.`
-          : null,
+      failed: 0,
+      warning: null,
     });
   } catch (error) {
     console.error('Error in import-contacts POST:', error);

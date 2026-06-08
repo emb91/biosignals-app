@@ -1,4 +1,5 @@
 import { employeeCountToSizeBucket, SENIORITY_LEVEL_OPTIONS, BUSINESS_AREA_OPTIONS } from '@/lib/arcova-taxonomy';
+import { cacheProfilePhoto } from '@/lib/photo-cache';
 import { ensureImportEmailEntry } from '@/lib/contact-emails';
 import { ensureImportPhoneEntry } from '@/lib/contact-phones';
 import { syncContactFitForContacts } from '@/lib/contact-fit';
@@ -378,6 +379,9 @@ export async function ingestEnrichedRecords(
         first_name: record.first_name || null,
         last_name: record.last_name || null,
         profile_photo_url: record.profile_photo_url || null,
+        profile_photo_cached: record.profile_photo_url
+          ? await cacheProfilePhoto(record.profile_photo_url)
+          : null,
         job_title: record.job_title || null,
         job_title_standardised: record.job_title_standardised || null,
         seniority_level: SENIORITY_LEVEL_OPTIONS.includes(record.seniority_level as never)

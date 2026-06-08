@@ -3,6 +3,7 @@
 // linkedin resolution = Claude web search for LinkedIn URL
 // profile enrichment  = Apify LinkedIn profile scrape + company scrape + Apollo company enrich + LLM bio summary
 import { completeLlm } from '@/lib/llm-client';
+import { cacheProfilePhoto } from '@/lib/photo-cache';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import {
   enrichOrganizationWithApollo,
@@ -17,7 +18,7 @@ import {
 import type { ApolloPhoneEntry } from '@/lib/apollo';
 import { syncContactFitForContact } from '@/lib/contact-fit';
 import { syncCompanyFitForCompany } from '@/lib/company-fit';
-import { resolveLinkedinUrl, type LinkedinResolutionResult } from '@/lib/linkedin-url-resolver';
+import { resolveLinkedinUrl, normalizeLinkedinProfileUrl, type LinkedinResolutionResult } from '@/lib/linkedin-url-resolver';
 import { classifyContacts } from '@/lib/contact-classification';
 import { runCompanyMonitor } from '@/lib/company-monitor';
 import { employeeCountToSizeBucket } from '@/lib/arcova-taxonomy';
@@ -1024,7 +1025,7 @@ export async function runContactResolutionPipelineForContact(
       getEmailDomain((rawData.email as string | undefined) || typedContact.email) ||
       null;
 
-    const resolvedLinkedin = await resolveLinkedinUrl({
+    let resolvedLinkedin = await resolveLinkedinUrl({
       // Prefer Apollo's returned values — these are what the LLM search should be based on.
       // The CSV's linkedin_url is intentionally not passed; if Apollo didn't return one,
       // the LLM search runs fresh without a CSV hint.
@@ -1040,6 +1041,23 @@ export async function runContactResolutionPipelineForContact(
     });
 
     await throwIfLeadRefreshCancelled(supabase, contactId, userId);
+
+    // Fall back to the LinkedIn URL the contact was IMPORTED with (CSV/Apollo)
+    // when the fresh search can't surface a credible one. The imported URL is a
+    // credible source in its own right — blocking enrichment over a failed
+    // re-search (e.g. provider down, or a hard-to-find small-company profile)
+    // would needlessly strand a contact that already has a valid profile.
+    if (!resolvedLinkedin.linkedin_url) {
+      const existingLinkedin = normalizeLinkedinProfileUrl(typedContact.linkedin_url);
+      if (existingLinkedin) {
+        resolvedLinkedin = {
+          linkedin_url: existingLinkedin,
+          source: 'csv',
+          confidence: Math.max(resolvedLinkedin.confidence, 0.8),
+          search_summary: resolvedLinkedin.search_summary || 'Using the imported LinkedIn URL (re-search found no higher-confidence match).',
+        };
+      }
+    }
 
     if (!resolvedLinkedin.linkedin_url) {
       const finishedAt = new Date().toISOString();
@@ -1354,6 +1372,9 @@ export async function runContactResolutionPipelineForContact(
       headline: resolved.headline,
       location: resolved.location || typedContact.location,
       profile_photo_url: resolved.profilePhotoUrl || null,
+      profile_photo_cached: resolved.profilePhotoUrl
+        ? await cacheProfilePhoto(resolved.profilePhotoUrl)
+        : null,
       contact_bio: contactBio,
       email_status: emailAssessment.status,
       email_status_reasoning: emailAssessment.reasoning,
@@ -1416,7 +1437,6 @@ export async function runContactResolutionPipelineForContact(
         ? ((apolloPerson as Record<string, unknown>).phone_numbers as ApolloPhoneEntry[])
         : [];
       let initialWritten = 0;
-      let initialGateAllowed = false;
       if (apolloPhones.length > 0) {
         const phoneResult = await writeApolloPhonesToContact(supabase, {
           userId,
@@ -1424,7 +1444,6 @@ export async function runContactResolutionPipelineForContact(
           phones: apolloPhones,
         });
         initialWritten = phoneResult.written;
-        initialGateAllowed = phoneResult.gateAllowed;
         if (!phoneResult.gateAllowed) {
           console.log(`[enrichment-pipeline] phone fit gate denied for ${contactId}`);
         }
@@ -1450,10 +1469,15 @@ export async function runContactResolutionPipelineForContact(
         });
         if (revealResult.revealed > 0) {
           console.log(
-            `[enrichment-pipeline] Apollo phone reveal recovered ${revealResult.revealed} phone(s) for ${contactId}`,
+            `[enrichment-pipeline] Apollo phone reveal recovered ${revealResult.revealed} inline phone(s) for ${contactId}`,
           );
-        } else if (!revealResult.gateAllowed && initialGateAllowed === false) {
-          // No log: gate already denied at first pass.
+        }
+        if (revealResult.pending) {
+          // Mobile/personal numbers arrive asynchronously via
+          // app/api/apollo/phone-webhook/[token] and are written there later.
+          console.log(
+            `[enrichment-pipeline] Apollo async phone reveal queued for ${contactId} (numbers land via webhook)`,
+          );
         }
       }
     } catch (err) {

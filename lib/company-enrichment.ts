@@ -30,7 +30,6 @@
  *   - lib/signals/run-job-change-monitor (auto-enrich newly created stubs)
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { enrichOrganizationWithApollo, type ApolloOrganizationEnrichmentResult } from '@/lib/apollo';
 import {
   scrapeLinkedInCompany,
   extractApifyFirmographics,
@@ -39,6 +38,10 @@ import {
 } from '@/lib/my-company-enrichment';
 import { runCompanyMonitor } from '@/lib/company-monitor';
 import { employeeCountToSizeBucket } from '@/lib/arcova-taxonomy';
+import {
+  resolveCompanyIdentity,
+  type CompanyIdentityContext,
+} from '@/lib/company-identity-resolver';
 
 export type CompanyEnrichmentResult = {
   company_id: string;
@@ -164,33 +167,33 @@ export async function runCompanyEnrichmentById(
   await markCompanyEnrichmentRunning(supabase, companyId);
 
   try {
-    // 2. Apollo organization enrich.
-    // Prefer the strongest single identifier we have — domain or LinkedIn URL
-    // pin Apollo to exactly the right entity. Passing company_name alongside
-    // can cause Apollo to return a name-match for an unrelated org (we saw
-    // "Moderna" → "Moderna Housewares"); only fall back to name when no
-    // structured identifier exists.
-    const apolloLookup: Parameters<typeof enrichOrganizationWithApollo>[0] = company.domain
-      ? { company_domain: company.domain }
-      : company.linkedin_url
-        ? { company_linkedin_url: company.linkedin_url }
-        : { company_name: company.company_name };
-
-    const apollo: ApolloOrganizationEnrichmentResult = await enrichOrganizationWithApollo(
-      apolloLookup,
-    ).catch((err): ApolloOrganizationEnrichmentResult => {
-      console.warn(
-        `[company-enrichment] Apollo failed for ${companyId} (${company.company_name}):`,
-        err instanceof Error ? err.message : err,
-      );
-      return {};
+    // 2. Resolve the company's true identity BEFORE writing anything.
+    // Apollo's domain-enrich is a fuzzy match — asking for `moderna.com`
+    // returns "Moderna Housewares" (modernahousewares.com), a different
+    // company with a different domain. The resolver (mirrors the SEC CIK
+    // tiered pattern) validates the domain match, falls back to a name
+    // search + Haiku disambiguation, and returns an authoritative
+    // domain/LinkedIn or an honest "couldn't resolve" reason.
+    const contactContext = await loadContactContext(supabase, companyId);
+    const identity = await resolveCompanyIdentity({
+      companyName: company.company_name,
+      domain: company.domain,
+      context: contactContext,
     });
 
-    // 3. Resolve a LinkedIn URL — Apollo first, then whatever was on the row.
+    if (!identity.resolved) {
+      const reason = identity.reason || 'Could not identify this company.';
+      await failCompanyEnrichment(supabase, companyId, reason);
+      return { company_id: companyId, status: 'failed', error: reason, fields_updated: [] };
+    }
+
+    const apollo = identity.apollo;
+
+    // 3. The resolver gives us an AUTHORITATIVE LinkedIn URL (it validated the
+    // identity), so prefer it over whatever stale value was on the row.
     const linkedinUrl =
-      normalizeLinkedInCompanyUrl(
-        typeof apollo.company_linkedin_url === 'string' ? apollo.company_linkedin_url : null,
-      ) ?? normalizeLinkedInCompanyUrl(company.linkedin_url);
+      normalizeLinkedInCompanyUrl(identity.linkedinUrl) ??
+      normalizeLinkedInCompanyUrl(company.linkedin_url);
 
     // 4. Apify LinkedIn scrape (sequential — needs the URL).
     let apifyRaw: Record<string, unknown> | null = null;
@@ -207,14 +210,15 @@ export async function runCompanyEnrichmentById(
     }
 
     // 5. Merge canonical firmographics.
-    // IDENTITY fields (company_name, domain, linkedin_url) are STICKY — the
-    // existing canonical value wins, because the user has already seen and
-    // accepted them. Apollo can match the wrong entity by name alone
-    // (e.g. "Moderna" → "Moderna Housewares" instead of biotech Moderna);
-    // letting Apollo's result clobber the canonical name is a destructive
-    // bug. Firmographics (employee_count, industry, HQ, etc.) DO accept
-    // freshly-fetched values to fill in or update existing data.
+    // DOMAIN + LINKEDIN are AUTHORITATIVE from the resolver — it validated the
+    // identity (domain-match or name+LLM disambiguation), so it's allowed to
+    // CORRECT a wrong stub domain (e.g. moderna.com → modernatx.com). That's
+    // the whole point: the stub guessed wrong and we now know better.
+    //   company_name stays STICKY (existing wins) — the resolver confirmed it's
+    // the same company, and the user may have curated the display name.
+    //   Firmographics (employees, industry, HQ, …) take fresh values.
     const resolvedDomain =
+      identity.domain ??
       normalizeDomain(company.domain) ??
       normalizeDomain(typeof apollo.company_domain === 'string' ? apollo.company_domain : null);
     const employeeCount = pickNumber(
@@ -231,9 +235,9 @@ export async function runCompanyEnrichmentById(
         typeof apollo.company_name === 'string' ? apollo.company_name : null,
       ),
       linkedin_url: pickString(
-        company.linkedin_url,
         linkedinUrl,
         apifyFirmographics.linkedin_url,
+        company.linkedin_url,
       ),
       description: pickString(apifyFirmographics.description, company.description),
       tagline: pickString(apifyFirmographics.tagline, company.tagline),
@@ -326,28 +330,29 @@ export async function runCompanyEnrichmentById(
       );
     }
 
-    // 7. Mark succeeded — but only if we actually got firmographics from
-    // SOMEWHERE this run. If both providers returned nothing and the row
-    // had nothing before either, this is effectively a failed lookup
-    // (e.g. company name doesn't match any Apollo org and we couldn't
-    // resolve a LinkedIn URL). Surfacing that as `failed` lets the side
-    // panel banner tell the truth instead of stamping last_enriched_at
-    // on an empty row.
-    const gotApollo = Object.keys(apollo).length > 0;
-    const gotApify = apifyRaw != null;
-    if (!gotApollo && !gotApify) {
-      const reason = linkedinUrl
-        ? 'Apollo and Apify both returned no data for this company.'
-        : 'Could not resolve a LinkedIn URL or matching Apollo organization.';
-      await failCompanyEnrichment(supabase, companyId, reason);
+    // 7. Honor a user cancellation. The DELETE /enrich endpoint flips the row
+    // to `cancelled` while we were working (we can't truly abort an in-flight
+    // scrape, but we can decline to overwrite the user's stop). The firmographics
+    // we already wrote stay — they're valid — but we leave the status as
+    // `cancelled` rather than flipping it to `succeeded`.
+    const { data: cancelCheck } = await supabase
+      .from('companies')
+      .select('enrichment_refresh_status')
+      .eq('id', companyId)
+      .maybeSingle();
+    if ((cancelCheck as { enrichment_refresh_status?: string | null } | null)?.enrichment_refresh_status === 'cancelled') {
       return {
         company_id: companyId,
-        status: 'failed',
-        error: reason,
+        status: 'failed', // not 'succeeded' — the run was cancelled
+        error: 'Enrichment was cancelled.',
         fields_updated: fieldsUpdated,
       };
     }
 
+    // Mark succeeded. We only reach here when the identity resolver confirmed
+    // the company (step 2 returns early on an unresolved match), so we always
+    // have authoritative Apollo firmographics by this point — Apify is a bonus
+    // layer on top.
     const finishedAt = new Date().toISOString();
     await supabase
       .from('companies')
@@ -369,6 +374,37 @@ export async function runCompanyEnrichmentById(
     const message = err instanceof Error ? err.message : String(err);
     await failCompanyEnrichment(supabase, companyId, message);
     return { company_id: companyId, status: 'failed', error: message, fields_updated: [] };
+  }
+}
+
+/**
+ * Pull one linked contact's name/title/headline to give the identity resolver
+ * disambiguation context (e.g. "Chong Ma, VP Research works here" helps pick
+ * biotech Moderna over Moderna Housewares). Best-effort — returns null if no
+ * contact or the query fails.
+ */
+async function loadContactContext(
+  supabase: SupabaseClient,
+  companyId: string,
+): Promise<CompanyIdentityContext | null> {
+  try {
+    const { data } = await supabase
+      .from('contacts')
+      .select('full_name, job_title, headline')
+      .eq('company_id', companyId)
+      .not('full_name', 'is', null)
+      .limit(1)
+      .maybeSingle();
+    if (!data) return null;
+    const row = data as { full_name?: string | null; job_title?: string | null; headline?: string | null };
+    if (!row.full_name && !row.job_title && !row.headline) return null;
+    return {
+      contactName: row.full_name ?? null,
+      contactTitle: row.job_title ?? null,
+      contactHeadline: row.headline ?? null,
+    };
+  } catch {
+    return null;
   }
 }
 

@@ -10,14 +10,11 @@
  * future modules for clinical trials, EDGAR filings, and NIH grants.
  */
 
-import Anthropic from '@anthropic-ai/sdk';
 import { FUNDING_STAGE_OPTIONS, type FundingStage } from '@/lib/arcova-taxonomy';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
+import { completeWithWebSearch } from '@/lib/llm-client';
 
 export type { FundingStage };
-
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const MODEL = 'claude-sonnet-4-6';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -125,36 +122,26 @@ Rules for funding_status_label:
 - Prefer source language like "Venture capital fund" or "Venture - Series Unknown" over invented paraphrases
 - Return null only if you genuinely cannot determine any useful funding status`;
 
-  const message = await client.messages.create({
-    model: MODEL,
-    max_tokens: 500,
-    messages: [{ role: 'user', content: prompt }],
-    tools: [
-      {
-        type: 'web_search_20250305',
-        name: 'web_search',
-        max_uses: 3,
-      } as Parameters<typeof client.messages.create>[0]['tools'] extends Array<infer T> ? T : never,
-    ],
+  const result = await completeWithWebSearch({
+    feature: 'company_monitor_funding',
+    prompt,
+    maxTokens: 500,
+    maxSearches: 3,
   });
   await recordLlmUsageEvent({
-    provider: 'anthropic',
+    provider: result.provider,
     feature: 'company_monitor_funding',
     route: 'lib/company-monitor/funding#searchFundingStage',
-    model: MODEL,
-    usage: message.usage,
+    model: result.model,
+    usage: result.usage,
     metadata: {
       company_name: input.company_name,
       domain: input.domain ?? null,
-      tool: 'web_search_20250305',
+      tool: 'web_search',
     },
   });
 
-  // Extract final text block
-  const text = message.content
-    .filter((b) => b.type === 'text')
-    .map((b) => (b as { type: 'text'; text: string }).text)
-    .join('');
+  const text = result.text;
 
   const jsonMatch = text.match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
