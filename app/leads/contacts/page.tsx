@@ -27,6 +27,7 @@ import {
 } from '@/lib/lead-action';
 import { formatProvenanceImportedAt } from '@/lib/data-provenance';
 import { ROUTES, withQuery } from '@/lib/routes';
+import Nango from '@nangohq/frontend';
 import { looksLikeEmail, type ContactEmailRow } from '@/lib/contact-emails';
 import { looksLikePhone, type ContactPhoneRow } from '@/lib/contact-phones';
 import {
@@ -1568,6 +1569,23 @@ export function ContactsWorkspace() {
       .catch(() => {});
   }, []);
 
+  const handleHubSpotReconnect = useCallback(async (afterReconnect?: () => void) => {
+    try {
+      const nango = new Nango({ publicKey: process.env.NEXT_PUBLIC_NANGO_PUBLIC_KEY ?? '' });
+      const connectionId = `hubspot-${user?.id ?? 'unknown'}`;
+      await nango.auth('hubspot', connectionId);
+      await fetch('/api/hubspot/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ integrationId: 'hubspot', connectionId }),
+      });
+      setHubspotConnected(true);
+      setHubspotSyncResult(null);
+      setHubspotPullResult(null);
+      afterReconnect?.();
+    } catch { /* user cancelled or popup blocked */ }
+  }, [user?.id]);
+
   const handlePushToHubspot = useCallback(async () => {
     if (pushingToHubspot) return;
     setPushingToHubspot(true);
@@ -3075,9 +3093,13 @@ export function ContactsWorkspace() {
               <span className="text-sm font-semibold text-rose-700">HubSpot sync failed</span>
               <p className="mt-0.5 text-xs text-rose-600 break-words">{hubspotSyncResult.error}</p>
               {hubspotSyncResult.code === 'token_error' && (
-                <a href="/settings" className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-rose-700 underline underline-offset-2 hover:text-rose-900">
-                  Reconnect HubSpot in Settings →
-                </a>
+                <button
+                  type="button"
+                  onClick={() => handleHubSpotReconnect(handlePushToHubspot)}
+                  className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-rose-700 underline underline-offset-2 hover:text-rose-900"
+                >
+                  Reconnect HubSpot and retry →
+                </button>
               )}
             </div>
           ) : (
@@ -3137,9 +3159,13 @@ export function ContactsWorkspace() {
             <span className="text-sm font-semibold text-rose-700">HubSpot CRM pull failed</span>
             <p className="mt-0.5 text-xs text-rose-600 break-words">{hubspotPullResult.error}</p>
             {hubspotPullResult.code === 'token_error' && (
-              <a href="/settings" className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-rose-700 underline underline-offset-2 hover:text-rose-900">
-                Reconnect HubSpot in Settings →
-              </a>
+              <button
+                type="button"
+                onClick={() => handleHubSpotReconnect(handlePullHubspotCrm)}
+                className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-rose-700 underline underline-offset-2 hover:text-rose-900"
+              >
+                Reconnect HubSpot and retry →
+              </button>
             )}
           </div>
         ) : (
