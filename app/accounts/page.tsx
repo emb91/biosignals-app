@@ -1239,21 +1239,25 @@ export default function AccountsPage() {
           </div>
         );
       case 'company_type':
-        return account.company_type ? (
-          <button
-            type="button"
-            className="-m-0.5 p-0.5 text-left cursor-pointer"
-            onClick={(e) => {
-              e.stopPropagation();
-              openDetailsWithCriteria(account.id);
-            }}
-          >
-            <span className="block truncate text-[12px] text-gray-700" title={account.company_type}>
-              {truncate35(account.company_type)}
-            </span>
-          </button>
-        ) : (
-          <span className="text-[12px] text-gray-700">—</span>
+        return (
+          <div className="flex items-center min-w-0">
+            {account.company_type ? (
+              <button
+                type="button"
+                className="min-w-0 text-left cursor-pointer"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openDetailsWithCriteria(account.id);
+                }}
+              >
+                <span className="block truncate text-[12px] text-gray-700" title={account.company_type}>
+                  {truncate35(account.company_type)}
+                </span>
+              </button>
+            ) : (
+              <span className="text-[12px] text-gray-700">—</span>
+            )}
+          </div>
         );
       case 'fit':
         return (

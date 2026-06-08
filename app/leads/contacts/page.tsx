@@ -1376,6 +1376,7 @@ export function ContactsWorkspace() {
     contacts: { upserted: number; errors: number };
     skipped: number;
     skippedContacts: { name: string; company: string | null; reason: string }[];
+    error?: string;
   } | null>(null);
   const [hubspotPullResult, setHubspotPullResult] = useState<{
     fetchedContacts: number;
@@ -1389,6 +1390,7 @@ export function ContactsWorkspace() {
     emittedEvents: number;
     recomputedCompanies: number;
     skippedUnresolvedCompanies: number;
+    error?: string;
   } | null>(null);
   const [syncResultExpanded, setSyncResultExpanded] = useState(false);
   const [stoppingLeadId, setStoppingLeadId] = useState<string | null>(null);
@@ -1572,14 +1574,19 @@ export function ContactsWorkspace() {
     try {
       const res = await fetch('/api/hubspot/push-enrichment', { method: 'POST' });
       const text = await res.text();
-      const data = text ? JSON.parse(text) : null;
+      let data: Record<string, unknown> | null = null;
+      try { data = text ? JSON.parse(text) : null; } catch { /* unparseable body */ }
       if (res.ok) {
-        if (data?.contacts) setHubspotSyncResult(data);
+        if (data?.contacts) {
+          setHubspotSyncResult(data as Parameters<typeof setHubspotSyncResult>[0]);
+        }
       } else {
-        console.error('HubSpot push failed:', data?.error || text || 'Unknown error');
+        const msg = (data?.error as string) || text || `HTTP ${res.status}`;
+        setHubspotSyncResult({ contacts: { upserted: 0, errors: 0 }, skipped: 0, skippedContacts: [], error: msg });
       }
     } catch (err) {
-      console.error('HubSpot push error:', err);
+      const msg = err instanceof Error ? err.message : String(err);
+      setHubspotSyncResult({ contacts: { upserted: 0, errors: 0 }, skipped: 0, skippedContacts: [], error: msg });
     } finally {
       setPushingToHubspot(false);
     }
