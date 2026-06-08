@@ -40,6 +40,20 @@ type Child = {
   eventAt: string | null;
 };
 
+type SourceEventRow = {
+  id: string;
+  title: string | null;
+  summary: string | null;
+  excerpt: string | null;
+  source: string | null;
+  source_url: string | null;
+  event_at: string | null;
+  metadata: Record<string, unknown> | null;
+};
+
+/** A hiring-surge metadata.all_roles entry: every scraped open posting. */
+type SurgeRole = { title?: string | null; url?: string | null };
+
 // Decode the handful of HTML entities that show up in scraped titles/abstracts
 // (numeric refs + a few named ones) so they render as text, not "&#x2009;".
 function decodeEntities(s: string): string {
@@ -170,31 +184,15 @@ export async function GET(req: Request) {
     sourceEventIds.length
       ? supabase
           .from('signal_source_events')
-          .select('id, title, summary, excerpt, source, source_url, event_at')
+          .select('id, title, summary, excerpt, source, source_url, event_at, metadata')
           .in('id', sourceEventIds)
       : Promise.resolve({
-          data: [] as Array<{
-            id: string;
-            title: string | null;
-            summary: string | null;
-            excerpt: string | null;
-            source: string | null;
-            source_url: string | null;
-            event_at: string | null;
-          }>,
+          data: [] as Array<SourceEventRow>,
         }),
   ]);
 
   const sourceById = new Map(
-    ((sourceRes.data ?? []) as Array<{
-      id: string;
-      title: string | null;
-      summary: string | null;
-      excerpt: string | null;
-      source: string | null;
-      source_url: string | null;
-      event_at: string | null;
-    }>).map((s) => [s.id, s]),
+    ((sourceRes.data ?? []) as Array<SourceEventRow>).map((s) => [s.id, s]),
   );
 
   const companyName = new Map<string, string>(
@@ -245,23 +243,45 @@ export async function GET(req: Request) {
   // the specific thing — the actual job role, parsed from the summary's
   // "e.g. {role}" example or the LinkedIn URL slug — so two different postings
   // read distinctly instead of as identical rows.
-  const toChild = (r: SignalRow): Child => {
+  // One signal row → its expandable children. Normally a single child, but a
+  // hiring-surge (hiring_expansion) row whose source metadata carries the full
+  // posting list (all_roles) expands into one child PER open role, so the surge
+  // lists every role instead of a single generic line. (all_roles is only
+  // present after the monitor change + a hiring run; older surges fall back to
+  // the single child.)
+  const childrenForRow = (r: SignalRow): Child[] => {
     const src = r.source_event_id ? sourceById.get(r.source_event_id) : null;
-    const rawDetail = src?.summary || src?.excerpt || r.evidence_excerpt || null;
 
+    const allRoles = Array.isArray(src?.metadata?.all_roles)
+      ? (src!.metadata!.all_roles as SurgeRole[])
+      : null;
+    if (allRoles && allRoles.length > 0) {
+      return allRoles
+        .filter((role) => role && (role.title || role.url))
+        .map((role, i) => ({
+          id: `${r.id}:${i}`,
+          title: role.title ? decodeEntities(role.title) : 'Open role',
+          detail: null,
+          source: src?.source ?? null,
+          url: role.url ?? null,
+          eventAt: src?.event_at ?? r.event_at ?? r.observed_at,
+        }));
+    }
+
+    const rawDetail = src?.summary || src?.excerpt || r.evidence_excerpt || null;
     const specificTitle = src?.title && !isGenericTitle(src.title) ? decodeEntities(src.title) : null;
     const derivedTitle = specificTitle ?? roleFromSummary(src?.summary) ?? roleFromUrl(src?.source_url);
     // Fall back to the (generic) source title only if nothing better was found.
     const title = derivedTitle ?? (src?.title ? decodeEntities(src.title) : null);
 
-    return {
+    return [{
       id: r.id,
       title,
       detail: rawDetail ? decodeEntities(rawDetail).slice(0, 280) : null,
       source: src?.source ?? null,
       url: src?.source_url ?? null,
       eventAt: src?.event_at ?? r.event_at ?? r.observed_at,
-    };
+    }];
   };
 
   for (const r of rows) {
@@ -281,7 +301,7 @@ export async function GET(req: Request) {
     const existing = groups.get(groupKey);
     if (existing) {
       existing.count += 1;
-      existing.children.push(toChild(r));
+      existing.children.push(...childrenForRow(r));
       continue;
     }
     groups.set(groupKey, {
@@ -298,7 +318,7 @@ export async function GET(req: Request) {
       displayAt: r.event_at ?? r.observed_at,
       evidence: r.evidence_excerpt,
       count: 1,
-      children: [toChild(r)],
+      children: childrenForRow(r),
     });
   }
 

@@ -877,6 +877,10 @@ export async function runHiringMonitor(input: HiringMonitorInput): Promise<Hirin
             total_postings: postings.length,
             matched_postings: matchedTitles.length,
             matched_titles: matchedTitles,
+            // Every scraped posting (title + LinkedIn URL), so the /log surge
+            // row can list the full set of open roles, not just the matched
+            // ones. Capped to keep the metadata blob bounded.
+            all_roles: postings.slice(0, 50).map((p) => ({ title: p.title, url: p.job_url })),
             buyer_functions_activated: buyerFunctionsFromMix,
             categories: Object.fromEntries(categoryMatches.map((c) => [c.key, c.count])),
             week: currentWeekKey,
