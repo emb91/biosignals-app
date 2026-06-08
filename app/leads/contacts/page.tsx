@@ -471,7 +471,7 @@ const LEADS_GRID_COLS_SM =
 const LEADS_GRID_COLS_LG =
   'minmax(0,1fr) minmax(0,1fr) minmax(0,1.15fr) minmax(5.5rem,0.7fr)';
 const LEADS_GRID_COLS_FULL =
-  'minmax(0,0.85fr) minmax(0,1fr) minmax(0,1.15fr) minmax(7.25rem,0.85fr) minmax(0,5.25rem) minmax(9.5rem,1.15fr)';
+  'minmax(0,0.85fr) minmax(0,1fr) minmax(0,0.95fr) minmax(4rem,0.45fr) minmax(0,5.25rem) minmax(9.5rem,1.15fr)';
 
 function pickLeadsGridCols(width: number): string {
   if (width >= 1280) return LEADS_GRID_COLS_FULL;
@@ -1284,6 +1284,12 @@ function getSortValue(lead: Lead | QueryLead, col: string): string | number {
       return lead.contact_fit_score ?? -1;
     case 'priority':
       return displayContactPriority(lead as Lead) ?? -1;
+    case 'crm': {
+      // Cluster CRM badges by engagement so sorting groups them sensibly:
+      // open deal → won → lost → no deal. Mirrors getHubSpotTableBadge states.
+      const crmOrder: Record<string, number> = { active: 4, customer: 3, dormant: 2, context_only: 1, none: 0 };
+      return crmOrder[(lead as Lead).hubspot_lead_state ?? 'none'] ?? 0;
+    }
     case 'source':
       return ((lead as QueryLead).data_provenance_type ?? '').toLowerCase();
     case 'signals':
@@ -3264,15 +3270,10 @@ export function ContactsWorkspace() {
                           'hover:text-gray-800 transition-colors text-left',
                         )}
                       >
-                        <span className="flex items-start gap-1">
+                        <span className="flex items-center gap-1">
                           {col === 'name' ? 'Name' : col === 'job_title' ? 'Job title' : 'Company name'}
                           <SortArrow col={col} activeCol={tableSortCol} dir={tableSortDir} />
                         </span>
-                        {col === 'company' ? (
-                          <span className="text-[10px] font-normal normal-case tracking-normal text-gray-400">
-                            (click to view)
-                          </span>
-                        ) : null}
                       </button>
                     ))}
                     <button
@@ -3285,9 +3286,14 @@ export function ContactsWorkspace() {
                         <SortArrow col="priority" activeCol={tableSortCol} dir={tableSortDir} />
                       </span>
                     </button>
-                    <div className="hidden w-full items-center justify-center min-[1280px]:flex">
+                    <button
+                      type="button"
+                      onClick={() => handleSortCol('crm')}
+                      className="hidden w-full items-center justify-center gap-1 hover:text-gray-800 transition-colors min-[1280px]:flex"
+                    >
                       <span className="normal-case tracking-normal">CRM</span>
-                    </div>
+                      <SortArrow col="crm" activeCol={tableSortCol} dir={tableSortDir} />
+                    </button>
                     <button
                       type="button"
                       onClick={() => handleSortCol('status')}
@@ -3432,8 +3438,8 @@ export function ContactsWorkspace() {
 
                           {/* Job title — hidden below lg (table is too cramped) */}
                           <div className="hidden min-w-0 lg:block">
-                            <p className="truncate text-[12px] leading-snug text-gray-700">
-                              {((t) => t.length > 30 ? t.slice(0, 30) + '…' : t)(lead.resolved_current_job_title || lead.job_title || '—')}
+                            <p className="text-[11px] leading-snug text-gray-600 break-words line-clamp-2">
+                              {lead.resolved_current_job_title || lead.job_title || '—'}
                             </p>
                           </div>
 

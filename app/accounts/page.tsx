@@ -434,7 +434,7 @@ function TaxonomyPills({ items }: { items: string[] | null | undefined }) {
   );
 }
 
-const DEFAULT_COLUMNS: AccountQueryColumn[] = ['company', 'company_type', 'priority', 'contacts', 'crm_status', 'action'];
+const DEFAULT_COLUMNS: AccountQueryColumn[] = ['company', 'company_type', 'contacts', 'priority', 'crm_status', 'action'];
 // Below 1280px the table is space-constrained (sidebar collapses to hamburger at
 // <1280, agent panel is still ~380px until <768). Cramming all 5 columns turns the
 // header into overlapping word soup — so below 1280 we keep just the essentials:
@@ -1206,9 +1206,9 @@ export default function AccountsPage() {
     const isSelected = selectedAccountId === account.id;
     const href = externalUrl(account as AccountRow);
     const companyLabel = account.company_name || account.domain || '—';
-    // Cap long values at 30 chars + ellipsis (mirrors the contacts table); full
-    // text stays available on hover via the title attribute.
-    const truncate30 = (s: string) => (s.length > 30 ? s.slice(0, 30) + '…' : s);
+    // Cap long values at 35 chars + ellipsis; full text stays available on
+    // hover via the title attribute.
+    const truncate35 = (s: string) => (s.length > 35 ? s.slice(0, 35) + '…' : s);
     const isArcovaAccount = (account.data_provenance_type || '').toLowerCase().includes('arcova');
 
     switch (col) {
@@ -1224,11 +1224,11 @@ export default function AccountsPage() {
                 className="truncate text-[12px] font-medium text-arcova-teal hover:underline min-w-0"
                 title={companyLabel}
               >
-                {truncate30(companyLabel)}
+                {truncate35(companyLabel)}
               </a>
             ) : (
               <span className="truncate text-[12px] font-medium text-gray-900 min-w-0" title={companyLabel}>
-                {truncate30(companyLabel)}
+                {truncate35(companyLabel)}
               </span>
             )}
             {href && (
@@ -1249,7 +1249,7 @@ export default function AccountsPage() {
             }}
           >
             <span className="block truncate text-[12px] text-gray-700" title={account.company_type}>
-              {truncate30(account.company_type)}
+              {truncate35(account.company_type)}
             </span>
           </button>
         ) : (
@@ -1554,7 +1554,7 @@ export default function AccountsPage() {
                           onClick={() => handleSortCol(col)}
                           className={cn(
                             'flex min-w-0 items-center gap-1 hover:text-gray-800 transition-colors text-left',
-                            col === 'fit' || col === 'priority' || col === 'readiness' || col === 'action' ? 'justify-center text-center' : '',
+                            col === 'fit' || col === 'priority' || col === 'readiness' || col === 'action' || col === 'contacts' || col === 'crm_status' ? 'justify-center text-center' : '',
                           )}
                         >
                           {ACCOUNT_QUERY_COL_DEFS[col].label}
@@ -1624,7 +1624,7 @@ export default function AccountsPage() {
                                   key={col}
                                   className={cn(
                                     'min-w-0',
-                                    col === 'fit' || col === 'priority' || col === 'action' ? 'flex justify-center' : '',
+                                    col === 'fit' || col === 'priority' || col === 'action' || col === 'contacts' || col === 'crm_status' ? 'flex justify-center' : '',
                                     col === 'therapeutic_areas' ? 'pl-2' : '',
                                   )}
                                 >
