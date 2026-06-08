@@ -47,7 +47,7 @@ const ACTOR_TIMEOUT_MS = 120_000;
 const RESULTS_PER_COMPANY = 25;
 
 /** Emit hiring_expansion if a company returns at least this many matching postings. */
-const JOB_SURGE_THRESHOLD = 10;
+const JOB_SURGE_THRESHOLD = 5;
 
 const SOURCE = 'linkedin_jobs';
 
