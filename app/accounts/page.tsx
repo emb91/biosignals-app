@@ -1793,10 +1793,21 @@ export default function AccountsPage() {
 
                       {panelMode === 'action' && (() => {
                         const action = getAccountRowAction(selectedAccount);
+                        const config = LEAD_ACTION_PILL_CLASS[action];
                         const companyLabel =
                           selectedAccount.company_name || selectedAccount.domain || 'This company';
+                        const updatedAt = selectedAccount.last_enriched_at;
                         return (
                           <div className="flex flex-col gap-3.5">
+                            {/* Action pill + timestamp — matches the /contacts action tab header */}
+                            <div className="flex flex-wrap items-center gap-2.5">
+                              <span className={cn('inline-flex items-center rounded-full px-3 py-1 text-sm font-medium', config.className)}>
+                                {config.label}
+                              </span>
+                              {updatedAt ? (
+                                <span className="text-[11px] text-[#7d909a]">Updated {formatDate(updatedAt)}</span>
+                              ) : null}
+                            </div>
                             {action === 'monitor' &&
                               (isAccountMonitorAwaitingSignal(selectedAccount) ? (
                                 <div className="space-y-3">
