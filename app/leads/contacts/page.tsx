@@ -3700,29 +3700,6 @@ export function ContactsWorkspace() {
                               selectedLead.full_name ||
                               'Selected contact'}
                           </h2>
-                          {selectedPreview === 'action' &&
-                            (() => {
-                              const action = getContactAction(selectedLead);
-                              const config = LEAD_ACTION_PILL_CLASS[action];
-                              const updatedIso =
-                                selectedContactFit?.contact_fit_scored_at ??
-                                selectedLead.updated_at ??
-                                selectedLead.created_at ??
-                                null;
-                              const rel = actionDrawerRelativeTime(updatedIso);
-                              return (
-                                <div className="mt-1.5 flex flex-wrap items-center gap-2.5">
-                                  <span
-                                    className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-medium ${config.className}`}
-                                  >
-                                    {config.label}
-                                  </span>
-                                  {rel ? (
-                                    <span className="text-[11px] text-[#7d909a]">Updated {rel}</span>
-                                  ) : null}
-                                </div>
-                              );
-                            })()}
                         </div>
                         <div className="flex items-start gap-2 flex-shrink-0">
                           {(selectedLead.profile_photo_cached || selectedLead.profile_photo_url) && !failedProfilePhotoByContactId[selectedLead.id] ? (
@@ -4669,8 +4646,27 @@ export function ContactsWorkspace() {
                             const contactLoading = Boolean(selectedContactFitState?.loading);
                             const contactCriteria = contactLoading ? [] : buildActionContactFitCriteria();
 
+                            const actionConfig = LEAD_ACTION_PILL_CLASS[action];
+                            const updatedIso =
+                              selectedContactFit?.contact_fit_scored_at ??
+                              selectedLead.updated_at ??
+                              selectedLead.created_at ??
+                              null;
+                            const updatedRel = actionDrawerRelativeTime(updatedIso);
+
                             return (
                               <div className="flex flex-col gap-3.5">
+                                {/* Action pill + timestamp */}
+                                <div className="flex flex-wrap items-center gap-2.5">
+                                  <span
+                                    className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-medium ${actionConfig.className}`}
+                                  >
+                                    {actionConfig.label}
+                                  </span>
+                                  {updatedRel ? (
+                                    <span className="text-[11px] text-[#7d909a]">Updated {updatedRel}</span>
+                                  ) : null}
+                                </div>
                                 {/* Action explanation */}
                                 {action === 'monitor' &&
                                   (isLeadReadyAwaitingContactSignal(selectedLead) ? (
