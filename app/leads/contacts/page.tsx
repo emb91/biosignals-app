@@ -2777,119 +2777,94 @@ export function ContactsWorkspace() {
 
   const renderContactFitScoresCard = () => {
     const contactFitHeaderPct = selectedLead ? resolveContactFitForLeadAction(selectedLead) : null;
+    const fitScore = selectedContactFit?.contact_fit_score ?? contactFitHeaderPct;
+    const n = percentDisplayNumber(fitScore);
     return (
-      <div className="rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden">
-        <button
-          type="button"
-          onClick={() => setScoringPanelOpen((s) => ({ ...s, contactFit: !s.contactFit }))}
-          className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-100/60 transition-colors"
-        >
-          <span className="text-xs font-semibold text-gray-700">Contact Fit</span>
-          <div className="flex items-center gap-2">
-            {contactFitHeaderPct !== null && (
-              <span className="text-sm font-semibold tabular-nums text-gray-900">
-                {formatPercentValue(contactFitHeaderPct)}
-              </span>
-            )}
-            <ChevronDown
-              className={`w-3.5 h-3.5 shrink-0 text-gray-400 transition-transform duration-200 ${scoringPanelOpen.contactFit ? '' : '-rotate-90'}`}
-            />
-          </div>
-        </button>
-        {scoringPanelOpen.contactFit && (
-          <div className="px-4 pb-4 space-y-3">
+      <div className="contacts-fit-card">
+        <div className="contacts-fit-head">
+          <span className="contacts-fit-head-title">Contact Fit</span>
+          <span className="contacts-fit-head-num">
             {selectedContactFitState?.loading ? (
-              <p className="text-xs text-gray-400">Loading contact fit…</p>
-            ) : selectedContactFit?.winning_breakdown && selectedLead ? (
-              (() => {
-                const fitBreakdown = selectedContactFit.winning_breakdown;
-                return (
-                  <div>
-                    {formatPercentValue(selectedContactFit.contact_fit_score) && (
-                      <div>
-                        <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-sm font-medium text-slate-700">
-                          {formatPercentValue(selectedContactFit.contact_fit_score)}
-                        </span>
-                      </div>
-                    )}
-
-                    <div className="mt-5 space-y-2.5">
-                      <p className="text-[11px] text-gray-400">Click a row to unfold detail</p>
-                      {CONTACT_FIT_COMPONENT_ORDER.map((key) => {
-                        const component = fitBreakdown.components[key];
-                        if (!component?.active) return null;
-                        const componentPercent = formatPercentValue(component.score01);
-                        const barKey = `contact:${key}`;
-                        const isOpen = expandedBars.has(barKey);
-                        return (
-                          <div key={key}>
-                            <button
-                              type="button"
-                              onClick={() => toggleBar(barKey)}
-                              className="w-full rounded-md px-1 -mx-1 py-0.5 text-left transition-colors hover:bg-gray-100/80"
-                            >
-                              <div className="flex items-center justify-between gap-2">
-                                <p className="text-xs font-medium text-gray-700">{component.label}</p>
-                                <div className="flex items-center gap-1 shrink-0">
-                                  {componentPercent && (
-                                    <span className="text-[11px] text-slate-500">{componentPercent}</span>
-                                  )}
-                                  <ChevronDown
-                                    className={`h-3 w-3 shrink-0 text-gray-400 transition-transform duration-200 ${isOpen ? 'rotate-0' : '-rotate-90'}`}
-                                    aria-hidden
-                                  />
-                                </div>
-                              </div>
-                              <div className="mt-1 h-1 overflow-hidden rounded-full bg-slate-200">
-                                <div
-                                  className={`h-full rounded-full ${component.available ? 'bg-arcova-teal' : 'bg-slate-300'}`}
-                                  style={{
-                                    width: `${Math.max(0, Math.min(100, Math.round(component.score01 * 100)))}%`,
-                                  }}
-                                />
-                              </div>
-                            </button>
-                            {isOpen &&
-                              (() => {
-                                const showPill = Boolean(component.matchedValue) && component.matchStatus !== 'mismatch';
-                                const detailText: string | null = (() => {
-                                  if (component.matchStatus === 'exact') return 'Exact match';
-                                  if (key === 'seniority') {
-                                    const contactSeniority = selectedLead.seniority_level ?? null;
-                                    if (contactSeniority) {
-                                      return `Contact is ${contactSeniority}. This is not the target buying group for this ICP`;
-                                    }
-                                  }
-                                  return component.detail || null;
-                                })();
-                                if (!showPill && !detailText) return null;
-                                return (
-                                  <div className="mt-1.5 space-y-1">
-                                    {showPill && (
-                                      <div className="flex flex-wrap gap-1">
-                                        <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal">
-                                          {component.matchedValue}
-                                        </span>
-                                      </div>
-                                    )}
-                                    {detailText && (
-                                      <p className="text-[11px] leading-relaxed text-gray-400">{detailText}</p>
-                                    )}
-                                  </div>
-                                );
-                              })()}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })()
+              <span className="text-xs font-medium text-[#7d909a]">…</span>
+            ) : n != null ? (
+              <>
+                {n}
+                <span>%</span>
+              </>
             ) : (
-              <p className="text-xs text-gray-400">No contact fit yet.</p>
+              <span className="text-sm font-semibold text-[#7d909a]">—</span>
             )}
-          </div>
-        )}
+          </span>
+        </div>
+        <div className="contacts-fit-bar" aria-hidden>
+          {!selectedContactFitState?.loading && n != null ? (
+            <span className="contacts-fit-bar-fill" style={{ width: `${Math.min(100, n)}%` }} />
+          ) : null}
+        </div>
+        <div className="contacts-fit-criteria">
+          {selectedContactFitState?.loading ? (
+            <p className="text-xs text-[#7d909a]">Loading…</p>
+          ) : selectedContactFit?.winning_breakdown && selectedLead ? (
+            CONTACT_FIT_COMPONENT_ORDER.map((key) => {
+              const component = selectedContactFit.winning_breakdown!.components[key];
+              if (!component?.active) return null;
+              const barKey = `contact:${key}`;
+              const isOpen = expandedBars.has(barKey);
+              const ok = score01ToFitOk(component.score01, component.matchStatus ?? null);
+              const showPill = Boolean(component.matchedValue) && component.matchStatus !== 'mismatch';
+              const detailText: string | null = (() => {
+                if (component.matchStatus === 'exact') return 'Exact match';
+                if (key === 'seniority') {
+                  const contactSeniority = selectedLead.seniority_level ?? null;
+                  if (contactSeniority) {
+                    return `Contact is ${contactSeniority}. This is not the target buying group for this ICP`;
+                  }
+                }
+                return component.detail || null;
+              })();
+              const hasDetail = showPill || Boolean(detailText);
+              return (
+                <div key={key}>
+                  <button
+                    type="button"
+                    onClick={() => hasDetail && toggleBar(barKey)}
+                    className={cn('contacts-fit-criterion w-full text-left', hasDetail && 'hover:opacity-80')}
+                    style={{ cursor: hasDetail ? 'pointer' : 'default' }}
+                  >
+                    <span
+                      className={cn(
+                        'contacts-fit-criterion-icon',
+                        ok === 'pass' && 'contacts-fit-criterion-pass',
+                        ok === 'warn' && 'contacts-fit-criterion-warn',
+                        ok === 'miss' && 'contacts-fit-criterion-miss',
+                      )}
+                    >
+                      {ok === 'pass' ? '✓' : ok === 'warn' ? '~' : '✗'}
+                    </span>
+                    <span className="contacts-fit-criterion-text">{component.label}</span>
+                    <span className="contacts-fit-criterion-val">
+                      {formatPercentValue(component.score01) ?? '—'}
+                    </span>
+                  </button>
+                  {isOpen && hasDetail && (
+                    <div className="mt-1 ml-[22px] space-y-1">
+                      {showPill && (
+                        <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal">
+                          {component.matchedValue}
+                        </span>
+                      )}
+                      {detailText && (
+                        <p className="text-[11px] leading-relaxed text-[#7d909a]">{detailText}</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          ) : (
+            <p className="text-xs text-[#7d909a]">No contact fit yet.</p>
+          )}
+        </div>
       </div>
     );
   };
@@ -3791,10 +3766,10 @@ export function ContactsWorkspace() {
                         {([
                           { key: 'contact', label: 'Contact' },
                           { key: 'scoring', label: 'Fit' },
-                          { key: 'action', label: 'Action' },
-                          { key: 'signals', label: 'Signals' },
                           { key: 'priority', label: 'Priority' },
                           { key: 'hubspot', label: 'CRM' },
+                          { key: 'signals', label: 'Signals' },
+                          { key: 'action', label: 'Action' },
                           { key: 'outreach', label: 'Outreach' },
                         ] as const).map(({ key, label }) => {
                           const isActive = selectedPreview === key;
@@ -4831,19 +4806,6 @@ export function ContactsWorkspace() {
                                   </div>
                                 )}
 
-                                {renderActionFitDesignCard(
-                                  'Contact fit',
-                                  selectedContactFit?.contact_fit_score ??
-                                    resolveContactFitForLeadAction(selectedLead),
-                                  contactCriteria,
-                                  {
-                                    loading: contactLoading,
-                                    emptyHint:
-                                      !contactLoading && contactCriteria.length === 0
-                                        ? 'Run enrichment to see contact-level criteria.'
-                                        : undefined,
-                                  },
-                                )}
                               </div>
                             );
                           })()
@@ -4978,16 +4940,6 @@ export function ContactsWorkspace() {
                               );
                             })()}
 
-                            <div className="space-y-2">
-                              <h2 className="text-lg font-semibold text-gray-900 leading-tight">Lead prioritisation</h2>
-                              <div className="flex flex-wrap gap-1.5">
-                                {selectedContactFit?.contact_fit_score != null && (
-                                  <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
-                                    Contact fit {formatPercentValue(selectedContactFit.contact_fit_score)}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
                             {renderContactFitScoresCard()}
                           </div>
                         )}
