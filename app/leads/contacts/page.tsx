@@ -308,6 +308,7 @@ interface Lead {
   email_status_reasoning: string | null;
   linkedin_url: string | null;
   profile_photo_url: string | null;
+  profile_photo_cached: string | null;
   headline: string | null;
   location: string | null;
   city?: string | null;
@@ -1473,7 +1474,7 @@ export function ContactsWorkspace() {
   useEffect(() => {
     if (!selectedLeadId) return;
     const selected = leads.find((lead) => lead.id === selectedLeadId);
-    if (!selected?.profile_photo_url) return;
+    if (!selected?.profile_photo_cached && !selected?.profile_photo_url) return;
     setFailedProfilePhotoByContactId((prev) => {
       if (!prev[selectedLeadId]) return prev;
       const next = { ...prev };
@@ -3743,9 +3744,9 @@ export function ContactsWorkspace() {
                             })()}
                         </div>
                         <div className="flex items-start gap-2 flex-shrink-0">
-                          {selectedLead.profile_photo_url && !failedProfilePhotoByContactId[selectedLead.id] ? (
+                          {(selectedLead.profile_photo_cached || selectedLead.profile_photo_url) && !failedProfilePhotoByContactId[selectedLead.id] ? (
                             <img
-                              src={selectedLead.profile_photo_url}
+                              src={selectedLead.profile_photo_cached || selectedLead.profile_photo_url!}
                               alt=""
                               className="h-[3.375rem] w-[3.375rem] shrink-0 rounded-xl object-cover shadow-sm ring-1 ring-black/5"
                               onError={() =>
@@ -4844,6 +4845,8 @@ export function ContactsWorkspace() {
                           /* ── Signals view ── */
                           <EntitySignalsList
                             contactId={selectedLead.id}
+                            companyId={selectedLead.company_id ?? undefined}
+                            primaryScope="contact"
                             effectiveReadinessScore={selectedLead.contact_readiness_score ?? null}
                             crmCappedReason={(() => {
                               const contactLabel = selectedLead.full_name || 'This contact';
