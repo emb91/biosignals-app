@@ -641,14 +641,17 @@ export default function AccountsPage() {
   const [loadingContacts, setLoadingContacts] = useState(false);
 
   // Detail panel accordion open state
-  const [detailPanelOpen, setDetailPanelOpen] = useState({
-    criteria: false,
-    firmographics: false,
-    funding: false,
-    products: false,
-    services: false,
-    technology: false,
-  });
+  // Details segments are UNFOLDED by default (matches /contacts). The user can
+  // still collapse any segment; selecting a new account re-expands them.
+  const ALL_DETAILS_EXPANDED = {
+    criteria: true,
+    firmographics: true,
+    funding: true,
+    products: true,
+    services: true,
+    technology: true,
+  } as const;
+  const [detailPanelOpen, setDetailPanelOpen] = useState({ ...ALL_DETAILS_EXPANDED });
   const toggleDetail = (key: keyof typeof detailPanelOpen) =>
     setDetailPanelOpen((s) => ({ ...s, [key]: !s[key] }));
 
@@ -676,25 +679,9 @@ export default function AccountsPage() {
 
     if (pendingOpenCriteriaRef.current) {
       pendingOpenCriteriaRef.current = false;
-      setDetailPanelOpen({
-        criteria: true,
-        firmographics: false,
-        funding: false,
-        products: false,
-        services: false,
-        technology: false,
-      });
-      return;
     }
-
-    setDetailPanelOpen({
-      criteria: false,
-      firmographics: false,
-      funding: false,
-      products: false,
-      services: false,
-      technology: false,
-    });
+    // Always re-expand all segments when the selected account changes.
+    setDetailPanelOpen({ ...ALL_DETAILS_EXPANDED });
   }, [selectedAccountId]);
 
   useEffect(() => {
@@ -1084,14 +1071,7 @@ export default function AccountsPage() {
   const openDetailsWithCriteria = (id: string) => {
     setPanelMode('details');
     if (selectedAccountId === id) {
-      setDetailPanelOpen({
-        criteria: true,
-        firmographics: false,
-        funding: false,
-        products: false,
-        services: false,
-        technology: false,
-      });
+      setDetailPanelOpen({ ...ALL_DETAILS_EXPANDED });
       return;
     }
     pendingOpenCriteriaRef.current = true;
@@ -1764,34 +1744,35 @@ export default function AccountsPage() {
                       </div>
                     </div>
 
-                    <div className="flex shrink-0 border-b border-[rgba(13,53,71,0.08)] px-5">
-                      {(['details', 'priority', 'fit', 'action', 'contacts', 'signals', 'crm'] as PanelMode[]).map((mode) => (
-                        <button
-                          key={mode}
-                          type="button"
-                          onClick={() => setPanelMode(mode)}
-                          className={cn(
-                            'py-2.5 pr-4 text-xs font-medium border-b-2 -mb-px transition-colors capitalize',
-                            panelMode === mode
-                              ? 'border-arcova-teal text-arcova-teal'
-                              : 'border-transparent text-gray-500 hover:text-gray-700',
-                          )}
-                        >
-                          {mode === 'contacts'
-                            ? 'Contacts'
-                            : mode === 'fit'
-                              ? 'Fit'
-                              : mode === 'action'
-                                ? 'Action'
-                                : mode === 'signals'
-                                  ? 'Signals'
-                                  : mode === 'priority'
-                                    ? 'Priority'
-                                    : mode === 'crm'
-                                      ? 'CRM'
-                                      : 'Details'}
-                        </button>
-                      ))}
+                    {/* Peer tab strip — teal button style, matching /leads/contacts.
+                        Order: Details, Contacts, Fit, Priority, Signals, CRM, Action. */}
+                    <div className="relative z-[1] flex items-center gap-1 overflow-x-auto border-b border-[rgba(13,53,71,0.06)] bg-white/60 px-3 py-1.5">
+                      {([
+                        { mode: 'details', label: 'Details' },
+                        { mode: 'contacts', label: 'Contacts' },
+                        { mode: 'fit', label: 'Fit' },
+                        { mode: 'priority', label: 'Priority' },
+                        { mode: 'signals', label: 'Signals' },
+                        { mode: 'crm', label: 'CRM' },
+                        { mode: 'action', label: 'Action' },
+                      ] as { mode: PanelMode; label: string }[]).map(({ mode, label }) => {
+                        const isActive = panelMode === mode;
+                        return (
+                          <button
+                            key={mode}
+                            type="button"
+                            onClick={() => setPanelMode(mode)}
+                            className={cn(
+                              'shrink-0 rounded-md px-2 py-1 text-[11.5px] font-semibold transition-colors',
+                              isActive
+                                ? 'bg-arcova-teal/10 text-arcova-teal'
+                                : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700',
+                            )}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
                     </div>
 
                     {/* Panel body */}
@@ -2029,72 +2010,8 @@ export default function AccountsPage() {
                                 </button>
                               </div>
                             )}
-                            {/* Data source — matches the contact card's Data source card.
-                                Holds the Type/Imported metadata + the Refresh enrichment
-                                action inside the same segment (no separate footer button). */}
-                            <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-3 py-3 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
-                              <p className="mb-3 font-manrope text-xs font-semibold text-[#0d3547]">Data source</p>
-                              <div className="grid grid-cols-2 gap-x-6 gap-y-2">
-                                <div className="min-w-0">
-                                  <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">Type</p>
-                                  <p className="mt-2 text-sm leading-snug text-[#0d3547]">{selectedAccount.data_provenance_type}</p>
-                                </div>
-                                <div className="min-w-0">
-                                  <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">Imported</p>
-                                  <p className="mt-2 text-sm leading-snug text-[#0d3547]">
-                                    {formatProvenanceImportedAt(selectedAccount.data_provenance_imported_at)}
-                                  </p>
-                                </div>
-                              </div>
-
-                              <div className="mt-4 space-y-3 border-t border-[rgba(13,53,71,0.06)] pt-4">
-                                {selectedAccount.last_enriched_at && (
-                                  <p className="text-xs leading-snug text-[#4a6470]">
-                                    Last updated {formatDate(selectedAccount.last_enriched_at)}
-                                  </p>
-                                )}
-                                <p className="text-xs leading-relaxed text-[#6B7280]">
-                                  You can refresh this enrichment again whenever you need updated data.
-                                </p>
-                                {(() => {
-                                  // While a run is in flight (the request OR the async
-                                  // after() job, until the 5s poll flips the row), show a
-                                  // disabled "Enriching…" indicator PLUS an enabled "Stop"
-                                  // control (mirrors the contacts stop button). Otherwise
-                                  // the normal "Refresh enrichment" trigger.
-                                  const isWorking =
-                                    refreshingCompanyId === selectedAccount.id || enrichmentRunning;
-                                  if (isWorking) {
-                                    return (
-                                      <div className="flex items-center gap-2">
-                                        <span className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#1F2937] opacity-60">
-                                          <RotateCw className="w-4 h-4 text-[#1F2937] animate-spin" />
-                                          Enriching…
-                                        </span>
-                                        <button
-                                          type="button"
-                                          onClick={() => stopCompanyEnrichment(selectedAccount.id)}
-                                          className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-red-600 transition-colors hover:bg-red-50"
-                                        >
-                                          <X className="w-4 h-4" />
-                                          Stop
-                                        </button>
-                                      </div>
-                                    );
-                                  }
-                                  return (
-                                    <button
-                                      type="button"
-                                      onClick={() => rerunCompanyEnrichment(selectedAccount.id)}
-                                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#1F2937] transition-colors hover:bg-gray-50"
-                                    >
-                                      <RotateCw className="w-4 h-4 text-[#1F2937]" />
-                                      Refresh enrichment
-                                    </button>
-                                  );
-                                })()}
-                              </div>
-                            </div>
+                            {/* Data source / enrichment box is rendered at the BOTTOM of the
+                                Details tab (after all segments) — see below. */}
 
                             {/* Criteria */}
                             {hasCriteria && (
@@ -2124,12 +2041,8 @@ export default function AccountsPage() {
                                         <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2.5 py-0.5 text-xs font-medium text-arcova-teal">{selectedAccount.company_type}</span>
                                       </div>
                                     )}
-                                    {selectedAccount.industry && (
-                                      <div>
-                                        <p className="text-gray-400 text-xs mb-1">Industry</p>
-                                        <p className="text-sm text-gray-700">{selectedAccount.industry}</p>
-                                      </div>
-                                    )}
+                                    {/* Raw Apollo `industry` intentionally hidden — it's free-text,
+                                        not an ICP/taxonomy criterion (company_type pill covers it). */}
                                     {selectedAccount.sub_industry && (
                                       <div>
                                         <p className="text-gray-400 text-xs mb-1">Sub-industry</p>
@@ -2315,6 +2228,73 @@ export default function AccountsPage() {
                                 )}
                               </div>
                             )}
+
+                            {/* Data source / enrichment box — pinned to the BOTTOM of the
+                                Details tab (matches /leads/contacts). Holds Type/Imported +
+                                the Refresh / Stop enrichment controls. */}
+                            <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-3 py-3 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
+                              <p className="mb-3 font-manrope text-xs font-semibold text-[#0d3547]">Data source</p>
+                              <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+                                <div className="min-w-0">
+                                  <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">Type</p>
+                                  <p className="mt-2 text-sm leading-snug text-[#0d3547]">{selectedAccount.data_provenance_type}</p>
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">Imported</p>
+                                  <p className="mt-2 text-sm leading-snug text-[#0d3547]">
+                                    {formatProvenanceImportedAt(selectedAccount.data_provenance_imported_at)}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="mt-4 space-y-3 border-t border-[rgba(13,53,71,0.06)] pt-4">
+                                {selectedAccount.last_enriched_at && (
+                                  <p className="text-xs leading-snug text-[#4a6470]">
+                                    Last updated {formatDate(selectedAccount.last_enriched_at)}
+                                  </p>
+                                )}
+                                <p className="text-xs leading-relaxed text-[#6B7280]">
+                                  You can refresh this enrichment again whenever you need updated data.
+                                </p>
+                                {(() => {
+                                  // While a run is in flight (the request OR the async
+                                  // after() job, until the 5s poll flips the row), show a
+                                  // disabled "Enriching…" indicator PLUS an enabled "Stop"
+                                  // control (mirrors the contacts stop button). Otherwise
+                                  // the normal "Refresh enrichment" trigger.
+                                  const isWorking =
+                                    refreshingCompanyId === selectedAccount.id || enrichmentRunning;
+                                  if (isWorking) {
+                                    return (
+                                      <div className="flex items-center gap-2">
+                                        <span className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#1F2937] opacity-60">
+                                          <RotateCw className="w-4 h-4 text-[#1F2937] animate-spin" />
+                                          Enriching…
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() => stopCompanyEnrichment(selectedAccount.id)}
+                                          className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-red-600 transition-colors hover:bg-red-50"
+                                        >
+                                          <X className="w-4 h-4" />
+                                          Stop
+                                        </button>
+                                      </div>
+                                    );
+                                  }
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={() => rerunCompanyEnrichment(selectedAccount.id)}
+                                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#1F2937] transition-colors hover:bg-gray-50"
+                                    >
+                                      <RotateCw className="w-4 h-4 text-[#1F2937]" />
+                                      Refresh enrichment
+                                    </button>
+                                  );
+                                })()}
+                              </div>
+                            </div>
                           </div>
                         );
                       })()}
