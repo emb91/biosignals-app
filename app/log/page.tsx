@@ -134,7 +134,7 @@ function eventSublabel(event: SyncEvent): string {
   const parts: string[] = [];
   if (event.event_type === 'csv_import') {
     if (event.total_rows != null) parts.push(`${event.total_rows} rows`);
-    if (event.processed_rows != null) parts.push(`${event.processed_rows} imported`);
+    if (event.processed_rows != null) parts.push(`${importedRows(event)} imported`);
     if (event.duplicate_rows != null && event.duplicate_rows > 0) parts.push(`${event.duplicate_rows} duplicates`);
     if (event.failed_rows != null && event.failed_rows > 0) parts.push(`${event.failed_rows} failed`);
     return parts.join(' · ') || 'No data';
@@ -163,6 +163,16 @@ function formatSignalTypeLabel(value: string | null | undefined): string {
     .replace(/\bcrm\b/gi, 'CRM')
     .replace(/\bhs\b/gi, 'HS')
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+/** Rows actually imported = processed minus duplicates and failures.
+ *  `processed_rows` counts every row that reached a terminal state (enriched +
+ *  duplicate + failed), so using it directly over-counts "Imported". */
+function importedRows(event: SyncEvent): number {
+  return Math.max(
+    0,
+    (event.processed_rows ?? 0) - (event.duplicate_rows ?? 0) - (event.failed_rows ?? 0),
+  );
 }
 
 type StatusLevel = 'done' | 'warning' | 'failed';
@@ -289,7 +299,7 @@ function SyncEventCard({
             {event.event_type === 'csv_import' && (
               <>
                 <InlineStat label="Total" value={event.total_rows} />
-                <InlineStat label="Imported" value={event.processed_rows} />
+                <InlineStat label="Imported" value={importedRows(event)} />
                 <InlineStat label="Duplicates" value={event.duplicate_rows} />
                 <InlineStat label="Failed" value={event.failed_rows} highlight={status !== 'done'} />
               </>
