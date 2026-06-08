@@ -6,6 +6,7 @@ import { enrichContact } from '@/lib/enrichment-provider';
 import { ingestEnrichedRecords, type EnrichedImportRecord } from '@/lib/import-ingestion';
 import { runContactResolutionPipelineForContact } from '@/lib/contact-resolution-pipeline';
 import { createAdminClient } from '@/lib/supabase-admin';
+import { resolveLinkedinUrl } from '@/lib/linkedin-url-resolver';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -107,6 +108,34 @@ export async function isBatchCancelled(
 
 // ── Main worker ───────────────────────────────────────────────────────────────
 
+/**
+ * The contact's LinkedIn URL is the canonical key — a row with none is bounced
+ * at storage. Prefer the one we already have (Apollo result or CSV); if there's
+ * none, resolve it via web search BEFORE storage so the contact lands instead of
+ * being silently dropped (important for HubSpot contacts + small biotechs Apollo
+ * can't surface). Best-effort: returns '' only if it genuinely can't be resolved.
+ */
+async function linkedinForStorage(direct: string, fallbackRow: NormalisedRow): Promise<string> {
+  const known = (direct || '').trim();
+  if (known) return known;
+  try {
+    const resolved = await resolveLinkedinUrl({
+      full_name: fallbackRow.full_name || null,
+      first_name: fallbackRow.first_name || null,
+      last_name: fallbackRow.last_name || null,
+      email: fallbackRow.email || null,
+      linkedin_url: null,
+      company_name: fallbackRow.company_name || null,
+      company_domain: fallbackRow.company_domain || null,
+      location: fallbackRow.location || null,
+    });
+    return (resolved?.linkedin_url || '').trim();
+  } catch (e) {
+    console.error('[import-queue] pre-storage LinkedIn resolution failed:', e);
+    return '';
+  }
+}
+
 export async function processQueuedRowsInBackground(params: {
   queuedRows: QueuedRow[];
   batchId: string;
@@ -148,8 +177,8 @@ export async function processQueuedRowsInBackground(params: {
       // the contact from the raw CSV data and let the resolution pipeline run
       // (its profile step is an Apify LinkedIn scrape, which doesn't need Apollo).
       // Returns true if kept, false if it genuinely can't be stored (no key).
-      const keepForLinkedinFallback = (): boolean => {
-        const linkedin = (fallbackRow.linkedin_url || '').trim();
+      const keepForLinkedinFallback = async (): Promise<boolean> => {
+        const linkedin = await linkedinForStorage(fallbackRow.linkedin_url, fallbackRow);
         if (!linkedin) return false;
         enrichedRecords.push({
           raw_upload_id: row.id,
@@ -175,7 +204,7 @@ export async function processQueuedRowsInBackground(params: {
         if (await isBatchCancelled(admin, batchId)) break;
 
         if (!hasConfidentEnrichment(enrichmentResult, fallbackRow)) {
-          if (!keepForLinkedinFallback()) {
+          if (!(await keepForLinkedinFallback())) {
             markFailed(
               row.id,
               fallbackRow.linkedin_url
@@ -188,6 +217,17 @@ export async function processQueuedRowsInBackground(params: {
 
         const finalLocation = enrichmentResult.location || location;
         const parsedLocation = parseLocation(finalLocation);
+
+        // Resolve the canonical key before storage: Apollo's LinkedIn, else the
+        // CSV's, else a web-search resolution. Without one the row can't be stored.
+        const resolvedLinkedinForStorage = await linkedinForStorage(
+          enrichmentResult.linkedin_url || fallbackRow.linkedin_url || '',
+          fallbackRow,
+        );
+        if (!resolvedLinkedinForStorage) {
+          markFailed(row.id, 'No LinkedIn URL found (Apollo, CSV, or web search) — cannot store');
+          continue;
+        }
 
         enrichedRecords.push({
           raw_upload_id: row.id,
@@ -221,7 +261,7 @@ export async function processQueuedRowsInBackground(params: {
           // Fall back to the CSV LinkedIn URL when Apollo matched the person but
           // returned no linkedin_url (common for small biotechs). The canonical
           // split REQUIRES a linkedin_url, so dropping it here silently failed the row.
-          linkedin_url: enrichmentResult.linkedin_url || fallbackRow.linkedin_url || '',
+          linkedin_url: resolvedLinkedinForStorage,
           profile_photo_url: enrichmentResult.profile_photo_url,
           headline: enrichmentResult.headline,
           location: finalLocation,
@@ -236,7 +276,7 @@ export async function processQueuedRowsInBackground(params: {
         });
       } catch (error) {
         console.error('Contact enrichment failed for row:', row.id, error);
-        if (!keepForLinkedinFallback()) {
+        if (!(await keepForLinkedinFallback())) {
           const message = error instanceof Error ? error.message : String(error);
           markFailed(row.id, `Enrichment error: ${message.slice(0, 200)}`);
         }
