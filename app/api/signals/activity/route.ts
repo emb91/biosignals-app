@@ -120,15 +120,33 @@ function formatTrialPhase(p: string): string {
   const m = p.match(/PHASE\s*(\d)/i);
   return m ? `Phase ${m[1]}` : prettyEnum(p);
 }
+// Compact USD: 1399878 -> "$1.4M", 5000000 -> "$5M", 250000 -> "$250K".
+function formatUsd(n: unknown): string | null {
+  const v = typeof n === 'number' ? n : Number(n);
+  if (!Number.isFinite(v) || v <= 0) return null;
+  if (v >= 1e9) return `$${(v / 1e9).toFixed(2).replace(/\.?0+$/, '')}B`;
+  if (v >= 1e6) return `$${(v / 1e6).toFixed(2).replace(/\.?0+$/, '')}M`;
+  if (v >= 1e3) return `$${Math.round(v / 1e3)}K`;
+  return `$${Math.round(v)}`;
+}
+function firstNum(...vals: unknown[]): number | null {
+  for (const v of vals) {
+    const n = typeof v === 'number' ? v : null;
+    if (n != null && Number.isFinite(n) && n > 0) return n;
+  }
+  return null;
+}
 
-// Pull a SPECIFIC title + detail out of a signal's source metadata when the
-// stored source title is generic. Covers clinical trials (study_title + phase/
-// condition/status) and individual patents (patent_title + number).
+// Pull a SPECIFIC title + detail out of a signal's source metadata. A null
+// title means "keep whatever title the caller derived" (e.g. a real press-release
+// headline) and only swap in the richer detail line. Covers clinical trials,
+// patents, FDA decisions, grants, and funding rounds.
 function specificFromMetadata(
   meta: Record<string, unknown> | null | undefined,
 ): { title: string | null; detail: string | null } {
   if (!meta) return { title: null, detail: null };
 
+  // Clinical trial
   if (typeof meta.study_title === 'string' && meta.study_title) {
     const phase = Array.isArray(meta.phases) && meta.phases.length ? formatTrialPhase(String(meta.phases[0])) : null;
     const cond = Array.isArray(meta.conditions) && meta.conditions.length ? String(meta.conditions[0]) : null;
@@ -138,8 +156,43 @@ function specificFromMetadata(
     return { title: meta.study_title, detail };
   }
 
+  // Patent
   if (typeof meta.patent_title === 'string' && meta.patent_title) {
     return { title: meta.patent_title, detail: typeof meta.patent_id === 'string' ? meta.patent_id : null };
+  }
+
+  // FDA decision (openFDA): trade name + what it is + dossier number.
+  if (typeof meta.trade_name === 'string' && meta.trade_name) {
+    const generic = typeof meta.generic_name === 'string' ? meta.generic_name : null;
+    const dossier =
+      (typeof meta.pma_number === 'string' && meta.pma_number) ||
+      (typeof meta.k_number === 'string' && meta.k_number) ||
+      (typeof meta.application_number === 'string' && meta.application_number) ||
+      null;
+    const detail = [generic ? generic.slice(0, 90) : null, dossier].filter(Boolean).join(' · ') || null;
+    return { title: meta.trade_name, detail };
+  }
+
+  // Grant (NIH RePORTER): project title + agency · amount · grant number.
+  if (typeof meta.project_title === 'string' && meta.project_title) {
+    const agency = typeof meta.agency_ic_abbr === 'string' ? meta.agency_ic_abbr : null;
+    const amount = formatUsd(meta.award_amount);
+    const num = typeof meta.project_num === 'string' ? meta.project_num : null;
+    const detail = [agency, amount, num].filter(Boolean).join(' · ') || null;
+    return { title: meta.project_title, detail };
+  }
+
+  // Funding round (press release amount_usd/investors, or SEC offering amount).
+  // Keep the existing title (a real press headline) — only add the money line.
+  const fundingAmount = formatUsd(
+    firstNum(meta.amount_usd, meta.total_offering_amount, meta.total_amount_sold),
+  );
+  const investors = Array.isArray(meta.investors)
+    ? (meta.investors as unknown[]).filter((v): v is string => typeof v === 'string' && !!v).slice(0, 3)
+    : [];
+  if (fundingAmount || investors.length > 0) {
+    const detail = [fundingAmount, investors.join(', ') || null].filter(Boolean).join(' · ') || null;
+    return { title: null, detail };
   }
 
   return { title: null, detail: null };
