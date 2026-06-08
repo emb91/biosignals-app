@@ -383,7 +383,18 @@ async function matchPerson(input: ApolloLookupInput, options: MatchPersonOptions
     params.set('reveal_personal_emails', 'true');
   }
   if (options.revealPhoneNumber) {
-    params.set('reveal_phone_number', 'true');
+    // Apollo's phone reveal is ASYNC: reveal_phone_number=true requires a
+    // webhook_url and the number is delivered to that webhook later, not in this
+    // response. Only request it when a receiver URL is configured — otherwise
+    // Apollo rejects the whole call ("add a valid 'webhook_url'") and we'd waste
+    // it anyway (no way to capture the async result). The cheap pass still
+    // returns any phones Apollo includes inline. TODO: build the webhook receiver
+    // to actually capture revealed phones (needs a public URL; prod-only).
+    const phoneWebhookUrl = process.env.APOLLO_PHONE_WEBHOOK_URL;
+    if (phoneWebhookUrl) {
+      params.set('reveal_phone_number', 'true');
+      params.set('webhook_url', phoneWebhookUrl);
+    }
   }
 
   const url = `https://api.apollo.io/api/v1/people/match?${params.toString()}`;
