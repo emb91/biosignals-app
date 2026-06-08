@@ -52,6 +52,10 @@ type AccountRpcRow = {
   services: string[] | null;
   technologies: string[] | null;
   last_enriched_at: string | null;
+  enrichment_refresh_status: 'idle' | 'running' | 'succeeded' | 'failed' | 'cancelled' | null;
+  enrichment_refresh_last_error: string | null;
+  enrichment_refresh_started_at: string | null;
+  enrichment_refresh_finished_at: string | null;
   contact_count: number;
   best_contact_fit: number | null;
   worst_contact_fit: number | null;

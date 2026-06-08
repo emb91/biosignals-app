@@ -91,6 +91,13 @@ type AccountRow = {
   services: string[] | null;
   technologies: string[] | null;
   last_enriched_at: string | null;
+  // Dedicated company-enrichment job state — drives the side panel banner.
+  // null/idle ≈ never run; running ≈ "Enrichment in progress" (real, not a lie);
+  // failed ≈ "Enrichment failed, retry" (with last_error); succeeded ≈ no banner.
+  enrichment_refresh_status?: 'idle' | 'running' | 'succeeded' | 'failed' | 'cancelled' | null;
+  enrichment_refresh_last_error?: string | null;
+  enrichment_refresh_started_at?: string | null;
+  enrichment_refresh_finished_at?: string | null;
   contact_count: number;
   best_contact_fit: number | null;
   worst_contact_fit: number | null;
@@ -649,17 +656,34 @@ export default function AccountsPage() {
     });
   }, [selectedAccountId, accounts]);
 
-  // Company enrichment refresh
+  // Company enrichment refresh.
+  // Hits the dedicated company-enrichment endpoint (not /api/monitor-company,
+  // which only re-runs funding/taxonomy and doesn't actually fetch
+  // firmographics or stamp last_enriched_at). The endpoint returns 200
+  // immediately and runs the heavy work async via Next's after() —
+  // the row flips to enrichment_refresh_status='running' synchronously,
+  // so the next refetch already shows the new state.
   const [refreshingCompanyId, setRefreshingCompanyId] = useState<string | null>(null);
   const rerunCompanyEnrichment = async (companyId: string) => {
     setRefreshingCompanyId(companyId);
     try {
-      await fetch('/api/monitor-company', {
+      await fetch(`/api/companies/${companyId}/enrich`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company_id: companyId }),
       });
+      // Invalidate BOTH the list cache AND the per-account detail cache.
+      // The side panel reads detail from selectedAccountDetailById, which is
+      // a fetch-once cache keyed by id. Without clearing it, the banner
+      // would keep showing the stale "in progress" state even after the
+      // background enrichment flipped the DB row to succeeded/failed.
       invalidateCache('/api/accounts');
+      invalidateCache(`/api/accounts/${companyId}`);
+      setSelectedAccountDetailById((prev) => {
+        if (!(companyId in prev)) return prev;
+        const next = { ...prev };
+        delete next[companyId];
+        return next;
+      });
       await fetchAccounts();
     } catch (err) {
       console.error('Error refreshing company enrichment:', err);
@@ -1761,10 +1785,40 @@ export default function AccountsPage() {
                           selectedAccount.headquarters_country
                         );
                         const hasFunding = !!(selectedAccount.funding_stage || selectedAccount.funding_status_label || selectedAccount.total_funding_usd != null || selectedAccount.latest_funding_date);
-                        const isPendingEnrichment = !selectedAccount.last_enriched_at;
+                        // Banner branches on the dedicated company-enrichment job state
+                        // (mirrors the contacts pattern). The old `!last_enriched_at`
+                        // gate was a lie when enrichment had silently failed — now we
+                        // distinguish:
+                        //   running  → "Enrichment in progress" (amber, accurate)
+                        //   failed   → "Enrichment failed" with the last error +
+                        //              a hint to retry via Refresh enrichment below
+                        //   null/idle + no last_enriched_at → "Enrichment in progress"
+                        //              (treats not-yet-started as in-progress, since
+                        //              the stub auto-fires enrichment on creation)
+                        //   succeeded / has last_enriched_at → no banner
+                        const enrichmentStatus = selectedAccount.enrichment_refresh_status ?? null;
+                        const enrichmentFailed = enrichmentStatus === 'failed';
+                        const enrichmentRunning =
+                          enrichmentStatus === 'running' ||
+                          (enrichmentStatus == null && !selectedAccount.last_enriched_at);
                         return (
                           <div className="space-y-3">
-                            {isPendingEnrichment && (
+                            {enrichmentFailed && (
+                              <div className="rounded-xl border border-amber-200 bg-amber-50/80 px-3.5 py-3 flex gap-2.5">
+                                <svg className="mt-0.5 w-4 h-4 shrink-0 text-amber-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+                                  <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                                </svg>
+                                <div className="min-w-0">
+                                  <p className="text-[12.5px] font-semibold text-amber-800">Enrichment failed</p>
+                                  <p className="mt-0.5 text-[12px] leading-relaxed text-amber-700">
+                                    {selectedAccount.enrichment_refresh_last_error?.trim() ||
+                                      "We couldn't pull firmographics for this company on the last run."}
+                                    {' '}Try Refresh enrichment below.
+                                  </p>
+                                </div>
+                              </div>
+                            )}
+                            {!enrichmentFailed && enrichmentRunning && (
                               <div className="rounded-xl border border-amber-200 bg-amber-50/80 px-3.5 py-3 flex gap-2.5">
                                 <svg className="mt-0.5 w-4 h-4 shrink-0 text-amber-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
                                   <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />

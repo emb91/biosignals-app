@@ -88,7 +88,10 @@ const normalizeIncomingRows = (
     };
   });
 
-const isExactDuplicate = (row: NormalisedRow, existing: Record<string, unknown>): boolean => {
+const duplicateMatch = (
+  row: NormalisedRow,
+  existing: Record<string, unknown>
+): 'linkedin' | 'email' | 'name+company' | null => {
   const rowLinkedin = normalize(row.linkedin_url);
   const rowEmail = normalize(row.email);
   const rowFirst = normalize(row.first_name);
@@ -101,8 +104,8 @@ const isExactDuplicate = (row: NormalisedRow, existing: Record<string, unknown>)
   const exLast = normalize(existing.last_name as string | undefined);
   const exCompany = normalize(existing.company_name as string | undefined);
 
-  if (rowLinkedin && exLinkedin && rowLinkedin === exLinkedin) return true;
-  if (rowEmail && exEmail && rowEmail === exEmail) return true;
+  if (rowLinkedin && exLinkedin && rowLinkedin === exLinkedin) return 'linkedin';
+  if (rowEmail && exEmail && rowEmail === exEmail) return 'email';
   if (
     rowFirst &&
     rowLast &&
@@ -114,10 +117,10 @@ const isExactDuplicate = (row: NormalisedRow, existing: Record<string, unknown>)
     rowLast === exLast &&
     rowCompany === exCompany
   ) {
-    return true;
+    return 'name+company';
   }
 
-  return false;
+  return null;
 };
 
 export async function POST(request: Request) {
@@ -192,6 +195,7 @@ export async function POST(request: Request) {
       .eq('user_id', user.id);
 
     const duplicateIds: string[] = [];
+    const duplicateReasons = new Map<string, string>();
     const invalidEmailIds: string[] = [];
     const pendingRows = insertedRows.filter((row) => {
       const rawData = row.raw_data as Record<string, unknown>;
@@ -213,12 +217,23 @@ export async function POST(request: Request) {
         return false;
       }
 
-      const isDupe = (existingContacts || []).some((contact) =>
-        isExactDuplicate(rowNorm, contact as Record<string, unknown>)
-      );
+      let dupeReason: string | null = null;
+      for (const contact of existingContacts || []) {
+        const match = duplicateMatch(rowNorm, contact as Record<string, unknown>);
+        if (match) {
+          dupeReason =
+            match === 'linkedin'
+              ? 'Duplicate LinkedIn URL'
+              : match === 'email'
+                ? 'Duplicate email'
+                : 'Duplicate name + company';
+          break;
+        }
+      }
 
-      if (isDupe) {
+      if (dupeReason) {
         duplicateIds.push(row.id as string);
+        duplicateReasons.set(row.id as string, dupeReason);
         return false;
       }
       return true;
@@ -228,20 +243,40 @@ export async function POST(request: Request) {
     const rowsToEnrich = pendingRows;
 
     if (duplicateIds.length > 0) {
-      await supabase.from('raw_uploads').update({ status: 'duplicate' }).in('id', duplicateIds);
+      const byReason = new Map<string, string[]>();
+      for (const id of duplicateIds) {
+        const reason = duplicateReasons.get(id) || 'Duplicate of existing contact';
+        const ids = byReason.get(reason) ?? [];
+        ids.push(id);
+        byReason.set(reason, ids);
+      }
+      for (const [reason, ids] of byReason) {
+        await supabase
+          .from('raw_uploads')
+          .update({ status: 'duplicate', failure_reason: reason })
+          .in('id', ids);
+      }
     }
 
     if (invalidEmailIds.length > 0) {
       await supabase
         .from('raw_uploads')
-        .update({ status: 'failed', enriched_at: new Date().toISOString() })
+        .update({
+          status: 'failed',
+          failure_reason: 'Invalid email address',
+          enriched_at: new Date().toISOString(),
+        })
         .in('id', invalidEmailIds);
     }
 
     if (quotaHeldIds.length > 0) {
       await supabase
         .from('raw_uploads')
-        .update({ status: 'failed', enriched_at: new Date().toISOString() })
+        .update({
+          status: 'failed',
+          failure_reason: 'Held back by enrichment quota',
+          enriched_at: new Date().toISOString(),
+        })
         .in('id', quotaHeldIds);
     }
 

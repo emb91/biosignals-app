@@ -1,0 +1,72 @@
+import { after, NextResponse } from 'next/server';
+import { createClient } from '@/lib/supabase-server';
+import { createAdminClient } from '@/lib/supabase-admin';
+import {
+  markCompanyEnrichmentRunning,
+  runCompanyEnrichmentById,
+} from '@/lib/company-enrichment';
+import { syncCompanyFitForCompany } from '@/lib/company-fit';
+
+/**
+ * POST /api/companies/[id]/enrich
+ *
+ * Kicks off the dedicated company-enrichment pipeline for a single company.
+ * The work itself runs asynchronously via `after()` so the response returns
+ * immediately — the caller polls the row's `enrichment_refresh_status` to
+ * see when it flips to `succeeded` / `failed`.
+ *
+ * This is the path the Accounts side-panel "Refresh enrichment" button
+ * hits, and the path that `job_change_monitor` fires when it creates a
+ * new company stub from a contact's job-change event.
+ */
+export async function POST(
+  _request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { id } = await params;
+
+    const authClient = await createClient();
+    const { data: { user }, error: authError } = await authClient.auth.getUser();
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    if (!id) {
+      return NextResponse.json({ error: 'company id required' }, { status: 400 });
+    }
+
+    // Use admin client to bypass RLS — this endpoint is gated by the auth
+    // check above and only reads/writes the company row + dependent caches.
+    const supabase = createAdminClient();
+
+    // Flip the row to `running` SYNCHRONOUSLY so the UI sees the new state
+    // on the next refetch, before the heavy lifting starts.
+    await markCompanyEnrichmentRunning(supabase, id);
+
+    // Run enrichment in the background. We don't await — the response
+    // returns immediately. Next will keep the connection open for `after()`
+    // work after the response is sent.
+    after(async () => {
+      try {
+        await runCompanyEnrichmentById(supabase, id);
+      } catch (err) {
+        // runCompanyEnrichmentById already records the failure on the row;
+        // this catch is just a belt-and-braces so the after() callback
+        // never throws uncaught.
+        console.error('[api/companies/enrich] background run threw:', err);
+        return;
+      }
+      // Resync the user's fit score after enrichment finishes. Non-fatal.
+      try {
+        await syncCompanyFitForCompany(supabase, user.id, id);
+      } catch (fitErr) {
+        console.warn('[api/companies/enrich] syncCompanyFitForCompany failed:', fitErr);
+      }
+    });
+
+    return NextResponse.json({ success: true, company_id: id, status: 'running' });
+  } catch (error) {
+    console.error('[api/companies/enrich] error:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+}

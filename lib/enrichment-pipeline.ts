@@ -2,7 +2,7 @@
 // contact discovery   = Apollo identity/contact (already stored before this runs)
 // linkedin resolution = Claude web search for LinkedIn URL
 // profile enrichment  = Apify LinkedIn profile scrape + company scrape + Apollo company enrich + LLM bio summary
-import Anthropic from '@anthropic-ai/sdk';
+import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import {
   enrichOrganizationWithApollo,
@@ -547,38 +547,27 @@ function extractCompanyFirmographics(raw: Record<string, unknown> | null): Recor
 }
 
 async function summariseCompanyBio(description: string): Promise<string | null> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey || !description.trim()) return null;
-
+  if (!description.trim()) return null;
+  // Anthropic-direct preferred (cheaper); OpenRouter fallback if Anthropic
+  // errors (e.g. credit balance drained). See lib/llm-client.ts.
   try {
-    const client = new Anthropic({ apiKey });
-    // Synthesizes a short factual sentence from external (Apollo / Apify) data —
-    // Haiku is plenty for this. See memory/llm_cost_concerns.md.
-    const message = await client.messages.create({
-      model: 'claude-haiku-4-5',
-      max_tokens: 100,
-      messages: [
-        {
-          role: 'user',
-          content: `Write a single plain sentence (10–20 words) describing what this company does, in a B2B sales context. Be factual and specific — name the category, product, or service. No preamble, no punctuation beyond the closing period.\n\n${description}`,
-        },
-      ],
+    const result = await completeLlm({
+      feature: 'company_bio_summarization',
+      maxTokens: 100,
+      prompt: `Write a single plain sentence (10–20 words) describing what this company does, in a B2B sales context. Be factual and specific — name the category, product, or service. No preamble, no punctuation beyond the closing period.\n\n${description}`,
     });
     await recordLlmUsageEvent({
-      provider: 'anthropic',
+      provider: result.provider,
       feature: 'company_bio_summarization',
       route: 'lib/enrichment-pipeline#summariseCompanyBio',
-      model: 'claude-haiku-4-5',
-      usage: message.usage,
+      model: result.model,
+      usage: result.usage,
       metadata: {
         description_length: description.length,
       },
     });
 
-    const block = message.content[0];
-    if (block.type !== 'text') return null;
-
-    const sentence = block.text.trim().replace(/^[-•*\d.)]\s*/, '');
+    const sentence = result.text.trim().replace(/^[-•*\d.)]\s*/, '');
     return sentence || null;
   } catch (err) {
     console.warn('Company bio summarisation failed (non-fatal):', err instanceof Error ? err.message : err);
@@ -593,9 +582,6 @@ async function generateContactBio(params: {
   headline: string | null;
   employmentHistory: NormalizedEmployment[];
 }): Promise<string | null> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return null;
-
   const { fullName, currentTitle, currentCompany, headline, employmentHistory } = params;
   if (!currentTitle && !currentCompany && employmentHistory.length === 0) return null;
 
@@ -614,21 +600,20 @@ ${historyText || '— No history available'}`;
 
   const instruction = `Write a single plain sentence (10–20 words) describing this person as a prospect in a B2B sales context — current role, organization, and why they are a relevant contact. Be factual and specific; use title, company, or domain of focus when the source material supports it. No preamble, no bullet points, no labels, no punctuation beyond the closing period.`;
 
+  // Anthropic-direct preferred (cheaper); OpenRouter fallback if Anthropic
+  // errors. See lib/llm-client.ts.
   try {
-    const client = new Anthropic({ apiKey });
-    // Synthesizes a short factual sentence from Apollo + Apify employment data —
-    // Haiku is plenty for this. See memory/llm_cost_concerns.md.
-    const message = await client.messages.create({
-      model: 'claude-haiku-4-5',
-      max_tokens: 100,
-      messages: [{ role: 'user', content: `${instruction}\n\n${sourceBlock}` }],
+    const result = await completeLlm({
+      feature: 'contact_bio_generation',
+      maxTokens: 100,
+      prompt: `${instruction}\n\n${sourceBlock}`,
     });
     await recordLlmUsageEvent({
-      provider: 'anthropic',
+      provider: result.provider,
       feature: 'contact_bio_generation',
       route: 'lib/enrichment-pipeline#generateContactBio',
-      model: 'claude-haiku-4-5',
-      usage: message.usage,
+      model: result.model,
+      usage: result.usage,
       metadata: {
         full_name: fullName,
         current_company: currentCompany,
@@ -636,10 +621,7 @@ ${historyText || '— No history available'}`;
       },
     });
 
-    const block = message.content[0];
-    if (block.type !== 'text') return null;
-
-    const firstLine = block.text.trim().split('\n')[0] ?? '';
+    const firstLine = result.text.trim().split('\n')[0] ?? '';
     const sentence = firstLine.replace(/^[-•*\d.)]\s*/, '').trim();
     return sentence || null;
   } catch (err) {

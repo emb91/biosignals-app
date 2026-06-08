@@ -118,6 +118,11 @@ export async function processQueuedRowsInBackground(params: {
   const admin = createAdminClient();
   const enrichedRecords: EnrichedImportRecord[] = [];
   const failedIds: string[] = [];
+  const failureReasons = new Map<string, string>();
+  const markFailed = (id: string, reason: string) => {
+    failedIds.push(id);
+    failureReasons.set(id, reason);
+  };
 
   try {
     for (const row of queuedRows) {
@@ -170,7 +175,14 @@ export async function processQueuedRowsInBackground(params: {
         if (await isBatchCancelled(admin, batchId)) break;
 
         if (!hasConfidentEnrichment(enrichmentResult, fallbackRow)) {
-          if (!keepForLinkedinFallback()) failedIds.push(row.id);
+          if (!keepForLinkedinFallback()) {
+            markFailed(
+              row.id,
+              fallbackRow.linkedin_url
+                ? 'Enrichment returned no confident match'
+                : 'No enrichment match and no LinkedIn URL for fallback'
+            );
+          }
           continue;
         }
 
@@ -206,7 +218,10 @@ export async function processQueuedRowsInBackground(params: {
                 : typeof rawData.office_phone === 'string'
                   ? (rawData.office_phone as string)
                   : undefined,
-          linkedin_url: enrichmentResult.linkedin_url || '',
+          // Fall back to the CSV LinkedIn URL when Apollo matched the person but
+          // returned no linkedin_url (common for small biotechs). The canonical
+          // split REQUIRES a linkedin_url, so dropping it here silently failed the row.
+          linkedin_url: enrichmentResult.linkedin_url || fallbackRow.linkedin_url || '',
           profile_photo_url: enrichmentResult.profile_photo_url,
           headline: enrichmentResult.headline,
           location: finalLocation,
@@ -221,15 +236,27 @@ export async function processQueuedRowsInBackground(params: {
         });
       } catch (error) {
         console.error('Contact enrichment failed for row:', row.id, error);
-        if (!keepForLinkedinFallback()) failedIds.push(row.id);
+        if (!keepForLinkedinFallback()) {
+          const message = error instanceof Error ? error.message : String(error);
+          markFailed(row.id, `Enrichment error: ${message.slice(0, 200)}`);
+        }
       }
     }
 
     if (failedIds.length > 0) {
-      await admin
-        .from('raw_uploads')
-        .update({ status: 'failed', enriched_at: new Date().toISOString() })
-        .in('id', failedIds);
+      const byReason = new Map<string, string[]>();
+      for (const id of failedIds) {
+        const reason = failureReasons.get(id) || 'Enrichment failed';
+        const ids = byReason.get(reason) ?? [];
+        ids.push(id);
+        byReason.set(reason, ids);
+      }
+      for (const [reason, ids] of byReason) {
+        await admin
+          .from('raw_uploads')
+          .update({ status: 'failed', failure_reason: reason, enriched_at: new Date().toISOString() })
+          .in('id', ids);
+      }
     }
 
     if (enrichedRecords.length > 0) {
@@ -274,7 +301,11 @@ export async function processQueuedRowsInBackground(params: {
     if (stuckIds.length > 0) {
       await admin
         .from('raw_uploads')
-        .update({ status: 'failed', enriched_at: new Date().toISOString() })
+        .update({
+          status: 'failed',
+          failure_reason: 'Background enrichment worker crashed',
+          enriched_at: new Date().toISOString(),
+        })
         .in('id', stuckIds);
     }
 

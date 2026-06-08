@@ -94,6 +94,14 @@ export interface QueryAccount {
   services: string[] | null;
   technologies: string[] | null;
   last_enriched_at: string | null;
+  /** Dedicated company-enrichment job status (lib/company-enrichment.ts). Drives the
+   *  side-panel banner: running → "in progress", failed → "failed, retry" with the
+   *  last error, succeeded/null → no banner (or "never tried" if also no
+   *  last_enriched_at). Mirrors the contacts pattern (enrichment_refresh_status). */
+  enrichment_refresh_status: 'idle' | 'running' | 'succeeded' | 'failed' | 'cancelled' | null;
+  enrichment_refresh_last_error: string | null;
+  enrichment_refresh_started_at: string | null;
+  enrichment_refresh_finished_at: string | null;
   contact_count: number;
   best_contact_fit: number | null;
   worst_contact_fit: number | null;
@@ -145,6 +153,10 @@ type CompanyAggRow = {
   services: string[] | null;
   technologies: string[] | null;
   last_enriched_at: string | null;
+  enrichment_refresh_status: 'idle' | 'running' | 'succeeded' | 'failed' | 'cancelled' | null;
+  enrichment_refresh_last_error: string | null;
+  enrichment_refresh_started_at: string | null;
+  enrichment_refresh_finished_at: string | null;
 };
 
 type ScratchAgg = CompanyAggRow & {
@@ -220,6 +232,10 @@ function finalizeScratch(row: ScratchAgg): QueryAccount {
     services: row.services,
     technologies: row.technologies,
     last_enriched_at: row.last_enriched_at,
+    enrichment_refresh_status: row.enrichment_refresh_status,
+    enrichment_refresh_last_error: row.enrichment_refresh_last_error,
+    enrichment_refresh_started_at: row.enrichment_refresh_started_at,
+    enrichment_refresh_finished_at: row.enrichment_refresh_finished_at,
     contact_count: row.contact_count,
     best_contact_fit: row.best_contact_fit,
     worst_contact_fit: row.worst_contact_fit,
@@ -280,7 +296,11 @@ export async function fetchAggregatedAccounts(
         products_services,
         services,
         technologies,
-        last_enriched_at
+        last_enriched_at,
+        enrichment_refresh_status,
+        enrichment_refresh_last_error,
+        enrichment_refresh_started_at,
+        enrichment_refresh_finished_at
       )
     `,
     )

@@ -55,7 +55,12 @@ export type LlmFeature =
   // ICP buying-team generation — infers the distinct buying teams (personas)
   // for an ICP. Sonnet: the multi-team split + prune-to-what-we-sell reasoning
   // is quality-sensitive, and it fires only once per ICP at (re-)enrichment.
-  | 'icp_buying_team';
+  | 'icp_buying_team'
+  // Enrichment bios — short factual sentence from Apify/Apollo data.
+  // Plain text completion (no Anthropic-specific tools), so OpenRouter
+  // fallback works when ANTHROPIC_API_KEY runs out of credit.
+  | 'company_bio_summarization'
+  | 'contact_bio_generation';
 
 /**
  * Default models per (feature, route). Override via the `model` arg.
@@ -156,6 +161,16 @@ const FEATURE_MODELS: Record<LlmFeature, { openrouter: string; anthropic: string
   icp_buying_team: {
     openrouter: 'anthropic/claude-sonnet-4-6',
     anthropic: 'claude-sonnet-4-6',
+  },
+  // Enrichment bios — Haiku is plenty (one short factual sentence from
+  // structured input). See memory/llm_cost_concerns.md.
+  company_bio_summarization: {
+    openrouter: 'anthropic/claude-haiku-4-5',
+    anthropic: 'claude-haiku-4-5',
+  },
+  contact_bio_generation: {
+    openrouter: 'anthropic/claude-haiku-4-5',
+    anthropic: 'claude-haiku-4-5',
   },
 };
 
