@@ -31,8 +31,11 @@ export async function POST() {
   let accessToken: string;
   try {
     accessToken = (await nango.getToken(HUBSPOT_INTEGRATION_ID, conn.nango_connection_id)) as string;
-  } catch {
-    return NextResponse.json({ error: 'Failed to get HubSpot token' }, { status: 400 });
+  } catch (e) {
+    const nangoMsg: string =
+      (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? '';
+    const msg = nangoMsg || 'Failed to get HubSpot token';
+    return NextResponse.json({ error: msg, code: 'token_error' }, { status: 400 });
   }
 
   try {

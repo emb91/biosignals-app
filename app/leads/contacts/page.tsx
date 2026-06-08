@@ -1377,6 +1377,7 @@ export function ContactsWorkspace() {
     skipped: number;
     skippedContacts: { name: string; company: string | null; reason: string }[];
     error?: string;
+    code?: string;
   } | null>(null);
   const [hubspotPullResult, setHubspotPullResult] = useState<{
     fetchedContacts: number;
@@ -1391,6 +1392,7 @@ export function ContactsWorkspace() {
     recomputedCompanies: number;
     skippedUnresolvedCompanies: number;
     error?: string;
+    code?: string;
   } | null>(null);
   const [syncResultExpanded, setSyncResultExpanded] = useState(false);
   const [stoppingLeadId, setStoppingLeadId] = useState<string | null>(null);
@@ -1582,7 +1584,8 @@ export function ContactsWorkspace() {
         }
       } else {
         const msg = (data?.error as string) || text || `HTTP ${res.status}`;
-        setHubspotSyncResult({ contacts: { upserted: 0, errors: 0 }, skipped: 0, skippedContacts: [], error: msg });
+        const code = (data?.code as string) || undefined;
+        setHubspotSyncResult({ contacts: { upserted: 0, errors: 0 }, skipped: 0, skippedContacts: [], error: msg, code });
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1603,7 +1606,8 @@ export function ContactsWorkspace() {
       try { data = text ? JSON.parse(text) : null; } catch { /* unparseable body */ }
       if (!res.ok) {
         const msg = (data?.error as string) || text || `HTTP ${res.status}`;
-        setHubspotPullResult({ fetchedContacts: 0, mirroredContacts: 0, contactEventsEmitted: 0, contactContextOnlyEvents: 0, contactRecomputedCompanies: 0, contactSkippedUnresolvedCompanies: 0, fetchedDeals: 0, mirroredDeals: 0, emittedEvents: 0, recomputedCompanies: 0, skippedUnresolvedCompanies: 0, error: msg });
+        const code = (data?.code as string) || undefined;
+        setHubspotPullResult({ fetchedContacts: 0, mirroredContacts: 0, contactEventsEmitted: 0, contactContextOnlyEvents: 0, contactRecomputedCompanies: 0, contactSkippedUnresolvedCompanies: 0, fetchedDeals: 0, mirroredDeals: 0, emittedEvents: 0, recomputedCompanies: 0, skippedUnresolvedCompanies: 0, error: msg, code });
         return;
       }
       if (data?.result) {
@@ -3070,6 +3074,11 @@ export function ContactsWorkspace() {
             <div>
               <span className="text-sm font-semibold text-rose-700">HubSpot sync failed</span>
               <p className="mt-0.5 text-xs text-rose-600 break-words">{hubspotSyncResult.error}</p>
+              {hubspotSyncResult.code === 'token_error' && (
+                <a href="/settings" className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-rose-700 underline underline-offset-2 hover:text-rose-900">
+                  Reconnect HubSpot in Settings →
+                </a>
+              )}
             </div>
           ) : (
             <>
@@ -3127,6 +3136,11 @@ export function ContactsWorkspace() {
           <div>
             <span className="text-sm font-semibold text-rose-700">HubSpot CRM pull failed</span>
             <p className="mt-0.5 text-xs text-rose-600 break-words">{hubspotPullResult.error}</p>
+            {hubspotPullResult.code === 'token_error' && (
+              <a href="/settings" className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-rose-700 underline underline-offset-2 hover:text-rose-900">
+                Reconnect HubSpot in Settings →
+              </a>
+            )}
           </div>
         ) : (
           <div className="flex items-center gap-3 flex-wrap">
