@@ -783,6 +783,55 @@ function priorityScoreArcColor(pct: number | null): string {
 }
 
 /**
+ * One priority sub-score row (company fit / contact fit / readiness) for the
+ * side panel's Priority view. Defined at MODULE scope on purpose: when it lived
+ * inside the panel render body its function identity changed every render, so
+ * React remounted the gauge on each parent re-render (the 5s lead poll, live
+ * recompute, etc.), replaying the fill animation 2–3× instead of once.
+ */
+function ScoreRow({
+  label,
+  pct,
+  arcColor,
+  onOpen,
+}: {
+  label: string;
+  pct: number | null;
+  arcColor: string;
+  onOpen: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="w-full rounded-xl border border-gray-100 bg-gray-50/70 px-4 py-3 flex items-center gap-4 text-left transition-colors hover:bg-arcova-teal/5"
+    >
+      <AnimatedCircularProgressBar
+        value={pct ?? 0}
+        gaugePrimaryColor={arcColor}
+        gaugeSecondaryColor="rgba(13,53,71,0.09)"
+        animateOnMount
+        deferAnimationMs={160}
+        label={
+          <span className="block text-xs font-semibold text-gray-800 leading-snug tabular-nums">
+            {pct != null ? pct : '—'}
+          </span>
+        }
+        className="size-12 shrink-0 [--transition-length:0.95s]"
+      />
+      <div className="flex-1 min-w-0">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">
+          {label}
+        </p>
+        <p className="mt-1 text-[11px] font-semibold text-arcova-teal">
+          See details →
+        </p>
+      </div>
+    </button>
+  );
+}
+
+/**
  * Compute the contact's recommended action from company_fit + contact_fit +
  * contact_readiness + HubSpot lead state. Single source of truth used by the
  * action pill, the action drawer, the sort comparator and the CSV export.
@@ -1641,7 +1690,15 @@ export function ContactsWorkspace() {
     if (!id || leads.length === 0) return;
     if (leads.some((l) => l.id === id)) {
       setSelectedLeadId(id);
-      setSelectedPreview('contact');
+      // Allow deep-linking straight to a panel tab (e.g. the accounts page sends
+      // ?lead=<id>&tab=outreach when you click Reach out on an account).
+      const tab = searchParams.get('tab');
+      const validTabs = ['contact', 'hubspot', 'scoring', 'action', 'signals', 'priority', 'outreach'] as const;
+      setSelectedPreview(
+        (validTabs as readonly string[]).includes(tab ?? '')
+          ? (tab as (typeof validTabs)[number])
+          : 'contact',
+      );
     }
   }, [searchParams, leads]);
 
@@ -4815,45 +4872,6 @@ export function ContactsWorkspace() {
                             const readinessPct = percentDisplayNumber(effReadiness);
                             const priorityNorm = displayContactPriority(selectedLead);
                             const priorityPct = percentDisplayNumber(priorityNorm);
-                            const ScoreRow = ({
-                              label,
-                              pct,
-                              arcColor,
-                              onOpen,
-                            }: {
-                              label: string;
-                              pct: number | null;
-                              arcColor: string;
-                              onOpen: () => void;
-                            }) => (
-                              <button
-                                type="button"
-                                onClick={onOpen}
-                                className="w-full rounded-xl border border-gray-100 bg-gray-50/70 px-4 py-3 flex items-center gap-4 text-left transition-colors hover:bg-arcova-teal/5"
-                              >
-                                <AnimatedCircularProgressBar
-                                  value={pct ?? 0}
-                                  gaugePrimaryColor={arcColor}
-                                  gaugeSecondaryColor="rgba(13,53,71,0.09)"
-                                  animateOnMount
-                                  deferAnimationMs={160}
-                                  label={
-                                    <span className="block text-xs font-semibold text-gray-800 leading-snug tabular-nums">
-                                      {pct != null ? pct : '—'}
-                                    </span>
-                                  }
-                                  className="size-12 shrink-0 [--transition-length:0.95s]"
-                                />
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">
-                                    {label}
-                                  </p>
-                                  <p className="mt-1 text-[11px] font-semibold text-arcova-teal">
-                                    See details →
-                                  </p>
-                                </div>
-                              </button>
-                            );
                             return (
                               <div className="space-y-3">
                                 {/* Priority — large gauge, number only */}

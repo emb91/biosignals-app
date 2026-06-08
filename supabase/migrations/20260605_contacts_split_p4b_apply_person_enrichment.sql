@@ -1,0 +1,7 @@
+-- Phase 4b: apply_person_enrichment(p_user_id, p_contact_id, p_payload) —
+-- enrichment writes canonical `people` directly (merges only present keys via
+-- jsonb_populate_record over the existing row) instead of through the view,
+-- whose triggers would route editable fields to per-user overrides and starve
+-- later importers of enriched values. SECURITY DEFINER; resolves person_id from
+-- the caller's own user_contacts row.
+-- Full body applied via Supabase MCP migration `contacts_split_p4b_apply_person_enrichment`.

@@ -78,6 +78,17 @@ interface SignalActivityItem {
   evidence: string | null;
   /** How many same-company same-type events collapsed into this row. */
   count: number;
+  /** Per-event detail shown when the row is expanded. */
+  children: SignalActivityChild[];
+}
+
+interface SignalActivityChild {
+  id: string;
+  title: string | null;
+  detail: string | null;
+  source: string | null;
+  url: string | null;
+  eventAt: string | null;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -453,6 +464,14 @@ export default function LogPage() {
   const [signalActivity, setSignalActivity] = useState<SignalActivityItem[]>([]);
   const [loadingActivity, setLoadingActivity] = useState(true);
   const [activitySectionOpen, setActivitySectionOpen] = useState<boolean>(true);
+  const [expandedActivityIds, setExpandedActivityIds] = useState<Set<string>>(new Set());
+  const toggleActivity = (id: string) =>
+    setExpandedActivityIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   const [syncSectionOpen, setSyncSectionOpen] = useState<boolean>(false);
   const [outreachErrors, setOutreachErrors] = useState<Array<{
     id: string;
@@ -818,37 +837,87 @@ export default function LogPage() {
                         // The signal's own event date (when the patent was filed),
                         // falling back to ingest date only when there's no event date.
                         const when = item.displayAt ?? item.eventAt ?? item.observedAt;
+                        const expanded = expandedActivityIds.has(item.id);
                         return (
                           <div
                             key={item.id}
-                            className={`flex items-center gap-2.5 px-3.5 py-2 ${
-                              i > 0 ? 'border-t border-[rgba(13,53,71,0.06)]' : ''
-                            }`}
+                            className={i > 0 ? 'border-t border-[rgba(13,53,71,0.06)]' : ''}
                           >
-                            <span
-                              className={`shrink-0 rounded px-1.5 py-px text-[10px] font-semibold tracking-wide border ${
-                                item.scope === 'company'
-                                  ? 'bg-arcova-teal/10 text-arcova-teal border-arcova-teal/20'
-                                  : 'bg-[#0d3547]/8 text-[#0d3547] border-[#0d3547]/12'
-                              }`}
+                            <button
+                              type="button"
+                              onClick={() => toggleActivity(item.id)}
+                              className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left transition-colors hover:bg-white/50"
                             >
-                              {item.scope === 'company' ? 'Company' : 'Contact'}
-                            </span>
-                            <span className="flex-1 min-w-0 truncate text-[12.5px] text-[#0d3547]">
-                              {item.sentence}
-                              {item.count > 1 && (
-                                <span className="ml-1.5 text-[11px] font-medium text-[#7d909a]">
-                                  ×{item.count}
+                              <span
+                                className={`shrink-0 rounded px-1.5 py-px text-[10px] font-semibold tracking-wide border ${
+                                  item.scope === 'company'
+                                    ? 'bg-arcova-teal/10 text-arcova-teal border-arcova-teal/20'
+                                    : 'bg-[#0d3547]/8 text-[#0d3547] border-[#0d3547]/12'
+                                }`}
+                              >
+                                {item.scope === 'company' ? 'Company' : 'Contact'}
+                              </span>
+                              <span className="flex-1 min-w-0 truncate text-[12.5px] text-[#0d3547]">
+                                {item.sentence}
+                                {item.count > 1 && (
+                                  <span className="ml-1.5 text-[11px] font-medium text-[#7d909a]">
+                                    ×{item.count}
+                                  </span>
+                                )}
+                              </span>
+                              {when && (
+                                <span
+                                  className="shrink-0 text-[10.5px] text-[#b6c2c8]"
+                                  title={absoluteTime(when)}
+                                >
+                                  {signalDateLabel(when)}
                                 </span>
                               )}
-                            </span>
-                            {when && (
-                              <span
-                                className="shrink-0 text-[10.5px] text-[#b6c2c8]"
-                                title={absoluteTime(when)}
-                              >
-                                {signalDateLabel(when)}
-                              </span>
+                              <ChevronDown
+                                className={`h-3 w-3 shrink-0 text-[#b6c2c8] transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+                              />
+                            </button>
+
+                            {expanded && (
+                              <ul className="space-y-1.5 bg-white/40 px-3.5 pb-2.5 pt-1">
+                                {item.children.map((child) => {
+                                  const titleText =
+                                    child.title || child.detail || 'Details unavailable';
+                                  return (
+                                    <li
+                                      key={child.id}
+                                      className="rounded-md border border-[rgba(13,53,71,0.06)] bg-white/70 px-2.5 py-1.5"
+                                    >
+                                      {child.url ? (
+                                        <a
+                                          href={child.url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="text-[12px] font-medium text-arcova-teal hover:underline"
+                                        >
+                                          {titleText}
+                                        </a>
+                                      ) : (
+                                        <span className="text-[12px] font-medium text-[#0d3547]">
+                                          {titleText}
+                                        </span>
+                                      )}
+                                      <div className="mt-0.5 flex items-center gap-1.5 text-[10.5px] text-[#b6c2c8]">
+                                        {child.source && (
+                                          <span className="uppercase tracking-wide">{child.source}</span>
+                                        )}
+                                        {child.source && child.eventAt && <span>·</span>}
+                                        {child.eventAt && <span>{signalDateLabel(child.eventAt)}</span>}
+                                      </div>
+                                      {child.title && child.detail && (
+                                        <p className="mt-1 text-[11px] leading-snug text-[#7d909a] line-clamp-2">
+                                          {child.detail}
+                                        </p>
+                                      )}
+                                    </li>
+                                  );
+                                })}
+                              </ul>
                             )}
                           </div>
                         );

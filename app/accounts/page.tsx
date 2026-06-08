@@ -43,6 +43,7 @@ import {
   isCrmSuppressed,
   LEAD_ACTION_PILL_CLASS,
   LEAD_ACTION_SORT_ORDER,
+  type SequenceDispatchStatus,
   SOURCE_COMPANY_MIN,
   SOURCE_CONTACT_MAX,
 } from '@/lib/lead-action';
@@ -104,6 +105,9 @@ type AccountRow = {
   crm_status?: 'customer' | 'active' | 'dormant' | 'context_only' | 'none' | null;
   crm_deal_stage_label?: string | null;
   crm_closed_at?: string | null;
+  /** Aggregate outreach funnel state across the account's contacts — drives the
+   *  Send outreach / Await reply action overlay (mirrors the contact action). */
+  latest_sequence_status?: SequenceDispatchStatus;
   user_overrides?: Record<string, unknown> | null;
 };
 
@@ -132,10 +136,11 @@ type ContactAtCompany = {
   linkedin_url: string | null;
   contact_fit_score: number | null;
   overall_fit_score: number | null;
+  priority_score: number | null;
   seniority_level: string | null;
 };
 
-type PanelMode = 'details' | 'fit' | 'action' | 'contacts' | 'signals' | 'priority' | 'crm';
+type PanelMode = 'details' | 'fit' | 'action' | 'contacts' | 'signals' | 'priority' | 'crm' | 'reachout';
 
 interface AccountCrmDealContact {
   arcova_contact_id: string | null;
@@ -543,6 +548,10 @@ export default function AccountsPage() {
 
   // Contacts panel
   const [contacts, setContacts] = useState<ContactAtCompany[]>([]);
+  /** Ranked contacts shown in the "Choose a contact to reach out to" picker
+   *  (only used when an account with >1 contact has the Reach out action). */
+  const [reachOutCandidates, setReachOutCandidates] = useState<ContactAtCompany[]>([]);
+  const [reachOutLoadingId, setReachOutLoadingId] = useState<string | null>(null);
   const [loadingContacts, setLoadingContacts] = useState(false);
 
   // Detail panel accordion open state
@@ -933,6 +942,64 @@ export default function AccountsPage() {
     setPanelMode('action');
   };
 
+  /** Reach out happens at the CONTACT level (its outreach tab). Send the rep to
+   *  the contact's Reach out tab on /leads/contacts — mirroring the contact
+   *  page, where Reach out opens the side-panel Outreach tab. */
+  const navigateToContactReachOut = (contactId: string) => {
+    router.push(`${ROUTES.leads.contacts}?lead=${encodeURIComponent(contactId)}&tab=outreach`);
+  };
+
+  /** Reach out on an account: 1 contact → go straight to that contact's Reach
+   *  out tab; >1 → open the side panel with a picker ranked by contact priority
+   *  so the rep chooses who to approach. */
+  const handleAccountReachOut = async (account: AccountRow | QueryAccount) => {
+    setReachOutLoadingId(account.id);
+    try {
+      const res = await fetch(
+        `/api/leads?companyId=${encodeURIComponent(account.id)}&pageSize=100`,
+      );
+      const json = await res.json();
+      const ranked = ((json?.data ?? []) as ContactAtCompany[])
+        .slice()
+        .sort((a, b) => (b.priority_score ?? 0) - (a.priority_score ?? 0));
+      if (ranked.length === 1) {
+        navigateToContactReachOut(ranked[0].id);
+      } else if (ranked.length > 1) {
+        setReachOutCandidates(ranked);
+        setSelectedAccountId(account.id);
+        setPanelMode('reachout');
+      } else {
+        // No contacts on file (shouldn't reach here for reach_out) → explain.
+        openActionTab(account.id);
+      }
+    } catch {
+      openActionTab(account.id);
+    } finally {
+      setReachOutLoadingId(null);
+    }
+  };
+
+  /** Action-pill routing — mirrors the contact action button:
+   *  reach_out → contact's Reach out (picker if >1); send_outreach → /outreach;
+   *  source_contact → /data with full company+ICP context; everything else
+   *  (monitor / deprioritise / await_reply) → the side-panel Action drawer. */
+  const handleAccountActionClick = (account: AccountRow | QueryAccount) => {
+    const action = getAccountRowAction(account);
+    if (action === 'reach_out') {
+      void handleAccountReachOut(account);
+      return;
+    }
+    if (action === 'send_outreach') {
+      router.push(ROUTES.outreach);
+      return;
+    }
+    if (action === 'source_contact') {
+      openContactAcquisition(account as AccountRow);
+      return;
+    }
+    openActionTab(account.id);
+  };
+
   const openSignalsTab = (id: string) => {
     pendingOpenCriteriaRef.current = false;
     setSelectedAccountId(id);
@@ -1114,11 +1181,13 @@ export default function AccountsPage() {
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                openActionTab(account.id);
+                handleAccountActionClick(account);
               }}
+              disabled={reachOutLoadingId === account.id}
               className={cn(
                 'inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium cursor-pointer select-none',
                 'transition-colors duration-150 ease-out hover:shadow-sm active:scale-[0.97]',
+                reachOutLoadingId === account.id && 'opacity-60',
                 actionPillEmphasized
                   ? config.rowSelectedClassName
                   : cn(config.className, config.interactiveClassName, 'shadow-sm'),
@@ -1441,15 +1510,17 @@ export default function AccountsPage() {
                             ? 'Fit'
                             : panelMode === 'action'
                               ? 'Action'
-                              : panelMode === 'contacts'
-                                ? 'Contacts'
-                                : panelMode === 'priority'
-                                  ? 'Priority'
-                                  : panelMode === 'signals'
-                                    ? 'Signals'
-                                    : panelMode === 'crm'
-                                      ? 'CRM'
-                                      : 'Company'}
+                              : panelMode === 'reachout'
+                                ? 'Reach out'
+                                : panelMode === 'contacts'
+                                  ? 'Contacts'
+                                  : panelMode === 'priority'
+                                    ? 'Priority'
+                                    : panelMode === 'signals'
+                                      ? 'Signals'
+                                      : panelMode === 'crm'
+                                        ? 'CRM'
+                                        : 'Company'}
                         </p>
                         <h2 className="font-manrope mt-1.5 break-words text-xl font-bold leading-tight tracking-[-0.024em] text-[rgb(13,53,71)] sm:text-2xl">
                           {selectedAccount.company_name || selectedAccount.domain || 'Company'}
@@ -1986,6 +2057,62 @@ export default function AccountsPage() {
                           </div>
                         );
                       })()}
+
+                      {panelMode === 'reachout' && (
+                        <div className="space-y-3">
+                          <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
+                            Choose a contact to reach out to at{' '}
+                            <strong>{selectedAccount.company_name || selectedAccount.domain || 'this company'}</strong>.
+                            Ranked by priority score — the strongest opportunity first.
+                          </p>
+                          <div className="space-y-2">
+                            {reachOutCandidates.map((contact, idx) => {
+                              const title =
+                                contact.resolved_current_job_title || contact.job_title || null;
+                              const priorityPct = formatPct(contact.priority_score);
+                              return (
+                                <button
+                                  key={contact.id}
+                                  type="button"
+                                  onClick={() => navigateToContactReachOut(contact.id)}
+                                  className="group w-full rounded-xl border border-gray-100 bg-gray-50/70 px-3.5 py-3 text-left transition-colors hover:border-arcova-teal/40 hover:bg-arcova-teal/5"
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="flex min-w-0 items-center gap-2.5">
+                                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-arcova-teal/10 text-[11px] font-semibold tabular-nums text-arcova-teal">
+                                        {idx + 1}
+                                      </span>
+                                      <div className="min-w-0">
+                                        <p className="truncate text-sm font-medium text-gray-900">
+                                          {contact.full_name || '—'}
+                                        </p>
+                                        {title && (
+                                          <p className="truncate text-xs text-gray-500 mt-0.5">{title}</p>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <div className="flex shrink-0 items-center gap-2">
+                                      {priorityPct != null && (
+                                        <span className="text-right">
+                                          <span className="block text-sm font-semibold tabular-nums text-gray-900">
+                                            {priorityPct}
+                                          </span>
+                                          <span className="block text-[10px] uppercase tracking-[0.12em] text-gray-400">
+                                            priority
+                                          </span>
+                                        </span>
+                                      )}
+                                      <span className="text-xs font-semibold text-arcova-teal opacity-0 transition-opacity group-hover:opacity-100">
+                                        Reach out →
+                                      </span>
+                                    </div>
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
 
                       {panelMode === 'contacts' && (
                         <div className="space-y-3">

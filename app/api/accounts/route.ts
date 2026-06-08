@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
-import { isCrmSuppressed } from '@/lib/lead-action';
+import { isCrmSuppressed, type SequenceDispatchStatus } from '@/lib/lead-action';
 import {
   type DataProvenanceChannel,
   formatDataProvenanceTypeOnly,
@@ -157,6 +157,75 @@ async function fetchCompanyCrmStatuses(
   }
 }
 
+/**
+ * Aggregate outreach funnel state per account so the account action mirrors the
+ * contact action's outreach overlay (Send outreach / Await reply). Takes each
+ * contact's LATEST sequence status (same normalisation as /api/leads), then per
+ * company keeps the highest-actionability state: a staged 'draft' (the rep has
+ * something ready to dispatch) outranks a 'sent' one, matching LEAD_ACTION_SORT_ORDER
+ * (send_outreach > await_reply). 'replied' / 'failed' contribute nothing — they
+ * fall through to the score-driven action, exactly like a single contact does.
+ */
+async function fetchCompanySequenceStatuses(
+  supabase: SupabaseLike,
+  userId: string,
+  companyIds: string[],
+): Promise<Map<string, SequenceDispatchStatus>> {
+  if (!companyIds.length) return new Map();
+  try {
+    const { data: contacts, error: contactsErr } = await supabase
+      .from('contacts')
+      .select('id, company_id')
+      .eq('user_id', userId)
+      .in('company_id', companyIds)
+      .is('archived_at', null);
+    if (contactsErr || !contacts?.length) return new Map();
+
+    const companyByContactId = new Map(
+      (contacts as Array<{ id: string; company_id: string }>).map((c) => [c.id, c.company_id]),
+    );
+    const contactIds = [...companyByContactId.keys()];
+
+    const { data: seqs, error: seqErr } = await supabase
+      .from('outreach_sequences')
+      .select('contact_id, dispatch_status, exported_to, created_at')
+      .eq('user_id', userId)
+      .in('contact_id', contactIds)
+      .order('created_at', { ascending: false });
+    if (seqErr || !seqs?.length) return new Map();
+
+    // Latest status per contact (newest first → set-if-absent), normalised to the
+    // states the action override understands — identical to /api/leads.
+    const latestByContact = new Map<string, string>();
+    for (const r of seqs as Array<{
+      contact_id: string;
+      dispatch_status: string | null;
+      exported_to: string | null;
+    }>) {
+      if (latestByContact.has(r.contact_id)) continue;
+      let normalized = r.dispatch_status;
+      if (normalized === 'exported') normalized = 'sent';
+      if (!normalized) normalized = r.exported_to ? 'sent' : 'draft';
+      latestByContact.set(r.contact_id, normalized);
+    }
+
+    // Aggregate per company: draft > sent; everything else ignored.
+    const companySeq = new Map<string, SequenceDispatchStatus>();
+    for (const [contactId, status] of latestByContact) {
+      const companyId = companyByContactId.get(contactId);
+      if (!companyId) continue;
+      if (status === 'draft') {
+        companySeq.set(companyId, 'draft');
+      } else if (status === 'sent' && companySeq.get(companyId) !== 'draft') {
+        companySeq.set(companyId, 'sent');
+      }
+    }
+    return companySeq;
+  } catch {
+    return new Map();
+  }
+}
+
 export async function GET(request: Request) {
   try {
     const supabase = await createClient();
@@ -226,7 +295,7 @@ export async function GET(request: Request) {
 
     const needsIcps = rows.some((r) => Boolean(r.matched_icp_id));
 
-    const [icpResult, companyCrmStatuses] = await Promise.all([
+    const [icpResult, companyCrmStatuses, companySequenceStatuses] = await Promise.all([
       needsIcps
         ? supabase
             .from('icps')
@@ -236,6 +305,8 @@ export async function GET(request: Request) {
         : Promise.resolve({ data: [], error: null }),
       // CRM status scoped to this page only — the expensive per-contact lookup.
       fetchCompanyCrmStatuses(supabase, user.id, sliceCompanyIds),
+      // Aggregate outreach funnel state per account (mirrors the contact action).
+      fetchCompanySequenceStatuses(supabase, user.id, sliceCompanyIds),
     ]);
 
     let icpLabels = new Map<string, string>();
@@ -330,6 +401,9 @@ export async function GET(request: Request) {
         crm_status: crmEntry?.state ?? null,
         crm_deal_stage_label: crmEntry?.dealStageLabel ?? null,
         crm_closed_at: crmEntry?.closedAt ?? null,
+        // Aggregate outreach funnel state → drives the Send outreach / Await
+        // reply action overlay in getAccountRowAction (mirrors contacts).
+        latest_sequence_status: companySequenceStatuses.get(row.id) ?? null,
       };
     });
 

@@ -1,0 +1,5 @@
+-- Phase 4b: import_upsert_contact(p_user_id, p_payload) — server-side import
+-- upsert replacing the now-broken .upsert(onConflict) against the contacts view.
+-- Writes canonical people (fill-if-null) + per-user user_contacts; returns
+-- (contact_id, person_already_enriched) for the dedup cost-win.
+-- Full body applied via Supabase MCP migration `contacts_split_p4b_import_rpc`.

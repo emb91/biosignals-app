@@ -71,6 +71,7 @@ type ExistingContact = {
 
 type MinimalSupabase = {
   from: (table: string) => any;
+  rpc: (fn: string, args?: Record<string, unknown>) => any;
 };
 
 const normalize = (value: string | null | undefined) => (value || '').trim().toLowerCase();
@@ -145,15 +146,6 @@ type ExistingCompany = {
   modalities: string[] | null;
   clinical_stage: string | null;
 };
-
-function isMissingColumnError(error: unknown): boolean {
-  const message =
-    error && typeof error === 'object' && 'message' in error
-      ? String((error as { message?: unknown }).message || '')
-      : '';
-
-  return message.includes('column') && message.includes('does not exist');
-}
 
 function isDuplicateContact(record: EnrichedImportRecord, existing: ExistingContact): boolean {
   const rLinkedin = normalize(record.linkedin_url);
@@ -430,36 +422,31 @@ export async function ingestEnrichedRecords(
         updated_at: new Date().toISOString(),
       };
 
-      let upsertResult = await supabase
-        .from('contacts')
-        .upsert(contactPayload, {
-          onConflict: 'user_id,linkedin_url',
-          ignoreDuplicates: false,
-        })
-        .select('id');
+      // Canonical contact split: `contacts` is now a trigger-updatable view, so
+      // .upsert(onConflict) no longer works. import_upsert_contact writes the
+      // canonical `people` row (fill-if-null: never clobbers another user's
+      // enriched data) + the per-user `user_contacts` row, and reports whether
+      // the person was already enriched so we can skip re-paying the provider.
+      const importRpc = await supabase.rpc('import_upsert_contact', {
+        p_user_id: userId,
+        p_payload: contactPayload,
+      });
 
-      if (upsertResult.error && isMissingColumnError(upsertResult.error)) {
-        const {
-          contact_discovery_status,
-          email_status,
-          email_status_reasoning,
-          linkedin_resolution_status,
-          profile_enrichment_status,
-          ...legacyCompatiblePayload
-        } = contactPayload;
-
-        upsertResult = await supabase
-          .from('contacts')
-          .upsert(legacyCompatiblePayload, {
-            onConflict: 'user_id,linkedin_url',
-            ignoreDuplicates: false,
-          })
-          .select('id');
+      if (importRpc.error) {
+        throw importRpc.error;
       }
 
-      if (upsertResult.error) {
-        throw upsertResult.error;
+      const importedRow = (
+        importRpc.data as Array<{ contact_id?: string; person_already_enriched?: boolean }> | null
+      )?.[0];
+
+      if (!importedRow?.contact_id) {
+        throw new Error(
+          'Contact skipped: a linkedin_url is required for the canonical contact split.',
+        );
       }
+
+      const upsertResult = { data: [{ id: importedRow.contact_id }], error: null as null };
 
       for (const row of (upsertResult.data || []) as Array<{ id?: string }>) {
         if (typeof row.id === 'string') {

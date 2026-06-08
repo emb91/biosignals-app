@@ -1,0 +1,7 @@
+-- Route enrichment_refresh_priority through the view UPDATE trigger and the
+-- enrichment merge RPC (so the job-change monitor's update to it lands on
+-- canonical people). Re-applies contacts_compat_update() and
+-- apply_person_enrichment() with `enrichment_refresh_priority` added to the
+-- people SET. Full bodies applied via Supabase MCP migration
+-- `contacts_split_route_refresh_priority`; see contacts_compat_update /
+-- apply_person_enrichment definitions in the live DB for the verbatim source.

@@ -24,9 +24,125 @@ interface SignalRow {
   signal_scope: 'company' | 'contact' | string;
   company_id: string | null;
   contact_id: string | null;
+  source_event_id: string | null;
   event_at: string | null;
   observed_at: string | null;
   evidence_excerpt: string | null;
+}
+
+/** One underlying event shown when a grouped row is expanded. */
+type Child = {
+  id: string;
+  title: string | null;
+  detail: string | null;
+  source: string | null;
+  url: string | null;
+  eventAt: string | null;
+};
+
+type SourceEventRow = {
+  id: string;
+  title: string | null;
+  summary: string | null;
+  excerpt: string | null;
+  source: string | null;
+  source_url: string | null;
+  event_at: string | null;
+  metadata: Record<string, unknown> | null;
+};
+
+/** A hiring-surge metadata.all_roles entry: every scraped open posting. */
+type SurgeRole = { title?: string | null; url?: string | null };
+
+// Decode the handful of HTML entities that show up in scraped titles/abstracts
+// (numeric refs + a few named ones) so they render as text, not "&#x2009;".
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .trim();
+}
+
+// Some signal types store a GENERIC source title like "cmc_hiring detected at
+// Moderna" instead of the specific thing (the actual job role). Detect that so
+// we can swap in a better label.
+function isGenericTitle(t: string | null | undefined): boolean {
+  return !!t && /\bdetected at\b/i.test(t);
+}
+
+// Pull the specific role out of a hiring summary's "e.g. {role}" example, e.g.
+//   "…E.g. Scientist, Process Development (Formulation)."        → "Scientist, Process Development (Formulation)"
+//   "1 open … role detected … (e.g. Senior Engineer I, …)."      → "Senior Engineer I, …"
+function roleFromSummary(summary: string | null | undefined): string | null {
+  if (!summary) return null;
+  const m = summary.match(/\be\.?\s*g\.?[:.]?\s+(.+)$/i);
+  if (!m) return null;
+  let role = m[1].trim().replace(/\.+$/, '').trim();
+  // Drop a trailing ")" left unbalanced by stripping the wrapping "(e.g. …)".
+  if (role.endsWith(')') && (role.split('(').length - 1) < (role.split(')').length - 1)) {
+    role = role.slice(0, -1).trim();
+  }
+  return role || null;
+}
+
+// Last-resort: derive a role from a LinkedIn job URL slug
+// (".../jobs/view/{role}-at-{company}-{id}") → title-cased words.
+function roleFromUrl(rawUrl: string | null | undefined): string | null {
+  if (!rawUrl) return null;
+  const slug = rawUrl.match(/\/jobs\/view\/([^?]+)/i)?.[1];
+  if (!slug) return null;
+  const rolePart = slug.split('-at-')[0];
+  if (!rolePart || rolePart === slug) return null; // no "-at-" → can't isolate the role
+  const words = rolePart.split('-').filter(Boolean);
+  if (words.length === 0) return null;
+  return words.map((w) => (w.length <= 2 ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1))).join(' ');
+}
+
+// Patent title fallback when metadata.patent_title is missing — the summary is
+// "Patent filing/grant activity detected for {Company}: {Title}."
+function patentTitleFromSummary(summary: string | null | undefined): string | null {
+  if (!summary) return null;
+  const idx = summary.indexOf(': ');
+  if (idx === -1) return null;
+  return summary.slice(idx + 2).replace(/\.+$/, '').trim() || null;
+}
+
+function prettyEnum(s: string): string {
+  return s.replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
+}
+function formatTrialPhase(p: string): string {
+  const m = p.match(/PHASE\s*(\d)/i);
+  return m ? `Phase ${m[1]}` : prettyEnum(p);
+}
+
+// Pull a SPECIFIC title + detail out of a signal's source metadata when the
+// stored source title is generic. Covers clinical trials (study_title + phase/
+// condition/status) and individual patents (patent_title + number).
+function specificFromMetadata(
+  meta: Record<string, unknown> | null | undefined,
+): { title: string | null; detail: string | null } {
+  if (!meta) return { title: null, detail: null };
+
+  if (typeof meta.study_title === 'string' && meta.study_title) {
+    const phase = Array.isArray(meta.phases) && meta.phases.length ? formatTrialPhase(String(meta.phases[0])) : null;
+    const cond = Array.isArray(meta.conditions) && meta.conditions.length ? String(meta.conditions[0]) : null;
+    const status = typeof meta.study_status === 'string' ? prettyEnum(meta.study_status) : null;
+    const nct = typeof meta.nct_id === 'string' ? meta.nct_id : null;
+    const detail = [phase, cond, status, nct].filter(Boolean).join(' · ') || null;
+    return { title: meta.study_title, detail };
+  }
+
+  if (typeof meta.patent_title === 'string' && meta.patent_title) {
+    return { title: meta.patent_title, detail: typeof meta.patent_id === 'string' ? meta.patent_id : null };
+  }
+
+  return { title: null, detail: null };
 }
 
 export async function GET(req: Request) {
@@ -48,7 +164,7 @@ export async function GET(req: Request) {
   // per-user set is small.
   const { data: rowsRaw, error } = await supabase
     .from('normalized_signals')
-    .select('id, signal_key, signal_scope, company_id, contact_id, event_at, observed_at, evidence_excerpt')
+    .select('id, signal_key, signal_scope, company_id, contact_id, source_event_id, event_at, observed_at, evidence_excerpt')
     .eq('user_id', user.id)
     .order('event_at', { ascending: false, nullsFirst: false })
     .limit(MAX_ROWS);
@@ -75,11 +191,13 @@ export async function GET(req: Request) {
     return NextResponse.json({ items: [], days });
   }
 
-  // Resolve company + contact names, and the user's archived companies to filter.
+  // Resolve company + contact names, source events (per-event detail), and the
+  // user's archived companies to filter.
   const companyIds = [...new Set(rows.map((r) => r.company_id).filter((v): v is string => !!v))];
   const contactIds = [...new Set(rows.map((r) => r.contact_id).filter((v): v is string => !!v))];
+  const sourceEventIds = [...new Set(rows.map((r) => r.source_event_id).filter((v): v is string => !!v))];
 
-  const [companiesRes, contactsRes, archivedRes] = await Promise.all([
+  const [companiesRes, contactsRes, archivedRes, sourceRes] = await Promise.all([
     companyIds.length
       ? supabase.from('companies').select('id, company_name').in('id', companyIds)
       : Promise.resolve({ data: [] as Array<{ id: string; company_name: string | null }> }),
@@ -104,7 +222,19 @@ export async function GET(req: Request) {
       .select('company_id')
       .eq('user_id', user.id)
       .not('archived_at', 'is', null),
+    sourceEventIds.length
+      ? supabase
+          .from('signal_source_events')
+          .select('id, title, summary, excerpt, source, source_url, event_at, metadata')
+          .in('id', sourceEventIds)
+      : Promise.resolve({
+          data: [] as Array<SourceEventRow>,
+        }),
   ]);
+
+  const sourceById = new Map(
+    ((sourceRes.data ?? []) as Array<SourceEventRow>).map((s) => [s.id, s]),
+  );
 
   const companyName = new Map<string, string>(
     ((companiesRes.data ?? []) as Array<{ id: string; company_name: string | null }>).map((c) => [
@@ -144,8 +274,61 @@ export async function GET(req: Request) {
     displayAt: string | null;
     evidence: string | null;
     count: number;
+    /** Per-event detail, shown when the row is expanded. */
+    children: Child[];
   };
   const groups = new Map<string, Item>();
+
+  // Build a child (title + detail) from a signal row + its source. For signals
+  // whose source title is generic ("cmc_hiring detected at Moderna"), swap in
+  // the specific thing — the actual job role, parsed from the summary's
+  // "e.g. {role}" example or the LinkedIn URL slug — so two different postings
+  // read distinctly instead of as identical rows.
+  // One signal row → its expandable children. Normally a single child, but a
+  // hiring-surge (hiring_expansion) row whose source metadata carries the full
+  // posting list (all_roles) expands into one child PER open role, so the surge
+  // lists every role instead of a single generic line. (all_roles is only
+  // present after the monitor change + a hiring run; older surges fall back to
+  // the single child.)
+  const childrenForRow = (r: SignalRow): Child[] => {
+    const src = r.source_event_id ? sourceById.get(r.source_event_id) : null;
+
+    const allRoles = Array.isArray(src?.metadata?.all_roles)
+      ? (src!.metadata!.all_roles as SurgeRole[])
+      : null;
+    if (allRoles && allRoles.length > 0) {
+      return allRoles
+        .filter((role) => role && (role.title || role.url))
+        .map((role, i) => ({
+          id: `${r.id}:${i}`,
+          title: role.title ? decodeEntities(role.title) : 'Open role',
+          detail: null,
+          source: src?.source ?? null,
+          url: role.url ?? null,
+          eventAt: src?.event_at ?? r.event_at ?? r.observed_at,
+        }));
+    }
+
+    const rawDetail = src?.summary || src?.excerpt || r.evidence_excerpt || null;
+    const specificTitle = src?.title && !isGenericTitle(src.title) ? decodeEntities(src.title) : null;
+    const meta = specificFromMetadata(src?.metadata);
+    const derivedTitle =
+      specificTitle ?? meta.title ?? roleFromSummary(src?.summary) ?? roleFromUrl(src?.source_url);
+    // Fall back to the (generic) source title only if nothing better was found.
+    const title = derivedTitle ?? (src?.title ? decodeEntities(src.title) : null);
+    // Prefer the structured metadata detail (e.g. "Phase 4 · COVID-19 ·
+    // Recruiting") over the raw summary.
+    const detail = meta.detail ?? (rawDetail ? decodeEntities(rawDetail).slice(0, 280) : null);
+
+    return [{
+      id: r.id,
+      title,
+      detail,
+      source: src?.source ?? null,
+      url: src?.source_url ?? null,
+      eventAt: src?.event_at ?? r.event_at ?? r.observed_at,
+    }];
+  };
 
   for (const r of rows) {
     // Drop signals on archived companies or archived contacts.
@@ -164,6 +347,7 @@ export async function GET(req: Request) {
     const existing = groups.get(groupKey);
     if (existing) {
       existing.count += 1;
+      existing.children.push(...childrenForRow(r));
       continue;
     }
     groups.set(groupKey, {
@@ -180,12 +364,74 @@ export async function GET(req: Request) {
       displayAt: r.event_at ?? r.observed_at,
       evidence: r.evidence_excerpt,
       count: 1,
+      children: childrenForRow(r),
     });
   }
 
   // `rows` is already sorted by signal date desc, so insertion order keeps the
   // list newest-first by the signal's own event date.
   const items = [...groups.values()];
+
+  // Patent-velocity rows (assignee_portfolio_acceleration) summarise "N patents
+  // in the last 90 days" but don't store the list. The individual patents ARE
+  // stored as their own events (with patent_title + Google Patents URL), so
+  // fetch the company's recent patents and list them as the row's children —
+  // one bullet (title + link) per patent. No monitor change / re-scrape needed.
+  const velocityItems = items.filter(
+    (it) => it.signalKey === 'assignee_portfolio_acceleration' && it.companyId,
+  );
+  if (velocityItems.length > 0) {
+    const velCompanyIds = [...new Set(velocityItems.map((it) => it.companyId).filter((v): v is string => !!v))];
+    // Generous 120-day window so the 90-day velocity window is fully covered.
+    const patentCutoff = new Date(Date.now() - 120 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: patentRows } = await supabase
+      .from('signal_source_events')
+      .select('entity_company_id, source_url, event_at, summary, metadata')
+      .eq('user_id', user.id)
+      .in('entity_company_id', velCompanyIds)
+      .in('source_event_type', ['patent_filed_or_granted', 'patent_application_published', 'patent_granted'])
+      .gte('event_at', patentCutoff)
+      .order('event_at', { ascending: false });
+
+    const patentsByCompany = new Map<string, Child[]>();
+    const seenPatent = new Map<string, Set<string>>();
+    for (const p of (patentRows ?? []) as Array<{
+      entity_company_id: string | null;
+      source_url: string | null;
+      event_at: string | null;
+      summary: string | null;
+      metadata: Record<string, unknown> | null;
+    }>) {
+      const cid = p.entity_company_id;
+      if (!cid) continue;
+      const meta = p.metadata ?? {};
+      const patentId = (typeof meta.patent_id === 'string' && meta.patent_id) || p.source_url || '';
+      // Dedup the same patent across filed/published/granted events.
+      if (!seenPatent.has(cid)) seenPatent.set(cid, new Set());
+      if (patentId && seenPatent.get(cid)!.has(patentId)) continue;
+      if (patentId) seenPatent.get(cid)!.add(patentId);
+
+      const title =
+        (typeof meta.patent_title === 'string' && meta.patent_title) ||
+        patentTitleFromSummary(p.summary) ||
+        'Patent';
+      const arr = patentsByCompany.get(cid) ?? [];
+      arr.push({
+        id: `${cid}:patent:${patentId || arr.length}`,
+        title: decodeEntities(title),
+        detail: typeof meta.patent_id === 'string' ? meta.patent_id : null,
+        source: 'patentsview',
+        url: p.source_url,
+        eventAt: (typeof meta.patent_date === 'string' && meta.patent_date) || p.event_at,
+      });
+      patentsByCompany.set(cid, arr);
+    }
+
+    for (const it of velocityItems) {
+      const kids = it.companyId ? patentsByCompany.get(it.companyId) : null;
+      if (kids && kids.length > 0) it.children = kids;
+    }
+  }
 
   return NextResponse.json({ items, days });
 }

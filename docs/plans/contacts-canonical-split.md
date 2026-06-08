@@ -170,3 +170,98 @@ Phase-1d-sized. Phases 1–3 are low-risk and independently shippable (pure expa
 Phases 4–5 are the real work (dual-write + read cutover, behind the view). Recommend shipping
 1–3 first to de-risk, then 4–7 per subsystem. Not urgent until multi-tenant scale, but the
 expand phases can land anytime.
+
+---
+
+# Phases 4–7 — detailed execution plan (DRAFT, for review before running)
+
+Status going in: `people` + `user_contacts` + `contacts_compat` (security_invoker) + RLS are
+LIVE in the DB and verified (per-tenant isolation proven). The app still reads/writes the
+real `contacts` table — these phases flip it over.
+
+## Chosen strategy: rename + INSTEAD OF triggers (transparent), enrichment writes direct
+Two ways to cut over; this picks the lower-churn, more-reversible one:
+- **Reads** → rename `contacts`→`contacts_legacy` and `contacts_compat`→`contacts`. Every
+  existing `.from('contacts').select()` (≈50 sites) then hits the view with NO code change.
+  Instantly reversible (rename back).
+- **Writes** → the view isn't auto-updatable, so add INSTEAD OF INSERT/UPDATE/DELETE triggers
+  that route writes to `people` / `user_contacts`. The view becomes the single write surface.
+- **The one ambiguity:** an UPDATE to an editable field (job_title, email, company_name…) could
+  be enrichment (→ canonical `people`) OR a manual edit (→ per-user `user_overrides`). A trigger
+  can't tell. **Resolution:** enrichment + import write `people`/`user_contacts` DIRECTLY (bypass
+  the view), so the ONLY editable-field writes through the view are manual edits → trigger routes
+  them to `user_overrides`. Clean and unambiguous.
+
+## Phase 4 — write routing (DB triggers + the direct-write app paths)
+4a. **INSTEAD OF triggers** on the (still-named-compat) view:
+   - INSERT → upsert `people` by `linkedin_url`, insert `user_contacts` (id = the supplied id or new).
+   - UPDATE → per-user cols → `user_contacts`; editable cols → `user_contacts.user_overrides` (jsonb merge); canonical cols → `people` (only hit by stragglers).
+   - DELETE → delete the `user_contacts` row (leave `people` if other users link it).
+   Triggers run SECURITY DEFINER where they must write `people` (which has no INSERT/UPDATE RLS).
+4b. **Enrichment + import write direct** (app): rewrite `lib/import-ingestion.ts`,
+   `lib/enrichment-pipeline.ts`, `lib/linkedin-url-resolver.ts` (and the per-contact readiness/fit
+   writers) to target `people` (canonical) + `user_contacts` (per-user) explicitly.
+4c. **THE COST WIN** lives here: before enriching, `SELECT … FROM people WHERE linkedin_url = ?`;
+   if present and `last_enriched_at` within a freshness window → reuse, create only the
+   `user_contacts` link, skip the paid call.
+4d. Verify every trigger path in SQL (insert/update/delete through the view → assert people/user_contacts).
+
+## Phase 5 — the flip + RPC/child re-point (DB, atomic + reversible)
+5a. Re-point the 7 child-table FKs from `contacts(id)` → `user_contacts(id)` (ids already match →
+   metadata-only, data already satisfies it). `signal_events.entity_contact_id` → `people(id)`.
+5b. **THE FLIP:** rename `contacts`→`contacts_legacy`; rename the view → `contacts`. Reload the
+   PostgREST schema cache (`NOTIFY pgrst`). Instantly reversible (rename back).
+5c. Repoint the 2 RPCs (`list_user_accounts`, `refresh_contact_priority_scores`) to read
+   `user_contacts`/`people` instead of `contacts` (they already read user_companies for accounts).
+
+## Phase 6 — verify + soak (NEEDS THE APP RUNNING)
+Drive every contacts surface against the new structure: `/leads/contacts`, `/accounts`, the
+contact detail panel, outreach generation, HubSpot push/pull, attribution, import, enrichment
+refresh, archive/restore. Watch for PostgREST view-write quirks (RETURNING shape, schema cache).
+Soak for a bit before contracting.
+
+## Phase 7 — contract
+Drop `contacts_legacy`; drop the dead legacy columns (`fit_score`, `overall_fit_score`, the unused
+`user_contacts` legacy fit cols). One trivial migration once Phase 6 is solid.
+
+## Risks & how each is handled
+- **Cross-tenant leak** → RLS + security_invoker, already verified in SQL. Re-verify after the flip.
+- **Trigger correctness** → fully SQL-testable before the flip (Phase 4d).
+- **PostgREST view-write semantics** (insert/update via a triggered view, RETURNING, schema cache)
+  → the one thing SQL can't fully prove; **requires the running app** (Phase 6).
+- **Editable-field mis-routing** → solved by enrichment-writes-direct (4b).
+- **Reversibility** → the flip is a rename; revert = rename back + drop triggers. Legacy table kept
+  until Phase 7. No data destroyed until the very end.
+
+## Hard prerequisite
+Phase 6 needs the app runnable to verify the view-write + read cutover end-to-end. The dev-server
+Turbopack lock has blocked in-app verification all session — that must be resolved (free the lock /
+a runnable instance) before the flip, or the cutover ships unverified.
+
+## Suggested execution order (each step independently safe until the flip)
+1. Phase 0 cleanup: resolve/archive the 1 linkedin-less contact.
+2. Phase 4a triggers + 4d SQL tests (no behaviour change yet — view unused).
+3. Phase 4b/4c enrichment+import direct writes + cost-win (still writing legacy too, as a net).
+4. Phase 5 flip (rename + FK re-point + RPC repoint) — the one behaviour-changing step.
+5. Phase 6 app verification.
+6. Phase 7 contract.
+
+---
+
+# Execution status (2026-06-05) — Phases 0,4,5 DONE; 6 = your verification; 7 deferred
+
+**DONE (DB migrations applied LIVE + code committed on branch `feat/contacts-split-cutover`):**
+- **Phase 0** — archived the 1 LinkedIn-less contact (David Walling) + deleted its 5 orphan child rows. All 18 active contacts now have a linkedin_url.
+- **Phase 4a** — INSTEAD OF insert/update/delete triggers on the view. 16 routing + isolation checks pass in SQL.
+- **Phase 4b** — `import_upsert_contact` RPC (replaces the now-impossible `.upsert(onConflict)` on the view) + `apply_person_enrichment` RPC (enrichment writes canonical `people` directly, not per-user overrides). import-ingestion.ts + enrichment-pipeline.ts rewired. SQL-tested; tsc clean.
+- **Phase 5** — repointed 11 child FKs → user_contacts; rewrote list_user_accounts + refresh_contact_priority_scores to read user_contacts (byte-parity verified); **renamed contacts→contacts_legacy, contacts_compat→contacts**. Post-flip reads/writes/RLS verified in SQL.
+
+**Cost-win status:** the split now dedupes the canonical person; the refresh/re-enrichment path skips automatically because `profile_enrichment_status` is a shared `people` column. The *upstream contact-discovery* pre-pay check (don't call the provider at all when the linked person is already enriched) is a follow-up — it lives in the paid-API hot path and needs runtime testing, so it was NOT wired blind.
+
+**⚠ DB is migrated LIVE but the matching code is only on the branch.** Running `main` against the migrated DB will break import (it still calls the old upsert). The branch must be deployed/merged for the app to work.
+
+**Phase 6 (yours):** check out `feat/contacts-split-cutover`, run the app, and exercise: /leads/contacts (read + edit a field), /accounts, contact panel, import a CSV, run an enrichment refresh, HubSpot push/pull, archive/restore. Watch for PostgREST view-write quirks.
+
+**Rollback (if Phase 6 fails):** `ALTER VIEW public.contacts RENAME TO contacts_compat; ALTER TABLE public.contacts_legacy RENAME TO contacts; NOTIFY pgrst,'reload schema';` then redeploy main. NOTE: writes that landed in people/user_contacts during the soak window are not in contacts_legacy — re-sync or re-import if reverting after writes.
+
+**Phase 7 (deferred, per request):** drop contacts_legacy + dead columns. Left in place as the rollback target.
