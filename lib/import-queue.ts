@@ -138,18 +138,18 @@ export async function processQueuedRowsInBackground(params: {
         company_linkedin_url: (rawData.company_linkedin_url as string) || '',
       };
 
-      // Don't lose a real prospect just because import-time enrichment didn't
-      // land: as long as we have its LinkedIn URL (the canonical key) keep the
-      // contact from the raw CSV data, flagged not-enriched + re-enrichable.
+      // Apollo couldn't surface this person — but we can still find them from
+      // LinkedIn. As long as we have the LinkedIn URL (the canonical key), keep
+      // the contact from the raw CSV data and let the resolution pipeline run
+      // (its profile step is an Apify LinkedIn scrape, which doesn't need Apollo).
       // Returns true if kept, false if it genuinely can't be stored (no key).
-      const keepUnenriched = (): boolean => {
+      const keepForLinkedinFallback = (): boolean => {
         const linkedin = (fallbackRow.linkedin_url || '').trim();
         if (!linkedin) return false;
         enrichedRecords.push({
           raw_upload_id: row.id,
           batch_id: batchId,
           user_id: userId,
-          enrichment_failed: true,
           full_name: fallbackRow.full_name || undefined,
           first_name: fallbackRow.first_name || undefined,
           last_name: fallbackRow.last_name || undefined,
@@ -170,7 +170,7 @@ export async function processQueuedRowsInBackground(params: {
         if (await isBatchCancelled(admin, batchId)) break;
 
         if (!hasConfidentEnrichment(enrichmentResult, fallbackRow)) {
-          if (!keepUnenriched()) failedIds.push(row.id);
+          if (!keepForLinkedinFallback()) failedIds.push(row.id);
           continue;
         }
 
@@ -221,7 +221,7 @@ export async function processQueuedRowsInBackground(params: {
         });
       } catch (error) {
         console.error('Contact enrichment failed for row:', row.id, error);
-        if (!keepUnenriched()) failedIds.push(row.id);
+        if (!keepForLinkedinFallback()) failedIds.push(row.id);
       }
     }
 
@@ -240,21 +240,25 @@ export async function processQueuedRowsInBackground(params: {
 
       const { data: insertedContacts } = await admin
         .from('contacts')
-        .select('id, profile_enrichment_status')
+        .select('id')
         .eq('user_id', userId)
         .eq('batch_id', batchId);
 
       for (const contact of insertedContacts || []) {
-        const c = contact as { id?: string; profile_enrichment_status?: string };
-        if (!c.id) continue;
-        // Skip the kept-but-unenriched rows — their enrichment just failed, so
-        // immediately re-running (and re-paying for) it is wasteful. The contact
-        // is visible and the user can re-enrich it on demand.
-        if (c.profile_enrichment_status === 'failed') continue;
-        await runContactResolutionPipelineForContact(
-          admin as unknown as Parameters<typeof runContactResolutionPipelineForContact>[0],
-          { contactId: c.id, userId }
-        );
+        const contactId = (contact as { id?: string }).id;
+        if (!contactId) continue;
+        // Resolution pipeline = LinkedIn resolution + Apify profile scrape. This
+        // is the fallback that surfaces data on people Apollo couldn't match.
+        // Per-contact try/catch so one un-scrapeable profile doesn't fail the
+        // whole batch (the contact is already stored either way).
+        try {
+          await runContactResolutionPipelineForContact(
+            admin as unknown as Parameters<typeof runContactResolutionPipelineForContact>[0],
+            { contactId, userId }
+          );
+        } catch (pipelineError) {
+          console.error('Resolution pipeline failed for contact:', contactId, pipelineError);
+        }
       }
     }
 

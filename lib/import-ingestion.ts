@@ -12,10 +12,6 @@ export type EnrichedImportRecord = {
   raw_upload_id: string;
   batch_id?: string;
   user_id: string;
-  /** True when import-time enrichment failed but we still store the contact from
-   *  the raw CSV data (so the prospect isn't silently lost). It's flagged
-   *  not-enriched + re-enrichable rather than dropped. */
-  enrichment_failed?: boolean;
   enrichment_provider?: 'apollo' | 'fiber';
   full_name?: string;
   first_name?: string;
@@ -414,11 +410,8 @@ export async function ingestEnrichedRecords(
         email_status_reasoning: record.email
           ? 'Candidate email from contact discovery. Current company alignment not resolved yet.'
           : 'No email returned during contact discovery.',
-        // A kept-but-unenriched row is flagged 'failed' so the Leads view shows
-        // it as not-enriched (and the refresh button can re-enrich it); a normal
-        // import row stays 'pending' for routine enrichment pickup.
-        linkedin_resolution_status: record.enrichment_failed ? 'failed' : 'pending',
-        profile_enrichment_status: record.enrichment_failed ? 'failed' : 'pending',
+        linkedin_resolution_status: 'pending',
+        profile_enrichment_status: 'pending',
         fit_score: 0,
         fit_score_reasoning: 'Not scored yet.',
         fit_score_matched_on: [],
@@ -495,12 +488,7 @@ export async function ingestEnrichedRecords(
 
       await supabase
         .from('raw_uploads')
-        .update({
-          // The contact IS stored either way; 'failed' here means "imported but
-          // not enriched" so the batch summary still surfaces it for re-enrichment.
-          status: record.enrichment_failed ? 'failed' : 'enriched',
-          enriched_at: new Date().toISOString(),
-        })
+        .update({ status: 'enriched', enriched_at: new Date().toISOString() })
         .eq('id', record.raw_upload_id);
 
       inserted += 1;
