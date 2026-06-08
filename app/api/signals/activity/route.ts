@@ -113,6 +113,38 @@ function patentTitleFromSummary(summary: string | null | undefined): string | nu
   return summary.slice(idx + 2).replace(/\.+$/, '').trim() || null;
 }
 
+function prettyEnum(s: string): string {
+  return s.replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
+}
+function formatTrialPhase(p: string): string {
+  const m = p.match(/PHASE\s*(\d)/i);
+  return m ? `Phase ${m[1]}` : prettyEnum(p);
+}
+
+// Pull a SPECIFIC title + detail out of a signal's source metadata when the
+// stored source title is generic. Covers clinical trials (study_title + phase/
+// condition/status) and individual patents (patent_title + number).
+function specificFromMetadata(
+  meta: Record<string, unknown> | null | undefined,
+): { title: string | null; detail: string | null } {
+  if (!meta) return { title: null, detail: null };
+
+  if (typeof meta.study_title === 'string' && meta.study_title) {
+    const phase = Array.isArray(meta.phases) && meta.phases.length ? formatTrialPhase(String(meta.phases[0])) : null;
+    const cond = Array.isArray(meta.conditions) && meta.conditions.length ? String(meta.conditions[0]) : null;
+    const status = typeof meta.study_status === 'string' ? prettyEnum(meta.study_status) : null;
+    const nct = typeof meta.nct_id === 'string' ? meta.nct_id : null;
+    const detail = [phase, cond, status, nct].filter(Boolean).join(' · ') || null;
+    return { title: meta.study_title, detail };
+  }
+
+  if (typeof meta.patent_title === 'string' && meta.patent_title) {
+    return { title: meta.patent_title, detail: typeof meta.patent_id === 'string' ? meta.patent_id : null };
+  }
+
+  return { title: null, detail: null };
+}
+
 export async function GET(req: Request) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -279,14 +311,19 @@ export async function GET(req: Request) {
 
     const rawDetail = src?.summary || src?.excerpt || r.evidence_excerpt || null;
     const specificTitle = src?.title && !isGenericTitle(src.title) ? decodeEntities(src.title) : null;
-    const derivedTitle = specificTitle ?? roleFromSummary(src?.summary) ?? roleFromUrl(src?.source_url);
+    const meta = specificFromMetadata(src?.metadata);
+    const derivedTitle =
+      specificTitle ?? meta.title ?? roleFromSummary(src?.summary) ?? roleFromUrl(src?.source_url);
     // Fall back to the (generic) source title only if nothing better was found.
     const title = derivedTitle ?? (src?.title ? decodeEntities(src.title) : null);
+    // Prefer the structured metadata detail (e.g. "Phase 4 · COVID-19 ·
+    // Recruiting") over the raw summary.
+    const detail = meta.detail ?? (rawDetail ? decodeEntities(rawDetail).slice(0, 280) : null);
 
     return [{
       id: r.id,
       title,
-      detail: rawDetail ? decodeEntities(rawDetail).slice(0, 280) : null,
+      detail,
       source: src?.source ?? null,
       url: src?.source_url ?? null,
       eventAt: src?.event_at ?? r.event_at ?? r.observed_at,
