@@ -43,8 +43,17 @@ import type { BuyerFunction, SignalKey } from '@/lib/signals/readiness-types';
 const APIFY_ACTOR = 'curious_coder~linkedin-jobs-scraper';
 /** Timeout for the batch call. One run covers all companies. */
 const ACTOR_TIMEOUT_MS = 120_000;
-/** Max results fetched per company search URL. */
+/** Target results per company search URL. */
 const RESULTS_PER_COMPANY = 25;
+/**
+ * Hard ceiling on the actor's GLOBAL `count` for a single call. The actor's
+ * `count` is a TOTAL cap across ALL search URLs (verified against its input
+ * schema: "Number of jobs needed — Limit number of jobs scraped"), so passing a
+ * flat 25 with N company URLs starved every company to ~25/N postings. We now
+ * request RESULTS_PER_COMPANY × companyCount, bounded by this ceiling so a
+ * large batch can't request an unbounded scrape.
+ */
+const MAX_TOTAL_RESULTS = 1000;
 
 /** Emit hiring_expansion if a company returns at least this many matching postings. */
 const JOB_SURGE_THRESHOLD = 5;
@@ -465,8 +474,10 @@ async function fetchJobsFromLinkedIn(
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
+          // `count` is a GLOBAL cap across all `urls`, so scale it by the number
+          // of companies (bounded) — otherwise N companies share one tiny budget.
           urls,
-          count: RESULTS_PER_COMPANY,
+          count: Math.min(RESULTS_PER_COMPANY * urls.length, MAX_TOTAL_RESULTS),
           scrapeCompany: false, // skip extra per-job company requests — we already have company data
         }),
         signal: controller.signal,
