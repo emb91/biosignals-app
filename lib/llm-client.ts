@@ -55,7 +55,19 @@ export type LlmFeature =
   // ICP buying-team generation — infers the distinct buying teams (personas)
   // for an ICP. Sonnet: the multi-team split + prune-to-what-we-sell reasoning
   // is quality-sensitive, and it fires only once per ICP at (re-)enrichment.
-  | 'icp_buying_team';
+  | 'icp_buying_team'
+  // Enrichment bios — short factual sentence from Apify/Apollo data.
+  // Plain text completion (no Anthropic-specific tools), so OpenRouter
+  // fallback works when ANTHROPIC_API_KEY runs out of credit.
+  | 'company_bio_summarization'
+  | 'contact_bio_generation'
+  // Web-search-backed enrichment. These call Anthropic's server-side
+  // web_search tool when on Anthropic; on fallback they use OpenRouter's
+  // `web` plugin so they keep working when Anthropic credits are dry.
+  | 'company_monitor_funding'
+  | 'company_monitor_taxonomy'
+  | 'my_company_enrichment_analysis'
+  | 'my_company_enrichment_bullet_condense';
 
 /**
  * Default models per (feature, route). Override via the `model` arg.
@@ -156,6 +168,37 @@ const FEATURE_MODELS: Record<LlmFeature, { openrouter: string; anthropic: string
   icp_buying_team: {
     openrouter: 'anthropic/claude-sonnet-4-6',
     anthropic: 'claude-sonnet-4-6',
+  },
+  // Enrichment bios — Haiku is plenty (one short factual sentence from
+  // structured input). See memory/llm_cost_concerns.md.
+  company_bio_summarization: {
+    openrouter: 'anthropic/claude-haiku-4-5',
+    anthropic: 'claude-haiku-4-5',
+  },
+  contact_bio_generation: {
+    openrouter: 'anthropic/claude-haiku-4-5',
+    anthropic: 'claude-haiku-4-5',
+  },
+  // Web-search enrichment — Sonnet for quality reasoning over live results.
+  // OpenRouter route runs the same model + the `web` plugin (see
+  // completeWithWebSearch), so funding/taxonomy/narrative survive an
+  // Anthropic credit outage instead of returning empty.
+  company_monitor_funding: {
+    openrouter: 'anthropic/claude-sonnet-4-6',
+    anthropic: 'claude-sonnet-4-6',
+  },
+  company_monitor_taxonomy: {
+    openrouter: 'anthropic/claude-sonnet-4-6',
+    anthropic: 'claude-sonnet-4-6',
+  },
+  my_company_enrichment_analysis: {
+    openrouter: 'anthropic/claude-sonnet-4-6',
+    anthropic: 'claude-sonnet-4-6',
+  },
+  // Plain condense pass (no web search) — Haiku is plenty.
+  my_company_enrichment_bullet_condense: {
+    openrouter: 'anthropic/claude-haiku-4-5',
+    anthropic: 'claude-haiku-4-5',
   },
 };
 
@@ -291,6 +334,162 @@ export async function completeLlm(opts: LlmCompletionInput): Promise<LlmCompleti
     }
     throw error;
   }
+}
+
+export type LlmWebSearchInput = {
+  feature: LlmFeature;
+  prompt: string;
+  system?: string;
+  maxTokens?: number;
+  /** Max web searches the model may run (Anthropic max_uses / OpenRouter web max_results). */
+  maxSearches?: number;
+  model?: string;
+  provider?: 'openrouter' | 'anthropic';
+  disableFallback?: boolean;
+};
+
+/**
+ * Like completeLlm, but the model can search the web.
+ *
+ * - Anthropic route: uses the server-side `web_search_20250305` tool.
+ * - OpenRouter route: uses the `web` plugin (Exa-backed) on the same model.
+ *
+ * Same preference + auto-fallback as completeLlm: direct Anthropic first
+ * (cheaper), OpenRouter on failure — so funding/taxonomy/narrative keep
+ * working through an Anthropic credit outage rather than returning empty.
+ * Returns { text, provider, model, usage }; the caller parses `text`.
+ */
+export async function completeWithWebSearch(opts: LlmWebSearchInput): Promise<LlmCompletionResult> {
+  const provider = pickProvider(opts);
+  const model = opts.model ?? FEATURE_MODELS[opts.feature][provider];
+  const maxTokens = opts.maxTokens ?? 2048;
+  const maxSearches = opts.maxSearches ?? 3;
+
+  try {
+    if (provider === 'openrouter') {
+      return await searchWithOpenRouter({ model, prompt: opts.prompt, system: opts.system, maxTokens, maxSearches });
+    }
+    return await searchWithAnthropic({ model, prompt: opts.prompt, system: opts.system, maxTokens, maxSearches });
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    if (opts.provider || opts.disableFallback) throw error;
+
+    if (provider === 'anthropic' && process.env.OPENROUTER_API_KEY) {
+      console.warn(
+        `[llm-client] Anthropic web-search failed for feature=${opts.feature}, falling back to OpenRouter web plugin: ${errMsg.slice(0, 200)}`,
+      );
+      return searchWithOpenRouter({
+        model: FEATURE_MODELS[opts.feature].openrouter,
+        prompt: opts.prompt,
+        system: opts.system,
+        maxTokens,
+        maxSearches,
+      });
+    }
+    if (provider === 'openrouter' && process.env.ANTHROPIC_API_KEY) {
+      console.warn(
+        `[llm-client] OpenRouter web-search failed for feature=${opts.feature}, falling back to Anthropic: ${errMsg.slice(0, 200)}`,
+      );
+      return searchWithAnthropic({
+        model: FEATURE_MODELS[opts.feature].anthropic,
+        prompt: opts.prompt,
+        system: opts.system,
+        maxTokens,
+        maxSearches,
+      });
+    }
+    throw error;
+  }
+}
+
+async function searchWithAnthropic(opts: {
+  model: string;
+  prompt: string;
+  system?: string;
+  maxTokens: number;
+  maxSearches: number;
+}): Promise<LlmCompletionResult> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new LlmCompletionError('anthropic', null, 'ANTHROPIC_API_KEY not set');
+  const client = new Anthropic({ apiKey });
+  let message;
+  try {
+    message = await client.messages.create({
+      model: opts.model,
+      max_tokens: opts.maxTokens,
+      ...(opts.system ? { system: opts.system } : {}),
+      messages: [{ role: 'user', content: opts.prompt }],
+      tools: [
+        {
+          type: 'web_search_20250305',
+          name: 'web_search',
+          max_uses: opts.maxSearches,
+        } as Parameters<typeof client.messages.create>[0]['tools'] extends Array<infer T> ? T : never,
+      ],
+    });
+  } catch (error) {
+    const status = (error as { status?: number })?.status ?? null;
+    throw new LlmCompletionError('anthropic', status, error instanceof Error ? error.message : String(error));
+  }
+  const blocks = Array.isArray(message.content) ? (message.content as unknown[]) : [];
+  const text = blocks
+    .map((b) => {
+      if (!b || typeof b !== 'object') return null;
+      const block = b as { type?: unknown; text?: unknown };
+      return block.type === 'text' && typeof block.text === 'string' ? block.text : null;
+    })
+    .filter((t): t is string => typeof t === 'string')
+    .join('')
+    .trim();
+  const usage = (message.usage ?? {}) as { input_tokens?: number; output_tokens?: number };
+  return { text, provider: 'anthropic', model: opts.model, usage };
+}
+
+async function searchWithOpenRouter(opts: {
+  model: string;
+  prompt: string;
+  system?: string;
+  maxTokens: number;
+  maxSearches: number;
+}): Promise<LlmCompletionResult> {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) throw new LlmCompletionError('openrouter', null, 'OPENROUTER_API_KEY not set');
+  const messages: Array<{ role: 'system' | 'user'; content: string }> = [];
+  if (opts.system) messages.push({ role: 'system', content: opts.system });
+  messages.push({ role: 'user', content: opts.prompt });
+  const response = await fetch(OPENROUTER_ENDPOINT, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': process.env.NEXT_PUBLIC_SITE_URL ?? 'https://arcova.bio',
+      'X-Title': 'Arcova GTM',
+    },
+    body: JSON.stringify({
+      model: opts.model,
+      messages,
+      max_tokens: opts.maxTokens,
+      // OpenRouter web plugin (Exa-backed) — the credit-resilient equivalent
+      // of Anthropic's web_search tool.
+      plugins: [{ id: 'web', max_results: opts.maxSearches }],
+    }),
+  });
+  if (!response.ok) {
+    const errText = await response.text().catch(() => '');
+    throw new LlmCompletionError('openrouter', response.status, `OpenRouter ${response.status}: ${errText.slice(0, 500)}`);
+  }
+  type OpenRouterResponse = {
+    choices?: Array<{ message?: { content?: string } }>;
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
+  };
+  const json = (await response.json()) as OpenRouterResponse;
+  const text = (json.choices?.[0]?.message?.content ?? '').trim();
+  return {
+    text,
+    provider: 'openrouter',
+    model: opts.model,
+    usage: { input_tokens: json.usage?.prompt_tokens, output_tokens: json.usage?.completion_tokens },
+  };
 }
 
 // ── OpenRouter ────────────────────────────────────────────────────────────

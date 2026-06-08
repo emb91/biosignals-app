@@ -719,12 +719,12 @@ Distinct from the priority table above — this lists exactly what each running 
 | | `recently_changed_company` | 👤 | same | |
 | | `title_change` | 👤 | same | |
 | ~~**Conferences (web search)**~~ | ~~all~~ | — | **cut** — Sonnet+web_search approach produced poor output; pipeline removed | |
-| ~~**Press Releases (RSS + Haiku)**~~ | ~~all~~ | — | **cut** — monitor removed; signals were either duplicated by structured monitors or low-value noise | |
+| **Press Releases (RSS + Haiku)** | partnership_deal, funding_round, ipo_or_follow_on, grant_award, licensing_deal, m&a, … | 🏢 | **ACTIVE — NOT cut.** GlobeNewswire (biotech+pharma) + PR Newswire RSS → `press_release_articles` → Haiku 4.5 classification → `runPressReleaseMonitor`. Built + verified: 230 articles ingested, successful runs 2026-05-25/26 (4 feeds, 0 failed). Cron `press-releases-delta` (daily 13:00). Currently DORMANT — Vercel crons only fire on a live prod deploy; on local-only dev nothing schedules it, so it last ran 2026-05-26. Needs a live deploy or a local scheduler. (Earlier "cut" note was reversed — the RSS+Haiku pipeline was rebuilt.) | |
 
 **Coverage roll-up by scope:** 40 distinct company-scope emit paths · 5 distinct contact-scope emit paths.
 
 **Catalog gaps still without any monitor** (catalog entries exist but nothing emits them):
-- `new_facility`, `facility_expansion` — press releases cut; no active monitor; need targeted news/web search approach
+- `new_facility`, `facility_expansion` — the press-release monitor (RSS+Haiku) is active but doesn't classify facility moves; either add those categories to the press classifier or use a targeted news/web search approach
 - `commercialization_move` — same
 - `distressed_financing` (P1) — V2 SEC funding classifier could emit this for debt/credit facility 8-Ks
 - `new_to_role` (P2 contact) — needs a contact-side LinkedIn / HubSpot signal

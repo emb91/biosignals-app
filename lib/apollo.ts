@@ -367,6 +367,14 @@ type MatchPersonOptions = {
    * only flip on for high-fit contacts (see lib/contact-phone-enrichment.ts).
    */
   revealPhoneNumber?: boolean;
+  /**
+   * Per-call webhook URL (with correlation token in the path) that Apollo POSTs
+   * the async phone reveal to. When omitted we fall back to APOLLO_PHONE_WEBHOOK_URL
+   * (no token — legacy/uncorrelated). When neither is set, the reveal isn't
+   * requested at all (Apollo rejects reveal_phone_number without a webhook_url,
+   * and there'd be no way to capture the async result).
+   */
+  phoneRevealWebhookUrl?: string;
 };
 
 async function matchPerson(input: ApolloLookupInput, options: MatchPersonOptions = {}) {
@@ -383,7 +391,20 @@ async function matchPerson(input: ApolloLookupInput, options: MatchPersonOptions
     params.set('reveal_personal_emails', 'true');
   }
   if (options.revealPhoneNumber) {
-    params.set('reveal_phone_number', 'true');
+    // Apollo's phone reveal is ASYNC: reveal_phone_number=true requires a
+    // webhook_url and the number is delivered to that webhook later, not in this
+    // response. The receiver lives at app/api/apollo/phone-webhook/[token] and
+    // correlates the async delivery back to a contact via the token in the path
+    // (see lib/apollo-phone-webhook.ts). Prefer the per-call tokenized URL from
+    // the caller; fall back to the bare env URL. Only request the reveal when we
+    // have a URL — otherwise Apollo rejects the whole call ("add a valid
+    // 'webhook_url'") and there'd be no way to capture the async result. The
+    // sync response still returns any phones Apollo includes inline.
+    const phoneWebhookUrl = options.phoneRevealWebhookUrl || process.env.APOLLO_PHONE_WEBHOOK_URL;
+    if (phoneWebhookUrl) {
+      params.set('reveal_phone_number', 'true');
+      params.set('webhook_url', phoneWebhookUrl);
+    }
   }
 
   const url = `https://api.apollo.io/api/v1/people/match?${params.toString()}`;
@@ -610,11 +631,15 @@ async function runApolloPeopleMatchTwoStep(
  */
 export async function tryApolloPhoneRevealForLookup(
   input: ApolloLookupInput,
+  options: { phoneRevealWebhookUrl?: string } = {},
 ): Promise<{
   person: ApolloPerson | null;
   payload: ApolloMatchResponse | null;
 }> {
-  const match = await matchPerson(input, { revealPhoneNumber: true });
+  const match = await matchPerson(input, {
+    revealPhoneNumber: true,
+    phoneRevealWebhookUrl: options.phoneRevealWebhookUrl,
+  });
   return { person: match.person, payload: match.payload };
 }
 

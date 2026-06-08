@@ -113,6 +113,7 @@ export async function runCompanyMonitor(
   };
 
   // ── Funding module ──────────────────────────────────────────────────────────
+  const runFundingModule = async () => {
   const fundingCheckedAt = new Date().toISOString();
   try {
     const fundingInput: FundingInput = {
@@ -230,8 +231,10 @@ export async function runCompanyMonitor(
 
     result.errors.push(`funding: ${msg}`);
   }
+  };
 
   // ── Taxonomy module ────────────────────────────────────────────────────────
+  const runTaxonomyModule = async () => {
   try {
     const taxonomyInput: CompanyTaxonomyInput = {
       company_name: input.company_name,
@@ -364,8 +367,10 @@ export async function runCompanyMonitor(
     console.warn(`[company-monitor] taxonomy module failed for ${input.company_name}:`, msg);
     result.errors.push(`taxonomy: ${msg}`);
   }
+  };
 
   // ── Narrative module (products_services, services, technologies) ───────────
+  const runNarrativeModule = async () => {
   try {
     const websiteForNarrative =
       input.website ||
@@ -414,11 +419,18 @@ export async function runCompanyMonitor(
     console.warn(`[company-monitor] narrative module failed for ${input.company_name}:`, msg);
     result.errors.push(`narrative: ${msg}`);
   }
+  };
+
+  // Run the independent modules in PARALLEL. Each writes a DISJOINT set of
+  // companies columns (funding_* / taxonomy fields / products_services etc.;
+  // only updated_at overlaps, harmlessly) and has its own try/catch, so one
+  // failing never aborts the others. This cuts wall-clock ~3x vs sequential —
+  // important because the whole thing runs inside an after() job under a
+  // serverless maxDuration budget (see the enrich route's maxDuration).
+  await Promise.all([runFundingModule(), runTaxonomyModule(), runNarrativeModule()]);
 
   // ── Future modules slot in here ─────────────────────────────────────────────
-  // try { const ct = await runClinicalTrialsModule(input); ... } catch { ... }
-  // try { const edgar = await runEdgarModule(input); ... } catch { ... }
-  // try { const nih = await runNihModule(input); ... } catch { ... }
+  // Add as additional entries in the Promise.all above (clinical trials, EDGAR, NIH…).
 
   return result;
 }

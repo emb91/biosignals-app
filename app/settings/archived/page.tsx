@@ -67,16 +67,21 @@ function ArchivedRecordCard({
   onRestoreContact: (contact: ArchivedContact, group: ArchivedGroup) => void;
   restoring: boolean;
 }) {
-  const accountLabel =
-    group.account?.company_name ||
-    group.account?.domain ||
-    group.contacts[0]?.company_name ||
-    'Archived account';
+  // A group either represents an archived ACCOUNT (+ its cascade-archived
+  // contacts) or one-or-more archived CONTACTS whose account is still active.
+  // The two render differently: an account shows the company; a contact-only
+  // group shows the contact, with no account-level restore.
+  const isAccountGroup = !!group.account;
 
-  const accountMeta =
-    group.account?.domain ||
-    group.contacts[0]?.email ||
-    null;
+  const headerLabel = isAccountGroup
+    ? group.account?.company_name || group.account?.domain || 'Archived account'
+    : group.contacts.length === 1
+      ? group.contacts[0]?.full_name || group.contacts[0]?.email || 'Archived contact'
+      : `${group.contacts.length} archived contacts`;
+
+  // Account groups show the company domain; contact-only groups don't have one
+  // (the contact's email is shown on its own row below, not as a "domain").
+  const accountDomain = isAccountGroup ? group.account?.domain ?? null : null;
 
   return (
     <div
@@ -100,9 +105,9 @@ function ArchivedRecordCard({
             Archived
           </span>
           <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-[#0d3547]">
-            {accountLabel}
+            {headerLabel}
           </span>
-          {collapsed && (
+          {collapsed && isAccountGroup && (
             <span className="hidden shrink-0 text-[11px] text-[#7d909a] sm:block">
               {group.contacts.length} {group.contacts.length === 1 ? 'contact' : 'contacts'}
             </span>
@@ -116,34 +121,40 @@ function ArchivedRecordCard({
 
       {!collapsed && (
         <div className="space-y-3 px-3.5 py-2.5">
-          <div className="flex flex-wrap gap-x-5 gap-y-1">
-            <span className="text-[12px] text-[#7d909a]">
-              <span className="font-semibold text-[#0d3547]">{group.contacts.length}</span> contacts
-            </span>
-            {accountMeta && (
-              <span className="text-[12px] text-[#7d909a]">
-                <span className="font-semibold text-[#0d3547]">Domain</span> {accountMeta}
-              </span>
-            )}
-          </div>
+          {isAccountGroup && (
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1">
+                <span className="text-[12px] text-[#7d909a]">
+                  <span className="font-semibold text-[#0d3547]">{group.contacts.length}</span>{' '}
+                  {group.contacts.length === 1 ? 'contact' : 'contacts'}
+                </span>
+                {accountDomain && (
+                  <span className="truncate text-[12px] text-[#7d909a]">
+                    <span className="font-semibold text-[#0d3547]">Domain</span> {accountDomain}
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => onRestoreGroup(group)}
+                disabled={restoring}
+                className="inline-flex shrink-0 items-center gap-1 rounded border border-[rgba(45,138,138,0.18)] bg-[rgba(45,138,138,0.08)] px-2 py-1 text-[10.5px] font-semibold text-[#2d8a8a] transition hover:bg-[rgba(45,138,138,0.14)] disabled:opacity-60"
+              >
+                <ArchiveRestore className="h-3 w-3" />
+                {restoring ? 'Restoring…' : 'Restore'}
+              </button>
+            </div>
+          )}
 
           <p className="text-[11px] text-[#b6c2c8]">{absoluteTime(group.archivedAt)}</p>
 
-          <div className="flex items-center justify-end">
-            <button
-              type="button"
-              onClick={() => onRestoreGroup(group)}
-              disabled={restoring}
-              className="inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-[11px] font-semibold border border-[rgba(45,138,138,0.18)] bg-[rgba(45,138,138,0.08)] text-[#2d8a8a] disabled:opacity-60"
-            >
-              <ArchiveRestore className="h-3 w-3" />
-              {restoring ? 'Restoring…' : 'Restore'}
-            </button>
-          </div>
-
           <div>
             <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">
-              Contacts in this account
+              {isAccountGroup
+                ? 'Contacts in this account'
+                : group.contacts.length === 1
+                  ? 'Archived contact'
+                  : 'Archived contacts'}
             </p>
             <ul className="space-y-1.5">
               {group.contacts.map((contact) => (
@@ -157,14 +168,18 @@ function ArchivedRecordCard({
                     </span>
                     {contact.email && <span className="text-[#7d909a]"> · {contact.email}</span>}
                   </div>
-                  {!group.account && (
+                  {/* Account groups restore from the meta-line button above (it
+                      brings the account + all its contacts back), so the rows are
+                      info-only. A contact-only group restores per contact here. */}
+                  {!isAccountGroup && (
                     <button
                       type="button"
                       onClick={() => onRestoreContact(contact, group)}
                       disabled={restoring}
-                      className="shrink-0 rounded px-2 py-1 text-[10.5px] font-semibold text-[#2d8a8a] transition hover:bg-[rgba(45,138,138,0.08)] disabled:opacity-60"
+                      className="inline-flex shrink-0 items-center gap-1 rounded border border-[rgba(45,138,138,0.18)] bg-[rgba(45,138,138,0.08)] px-2 py-1 text-[10.5px] font-semibold text-[#2d8a8a] transition hover:bg-[rgba(45,138,138,0.14)] disabled:opacity-60"
                     >
-                      Restore
+                      <ArchiveRestore className="h-3 w-3" />
+                      {restoring ? 'Restoring…' : 'Restore'}
                     </button>
                   )}
                 </li>
@@ -173,9 +188,11 @@ function ArchivedRecordCard({
           </div>
 
           <div className="flex items-center gap-1.5 text-[11.5px] text-[#7d909a]">
-            {group.account
-              ? 'Restoring any contact here will also restore the archived account group.'
-              : 'This account is already active. Restore individual contacts below if you want them back.'}
+            {isAccountGroup
+              ? 'Restoring this account also brings its archived contacts back.'
+              : group.contacts.length === 1
+                ? 'The account is still active — only this contact was archived. Restore it to bring it back.'
+                : 'The account is still active — only these contacts were archived. Restore any to bring it back.'}
           </div>
         </div>
       )}
@@ -360,20 +377,18 @@ export default function ArchivedRecordsPage() {
                     collapsed={!expandedKeys.has(group.key)}
                     onToggle={() => toggle(group.key)}
                     onRestoreGroup={(selectedGroup) => {
+                      // Account group: restore the account (cascades its contacts).
                       if (!confirmRestoreGroup(selectedGroup)) return;
                       void restoreRecord(
-                        selectedGroup.account ? 'account' : 'contact',
-                        selectedGroup.account?.id ?? selectedGroup.contacts[0]?.id ?? '',
+                        'account',
+                        selectedGroup.account?.id ?? '',
                         selectedGroup.key,
                       );
                     }}
                     onRestoreContact={(contact, selectedGroup) => {
+                      // Contact-only group: restore just that contact.
                       if (!confirmRestoreContact(contact)) return;
-                      void restoreRecord(
-                        selectedGroup.account ? 'account' : 'contact',
-                        selectedGroup.account?.id ?? contact.id,
-                        selectedGroup.key,
-                      );
+                      void restoreRecord('contact', contact.id, selectedGroup.key);
                     }}
                     restoring={restoringKey === group.key}
                   />

@@ -134,7 +134,7 @@ function eventSublabel(event: SyncEvent): string {
   const parts: string[] = [];
   if (event.event_type === 'csv_import') {
     if (event.total_rows != null) parts.push(`${event.total_rows} rows`);
-    if (event.processed_rows != null) parts.push(`${event.processed_rows} imported`);
+    if (event.processed_rows != null) parts.push(`${importedRows(event)} imported`);
     if (event.duplicate_rows != null && event.duplicate_rows > 0) parts.push(`${event.duplicate_rows} duplicates`);
     if (event.failed_rows != null && event.failed_rows > 0) parts.push(`${event.failed_rows} failed`);
     return parts.join(' · ') || 'No data';
@@ -163,6 +163,16 @@ function formatSignalTypeLabel(value: string | null | undefined): string {
     .replace(/\bcrm\b/gi, 'CRM')
     .replace(/\bhs\b/gi, 'HS')
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+/** Rows actually imported = processed minus duplicates and failures.
+ *  `processed_rows` counts every row that reached a terminal state (enriched +
+ *  duplicate + failed), so using it directly over-counts "Imported". */
+function importedRows(event: SyncEvent): number {
+  return Math.max(
+    0,
+    (event.processed_rows ?? 0) - (event.duplicate_rows ?? 0) - (event.failed_rows ?? 0),
+  );
 }
 
 type StatusLevel = 'done' | 'warning' | 'failed';
@@ -225,6 +235,20 @@ const METHOD_STYLE = 'bg-white/60 text-[#7d909a] border border-[rgba(13,53,71,0.
 
 // ── SyncEventCard ──────────────────────────────────────────────────────────
 
+interface BatchDetailRow {
+  id: string;
+  full_name: string;
+  email: string;
+  company_name: string;
+  job_title: string;
+  failure_reason: string;
+}
+
+interface BatchDetails {
+  failedRows: BatchDetailRow[];
+  duplicateRows: BatchDetailRow[];
+}
+
 function SyncEventCard({
   event,
   collapsed,
@@ -235,6 +259,35 @@ function SyncEventCard({
   onToggle: () => void;
 }) {
   const status = eventStatus(event);
+
+  const [batchDetails, setBatchDetails] = useState<BatchDetails | null>(null);
+  const [batchDetailsLoading, setBatchDetailsLoading] = useState(false);
+  const [batchDetailsError, setBatchDetailsError] = useState<string | null>(null);
+
+  const needsDetails =
+    !collapsed &&
+    event.event_type === 'csv_import' &&
+    event.id !== 'legacy-push' &&
+    ((event.failed_rows ?? 0) > 0 || (event.duplicate_rows ?? 0) > 0);
+
+  useEffect(() => {
+    if (!needsDetails || batchDetails || batchDetailsLoading) return;
+    setBatchDetailsLoading(true);
+    setBatchDetailsError(null);
+    fetch(`/api/import-history/${event.id}`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        setBatchDetails({
+          failedRows: Array.isArray(json.failedRows) ? json.failedRows : [],
+          duplicateRows: Array.isArray(json.duplicateRows) ? json.duplicateRows : [],
+        });
+      })
+      .catch((err) => {
+        setBatchDetailsError(err instanceof Error ? err.message : 'Failed to load row details');
+      })
+      .finally(() => setBatchDetailsLoading(false));
+  }, [needsDetails, event.id, batchDetails, batchDetailsLoading]);
 
   return (
     <div className={`rounded-lg border border-white/80 bg-white/55 backdrop-blur-xl ${
@@ -289,7 +342,7 @@ function SyncEventCard({
             {event.event_type === 'csv_import' && (
               <>
                 <InlineStat label="Total" value={event.total_rows} />
-                <InlineStat label="Imported" value={event.processed_rows} />
+                <InlineStat label="Imported" value={importedRows(event)} />
                 <InlineStat label="Duplicates" value={event.duplicate_rows} />
                 <InlineStat label="Failed" value={event.failed_rows} highlight={status !== 'done'} />
               </>
@@ -339,6 +392,54 @@ function SyncEventCard({
                 ))}
               </ul>
             </div>
+          )}
+
+          {/* CSV import per-row details (lazy-loaded on expand) */}
+          {event.event_type === 'csv_import' && event.id !== 'legacy-push' && (
+            <>
+              {batchDetailsLoading && (
+                <p className="text-[11.5px] text-[#7d909a]">Loading row details…</p>
+              )}
+              {batchDetailsError && (
+                <p className="text-[11.5px] text-red-500">Couldn’t load row details: {batchDetailsError}</p>
+              )}
+              {batchDetails && batchDetails.failedRows.length > 0 && (
+                <div>
+                  <p className="mb-1 flex items-center gap-1 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-red-400">
+                    <AlertTriangle className="h-3 w-3" /> Failed ({batchDetails.failedRows.length})
+                  </p>
+                  <ul className="space-y-0.5">
+                    {batchDetails.failedRows.map((r) => (
+                      <li key={r.id} className="text-[12px] text-[#4a6470]">
+                        <span className="font-medium text-[#0d3547]">{r.full_name || 'Unnamed contact'}</span>
+                        {r.company_name && <span className="text-[#7d909a]"> · {r.company_name}</span>}
+                        {r.failure_reason && (
+                          <span className="text-red-500"> — {r.failure_reason}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {batchDetails && batchDetails.duplicateRows.length > 0 && (
+                <div>
+                  <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#7d909a]">
+                    Duplicates ({batchDetails.duplicateRows.length})
+                  </p>
+                  <ul className="space-y-0.5">
+                    {batchDetails.duplicateRows.map((r) => (
+                      <li key={r.id} className="text-[12px] text-[#4a6470]">
+                        <span className="font-medium text-[#0d3547]">{r.full_name || 'Unnamed contact'}</span>
+                        {r.company_name && <span className="text-[#7d909a]"> · {r.company_name}</span>}
+                        {r.failure_reason && (
+                          <span className="text-[#b6c2c8]"> — {r.failure_reason}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
           )}
 
           {/* Error details */}

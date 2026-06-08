@@ -88,7 +88,10 @@ const normalizeIncomingRows = (
     };
   });
 
-const isExactDuplicate = (row: NormalisedRow, existing: Record<string, unknown>): boolean => {
+const duplicateMatch = (
+  row: NormalisedRow,
+  existing: Record<string, unknown>
+): 'linkedin' | 'email' | 'name+company' | null => {
   const rowLinkedin = normalize(row.linkedin_url);
   const rowEmail = normalize(row.email);
   const rowFirst = normalize(row.first_name);
@@ -101,8 +104,8 @@ const isExactDuplicate = (row: NormalisedRow, existing: Record<string, unknown>)
   const exLast = normalize(existing.last_name as string | undefined);
   const exCompany = normalize(existing.company_name as string | undefined);
 
-  if (rowLinkedin && exLinkedin && rowLinkedin === exLinkedin) return true;
-  if (rowEmail && exEmail && rowEmail === exEmail) return true;
+  if (rowLinkedin && exLinkedin && rowLinkedin === exLinkedin) return 'linkedin';
+  if (rowEmail && exEmail && rowEmail === exEmail) return 'email';
   if (
     rowFirst &&
     rowLast &&
@@ -114,10 +117,10 @@ const isExactDuplicate = (row: NormalisedRow, existing: Record<string, unknown>)
     rowLast === exLast &&
     rowCompany === exCompany
   ) {
-    return true;
+    return 'name+company';
   }
 
-  return false;
+  return null;
 };
 
 export async function POST(request: Request) {
@@ -192,7 +195,8 @@ export async function POST(request: Request) {
       .eq('user_id', user.id);
 
     const duplicateIds: string[] = [];
-    const invalidEmailIds: string[] = [];
+    const duplicateReasons = new Map<string, string>();
+    const clearedEmailIds: string[] = [];
     const pendingRows = insertedRows.filter((row) => {
       const rawData = row.raw_data as Record<string, unknown>;
       const rowNorm: NormalisedRow = {
@@ -209,16 +213,31 @@ export async function POST(request: Request) {
       };
 
       if (rowNorm.email && !looksLikeEmail(rowNorm.email)) {
-        invalidEmailIds.push(row.id as string);
-        return false;
+        // Treat an invalid email the same as no email: drop it from the
+        // enrichment payload but let the row proceed (LinkedIn / name+company
+        // can still resolve the contact).
+        rowNorm.email = '';
+        (row as { email: string | null }).email = null;
+        clearedEmailIds.push(row.id as string);
       }
 
-      const isDupe = (existingContacts || []).some((contact) =>
-        isExactDuplicate(rowNorm, contact as Record<string, unknown>)
-      );
+      let dupeReason: string | null = null;
+      for (const contact of existingContacts || []) {
+        const match = duplicateMatch(rowNorm, contact as Record<string, unknown>);
+        if (match) {
+          dupeReason =
+            match === 'linkedin'
+              ? 'Duplicate LinkedIn URL'
+              : match === 'email'
+                ? 'Duplicate email'
+                : 'Duplicate name + company';
+          break;
+        }
+      }
 
-      if (isDupe) {
+      if (dupeReason) {
         duplicateIds.push(row.id as string);
+        duplicateReasons.set(row.id as string, dupeReason);
         return false;
       }
       return true;
@@ -228,20 +247,38 @@ export async function POST(request: Request) {
     const rowsToEnrich = pendingRows;
 
     if (duplicateIds.length > 0) {
-      await supabase.from('raw_uploads').update({ status: 'duplicate' }).in('id', duplicateIds);
+      const byReason = new Map<string, string[]>();
+      for (const id of duplicateIds) {
+        const reason = duplicateReasons.get(id) || 'Duplicate of existing contact';
+        const ids = byReason.get(reason) ?? [];
+        ids.push(id);
+        byReason.set(reason, ids);
+      }
+      for (const [reason, ids] of byReason) {
+        await supabase
+          .from('raw_uploads')
+          .update({ status: 'duplicate', failure_reason: reason })
+          .in('id', ids);
+      }
     }
 
-    if (invalidEmailIds.length > 0) {
+    if (clearedEmailIds.length > 0) {
+      // Persist the email-stripped state on raw_uploads so logs reflect what
+      // actually got fed into enrichment.
       await supabase
         .from('raw_uploads')
-        .update({ status: 'failed', enriched_at: new Date().toISOString() })
-        .in('id', invalidEmailIds);
+        .update({ email: null })
+        .in('id', clearedEmailIds);
     }
 
     if (quotaHeldIds.length > 0) {
       await supabase
         .from('raw_uploads')
-        .update({ status: 'failed', enriched_at: new Date().toISOString() })
+        .update({
+          status: 'failed',
+          failure_reason: 'Held back by enrichment quota',
+          enriched_at: new Date().toISOString(),
+        })
         .in('id', quotaHeldIds);
     }
 
@@ -252,7 +289,7 @@ export async function POST(request: Request) {
 
     await supabase
       .from('upload_batches')
-      .update({ duplicate_rows: duplicateIds.length, failed_rows: quotaHeldIds.length + invalidEmailIds.length })
+      .update({ duplicate_rows: duplicateIds.length, failed_rows: quotaHeldIds.length })
       .eq('id', batchId);
 
     if (rowsToEnrich.length === 0) {
@@ -290,11 +327,8 @@ export async function POST(request: Request) {
       heldBackByQuota: quotaHeldIds.length,
       beingEnriched: pendingIds.length,
       complete: 0,
-      failed: invalidEmailIds.length,
-      warning:
-        invalidEmailIds.length > 0
-          ? `${invalidEmailIds.length} row${invalidEmailIds.length === 1 ? '' : 's'} were skipped because the email address looked invalid. Fix those emails and re-import to include them.`
-          : null,
+      failed: 0,
+      warning: null,
     });
   } catch (error) {
     console.error('Error in import-contacts POST:', error);

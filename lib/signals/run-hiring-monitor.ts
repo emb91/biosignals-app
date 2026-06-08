@@ -43,11 +43,25 @@ import type { BuyerFunction, SignalKey } from '@/lib/signals/readiness-types';
 const APIFY_ACTOR = 'curious_coder~linkedin-jobs-scraper';
 /** Timeout for the batch call. One run covers all companies. */
 const ACTOR_TIMEOUT_MS = 120_000;
-/** Max results fetched per company search URL. */
-const RESULTS_PER_COMPANY = 25;
+/**
+ * Target results per company. The actor returns min(count, actually-available),
+ * so a higher value only matters for companies that genuinely have more roles —
+ * it doesn't over-scrape small ones. 100 matches the all_roles display cap and
+ * keeps single-company runs from being starved.
+ */
+const RESULTS_PER_COMPANY = 100;
+/**
+ * Hard ceiling on the actor's GLOBAL `count` for a single call. The actor's
+ * `count` is a TOTAL cap across ALL search URLs (verified against its input
+ * schema: "Number of jobs needed — Limit number of jobs scraped"), so passing a
+ * flat 25 with N company URLs starved every company to ~25/N postings. We now
+ * request RESULTS_PER_COMPANY × companyCount, bounded by this ceiling so a
+ * large batch can't request an unbounded scrape.
+ */
+const MAX_TOTAL_RESULTS = 1000;
 
 /** Emit hiring_expansion if a company returns at least this many matching postings. */
-const JOB_SURGE_THRESHOLD = 10;
+const JOB_SURGE_THRESHOLD = 5;
 
 const SOURCE = 'linkedin_jobs';
 
@@ -465,8 +479,10 @@ async function fetchJobsFromLinkedIn(
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
+          // `count` is a GLOBAL cap across all `urls`, so scale it by the number
+          // of companies (bounded) — otherwise N companies share one tiny budget.
           urls,
-          count: RESULTS_PER_COMPANY,
+          count: Math.min(RESULTS_PER_COMPANY * urls.length, MAX_TOTAL_RESULTS),
           scrapeCompany: false, // skip extra per-job company requests — we already have company data
         }),
         signal: controller.signal,
@@ -880,7 +896,7 @@ export async function runHiringMonitor(input: HiringMonitorInput): Promise<Hirin
             // Every scraped posting (title + LinkedIn URL), so the /log surge
             // row can list the full set of open roles, not just the matched
             // ones. Capped to keep the metadata blob bounded.
-            all_roles: postings.slice(0, 50).map((p) => ({ title: p.title, url: p.job_url })),
+            all_roles: postings.slice(0, 100).map((p) => ({ title: p.title, url: p.job_url })),
             buyer_functions_activated: buyerFunctionsFromMix,
             categories: Object.fromEntries(categoryMatches.map((c) => [c.key, c.count])),
             week: currentWeekKey,

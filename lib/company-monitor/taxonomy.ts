@@ -6,7 +6,6 @@
  * the canonical options exported from `arcova-taxonomy`.
  */
 
-import Anthropic from '@anthropic-ai/sdk';
 import {
   COMPANY_TYPE_OPTIONS,
   DEVELOPMENT_STAGE_OPTIONS,
@@ -26,9 +25,8 @@ import {
   normalizePlatformCategory,
 } from '@/lib/platform-category';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
+import { completeWithWebSearch } from '@/lib/llm-client';
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const MODEL = 'claude-sonnet-4-6';
 const MAX_CONTEXT_CHARS = 12000;
 
 export type CompanyTaxonomyInput = {
@@ -370,35 +368,26 @@ Return ONLY valid JSON:
   "evidence_summary": "<one or two sentences — PLANE A vs PLANE B>"
 }`;
 
-  const message = await client.messages.create({
-    model: MODEL,
-    max_tokens: 2000,
-    messages: [{ role: 'user', content: prompt }],
-    tools: [
-      {
-        type: 'web_search_20250305',
-        name: 'web_search',
-        max_uses: 3,
-      } as Parameters<typeof client.messages.create>[0]['tools'] extends Array<infer T> ? T : never,
-    ],
+  const result = await completeWithWebSearch({
+    feature: 'company_monitor_taxonomy',
+    prompt,
+    maxTokens: 2000,
+    maxSearches: 3,
   });
   await recordLlmUsageEvent({
-    provider: 'anthropic',
+    provider: result.provider,
     feature: 'company_monitor_taxonomy',
     route: 'lib/company-monitor/taxonomy#resolveCompanyTaxonomy',
-    model: MODEL,
-    usage: message.usage,
+    model: result.model,
+    usage: result.usage,
     metadata: {
       company_name: input.company_name,
       domain: input.domain ?? null,
-      tool: 'web_search_20250305',
+      tool: 'web_search',
     },
   });
 
-  const text = message.content
-    .filter((block) => block.type === 'text')
-    .map((block) => (block as { type: 'text'; text: string }).text)
-    .join('');
+  const text = result.text;
 
   return normalizeCompanyTaxonomyResult(parseTaxonomyJson(text), checkedAt);
 }

@@ -9,10 +9,9 @@
  *   2. Apollo org enrich  — verified firmographics (headcount, funding, HQ)   ┐ parallel
  *   3. Apify LinkedIn     — social proof (follower count, employee range, etc.) ┘ after 1+2 give us the LinkedIn URL
  */
-import Anthropic from '@anthropic-ai/sdk';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
+import { completeLlm, completeWithWebSearch } from '@/lib/llm-client';
 
-const ANALYSIS_MODEL = 'claude-sonnet-4-6';
 const HARVESTAPI_COMPANY_ACTOR = 'harvestapi~linkedin-company';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -23,16 +22,6 @@ function str(v: unknown): string {
 
 function num(v: unknown): number | null {
   return typeof v === 'number' ? v : null;
-}
-
-function extractTextBlocks(message: { content?: unknown }): string {
-  const blocks = Array.isArray(message?.content) ? message.content : [];
-  return blocks
-    .filter((b): b is Record<string, unknown> => !!b && typeof b === 'object')
-    .filter((b) => b.type === 'text' && typeof b.text === 'string')
-    .map((b) => (b.text as string).trim())
-    .join('\n')
-    .trim();
 }
 
 function parseJson(text: string): Record<string, unknown> | null {
@@ -55,11 +44,6 @@ function parseJson(text: string): Record<string, unknown> | null {
 export async function analyseCompanyWithClaude(
   website: string,
 ): Promise<Record<string, unknown>> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error('Missing ANTHROPIC_API_KEY');
-
-  const client = new Anthropic({ apiKey });
-
   const prompt = `You are a B2B sales intelligence analyst. Research the company at ${website} using web search and return a structured JSON profile for a sales intelligence platform.
 
 Search their website, LinkedIn company page, Crunchbase, news articles, and any other relevant sources.
@@ -148,31 +132,25 @@ For buyer_disqualifiers:
 
 Return ONLY the JSON object. No markdown, no explanation.`;
 
-  const message = await client.messages.create({
-    model: ANALYSIS_MODEL,
-    max_tokens: 4096,
-    messages: [{ role: 'user', content: prompt }],
-    tools: [
-      {
-        type: 'web_search_20250305',
-        name: 'web_search',
-        max_uses: 8,
-      } as unknown as Parameters<typeof client.messages.create>[0] extends { tools?: Array<infer T> } ? T : never,
-    ],
+  const result = await completeWithWebSearch({
+    feature: 'my_company_enrichment_analysis',
+    prompt,
+    maxTokens: 4096,
+    maxSearches: 8,
   });
   await recordLlmUsageEvent({
-    provider: 'anthropic',
+    provider: result.provider,
     feature: 'my_company_enrichment_analysis',
     route: 'lib/my-company-enrichment#analyseCompanyWithClaude',
-    model: ANALYSIS_MODEL,
-    usage: message.usage,
+    model: result.model,
+    usage: result.usage,
     metadata: {
       website,
-      tool: 'web_search_20250305',
+      tool: 'web_search',
     },
   });
 
-  const text = extractTextBlocks(message as { content?: unknown });
+  const text = result.text;
   const parsed = parseJson(text);
 
   if (!parsed || Object.keys(parsed).length === 0) {
@@ -335,11 +313,6 @@ export async function condenseBulletArrays({
   services: string[];
   technologies: string[];
 }> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error('Missing ANTHROPIC_API_KEY');
-
-  const client = new Anthropic({ apiKey });
-
   const prompt = `You are condensing data for a B2B sales intelligence UI. Different fields have different rules:
 
 **good_fit / bad_fit / value_propositions** — rewrite each as a punchy phrase of 5–8 words. No full sentences, no leading dashes, drop filler like "companies that" or "organizations with".
@@ -376,29 +349,24 @@ ${JSON.stringify(
     2,
   )}`;
 
-  const message = await client.messages.create({
-    model: ANALYSIS_MODEL,
-    max_tokens: 1536,
-    messages: [{ role: 'user', content: prompt }],
+  const result = await completeLlm({
+    feature: 'my_company_enrichment_bullet_condense',
+    prompt,
+    maxTokens: 1536,
   });
   await recordLlmUsageEvent({
-    provider: 'anthropic',
+    provider: result.provider,
     feature: 'my_company_enrichment_bullet_condense',
     route: 'lib/my-company-enrichment#condenseBulletArrays',
-    model: ANALYSIS_MODEL,
-    usage: message.usage,
+    model: result.model,
+    usage: result.usage,
     metadata: {
       company_name: company_name ?? null,
     },
   });
 
-  const text = message.content
-    .filter((b) => b.type === 'text')
-    .map((b) => (b as { type: 'text'; text: string }).text)
-    .join('');
-
-  const parsed = parseJson(text);
-  if (!parsed) throw new Error(`condenseBulletArrays: no JSON in response. Raw: ${text.slice(0, 300)}`);
+  const parsed = parseJson(result.text);
+  if (!parsed) throw new Error(`condenseBulletArrays: no JSON in response. Raw: ${result.text.slice(0, 300)}`);
 
   const toArr = (v: unknown): string[] =>
     Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];

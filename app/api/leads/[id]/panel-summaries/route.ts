@@ -40,7 +40,6 @@ export async function GET(
         fit_score,
         contact_fit_score,
         overall_fit_score,
-        hubspot_lead_state,
         contact_panel_summary,
         contact_fit_summary
       `)

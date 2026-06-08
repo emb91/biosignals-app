@@ -81,6 +81,7 @@ type ImportBatchRow = {
   company_name: string;
   company_domain: string;
   job_title: string;
+  failure_reason?: string;
 };
 
 type ImportBatchDetails = {
@@ -328,6 +329,18 @@ export default function ImportPage() {
       router.push('/login');
     }
   }, [loading, router, user]);
+
+  // On batch completion, default the expanded section to whichever bucket the
+  // user most needs to see: enriched (the success story) if it's the bigger
+  // bucket, otherwise the failure list (so they can investigate reasons).
+  useEffect(() => {
+    if (progress?.batchStatus !== 'complete') return;
+    if (expandedBatchSection !== null) return;
+    const enriched = progress.enriched ?? 0;
+    const notEnriched = progress.notEnriched ?? 0;
+    if (enriched === 0 && notEnriched === 0) return;
+    setExpandedBatchSection(enriched > notEnriched ? 'enriched' : 'failed');
+  }, [progress?.batchStatus, progress?.enriched, progress?.notEnriched, expandedBatchSection]);
 
   // On mount: restore any in-progress/completed batch and load history
   useEffect(() => {
@@ -965,7 +978,14 @@ export default function ImportPage() {
                       { label: 'enriched', value: progress?.enriched ?? 0, section: 'enriched' as const, className: 'bg-arcova-teal/10 text-arcova-teal' },
                       { label: 'uploaded', value: progress?.total ?? 0, section: 'uploaded' as const, className: 'bg-gray-100 text-gray-600' },
                       { label: 'duplicates', value: progress?.duplicates ?? 0, section: 'duplicate' as const, className: 'bg-gray-100 text-gray-500' },
-                      { label: 'not enriched', value: progress?.notEnriched ?? 0, section: 'failed' as const, className: 'bg-gray-100 text-gray-500' },
+                      {
+                        label: 'not enriched',
+                        value: progress?.notEnriched ?? 0,
+                        section: 'failed' as const,
+                        className: (progress?.notEnriched ?? 0) > 0
+                          ? 'bg-red-50 text-red-600'
+                          : 'bg-gray-100 text-gray-500',
+                      },
                     ].map(({ label, value, section, className }) => (
                       <button
                         key={label}
@@ -993,15 +1013,25 @@ export default function ImportPage() {
                         <p className="px-4 py-6 text-sm text-gray-400 text-center">No contacts to show.</p>
                       ) : (
                         <div className="divide-y divide-gray-100">
-                          {visibleBatchRows.map((row) => (
-                            <div key={row.id} className="flex items-start justify-between gap-4 px-4 py-3">
-                              <div className="min-w-0">
-                                <p className="text-sm font-medium text-gray-900 truncate">{row.full_name}</p>
-                                <p className="text-xs text-gray-500 mt-0.5">{row.company_name || row.company_domain || 'Unknown company'}{row.job_title ? ` · ${row.job_title}` : ''}</p>
+                          {visibleBatchRows.map((row) => {
+                            const showReason =
+                              !!row.failure_reason &&
+                              (expandedBatchSection === 'failed' || expandedBatchSection === 'duplicate');
+                            const reasonClass =
+                              expandedBatchSection === 'failed' ? 'text-red-500' : 'text-gray-400';
+                            return (
+                              <div key={row.id} className="flex items-start justify-between gap-4 px-4 py-3">
+                                <div className="min-w-0">
+                                  <p className="text-sm font-medium text-gray-900 truncate">{row.full_name}</p>
+                                  <p className="text-xs text-gray-500 mt-0.5">{row.company_name || row.company_domain || 'Unknown company'}{row.job_title ? ` · ${row.job_title}` : ''}</p>
+                                  {showReason && (
+                                    <p className={`text-xs mt-0.5 ${reasonClass}`}>{row.failure_reason}</p>
+                                  )}
+                                </div>
+                                <p className="text-xs text-gray-400 shrink-0">{row.email || 'No email'}</p>
                               </div>
-                              <p className="text-xs text-gray-400 shrink-0">{row.email || 'No email'}</p>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       )}
                     </div>

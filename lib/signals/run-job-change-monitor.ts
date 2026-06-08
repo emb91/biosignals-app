@@ -20,6 +20,10 @@
  */
 
 import { createAdminClient } from '@/lib/supabase-admin';
+import {
+  markCompanyEnrichmentRunning,
+  runCompanyEnrichmentById,
+} from '@/lib/company-enrichment';
 import { emitExternalContactSignalsFromEnrichment } from '@/lib/signals/readiness-external-contacts';
 import {
   ingestSignalSourceEvent,
@@ -253,10 +257,21 @@ async function resolveOrCreateCompanyId(
     return existingCompany.id;
   }
 
-  // 4. Create a fresh stub. Minimal fields — enrichment fills the rest later.
+  // 4. Create a fresh stub. Minimal fields — the dedicated company-enrichment
+  // path below fills firmographics via Apollo + Apify so the row doesn't sit
+  // as a perpetual "Enrichment in progress" stub when the contact's own
+  // LinkedIn resolution is blocked.
   const { data: created, error: insertErr } = await admin
     .from('companies')
-    .insert({ company_name: trimmed, source: 'job_change_monitor' })
+    .insert({
+      company_name: trimmed,
+      source: 'job_change_monitor',
+      // Flip status to `running` at insert time so the side-panel banner
+      // immediately reflects "in progress" rather than the misleading
+      // null-last_enriched_at case.
+      enrichment_refresh_status: 'running',
+      enrichment_refresh_started_at: new Date().toISOString(),
+    })
     .select('id')
     .single();
   if (insertErr || !created || typeof created.id !== 'string') {
@@ -278,6 +293,30 @@ async function resolveOrCreateCompanyId(
       },
       { onConflict: 'user_id,company_id' },
     );
+
+  // Kick off enrichment for the freshly created stub. Inline await keeps
+  // the result deterministic (cron volume is low — case 4 only fires for
+  // companies that don't yet exist globally). Failures are recorded on
+  // the row by runCompanyEnrichmentById; we don't rethrow so the rest of
+  // the monitor (signal emission) still runs.
+  try {
+    // markCompanyEnrichmentRunning is idempotent; we already set the status
+    // on the insert above, but calling it again refreshes started_at if the
+    // INSERT path didn't accept the new columns for any reason.
+    await markCompanyEnrichmentRunning(
+      admin as unknown as Parameters<typeof markCompanyEnrichmentRunning>[0],
+      created.id,
+    );
+    await runCompanyEnrichmentById(
+      admin as unknown as Parameters<typeof runCompanyEnrichmentById>[0],
+      created.id,
+    );
+  } catch (enrichErr) {
+    console.warn(
+      `[job-change-monitor] enrichment failed for new stub "${trimmed}" (${created.id}):`,
+      enrichErr instanceof Error ? enrichErr.message : enrichErr,
+    );
+  }
 
   return created.id;
 }

@@ -32,12 +32,17 @@ export type LinkedinResolutionInput = {
 
 export type LinkedinResolutionResult = {
   linkedin_url: string | null;
-  source: 'csv' | 'apollo' | 'anthropic_search' | null;
+  source: 'csv' | 'apollo' | 'anthropic_search' | 'openrouter_search' | null;
   confidence: number;
   search_summary?: string | null;
 };
 
 const SEARCH_MODEL = 'claude-sonnet-4-6';
+const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
+// Fallback when Anthropic web search is unavailable (e.g. credits exhausted).
+// perplexity/sonar is a cheap, web-search-native model — the prompt still
+// demands a linkedin.com/in URL + >=0.8 confidence, so off-target results filter out.
+const OPENROUTER_SEARCH_MODEL = 'perplexity/sonar';
 
 function normalizeString(value?: string | null): string {
   return (value || '').trim();
@@ -125,9 +130,12 @@ function parseResolutionJson(text: string): { linkedin_url?: string | null; conf
   }
 }
 
-async function searchLinkedinUrlWithAnthropic(input: LinkedinResolutionInput): Promise<LinkedinResolutionResult> {
-  const client = getAnthropicClient();
-
+/** Shared prompt for both the Anthropic and perplexity searchers. */
+function buildResolutionPrompt(input: LinkedinResolutionInput): {
+  prompt: string;
+  fullName: string;
+  companyDomain: string | null;
+} {
   const fullName =
     normalizeString(input.full_name) ||
     [normalizeString(input.first_name), normalizeString(input.last_name)].filter(Boolean).join(' ');
@@ -150,7 +158,7 @@ Return only valid JSON:
 }
 
 Rules:
-- Only return a personal LinkedIn profile URL, not a company page.
+- Only return a personal LinkedIn profile URL (linkedin.com/in/...), not a company page.
 - Only return a URL if confidence is at least 0.8.
 - If you are not confident, return null for linkedin_url.
 - Prefer exact matches that align across name, company hints, email-domain hints, location, and Apollo employment history.
@@ -168,6 +176,33 @@ Person context:
 - Apollo person name: ${normalizeString(apolloPerson?.name) || 'Unknown'}
 - Apollo employment history: ${summarizeApolloEmployment(apolloPerson)}
 `;
+
+  return { prompt, fullName, companyDomain };
+}
+
+/** Turn an LLM's text answer into a result, applying the linkedin.com + >=0.8 gate. */
+function interpretResolution(
+  text: string,
+  source: 'anthropic_search' | 'openrouter_search',
+): LinkedinResolutionResult {
+  const parsed = parseResolutionJson(text);
+  const normalizedUrl = normalizeLinkedinProfileUrl(parsed?.linkedin_url || null);
+  const confidence = typeof parsed?.confidence === 'number' ? parsed.confidence : 0;
+
+  if (!normalizedUrl || confidence < 0.8) {
+    return {
+      linkedin_url: null,
+      source: null,
+      confidence: confidence || 0,
+      search_summary: parsed?.summary || text || null,
+    };
+  }
+  return { linkedin_url: normalizedUrl, source, confidence, search_summary: parsed?.summary || null };
+}
+
+async function searchLinkedinUrlWithAnthropic(input: LinkedinResolutionInput): Promise<LinkedinResolutionResult> {
+  const client = getAnthropicClient();
+  const { prompt, fullName, companyDomain } = buildResolutionPrompt(input);
 
   const message = await client.messages.create({
     model: SEARCH_MODEL,
@@ -196,26 +231,62 @@ Person context:
     },
   });
 
-  const text = extractTextBlocks(message);
-  const parsed = parseResolutionJson(text);
-  const normalizedUrl = normalizeLinkedinProfileUrl(parsed?.linkedin_url || null);
-  const confidence = typeof parsed?.confidence === 'number' ? parsed.confidence : 0;
+  return interpretResolution(extractTextBlocks(message), 'anthropic_search');
+}
 
-  if (!normalizedUrl || confidence < 0.8) {
-    return {
-      linkedin_url: null,
-      source: null,
-      confidence: confidence || 0,
-      search_summary: parsed?.summary || text || null,
-    };
+/**
+ * Fallback web-search resolution via OpenRouter (perplexity/sonar). Used when
+ * the direct-Anthropic web search is unavailable — most importantly when the
+ * Anthropic balance is exhausted — so enrichment doesn't hard-stop on one
+ * provider being down. perplexity/sonar does its own web search natively.
+ */
+async function searchLinkedinUrlWithPerplexity(input: LinkedinResolutionInput): Promise<LinkedinResolutionResult> {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) throw new Error('Missing OPENROUTER_API_KEY');
+  const { prompt, fullName, companyDomain } = buildResolutionPrompt(input);
+
+  const res = await fetch(OPENROUTER_ENDPOINT, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: OPENROUTER_SEARCH_MODEL,
+      max_tokens: 600,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`OpenRouter LinkedIn search failed (${res.status}): ${body.slice(0, 200)}`);
   }
 
-  return {
-    linkedin_url: normalizedUrl,
-    source: 'anthropic_search',
-    confidence,
-    search_summary: parsed?.summary || null,
+  const json = (await res.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
   };
+  const text = json?.choices?.[0]?.message?.content || '';
+
+  await recordLlmUsageEvent({
+    provider: 'openrouter',
+    feature: 'linkedin_url_resolution',
+    route: 'lib/linkedin-url-resolver#searchLinkedinUrlWithPerplexity',
+    model: OPENROUTER_SEARCH_MODEL,
+    usage: {
+      input_tokens: json?.usage?.prompt_tokens,
+      output_tokens: json?.usage?.completion_tokens,
+    },
+    metadata: {
+      full_name: fullName || null,
+      company_name: normalizeString(input.company_name) || null,
+      company_domain: companyDomain,
+      tool: 'perplexity_web_search',
+    },
+  });
+
+  return interpretResolution(text, 'openrouter_search');
 }
 
 export async function resolveLinkedinUrl(input: LinkedinResolutionInput): Promise<LinkedinResolutionResult> {
@@ -229,5 +300,26 @@ export async function resolveLinkedinUrl(input: LinkedinResolutionInput): Promis
     };
   }
 
-  return searchLinkedinUrlWithAnthropic(input);
+  // Web-search resolution: Anthropic (web_search, linkedin-scoped) is primary;
+  // on failure (e.g. Anthropic credits exhausted / outage) fall back to
+  // perplexity/sonar via OpenRouter so resolution survives an Anthropic outage.
+  // If BOTH fail, return a null result (don't throw) so the caller stores the
+  // contact with a failure_reason instead of crashing the whole enrichment.
+  try {
+    return await searchLinkedinUrlWithAnthropic(input);
+  } catch (anthropicError) {
+    console.warn(
+      '[linkedin-resolver] Anthropic search failed, falling back to perplexity/sonar:',
+      anthropicError instanceof Error ? anthropicError.message : anthropicError,
+    );
+    try {
+      return await searchLinkedinUrlWithPerplexity(input);
+    } catch (fallbackError) {
+      console.error(
+        '[linkedin-resolver] perplexity fallback also failed:',
+        fallbackError instanceof Error ? fallbackError.message : fallbackError,
+      );
+      return { linkedin_url: null, source: null, confidence: 0, search_summary: null };
+    }
+  }
 }

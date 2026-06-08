@@ -91,6 +91,13 @@ type AccountRow = {
   services: string[] | null;
   technologies: string[] | null;
   last_enriched_at: string | null;
+  // Dedicated company-enrichment job state — drives the side panel banner.
+  // null/idle ≈ never run; running ≈ "Enrichment in progress" (real, not a lie);
+  // failed ≈ "Enrichment failed, retry" (with last_error); succeeded ≈ no banner.
+  enrichment_refresh_status?: 'idle' | 'running' | 'succeeded' | 'failed' | 'cancelled' | null;
+  enrichment_refresh_last_error?: string | null;
+  enrichment_refresh_started_at?: string | null;
+  enrichment_refresh_finished_at?: string | null;
   contact_count: number;
   best_contact_fit: number | null;
   worst_contact_fit: number | null;
@@ -110,6 +117,85 @@ type AccountRow = {
   latest_sequence_status?: SequenceDispatchStatus;
   user_overrides?: Record<string, unknown> | null;
 };
+
+/**
+ * Time-based enrichment progress shared by the side-panel banner and the
+ * table-row animation. Company enrichment exposes a single `running` status
+ * (no granular sub-stages like contacts' linkedin→profile), so we ease a
+ * percent from a floor toward a ceiling (never 100 until the row actually
+ * flips to `succeeded`) and rotate a stage label. The accounts page's 5s poll
+ * flips the row to succeeded/failed, which unmounts the consumers.
+ */
+function useEnrichmentProgress(startedAt: string | null): { percent: number; label: string } {
+  const [nowMs, setNowMs] = useState(0);
+  useEffect(() => {
+    setNowMs(Date.now());
+    const id = setInterval(() => setNowMs(Date.now()), 900);
+    return () => clearInterval(id);
+  }, []);
+
+  const started = startedAt ? new Date(startedAt).getTime() : null;
+  const elapsed = started && nowMs ? Math.max(0, nowMs - started) : 0;
+  // Ease toward 94% — hold short of 100 so the bar never claims "done" before
+  // the server confirms it. Same exponential shape as the contacts gauge.
+  const FLOOR = 8;
+  const CEIL = 94;
+  const PACE_MS = 9000;
+  const percent = Math.round(FLOOR + (CEIL - FLOOR) * (1 - Math.exp(-elapsed / PACE_MS)));
+  const label =
+    elapsed < 3500
+      ? 'Finding the company'
+      : elapsed < 8000
+        ? 'Pulling firmographics'
+        : 'Finalizing details';
+
+  return { percent, label };
+}
+
+/** Side-panel banner variant (stacked: heading + label + full-width bar). */
+function CompanyEnrichmentProgress({ startedAt }: { startedAt: string | null }) {
+  const { percent, label } = useEnrichmentProgress(startedAt);
+  return (
+    <div className="min-w-0 flex-1">
+      <p className="text-[12.5px] font-semibold text-arcova-teal">Enriching this company…</p>
+      <p className="mt-0.5 text-[12px] leading-relaxed text-[#1f475a]">{label}…</p>
+      <div className="mt-2.5 flex items-center gap-3">
+        <div className="relative h-2.5 flex-1 overflow-hidden rounded-full bg-arcova-teal/12">
+          <div
+            className="arcova-enrichment-progress absolute inset-y-0 left-0 rounded-full transition-[width] duration-700 ease-out"
+            style={{ width: `${percent}%` }}
+          >
+            <div className="arcova-enrichment-glow absolute inset-y-0 right-0 w-14 rounded-full" />
+          </div>
+        </div>
+        <span className="text-[11px] font-medium tabular-nums text-arcova-teal">{percent}%</span>
+      </div>
+    </div>
+  );
+}
+
+/** Compact table-row variant (single line: label + inline bar + percent),
+ *  spanning the non-identity columns of an enriching account row. Mirrors the
+ *  /contacts table row treatment. */
+function AccountRowEnrichingBar({ startedAt }: { startedAt: string | null }) {
+  const { percent, label } = useEnrichmentProgress(startedAt);
+  return (
+    <div className="flex items-center gap-3 min-w-0">
+      <span className="hidden lg:block shrink-0 text-xs text-arcova-teal/80 truncate max-w-[10rem]">
+        {label}…
+      </span>
+      <div className="relative h-2.5 flex-1 min-w-[3rem] overflow-hidden rounded-full bg-arcova-teal/12">
+        <div
+          className="arcova-enrichment-progress absolute inset-y-0 left-0 rounded-full transition-[width] duration-700 ease-out"
+          style={{ width: `${percent}%` }}
+        >
+          <div className="arcova-enrichment-glow absolute inset-y-0 right-0 w-14 rounded-full" />
+        </div>
+      </div>
+      <span className="shrink-0 text-[11px] font-medium tabular-nums text-arcova-teal">{percent}%</span>
+    </div>
+  );
+}
 
 function score01ForActionCopy(value: number | null | undefined): number | null {
   if (value == null || !Number.isFinite(value)) return null;
@@ -348,7 +434,7 @@ function TaxonomyPills({ items }: { items: string[] | null | undefined }) {
   );
 }
 
-const DEFAULT_COLUMNS: AccountQueryColumn[] = ['company', 'company_type', 'priority', 'contacts', 'crm_status', 'action'];
+const DEFAULT_COLUMNS: AccountQueryColumn[] = ['company', 'company_type', 'contacts', 'priority', 'crm_status', 'action'];
 // Below 1280px the table is space-constrained (sidebar collapses to hamburger at
 // <1280, agent panel is still ~380px until <768). Cramming all 5 columns turns the
 // header into overlapping word soup — so below 1280 we keep just the essentials:
@@ -611,32 +697,6 @@ export default function AccountsPage() {
     });
   }, [selectedAccountId]);
 
-  // Fetch full detail for the selected account (firmographics, products,
-  // funding detail, etc.) — these fields aren't in the lean list response.
-  // Cached via the module-level fetch cache so re-selecting is instant.
-  useEffect(() => {
-    if (!selectedAccountId) return;
-    if (selectedAccountDetailById[selectedAccountId]) return; // already loaded
-    let cancelled = false;
-    (async () => {
-      try {
-        const { data: result } = await cachedJson<{ data?: Partial<AccountRow> }>(
-          `/api/accounts/${encodeURIComponent(selectedAccountId)}`,
-        );
-        if (cancelled || !result.data) return;
-        setSelectedAccountDetailById((prev) => ({
-          ...prev,
-          [selectedAccountId]: result.data!,
-        }));
-      } catch (e) {
-        console.error('Error fetching account detail:', e);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedAccountId, selectedAccountDetailById]);
-
   useEffect(() => {
     if (!selectedAccountId) return;
     const selected = accounts.find((account) => account.id === selectedAccountId);
@@ -649,22 +709,73 @@ export default function AccountsPage() {
     });
   }, [selectedAccountId, accounts]);
 
-  // Company enrichment refresh
+  // Company enrichment refresh.
+  // Hits the dedicated company-enrichment endpoint (not /api/monitor-company,
+  // which only re-runs funding/taxonomy and doesn't actually fetch
+  // firmographics or stamp last_enriched_at). The endpoint returns 200
+  // immediately and runs the heavy work async via Next's after() —
+  // the row flips to enrichment_refresh_status='running' synchronously,
+  // so the next refetch already shows the new state.
   const [refreshingCompanyId, setRefreshingCompanyId] = useState<string | null>(null);
   const rerunCompanyEnrichment = async (companyId: string) => {
     setRefreshingCompanyId(companyId);
+
+    // Optimistically flip the row to "running" in BOTH the lean list and the
+    // per-id detail cache (the side panel merges detail OVER lean, so patching
+    // only one lets the stale copy win — same bug the contacts page documents
+    // in stopLeadEnrichment). This gives the instant "in progress" feedback
+    // the contacts refresh has; the 5s poll below then reflects completion.
+    const nowIso = new Date().toISOString();
+    const runningPatch: Partial<AccountRow> = {
+      enrichment_refresh_status: 'running',
+      enrichment_refresh_started_at: nowIso,
+      enrichment_refresh_finished_at: null,
+      enrichment_refresh_last_error: null,
+    };
+    setAccounts((prev) => prev.map((a) => (a.id === companyId ? { ...a, ...runningPatch } : a)));
+    setSelectedAccountDetailById((prev) =>
+      companyId in prev ? { ...prev, [companyId]: { ...prev[companyId], ...runningPatch } } : prev,
+    );
+
     try {
-      await fetch('/api/monitor-company', {
+      await fetch(`/api/companies/${companyId}/enrich`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company_id: companyId }),
       });
+      // The endpoint returns immediately (work runs in after()). Refresh once
+      // now so the server-confirmed "running" state lands; the 5s poll picks
+      // up the eventual succeeded/failed flip.
       invalidateCache('/api/accounts');
-      await fetchAccounts();
+      await fetchAccounts(true);
+      await loadAccountDetail(companyId, true);
     } catch (err) {
       console.error('Error refreshing company enrichment:', err);
     } finally {
       setRefreshingCompanyId(null);
+    }
+  };
+
+  // Stop a running company enrichment (mirrors the contacts stop control).
+  // Optimistically flips the row out of "running" so the UI stops animating
+  // immediately; the DELETE endpoint sets status='cancelled' server-side and
+  // the background job declines to overwrite it.
+  const stopCompanyEnrichment = async (companyId: string) => {
+    const cancelledPatch: Partial<AccountRow> = {
+      enrichment_refresh_status: 'cancelled',
+      enrichment_refresh_finished_at: new Date().toISOString(),
+    };
+    setAccounts((prev) => prev.map((a) => (a.id === companyId ? { ...a, ...cancelledPatch } : a)));
+    setSelectedAccountDetailById((prev) =>
+      companyId in prev ? { ...prev, [companyId]: { ...prev[companyId], ...cancelledPatch } } : prev,
+    );
+    if (refreshingCompanyId === companyId) setRefreshingCompanyId(null);
+    try {
+      await fetch(`/api/companies/${companyId}/enrich`, { method: 'DELETE' });
+      invalidateCache('/api/accounts');
+      await fetchAccounts(true);
+      await loadAccountDetail(companyId, true);
+    } catch (err) {
+      console.error('Error stopping company enrichment:', err);
     }
   };
 
@@ -686,10 +797,12 @@ export default function AccountsPage() {
     if (id) accountsDeepLinkCompanyIdRef.current = id;
   }, [searchParams]);
 
-  const fetchAccounts = useCallback(async () => {
+  const fetchAccounts = useCallback(async (silent = false) => {
     if (!user) return;
     const focusId = accountsDeepLinkCompanyIdRef.current;
-    setLoadingAccounts(true);
+    // `silent` skips the full-table loading spinner — used by the 5s enrichment
+    // poll so the list doesn't flash a skeleton every tick.
+    if (!silent) setLoadingAccounts(true);
     try {
       const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
       if (focusId) params.set('companyId', focusId);
@@ -718,11 +831,67 @@ export default function AccountsPage() {
       console.error('Error fetching accounts:', err);
     } finally {
       if (focusId) accountsDeepLinkCompanyIdRef.current = null;
-      setLoadingAccounts(false);
+      if (!silent) setLoadingAccounts(false);
     }
   }, [user, page]);
 
   useEffect(() => { fetchAccounts(); }, [fetchAccounts]);
+
+  // Load (or force-reload) a single account's detail record into the per-id
+  // cache. The side panel merges this over the lean list row, so after a
+  // mutation we must refresh it here or the panel keeps showing stale state
+  // (e.g. enrichment_refresh_status). `force` bypasses the module fetch cache.
+  const loadAccountDetail = useCallback(async (companyId: string, force = false) => {
+    if (!companyId) return;
+    try {
+      if (force) invalidateCache(`/api/accounts/${encodeURIComponent(companyId)}`);
+      const { data: result } = await cachedJson<{ data?: Partial<AccountRow> }>(
+        `/api/accounts/${encodeURIComponent(companyId)}`,
+      );
+      if (!result.data) return;
+      setSelectedAccountDetailById((prev) => ({ ...prev, [companyId]: result.data! }));
+    } catch (e) {
+      console.error('Error fetching account detail:', e);
+    }
+  }, []);
+
+  // Fetch full detail for the selected account (firmographics, products,
+  // funding detail, etc.) — these fields aren't in the lean list response.
+  // Cached via the module-level fetch cache so re-selecting is instant.
+  useEffect(() => {
+    if (!selectedAccountId) return;
+    if (selectedAccountDetailById[selectedAccountId]) return; // already loaded
+    loadAccountDetail(selectedAccountId);
+  }, [selectedAccountId, selectedAccountDetailById, loadAccountDetail]);
+
+  // Auto-poll every 5s while any company enrichment is running (mirrors the
+  // contacts page). Company enrichment runs async via after(), so without a
+  // poll the side panel would never reflect the succeeded/failed flip until
+  // the user manually navigated away and back. We poll the lean list (cheap)
+  // and force-refresh the selected account's detail so its banner updates.
+  //
+  // CRITICAL: the lean list (`/api/accounts` → list_user_accounts RPC) does
+  // NOT carry enrichment_refresh_status — only the detail endpoint
+  // (accounts_view) does. So we MUST also check the selected account's detail
+  // status, or the poll would die the moment fetchAccounts() overwrites the
+  // optimistic patch on the lean list (the banner reads detail and would then
+  // be stuck "running" forever). The detail cache is the reliable source here.
+  const selectedDetailStatus = selectedAccountId
+    ? selectedAccountDetailById[selectedAccountId]?.enrichment_refresh_status ?? null
+    : null;
+  const anyCompanyEnrichmentRunning =
+    refreshingCompanyId != null ||
+    selectedDetailStatus === 'running' ||
+    accounts.some((a) => a.enrichment_refresh_status === 'running');
+  useEffect(() => {
+    if (!anyCompanyEnrichmentRunning) return;
+    const interval = setInterval(() => {
+      invalidateCache('/api/accounts');
+      fetchAccounts(true);
+      if (selectedAccountId) loadAccountDetail(selectedAccountId, true);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [anyCompanyEnrichmentRunning, selectedAccountId, fetchAccounts, loadAccountDetail]);
 
   const accountAgentTask = searchParams.get('agentTask') ?? '';
   useEffect(() => {
@@ -1037,6 +1206,9 @@ export default function AccountsPage() {
     const isSelected = selectedAccountId === account.id;
     const href = externalUrl(account as AccountRow);
     const companyLabel = account.company_name || account.domain || '—';
+    // Cap long values at 35 chars + ellipsis; full text stays available on
+    // hover via the title attribute.
+    const truncate35 = (s: string) => (s.length > 35 ? s.slice(0, 35) + '…' : s);
     const isArcovaAccount = (account.data_provenance_type || '').toLowerCase().includes('arcova');
 
     switch (col) {
@@ -1049,14 +1221,14 @@ export default function AccountsPage() {
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(e) => e.stopPropagation()}
-                className="text-sm font-medium text-arcova-teal hover:underline line-clamp-2 break-words leading-snug min-w-0"
+                className="truncate text-[12px] font-medium text-arcova-teal hover:underline min-w-0"
                 title={companyLabel}
               >
-                {companyLabel}
+                {truncate35(companyLabel)}
               </a>
             ) : (
-              <span className="text-sm font-medium text-gray-900 line-clamp-2 break-words leading-snug min-w-0" title={companyLabel}>
-                {companyLabel}
+              <span className="truncate text-[12px] font-medium text-gray-900 min-w-0" title={companyLabel}>
+                {truncate35(companyLabel)}
               </span>
             )}
             {href && (
@@ -1076,12 +1248,12 @@ export default function AccountsPage() {
               openDetailsWithCriteria(account.id);
             }}
           >
-            <span className="block text-xs text-gray-700 line-clamp-2 break-words leading-snug" title={account.company_type}>
-              {account.company_type}
+            <span className="block truncate text-[12px] text-gray-700" title={account.company_type}>
+              {truncate35(account.company_type)}
             </span>
           </button>
         ) : (
-          <span className="text-xs text-gray-700">—</span>
+          <span className="text-[12px] text-gray-700">—</span>
         );
       case 'fit':
         return (
@@ -1185,7 +1357,7 @@ export default function AccountsPage() {
               }}
               disabled={reachOutLoadingId === account.id}
               className={cn(
-                'inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium cursor-pointer select-none',
+                'inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium cursor-pointer select-none',
                 'transition-colors duration-150 ease-out hover:shadow-sm active:scale-[0.97]',
                 reachOutLoadingId === account.id && 'opacity-60',
                 actionPillEmphasized
@@ -1199,9 +1371,9 @@ export default function AccountsPage() {
         );
       }
       case 'funding_stage':
-        return <span className="text-xs text-gray-600 line-clamp-2">{account.funding_stage || account.funding_status_label || '—'}</span>;
+        return <span className="text-[12px] text-gray-600 line-clamp-2">{account.funding_stage || account.funding_status_label || '—'}</span>;
       case 'icp_match':
-        return <span className="text-xs text-gray-600 line-clamp-2">{account.matched_icp_label || '—'}</span>;
+        return <span className="text-[12px] text-gray-600 line-clamp-2">{account.matched_icp_label || '—'}</span>;
       case 'development_stages':
         return (
           <InlinePills
@@ -1215,9 +1387,9 @@ export default function AccountsPage() {
           />
         );
       case 'employee_range':
-        return <span className="text-xs text-gray-600 truncate">{account.employee_range || (account.employee_count != null ? account.employee_count.toLocaleString() : '—')}</span>;
+        return <span className="text-[12px] text-gray-600 truncate">{account.employee_range || (account.employee_count != null ? account.employee_count.toLocaleString() : '—')}</span>;
       case 'location':
-        return <span className="text-xs text-gray-600 line-clamp-2">{accountLocation(account) || '—'}</span>;
+        return <span className="text-[12px] text-gray-600 line-clamp-2">{accountLocation(account) || '—'}</span>;
       case 'source':
         return (
           <span
@@ -1382,7 +1554,7 @@ export default function AccountsPage() {
                           onClick={() => handleSortCol(col)}
                           className={cn(
                             'flex min-w-0 items-center gap-1 hover:text-gray-800 transition-colors text-left',
-                            col === 'fit' || col === 'priority' || col === 'readiness' || col === 'action' ? 'justify-center text-center' : '',
+                            col === 'fit' || col === 'priority' || col === 'readiness' || col === 'action' || col === 'contacts' || col === 'crm_status' ? 'justify-center text-center' : '',
                           )}
                         >
                           {ACCOUNT_QUERY_COL_DEFS[col].label}
@@ -1407,6 +1579,13 @@ export default function AccountsPage() {
                       {sortedAccounts.map((account, index) => {
                         const isSelected = selectedAccountId === account.id;
                         const rowNumber = (page - 1) * PAGE_SIZE + index + 1;
+                        // While enrichment runs, replace the data columns with an
+                        // animated progress bar (mirrors the /contacts table row).
+                        // The first column ('company' at every breakpoint) keeps the
+                        // identity so you can see WHICH company is enriching; the bar
+                        // spans the remaining columns. The 5s poll flips the row to
+                        // succeeded/failed, returning it to the normal cells.
+                        const enriching = account.enrichment_refresh_status === 'running';
 
                         return (
                           <div
@@ -1428,18 +1607,31 @@ export default function AccountsPage() {
                             <span aria-hidden className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-medium tabular-nums text-gray-400 select-none">
                               {rowNumber}
                             </span>
-                            {tableColumns.map((col) => (
-                              <div
-                                key={col}
-                                className={cn(
-                                  'min-w-0',
-                                  col === 'fit' || col === 'priority' || col === 'action' ? 'flex justify-center' : '',
-                                  col === 'therapeutic_areas' ? 'pl-2' : '',
-                                )}
-                              >
-                                {renderAccountQueryCell(account, col)}
-                              </div>
-                            ))}
+                            {enriching ? (
+                              <>
+                                <div className="min-w-0">
+                                  {renderAccountQueryCell(account, tableColumns[0])}
+                                </div>
+                                <div className="min-w-0" style={{ gridColumn: '2 / -1' }}>
+                                  <AccountRowEnrichingBar
+                                    startedAt={account.enrichment_refresh_started_at ?? null}
+                                  />
+                                </div>
+                              </>
+                            ) : (
+                              tableColumns.map((col) => (
+                                <div
+                                  key={col}
+                                  className={cn(
+                                    'min-w-0',
+                                    col === 'fit' || col === 'priority' || col === 'action' || col === 'contacts' || col === 'crm_status' ? 'flex justify-center' : '',
+                                    col === 'therapeutic_areas' ? 'pl-2' : '',
+                                  )}
+                                >
+                                  {renderAccountQueryCell(account, col)}
+                                </div>
+                              ))
+                            )}
                           </div>
                         );
                       })}
@@ -1754,27 +1946,68 @@ export default function AccountsPage() {
                         const hasFirmographics = !!(
                           selectedAccount.employee_count != null ||
                           selectedAccount.employee_range ||
-                          selectedAccount.company_size_bucket ||
                           selectedAccount.founded_year != null ||
                           selectedAccount.headquarters_city ||
                           selectedAccount.headquarters_state ||
                           selectedAccount.headquarters_country
                         );
                         const hasFunding = !!(selectedAccount.funding_stage || selectedAccount.funding_status_label || selectedAccount.total_funding_usd != null || selectedAccount.latest_funding_date);
-                        const isPendingEnrichment = !selectedAccount.last_enriched_at;
+                        // Banner branches on the dedicated company-enrichment job state
+                        // (mirrors the contacts pattern):
+                        //   running   → animated "Enriching…" bar (real in-flight run;
+                        //               markCompanyEnrichmentRunning always sets
+                        //               started_at, so the bar has a real clock)
+                        //   failed    → "Enrichment failed" + last error
+                        //   never run → static "not enriched yet" prompt (NO animation,
+                        //               button ENABLED so the user can trigger it)
+                        //   succeeded → no banner
+                        //
+                        // IMPORTANT: `running` is gated strictly on status==='running'.
+                        // We must NOT treat a bare stub (null/idle/cancelled with no
+                        // last_enriched_at) as "running" — doing so rendered a fake
+                        // animated bar stuck at the 8% floor (no started_at) AND
+                        // disabled the Refresh button, so the user could never trigger
+                        // enrichment. This also keeps the banner in lockstep with the
+                        // poll's `anyCompanyEnrichmentRunning` (also status==='running').
+                        const enrichmentStatus = selectedAccount.enrichment_refresh_status ?? null;
+                        const enrichmentFailed = enrichmentStatus === 'failed';
+                        const enrichmentRunning = enrichmentStatus === 'running';
+                        const neverEnriched =
+                          !enrichmentRunning &&
+                          !enrichmentFailed &&
+                          !selectedAccount.last_enriched_at;
                         return (
                           <div className="space-y-3">
-                            {isPendingEnrichment && (
+                            {neverEnriched && (
+                              <div className="rounded-xl border border-[rgba(13,53,71,0.1)] bg-[rgba(13,53,71,0.03)] px-3.5 py-3">
+                                <p className="text-[12.5px] leading-relaxed text-[#1f475a]">
+                                  This company hasn&apos;t been enriched yet. Click{' '}
+                                  <span className="font-semibold">Refresh enrichment</span> below to
+                                  pull its details, fit score, and signals.
+                                </p>
+                              </div>
+                            )}
+                            {enrichmentFailed && (
                               <div className="rounded-xl border border-amber-200 bg-amber-50/80 px-3.5 py-3 flex gap-2.5">
                                 <svg className="mt-0.5 w-4 h-4 shrink-0 text-amber-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
                                   <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
                                 </svg>
                                 <div className="min-w-0">
-                                  <p className="text-[12.5px] font-semibold text-amber-800">Enrichment in progress</p>
+                                  <p className="text-[12.5px] font-semibold text-amber-800">Enrichment failed</p>
                                   <p className="mt-0.5 text-[12px] leading-relaxed text-amber-700">
-                                    This company was added automatically when a contact changed jobs. Details, fit score, and signals will populate within the hour.
+                                    {selectedAccount.enrichment_refresh_last_error?.trim() ||
+                                      "We couldn't pull firmographics for this company on the last run."}
+                                    {' '}Try Refresh enrichment below.
                                   </p>
                                 </div>
+                              </div>
+                            )}
+                            {!enrichmentFailed && enrichmentRunning && (
+                              <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 px-3.5 py-3 flex gap-2.5">
+                                <RotateCw className="mt-0.5 w-4 h-4 shrink-0 text-arcova-teal animate-spin" aria-hidden />
+                                <CompanyEnrichmentProgress
+                                  startedAt={selectedAccount.enrichment_refresh_started_at ?? null}
+                                />
                               </div>
                             )}
                             {getAccountRowAction(selectedAccount) === 'monitor' && (
@@ -1819,15 +2052,43 @@ export default function AccountsPage() {
                                 <p className="text-xs leading-relaxed text-[#6B7280]">
                                   You can refresh this enrichment again whenever you need updated data.
                                 </p>
-                                <button
-                                  type="button"
-                                  onClick={() => rerunCompanyEnrichment(selectedAccount.id)}
-                                  disabled={refreshingCompanyId === selectedAccount.id}
-                                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#1F2937] transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                >
-                                  <RotateCw className={cn('w-4 h-4 text-[#1F2937]', refreshingCompanyId === selectedAccount.id ? 'animate-spin' : '')} />
-                                  {refreshingCompanyId === selectedAccount.id ? 'Refreshing…' : 'Refresh enrichment'}
-                                </button>
+                                {(() => {
+                                  // While a run is in flight (the request OR the async
+                                  // after() job, until the 5s poll flips the row), show a
+                                  // disabled "Enriching…" indicator PLUS an enabled "Stop"
+                                  // control (mirrors the contacts stop button). Otherwise
+                                  // the normal "Refresh enrichment" trigger.
+                                  const isWorking =
+                                    refreshingCompanyId === selectedAccount.id || enrichmentRunning;
+                                  if (isWorking) {
+                                    return (
+                                      <div className="flex items-center gap-2">
+                                        <span className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#1F2937] opacity-60">
+                                          <RotateCw className="w-4 h-4 text-[#1F2937] animate-spin" />
+                                          Enriching…
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() => stopCompanyEnrichment(selectedAccount.id)}
+                                          className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-red-600 transition-colors hover:bg-red-50"
+                                        >
+                                          <X className="w-4 h-4" />
+                                          Stop
+                                        </button>
+                                      </div>
+                                    );
+                                  }
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={() => rerunCompanyEnrichment(selectedAccount.id)}
+                                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#1F2937] transition-colors hover:bg-gray-50"
+                                    >
+                                      <RotateCw className="w-4 h-4 text-[#1F2937]" />
+                                      Refresh enrichment
+                                    </button>
+                                  );
+                                })()}
                               </div>
                             </div>
 
@@ -1917,12 +2178,8 @@ export default function AccountsPage() {
                                           <p className="text-gray-900 text-sm mt-0.5">{selectedAccount.employee_count != null ? selectedAccount.employee_count.toLocaleString() : selectedAccount.employee_range}</p>
                                         </div>
                                       )}
-                                      {selectedAccount.company_size_bucket && (
-                                        <div>
-                                          <p className="text-gray-400 text-xs">Size bucket</p>
-                                          <p className="text-gray-900 text-sm mt-0.5">{selectedAccount.company_size_bucket}</p>
-                                        </div>
-                                      )}
+                                      {/* Size bucket intentionally NOT shown here — it's an ICP
+                                          criterion, not an account firmographic. */}
                                       {selectedAccount.founded_year != null && (
                                         <div>
                                           <p className="text-gray-400 text-xs">Founded</p>

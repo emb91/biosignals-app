@@ -19,7 +19,8 @@ type SignalItem = {
   id: string;
   signalKey: string;
   dimensions: string[];
-
+  companyId: string | null;
+  contactId: string | null;
   observedAt: string;
   eventAt: string | null;
   evidenceExcerpt: string | null;
@@ -50,6 +51,11 @@ type Props = {
   companyId?: string;
   /** UUID of the contact (contacts panel) */
   contactId?: string;
+  /**
+   * When both contactId and companyId are provided, which scope to show first.
+   * Defaults to 'company' (accounts panel); pass 'contact' for the contacts panel.
+   */
+  primaryScope?: 'contact' | 'company';
   /**
    * When set, overrides the raw readiness score shown in the readiness band.
    * Used when CRM status caps the effective readiness (e.g. closed-won customer).
@@ -506,9 +512,17 @@ function buildReadinessSummary({
   return `${entityLabel} has limited readiness right now. The strongest evidence is ${joined}, but it is not enough to make this a strong outreach moment yet.`;
 }
 
+async function fetchSignals(params: URLSearchParams): Promise<SignalItem[]> {
+  const json: { data?: Array<SignalItem & { sourceMetadata?: Record<string, unknown> }>; error?: string } =
+    await fetch(`/api/signals/feed?${params.toString()}`).then((r) => r.json());
+  if (json.error) throw new Error(json.error);
+  return (json.data ?? []).map((item) => ({ ...item, sourceMetadata: item.sourceMetadata ?? {} }));
+}
+
 export function EntitySignalsList({
   companyId,
   contactId,
+  primaryScope = 'company',
   effectiveReadinessScore,
   crmCappedReason,
 }: Props) {
@@ -522,25 +536,39 @@ export function EntitySignalsList({
     setLoading(true);
     setError(null);
 
-    const params = new URLSearchParams({ pageSize: '50' });
-    if (companyId) params.set('company_id', companyId);
-    if (contactId) params.set('contact_id', contactId);
+    const bothProvided = !!(companyId && contactId);
 
-    fetch(`/api/signals/feed?${params.toString()}`)
-      .then((r) => r.json())
-      .then((json: { data?: Array<SignalItem & { sourceMetadata?: Record<string, unknown> }>; error?: string }) => {
-        if (cancelled) return;
-        if (json.error) { setError(json.error); return; }
-        setItems((json.data ?? []).map((item) => ({
-          ...item,
-          sourceMetadata: item.sourceMetadata ?? {},
-        })));
-      })
-      .catch((e) => { if (!cancelled) setError(String(e)); })
-      .finally(() => { if (!cancelled) setLoading(false); });
+    if (bothProvided) {
+      // Fetch contact signals and company signals separately, then merge.
+      // Contact signals come first when primaryScope='contact' (contacts panel),
+      // company signals come first when primaryScope='company' (accounts panel).
+      const contactParams = new URLSearchParams({ pageSize: '50', contact_id: contactId! });
+      const companyParams = new URLSearchParams({ pageSize: '50', company_id: companyId! });
+      Promise.all([fetchSignals(contactParams), fetchSignals(companyParams)])
+        .then(([contactItems, companyItems]) => {
+          if (cancelled) return;
+          // Dedup company items that already appear in contact items
+          const contactIds = new Set(contactItems.map((i) => i.id));
+          const uniqueCompanyItems = companyItems.filter((i) => !contactIds.has(i.id));
+          const merged = primaryScope === 'contact'
+            ? [...contactItems, ...uniqueCompanyItems]
+            : [...uniqueCompanyItems, ...contactItems];
+          setItems(merged);
+        })
+        .catch((e) => { if (!cancelled) setError(String(e)); })
+        .finally(() => { if (!cancelled) setLoading(false); });
+    } else {
+      const params = new URLSearchParams({ pageSize: '50' });
+      if (companyId) params.set('company_id', companyId);
+      if (contactId) params.set('contact_id', contactId);
+      fetchSignals(params)
+        .then((data) => { if (!cancelled) setItems(data); })
+        .catch((e) => { if (!cancelled) setError(String(e)); })
+        .finally(() => { if (!cancelled) setLoading(false); });
+    }
 
     return () => { cancelled = true; };
-  }, [companyId, contactId]);
+  }, [companyId, contactId, primaryScope]);
 
   if (loading) {
     return (
@@ -560,17 +588,22 @@ export function EntitySignalsList({
         <p className="text-sm font-medium text-slate-500">No signals yet</p>
         <p className="mt-1 text-xs text-slate-400">
           Signals appear here as intelligence is collected on this{' '}
-          {companyId ? 'account' : 'contact'}.
+          {contactId ? 'contact or their company' : 'account'}.
         </p>
       </div>
     );
   }
 
-  const readiness = items.find((i) => i.readiness?.overallLabel)?.readiness ?? null;
-  const reason = items.find((i) => i.reason?.whyNow || i.reason?.summaryShort)?.reason ?? null;
-  const entityLabel =
-    items.find((i) => (contactId ? i.contactName : i.companyName))?.[contactId ? 'contactName' : 'companyName'] ??
-    (companyId ? 'This account' : 'This contact');
+  // When both are present, prefer readiness from the primary entity (contact or company)
+  const primaryItems = (contactId && companyId)
+    ? (primaryScope === 'contact' ? items.filter((i) => i.contactId === contactId) : items.filter((i) => i.companyId === companyId))
+    : items;
+  const readiness = (primaryItems.find((i) => i.readiness?.overallLabel) ?? items.find((i) => i.readiness?.overallLabel))?.readiness ?? null;
+  const reason = (primaryItems.find((i) => i.reason?.whyNow || i.reason?.summaryShort) ?? items.find((i) => i.reason?.whyNow || i.reason?.summaryShort))?.reason ?? null;
+  // Entity label: prefer the primary scope's name (contact name for contacts panel)
+  const entityLabel = contactId
+    ? (items.find((i) => i.contactName)?.contactName ?? items.find((i) => i.companyName)?.companyName ?? 'This contact')
+    : (items.find((i) => i.companyName)?.companyName ?? 'This account');
   const summary = buildReadinessSummary({
     entityLabel,
     items,
@@ -606,12 +639,36 @@ export function EntitySignalsList({
         {items.length} signal{items.length !== 1 ? 's' : ''}
       </p>
 
-      {/* Signal list */}
-      <div className="space-y-2">
-        {items.map((item) => (
-          <SignalCard key={item.id} item={item} />
-        ))}
-      </div>
+      {/* Signal list — with optional section headers when both contact + company signals are shown */}
+      {(contactId && companyId) ? (() => {
+        const contactItems = items.filter((i) => i.contactId === contactId);
+        const companyItems = items.filter((i) => !contactItems.includes(i));
+        const [firstGroup, secondGroup] = primaryScope === 'contact'
+          ? [{ label: 'Contact signals', items: contactItems }, { label: 'Account signals', items: companyItems }]
+          : [{ label: 'Account signals', items: companyItems }, { label: 'Contact signals', items: contactItems }];
+        return (
+          <div className="space-y-4">
+            {firstGroup.items.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-300">{firstGroup.label}</p>
+                {firstGroup.items.map((item) => <SignalCard key={item.id} item={item} />)}
+              </div>
+            )}
+            {secondGroup.items.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-300">{secondGroup.label}</p>
+                {secondGroup.items.map((item) => <SignalCard key={item.id} item={item} />)}
+              </div>
+            )}
+          </div>
+        );
+      })() : (
+        <div className="space-y-2">
+          {items.map((item) => (
+            <SignalCard key={item.id} item={item} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
