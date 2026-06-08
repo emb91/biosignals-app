@@ -142,9 +142,13 @@ export async function ensureEnrichedPhoneEntry(
     sourceProvider?: string | null;
     phoneStatus?: string | null;
   },
-): Promise<void> {
+): Promise<boolean> {
+  // Returns true only when a NEW row was inserted (false on no-op: invalid
+  // phone, already-present duplicate, missing table, or other swallowed error).
+  // Existing void callers can ignore the return; callers that report counts can
+  // use it for an honest "phones written" tally.
   const normalized = normalizePhone(params.phone);
-  if (!normalized) return;
+  if (!normalized) return false;
   try {
     const { error } = await supabase.from('contact_phones').insert({
       user_id: params.userId,
@@ -155,11 +159,14 @@ export async function ensureEnrichedPhoneEntry(
       source_provider: params.sourceProvider ?? null,
       phone_status: params.phoneStatus ?? null,
     });
-    if (error && !isPostgresUniqueViolation(error) && !isMissingContactPhonesTableError(error)) {
+    if (!error) return true;
+    if (!isPostgresUniqueViolation(error) && !isMissingContactPhonesTableError(error)) {
       console.error('[contact_phones] ensureEnrichedPhoneEntry insert failed:', error);
     }
+    return false;
   } catch (error) {
     console.error('[contact_phones] ensureEnrichedPhoneEntry unexpected:', error);
+    return false;
   }
 }
 

@@ -17,6 +17,10 @@ import {
   normalizePhone,
   type ContactPhoneCategory,
 } from '@/lib/contact-phones';
+import {
+  registerPhoneRevealRequest,
+  buildPhoneRevealWebhookUrl,
+} from '@/lib/apollo-phone-webhook';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SupabaseFrom = { from: (table: string) => any };
@@ -148,6 +152,18 @@ export async function writeApolloPhonesToContact(
  * pull mobile / personal numbers that aren't returned by the standard match.
  * Costs additional Apollo credits — gated by fit score.
  *
+ * Apollo's phone reveal is ASYNCHRONOUS: the revealed mobile/personal numbers
+ * are delivered to a webhook minutes later (see app/api/apollo/phone-webhook),
+ * NOT in this call's response. So this function does two things:
+ *   - registers a correlation row + mints a token, and fires the reveal with a
+ *     tokenized webhook_url so the async delivery can be matched back to this
+ *     contact (only when APOLLO_PHONE_WEBHOOK_URL is configured — i.e. prod);
+ *   - writes any phones Apollo DOES return inline on the sync response (usually
+ *     just an employer phone) immediately.
+ *
+ * `revealed` counts only the inline phones written now; async numbers land via
+ * the webhook. `pending` is true when an async reveal was successfully queued.
+ *
  * Caller is responsible for deciding when to invoke this (typically: only
  * when the standard match returned no phones, or only on high-priority
  * accounts). We don't try to be clever about that here.
@@ -160,16 +176,32 @@ export async function attemptApolloPhoneRevealForContact(
     lookupInput: ApolloLookupInput;
     fitScores?: PhoneEnrichmentGateInput;
   },
-): Promise<{ revealed: number; gateAllowed: boolean; error: string | null }> {
+): Promise<{ revealed: number; pending: boolean; gateAllowed: boolean; error: string | null }> {
   const gate = params.fitScores
     ? { allowed: shouldEnrichPhones(params.fitScores) }
     : await shouldEnrichPhonesFor(supabase, { userId: params.userId, contactId: params.contactId });
-  if (!gate.allowed) return { revealed: 0, gateAllowed: false, error: null };
+  if (!gate.allowed) return { revealed: 0, pending: false, gateAllowed: false, error: null };
+
+  // Register the async correlation + build the tokenized webhook URL. Returns
+  // null in local dev (APOLLO_PHONE_WEBHOOK_URL unset) — then no async reveal is
+  // requested and we just capture whatever inline phones the match returns.
+  const registration = await registerPhoneRevealRequest(supabase, {
+    userId: params.userId,
+    contactId: params.contactId,
+    linkedinUrl: params.lookupInput.linkedin_url ?? null,
+    email: params.lookupInput.email ?? null,
+    fullName:
+      params.lookupInput.full_name ??
+      [params.lookupInput.first_name, params.lookupInput.last_name].filter(Boolean).join(' ') ??
+      null,
+  });
+  const webhookUrl = registration ? buildPhoneRevealWebhookUrl(registration.token) : null;
 
   try {
-    const { person } = await tryApolloPhoneRevealForLookup(params.lookupInput);
+    const { person } = await tryApolloPhoneRevealForLookup(params.lookupInput, {
+      phoneRevealWebhookUrl: webhookUrl ?? undefined,
+    });
     const phones = Array.isArray(person?.phone_numbers) ? person.phone_numbers : [];
-    if (phones.length === 0) return { revealed: 0, gateAllowed: true, error: null };
 
     let revealed = 0;
     for (const entry of phones) {
@@ -195,10 +227,10 @@ export async function attemptApolloPhoneRevealForContact(
         console.error('[contact-phone-enrichment] reveal write failed:', err);
       }
     }
-    return { revealed, gateAllowed: true, error: null };
+    return { revealed, pending: Boolean(webhookUrl), gateAllowed: true, error: null };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[contact-phone-enrichment] Apollo phone reveal failed:', msg);
-    return { revealed: 0, gateAllowed: true, error: msg };
+    return { revealed: 0, pending: Boolean(webhookUrl), gateAllowed: true, error: msg };
   }
 }
