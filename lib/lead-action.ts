@@ -10,7 +10,11 @@ export type LeadAction =
   | 'send_outreach'
   | 'await_reply'
   | 'monitor'
-  | 'deprioritize';
+  | 'deprioritize'
+  // Data-quality overlay (contacts only): can't sync to HubSpot until the
+  // contact's email is fixed. Never produced by getActionFromScores — applied
+  // as an overlay via applyFixOverride. See its doc for the override rules.
+  | 'fix';
 
 /**
  * Dispatch status of the contact's most recent outreach_sequences row.
@@ -197,7 +201,25 @@ export function formatLeadActionLabel(action: LeadAction): string {
       return 'Await reply';
     case 'monitor':
       return 'Monitor';
+    case 'fix':
+      return 'Fix';
   }
+}
+
+/**
+ * Data-quality overlay (contacts only): a contact that can't be pushed to
+ * HubSpot because its email is missing or malformed surfaces as "Fix", so the
+ * user clears the blocker before trying to engage.
+ *
+ * Only overrides the "engage this contact" actions (reach_out / send_outreach /
+ * await_reply / monitor). Deprioritise (not pursuing them) and Source (wrong
+ * persona — go find a different contact) are left alone: fixing THIS contact's
+ * email wouldn't change either call.
+ */
+export function applyFixOverride(baseAction: LeadAction, hasSyncIssue: boolean): LeadAction {
+  if (!hasSyncIssue) return baseAction;
+  if (baseAction === 'deprioritize' || baseAction === 'source_contact') return baseAction;
+  return 'fix';
 }
 
 /**
@@ -297,6 +319,17 @@ export const LEAD_ACTION_PILL_CLASS: Record<LeadAction, LeadActionPillConfig> = 
     rowSelectedClassName:
       'bg-[#dfeaf1] text-[#3f5562] ring-1 ring-[#c9d9e6] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-slate-500/38',
   },
+  // Warm orange-red "needs attention" — distinct from Monitor's yellow and
+  // Source's pink, and tied to the HubSpot-orange sync blocker it represents.
+  fix: {
+    label: 'Fix',
+    className:
+      'bg-[#ffe7dd] text-[#b34a26] ring-1 ring-[#f6c3ac] font-medium',
+    interactiveClassName:
+      'hover:bg-[#ffdbcc] hover:ring-[#efb295] active:brightness-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-orange-500/40',
+    rowSelectedClassName:
+      'bg-[#ffe7dd] text-[#b34a26] ring-1 ring-[#f6c3ac] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-orange-500/40',
+  },
 };
 
 /** Sort key for action columns (higher = more urgency). */
@@ -304,6 +337,9 @@ export const LEAD_ACTION_PILL_CLASS: Record<LeadAction, LeadActionPillConfig> = 
 // represent committed work already in motion that the user is more likely to
 // want surfaced at the top of the table.
 export const LEAD_ACTION_SORT_ORDER: Record<LeadAction, number> = {
+  // Fix sorts top: it blocks an otherwise-actionable contact, so surface it for
+  // resolution before the active-engagement funnel.
+  fix: 6,
   send_outreach: 5,
   await_reply: 4,
   reach_out: 3,

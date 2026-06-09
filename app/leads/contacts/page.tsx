@@ -13,6 +13,7 @@ import {
   type LeadAction,
   type SequenceDispatchStatus,
   applyOutreachOverride,
+  applyFixOverride,
   effectiveReadiness,
   isCrmSuppressed,
   getActionFromScores,
@@ -599,11 +600,23 @@ function getHubSpotTableBadge(lead: Lead): {
       };
     // 'context_only' (in HubSpot, no actionable deal) and 'none' both render
     // as "No deal" — same neutral pill, since users don't distinguish them.
-    default:
+    default: {
+      // A contact that's not in HubSpot at all AND can't be pushed (bad/missing
+      // email) reads as "Not synced" so the sync blocker is visible in the CRM
+      // column — matches the "Fix" action. context_only already lives in HubSpot,
+      // so it stays "No deal".
+      const notInHubspot = lead.hubspot_lead_state == null || lead.hubspot_lead_state === 'none';
+      if (notInHubspot && contactHasSyncIssue(lead)) {
+        return {
+          label: 'Not synced',
+          className: 'border-[rgba(179,74,38,0.24)] bg-[#ffe7dd] text-[#b34a26]',
+        };
+      }
       return {
         label: 'No deal',
         className: 'border-[rgba(13,53,71,0.08)] bg-[rgba(13,53,71,0.03)] text-[#7d909a]',
       };
+    }
   }
 }
 
@@ -841,6 +854,23 @@ function ScoreRow({
  * live on a Lead (lead.company_fit_score, lead.companies.company_fit_score,
  * lead.fit_score).
  */
+/**
+ * Why a contact can't be pushed to HubSpot, or null if it can. Mirrors the
+ * push-enrichment route's filter (which keys on the primary `email` field):
+ * no email, or an email that doesn't look valid. Drives the "Fix" action and
+ * the "Not synced" CRM badge.
+ */
+function contactSyncIssueReason(lead: Pick<Lead, 'email'>): 'no_email' | 'invalid_email' | null {
+  const email = lead.email?.trim() ?? '';
+  if (!email) return 'no_email';
+  if (!looksLikeEmail(email)) return 'invalid_email';
+  return null;
+}
+
+function contactHasSyncIssue(lead: Pick<Lead, 'email'>): boolean {
+  return contactSyncIssueReason(lead) !== null;
+}
+
 function getContactAction(
   lead: Lead,
 ): LeadAction {
@@ -867,11 +897,14 @@ function getContactAction(
   // to "Send outreach"; a sent sequence to "Await reply". Pass crmState so a
   // closed-won / closed-lost contact still reads as Deprioritise even with a
   // historic sequence on file (during cooldown only).
-  return applyOutreachOverride(
+  const withOutreach = applyOutreachOverride(
     base,
     (lead.latest_sequence_status ?? null) as SequenceDispatchStatus,
     crmForAction,
   );
+  // Data-quality overlay wins last: a contact we'd otherwise engage but can't
+  // push to HubSpot (bad/missing email) surfaces as "Fix".
+  return applyFixOverride(withOutreach, contactHasSyncIssue(lead));
 }
 
 const LEAD_EDIT_INPUT_CLASS =
@@ -4932,6 +4965,35 @@ export function ContactsWorkspace() {
                                     </p>
                                   </div>
                                 )}
+
+                                {action === 'fix' && (() => {
+                                  const reason = contactSyncIssueReason(selectedLead);
+                                  return (
+                                    <div className="space-y-3">
+                                      <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
+                                        {contactName || 'This contact'} can&apos;t be synced to HubSpot yet because{' '}
+                                        {reason === 'no_email'
+                                          ? 'they have no email address on file'
+                                          : 'their email address looks invalid'}
+                                        . Add a valid work email (e.g. name@company.com) to unblock CRM sync and
+                                        outreach.
+                                      </p>
+                                      <div className="rounded-xl border border-[#f6c3ac] bg-[#ffe7dd]/40 p-4">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setSelectedPreview('contact');
+                                            startEditingLead(selectedLead);
+                                          }}
+                                          className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-[#e8a07e] bg-white px-4 py-2.5 text-sm font-semibold text-[#b34a26] transition-colors hover:bg-[#fff3ee]"
+                                        >
+                                          Edit contact email
+                                          <ChevronRight className="w-4 h-4" aria-hidden />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
 
                               </div>
                             );
