@@ -173,15 +173,15 @@ const SIGNAL_LABELS: Record<string, string> = {
   // Hiring
   hiring_expansion:          'Hiring expansion',
   job_surge:                 'Hiring surge',
-  research_hiring:           'Research hiring',
-  cmc_hiring:                'CMC hiring',
-  data_informatics_hiring:   'Data & informatics hiring',
-  medical_hiring:            'Medical affairs hiring',
-  quality_hiring:            'Quality hiring',
-  executive_hiring:          'Executive hiring',
-  clinical_ops_hiring:       'Clinical ops hiring',
-  bd_hiring:                 'BD hiring',
-  regulatory_hiring:         'Regulatory hiring',
+  research_hiring:           'Research',
+  cmc_hiring:                'CMC',
+  data_informatics_hiring:   'Data & informatics',
+  medical_hiring:            'Medical affairs',
+  quality_hiring:            'Quality',
+  executive_hiring:          'Executive',
+  clinical_ops_hiring:       'Clinical ops',
+  bd_hiring:                 'BD',
+  regulatory_hiring:         'Regulatory',
   // Research
   assignee_portfolio_acceleration: 'Patent portfolio surge',
   patent_filed_or_granted:         'Patent filed',
@@ -331,16 +331,35 @@ function relativeTime(isoStr: string | null | undefined): string {
  */
 const DOCUMENT_TITLE_KEYS = new Set([
   'publication', 'publication_surge', 'new_paper_published',
+  // Individual patents: real USPTO titles shown as sub-items.
+  // assignee_portfolio_acceleration excluded — it's an aggregate; its summary
+  // ("X shows elevated recent patent velocity…") should NOT appear as a sub-item.
   'patent_filed_or_granted', 'patent_application_published', 'patent_granted', 'new_therapeutic_area_patent',
-  'assignee_portfolio_acceleration',
   'fda_approval', 'fda_submission',
   'funding_round', 'series_announcement', 'acquisition',
-  'clinical_trial_recruiting', 'clinical_trial_registered', 'clinical_trial_phase_start',
-  'clinical_trial_completion', 'clinical_trial_completed', 'trial_site_expansion',
-  'trial_failure_or_halt', 'program_discontinuation', 'indication_expansion',
   // grant_award / nih_grant_awarded excluded: their title is a DB artifact;
   // the summary field carries the useful text (award amount, agency, grant number)
 ]);
+
+/**
+ * Clinical trial signal keys whose raw source text is a verbose
+ * "ClinicalTrials.gov indicates activity for X (NCTxxxxxxxx). …" sentence.
+ * We extract just the NCT identifier so the sub-item label is clean and short.
+ */
+const CLINICAL_TRIAL_SIGNAL_KEYS = new Set([
+  'clinical_trial_recruiting', 'clinical_trial_registered', 'clinical_trial_phase_start',
+  'clinical_trial_completion', 'clinical_trial_completed', 'trial_site_expansion',
+  'trial_failure_or_halt', 'program_discontinuation', 'indication_expansion',
+]);
+
+/** Pull the NCT identifier out of verbose ClinicalTrials.gov text, or return as-is. */
+function cleanClinicalText(s: string | null): string | null {
+  if (!s) return null;
+  const m = s.match(/NCT\d{8}/);
+  // If the text is a verbose ClinicalTrials summary, surface just the NCT ID
+  if (m && (s.includes('ClinicalTrials') || s.includes('indicates activity'))) return m[0];
+  return s;
+}
 
 /** Patterns in titles/summaries that indicate internal tooling provenance — hide from users. */
 const INTERNAL_PROVENANCE = /\b(apify|manual[_ ]test|test[_ ]emission|admin[_ ]signals|hubspot[_ ]contact|linkedin[_ ]scrape)\b/i;
@@ -361,11 +380,19 @@ function cleanSubItemTitle(
     return s;
   };
 
-  // Aggregate hiring signals: pills carry all the info; never show a sub-item title
-  // (checked first so the summary "X has 47 open roles..." doesn't sneak through)
+  // Aggregate signals whose content is conveyed by the row label / pills — no sub-item needed
   if (signalKey === 'hiring_expansion' || signalKey === 'job_surge') return null;
+  // Portfolio surge is an aggregate; its verbose summary should never appear as a sub-item.
+  // Individual patents absorbed into it carry their own USPTO titles.
+  if (signalKey === 'assignee_portfolio_acceleration') return null;
 
-  // Document-titled signals get their actual source title (PubMed, USPTO, ClinicalTrials, etc.)
+  // Clinical trial signals: raw text is a verbose "ClinicalTrials.gov indicates activity…"
+  // sentence — extract just the NCT identifier so the label is clean.
+  if (CLINICAL_TRIAL_SIGNAL_KEYS.has(signalKey)) {
+    return cleanClinicalText(safe(title)) ?? cleanClinicalText(safe(summary));
+  }
+
+  // Document-titled signals get their actual source title (PubMed, USPTO, etc.)
   // For grants we skip this — title is a DB artifact; summary has the good text
   if (DOCUMENT_TITLE_KEYS.has(signalKey)) {
     return safe(title) ?? safe(summary);
@@ -704,9 +731,14 @@ export default function BriefingPage() {
       const meta = s.sourceMetadata as Record<string, unknown>;
       const familyKey = SIGNAL_KEY_TO_FAMILY[s.signalKey] ?? 'funding';
 
-      // Age gate: skip signals outside the family's window
+      // Age gate: skip signals outside the family's window.
+      // Individual patent signals use observedAt (when we discovered the patent)
+      // rather than eventAt (the filing date, potentially years ago) so recently-
+      // detected historical patents still appear in the today view.
       const maxAgeMs = FAMILY_MAX_AGE_MS[familyKey] ?? 30 * 86_400_000;
-      const sigDate = Date.parse(s.eventAt ?? s.observedAt) || 0;
+      const sigDate = PATENT_INDIVIDUAL_KEYS.has(s.signalKey)
+        ? (Date.parse(s.observedAt) || 0)
+        : (Date.parse(s.eventAt ?? s.observedAt) || 0);
       if (now - sigDate > maxAgeMs) continue;
 
       if (!familyMap.has(familyKey)) familyMap.set(familyKey, new Map());
