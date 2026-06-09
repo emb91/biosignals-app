@@ -778,6 +778,36 @@
   color: var(--bt-ink-mute);
 }
 
+.briefing-today .bt-sig-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.3125rem;
+}
+
+.briefing-today .bt-sig-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.4375rem;
+  border-radius: 62.4375rem;
+  font-size: 0.625rem;
+  font-weight: 500;
+  background: rgba(13, 53, 71, 0.055);
+  color: var(--bt-ink-soft);
+  white-space: nowrap;
+  max-width: 13rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0;
+}
+
+/* First pill (count / headline number) gets accent colouring */
+.briefing-today .bt-sig-pill--lead {
+  background: rgba(0, 164, 180, 0.1);
+  color: var(--bt-accent);
+  font-weight: 600;
+}
+
 
 .briefing-today .bt-p-empty {
   position: relative;

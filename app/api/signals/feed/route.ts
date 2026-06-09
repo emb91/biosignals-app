@@ -321,13 +321,31 @@ export async function GET(request: Request) {
         .map((it) => it.companyId),
     );
     const keptPatentRepByCompany = new Set<string>();
-    const collapsed = filtered.filter((it) => {
+    const patentCollapsed = filtered.filter((it) => {
       if (!PATENT_DETAIL_TYPES.has(it.sourceEventType)) return true;
       if (companiesWithPatentAggregate.has(it.companyId)) return false; // summarised by the aggregate
       const key = it.companyId ?? 'none';
       if (keptPatentRepByCompany.has(key)) return false; // keep one representative
       keptPatentRepByCompany.add(key);
       return true;
+    });
+
+    // Collapse hiring noise: when a company has a hiring_expansion signal, the
+    // individual category signals (research_hiring, cmc_hiring, etc.) are already
+    // captured in the expansion's metadata.categories — suppress the individual rows
+    // so they don't flood the feed.
+    const HIRING_DETAIL_KEYS = new Set([
+      'research_hiring', 'cmc_hiring', 'data_informatics_hiring', 'quality_hiring',
+      'executive_hiring', 'clinical_ops_hiring', 'medical_hiring', 'bd_hiring',
+    ]);
+    const companiesWithHiringExpansion = new Set(
+      patentCollapsed
+        .filter((it) => it.signalKey === 'hiring_expansion')
+        .map((it) => it.companyId),
+    );
+    const collapsed = patentCollapsed.filter((it) => {
+      if (!HIRING_DETAIL_KEYS.has(it.signalKey)) return true;
+      return !companiesWithHiringExpansion.has(it.companyId); // keep if no aggregate for this company
     });
 
     // Recency = when the event actually happened (event_at), falling back to

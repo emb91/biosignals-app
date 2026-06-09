@@ -45,6 +45,7 @@ type LiveSignal = {
   companyDomain: string | null;
   sourceTitle: string | null;
   sourceSummary: string | null;
+  sourceMetadata: Record<string, unknown>;
   observedAt: string;
   eventAt: string | null;
 };
@@ -143,8 +144,10 @@ type BriefingSignalRow = {
   glyph: string;
   strong: string;
   rest: string;
-  what: string;
+  what: string | null;
   ago: string;
+  /** First pill is always styled as "lead" (teal accent). Rest are plain chips. */
+  pills?: string[];
 };
 
 function signalGlyph(key: string): string {
@@ -183,6 +186,23 @@ const SIGNAL_LABELS: Record<string, string> = {
 function signalLabel(key: string): string {
   return SIGNAL_LABELS[key] ?? key.replace(/_/g, ' ');
 }
+
+/** Maps hiring sub-category keys to short display labels for pills */
+const HIRING_CATEGORY_LABELS: Record<string, string> = {
+  research_hiring: 'R&D / discovery',
+  cmc_hiring: 'CMC / process dev',
+  data_informatics_hiring: 'data & informatics',
+  quality_hiring: 'quality / GMP',
+  executive_hiring: 'exec / VP',
+  clinical_ops_hiring: 'clinical ops',
+  medical_hiring: 'medical affairs',
+  bd_hiring: 'BD',
+};
+
+const INDIVIDUAL_HIRING_KEYS = new Set([
+  'research_hiring', 'cmc_hiring', 'data_informatics_hiring', 'quality_hiring',
+  'executive_hiring', 'clinical_ops_hiring', 'medical_hiring', 'bd_hiring',
+]);
 
 function relativeTime(isoStr: string | null | undefined): string {
   if (!isoStr) return '';
@@ -332,7 +352,7 @@ export default function BriefingPage() {
           fetch('/api/import-ready'),
           fetch('/api/today/pulse-series'),
           fetch('/api/outreach/replied'),
-          fetch('/api/signals/feed?pageSize=8&page=1'),
+          fetch('/api/signals/feed?pageSize=12&page=1'),
         ]);
 
         if (profileError) throw profileError;
@@ -438,6 +458,9 @@ export default function BriefingPage() {
               companyDomain: typeof s.companyDomain === 'string' ? s.companyDomain : null,
               sourceTitle: typeof s.sourceTitle === 'string' ? s.sourceTitle : null,
               sourceSummary: typeof s.sourceSummary === 'string' ? s.sourceSummary : null,
+              sourceMetadata: (s.sourceMetadata && typeof s.sourceMetadata === 'object' && !Array.isArray(s.sourceMetadata))
+                ? (s.sourceMetadata as Record<string, unknown>)
+                : {},
               observedAt: String(s.observedAt ?? ''),
               eventAt: typeof s.eventAt === 'string' ? s.eventAt : null,
             }))
@@ -513,14 +536,48 @@ export default function BriefingPage() {
         ago: '',
       }];
     }
-    return liveSignals.slice(0, 8).map((s) => ({
-      id: s.id,
-      glyph: signalGlyph(s.signalKey),
-      strong: s.companyName ?? s.companyDomain ?? 'Unknown',
-      rest: signalLabel(s.signalKey),
-      what: s.sourceSummary ?? s.sourceTitle ?? s.signalKey.replace(/_/g, ' '),
-      ago: relativeTime(s.eventAt ?? s.observedAt),
-    }));
+    return liveSignals.slice(0, 12).map((s) => {
+      const meta = s.sourceMetadata as Record<string, unknown>;
+      let what: string | null = s.sourceSummary ?? s.sourceTitle ?? s.signalKey.replace(/_/g, ' ');
+      let pills: string[] | undefined;
+
+      if (s.signalKey === 'hiring_expansion') {
+        // Lead pill = total count; remaining pills = category breakdown
+        const total = typeof meta.total_postings === 'number' ? meta.total_postings : null;
+        const categories = meta.categories && typeof meta.categories === 'object'
+          ? (meta.categories as Record<string, number>)
+          : null;
+        pills = [];
+        if (total !== null) pills.push(`${total} open roles`);
+        if (categories) {
+          for (const [key, count] of Object.entries(categories)) {
+            const lbl = HIRING_CATEGORY_LABELS[key];
+            if (lbl) pills.push(count > 1 ? `${lbl} · ${count}` : lbl);
+          }
+        }
+        // Strip the "Functions: …" tail from the summary — it's now in pills
+        const funcIdx = what?.indexOf(' Functions:') ?? -1;
+        if (funcIdx > 0) what = what!.slice(0, funcIdx).trim();
+      } else if (INDIVIDUAL_HIRING_KEYS.has(s.signalKey)) {
+        // Individual hiring signal: count pill + up to 3 role title pills; no sentence
+        const count = typeof meta.count === 'number' ? meta.count : null;
+        const titles = Array.isArray(meta.titles) ? (meta.titles as string[]) : [];
+        pills = [];
+        if (count !== null) pills.push(`${count} role${count !== 1 ? 's' : ''}`);
+        pills.push(...titles.slice(0, 3));
+        what = null;
+      }
+
+      return {
+        id: s.id,
+        glyph: signalGlyph(s.signalKey),
+        strong: s.companyName ?? s.companyDomain ?? 'Unknown',
+        rest: signalLabel(s.signalKey),
+        what,
+        ago: relativeTime(s.eventAt ?? s.observedAt),
+        pills,
+      };
+    });
   }, [liveSignals]);
 
   const agenda: AgendaItem[] = [
@@ -862,7 +919,19 @@ export default function BriefingPage() {
                         <strong>{s.strong}</strong>
                         {s.rest ? ` · ${s.rest}` : ''}
                       </span>
-                      <span className="bt-sig-what">{s.what}</span>
+                      {s.what ? <span className="bt-sig-what">{s.what}</span> : null}
+                      {s.pills && s.pills.length > 0 ? (
+                        <span className="bt-sig-pills">
+                          {s.pills.map((pill, j) => (
+                            <span
+                              key={j}
+                              className={cn('bt-sig-pill', j === 0 && 'bt-sig-pill--lead')}
+                            >
+                              {pill}
+                            </span>
+                          ))}
+                        </span>
+                      ) : null}
                     </span>
                     {s.ago ? <span className="bt-sig-ago">{s.ago}</span> : <span className="bt-sig-ago" />}
                   </li>
