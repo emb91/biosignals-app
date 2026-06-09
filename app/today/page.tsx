@@ -398,6 +398,24 @@ function cleanSubItemTitle(
 }
 
 /** Strip internal scraper URLs — only show real source URLs to users. */
+/** Signal keys that represent the same underlying event — collapsed into one row. */
+const SIGNAL_KEY_NORMALIZE: Record<string, string> = {
+  new_paper_published: 'publication',  // same concept, two source keys
+  nih_grant_awarded:   'grant_award',  // NIH-specific vs generic grant key
+};
+
+/**
+ * Individual patent signal keys that should be absorbed into the
+ * assignee_portfolio_acceleration (patent portfolio surge) row when one exists
+ * for the same company, so expanding the surge row lists all patents.
+ */
+const PATENT_INDIVIDUAL_KEYS = new Set([
+  'patent_filed_or_granted',
+  'patent_application_published',
+  'patent_granted',
+  'new_therapeutic_area_patent',
+]);
+
 function cleanSubItemUrl(url: string | null): string | null {
   if (!url) return null;
   if (url.includes('apify.com') || url.includes('api.apify.com')) return null;
@@ -696,10 +714,6 @@ export default function BriefingPage() {
 
       // Normalise signal keys that represent the same underlying event type so
       // they collapse into a single row rather than appearing as duplicates.
-      const SIGNAL_KEY_NORMALIZE: Record<string, string> = {
-        new_paper_published: 'publication',   // same concept, two source keys
-        nih_grant_awarded:   'grant_award',   // NIH-specific vs generic grant key
-      };
       const groupKey = SIGNAL_KEY_NORMALIZE[s.signalKey] ?? s.signalKey;
       const rowKey = `${company}||${groupKey}`;
 
@@ -760,6 +774,28 @@ export default function BriefingPage() {
         const row = family.get(rowKey)!;
         row.count++;
         row.items.push(subItem);
+      }
+    }
+
+    // Second pass: for companies that have a patent portfolio surge row, absorb
+    // individual patent rows into it so expanding the surge row lists all patents
+    // (mirrors how publication sub-items work). Count reflects number of patents.
+    for (const family of familyMap.values()) {
+      for (const [rowKey, surgeRow] of family) {
+        if (!rowKey.endsWith('||assignee_portfolio_acceleration')) continue;
+        const company = surgeRow.company;
+        let absorbedCount = 0;
+        for (const pKey of PATENT_INDIVIDUAL_KEYS) {
+          const indivRowKey = `${company}||${pKey}`;
+          const indivRow = family.get(indivRowKey);
+          if (!indivRow) continue;
+          surgeRow.items.push(...indivRow.items);
+          absorbedCount += indivRow.count;
+          family.delete(indivRowKey);
+        }
+        // Replace the count (was 1 for the surge event itself) with the number
+        // of absorbed individual patents so the badge is meaningful.
+        if (absorbedCount > 0) surgeRow.count = absorbedCount;
       }
     }
 
