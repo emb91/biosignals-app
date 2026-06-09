@@ -11,7 +11,6 @@
 import { useEffect, useState } from 'react';
 import { ExternalLink, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { AnimatedCircularProgressBar } from '@/components/ui/animated-circular-progress-bar';
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -134,12 +133,6 @@ const DIMENSION_COLORS: Record<string, string> = {
   caution: 'bg-rose-500',
 };
 
-const READINESS_LABEL_STYLES: Record<string, string> = {
-  high: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200',
-  medium: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200',
-  low: 'bg-rose-50 text-rose-700 ring-1 ring-rose-200',
-};
-
 const DIMENSION_PILL_STYLES: Record<string, string> = {
   new_budget: 'bg-emerald-50 text-emerald-700',
   new_needs: 'bg-blue-50 text-blue-700',
@@ -161,77 +154,6 @@ function relativeTime(iso: string): string {
   if (days < 30) return `${Math.floor(days / 7)}w ago`;
   if (days < 365) return `${Math.floor(days / 30)}mo ago`;
   return `${Math.floor(days / 365)}y ago`;
-}
-
-// ── Readiness band ────────────────────────────────────────────────────────
-
-function readinessArcColor(pct: number | null): string {
-  if (pct == null) return 'rgba(13,53,71,0.14)';
-  if (pct >= 70) return '#10b981'; // emerald-500
-  if (pct >= 35) return '#f59e0b'; // amber-500
-  return '#ef4444';                // red-500
-}
-
-function ReadinessBand({
-  r,
-  effectiveScore,
-  cappedReason,
-}: {
-  r: NonNullable<SignalItem['readiness']>;
-  effectiveScore?: number | null;
-  cappedReason?: string | null;
-}) {
-  if (!r.overallLabel) return null;
-
-  const rawPct = r.overallScore != null ? Math.round(r.overallScore * 100) : null;
-  const effectivePct = effectiveScore != null ? Math.round(effectiveScore * 100) : null;
-  const isCapped = effectivePct != null && rawPct != null && effectivePct < rawPct;
-  const pct = isCapped ? effectivePct : rawPct;
-  const displayLabel = isCapped && effectiveScore != null ? scoreLabel(effectiveScore) : r.overallLabel;
-  const arcColor = readinessArcColor(pct);
-
-  return (
-    <div className="mb-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-3">
-      <div className="flex items-center gap-3">
-        {/* Circular score gauge */}
-        <div className="shrink-0">
-          <AnimatedCircularProgressBar
-            value={pct ?? 0}
-            gaugePrimaryColor={arcColor}
-            gaugeSecondaryColor="rgba(13,53,71,0.09)"
-            animateOnMount
-            deferAnimationMs={160}
-            label={
-              <span className="block text-sm font-semibold text-gray-700 leading-snug tabular-nums">
-                {pct != null ? `${pct}` : '—'}
-              </span>
-            }
-            className="size-12 [--transition-length:0.95s]"
-          />
-        </div>
-
-        {/* Label */}
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Readiness</p>
-            <span
-              className={cn(
-                'rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize',
-                READINESS_LABEL_STYLES[displayLabel] ?? 'bg-slate-100 text-slate-600',
-              )}
-            >
-              {displayLabel}
-            </span>
-          </div>
-        </div>
-      </div>
-      {isCapped && cappedReason && (
-        <p className="mt-2 text-[11px] leading-snug text-amber-800">
-          Effective readiness is capped at {effectivePct} due to {cappedReason}.
-        </p>
-      )}
-    </div>
-  );
 }
 
 // ── Deal details extraction ────────────────────────────────────────────────
@@ -572,14 +494,6 @@ export function EntitySignalsList({
         )}>
           {summary}
         </p>
-      )}
-
-      {readiness && (
-        <ReadinessBand
-          r={readiness}
-          effectiveScore={effectiveReadinessScore}
-          cappedReason={crmCappedReason}
-        />
       )}
 
       {/* Signal count */}
