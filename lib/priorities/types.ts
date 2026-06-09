@@ -3,7 +3,7 @@
  *
  * `/today/priorities` aggregator returns one `TodayPriority` per source (overlap, gap,
  * import failures, stale leads queue, etc.). Each source can also expose its raw items
- * for source-specific pages (the agent inbox on `/icps`, the table on `/health`,
+ * for source-specific pages (the agent inbox on `/icps`, the table on `/coverage`,
  * etc.) via the `bySource` map.
  */
 

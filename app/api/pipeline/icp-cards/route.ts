@@ -9,6 +9,7 @@ import {
   normalizeFitScore01,
   overallHealth,
 } from '@/lib/pipeline-icp-health';
+import { computeIcpPerformanceByIcp } from '@/lib/coverage/icp-performance';
 
 export async function GET() {
   try {
@@ -96,6 +97,10 @@ export async function GET() {
       companyFitById.set(id, normalizeFitScore01(typeof raw === 'number' ? raw : null));
     }
 
+    // Bottom-up: per-ICP deal performance from the CRM mirror (null-safe — empty
+    // map when no HubSpot data, so the page degrades to the coverage-only tier).
+    const performanceByIcp = await computeIcpPerformanceByIcp(supabase, user.id);
+
     const cards = orderedIcps.map((icp) => {
       const companyIds = [...(companiesByIcp.get(icp.id) ?? [])];
       const company_count = companyIds.length;
@@ -144,6 +149,8 @@ export async function GET() {
         contact_fit,
         depth,
         overall,
+        // Bottom-up deal performance (null when no CRM deals mapped to this ICP).
+        performance: performanceByIcp.get(icp.id) ?? null,
       };
     });
 

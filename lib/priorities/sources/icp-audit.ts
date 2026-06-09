@@ -12,8 +12,6 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { redactInternalIdsFromAgentUserText } from '@/lib/agent-redact';
-import { ROUTES } from '@/lib/routes';
-import type { TodayPriority } from '@/lib/priorities/types';
 
 // Provider routing happens in lib/llm-client (`feature: 'icp_audit'`).
 // Defaults to Haiku 4.5 on both routes — plenty for structured-output audits
@@ -335,34 +333,5 @@ ${JSON.stringify(icps, null, 2)}`;
   }
 }
 
-/**
- * Collapse a list of raw icp-audit priorities into a single grouped TodayPriority for the
- * /today agenda. Returns null when the list is empty so the aggregator can skip the row.
- *
- * Deliberately count-free: the row just says "Review your ICPs" regardless of how many
- * findings sit behind it. Avoids the awkwardness of /today saying "3 flagged" when the
- * user has already dismissed two on `/icps`.
- */
-export function groupIcpAuditForToday(items: IcpPriority[]): TodayPriority | null {
-  if (items.length === 0) return null;
-  const sevRank: Record<IcpPrioritySeverity, number> = { high: 3, medium: 2, low: 1 };
-  // Lead with the single highest-severity finding's OWN words, so /today calls out the
-  // actual issue ("ICP 2 & ICP 3 overlap…") instead of a generic "Review your ICPs".
-  // Items are already dismissal-filtered upstream, so the top one is real + undismissed.
-  const [top] = [...items].sort((a, b) => sevRank[b.severity] - sevRank[a.severity]);
-  const others = items.length - 1;
-
-  const title = top.headline?.trim() || 'Review your ICPs';
-  const baseDetail = top.detail?.trim() || 'Arcova flagged something to look at in your ICP set.';
-  const detail = others > 0 ? `${baseDetail} (+${others} more ICP issue${others === 1 ? '' : 's'})` : baseDetail;
-
-  return {
-    source: 'icp-audit',
-    groupKey: 'default',
-    severity: top.severity,
-    title,
-    detail,
-    href: ROUTES.setup.icps,
-    cta: 'Open ICPs',
-  };
-}
+// NOTE: /today no longer groups the audit live. The audit now persists a note via
+// writeIcpNote (lib/priorities/sources/icp-note) and /today reads it — no LLM on /today.

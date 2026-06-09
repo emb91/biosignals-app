@@ -25,6 +25,7 @@ import {
   findArcovaContactsByEmails,
   getCrmSyncCheckpoint,
   listCrmDealsByHubSpotIds,
+  recordDealStageTransition,
   replaceCrmDealCompanyLinks,
   replaceCrmDealContactLinks,
   sourceEventExists,
@@ -527,6 +528,26 @@ export async function syncHubSpotDealsIntoReadiness(
         rawPayload: deal as unknown as Record<string, unknown>,
       });
       mirroredDeals += 1;
+
+      // Capture the stage transition for funnel + cycle-length analytics. Only on a
+      // real change (or the first time we see the deal) — the helper is idempotent.
+      // `at` = when it happened: the modified date for a transition, the created date
+      // for a deal's first observed stage.
+      const rawStage = deal.properties.dealstage ?? null;
+      if (rawStage && normalizeStage(rawStage) !== normalizeStage(previous?.deal_stage ?? null)) {
+        const at = previous
+          ? hsLastModifiedDate ?? new Date().toISOString()
+          : toIsoFromHubSpotDate(deal.properties.createdate ?? null) ??
+            hsLastModifiedDate ??
+            new Date().toISOString();
+        await recordDealStageTransition(supabase, {
+          userId: input.userId,
+          hubspotDealId: deal.id,
+          toStage: rawStage,
+          at,
+          rawPayload: { from: previous?.deal_stage ?? null, to: rawStage },
+        });
+      }
 
       const associatedCompanyRows: DealAssociatedCompanyRow[] = (dealCompanyMap.get(deal.id) ?? []).map((hubspotCompanyId) => {
         const company = hubspotCompaniesById.get(hubspotCompanyId) as HubSpotCompanyRecord | undefined;

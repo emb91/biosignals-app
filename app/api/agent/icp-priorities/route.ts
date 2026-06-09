@@ -23,6 +23,7 @@ import {
   getIcpAuditHash,
   type IcpPriority,
 } from '@/lib/priorities/sources/icp-audit';
+import { writeIcpNote } from '@/lib/priorities/sources/icp-note';
 
 export type { IcpPriority, IcpPriorityKind, IcpPrioritySeverity } from '@/lib/priorities/sources/icp-audit';
 
@@ -47,6 +48,11 @@ export async function POST(request: Request) {
     }
 
     const priorities = await computeIcpAuditPriorities(supabase, user.id, user.email);
+    // Leave a note for /today to read (so it never runs its own audit). Best-effort —
+    // never let a note-write failure break the /icps inbox response.
+    await writeIcpNote(supabase, user.id, priorities).catch((e) =>
+      console.error('[icp-priorities] note write failed:', e),
+    );
     return NextResponse.json({ priorities, hash: currentHash });
   } catch (err) {
     console.error('[icp-priorities] failed:', err);

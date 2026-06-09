@@ -41,8 +41,14 @@ const nextConfig = {
         permanent: false,
       },
       {
+        // Page renamed Health → Coverage; keep old links working.
+        source: '/health',
+        destination: '/coverage',
+        permanent: false,
+      },
+      {
         source: '/leads/health',
-        destination: '/health',
+        destination: '/coverage',
         permanent: false,
       },
       {
@@ -52,7 +58,7 @@ const nextConfig = {
       },
       {
         source: '/pipeline',
-        destination: '/health',
+        destination: '/coverage',
         permanent: false,
       },
       {

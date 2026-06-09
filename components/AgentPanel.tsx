@@ -16,7 +16,7 @@ import { BATCH_CONTACTS_KEY } from '@/lib/batch-contacts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type AgentPage = 'accounts' | 'leads' | 'today' | 'health' | 'signals' | 'imports' | 'data' | 'icps' | 'log' | 'outreach';
+export type AgentPage = 'accounts' | 'leads' | 'today' | 'coverage' | 'signals' | 'imports' | 'data' | 'icps' | 'log' | 'outreach';
 
 export interface AgentTableFilter {
   columns: AccountQueryColumn[];
@@ -68,6 +68,8 @@ export interface AgentPanelProps {
   onJobStarted?: (job: { requestType: string; icpId?: string; companyId?: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[]; quantity: number }) => void;
   /** Fires after the agent has written to the ICPs table (update / delete). Parent should re-fetch the ICP list. */
   onIcpMutation?: (mutations: Array<{ kind: 'updated' | 'deleted'; icpId: string; name: string | null; reasoning: string }>) => void;
+  /** Fires after the agent set a GTM target (Coverage page). Parent should re-fetch the target + plan. */
+  onGtmTargetMutation?: (mutation: { period: string; type: 'revenue' | 'deals'; value: number; reasoning: string }) => void;
   /** Hide the Arcova Agent title row (full-bleed chat, e.g. Data page). */
   hideHeader?: boolean;
   /** Hide suggested prompt chips when the parent is providing state-aware onboarding. */
@@ -116,10 +118,10 @@ const PROMPTS: Record<AgentPage, string[]> = {
     'What should I do after that?',
     'Show me the highest-leverage option',
   ],
-  health: [
-    'Where is my ICP coverage weakest?',
-    'Which ICP needs more companies?',
-    'Where do I need better contacts?',
+  coverage: [
+    'Which ICP converts best?',
+    'Set my target for this quarter',
+    'How many contacts should I source to hit my number?',
   ],
   data: [
     'Get 50 more companies for ICP 2',
@@ -160,7 +162,7 @@ const PAGE_SUBTITLE: Partial<Record<AgentPage, string>> = {
   accounts: 'Working on your accounts',
   leads: 'Working on your contacts',
   icps: 'Working on your ICPs',
-  health: 'Working on coverage',
+  coverage: 'Working on coverage',
   signals: 'Working on recent signals',
   imports: 'Working on your imports',
   data: 'Run sourcing jobs and track the queue',
@@ -172,7 +174,7 @@ const PAGE_INPUT_PLACEHOLDER: Partial<Record<AgentPage, string>> = {
   accounts: 'Ask anything about your accounts…',
   leads: 'Ask anything about your contacts…',
   icps: 'Ask anything about your ICPs…',
-  health: 'Ask anything about coverage…',
+  coverage: 'Ask anything about coverage…',
   signals: 'Ask anything about recent signals…',
   imports: 'Ask anything about your imports…',
   data: 'Ask anything about your data jobs…',
@@ -248,7 +250,7 @@ function stripMarkdown(text: string): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, onLeadsFilter, onTableClear, wide, onJobStarted, onIcpMutation, hideHeader, suppressPrompts, embedInBriefingBento, onBusyChange, briefingWelcome, briefingIdleChips, surfaceClassName, headerSubtitle, className, variant = 'side-rail' }: AgentPanelProps) {
+export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, onLeadsFilter, onTableClear, wide, onJobStarted, onIcpMutation, onGtmTargetMutation, hideHeader, suppressPrompts, embedInBriefingBento, onBusyChange, briefingWelcome, briefingIdleChips, surfaceClassName, headerSubtitle, className, variant = 'side-rail' }: AgentPanelProps) {
   const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -387,6 +389,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
         suggestedNavigation?: { href: string; label: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[] };
         pendingJobStart?: { requestType: string; icpId?: string; companyId?: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[]; quantity: number };
         icpMutations?: Array<{ kind: 'updated' | 'deleted'; icpId: string; name: string | null; reasoning: string }>;
+        gtmTargetMutation?: { period: string; type: 'revenue' | 'deals'; value: number; reasoning: string };
       } = await res.json();
 
       // Update the pending placeholder with the real response
@@ -424,6 +427,11 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
         if (onIcpMutation) onIcpMutation(data.icpMutations);
         clearIcpPrioritiesCache();
         setPriorityRefreshKey((k) => k + 1);
+      }
+
+      // Agent set a GTM target on the Coverage page — refresh the target + plan.
+      if (data.gtmTargetMutation && onGtmTargetMutation) {
+        onGtmTargetMutation(data.gtmTargetMutation);
       }
 
       // If this response closes out a priority-card conversation, remove the card.
@@ -726,7 +734,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
           // Distinct chrome per surface — see memory: agent_surfaces_distinct.md
           // - lightSetupChat: /data sourcing flow (intentionally different)
           // - todayChat:      /today briefing or central variant (intentionally different)
-          // - default:        side-panel agent on icps/accounts/leads/health/signals/imports/log
+          // - default:        side-panel agent on icps/accounts/leads/coverage/signals/imports/log
           lightSetupChat
             ? 'gap-3 border-slate-200 bg-white px-5 py-4'
             : todayChat
