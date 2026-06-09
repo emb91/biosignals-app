@@ -731,64 +731,65 @@ export default function BriefingPage() {
                 )}
               </section>
 
-              <section className="bt-bento bt-pipe-tile">
-                <header className="bt-tile-head">
-                  <div>
-                    <p className="bt-tile-eyebrow">Pipeline</p>
-                    <h2 className="bt-tile-title">Pulse</h2>
-                  </div>
-                  <span className="bt-tile-trend" style={{ color: BT_ACCENT }}>
-                    {runningJobs.length > 0 ? (
-                      <>
-                        <TrendingUp className="h-3 w-3" strokeWidth={2.2} />
-                        {runningJobs.length} active
-                      </>
-                    ) : (
-                      <>steady</>
-                    )}
-                  </span>
-                </header>
-                <div className="bt-pipe-grid">
-                  <div>
-                    <p className="bt-pipe-num">{formatInt(totalCoveredCompanies)}</p>
-                    <p className="bt-pipe-label">prioritised companies</p>
-                  </div>
-                  <div>
-                    <p className="bt-pipe-num bt-pipe-num-sub">{pipeReady}</p>
-                    <p className="bt-pipe-label">high-fit · surfaced</p>
-                  </div>
-                </div>
-                <div className="bt-pipe-series-slot">
-                  {pulseSeries.state === 'ready' ? (
-                    <>
-                      <BriefingSparkline accent={BT_ACCENT} values={pulseSeries.values} />
-                      <div className="bt-pipe-legend">
-                        <span>
-                          <i style={{ background: BT_ACCENT }} />
-                          signals / day (last 28 days)
-                        </span>
-                        <span>
-                          <i className="dim" />
-                          trailing 7-day average
-                        </span>
-                      </div>
-                    </>
-                  ) : pulseSeries.state === 'loading' ? (
-                    <div className="bt-pipe-series-pending" aria-busy="true" aria-label="Loading signal trend">
-                      <div className="bt-pipe-chart-skeleton" />
-                      <div className="bt-pipe-legend-skeleton" aria-hidden>
-                        <span />
-                        <span />
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="bt-pipe-series-pending bt-pipe-series-off" role="status">
-                      <p className="bt-pipe-off-text">Signal trend unavailable</p>
-                    </div>
-                  )}
-                </div>
-              </section>
             </div>
+
+            <section className="bt-bento bt-pipe-tile">
+              <header className="bt-tile-head">
+                <div>
+                  <p className="bt-tile-eyebrow">Pipeline</p>
+                  <h2 className="bt-tile-title">Pulse</h2>
+                </div>
+                <span className="bt-tile-trend" style={{ color: BT_ACCENT }}>
+                  {runningJobs.length > 0 ? (
+                    <>
+                      <TrendingUp className="h-3 w-3" strokeWidth={2.2} />
+                      {runningJobs.length} active
+                    </>
+                  ) : (
+                    <>steady</>
+                  )}
+                </span>
+              </header>
+              <div className="bt-pipe-grid">
+                <div>
+                  <p className="bt-pipe-num">{formatInt(totalCoveredCompanies)}</p>
+                  <p className="bt-pipe-label">prioritised companies</p>
+                </div>
+                <div>
+                  <p className="bt-pipe-num bt-pipe-num-sub">{pipeReady}</p>
+                  <p className="bt-pipe-label">high-fit · surfaced</p>
+                </div>
+              </div>
+              <div className="bt-pipe-series-slot">
+                {pulseSeries.state === 'ready' ? (
+                  <>
+                    <BriefingSparkline accent={BT_ACCENT} values={pulseSeries.values} />
+                    <div className="bt-pipe-legend">
+                      <span>
+                        <i style={{ background: BT_ACCENT }} />
+                        signals / day (last 28 days)
+                      </span>
+                      <span>
+                        <i className="dim" />
+                        trailing 7-day average
+                      </span>
+                    </div>
+                  </>
+                ) : pulseSeries.state === 'loading' ? (
+                  <div className="bt-pipe-series-pending" aria-busy="true" aria-label="Loading signal trend">
+                    <div className="bt-pipe-chart-skeleton" />
+                    <div className="bt-pipe-legend-skeleton" aria-hidden>
+                      <span />
+                      <span />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bt-pipe-series-pending bt-pipe-series-off" role="status">
+                    <p className="bt-pipe-off-text">Signal trend unavailable</p>
+                  </div>
+                )}
+              </div>
+            </section>
 
             <section className="bt-bento bt-signals-tile">
               <header className="bt-tile-head">

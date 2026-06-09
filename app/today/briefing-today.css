@@ -81,8 +81,8 @@
 .briefing-today .bt-bento-grid {
   display: grid;
   grid-template-columns: minmax(0, 45rem) 1fr;
-  /* Row height follows the taller column; page scrolls via main (no inner scroll on Priorities/Pulse) */
-  grid-template-rows: auto auto;
+  /* Row height follows content; page scrolls via main */
+  grid-template-rows: auto auto auto;
   gap: 1.125rem;
   align-items: start;
   margin-top: 0.875rem;
@@ -102,7 +102,7 @@
   overflow: hidden;
 }
 
-/* Priorities + Pulse: grid row gap matches left column; tiny bottom pad + overflow visible so card shadows are not clipped */
+/* Priorities only: tiny bottom pad + overflow visible so card shadows are not clipped */
 .briefing-today .bt-right-stack {
   grid-column: 2;
   grid-row: 1;
@@ -119,20 +119,28 @@
   overflow: visible;
 }
 
-.briefing-today .bt-stats-wrap {
+/* Pulse — left column, below agent */
+.briefing-today .bt-bento.bt-pipe-tile {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+/* Signals — right column, below priorities */
+.briefing-today .bt-signals-tile {
   grid-column: 2;
   grid-row: 2;
+}
+
+/* Stat cards — left column, below pulse */
+.briefing-today .bt-stats-wrap {
+  grid-column: 1;
+  grid-row: 3;
   position: relative;
   z-index: 0;
 }
 
 .briefing-today .bt-right-stack > .bt-bento {
   flex: 0 0 auto;
-}
-
-.briefing-today .bt-signals-tile {
-  grid-column: 1;
-  grid-row: 2;
 }
 
 @media (max-width: 980px) {
@@ -144,6 +152,7 @@
 
   .briefing-today .bt-agent-tile,
   .briefing-today .bt-right-stack,
+  .briefing-today .bt-bento.bt-pipe-tile,
   .briefing-today .bt-signals-tile,
   .briefing-today .bt-stats-wrap {
     grid-column: 1;
@@ -706,7 +715,7 @@
 /* Stats */
 .briefing-today .bt-stat-row {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 0.75rem;
   height: 100%;
   position: relative;
