@@ -183,6 +183,61 @@ export async function upsertCrmDeal(
   return toRecord<CrmDealMirrorRecord>(data);
 }
 
+/**
+ * Record a deal's stage transition into crm_deal_stage_history. Idempotent:
+ * - if the deal is already in `toStage` (an open row exists for it), no-op
+ * - otherwise close any open stage row(s) (`exited_at = at`) and open `toStage`
+ *
+ * `at` is the transition timestamp (hs_lastmodifieddate for a change, or the
+ * deal's created_date for the first observed stage). Powers per-ICP funnel
+ * conversion + sales-cycle length. Going-forward capture only — deals' history
+ * prior to first sync is partial unless backfilled via HubSpot property history.
+ */
+export async function recordDealStageTransition(
+  supabase: DatabaseClient,
+  input: {
+    userId: string;
+    hubspotDealId: string;
+    toStage: string;
+    at: string;
+    rawPayload?: Record<string, unknown> | null;
+  }
+): Promise<void> {
+  const { userId, hubspotDealId, toStage, at } = input;
+
+  const { data: openRows } = await supabase
+    .from('crm_deal_stage_history')
+    .select('id, stage')
+    .eq('user_id', userId)
+    .eq('hubspot_deal_id', hubspotDealId)
+    .is('exited_at', null);
+
+  const open = (openRows ?? []) as Array<{ id: string; stage: string }>;
+  if (open.length === 1 && open[0].stage === toStage) return; // already in this stage
+
+  if (open.length > 0) {
+    await supabase
+      .from('crm_deal_stage_history')
+      .update({ exited_at: at })
+      .eq('user_id', userId)
+      .eq('hubspot_deal_id', hubspotDealId)
+      .is('exited_at', null);
+  }
+
+  await supabase.from('crm_deal_stage_history').upsert(
+    {
+      user_id: userId,
+      hubspot_deal_id: hubspotDealId,
+      stage: toStage,
+      entered_at: at,
+      exited_at: null,
+      raw_payload: input.rawPayload ?? null,
+      synced_at: new Date().toISOString(),
+    },
+    { onConflict: 'user_id,hubspot_deal_id,stage,entered_at', ignoreDuplicates: true }
+  );
+}
+
 export async function listCrmContactsByHubSpotIds(
   supabase: DatabaseClient,
   userId: string,
