@@ -2822,7 +2822,16 @@ export default function AccountsPage() {
                       // (list + per-id detail module cache + detail state) then refetch.
                       // The old code missed invalidating the /api/accounts/[id] module
                       // cache, so the detail effect refetched stale overrides.
-                      if (selectedAccountId) invalidateAccountCaches(selectedAccountId);
+                      const editedId = selectedAccountId;
+                      if (editedId) {
+                        invalidateAccountCaches(editedId);
+                        // Keep the just-edited account SELECTED after the refetch. Without
+                        // this, fetchAccounts() resets selection to null whenever the edited
+                        // account isn't in the refetched page (an override edit can change
+                        // its fit → re-sort/filter drops it off the page). Setting the focus
+                        // ref makes fetchAccounts include it (companyId param) and re-select it.
+                        accountsDeepLinkCompanyIdRef.current = editedId;
+                      }
                       fetchAccounts();
                     }}
                   />
