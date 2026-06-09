@@ -152,7 +152,9 @@ type SignalGroupRow = {
   label: string;
   count: number;
   ago: string;
-  /** Lead pill = summary count, rest = breakdown. Hiring expansion only. */
+  /** Inline count shown next to the label (e.g. "54 open roles"). Never in pills. */
+  countLabel?: string;
+  /** Category breakdown pills — shown only in the expanded area. */
   pills?: string[];
   items: SignalSubItem[];
 };
@@ -731,33 +733,35 @@ export default function BriefingPage() {
       };
 
       if (!family.has(rowKey)) {
-        // Row-level pills for aggregate hiring signals
+        // Hiring signals: countLabel goes inline on the row; category pills
+        // go in the expanded area only (hidden until the user unfolds the row).
+        let countLabel: string | undefined;
         let pills: string[] | undefined;
         if (s.signalKey === 'hiring_expansion') {
           const total = typeof meta.total_postings === 'number' ? meta.total_postings : null;
           const categories = meta.categories && typeof meta.categories === 'object'
             ? (meta.categories as Record<string, number>) : null;
-          pills = [];
-          if (total !== null) pills.push(`${total} open roles`);
+          if (total !== null) countLabel = `${total} open roles`;
+          const categoryPills: string[] = [];
           let categorisedSum = 0;
           if (categories) {
             for (const [key, count] of Object.entries(categories)) {
               const lbl = HIRING_CATEGORY_LABELS[key];
               if (lbl) {
-                pills.push(count > 1 ? `${lbl} · ${count}` : lbl);
+                categoryPills.push(count > 1 ? `${lbl} · ${count}` : lbl);
                 categorisedSum += count;
               }
             }
           }
-          // Show unclassified remainder so the headline total adds up
           const other = total !== null ? total - categorisedSum : 0;
-          if (other > 0) pills.push(`+ ${other} general roles`);
+          if (other > 0) categoryPills.push(`+ ${other} general roles`);
+          if (categoryPills.length > 0) pills = categoryPills;
         } else if (s.signalKey === 'job_surge') {
-          const count = typeof meta.total_postings === 'number' ? meta.total_postings : null;
-          pills = count !== null ? [`${count} open roles`] : undefined;
+          const total = typeof meta.total_postings === 'number' ? meta.total_postings : null;
+          if (total !== null) countLabel = `${total} open roles`;
         } else if (INDIVIDUAL_HIRING_KEYS.has(s.signalKey)) {
-          const count = typeof meta.count === 'number' ? meta.count : null;
-          pills = count !== null ? [`${count} role${count !== 1 ? 's' : ''}`] : undefined;
+          const n = typeof meta.count === 'number' ? meta.count : null;
+          if (n !== null) countLabel = `${n} open role${n !== 1 ? 's' : ''}`;
         }
 
         family.set(rowKey, {
@@ -767,6 +771,7 @@ export default function BriefingPage() {
           label: signalLabel(groupKey),
           count: 1,
           ago: relativeTime(s.eventAt ?? s.observedAt),
+          countLabel,
           pills,
           items: [subItem],
         });
@@ -1105,9 +1110,9 @@ export default function BriefingPage() {
                   <ul className="bt-sig-list">
                     {group.rows.map((row, i) => {
                       const isOpen = expandedSignalRows.has(row.key);
-                      // Only expandable if there's at least one sub-item with content
                       const expandableItems = row.items.filter(item => item.title || item.url);
-                      const isExpandable = expandableItems.length > 0;
+                      // Expandable if has linked sub-items OR category pills to reveal
+                      const isExpandable = expandableItems.length > 0 || (row.pills != null && row.pills.length > 0);
                       const RowEl = isExpandable ? 'button' : 'div';
                       return (
                         <li key={row.key} className="bt-sig-group-item" style={{ animationDelay: `${i * 40}ms` }}>
@@ -1121,19 +1126,11 @@ export default function BriefingPage() {
                               <span className="bt-sig-line">
                                 <strong>{row.company}</strong>
                                 {` · ${row.label}`}
-                                {row.count > 1 && (
-                                  <span className="bt-sig-count">{row.count}</span>
-                                )}
+                                {row.countLabel
+                                  ? <span className="bt-sig-line-count">{` · ${row.countLabel}`}</span>
+                                  : row.count > 1 && <span className="bt-sig-count">{row.count}</span>
+                                }
                               </span>
-                              {row.pills && row.pills.length > 0 && (
-                                <span className="bt-sig-pills">
-                                  {row.pills.map((pill, j) => (
-                                    <span key={j} className={cn('bt-sig-pill', j === 0 && 'bt-sig-pill--lead')}>
-                                      {pill}
-                                    </span>
-                                  ))}
-                                </span>
-                              )}
                             </span>
                             <span className="bt-sig-ago">{row.ago}</span>
                             {isExpandable && (
@@ -1141,32 +1138,43 @@ export default function BriefingPage() {
                             )}
                           </RowEl>
 
-                          {/* Expanded sub-items */}
+                          {/* Expanded area: category pills + linked sub-items */}
                           {isOpen && isExpandable && (
-                            <ul className="bt-sig-sub-list">
-                              {expandableItems.map((item) => {
-                                const label = item.title ?? item.what;
-                                if (!label && !item.url) return null;
-                                return (
-                                  <li key={item.id} className="bt-sig-sub-item">
-                                    {item.url ? (
-                                      <a
-                                        href={item.url}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="bt-sig-sub-link"
-                                      >
-                                        {label ?? item.url}
-                                        <ExternalLink className="bt-sig-sub-ext h-2.5 w-2.5" strokeWidth={2} />
-                                      </a>
-                                    ) : (
-                                      <span className="bt-sig-sub-text">{label}</span>
-                                    )}
-                                    {item.ago && item.ago !== row.ago && <span className="bt-sig-sub-ago">{item.ago}</span>}
-                                  </li>
-                                );
-                              })}
-                            </ul>
+                            <>
+                              {row.pills && row.pills.length > 0 && (
+                                <div className="bt-sig-expanded-pills">
+                                  {row.pills.map((pill, j) => (
+                                    <span key={j} className="bt-sig-pill">{pill}</span>
+                                  ))}
+                                </div>
+                              )}
+                              {expandableItems.length > 0 && (
+                                <ul className="bt-sig-sub-list">
+                                  {expandableItems.map((item) => {
+                                    const label = item.title ?? item.what;
+                                    if (!label && !item.url) return null;
+                                    return (
+                                      <li key={item.id} className="bt-sig-sub-item">
+                                        {item.url ? (
+                                          <a
+                                            href={item.url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="bt-sig-sub-link"
+                                          >
+                                            {label ?? item.url}
+                                            <ExternalLink className="bt-sig-sub-ext h-2.5 w-2.5" strokeWidth={2} />
+                                          </a>
+                                        ) : (
+                                          <span className="bt-sig-sub-text">{label}</span>
+                                        )}
+                                        {item.ago && item.ago !== row.ago && <span className="bt-sig-sub-ago">{item.ago}</span>}
+                                      </li>
+                                    );
+                                  })}
+                                </ul>
+                              )}
+                            </>
                           )}
                         </li>
                       );
