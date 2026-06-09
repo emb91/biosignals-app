@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/private/tmp/arcova-contact-location-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/contact-profile-display.ts",
+    "lib/contact-profile-display.test.ts",
+    "lib/contact-emails.ts"
+  ]
+}
