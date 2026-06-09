@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel, type AgentPendingMessage } from '@/components/AgentPanel';
 import { PageHeader } from '@/components/PageHeader';
-import { Activity, AlertTriangle, Kanban, Loader2, Plus, Trophy } from 'lucide-react';
+import { Activity, AlertTriangle, Kanban, Loader2, Plus, Trophy, Target, Pencil, Search } from 'lucide-react';
 import {
   healthLabel,
   isWeakDim,
@@ -15,8 +15,26 @@ import {
   type PipelineDataRequestType,
 } from '@/lib/pipeline-icp-health';
 import type { IcpPerformance } from '@/lib/coverage/icp-performance';
+import { buildCoveragePlan, type CoveragePlan } from '@/lib/coverage/coverage-plan';
+import { quarterOf, quarterLabel } from '@/lib/coverage/period';
+import type { CoverageTargetType } from '@/lib/coverage/allocation';
 import { cn } from '@/lib/utils';
 import { ROUTES, withQuery } from '@/lib/routes';
+
+type CoverageTargetResponse = {
+  period: string;
+  target: { type: CoverageTargetType; value: number } | null;
+  updatedAt: string | null;
+  history: { period: string; type: CoverageTargetType; value: number }[];
+};
+
+type SupplyRow = {
+  icpId: string;
+  sourceableContacts: number | null;
+  universeCompanies: number | null;
+  netNewCompanies: number;
+  estimate: true;
+};
 
 interface IcpPipelineCard {
   icp_id: string;
@@ -145,6 +163,11 @@ function formatCycle(days: number | null | undefined): string {
   return `${Math.round(days)}d`;
 }
 
+/** A target value rendered in its unit ($ revenue or deal count). */
+function formatTargetValue(type: CoverageTargetType, value: number): string {
+  return type === 'revenue' ? formatUsd(value) : `${Math.round(value).toLocaleString()} deals`;
+}
+
 /** Active deals + won, for the "deals" column. */
 function formatDealCount(p: IcpPerformance | null): string {
   if (!p) return '—';
@@ -263,6 +286,18 @@ export default function HealthPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const agentTaskFiredRef = useRef<string | null>(null);
 
+  // Coverage target (prescriptive tier)
+  const [targetData, setTargetData] = useState<CoverageTargetResponse | null>(null);
+  const [editingTarget, setEditingTarget] = useState(false);
+  const [draftType, setDraftType] = useState<CoverageTargetType>('revenue');
+  const [draftValue, setDraftValue] = useState('');
+  const [savingTarget, setSavingTarget] = useState(false);
+
+  // Addressable-supply ceilings (opt-in, credit-spending)
+  const [ceilings, setCeilings] = useState<Map<string, number | null> | null>(null);
+  const [supplyLoading, setSupplyLoading] = useState(false);
+  const [supplyError, setSupplyError] = useState<string | null>(null);
+
   // Agent trigger: nonce increments to re-fire even with the same message text
   const [agentTrigger, setAgentTrigger] = useState<AgentPendingMessage | undefined>();
 
@@ -281,9 +316,70 @@ export default function HealthPage() {
     }
   }, []);
 
+  const loadTarget = useCallback(async () => {
+    try {
+      const res = await fetch('/api/coverage/target');
+      const payload = (await res.json().catch(() => ({}))) as CoverageTargetResponse;
+      if (res.ok) setTargetData(payload);
+    } catch {
+      /* non-blocking — Coverage still works without a target */
+    }
+  }, []);
+
   useEffect(() => {
-    if (user) void loadCards();
-  }, [user, loadCards]);
+    if (user) {
+      void loadCards();
+      void loadTarget();
+    }
+  }, [user, loadCards, loadTarget]);
+
+  const saveTarget = useCallback(async () => {
+    const value = Number(draftValue.replace(/[^0-9.]/g, ''));
+    if (!Number.isFinite(value) || value <= 0) return;
+    setSavingTarget(true);
+    try {
+      const res = await fetch('/api/coverage/target', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ type: draftType, value }),
+      });
+      if (res.ok) {
+        setEditingTarget(false);
+        setCeilings(null); // target changed → prior supply plan is stale
+        await loadTarget();
+      }
+    } finally {
+      setSavingTarget(false);
+    }
+  }, [draftType, draftValue, loadTarget]);
+
+  const checkSupply = useCallback(async () => {
+    if (!cards) return;
+    setSupplyLoading(true);
+    setSupplyError(null);
+    try {
+      const contactsPerCompany: Record<string, number> = {};
+      for (const c of cards) {
+        if (c.avg_contacts_per_company != null && c.avg_contacts_per_company > 0) {
+          contactsPerCompany[c.icp_id] = c.avg_contacts_per_company;
+        }
+      }
+      const res = await fetch('/api/coverage/supply', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ contactsPerCompany }),
+      });
+      const payload = (await res.json().catch(() => ({}))) as { supply?: SupplyRow[]; error?: string };
+      if (!res.ok) throw new Error(payload.error || 'Supply check failed');
+      const map = new Map<string, number | null>();
+      for (const row of payload.supply ?? []) map.set(row.icpId, row.sourceableContacts);
+      setCeilings(map);
+    } catch (e) {
+      setSupplyError(e instanceof Error ? e.message : 'Supply check failed');
+    } finally {
+      setSupplyLoading(false);
+    }
+  }, [cards]);
 
   const healthAgentTask = searchParams.get('agentTask') ?? '';
   const healthAgentIcpId = searchParams.get('icpId') ?? '';
@@ -341,6 +437,14 @@ export default function HealthPage() {
   const insight = cards ? bestThroughputInsight(cards) : null;
   const rankMap = cards ? throughputRankMap(cards) : new Map<string, number>();
   const hasAnyPerformance = !!cards?.some((c) => c.performance);
+
+  const period = targetData?.period ?? quarterOf();
+  const target = targetData?.target ?? null;
+  const plan: CoveragePlan | null =
+    cards && cards.length > 0 && target
+      ? buildCoveragePlan({ cards, target, ceilings: ceilings ?? undefined })
+      : null;
+  const allocByIcp = new Map(plan ? plan.result.allocations.map((a) => [a.icpId, a]) : []);
 
   if (authLoading) {
     return (
@@ -417,6 +521,215 @@ export default function HealthPage() {
                 </p>
                 <Activity className="ml-auto h-4 w-4 shrink-0 text-emerald-400" />
               </button>
+            )}
+
+            {/* Target plan — the prescriptive tier */}
+            {cards && cards.length > 0 && (
+              <div className="mb-5 rounded-xl border border-gray-200 bg-white shadow-sm">
+                <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-5 py-4">
+                  <div className="flex items-center gap-2.5">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-arcova-teal/10">
+                      <Target className="h-4 w-4 text-arcova-teal" />
+                    </div>
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                        Target · {quarterLabel(period)}
+                      </p>
+                      {target ? (
+                        <p className="text-lg font-semibold leading-tight text-gray-900">
+                          {formatTargetValue(target.type, target.value)}
+                        </p>
+                      ) : (
+                        <p className="text-sm text-gray-500">Set a quarterly target to plan what to source.</p>
+                      )}
+                    </div>
+                  </div>
+                  {!editingTarget && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDraftType(target?.type ?? 'revenue');
+                        setDraftValue(target ? String(target.value) : '');
+                        setEditingTarget(true);
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-teal px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/90"
+                    >
+                      {target ? <Pencil className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+                      {target ? 'Edit' : 'Set target'}
+                    </button>
+                  )}
+                </div>
+
+                {/* Inline editor */}
+                {editingTarget && (
+                  <div className="space-y-3 px-5 py-4">
+                    <div className="flex gap-2">
+                      {(['revenue', 'deals'] as const).map((t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() => setDraftType(t)}
+                          className={cn(
+                            'rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors',
+                            draftType === t
+                              ? 'border-arcova-teal bg-arcova-teal/10 text-arcova-teal'
+                              : 'border-gray-200 text-gray-600 hover:bg-gray-50',
+                          )}
+                        >
+                          {t === 'revenue' ? 'Revenue ($)' : 'Deals (count)'}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-gray-400">{draftType === 'revenue' ? '$' : '#'}</span>
+                      <input
+                        value={draftValue}
+                        onChange={(e) => setDraftValue(e.target.value)}
+                        inputMode="numeric"
+                        placeholder={draftType === 'revenue' ? '2,000,000' : '40'}
+                        className="w-44 rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:border-arcova-teal focus:outline-none"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') void saveTarget();
+                          if (e.key === 'Escape') setEditingTarget(false);
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void saveTarget()}
+                        disabled={savingTarget || !draftValue.trim()}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-teal px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/90 disabled:opacity-50"
+                      >
+                        {savingTarget && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                        Save
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingTarget(false)}
+                        className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-500 hover:bg-gray-50"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-400">
+                      One overall {quarterLabel(period)} target. We split it across ICPs by throughput and
+                      back-calculate how many contacts to source for each.
+                    </p>
+                  </div>
+                )}
+
+                {/* Allocation plan */}
+                {!editingTarget && target && plan && (
+                  <div className="px-5 py-4">
+                    {!plan.canPlan ? (
+                      <p className="text-sm text-gray-500">
+                        We need at least one ICP with closed-won deals (for average deal size) to plan a{' '}
+                        <span className="font-medium">revenue</span> target. Switch to a deals target, or sync your
+                        CRM so we can learn your ACV.
+                      </p>
+                    ) : (
+                      <>
+                        <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+                          <p className="text-sm text-gray-700">
+                            To hit {formatTargetValue(target.type, target.value)}, source{' '}
+                            <span className="font-semibold text-gray-900">
+                              ~{plan.result.totalToBuy.toLocaleString()} new contacts
+                            </span>{' '}
+                            across your ICPs.
+                          </p>
+                          {ceilings == null ? (
+                            <button
+                              type="button"
+                              onClick={() => void checkSupply()}
+                              disabled={supplyLoading}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50"
+                              title="Counts the addressable company universe per ICP (uses a small amount of Apollo credits)"
+                            >
+                              {supplyLoading ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Search className="h-3.5 w-3.5" />
+                              )}
+                              Check addressable supply
+                            </button>
+                          ) : (
+                            <span className="text-xs font-medium text-gray-400">Supply checked (estimate)</span>
+                          )}
+                        </div>
+
+                        {supplyError && <p className="mb-2 text-xs text-red-600">{supplyError}</p>}
+
+                        <div className="overflow-hidden rounded-lg border border-gray-100">
+                          <table className="w-full border-collapse text-sm">
+                            <thead>
+                              <tr className="border-b border-gray-100 bg-gray-50/60">
+                                <th className={TH_HEAD}>ICP</th>
+                                <th className={`${TH_HEAD} text-right`}>Share</th>
+                                <th className={`${TH_HEAD} text-right`}>Sub-target</th>
+                                <th className={`${TH_HEAD} text-right`}>To source</th>
+                                <th className={TH_HEAD}></th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {[...cards]
+                                .map((c) => ({ card: c, a: allocByIcp.get(c.icp_id) }))
+                                .filter((r) => r.a && (r.a.subTarget > 0 || r.a.toBuy > 0))
+                                .sort((x, y) => (y.a!.subTarget ?? 0) - (x.a!.subTarget ?? 0))
+                                .map(({ card, a }) => (
+                                  <tr key={card.icp_id} className="border-b border-gray-50 last:border-b-0">
+                                    <td className={`${TD} max-w-[16rem] truncate`}>{card.label}</td>
+                                    <td className={TD_NUM}>{Math.round((a!.shareOfTarget ?? 0) * 100)}%</td>
+                                    <td className={TD_NUM}>{formatTargetValue(target.type, a!.subTarget)}</td>
+                                    <td className={TD_NUM}>
+                                      {a!.capped ? (
+                                        <span className="text-amber-700">
+                                          {a!.sourceable.toLocaleString()}
+                                          <span className="text-gray-400"> / {a!.toBuy.toLocaleString()}</span>
+                                        </span>
+                                      ) : (
+                                        a!.toBuy.toLocaleString()
+                                      )}
+                                    </td>
+                                    <td className={`${TD} whitespace-nowrap`}>
+                                      {a!.capped && (
+                                        <span className="mr-2 inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                                          Supply-limited
+                                        </span>
+                                      )}
+                                      {a!.toBuy > 0 && (
+                                        <button
+                                          type="button"
+                                          onClick={() => openDataRequest(card, 'expand_companies')}
+                                          className="text-xs font-semibold text-arcova-teal hover:underline"
+                                        >
+                                          Source
+                                        </button>
+                                      )}
+                                    </td>
+                                  </tr>
+                                ))}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        {plan.result.shortfall > 0 && (
+                          <p className="mt-3 flex items-start gap-1.5 text-xs text-amber-700">
+                            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                            <span>
+                              {formatTargetValue(target.type, plan.result.shortfall)} of this target is beyond your
+                              ICPs' addressable supply. Broaden an ICP, extend the timeline, or trim the number.
+                            </span>
+                          </p>
+                        )}
+
+                        <p className="mt-3 text-xs text-gray-400">
+                          Estimate — blended win rate {formatPct(plan.defaults.winRate)}, assumed contact→deal{' '}
+                          {formatPct(plan.defaults.contactToDeal)}. Refines as more deals close.
+                        </p>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
             )}
 
             {cards === null ? (
@@ -544,6 +857,8 @@ export default function HealthPage() {
             healthCards: cards ?? [],
             healthTask: healthAgentTask || null,
             healthTaskIcpId: healthAgentIcpId || null,
+            coveragePeriod: period,
+            coverageTarget: target,
           }}
           pendingMessage={agentTrigger}
         />

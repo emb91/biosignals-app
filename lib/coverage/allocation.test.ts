@@ -6,6 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { allocateTarget, type IcpAllocationInput, type CoverageDefaults } from './allocation';
 import { quarterOf, priorQuarter, quarterLabel, quarterDateRange, isValidPeriod } from './period';
+import { buildCoveragePlan, DEFAULT_WIN_RATE } from './coverage-plan';
 
 const D: CoverageDefaults = { winRate: 0.5, contactToDeal: 0.5, avgAcv: 10_000 };
 const approx = (a: number, b: number, eps = 1e-3) => Math.abs(a - b) <= eps;
@@ -110,4 +111,30 @@ test('period helpers: quarter math, labels, UTC ranges', () => {
   assert.equal(range.startIso, '2026-04-01T00:00:00.000Z');
   assert.equal(range.endIso, '2026-07-01T00:00:00.000Z'); // exclusive
   assert.equal(quarterDateRange('bad'), null);
+});
+
+test('buildCoveragePlan: blends rates, guards revenue without ACV', () => {
+  const cards = [
+    { icp_id: 'A', label: 'A', contact_count: 0, performance: { throughput: 2, win_rate: 0.4, avg_acv: 20_000 } },
+    { icp_id: 'B', label: 'B', contact_count: 0, performance: { throughput: 1, win_rate: 0.2, avg_acv: null } },
+  ];
+  const revenue = buildCoveragePlan({ cards, target: { type: 'revenue', value: 100_000 } });
+  assert.ok(revenue.canPlan, 'revenue plannable when some ACV exists');
+  assert.ok(Math.abs(revenue.defaults.winRate - 0.3) < 1e-9, 'blended win rate = mean(0.4,0.2)=0.3');
+  assert.ok(revenue.result.allocations.length === 2);
+
+  // No ACV anywhere → a revenue target cannot be planned honestly.
+  const noAcv = buildCoveragePlan({
+    cards: [{ icp_id: 'A', label: 'A', contact_count: 0, performance: { throughput: 1, win_rate: null, avg_acv: null } }],
+    target: { type: 'revenue', value: 100_000 },
+  });
+  assert.equal(noAcv.canPlan, false);
+  assert.equal(noAcv.defaults.winRate, DEFAULT_WIN_RATE); // no win rate → falls back to default
+
+  // A deals target is always plannable (no ACV needed).
+  const deals = buildCoveragePlan({
+    cards: [{ icp_id: 'A', label: 'A', contact_count: 0, performance: null }],
+    target: { type: 'deals', value: 10 },
+  });
+  assert.ok(deals.canPlan);
 });
