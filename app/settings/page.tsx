@@ -183,16 +183,27 @@ export default function SettingsPage() {
 
   const handleHubSpotConnect = async () => {
     try {
-      const nango = new Nango({ publicKey: process.env.NEXT_PUBLIC_NANGO_PUBLIC_KEY ?? '' });
-      const providerConfigKey = 'hubspot';
-      const connectionId = `hubspot-${user?.id ?? 'unknown'}`;
-      await nango.auth(providerConfigKey, connectionId);
-      const res = await fetch('/api/hubspot/connect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ integrationId: providerConfigKey, connectionId }),
+      // Get a short-lived session token from our backend (auth'd server-side).
+      const sessionRes = await fetch('/api/nango/session', { method: 'POST' });
+      if (!sessionRes.ok) return;
+      const { sessionToken } = await sessionRes.json();
+      if (!sessionToken) return;
+
+      const nangoClient = new Nango();
+      const connectUI = nangoClient.openConnectUI({
+        onEvent: async (event) => {
+          if (event.type === 'connect') {
+            const { connectionId, providerConfigKey } = event.payload;
+            await fetch('/api/nango/connection', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ integrationId: providerConfigKey, connectionId }),
+            });
+            await refreshHubSpotStatus();
+          }
+        },
       });
-      if (res.ok) await refreshHubSpotStatus();
+      connectUI.setSessionToken(sessionToken);
     } catch { /* user cancelled or error */ }
   };
 

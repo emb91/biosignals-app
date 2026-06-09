@@ -641,14 +641,17 @@ export default function AccountsPage() {
   const [loadingContacts, setLoadingContacts] = useState(false);
 
   // Detail panel accordion open state
-  const [detailPanelOpen, setDetailPanelOpen] = useState({
-    criteria: false,
-    firmographics: false,
-    funding: false,
-    products: false,
-    services: false,
-    technology: false,
-  });
+  // Details segments are UNFOLDED by default (matches /contacts). The user can
+  // still collapse any segment; selecting a new account re-expands them.
+  const ALL_DETAILS_EXPANDED = {
+    criteria: true,
+    firmographics: true,
+    funding: true,
+    products: true,
+    services: true,
+    technology: true,
+  } as const;
+  const [detailPanelOpen, setDetailPanelOpen] = useState({ ...ALL_DETAILS_EXPANDED });
   const toggleDetail = (key: keyof typeof detailPanelOpen) =>
     setDetailPanelOpen((s) => ({ ...s, [key]: !s[key] }));
 
@@ -676,25 +679,9 @@ export default function AccountsPage() {
 
     if (pendingOpenCriteriaRef.current) {
       pendingOpenCriteriaRef.current = false;
-      setDetailPanelOpen({
-        criteria: true,
-        firmographics: false,
-        funding: false,
-        products: false,
-        services: false,
-        technology: false,
-      });
-      return;
     }
-
-    setDetailPanelOpen({
-      criteria: false,
-      firmographics: false,
-      funding: false,
-      products: false,
-      services: false,
-      technology: false,
-    });
+    // Always re-expand all segments when the selected account changes.
+    setDetailPanelOpen({ ...ALL_DETAILS_EXPANDED });
   }, [selectedAccountId]);
 
   useEffect(() => {
@@ -745,7 +732,7 @@ export default function AccountsPage() {
       // The endpoint returns immediately (work runs in after()). Refresh once
       // now so the server-confirmed "running" state lands; the 5s poll picks
       // up the eventual succeeded/failed flip.
-      invalidateCache('/api/accounts');
+      invalidateAccountCaches(companyId, { clearDetailState: false });
       await fetchAccounts(true);
       await loadAccountDetail(companyId, true);
     } catch (err) {
@@ -771,7 +758,7 @@ export default function AccountsPage() {
     if (refreshingCompanyId === companyId) setRefreshingCompanyId(null);
     try {
       await fetch(`/api/companies/${companyId}/enrich`, { method: 'DELETE' });
-      invalidateCache('/api/accounts');
+      invalidateAccountCaches(companyId, { clearDetailState: false });
       await fetchAccounts(true);
       await loadAccountDetail(companyId, true);
     } catch (err) {
@@ -807,7 +794,7 @@ export default function AccountsPage() {
       const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
       if (focusId) params.set('companyId', focusId);
       // Module-level cache: tab-switch-and-back doesn't refetch within TTL.
-      // After mutations (edit/archive) we call invalidateCache('/api/accounts').
+      // After mutations (enrich/stop/edit/archive) we call invalidateAccountCaches().
       const { data: result } = await cachedJson<{
         data?: AccountRow[];
         total?: number;
@@ -854,6 +841,32 @@ export default function AccountsPage() {
       console.error('Error fetching account detail:', e);
     }
   }, []);
+
+  // Invalidate EVERY cache layer for an account after a mutation. There are
+  // THREE and forgetting any one leaves the side panel showing stale data
+  // (see memory/project_enrichment_safety.md):
+  //   1. the module-level list cache       (/api/accounts)
+  //   2. the module-level per-id detail    (/api/accounts/[id])
+  //   3. the per-id detail in React state  (selectedAccountDetailById)
+  // Pass clearDetailState:false when the caller will immediately force-reload
+  // the detail (loadAccountDetail(id, true)) — keeping the existing state entry
+  // avoids a flicker (used by the enrichment refresh/poll path, which also
+  // wants its optimistic "running" patch to survive until the reload lands).
+  const invalidateAccountCaches = useCallback(
+    (companyId: string, opts?: { clearDetailState?: boolean }) => {
+      invalidateCache('/api/accounts');
+      invalidateCache(`/api/accounts/${encodeURIComponent(companyId)}`);
+      if (opts?.clearDetailState ?? true) {
+        setSelectedAccountDetailById((prev) => {
+          if (!(companyId in prev)) return prev;
+          const next = { ...prev };
+          delete next[companyId];
+          return next;
+        });
+      }
+    },
+    [],
+  );
 
   // Fetch full detail for the selected account (firmographics, products,
   // funding detail, etc.) — these fields aren't in the lean list response.
@@ -1048,6 +1061,20 @@ export default function AccountsPage() {
     return () => { cancelled = true; };
   }, [selectedAccountId, panelMode]);
 
+  // Auto-fetch fit for all contacts once they load (fit breakdown is always visible now)
+  useEffect(() => {
+    for (const contact of contacts) {
+      if (contact.id in contactFitCache || contactFitLoadingIds.has(contact.id)) continue;
+      setContactFitLoadingIds((s) => new Set(s).add(contact.id));
+      fetch(`/api/contacts/${encodeURIComponent(contact.id)}/fit`)
+        .then((r) => r.json())
+        .then((result) => setContactFitCache((c) => ({ ...c, [contact.id]: result.data ?? null })))
+        .catch(() => setContactFitCache((c) => ({ ...c, [contact.id]: null })))
+        .finally(() => setContactFitLoadingIds((s) => { const n = new Set(s); n.delete(contact.id); return n; }));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contacts]);
+
   const handleTableFilter = (_filter: AgentTableFilter, filteredAccounts: QueryAccount[]) => {
     setAgentFilterIds(new Set(filteredAccounts.map((a) => a.id)));
     setTableSortCol(null);
@@ -1084,14 +1111,7 @@ export default function AccountsPage() {
   const openDetailsWithCriteria = (id: string) => {
     setPanelMode('details');
     if (selectedAccountId === id) {
-      setDetailPanelOpen({
-        criteria: true,
-        firmographics: false,
-        funding: false,
-        products: false,
-        services: false,
-        technology: false,
-      });
+      setDetailPanelOpen({ ...ALL_DETAILS_EXPANDED });
       return;
     }
     pendingOpenCriteriaRef.current = true;
@@ -1239,21 +1259,25 @@ export default function AccountsPage() {
           </div>
         );
       case 'company_type':
-        return account.company_type ? (
-          <button
-            type="button"
-            className="-m-0.5 p-0.5 text-left cursor-pointer"
-            onClick={(e) => {
-              e.stopPropagation();
-              openDetailsWithCriteria(account.id);
-            }}
-          >
-            <span className="block truncate text-[12px] text-gray-700" title={account.company_type}>
-              {truncate35(account.company_type)}
-            </span>
-          </button>
-        ) : (
-          <span className="text-[12px] text-gray-700">—</span>
+        return (
+          <div className="flex items-center min-w-0">
+            {account.company_type ? (
+              <button
+                type="button"
+                className="min-w-0 text-left cursor-pointer"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openDetailsWithCriteria(account.id);
+                }}
+              >
+                <span className="block truncate text-[12px] text-gray-700" title={account.company_type}>
+                  {truncate35(account.company_type)}
+                </span>
+              </button>
+            ) : (
+              <span className="text-[12px] text-gray-700">—</span>
+            )}
+          </div>
         );
       case 'fit':
         return (
@@ -1760,34 +1784,35 @@ export default function AccountsPage() {
                       </div>
                     </div>
 
-                    <div className="flex shrink-0 border-b border-[rgba(13,53,71,0.08)] px-5">
-                      {(['details', 'priority', 'fit', 'action', 'contacts', 'signals', 'crm'] as PanelMode[]).map((mode) => (
-                        <button
-                          key={mode}
-                          type="button"
-                          onClick={() => setPanelMode(mode)}
-                          className={cn(
-                            'py-2.5 pr-4 text-xs font-medium border-b-2 -mb-px transition-colors capitalize',
-                            panelMode === mode
-                              ? 'border-arcova-teal text-arcova-teal'
-                              : 'border-transparent text-gray-500 hover:text-gray-700',
-                          )}
-                        >
-                          {mode === 'contacts'
-                            ? 'Contacts'
-                            : mode === 'fit'
-                              ? 'Fit'
-                              : mode === 'action'
-                                ? 'Action'
-                                : mode === 'signals'
-                                  ? 'Signals'
-                                  : mode === 'priority'
-                                    ? 'Priority'
-                                    : mode === 'crm'
-                                      ? 'CRM'
-                                      : 'Details'}
-                        </button>
-                      ))}
+                    {/* Peer tab strip — teal button style, matching /leads/contacts.
+                        Order: Details, Contacts, Fit, Priority, Signals, CRM, Action. */}
+                    <div className="relative z-[1] flex items-center gap-1 overflow-x-auto border-b border-[rgba(13,53,71,0.06)] bg-white/60 px-3 py-1.5">
+                      {([
+                        { mode: 'details', label: 'Details' },
+                        { mode: 'contacts', label: 'Contacts' },
+                        { mode: 'fit', label: 'Fit' },
+                        { mode: 'priority', label: 'Priority' },
+                        { mode: 'signals', label: 'Signals' },
+                        { mode: 'crm', label: 'CRM' },
+                        { mode: 'action', label: 'Action' },
+                      ] as { mode: PanelMode; label: string }[]).map(({ mode, label }) => {
+                        const isActive = panelMode === mode;
+                        return (
+                          <button
+                            key={mode}
+                            type="button"
+                            onClick={() => setPanelMode(mode)}
+                            className={cn(
+                              'shrink-0 rounded-md px-2 py-1 text-[11.5px] font-semibold transition-colors',
+                              isActive
+                                ? 'bg-arcova-teal/10 text-arcova-teal'
+                                : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700',
+                            )}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
                     </div>
 
                     {/* Panel body */}
@@ -1808,10 +1833,21 @@ export default function AccountsPage() {
 
                       {panelMode === 'action' && (() => {
                         const action = getAccountRowAction(selectedAccount);
+                        const config = LEAD_ACTION_PILL_CLASS[action];
                         const companyLabel =
                           selectedAccount.company_name || selectedAccount.domain || 'This company';
+                        const updatedAt = selectedAccount.last_enriched_at;
                         return (
                           <div className="flex flex-col gap-3.5">
+                            {/* Action pill + timestamp — matches the /contacts action tab header */}
+                            <div className="flex flex-wrap items-center gap-2.5">
+                              <span className={cn('inline-flex items-center rounded-full px-3 py-1 text-sm font-medium', config.className)}>
+                                {config.label}
+                              </span>
+                              {updatedAt ? (
+                                <span className="text-[11px] text-[#7d909a]">Updated {formatDate(updatedAt)}</span>
+                              ) : null}
+                            </div>
                             {action === 'monitor' &&
                               (isAccountMonitorAwaitingSignal(selectedAccount) ? (
                                 <div className="space-y-3">
@@ -2025,72 +2061,8 @@ export default function AccountsPage() {
                                 </button>
                               </div>
                             )}
-                            {/* Data source — matches the contact card's Data source card.
-                                Holds the Type/Imported metadata + the Refresh enrichment
-                                action inside the same segment (no separate footer button). */}
-                            <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-3 py-3 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
-                              <p className="mb-3 font-manrope text-xs font-semibold text-[#0d3547]">Data source</p>
-                              <div className="grid grid-cols-2 gap-x-6 gap-y-2">
-                                <div className="min-w-0">
-                                  <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">Type</p>
-                                  <p className="mt-2 text-sm leading-snug text-[#0d3547]">{selectedAccount.data_provenance_type}</p>
-                                </div>
-                                <div className="min-w-0">
-                                  <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">Imported</p>
-                                  <p className="mt-2 text-sm leading-snug text-[#0d3547]">
-                                    {formatProvenanceImportedAt(selectedAccount.data_provenance_imported_at)}
-                                  </p>
-                                </div>
-                              </div>
-
-                              <div className="mt-4 space-y-3 border-t border-[rgba(13,53,71,0.06)] pt-4">
-                                {selectedAccount.last_enriched_at && (
-                                  <p className="text-xs leading-snug text-[#4a6470]">
-                                    Last updated {formatDate(selectedAccount.last_enriched_at)}
-                                  </p>
-                                )}
-                                <p className="text-xs leading-relaxed text-[#6B7280]">
-                                  You can refresh this enrichment again whenever you need updated data.
-                                </p>
-                                {(() => {
-                                  // While a run is in flight (the request OR the async
-                                  // after() job, until the 5s poll flips the row), show a
-                                  // disabled "Enriching…" indicator PLUS an enabled "Stop"
-                                  // control (mirrors the contacts stop button). Otherwise
-                                  // the normal "Refresh enrichment" trigger.
-                                  const isWorking =
-                                    refreshingCompanyId === selectedAccount.id || enrichmentRunning;
-                                  if (isWorking) {
-                                    return (
-                                      <div className="flex items-center gap-2">
-                                        <span className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#1F2937] opacity-60">
-                                          <RotateCw className="w-4 h-4 text-[#1F2937] animate-spin" />
-                                          Enriching…
-                                        </span>
-                                        <button
-                                          type="button"
-                                          onClick={() => stopCompanyEnrichment(selectedAccount.id)}
-                                          className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-red-600 transition-colors hover:bg-red-50"
-                                        >
-                                          <X className="w-4 h-4" />
-                                          Stop
-                                        </button>
-                                      </div>
-                                    );
-                                  }
-                                  return (
-                                    <button
-                                      type="button"
-                                      onClick={() => rerunCompanyEnrichment(selectedAccount.id)}
-                                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#1F2937] transition-colors hover:bg-gray-50"
-                                    >
-                                      <RotateCw className="w-4 h-4 text-[#1F2937]" />
-                                      Refresh enrichment
-                                    </button>
-                                  );
-                                })()}
-                              </div>
-                            </div>
+                            {/* Data source / enrichment box is rendered at the BOTTOM of the
+                                Details tab (after all segments) — see below. */}
 
                             {/* Criteria */}
                             {hasCriteria && (
@@ -2117,15 +2089,11 @@ export default function AccountsPage() {
                                     {selectedAccount.company_type && (
                                       <div>
                                         <p className="text-gray-400 text-xs mb-1">Company type</p>
-                                        <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2.5 py-0.5 text-xs font-medium text-arcova-teal">{selectedAccount.company_type}</span>
+                                        <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2.5 py-1 text-sm font-medium text-arcova-teal">{selectedAccount.company_type}</span>
                                       </div>
                                     )}
-                                    {selectedAccount.industry && (
-                                      <div>
-                                        <p className="text-gray-400 text-xs mb-1">Industry</p>
-                                        <p className="text-sm text-gray-700">{selectedAccount.industry}</p>
-                                      </div>
-                                    )}
+                                    {/* Raw Apollo `industry` intentionally hidden — it's free-text,
+                                        not an ICP/taxonomy criterion (company_type pill covers it). */}
                                     {selectedAccount.sub_industry && (
                                       <div>
                                         <p className="text-gray-400 text-xs mb-1">Sub-industry</p>
@@ -2311,6 +2279,73 @@ export default function AccountsPage() {
                                 )}
                               </div>
                             )}
+
+                            {/* Data source / enrichment box — pinned to the BOTTOM of the
+                                Details tab (matches /leads/contacts). Holds Type/Imported +
+                                the Refresh / Stop enrichment controls. */}
+                            <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] px-3 py-3 shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
+                              <p className="mb-3 font-manrope text-xs font-semibold text-[#0d3547]">Data source</p>
+                              <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+                                <div className="min-w-0">
+                                  <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">Type</p>
+                                  <p className="mt-2 text-sm leading-snug text-[#0d3547]">{selectedAccount.data_provenance_type}</p>
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">Imported</p>
+                                  <p className="mt-2 text-sm leading-snug text-[#0d3547]">
+                                    {formatProvenanceImportedAt(selectedAccount.data_provenance_imported_at)}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="mt-4 space-y-3 border-t border-[rgba(13,53,71,0.06)] pt-4">
+                                {selectedAccount.last_enriched_at && (
+                                  <p className="text-xs leading-snug text-[#4a6470]">
+                                    Last updated {formatDate(selectedAccount.last_enriched_at)}
+                                  </p>
+                                )}
+                                <p className="text-xs leading-relaxed text-[#6B7280]">
+                                  You can refresh this enrichment again whenever you need updated data.
+                                </p>
+                                {(() => {
+                                  // While a run is in flight (the request OR the async
+                                  // after() job, until the 5s poll flips the row), show a
+                                  // disabled "Enriching…" indicator PLUS an enabled "Stop"
+                                  // control (mirrors the contacts stop button). Otherwise
+                                  // the normal "Refresh enrichment" trigger.
+                                  const isWorking =
+                                    refreshingCompanyId === selectedAccount.id || enrichmentRunning;
+                                  if (isWorking) {
+                                    return (
+                                      <div className="flex items-center gap-2">
+                                        <span className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#1F2937] opacity-60">
+                                          <RotateCw className="w-4 h-4 text-[#1F2937] animate-spin" />
+                                          Enriching…
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() => stopCompanyEnrichment(selectedAccount.id)}
+                                          className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-red-600 transition-colors hover:bg-red-50"
+                                        >
+                                          <X className="w-4 h-4" />
+                                          Stop
+                                        </button>
+                                      </div>
+                                    );
+                                  }
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={() => rerunCompanyEnrichment(selectedAccount.id)}
+                                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#1F2937] transition-colors hover:bg-gray-50"
+                                    >
+                                      <RotateCw className="w-4 h-4 text-[#1F2937]" />
+                                      Refresh enrichment
+                                    </button>
+                                  );
+                                })()}
+                              </div>
+                            </div>
                           </div>
                         );
                       })()}
@@ -2373,34 +2408,6 @@ export default function AccountsPage() {
 
                       {panelMode === 'contacts' && (
                         <div className="space-y-3">
-                          <div className="rounded-xl border border-gray-100 bg-gray-50/70 px-3 py-2.5">
-                            <p className="text-xs font-semibold text-gray-700 mb-3">Contact coverage</p>
-                            <div className="grid grid-cols-3 gap-3 text-xs">
-                              <div>
-                                <p className="text-gray-400 mb-0.5">Contacts</p>
-                                <p className="text-lg font-semibold text-gray-900">{selectedAccount.contact_count}</p>
-                              </div>
-                              <div>
-                                <p className="text-gray-400 mb-0.5">Best fit</p>
-                                <p className="text-lg font-semibold text-gray-900">{formatPct(selectedAccount.best_contact_fit) ?? '—'}</p>
-                              </div>
-                              <div>
-                                <p className="text-gray-400 mb-0.5">Avg fit</p>
-                                <p className="text-lg font-semibold text-gray-900">{formatPct(selectedAccount.avg_contact_fit) ?? '—'}</p>
-                              </div>
-                            </div>
-                            {(selectedAccount.best_contact_fit == null || selectedAccount.best_contact_fit < 1) && (
-                              <button
-                                type="button"
-                                onClick={() => openContactAcquisition(selectedAccount)}
-                                className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-white px-3 py-2 text-xs font-semibold text-arcova-teal hover:border-arcova-teal hover:bg-arcova-teal/5 transition-colors"
-                              >
-                                <Users className="h-3.5 w-3.5" />
-                                Find buyer-persona contacts
-                              </button>
-                            )}
-                          </div>
-
                           {loadingContacts ? (
                             <div className="flex justify-center py-12">
                               <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-arcova-teal" />
@@ -2432,7 +2439,6 @@ export default function AccountsPage() {
                           ) : (
                             <div className="space-y-2">
                               {contacts.map((contact) => {
-                                const isExpanded = expandedContactId === contact.id;
                                 const title = contact.resolved_current_job_title || contact.job_title || null;
                                 const fitPct = formatPct(contact.contact_fit_score);
                                 const fit = contactFitCache[contact.id];
@@ -2440,99 +2446,75 @@ export default function AccountsPage() {
                                 return (
                                   <div
                                     key={contact.id}
-                                    className={cn(
-                                      'rounded-xl border bg-gray-50/60 overflow-hidden transition-colors',
-                                      isExpanded ? 'border-arcova-teal/30' : 'border-gray-100',
-                                    )}
+                                    className="rounded-xl border border-arcova-teal/20 bg-gray-50/60 overflow-hidden"
                                   >
-                                    {/* Row header — click to toggle */}
-                                    <button
-                                      type="button"
-                                      onClick={() => toggleContact(contact.id)}
-                                      className="w-full text-left px-3 py-2.5 hover:bg-arcova-teal/5 transition-colors"
-                                    >
+                                    {/* Contact header */}
+                                    <div className="px-3 py-2.5">
                                       <div className="flex items-start justify-between gap-2">
                                         <div className="min-w-0">
                                           <p className="text-sm font-medium text-gray-900 truncate">{contact.full_name || '—'}</p>
                                           {title && <p className="text-xs text-gray-500 truncate mt-0.5">{title}</p>}
                                           {contact.email && <p className="text-xs text-gray-400 truncate mt-0.5">{contact.email}</p>}
                                         </div>
-                                        <div className="flex items-center gap-2 shrink-0">
-                                          {fitPct && (
-                                            <span className="text-sm font-semibold tabular-nums text-gray-900">{fitPct}</span>
-                                          )}
-                                          <ChevronDown className={cn('w-3.5 h-3.5 text-gray-400 transition-transform duration-200 shrink-0', isExpanded ? 'rotate-0' : '-rotate-90')} />
-                                        </div>
-                                      </div>
-                                    </button>
-
-                                    {/* Expanded fit breakdown */}
-                                    {isExpanded && (
-                                      <div className="border-t border-gray-100 px-3 py-3 space-y-2.5">
-                                        {fitLoading ? (
-                                          <p className="text-xs text-gray-400">Loading fit…</p>
-                                        ) : fit?.winning_breakdown ? (
-                                          <>
-                                            <button
-                                              type="button"
-                                              onClick={() => router.push(withQuery(ROUTES.contacts, `lead=${encodeURIComponent(contact.id)}&search=${encodeURIComponent(contact.full_name || contact.email || '')}`))}
-                                              className="inline-flex items-center gap-1 rounded-full border border-arcova-teal/30 bg-white px-2.5 py-1 text-xs font-semibold text-arcova-teal hover:border-arcova-teal hover:bg-arcova-teal/10 transition-colors"
-                                            >
-                                              View contact
-                                            </button>
-                                            <p className="text-[11px] text-gray-400">Click a row to unfold detail</p>
-                                            {CONTACT_FIT_COMPONENT_ORDER.map((key) => {
-                                              const component = fit.winning_breakdown!.components[key];
-                                              if (!component?.active) return null;
-                                              const componentPct = formatPct(component.score01);
-                                              const barKey = `${contact.id}:${key}`;
-                                              const isOpen = expandedBars.has(barKey);
-                                              const showPill = Boolean(component.matchedValue) && component.matchStatus !== 'mismatch';
-                                              const detailText: string | null = (() => {
-                                                if (component.matchStatus === 'exact') return 'Exact match';
-                                                if (key === 'seniority' && contact.seniority_level) return `Contact is ${contact.seniority_level}. This is not the target buying group for this ICP`;
-                                                return component.detail || null;
-                                              })();
-                                              return (
-                                                <div key={key}>
-                                                  <button
-                                                    type="button"
-                                                    onClick={() => toggleBar(barKey)}
-                                                    className="w-full rounded-md px-1 -mx-1 py-0.5 text-left transition-colors hover:bg-gray-100/80"
-                                                  >
-                                                    <div className="flex items-center justify-between gap-2">
-                                                      <p className="text-xs font-medium text-gray-700">{component.label}</p>
-                                                      <div className="flex items-center gap-1 shrink-0">
-                                                        {componentPct && <span className="text-[11px] text-slate-500">{componentPct}</span>}
-                                                        <ChevronDown className={cn('h-3 w-3 shrink-0 text-gray-400 transition-transform duration-200', isOpen ? 'rotate-0' : '-rotate-90')} aria-hidden />
-                                                      </div>
-                                                    </div>
-                                                    <div className="mt-1 h-1 overflow-hidden rounded-full bg-slate-200">
-                                                      <div
-                                                        className={`h-full rounded-full ${component.available ? 'bg-arcova-teal' : 'bg-slate-300'}`}
-                                                        style={{ width: `${Math.max(0, Math.min(100, Math.round(component.score01 * 100)))}%` }}
-                                                      />
-                                                    </div>
-                                                  </button>
-                                                  {isOpen && (showPill || detailText) && (
-                                                    <div className="mt-1.5 space-y-1">
-                                                      {showPill && (
-                                                        <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal">
-                                                          {component.matchedValue}
-                                                        </span>
-                                                      )}
-                                                      {detailText && <p className="text-[11px] leading-relaxed text-gray-400">{detailText}</p>}
-                                                    </div>
-                                                  )}
-                                                </div>
-                                              );
-                                            })}
-                                          </>
-                                        ) : (
-                                          <p className="text-xs text-gray-400">No contact fit data yet.</p>
+                                        {fitPct && (
+                                          <span className="text-sm font-semibold tabular-nums text-gray-900 shrink-0">{fitPct}</span>
                                         )}
                                       </div>
-                                    )}
+                                      <button
+                                        type="button"
+                                        onClick={() => router.push(withQuery(ROUTES.contacts, `lead=${encodeURIComponent(contact.id)}`))}
+                                        className="mt-2 inline-flex items-center gap-1 rounded-full border border-arcova-teal/30 bg-white px-2.5 py-1 text-xs font-semibold text-arcova-teal hover:border-arcova-teal hover:bg-arcova-teal/10 transition-colors"
+                                      >
+                                        View contact
+                                      </button>
+                                    </div>
+
+                                    {/* Fit breakdown — always visible */}
+                                    <div className="border-t border-gray-100 px-3 py-3 space-y-2.5">
+                                      {fitLoading ? (
+                                        <p className="text-xs text-gray-400">Loading fit…</p>
+                                      ) : fit?.winning_breakdown ? (
+                                        <>
+                                          {CONTACT_FIT_COMPONENT_ORDER.map((key) => {
+                                            const component = fit.winning_breakdown!.components[key];
+                                            if (!component?.active) return null;
+                                            const componentPct = formatPct(component.score01);
+                                            const showPill = Boolean(component.matchedValue) && component.matchStatus !== 'mismatch';
+                                            const detailText: string | null = (() => {
+                                              if (component.matchStatus === 'exact') return 'Exact match';
+                                              if (key === 'seniority' && contact.seniority_level) return `Contact is ${contact.seniority_level}. This is not the target buying group for this ICP`;
+                                              return component.detail || null;
+                                            })();
+                                            return (
+                                              <div key={key}>
+                                                <div className="flex items-center justify-between gap-2">
+                                                  <p className="text-xs font-medium text-gray-700">{component.label}</p>
+                                                  {componentPct && <span className="text-[11px] text-slate-500 shrink-0">{componentPct}</span>}
+                                                </div>
+                                                <div className="mt-1 h-1 overflow-hidden rounded-full bg-slate-200">
+                                                  <div
+                                                    className={`h-full rounded-full ${component.available ? 'bg-arcova-teal' : 'bg-slate-300'}`}
+                                                    style={{ width: `${Math.max(0, Math.min(100, Math.round(component.score01 * 100)))}%` }}
+                                                  />
+                                                </div>
+                                                {(showPill || detailText) && (
+                                                  <div className="mt-1.5 space-y-1">
+                                                    {showPill && (
+                                                      <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal">
+                                                        {component.matchedValue}
+                                                      </span>
+                                                    )}
+                                                    {detailText && <p className="text-[11px] leading-relaxed text-gray-400">{detailText}</p>}
+                                                  </div>
+                                                )}
+                                              </div>
+                                            );
+                                          })}
+                                        </>
+                                      ) : (
+                                        <p className="text-xs text-gray-400">No contact fit data yet.</p>
+                                      )}
+                                    </div>
                                   </div>
                                 );
                               })}
@@ -2810,7 +2792,7 @@ export default function AccountsPage() {
                                   throw new Error(result.error || 'Failed to archive account.');
                                 }
 
-                                invalidateCache('/api/accounts');
+                                invalidateAccountCaches(selectedAccount.id);
                                 setAccounts((prev) => prev.filter((account) => account.id !== selectedAccount.id));
                                 setSelectedAccountId(null);
                               } catch (error) {
@@ -2835,16 +2817,11 @@ export default function AccountsPage() {
                     open={editAccountOpen}
                     onClose={() => setEditAccountOpen(false)}
                     onSaved={() => {
-                      // Edit changed user_overrides — drop the list cache AND the
-                      // per-account detail cache so both refresh with new overrides.
-                      invalidateCache('/api/accounts');
-                      if (selectedAccountId) {
-                        setSelectedAccountDetailById((prev) => {
-                          const next = { ...prev };
-                          delete next[selectedAccountId];
-                          return next;
-                        });
-                      }
+                      // Edit changed user_overrides — invalidate ALL cache layers
+                      // (list + per-id detail module cache + detail state) then refetch.
+                      // The old code missed invalidating the /api/accounts/[id] module
+                      // cache, so the detail effect refetched stale overrides.
+                      if (selectedAccountId) invalidateAccountCaches(selectedAccountId);
                       fetchAccounts();
                     }}
                   />

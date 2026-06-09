@@ -3,6 +3,7 @@
 // linkedin resolution = Claude web search for LinkedIn URL
 // profile enrichment  = Apify LinkedIn profile scrape + company scrape + Apollo company enrich + LLM bio summary
 import { completeLlm } from '@/lib/llm-client';
+import { stickyIdentity } from '@/lib/company-merge';
 import { cacheProfilePhoto } from '@/lib/photo-cache';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import {
@@ -671,11 +672,17 @@ async function upsertResolvedCompany(
 
   const payload: Record<string, unknown> = {
     domain,
-    company_name: pickCanonicalString(input.resolvedCompanyName, existingCompany?.company_name),
-    linkedin_url: pickCanonicalString(
+    // IDENTITY fields are STICKY — when a canonical row already has them, the
+    // existing value wins over the freshly-resolved one. A contact-pipeline
+    // resolution (Apify profile → current company) can return a slightly
+    // different / wrong company name or LinkedIn for an existing canonical row;
+    // letting it overwrite would corrupt the row for every user of that company
+    // (the Moderna → "Moderna Housewares" class of bug). See lib/company-merge.
+    company_name: stickyIdentity(existingCompany?.company_name, input.resolvedCompanyName),
+    linkedin_url: stickyIdentity(
+      existingCompany?.linkedin_url,
       input.resolvedCompanyLinkedinUrl,
       apifyFirmographics.linkedin_url,
-      existingCompany?.linkedin_url
     ),
     website: pickCanonicalString(apifyFirmographics.website, existingCompany?.website),
     description: pickCanonicalString(apifyFirmographics.description, existingCompany?.description),
