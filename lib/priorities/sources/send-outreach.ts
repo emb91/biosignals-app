@@ -20,32 +20,6 @@ import type { TodayPriority } from '@/lib/priorities/types';
 // other states with their own surfaces, so they're deliberately excluded here.
 const STAGED_STATUS = 'draft';
 
-function djb2(input: string): string {
-  let h = 0;
-  for (let i = 0; i < input.length; i += 1) {
-    h = (h * 31 + input.charCodeAt(i)) | 0;
-  }
-  return Math.abs(h).toString(36);
-}
-
-/** Cheap inputs-hash — staged sequence ids + their last-status timestamps. */
-export async function getSendOutreachHash(
-  supabase: SupabaseClient,
-  userId: string,
-): Promise<string> {
-  const { data } = await supabase
-    .from('outreach_sequences')
-    .select('id, last_status_at, updated_at')
-    .eq('user_id', userId)
-    .eq('dispatch_status', STAGED_STATUS);
-  const rows = (data ?? []) as Array<{ id: string; last_status_at: string | null; updated_at: string | null }>;
-  const key = rows
-    .map((r) => `${r.id}:${r.last_status_at ?? r.updated_at ?? ''}`)
-    .sort()
-    .join('|');
-  return `draft_${djb2(key)}`;
-}
-
 type ContactRow = {
   id: string;
   full_name: string | null;

@@ -27,6 +27,7 @@ import {
   groupIcpAuditForToday,
 } from '@/lib/priorities/sources/icp-audit';
 import { computeSendOutreachPriority } from '@/lib/priorities/sources/send-outreach';
+import { computeNewAccountsPriority } from '@/lib/priorities/sources/new-accounts';
 
 const SEV_RANK: Record<PrioritySeverity, number> = { high: 3, medium: 2, low: 1 };
 
@@ -59,8 +60,8 @@ export async function GET(request: Request) {
       getIcpAuditHash(supabase, user.id),
       Promise.all([
         computeSendOutreachPriority(supabase, user.id),
+        computeNewAccountsPriority(supabase, user.id),
         // Future cheap sources:
-        // computeNewAccountsPriority(supabase, user.id),
         // computeEnrichmentFailures(supabase, user.id),
       ]),
     ]);

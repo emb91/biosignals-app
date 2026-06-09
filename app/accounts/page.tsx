@@ -512,6 +512,10 @@ function getAccountSortValue(account: AccountRow | QueryAccount, col: string): s
       return account.contact_count;
     case 'priority':
       return (account as AccountRow).priority_score ?? -1;
+    case 'added':
+      // ISO timestamps sort lexically = chronologically; '' (no date) sorts oldest.
+      // Used by the /today "new accounts" deep-link (?sort=newest).
+      return (account as AccountRow).data_provenance_imported_at ?? '';
     case 'therapeutic_areas':
       return ((account.therapeutic_areas || [])[0] || '').toLowerCase();
     case 'modalities':
@@ -583,7 +587,11 @@ export default function AccountsPage() {
   const agentTaskFiredRef = useRef<string | null>(null);
 
   const [agentFilterIds, setAgentFilterIds] = useState<Set<string> | null>(null);
-  const [tableSortCol, setTableSortCol] = useState<string | null>('priority');
+  // ?sort=newest (from the /today "new accounts" priority) lands sorted by most-recently
+  // added, so just-added accounts aren't buried at the bottom of the default priority sort.
+  const [tableSortCol, setTableSortCol] = useState<string | null>(
+    searchParams.get('sort') === 'newest' ? 'added' : 'priority',
+  );
   const [tableSortDir, setTableSortDir] = useState<'asc' | 'desc'>('desc');
   const [editAccountOpen, setEditAccountOpen] = useState(false);
 
