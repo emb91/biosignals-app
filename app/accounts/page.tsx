@@ -2368,34 +2368,6 @@ export default function AccountsPage() {
 
                       {panelMode === 'contacts' && (
                         <div className="space-y-3">
-                          <div className="rounded-xl border border-gray-100 bg-gray-50/70 px-3 py-2.5">
-                            <p className="text-xs font-semibold text-gray-700 mb-3">Contact coverage</p>
-                            <div className="grid grid-cols-3 gap-3 text-xs">
-                              <div>
-                                <p className="text-gray-400 mb-0.5">Contacts</p>
-                                <p className="text-lg font-semibold text-gray-900">{selectedAccount.contact_count}</p>
-                              </div>
-                              <div>
-                                <p className="text-gray-400 mb-0.5">Best fit</p>
-                                <p className="text-lg font-semibold text-gray-900">{formatPct(selectedAccount.best_contact_fit) ?? '—'}</p>
-                              </div>
-                              <div>
-                                <p className="text-gray-400 mb-0.5">Avg fit</p>
-                                <p className="text-lg font-semibold text-gray-900">{formatPct(selectedAccount.avg_contact_fit) ?? '—'}</p>
-                              </div>
-                            </div>
-                            {(selectedAccount.best_contact_fit == null || selectedAccount.best_contact_fit < 1) && (
-                              <button
-                                type="button"
-                                onClick={() => openContactAcquisition(selectedAccount)}
-                                className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-arcova-teal/30 bg-white px-3 py-2 text-xs font-semibold text-arcova-teal hover:border-arcova-teal hover:bg-arcova-teal/5 transition-colors"
-                              >
-                                <Users className="h-3.5 w-3.5" />
-                                Find buyer-persona contacts
-                              </button>
-                            )}
-                          </div>
-
                           {loadingContacts ? (
                             <div className="flex justify-center py-12">
                               <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-arcova-teal" />
