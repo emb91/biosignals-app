@@ -3182,11 +3182,10 @@ export function ContactsWorkspace() {
     const noun = (n: number, s: string) => `${s}${n === 1 ? '' : 's'}`;
     const accountsUpdated = r.contactRecomputedCompanies + r.recomputedCompanies;
     const unresolved = r.contactSkippedUnresolvedCompanies + r.skippedUnresolvedCompanies;
-    // Primary fetch counts always show; derived metrics only when non-zero (zeros are noise).
-    const stats: { value: number; label: string }[] = [
-      { value: r.fetchedContacts, label: `${noun(r.fetchedContacts, 'contact')} fetched` },
-      { value: r.fetchedDeals, label: `${noun(r.fetchedDeals, 'deal')} fetched` },
-    ];
+    // Contacts fetched is the headline; everything else is a chip shown only when
+    // non-zero (zeros are noise) — same pattern as the push banner.
+    const stats: { value: number; label: string }[] = [];
+    if (r.fetchedDeals > 0) stats.push({ value: r.fetchedDeals, label: `${noun(r.fetchedDeals, 'deal')} fetched` });
     if (r.contactEventsEmitted > 0) stats.push({ value: r.contactEventsEmitted, label: noun(r.contactEventsEmitted, 'contact signal') });
     if (r.mirroredDeals > 0) stats.push({ value: r.mirroredDeals, label: `${noun(r.mirroredDeals, 'deal')} mirrored` });
     if (r.emittedEvents > 0) stats.push({ value: r.emittedEvents, label: noun(r.emittedEvents, 'deal signal') });
@@ -3206,24 +3205,28 @@ export function ContactsWorkspace() {
               </div>
             ) : (
               <>
-                <span className="text-sm font-semibold text-gray-900">HubSpot CRM pulled</span>
-                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                  {stats.map((s, i) => (
-                    <span
-                      key={i}
-                      className="inline-flex items-baseline gap-1 rounded-md border border-gray-200/70 bg-gray-50 px-2 py-0.5 text-xs text-gray-500"
-                    >
-                      <span className="font-semibold tabular-nums text-gray-900">{s.value}</span>
-                      {s.label}
-                    </span>
-                  ))}
-                  {unresolved > 0 && (
-                    <span className="inline-flex items-baseline gap-1 rounded-md border border-amber-200/70 bg-amber-50 px-2 py-0.5 text-xs text-amber-700">
-                      <span className="font-semibold tabular-nums">{unresolved}</span>
-                      unresolved
-                    </span>
-                  )}
-                </div>
+                <span className="text-sm font-semibold text-gray-900">
+                  {r.fetchedContacts} contact{r.fetchedContacts !== 1 ? 's' : ''} fetched from HubSpot
+                </span>
+                {(stats.length > 0 || unresolved > 0) && (
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                    {stats.map((s, i) => (
+                      <span
+                        key={i}
+                        className="inline-flex items-baseline gap-1 rounded-md border border-gray-200/70 bg-gray-50 px-2 py-0.5 text-xs text-gray-500"
+                      >
+                        <span className="font-semibold tabular-nums text-gray-900">{s.value}</span>
+                        {s.label}
+                      </span>
+                    ))}
+                    {unresolved > 0 && (
+                      <span className="inline-flex items-baseline gap-1 rounded-md border border-amber-200/70 bg-amber-50 px-2 py-0.5 text-xs text-amber-700">
+                        <span className="font-semibold tabular-nums">{unresolved}</span>
+                        unresolved
+                      </span>
+                    )}
+                  </div>
+                )}
               </>
             )}
           </div>
