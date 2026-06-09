@@ -39,6 +39,25 @@ export function quarterLabel(period: string): string {
   return `Q${m[2]} ${m[1]}`;
 }
 
+/**
+ * How far through a quarter we are, for pacing. Returns elapsed fraction
+ * (clamped 0..1) and whole days remaining (0 when the quarter is over).
+ * null for an invalid period.
+ */
+export function quarterProgress(
+  period: string,
+  now: Date = new Date(),
+): { elapsedFraction: number; daysLeft: number; weeksLeft: number } | null {
+  const range = quarterDateRange(period);
+  if (!range) return null;
+  const start = new Date(range.startIso).getTime();
+  const end = new Date(range.endIso).getTime();
+  const t = now.getTime();
+  const elapsedFraction = Math.min(1, Math.max(0, (t - start) / (end - start)));
+  const daysLeft = Math.max(0, Math.ceil((end - t) / 86_400_000));
+  return { elapsedFraction, daysLeft, weeksLeft: Math.max(0, Math.round(daysLeft / 7)) };
+}
+
 /** UTC [start, end) ISO bounds for a quarter — used for attainment queries. */
 export function quarterDateRange(period: string): { startIso: string; endIso: string } | null {
   const m = PERIOD_RE.exec(period);

@@ -12,6 +12,7 @@
     "lib/coverage/allocation.ts",
     "lib/coverage/allocation.test.ts",
     "lib/coverage/period.ts",
-    "lib/coverage/coverage-plan.ts"
+    "lib/coverage/coverage-plan.ts",
+    "lib/coverage/verdict.ts"
   ]
 }

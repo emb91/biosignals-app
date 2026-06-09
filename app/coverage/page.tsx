@@ -6,7 +6,23 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel, type AgentPendingMessage } from '@/components/AgentPanel';
 import { PageHeader } from '@/components/PageHeader';
-import { Activity, AlertTriangle, Kanban, Loader2, Plus, Trophy, Target, Pencil, Search } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
+  Kanban,
+  Loader2,
+  Plus,
+  Trophy,
+  Target,
+  Pencil,
+  Search,
+  TrendingDown,
+  Sparkles,
+  Database,
+  BarChart3,
+} from 'lucide-react';
 import {
   healthLabel,
   isWeakDim,
@@ -14,12 +30,15 @@ import {
   type HealthDim,
   type PipelineDataRequestType,
 } from '@/lib/pipeline-icp-health';
-import type { IcpPerformance } from '@/lib/coverage/icp-performance';
+import type { CoverageActuals, IcpPerformance } from '@/lib/coverage/icp-performance';
 import { buildCoveragePlan, type CoveragePlan } from '@/lib/coverage/coverage-plan';
-import { quarterOf, quarterLabel } from '@/lib/coverage/period';
+import { quarterOf, quarterLabel, quarterProgress } from '@/lib/coverage/period';
 import type { CoverageTargetType } from '@/lib/coverage/allocation';
+import { computeCoverageVerdict, type CoverageVerdict } from '@/lib/coverage/verdict';
 import { cn } from '@/lib/utils';
 import { ROUTES, withQuery } from '@/lib/routes';
+
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 type CoverageTargetResponse = {
   period: string;
@@ -34,6 +53,15 @@ type SupplyRow = {
   universeCompanies: number | null;
   netNewCompanies: number;
   estimate: true;
+};
+
+type CardsMeta = {
+  period: string;
+  hasCrm: boolean;
+  totalDeals: number;
+  attributedDeals: number;
+  unattributed: { dealCount: number; openUsd: number; wonUsd: number };
+  actuals: CoverageActuals;
 };
 
 interface IcpPipelineCard {
@@ -53,6 +81,8 @@ interface IcpPipelineCard {
   /** Bottom-up CRM deal performance (null when no deals map to this ICP). */
   performance: IcpPerformance | null;
 }
+
+// ─── Pure helpers ────────────────────────────────────────────────────────────
 
 /**
  * An ICP has a critical coverage gap if:
@@ -77,58 +107,13 @@ function healthAccentClass(d: HealthDim): string {
   }
 }
 
-function HealthBadge({
-  dim,
-  onClick,
-}: {
-  dim: HealthDim;
-  onClick?: () => void;
-}) {
-  const cls =
-    dim === 'red'
-      ? 'bg-red-50 text-red-700 border-red-200'
-      : dim === 'amber'
-        ? 'bg-amber-50 text-amber-700 border-amber-200'
-        : 'bg-emerald-50 text-emerald-700 border-emerald-200';
-
-  if (onClick) {
-    return (
-      <button
-        type="button"
-        onClick={onClick}
-        className={cn(
-          'inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-opacity hover:opacity-75',
-          cls,
-        )}
-      >
-        {healthLabel(dim)}
-      </button>
-    );
-  }
-
-  return (
-    <span className={cn('inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium', cls)}>
-      {healthLabel(dim)}
-    </span>
-  );
-}
-
 function buildCtas(card: IcpPipelineCard): { type: PipelineDataRequestType; label: string }[] {
   const out: { type: PipelineDataRequestType; label: string }[] = [];
   if (isWeakDim(card.coverage)) {
-    out.push({ type: 'expand_companies', label: 'Find more companies for this ICP' });
+    out.push({ type: 'expand_companies', label: 'Find companies' });
   }
-  if (card.company_count > 0 && isWeakDim(card.contact_fit)) {
-    out.push({ type: 'more_contacts_at_accounts', label: 'Find contacts at these companies' });
-  }
-  if (card.company_count > 0 && isWeakDim(card.depth)) {
-    out.push({
-      type: 'more_contacts_at_accounts',
-      label:
-        card.icp_index > 0
-          ? `Find more contacts at your ICP ${card.icp_index} accounts`
-          : 'Find more contacts at accounts for this ICP',
-    });
+  if (card.company_count > 0 && (isWeakDim(card.contact_fit) || isWeakDim(card.depth))) {
+    out.push({ type: 'more_contacts_at_accounts', label: 'Find contacts' });
   }
   return out;
 }
@@ -152,6 +137,11 @@ function formatUsd(value: number | null | undefined): string {
   return `$${Math.round(value)}`;
 }
 
+/** Like formatUsd but renders 0 as $0 (for actuals, where zero is a fact). */
+function formatUsdZero(value: number): string {
+  return value === 0 ? '$0' : formatUsd(value);
+}
+
 function formatPct(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return '—';
   return `${Math.round(value * 100)}%`;
@@ -168,17 +158,16 @@ function formatTargetValue(type: CoverageTargetType, value: number): string {
   return type === 'revenue' ? formatUsd(value) : `${Math.round(value).toLocaleString()} deals`;
 }
 
-/** Active deals + won, for the "deals" column. */
-function formatDealCount(p: IcpPerformance | null): string {
-  if (!p) return '—';
-  const total = p.active_deal_count + p.won_count + p.lost_count;
-  return total > 0 ? total.toLocaleString() : '—';
-}
-
 const CONFIDENCE_LABEL: Record<IcpPerformance['confidence'], string> = {
   high: 'Strong sample',
   medium: 'Some signal',
   low: 'Thin sample',
+};
+
+const CONFIDENCE_CLASS: Record<IcpPerformance['confidence'], string> = {
+  high: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  medium: 'border-sky-200 bg-sky-50 text-sky-700',
+  low: 'border-gray-200 bg-gray-50 text-gray-500',
 };
 
 /**
@@ -274,15 +263,143 @@ function buildAllHealthHandoffPrompt(cards: IcpPipelineCard[]): string {
   return `The user clicked Today to review pipeline health, and the page shows the full ICP health table. Do not focus on only one ICP as if it is the whole story. Open by saying there are ${issueCards.length || cards.length} ICPs worth reviewing here, then summarise the visible pattern across them. Context: ${summary}. If one ICP is the sensible starting point, say "I'd start with..." and explain why. If the first issue is company coverage, remind them that the fix is companies first, then contacts because contacts are nested inside companies.${suggestedHref && firstCoverageGap ? ` If you suggest taking action, call suggest_navigation with href "${suggestedHref}" and label "Find companies for ${firstCoverageGap.label}".` : ''} Keep it warm, direct, and short.`;
 }
 
+// ─── Small presentational pieces ─────────────────────────────────────────────
+
 const TH_HEAD = 'text-left text-[11px] font-semibold uppercase tracking-wide text-gray-500 px-3 py-3';
 const TD = 'px-3 py-3 text-sm text-gray-900 align-top';
 const TD_NUM = 'px-3 py-3 text-sm text-gray-900 tabular-nums text-right align-top';
 
-export default function HealthPage() {
+/** Column header with an inline definition tooltip ("where am I looking?"). */
+function Th({ tip, right, children }: { tip?: string; right?: boolean; children: React.ReactNode }) {
+  const cls = cn(TH_HEAD, right && 'text-right');
+  if (!tip) return <th className={cls}>{children}</th>;
+  return (
+    <th className={cls}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="cursor-help underline decoration-dotted decoration-gray-300 underline-offset-2">
+            {children}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-[260px] text-xs font-normal normal-case tracking-normal">
+          {tip}
+        </TooltipContent>
+      </Tooltip>
+    </th>
+  );
+}
+
+function HealthBadge({ dim, onClick }: { dim: HealthDim; onClick?: () => void }) {
+  const cls =
+    dim === 'red'
+      ? 'bg-red-50 text-red-700 border-red-200'
+      : dim === 'amber'
+        ? 'bg-amber-50 text-amber-700 border-amber-200'
+        : 'bg-emerald-50 text-emerald-700 border-emerald-200';
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className={cn(
+          'inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-opacity hover:opacity-75',
+          cls,
+        )}
+      >
+        {healthLabel(dim)}
+      </button>
+    );
+  }
+
+  return (
+    <span className={cn('inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium', cls)}>
+      {healthLabel(dim)}
+    </span>
+  );
+}
+
+/** Numbered tier header: gives the page its coverage → performance → plan legibility. */
+function SectionHeader({
+  step,
+  icon,
+  title,
+  source,
+  children,
+}: {
+  step: string;
+  icon: React.ReactNode;
+  title: string;
+  source: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="mb-3 mt-8 flex flex-wrap items-center justify-between gap-2">
+      <div className="flex items-center gap-2.5">
+        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gray-100 text-gray-500">{icon}</div>
+        <div>
+          <p className="text-sm font-semibold text-gray-900">
+            <span className="mr-1.5 text-gray-400">{step} ·</span>
+            {title}
+          </p>
+          <p className="text-xs text-gray-400">{source}</p>
+        </div>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+const VERDICT_STYLE: Record<
+  CoverageVerdict['status'],
+  { wrap: string; icon: React.ReactNode; chip: string; chipLabel: string }
+> = {
+  'on-track': {
+    wrap: 'border-emerald-200 bg-emerald-50/70',
+    icon: <CheckCircle2 className="h-5 w-5 text-emerald-500" />,
+    chip: 'bg-emerald-100 text-emerald-800',
+    chipLabel: 'On track',
+  },
+  behind: {
+    wrap: 'border-amber-200 bg-amber-50/70',
+    icon: <TrendingDown className="h-5 w-5 text-amber-500" />,
+    chip: 'bg-amber-100 text-amber-800',
+    chipLabel: 'Behind pace',
+  },
+  blocked: {
+    wrap: 'border-red-200 bg-red-50/70',
+    icon: <AlertTriangle className="h-5 w-5 text-red-500" />,
+    chip: 'bg-red-100 text-red-800',
+    chipLabel: 'Blocked',
+  },
+  'no-target': {
+    wrap: 'border-arcova-teal/30 bg-arcova-teal/5',
+    icon: <Target className="h-5 w-5 text-arcova-teal" />,
+    chip: 'bg-arcova-teal/10 text-arcova-teal',
+    chipLabel: 'No target set',
+  },
+  'plan-only': {
+    wrap: 'border-sky-200 bg-sky-50/70',
+    icon: <Sparkles className="h-5 w-5 text-sky-500" />,
+    chip: 'bg-sky-100 text-sky-800',
+    chipLabel: 'Plan ready',
+  },
+  'no-icps': {
+    wrap: 'border-gray-200 bg-gray-50',
+    icon: <Kanban className="h-5 w-5 text-gray-400" />,
+    chip: 'bg-gray-100 text-gray-600',
+    chipLabel: 'Not set up',
+  },
+};
+
+// ─── Page ────────────────────────────────────────────────────────────────────
+
+export default function CoveragePage() {
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [cards, setCards] = useState<IcpPipelineCard[] | null>(null);
+  const [meta, setMeta] = useState<CardsMeta | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const agentTaskFiredRef = useRef<string | null>(null);
 
@@ -307,12 +424,14 @@ export default function HealthPage() {
       const res = await fetch('/api/pipeline/icp-cards');
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(typeof payload.error === 'string' ? payload.error : 'Failed to load health');
+        throw new Error(typeof payload.error === 'string' ? payload.error : 'Failed to load coverage');
       }
       setCards((payload.cards ?? []) as IcpPipelineCard[]);
+      setMeta((payload.meta ?? null) as CardsMeta | null);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : 'Failed to load');
       setCards([]);
+      setMeta(null);
     }
   }, []);
 
@@ -381,6 +500,7 @@ export default function HealthPage() {
     }
   }, [cards]);
 
+  // Agent deep-links (?agentTask=...) from Today priorities.
   const healthAgentTask = searchParams.get('agentTask') ?? '';
   const healthAgentIcpId = searchParams.get('icpId') ?? '';
   useEffect(() => {
@@ -415,14 +535,32 @@ export default function HealthPage() {
     }));
   }, [cards, healthAgentIcpId, healthAgentTask, user]);
 
-  const openDataRequest = (card: IcpPipelineCard, requestType: PipelineDataRequestType) => {
+  /**
+   * Route to a pre-scoped data request. `contactCount` carries the plan's
+   * "source N contacts"; we also pass a company estimate (contacts ÷ observed
+   * contacts-per-company) since the companies flow asks in company units.
+   */
+  const openDataRequest = (
+    icpId: string,
+    requestType: PipelineDataRequestType,
+    contactCount?: number,
+  ) => {
     const mode = requestType === 'expand_companies' ? 'companies' : 'contacts_for_icp';
     const params = new URLSearchParams({
       mode,
-      icpId: card.icp_id,
+      icpId,
       requestType,
       source: 'coverage',
     });
+    if (contactCount != null && contactCount > 0) {
+      params.set('count', String(contactCount));
+      const card = cards?.find((c) => c.icp_id === icpId);
+      const perCompany =
+        card?.avg_contacts_per_company != null && card.avg_contacts_per_company > 0
+          ? card.avg_contacts_per_company
+          : 4; // matches DEFAULT_CONTACTS_PER_COMPANY in lib/coverage/supply
+      params.set('companyCount', String(Math.max(1, Math.ceil(contactCount / perCompany))));
+    }
     router.push(withQuery(ROUTES.data, params));
   };
 
@@ -434,18 +572,103 @@ export default function HealthPage() {
     }));
   };
 
+  // ── Derived state ──────────────────────────────────────────────────────────
+
   const gapIcps = cards ? getCoverageGapIcps(cards) : [];
   const insight = cards ? bestThroughputInsight(cards) : null;
   const rankMap = cards ? throughputRankMap(cards) : new Map<string, number>();
   const hasAnyPerformance = !!cards?.some((c) => c.performance);
+  const hasCrm = meta?.hasCrm ?? false;
+  const actuals = meta?.actuals ?? null;
 
-  const period = targetData?.period ?? quarterOf();
+  const period = targetData?.period ?? meta?.period ?? quarterOf();
   const target = targetData?.target ?? null;
+  const progress = quarterProgress(period);
+
   const plan: CoveragePlan | null =
     cards && cards.length > 0 && target
       ? buildCoveragePlan({ cards, target, ceilings: ceilings ?? undefined })
       : null;
-  const allocByIcp = new Map(plan ? plan.result.allocations.map((a) => [a.icpId, a]) : []);
+
+  // Plan rows ranked into a "do this first" order: biggest sub-target first.
+  const rankedPlanRows =
+    plan && plan.canPlan && cards
+      ? [...plan.result.allocations]
+          .filter((a) => a.subTarget > 0 || a.toBuy > 0)
+          .sort((x, y) => y.subTarget - x.subTarget)
+      : [];
+  const topPriorityRow = rankedPlanRows.find((a) => a.toBuy > 0) ?? null;
+
+  const verdict: CoverageVerdict | null =
+    cards == null
+      ? null
+      : computeCoverageVerdict({
+          icpCount: cards.length,
+          gapIcpLabels: gapIcps.map((c) => c.label),
+          hasCrm,
+          target,
+          actuals: hasCrm && actuals
+            ? { wonUsd: actuals.wonUsd, wonCount: actuals.wonCount, openPipelineUsd: actuals.openPipelineUsd }
+            : null,
+          elapsedFraction: progress?.elapsedFraction ?? 0,
+          weeksLeft: progress?.weeksLeft ?? 0,
+          shortfall: plan?.canPlan ? plan.result.shortfall : 0,
+          topPriority: topPriorityRow
+            ? {
+                icpId: topPriorityRow.icpId,
+                label: topPriorityRow.label,
+                toBuy: topPriorityRow.capped ? topPriorityRow.sourceable : topPriorityRow.toBuy,
+              }
+            : null,
+          periodLabel: quarterLabel(period),
+        });
+
+  const runVerdictAction = () => {
+    const action = verdict?.action;
+    if (!action) return;
+    switch (action.kind) {
+      case 'add-icp':
+        router.push(ROUTES.setup.newIcp);
+        break;
+      case 'set-target':
+        setDraftType(target?.type ?? 'revenue');
+        setDraftValue(target ? String(target.value) : '');
+        setEditingTarget(true);
+        break;
+      case 'source':
+      case 'add-companies': {
+        const icpId = action.icpId ?? gapIcps[0]?.icp_id;
+        if (icpId) openDataRequest(icpId, 'expand_companies', action.count);
+        break;
+      }
+      case 'review-supply':
+        fireAgent(
+          `My ${quarterLabel(period)} target of ${target ? formatTargetValue(target.type, target.value) : ''} exceeds the addressable supply across my ICPs. Walk me through my options: broaden an ICP definition, extend the timeline, or trim the number. Use my actual ICPs and their supply ceilings.`,
+          'My target exceeds my ICP supply',
+        );
+        break;
+      case 'connect-crm':
+        router.push(ROUTES.settings);
+        break;
+    }
+  };
+
+  // Attainment bar geometry (only meaningful with target + CRM).
+  const attainPct = verdict?.attainment != null ? Math.min(1, Math.max(0, verdict.attainment)) : null;
+  const openPipelinePct =
+    target && actuals && attainPct != null
+      ? Math.min(
+          1 - attainPct,
+          Math.max(
+            0,
+            target.type === 'revenue'
+              ? actuals.openPipelineUsd / target.value
+              : actuals.openDealCount / target.value,
+          ),
+        )
+      : null;
+
+  const icpsClosedThisPeriod = (cards ?? []).filter((c) => (c.performance?.won_count_in_period ?? 0) > 0);
 
   if (authLoading) {
     return (
@@ -457,7 +680,10 @@ export default function HealthPage() {
 
   if (!user) return null;
 
+  const verdictStyle = verdict ? VERDICT_STYLE[verdict.status] : null;
+
   return (
+    <TooltipProvider delayDuration={150}>
     <div className="flex h-screen bg-transparent">
       <AppSidebar />
 
@@ -468,270 +694,8 @@ export default function HealthPage() {
               eyebrow="Coverage"
               eyebrowIcon={<Activity className="h-3 w-3" />}
               title="Coverage"
-              subtitle="How each ICP converts — sourced coverage, real deal performance, and what to buy to hit your number."
+              subtitle="One line per ICP: what you hold, how it converts, and what to source to hit your number."
             />
-
-            {/* Coverage gap banner */}
-            {gapIcps.length > 0 && (
-              <button
-                type="button"
-                onClick={() => {
-                  const names = gapIcps.map((c) => `${c.label} (${c.company_count} companies)`).join(', ');
-                  fireAgent(
-                    `${gapIcps.length === 1 ? 'One ICP is' : `${gapIcps.length} ICPs are`} missing strong contact coverage: ${names}. Explain what is going on and what I should do next.`,
-                    gapIcps.length === 1
-                      ? 'Why is my contact coverage weak for this ICP?'
-                      : 'Why is my contact coverage weak across these ICPs?',
-                  );
-                }}
-                className="w-full mb-5 flex items-center gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-left transition-colors hover:bg-red-100"
-              >
-                <AlertTriangle className="h-4 w-4 shrink-0 text-red-500" />
-                <p className="text-sm font-medium text-red-800">
-                  {gapIcps.length === 1
-                    ? '1 ICP is missing strong contact coverage.'
-                    : `${gapIcps.length} ICPs are missing strong contact coverage.`}{' '}
-                  <span className="font-normal text-red-600">Click to learn more.</span>
-                </p>
-                <Activity className="ml-auto h-4 w-4 shrink-0 text-red-400" />
-              </button>
-            )}
-
-            {/* Best-converting ICP — the non-obvious winner the deal data reveals */}
-            {insight && (
-              <button
-                type="button"
-                onClick={() => {
-                  const p = insight.best.performance!;
-                  fireAgent(
-                    `"${insight.best.label}" is my strongest-converting ICP by throughput (win rate ${formatPct(p.win_rate)}, avg ACV ${formatUsd(p.avg_acv)}, avg cycle ${formatCycle(p.avg_cycle_days)}). ${insight.surprise ? 'It is NOT the ICP with the most companies. ' : ''}Explain what makes it my best ICP and whether I should lean into it.`,
-                    `Why is ${insight.best.label} my best ICP?`,
-                  );
-                }}
-                className="w-full mb-5 flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-left transition-colors hover:bg-emerald-100"
-              >
-                <Trophy className="h-4 w-4 shrink-0 text-emerald-500" />
-                <p className="text-sm font-medium text-emerald-900">
-                  {insight.surprise
-                    ? `${insight.best.label} converts best — not the ICP with the most companies.`
-                    : `${insight.best.label} is your strongest-converting ICP.`}{' '}
-                  <span className="font-normal text-emerald-700">
-                    Win rate {formatPct(insight.best.performance!.win_rate)}, cycle{' '}
-                    {formatCycle(insight.best.performance!.avg_cycle_days)}. Click to explore.
-                  </span>
-                </p>
-                <Activity className="ml-auto h-4 w-4 shrink-0 text-emerald-400" />
-              </button>
-            )}
-
-            {/* Target plan — the prescriptive tier */}
-            {cards && cards.length > 0 && (
-              <div className="mb-5 rounded-xl border border-gray-200 bg-white shadow-sm">
-                <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-5 py-4">
-                  <div className="flex items-center gap-2.5">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-arcova-teal/10">
-                      <Target className="h-4 w-4 text-arcova-teal" />
-                    </div>
-                    <div>
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-                        Target · {quarterLabel(period)}
-                      </p>
-                      {target ? (
-                        <p className="text-lg font-semibold leading-tight text-gray-900">
-                          {formatTargetValue(target.type, target.value)}
-                        </p>
-                      ) : (
-                        <p className="text-sm text-gray-500">Set a quarterly target to plan what to source.</p>
-                      )}
-                    </div>
-                  </div>
-                  {!editingTarget && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setDraftType(target?.type ?? 'revenue');
-                        setDraftValue(target ? String(target.value) : '');
-                        setEditingTarget(true);
-                      }}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-teal px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/90"
-                    >
-                      {target ? <Pencil className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
-                      {target ? 'Edit' : 'Set target'}
-                    </button>
-                  )}
-                </div>
-
-                {/* Inline editor */}
-                {editingTarget && (
-                  <div className="space-y-3 px-5 py-4">
-                    <div className="flex gap-2">
-                      {(['revenue', 'deals'] as const).map((t) => (
-                        <button
-                          key={t}
-                          type="button"
-                          onClick={() => setDraftType(t)}
-                          className={cn(
-                            'rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors',
-                            draftType === t
-                              ? 'border-arcova-teal bg-arcova-teal/10 text-arcova-teal'
-                              : 'border-gray-200 text-gray-600 hover:bg-gray-50',
-                          )}
-                        >
-                          {t === 'revenue' ? 'Revenue ($)' : 'Deals (count)'}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-gray-400">{draftType === 'revenue' ? '$' : '#'}</span>
-                      <input
-                        value={draftValue}
-                        onChange={(e) => setDraftValue(e.target.value)}
-                        inputMode="numeric"
-                        placeholder={draftType === 'revenue' ? '2,000,000' : '40'}
-                        className="w-44 rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:border-arcova-teal focus:outline-none"
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') void saveTarget();
-                          if (e.key === 'Escape') setEditingTarget(false);
-                        }}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => void saveTarget()}
-                        disabled={savingTarget || !draftValue.trim()}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-teal px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/90 disabled:opacity-50"
-                      >
-                        {savingTarget && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                        Save
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setEditingTarget(false)}
-                        className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-500 hover:bg-gray-50"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                    <p className="text-xs text-gray-400">
-                      One overall {quarterLabel(period)} target. We split it across ICPs by throughput and
-                      back-calculate how many contacts to source for each.
-                    </p>
-                  </div>
-                )}
-
-                {/* Allocation plan */}
-                {!editingTarget && target && plan && (
-                  <div className="px-5 py-4">
-                    {!plan.canPlan ? (
-                      <p className="text-sm text-gray-500">
-                        We need at least one ICP with closed-won deals (for average deal size) to plan a{' '}
-                        <span className="font-medium">revenue</span> target. Switch to a deals target, or sync your
-                        CRM so we can learn your ACV.
-                      </p>
-                    ) : (
-                      <>
-                        <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-                          <p className="text-sm text-gray-700">
-                            To hit {formatTargetValue(target.type, target.value)}, source{' '}
-                            <span className="font-semibold text-gray-900">
-                              ~{plan.result.totalToBuy.toLocaleString()} new contacts
-                            </span>{' '}
-                            across your ICPs.
-                          </p>
-                          {ceilings == null ? (
-                            <button
-                              type="button"
-                              onClick={() => void checkSupply()}
-                              disabled={supplyLoading}
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50"
-                              title="Counts the addressable company universe per ICP (uses a small amount of Apollo credits)"
-                            >
-                              {supplyLoading ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              ) : (
-                                <Search className="h-3.5 w-3.5" />
-                              )}
-                              Check addressable supply
-                            </button>
-                          ) : (
-                            <span className="text-xs font-medium text-gray-400">Supply checked (estimate)</span>
-                          )}
-                        </div>
-
-                        {supplyError && <p className="mb-2 text-xs text-red-600">{supplyError}</p>}
-
-                        <div className="overflow-hidden rounded-lg border border-gray-100">
-                          <table className="w-full border-collapse text-sm">
-                            <thead>
-                              <tr className="border-b border-gray-100 bg-gray-50/60">
-                                <th className={TH_HEAD}>ICP</th>
-                                <th className={`${TH_HEAD} text-right`}>Share</th>
-                                <th className={`${TH_HEAD} text-right`}>Sub-target</th>
-                                <th className={`${TH_HEAD} text-right`}>To source</th>
-                                <th className={TH_HEAD}></th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {[...cards]
-                                .map((c) => ({ card: c, a: allocByIcp.get(c.icp_id) }))
-                                .filter((r) => r.a && (r.a.subTarget > 0 || r.a.toBuy > 0))
-                                .sort((x, y) => (y.a!.subTarget ?? 0) - (x.a!.subTarget ?? 0))
-                                .map(({ card, a }) => (
-                                  <tr key={card.icp_id} className="border-b border-gray-50 last:border-b-0">
-                                    <td className={`${TD} max-w-[16rem] truncate`}>{card.label}</td>
-                                    <td className={TD_NUM}>{Math.round((a!.shareOfTarget ?? 0) * 100)}%</td>
-                                    <td className={TD_NUM}>{formatTargetValue(target.type, a!.subTarget)}</td>
-                                    <td className={TD_NUM}>
-                                      {a!.capped ? (
-                                        <span className="text-amber-700">
-                                          {a!.sourceable.toLocaleString()}
-                                          <span className="text-gray-400"> / {a!.toBuy.toLocaleString()}</span>
-                                        </span>
-                                      ) : (
-                                        a!.toBuy.toLocaleString()
-                                      )}
-                                    </td>
-                                    <td className={`${TD} whitespace-nowrap`}>
-                                      {a!.capped && (
-                                        <span className="mr-2 inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
-                                          Supply-limited
-                                        </span>
-                                      )}
-                                      {a!.toBuy > 0 && (
-                                        <button
-                                          type="button"
-                                          onClick={() => openDataRequest(card, 'expand_companies')}
-                                          className="text-xs font-semibold text-arcova-teal hover:underline"
-                                        >
-                                          Source
-                                        </button>
-                                      )}
-                                    </td>
-                                  </tr>
-                                ))}
-                            </tbody>
-                          </table>
-                        </div>
-
-                        {plan.result.shortfall > 0 && (
-                          <p className="mt-3 flex items-start gap-1.5 text-xs text-amber-700">
-                            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                            <span>
-                              {formatTargetValue(target.type, plan.result.shortfall)} of this target is beyond your
-                              ICPs' addressable supply. Broaden an ICP, extend the timeline, or trim the number.
-                            </span>
-                          </p>
-                        )}
-
-                        <p className="mt-3 text-xs text-gray-400">
-                          Estimate — blended win rate {formatPct(plan.defaults.winRate)}, assumed contact→deal{' '}
-                          {formatPct(plan.defaults.contactToDeal)}. Refines as more deals close.
-                        </p>
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
 
             {cards === null ? (
               <div className="flex justify-center py-20">
@@ -742,14 +706,30 @@ export default function HealthPage() {
                 {loadError}
               </div>
             ) : cards.length === 0 ? (
+              /* First-run state: teach the three tiers, then point at step one. */
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-12 text-center">
                 <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                   <Kanban className="w-6 h-6 text-gray-400" />
                 </div>
-                <h2 className="text-base font-semibold text-gray-900 mb-1">No ICPs yet</h2>
-                <p className="text-gray-400 text-sm mb-5 max-w-xs mx-auto">
-                  Define at least one ICP to see pipeline health here.
+                <h2 className="text-base font-semibold text-gray-900 mb-1">Coverage starts with an ICP</h2>
+                <p className="text-gray-400 text-sm mb-6 max-w-md mx-auto">
+                  This page answers three questions, each unlocked by more data. Define an ICP to unlock the first.
                 </p>
+                <div className="mx-auto mb-7 grid max-w-2xl grid-cols-1 gap-3 text-left sm:grid-cols-3">
+                  {[
+                    { icon: <Database className="h-4 w-4 text-arcova-teal" />, title: '1 · Coverage', body: 'Do I have enough of the right companies and contacts? Works with no CRM.' },
+                    { icon: <BarChart3 className="h-4 w-4 text-arcova-teal" />, title: '2 · Performance', body: 'Which ICPs actually convert? Unlocked by connecting your CRM.' },
+                    { icon: <Target className="h-4 w-4 text-arcova-teal" />, title: '3 · Plan', body: 'What do I source to hit my number? Unlocked by setting a quarterly target.' },
+                  ].map((s) => (
+                    <div key={s.title} className="rounded-lg border border-gray-100 bg-gray-50/50 p-3.5">
+                      <div className="mb-1.5 flex items-center gap-1.5">
+                        {s.icon}
+                        <p className="text-xs font-semibold text-gray-900">{s.title}</p>
+                      </div>
+                      <p className="text-xs leading-relaxed text-gray-500">{s.body}</p>
+                    </div>
+                  ))}
+                </div>
                 <button
                   type="button"
                   onClick={() => router.push(ROUTES.setup.newIcp)}
@@ -760,94 +740,719 @@ export default function HealthPage() {
                 </button>
               </div>
             ) : (
-              <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden overflow-x-auto">
-                <table className="w-full min-w-[1080px] border-collapse">
-                  <thead>
-                    <tr className="border-b border-gray-200 bg-gray-50">
-                      <th className={TH_HEAD}>ICP name</th>
-                      <th className={`${TH_HEAD} text-right`}>Companies</th>
-                      <th className={`${TH_HEAD} text-right`}>Contacts</th>
-                      {/* Bottom-up deal performance (from connected CRM) */}
-                      <th className={`${TH_HEAD} text-right`}>Deals</th>
-                      <th className={`${TH_HEAD} text-right`}>Pipeline</th>
-                      <th className={`${TH_HEAD} text-right`}>Win rate</th>
-                      <th className={`${TH_HEAD} text-right`}>Avg ACV</th>
-                      <th className={`${TH_HEAD} text-right`}>Cycle</th>
-                      <th className={`${TH_HEAD} text-right`}>Throughput</th>
-                      <th className={TH_HEAD}>Health</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {cards.map((card) => {
-                      const ctas = buildCtas(card);
-                      const isGap = gapIcps.some((g) => g.icp_id === card.icp_id);
-                      return (
-                        <tr
-                          key={card.icp_id}
-                          className={cn(
-                            'border-b border-gray-100 border-l-4 hover:bg-gray-50/80',
-                            healthAccentClass(card.overall),
-                            'last:border-b-0',
-                          )}
-                        >
-                          <td className={TD}>
-                            <div className="min-w-0 max-w-[20rem]">
-                              <p className="font-medium text-gray-900 leading-snug">{card.label}</p>
-                            </div>
-                          </td>
-                          <td className={TD_NUM}>{card.company_count.toLocaleString()}</td>
-                          <td className={TD_NUM}>{card.contact_count.toLocaleString()}</td>
-                          <td className={TD_NUM}>{formatDealCount(card.performance)}</td>
-                          <td className={TD_NUM}>{formatUsd(card.performance?.pipeline_usd)}</td>
-                          <td className={TD_NUM}>{formatPct(card.performance?.win_rate)}</td>
-                          <td className={TD_NUM}>{formatUsd(card.performance?.avg_acv)}</td>
-                          <td className={TD_NUM}>{formatCycle(card.performance?.avg_cycle_days)}</td>
-                          <td className={TD_NUM}>
-                            {rankMap.has(card.icp_id) ? (
-                              <span
-                                title={
-                                  card.performance
-                                    ? `${CONFIDENCE_LABEL[card.performance.confidence]} · throughput rank`
-                                    : 'throughput rank'
-                                }
-                                className={cn(
-                                  'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold',
-                                  rankMap.get(card.icp_id) === 1
-                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                                    : 'border-gray-200 bg-gray-50 text-gray-600',
-                                )}
-                              >
-                                #{rankMap.get(card.icp_id)}
-                              </span>
-                            ) : (
-                              '—'
-                            )}
-                          </td>
-                          <td className={`${TD} whitespace-nowrap`}>
-                            <HealthBadge
-                              dim={card.overall}
-                              onClick={() =>
-                                fireAgent(
-                                  `Explain the health status for "${card.label}": it has ${card.company_count} companies, ${card.contact_count} contacts, avg company fit ${formatFitValue(card.avg_company_fit)}, avg contact fit ${formatFitValue(card.avg_contact_fit)}. Coverage is ${healthLabel(card.coverage)}, contact fit is ${healthLabel(card.contact_fit)}, depth is ${healthLabel(card.depth)}, overall ${healthLabel(card.overall)}. What's the issue and what should I do?`,
-                                  `Explain health for ${card.label}`,
-                                )
-                              }
-                            />
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
+              <>
+                {/* ── Top-line verdict: one status, one reason, one next action ── */}
+                {verdict && verdictStyle && (
+                  <div className={cn('mb-6 flex flex-wrap items-center gap-4 rounded-xl border px-5 py-4', verdictStyle.wrap)}>
+                    <div className="flex min-w-0 flex-1 items-start gap-3">
+                      <div className="mt-0.5 shrink-0">{verdictStyle.icon}</div>
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold', verdictStyle.chip)}>
+                            {verdictStyle.chipLabel}
+                          </span>
+                          <p className="text-sm font-semibold text-gray-900">{verdict.headline}</p>
+                        </div>
+                        {verdict.detail && <p className="mt-1 text-sm text-gray-600">{verdict.detail}</p>}
+                      </div>
+                    </div>
+                    {verdict.action && (
+                      <button
+                        type="button"
+                        onClick={runVerdictAction}
+                        className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-arcova-teal px-3.5 py-2 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/90"
+                      >
+                        {verdict.action.label}
+                      </button>
+                    )}
+                  </div>
+                )}
 
-            {cards && cards.length > 0 && (
-              <p className="mt-3 text-xs text-gray-400">
-                {hasAnyPerformance
-                  ? 'Deal performance is from your connected CRM. Throughput ranks ICPs by win-rate-weighted won revenue per day — your fastest, surest path to revenue.'
-                  : 'Connect your CRM (Settings → Integrations) to unlock deal performance — win rate, ACV, sales cycle and throughput per ICP.'}
-              </p>
+                {/* ── 3 · Target & plan ─────────────────────────────────────── */}
+                <SectionHeader
+                  step="3"
+                  icon={<Target className="h-3.5 w-3.5" />}
+                  title={`Target & plan · ${quarterLabel(period)}`}
+                  source="Set one number; we split it across ICPs and back-calculate what to source."
+                >
+                  {!editingTarget && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDraftType(target?.type ?? 'revenue');
+                        setDraftValue(target ? String(target.value) : '');
+                        setEditingTarget(true);
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50"
+                    >
+                      {target ? <Pencil className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+                      {target ? 'Edit target' : 'Set target'}
+                    </button>
+                  )}
+                </SectionHeader>
+
+                <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+                  {/* Inline editor */}
+                  {editingTarget && (
+                    <div className="space-y-3 border-b border-gray-100 px-5 py-4">
+                      <div className="flex gap-2">
+                        {(['revenue', 'deals'] as const).map((t) => (
+                          <button
+                            key={t}
+                            type="button"
+                            onClick={() => setDraftType(t)}
+                            className={cn(
+                              'rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors',
+                              draftType === t
+                                ? 'border-arcova-teal bg-arcova-teal/10 text-arcova-teal'
+                                : 'border-gray-200 text-gray-600 hover:bg-gray-50',
+                            )}
+                          >
+                            {t === 'revenue' ? 'Revenue ($)' : 'Deals (count)'}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-gray-400">{draftType === 'revenue' ? '$' : '#'}</span>
+                        <input
+                          value={draftValue}
+                          onChange={(e) => setDraftValue(e.target.value)}
+                          inputMode="numeric"
+                          placeholder={draftType === 'revenue' ? '2,000,000' : '40'}
+                          autoFocus
+                          className="w-44 rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:border-arcova-teal focus:outline-none"
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') void saveTarget();
+                            if (e.key === 'Escape') setEditingTarget(false);
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void saveTarget()}
+                          disabled={savingTarget || !draftValue.trim()}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-teal px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/90 disabled:opacity-50"
+                        >
+                          {savingTarget && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingTarget(false)}
+                          className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-500 hover:bg-gray-50"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                      <p className="text-xs text-gray-400">
+                        One overall {quarterLabel(period)} target. We split it across ICPs by throughput and
+                        back-calculate how many contacts to source for each.
+                      </p>
+                    </div>
+                  )}
+
+                  {!target && !editingTarget && (
+                    /* Purpose-built no-target state: what setting it unlocks. */
+                    <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-5">
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">No {quarterLabel(period)} target yet.</p>
+                        <p className="mt-0.5 text-sm text-gray-500">
+                          Set one number and this becomes a per-ICP sourcing plan
+                          {hasCrm && actuals && actuals.priorWonCount > 0
+                            ? `. Last quarter you closed ${formatUsdZero(actuals.priorWonUsd)} across ${actuals.priorWonCount} deal${actuals.priorWonCount === 1 ? '' : 's'}.`
+                            : ', bounded by what each ICP can actually supply.'}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          fireAgent(
+                            `Help me set a realistic ${quarterLabel(period)} target. Anchor on my CRM history if I have any, suggest a bracket (flat, +20%, +50% vs last quarter), and when I commit call set_gtm_target.`,
+                            'Help me size my quarterly target',
+                          )
+                        }
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-arcova-teal/40 px-3 py-1.5 text-xs font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/5"
+                      >
+                        <Sparkles className="h-3.5 w-3.5" />
+                        Size it with the agent
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Attainment & pacing: target vs closed-won vs open pipeline. */}
+                  {target && !editingTarget && (
+                    <div className="border-b border-gray-100 px-5 py-4">
+                      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+                        <p className="text-sm text-gray-700">
+                          <span className="text-lg font-semibold text-gray-900">{formatTargetValue(target.type, target.value)}</span>
+                          <span className="ml-2 text-xs text-gray-400">target</span>
+                        </p>
+                        {hasCrm && actuals && attainPct != null ? (
+                          <p className="text-sm tabular-nums text-gray-700">
+                            <span className="font-semibold text-gray-900">
+                              {target.type === 'revenue' ? formatUsdZero(actuals.wonUsd) : `${actuals.wonCount} deals`}
+                            </span>{' '}
+                            closed ({formatPct(attainPct)})
+                            {progress && (
+                              <span className="text-gray-400"> · {progress.weeksLeft} wk left</span>
+                            )}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-gray-400">Connect your CRM to track attainment here.</p>
+                        )}
+                      </div>
+
+                      {hasCrm && attainPct != null && (
+                        <>
+                          <div className="relative h-3 w-full overflow-hidden rounded-full bg-gray-100">
+                            {/* closed-won */}
+                            <div
+                              className="absolute inset-y-0 left-0 rounded-full bg-arcova-teal"
+                              style={{ width: `${attainPct * 100}%` }}
+                            />
+                            {/* open pipeline (unweighted, so labelled as such) */}
+                            {openPipelinePct != null && openPipelinePct > 0 && (
+                              <div
+                                className="absolute inset-y-0 bg-arcova-teal/25"
+                                style={{ left: `${attainPct * 100}%`, width: `${openPipelinePct * 100}%` }}
+                              />
+                            )}
+                            {/* pace marker */}
+                            {progress && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <div
+                                    className="absolute inset-y-0 w-0.5 cursor-help bg-gray-500"
+                                    style={{ left: `calc(${progress.elapsedFraction * 100}% - 1px)` }}
+                                  />
+                                </TooltipTrigger>
+                                <TooltipContent side="top" className="text-xs">
+                                  Pace: {formatPct(progress.elapsedFraction)} of the quarter has elapsed
+                                </TooltipContent>
+                              </Tooltip>
+                            )}
+                          </div>
+                          <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-gray-400">
+                            <span className="inline-flex items-center gap-1.5">
+                              <span className="h-2 w-2 rounded-full bg-arcova-teal" />
+                              Closed won
+                            </span>
+                            {openPipelinePct != null && openPipelinePct > 0 && actuals && (
+                              <span className="inline-flex items-center gap-1.5">
+                                <span className="h-2 w-2 rounded-full bg-arcova-teal/25" />
+                                Open pipeline {formatUsd(actuals.openPipelineUsd)} (not win-rate weighted)
+                              </span>
+                            )}
+                            <span className="inline-flex items-center gap-1.5">
+                              <span className="h-2.5 w-0.5 bg-gray-500" />
+                              Quarter pace
+                            </span>
+                          </div>
+                          {/* What changed: movement, not just point-in-time. */}
+                          {actuals && (actuals.wonCount > 0 || actuals.priorWonCount > 0) && (
+                            <p className="mt-2.5 text-xs text-gray-500">
+                              This quarter: {actuals.wonCount} deal{actuals.wonCount === 1 ? '' : 's'} closed (
+                              {formatUsdZero(actuals.wonUsd)})
+                              {icpsClosedThisPeriod.length > 0 && (
+                                <> from {icpsClosedThisPeriod.map((c) => c.label).join(', ')}</>
+                              )}
+                              . Last quarter: {actuals.priorWonCount} ({formatUsdZero(actuals.priorWonUsd)}).
+                            </p>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Sourcing plan: ranked into a "do this first" order. */}
+                  {!editingTarget && target && plan && (
+                    <div className="px-5 py-4">
+                      {!plan.canPlan ? (
+                        <p className="text-sm text-gray-500">
+                          We need at least one ICP with closed-won deals (for average deal size) to plan a{' '}
+                          <span className="font-medium">revenue</span> target. Switch to a deals target, or sync your
+                          CRM so we can learn your ACV.
+                        </p>
+                      ) : (
+                        <>
+                          <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+                            <p className="text-sm text-gray-700">
+                              To hit {formatTargetValue(target.type, target.value)}, source{' '}
+                              <span className="font-semibold text-gray-900">
+                                ~{plan.result.totalToBuy.toLocaleString()} new contacts
+                              </span>{' '}
+                              in this order:
+                            </p>
+                            {ceilings == null ? (
+                              <button
+                                type="button"
+                                onClick={() => void checkSupply()}
+                                disabled={supplyLoading}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50"
+                                title="Counts the addressable company universe per ICP (uses a small amount of Apollo credits)"
+                              >
+                                {supplyLoading ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <Search className="h-3.5 w-3.5" />
+                                )}
+                                Check addressable supply
+                              </button>
+                            ) : (
+                              <span className="text-xs font-medium text-gray-400">Supply checked (estimate)</span>
+                            )}
+                          </div>
+
+                          {supplyError && <p className="mb-2 text-xs text-red-600">{supplyError}</p>}
+
+                          <div className="overflow-hidden rounded-lg border border-gray-100">
+                            <table className="w-full border-collapse text-sm">
+                              <thead>
+                                <tr className="border-b border-gray-100 bg-gray-50/60">
+                                  <Th>Priority</Th>
+                                  <Th>ICP</Th>
+                                  <Th right tip="This ICP's share of the overall target, weighted by throughput (your fastest, surest converters get more of the number).">
+                                    Share
+                                  </Th>
+                                  <Th right tip="The slice of your target this ICP is expected to carry.">Sub-target</Th>
+                                  <Th right tip="Contacts to source for this ICP, back-calculated from its sub-target through win rate and contact-to-deal conversion, minus contacts you already hold.">
+                                    To source
+                                  </Th>
+                                  <Th> </Th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {rankedPlanRows.map((a, idx) => {
+                                  const isTop = topPriorityRow?.icpId === a.icpId;
+                                  return (
+                                    <tr key={a.icpId} className="border-b border-gray-50 last:border-b-0">
+                                      <td className={`${TD} w-16`}>
+                                        <span
+                                          className={cn(
+                                            'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold',
+                                            isTop
+                                              ? 'border-arcova-teal/40 bg-arcova-teal/10 text-arcova-teal'
+                                              : 'border-gray-200 bg-gray-50 text-gray-500',
+                                          )}
+                                        >
+                                          {idx === 0 ? 'First' : `#${idx + 1}`}
+                                        </span>
+                                      </td>
+                                      <td className={`${TD} max-w-[16rem] truncate`}>{a.label}</td>
+                                      <td className={TD_NUM}>{Math.round((a.shareOfTarget ?? 0) * 100)}%</td>
+                                      <td className={TD_NUM}>{formatTargetValue(target.type, a.subTarget)}</td>
+                                      <td className={TD_NUM}>
+                                        {a.capped ? (
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <span className="cursor-help text-amber-700">
+                                                {a.sourceable.toLocaleString()}
+                                                <span className="text-gray-400"> / {a.toBuy.toLocaleString()}</span>
+                                              </span>
+                                            </TooltipTrigger>
+                                            <TooltipContent side="top" className="max-w-[240px] text-xs">
+                                              The plan wants {a.toBuy.toLocaleString()} contacts, but this ICP&apos;s
+                                              addressable supply only has ~{a.sourceable.toLocaleString()} left.
+                                            </TooltipContent>
+                                          </Tooltip>
+                                        ) : (
+                                          a.toBuy.toLocaleString()
+                                        )}
+                                      </td>
+                                      <td className={`${TD} whitespace-nowrap text-right`}>
+                                        {a.capped && (
+                                          <span className="mr-2 inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                                            Supply-limited
+                                          </span>
+                                        )}
+                                        {a.toBuy > 0 && (
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              openDataRequest(
+                                                a.icpId,
+                                                'expand_companies',
+                                                a.capped ? a.sourceable : a.toBuy,
+                                              )
+                                            }
+                                            className={cn(
+                                              'rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors',
+                                              isTop
+                                                ? 'bg-arcova-teal text-white hover:bg-arcova-teal/90'
+                                                : 'text-arcova-teal hover:underline',
+                                            )}
+                                          >
+                                            Source {(a.capped ? a.sourceable : a.toBuy).toLocaleString()}
+                                          </button>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+
+                          {plan.result.shortfall > 0 && (
+                            <p className="mt-3 flex items-start gap-1.5 text-xs text-amber-700">
+                              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                              <span>
+                                {formatTargetValue(target.type, plan.result.shortfall)} of this target is beyond your
+                                ICPs&apos; addressable supply. Broaden an ICP, extend the timeline, or trim the number.
+                              </span>
+                            </p>
+                          )}
+
+                          {/* Honest provenance: which rates are measured vs assumed. */}
+                          <p className="mt-3 text-xs text-gray-400">
+                            Win rate {formatPct(plan.defaults.winRate)}{' '}
+                            {plan.sources.winRate === 'measured' ? '(measured from your closed deals)' : '(industry default)'} ·
+                            contact-to-deal {formatPct(plan.defaults.contactToDeal)}{' '}
+                            {plan.sources.contactToDeal === 'measured' && plan.sources.conversionSample
+                              ? `(measured: ${plan.sources.conversionSample.withDeals} of ${plan.sources.conversionSample.total} contacts produced a deal)`
+                              : '(industry default, refines as deals link to contacts)'}
+                            {target.type === 'revenue' && (
+                              <>
+                                {' '}· ACV {formatUsd(plan.defaults.avgAcv)}{' '}
+                                {plan.sources.avgAcv === 'measured' ? '(measured from won deals)' : '(assumed)'}
+                              </>
+                            )}
+                          </p>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* ── 2 · Deal performance ──────────────────────────────────── */}
+                <SectionHeader
+                  step="2"
+                  icon={<BarChart3 className="h-3.5 w-3.5" />}
+                  title="Deal performance"
+                  source={hasCrm ? 'From your connected CRM. This is what ranks your ICPs.' : 'Locked until a CRM is connected.'}
+                />
+
+                {!hasCrm ? (
+                  /* Purpose-built no-CRM state: what connecting unlocks. */
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-gray-300 bg-white/60 px-5 py-5">
+                    <div className="flex items-start gap-3">
+                      <BarChart3 className="mt-0.5 h-4 w-4 shrink-0 text-gray-400" />
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">Connect your CRM to see which ICPs actually convert.</p>
+                        <p className="mt-0.5 text-sm text-gray-500">
+                          Win rate, deal size, and sales-cycle length per ICP, measured from your closed deals instead
+                          of guessed. It also makes the sourcing plan above use your real funnel.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => router.push(ROUTES.settings)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50"
+                    >
+                      Connect CRM
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    {/* The non-obvious winner, one line, in context with the table it explains. */}
+                    {insight && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const p = insight.best.performance!;
+                          fireAgent(
+                            `"${insight.best.label}" is my strongest-converting ICP by throughput (win rate ${formatPct(p.win_rate)}, avg ACV ${formatUsd(p.avg_acv)}, avg cycle ${formatCycle(p.avg_cycle_days)}). ${insight.surprise ? 'It is NOT the ICP with the most companies. ' : ''}Explain what makes it my best ICP and whether I should lean into it.`,
+                            `Why is ${insight.best.label} my best ICP?`,
+                          );
+                        }}
+                        className="mb-3 flex w-full items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-left transition-colors hover:bg-emerald-100"
+                      >
+                        <Trophy className="h-4 w-4 shrink-0 text-emerald-500" />
+                        <p className="text-sm text-emerald-900">
+                          <span className="font-medium">
+                            {insight.surprise
+                              ? `${insight.best.label} converts best, and it is not your biggest ICP.`
+                              : `${insight.best.label} is your strongest converter.`}
+                          </span>{' '}
+                          <span className="text-emerald-700">Click to see why.</span>
+                        </p>
+                      </button>
+                    )}
+
+                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden overflow-x-auto">
+                      <table className="w-full min-w-[860px] border-collapse">
+                        <thead>
+                          <tr className="border-b border-gray-200 bg-gray-50">
+                            <Th>ICP</Th>
+                            <Th right tip="CRM deals attributed to this ICP: open, won, and lost.">Deals</Th>
+                            <Th right tip="Open (not yet closed) deal value attributed to this ICP.">Pipeline</Th>
+                            <Th right tip="Won deals divided by closed deals (won + lost). The sample size next to it tells you how much to trust it.">
+                              Win rate
+                            </Th>
+                            <Th right tip="Average value of this ICP's won deals.">Avg ACV</Th>
+                            <Th right tip="Average days from first stage to closed-won. Uses stage history when available; otherwise falls back to created-to-close dates.">
+                              Cycle
+                            </Th>
+                            <Th right tip="Win rate × won revenue ÷ average cycle days: revenue per day of selling. This is what ranks ICPs and splits your target.">
+                              Throughput
+                            </Th>
+                            <Th tip="Confidence by closed-deal sample: 10+ closed is strong, 4+ is some signal, fewer is thin. Thin samples can flip with one deal.">
+                              Sample
+                            </Th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {[...cards]
+                            .sort((a, b) => {
+                              const ra = rankMap.get(a.icp_id) ?? Infinity;
+                              const rb = rankMap.get(b.icp_id) ?? Infinity;
+                              if (ra !== rb) return ra - rb;
+                              const da = (a.performance?.active_deal_count ?? 0) + (a.performance?.won_count ?? 0) + (a.performance?.lost_count ?? 0);
+                              const db = (b.performance?.active_deal_count ?? 0) + (b.performance?.won_count ?? 0) + (b.performance?.lost_count ?? 0);
+                              return db - da;
+                            })
+                            .map((card) => {
+                              const p = card.performance;
+                              const totalDeals = p ? p.active_deal_count + p.won_count + p.lost_count : 0;
+                              const rank = rankMap.get(card.icp_id);
+                              return (
+                                <tr key={card.icp_id} className="border-b border-gray-100 last:border-b-0 hover:bg-gray-50/80">
+                                  <td className={TD}>
+                                    <p className="max-w-[18rem] truncate font-medium text-gray-900">{card.label}</p>
+                                    {p && p.won_count_in_period > 0 && (
+                                      <p className="mt-0.5 text-[11px] text-emerald-600">
+                                        +{formatUsd(p.won_usd_in_period)} closed this quarter
+                                      </p>
+                                    )}
+                                  </td>
+                                  <td className={TD_NUM}>
+                                    {totalDeals > 0 ? (
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <span className="cursor-help">{totalDeals}</span>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top" className="text-xs">
+                                          {p!.active_deal_count} open · {p!.won_count} won · {p!.lost_count} lost
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    ) : (
+                                      '—'
+                                    )}
+                                  </td>
+                                  <td className={TD_NUM}>{formatUsd(p?.pipeline_usd)}</td>
+                                  <td className={TD_NUM}>
+                                    {p?.win_rate != null ? (
+                                      <span>
+                                        {formatPct(p.win_rate)}{' '}
+                                        <span className="text-xs text-gray-400">
+                                          ({p.won_count}W-{p.lost_count}L)
+                                        </span>
+                                      </span>
+                                    ) : (
+                                      '—'
+                                    )}
+                                  </td>
+                                  <td className={TD_NUM}>{formatUsd(p?.avg_acv)}</td>
+                                  <td className={TD_NUM}>
+                                    {p?.avg_cycle_days != null ? (
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <span className="cursor-help">
+                                            {formatCycle(p.avg_cycle_days)}{' '}
+                                            <span className="text-xs text-gray-400">n={p.cycle_sample}</span>
+                                          </span>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top" className="max-w-[240px] text-xs">
+                                          Based on {p.cycle_sample} closed deal{p.cycle_sample === 1 ? '' : 's'}.{' '}
+                                          {p.cycle_from_history < p.cycle_sample
+                                            ? `${p.cycle_sample - p.cycle_from_history} use created-to-close dates because stage history starts accruing from now.`
+                                            : 'All from stage history.'}
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    ) : (
+                                      '—'
+                                    )}
+                                  </td>
+                                  <td className={TD_NUM}>
+                                    {rank != null && p ? (
+                                      /* Decomposed, not a black box: the formula behind the rank. */
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <span
+                                            className={cn(
+                                              'inline-flex cursor-help items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold',
+                                              rank === 1
+                                                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                                : 'border-gray-200 bg-gray-50 text-gray-600',
+                                            )}
+                                          >
+                                            #{rank}
+                                          </span>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top" className="max-w-[280px] text-xs">
+                                          <span className="font-semibold">Why #{rank}:</span> {formatPct(p.win_rate)} win
+                                          rate × {formatUsd(p.won_usd)} won ÷ {formatCycle(p.avg_cycle_days)} cycle ≈{' '}
+                                          {formatUsd(p.throughput)} of expected revenue per selling day.
+                                          {p.confidence === 'low' && ' Thin sample: treat as directional.'}
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    ) : (
+                                      '—'
+                                    )}
+                                  </td>
+                                  <td className={`${TD} whitespace-nowrap`}>
+                                    {p ? (
+                                      <span
+                                        className={cn(
+                                          'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium',
+                                          CONFIDENCE_CLASS[p.confidence],
+                                        )}
+                                      >
+                                        {CONFIDENCE_LABEL[p.confidence]}
+                                      </span>
+                                    ) : (
+                                      <span className="text-xs text-gray-400">No deals yet</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Data coverage of the deal data itself: what the table CAN'T see. */}
+                    {meta && meta.unattributed.dealCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          fireAgent(
+                            `${meta.unattributed.dealCount} of my ${meta.totalDeals} CRM deals (${formatUsd(meta.unattributed.openUsd + meta.unattributed.wonUsd) === '—' ? 'no recorded value' : formatUsd(meta.unattributed.openUsd + meta.unattributed.wonUsd)}) could not be attributed to any ICP, so they are invisible in my per-ICP performance. Explain why deals end up unattributed (no company or contact link that maps to an ICP) and what I can do to fix the links.`,
+                            'Why are some deals unattributed?',
+                          )
+                        }
+                        className="mt-2.5 flex w-full items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/60 px-4 py-2.5 text-left transition-colors hover:bg-amber-50"
+                      >
+                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+                        <p className="text-xs text-amber-800">
+                          <span className="font-semibold">
+                            {meta.unattributed.dealCount} of {meta.totalDeals} deal
+                            {meta.totalDeals === 1 ? '' : 's'}
+                            {meta.unattributed.openUsd + meta.unattributed.wonUsd > 0 &&
+                              ` (${formatUsd(meta.unattributed.openUsd + meta.unattributed.wonUsd)})`}{' '}
+                            couldn&apos;t be attributed to an ICP
+                          </span>{' '}
+                          and {meta.unattributed.dealCount === 1 ? 'is' : 'are'} not counted in this table. Click to see
+                          why and how to fix it.
+                        </p>
+                      </button>
+                    )}
+                  </>
+                )}
+
+                {/* ── 1 · Sourced coverage ──────────────────────────────────── */}
+                <SectionHeader
+                  step="1"
+                  icon={<Database className="h-3.5 w-3.5" />}
+                  title="Sourced coverage"
+                  source="From your sourced data. The raw material the plan draws on; works with no CRM."
+                >
+                  {gapIcps.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const names = gapIcps.map((c) => `${c.label} (${c.company_count} companies)`).join(', ');
+                        fireAgent(
+                          `${gapIcps.length === 1 ? 'One ICP is' : `${gapIcps.length} ICPs are`} missing strong contact coverage: ${names}. Explain what is going on and what I should do next.`,
+                          gapIcps.length === 1
+                            ? 'Why is my contact coverage weak for this ICP?'
+                            : 'Why is my contact coverage weak across these ICPs?',
+                        );
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-semibold text-red-700 transition-colors hover:bg-red-100"
+                    >
+                      <AlertTriangle className="h-3 w-3" />
+                      {gapIcps.length} coverage gap{gapIcps.length === 1 ? '' : 's'}
+                    </button>
+                  )}
+                </SectionHeader>
+
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden overflow-x-auto">
+                  <table className="w-full min-w-[820px] border-collapse">
+                    <thead>
+                      <tr className="border-b border-gray-200 bg-gray-50">
+                        <Th>ICP</Th>
+                        <Th right tip="Companies sourced and matched to this ICP.">Companies</Th>
+                        <Th right tip="Average company fit score across this ICP's matched companies. Below 60% counts as a coverage gap.">
+                          Company fit
+                        </Th>
+                        <Th right tip="Contacts held at this ICP's companies.">Contacts</Th>
+                        <Th right tip="Average contact fit score: how well the people match your buyer personas.">
+                          Contact fit
+                        </Th>
+                        <Th right tip="Average contacts per company. Multi-threaded deals usually need 3+.">Depth</Th>
+                        <Th tip="The worst of company coverage, contact fit, and depth. Click a badge for an explanation.">
+                          Health
+                        </Th>
+                        <Th> </Th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cards.map((card) => {
+                        const ctas = buildCtas(card);
+                        const primaryCta = ctas[0] ?? null;
+                        return (
+                          <tr
+                            key={card.icp_id}
+                            className={cn(
+                              'border-b border-gray-100 border-l-4 hover:bg-gray-50/80',
+                              healthAccentClass(card.overall),
+                              'last:border-b-0',
+                            )}
+                          >
+                            <td className={TD}>
+                              <p className="max-w-[18rem] truncate font-medium text-gray-900">{card.label}</p>
+                            </td>
+                            <td className={TD_NUM}>{card.company_count.toLocaleString()}</td>
+                            <td className={TD_NUM}>{formatFitValue(card.avg_company_fit)}</td>
+                            <td className={TD_NUM}>{card.contact_count.toLocaleString()}</td>
+                            <td className={TD_NUM}>{formatFitValue(card.avg_contact_fit)}</td>
+                            <td className={TD_NUM}>{formatDepthValue(card.avg_contacts_per_company)}</td>
+                            <td className={`${TD} whitespace-nowrap`}>
+                              <HealthBadge
+                                dim={card.overall}
+                                onClick={() =>
+                                  fireAgent(
+                                    `Explain the health status for "${card.label}": it has ${card.company_count} companies, ${card.contact_count} contacts, avg company fit ${formatFitValue(card.avg_company_fit)}, avg contact fit ${formatFitValue(card.avg_contact_fit)}. Coverage is ${healthLabel(card.coverage)}, contact fit is ${healthLabel(card.contact_fit)}, depth is ${healthLabel(card.depth)}, overall ${healthLabel(card.overall)}. What's the issue and what should I do?`,
+                                    `Explain health for ${card.label}`,
+                                  )
+                                }
+                              />
+                            </td>
+                            <td className={`${TD} whitespace-nowrap text-right`}>
+                              {primaryCta && (
+                                <button
+                                  type="button"
+                                  onClick={() => openDataRequest(card.icp_id, primaryCta.type)}
+                                  className="text-xs font-semibold text-arcova-teal hover:underline"
+                                >
+                                  {primaryCta.label}
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                <p className="mt-3 text-xs text-gray-400">
+                  {hasAnyPerformance
+                    ? 'Deal performance is measured from your connected CRM. Hover any column heading for its definition.'
+                    : 'Connect your CRM (Settings) to unlock deal performance: win rate, ACV, sales cycle, and throughput per ICP.'}
+                </p>
+              </>
             )}
           </div>
         </div>
@@ -869,5 +1474,6 @@ export default function HealthPage() {
         />
       </div>
     </div>
+    </TooltipProvider>
   );
 }

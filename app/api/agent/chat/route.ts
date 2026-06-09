@@ -99,6 +99,9 @@ interface PageContext {
   acquisitionCompanyId?: string;
   acquisitionCompanyName?: string;
   acquisitionBatchCompanies?: { id: string; name: string; icpId?: string | null }[];
+  /** Pre-scoped quantities handed off from the Coverage plan. */
+  acquisitionSuggestedContacts?: number;
+  acquisitionSuggestedCompanies?: number;
   todayBrief?: string;
   todayAgenda?: { title?: string; detail?: string; href?: string }[];
   // ICPs page — server-fetched at request time, not passed from the client.
@@ -645,10 +648,14 @@ The user wants to source contacts at ${context.acquisitionCompanyName || 'a spec
 Open the conversation by confirming the company, then ask how many contacts they want. Suggest 3 to 5. When they confirm, call start_acquisition_job with requestType "contacts_at_company", companyId "${context.acquisitionCompanyId}", quantity [what the user said].`;
         }
         if (mode === 'companies' && context.acquisitionIcpId) {
+          const scoped =
+            context.acquisitionSuggestedCompanies && context.acquisitionSuggestedCompanies > 0
+              ? `The Coverage plan pre-scoped this request: it calls for roughly ${context.acquisitionSuggestedContacts && context.acquisitionSuggestedContacts > 0 ? `${context.acquisitionSuggestedContacts} new contacts, which is about ` : ''}${context.acquisitionSuggestedCompanies} companies for this ICP. Open by confirming the ICP and proposing that quantity as the default; the user can adjust it.`
+              : 'Open the conversation by confirming the ICP, then ask how many companies they want to add. Suggest 20 to 50 for an initial run.';
           return `
 ## Queued job context
 The user wants to find more companies for ${context.acquisitionIcpLabel || 'their ICP'} (id: ${context.acquisitionIcpId}).
-Open the conversation by confirming the ICP, then ask how many companies they want to add. Suggest 20 to 50 for an initial run. When they confirm, call start_acquisition_job with requestType "expand_companies", icpId "${context.acquisitionIcpId}", quantity [what the user said].`;
+${scoped} When they confirm, call start_acquisition_job with requestType "expand_companies", icpId "${context.acquisitionIcpId}", quantity [the confirmed number].`;
         }
         return '';
       })()

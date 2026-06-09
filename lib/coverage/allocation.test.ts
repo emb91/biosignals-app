@@ -5,8 +5,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { allocateTarget, type IcpAllocationInput, type CoverageDefaults } from './allocation';
-import { quarterOf, priorQuarter, quarterLabel, quarterDateRange, isValidPeriod } from './period';
-import { buildCoveragePlan, DEFAULT_WIN_RATE } from './coverage-plan';
+import { quarterOf, priorQuarter, quarterLabel, quarterDateRange, quarterProgress, isValidPeriod } from './period';
+import { buildCoveragePlan, DEFAULT_WIN_RATE, DEFAULT_CONTACT_TO_DEAL } from './coverage-plan';
+import { computeCoverageVerdict, type CoverageVerdictInput } from './verdict';
 
 const D: CoverageDefaults = { winRate: 0.5, contactToDeal: 0.5, avgAcv: 10_000 };
 const approx = (a: number, b: number, eps = 1e-3) => Math.abs(a - b) <= eps;
@@ -111,6 +112,137 @@ test('period helpers: quarter math, labels, UTC ranges', () => {
   assert.equal(range.startIso, '2026-04-01T00:00:00.000Z');
   assert.equal(range.endIso, '2026-07-01T00:00:00.000Z'); // exclusive
   assert.equal(quarterDateRange('bad'), null);
+});
+
+test('quarterProgress: elapsed fraction + days left, clamped', () => {
+  // Mid-quarter: May 16 is ~half of Q2 (Apr 1 – Jul 1).
+  const mid = quarterProgress('2026-Q2', new Date('2026-05-16T12:00:00Z'))!;
+  assert.ok(mid.elapsedFraction > 0.45 && mid.elapsedFraction < 0.55, `~0.5, got ${mid.elapsedFraction}`);
+  assert.ok(mid.daysLeft > 40 && mid.daysLeft < 50);
+  // Before the quarter starts → 0; after it ends → 1 / 0 days.
+  assert.equal(quarterProgress('2026-Q2', new Date('2026-01-01T00:00:00Z'))!.elapsedFraction, 0);
+  const done = quarterProgress('2026-Q2', new Date('2026-09-01T00:00:00Z'))!;
+  assert.equal(done.elapsedFraction, 1);
+  assert.equal(done.daysLeft, 0);
+  assert.equal(quarterProgress('nope'), null);
+});
+
+test('buildCoveragePlan: measured contact→deal pools samples; assumed otherwise', () => {
+  const measured = buildCoveragePlan({
+    cards: [
+      {
+        icp_id: 'A',
+        label: 'A',
+        contact_count: 15,
+        performance: {
+          throughput: 2,
+          win_rate: 0.5,
+          avg_acv: 10_000,
+          contact_to_deal: 4 / 15,
+          contacts_with_deals: 4,
+          contacts_total: 15,
+        },
+      },
+      {
+        icp_id: 'B',
+        label: 'B',
+        contact_count: 5,
+        performance: {
+          throughput: 1,
+          win_rate: 0.5,
+          avg_acv: 10_000,
+          contact_to_deal: 1 / 5,
+          contacts_with_deals: 1,
+          contacts_total: 5,
+        },
+      },
+    ],
+    target: { type: 'deals', value: 10 },
+  });
+  // Pooled: (4 + 1) / (15 + 5) = 0.25, not mean(4/15, 1/5).
+  assert.ok(Math.abs(measured.defaults.contactToDeal - 0.25) < 1e-9);
+  assert.equal(measured.sources.contactToDeal, 'measured');
+  assert.deepEqual(measured.sources.conversionSample, { withDeals: 5, total: 20 });
+
+  const assumed = buildCoveragePlan({
+    cards: [{ icp_id: 'A', label: 'A', contact_count: 3, performance: { throughput: 1, win_rate: 0.5, avg_acv: 10_000 } }],
+    target: { type: 'deals', value: 10 },
+  });
+  assert.equal(assumed.defaults.contactToDeal, DEFAULT_CONTACT_TO_DEAL);
+  assert.equal(assumed.sources.contactToDeal, 'assumed');
+  assert.equal(assumed.sources.winRate, 'measured');
+});
+
+// ── Verdict ──────────────────────────────────────────────────────────────────
+
+function verdictInput(over: Partial<CoverageVerdictInput> = {}): CoverageVerdictInput {
+  return {
+    icpCount: 3,
+    gapIcpLabels: [],
+    hasCrm: true,
+    target: { type: 'revenue', value: 1_000_000 },
+    actuals: { wonUsd: 500_000, wonCount: 2, openPipelineUsd: 100_000 },
+    elapsedFraction: 0.5,
+    weeksLeft: 6,
+    shortfall: 0,
+    topPriority: { icpId: 'a', label: 'ICP A', toBuy: 120 },
+    periodLabel: 'Q2 2026',
+    ...over,
+  };
+}
+
+test('verdict: resolution order no-icps → no-target → blocked → behind → on-track', () => {
+  assert.equal(computeCoverageVerdict(verdictInput({ icpCount: 0 })).status, 'no-icps');
+  assert.equal(computeCoverageVerdict(verdictInput({ target: null })).status, 'no-target');
+  assert.equal(computeCoverageVerdict(verdictInput({ shortfall: 250_000 })).status, 'blocked');
+  assert.equal(
+    computeCoverageVerdict(verdictInput({ actuals: { wonUsd: 100_000, wonCount: 1, openPipelineUsd: 0 } })).status,
+    'behind', // 10% attained at 50% pace
+  );
+  assert.equal(computeCoverageVerdict(verdictInput()).status, 'on-track'); // 50% at 50%
+});
+
+test('verdict: pace grace, target hit, deals basis', () => {
+  // 42% attained at 50% elapsed is within the 10pt grace → on-track.
+  const grace = computeCoverageVerdict(
+    verdictInput({ actuals: { wonUsd: 420_000, wonCount: 2, openPipelineUsd: 0 } }),
+  );
+  assert.equal(grace.status, 'on-track');
+
+  const hit = computeCoverageVerdict(
+    verdictInput({ actuals: { wonUsd: 1_200_000, wonCount: 3, openPipelineUsd: 0 } }),
+  );
+  assert.equal(hit.status, 'on-track');
+  assert.ok(hit.attainment! >= 1);
+  assert.match(hit.headline, /Target hit/);
+
+  // Deals target paces on counts, not dollars.
+  const deals = computeCoverageVerdict(
+    verdictInput({
+      target: { type: 'deals', value: 10 },
+      actuals: { wonUsd: 0, wonCount: 1, openPipelineUsd: 0 },
+    }),
+  );
+  assert.equal(deals.status, 'behind');
+  assert.ok(Math.abs(deals.attainment! - 0.1) < 1e-9);
+});
+
+test('verdict: plan-only without CRM; behind recommends the top plan row', () => {
+  const planOnly = computeCoverageVerdict(verdictInput({ hasCrm: false, actuals: null }));
+  assert.equal(planOnly.status, 'plan-only');
+  assert.equal(planOnly.action?.kind, 'source');
+
+  const behind = computeCoverageVerdict(
+    verdictInput({ actuals: { wonUsd: 0, wonCount: 0, openPipelineUsd: 0 } }),
+  );
+  assert.equal(behind.status, 'behind');
+  assert.equal(behind.action?.kind, 'source');
+  assert.equal(behind.action?.icpId, 'a');
+  assert.equal(behind.action?.count, 120);
+
+  const noTarget = computeCoverageVerdict(verdictInput({ target: null, gapIcpLabels: ['ICP B'] }));
+  assert.equal(noTarget.action?.kind, 'set-target');
+  assert.match(noTarget.detail ?? '', /coverage gap/);
 });
 
 test('buildCoveragePlan: blends rates, guards revenue without ACV', () => {
