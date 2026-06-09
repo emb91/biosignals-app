@@ -20,12 +20,15 @@ export async function GET() {
     const startUtc = new Date(endUtc);
     startUtc.setUTCDate(startUtc.getUTCDate() - (DAYS - 1));
 
+    // normalized_signals is the authoritative signals store (the old `signals`
+    // table is empty). Join via user_companies so we only count signals for
+    // this user's tracked accounts.
     const { data: rows, error } = await supabase
-      .from('signals')
-      .select('detected_at')
+      .from('normalized_signals')
+      .select('observed_at, event_at, company_id')
       .eq('user_id', user.id)
-      .gte('detected_at', startUtc.toISOString())
-      .order('detected_at', { ascending: true });
+      .gte('observed_at', startUtc.toISOString())
+      .order('observed_at', { ascending: true });
 
     if (error) {
       console.error('[GET /api/today/pulse-series]', error);
@@ -36,10 +39,12 @@ export async function GET() {
     const DAY_MS = 86_400_000;
 
     for (const r of rows ?? []) {
-      const raw = r.detected_at;
+      // Use event_at (when the signal actually happened) if available, else observed_at
+      const raw = r.event_at ?? r.observed_at;
       const t =
         typeof raw === 'string' ? new Date(raw).getTime() : raw instanceof Date ? raw.getTime() : NaN;
       if (!Number.isFinite(t)) continue;
+      // Bin to the UTC day it falls in relative to startUtc
       const dayUtc = new Date(t);
       dayUtc.setUTCHours(0, 0, 0, 0);
       const ix = Math.round((dayUtc.getTime() - startUtc.getTime()) / DAY_MS);

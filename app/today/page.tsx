@@ -38,6 +38,17 @@ type BriefingPulseSeriesState =
   | { state: 'ready'; values: number[] }
   | { state: 'off' };
 
+type LiveSignal = {
+  id: string;
+  signalKey: string;
+  companyName: string | null;
+  companyDomain: string | null;
+  sourceTitle: string | null;
+  sourceSummary: string | null;
+  observedAt: string;
+  eventAt: string | null;
+};
+
 type TopLead = {
   id: string;
   name: string;
@@ -136,6 +147,55 @@ type BriefingSignalRow = {
   ago: string;
 };
 
+function signalGlyph(key: string): string {
+  if (key.includes('patent') || key === 'assignee_portfolio_acceleration') return '◎';
+  if (key === 'publication') return '◈';
+  if (key.includes('clinical') || key.includes('trial') || key.includes('indication')) return '⬡';
+  if (key.includes('hiring') || key === 'hiring_expansion') return '✦';
+  if (key.includes('crm') || key.includes('opportunity')) return '◇';
+  return '◎';
+}
+
+const SIGNAL_LABELS: Record<string, string> = {
+  patent_filed_or_granted: 'Patent filed / granted',
+  patent_application_published: 'Patent application',
+  patent_granted: 'Patent granted',
+  new_therapeutic_area_patent: 'New TA patent',
+  assignee_portfolio_acceleration: 'Patent portfolio surge',
+  publication: 'Publication',
+  clinical_trial_recruiting: 'Trial recruiting',
+  clinical_trial_completed: 'Trial completed',
+  trial_site_expansion: 'Trial site expansion',
+  indication_expansion: 'Indication expansion',
+  hiring_expansion: 'Hiring expansion',
+  cmc_hiring: 'CMC hiring',
+  research_hiring: 'Research hiring',
+  data_informatics_hiring: 'Data / informatics hiring',
+  medical_hiring: 'Medical affairs hiring',
+  quality_hiring: 'Quality hiring',
+  executive_hiring: 'Executive hiring',
+  clinical_ops_hiring: 'Clinical ops hiring',
+  bd_hiring: 'BD hiring',
+  new_contact_added_in_crm: 'New CRM contact',
+  open_opportunity_in_crm: 'Open opportunity',
+};
+
+function signalLabel(key: string): string {
+  return SIGNAL_LABELS[key] ?? key.replace(/_/g, ' ');
+}
+
+function relativeTime(isoStr: string | null | undefined): string {
+  if (!isoStr) return '';
+  const t = Date.parse(isoStr);
+  if (!Number.isFinite(t)) return '';
+  const diffDays = Math.floor((Date.now() - t) / 86_400_000);
+  if (diffDays <= 0) return 'today';
+  if (diffDays === 1) return '1d ago';
+  if (diffDays < 7) return `${diffDays}d ago`;
+  if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
+  return `${Math.floor(diffDays / 30)}mo ago`;
+}
+
 export default function BriefingPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
@@ -165,6 +225,7 @@ export default function BriefingPage() {
   const [aggregatedPriorities, setAggregatedPriorities] = useState<TodayPriority[]>([]);
   /** Pulse chart: stable layout while series loads so the card height (and shadow) does not jump */
   const [pulseSeries, setPulseSeries] = useState<BriefingPulseSeriesState>({ state: 'loading' });
+  const [liveSignals, setLiveSignals] = useState<LiveSignal[]>([]);
   const prevBriefingUserIdRef = useRef<string | undefined>(undefined);
 
   const taskStateStorageKey = user
@@ -258,6 +319,7 @@ export default function BriefingPage() {
           importReadyRes,
           pulseSeriesRes,
           repliedRes,
+          liveSignalsRes,
         ] = await Promise.all([
           supabase.from('user_company').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
           fetch(ROUTES.api.icps),
@@ -270,6 +332,7 @@ export default function BriefingPage() {
           fetch('/api/import-ready'),
           fetch('/api/today/pulse-series'),
           fetch('/api/outreach/replied'),
+          fetch('/api/signals/feed?pageSize=8&page=1'),
         ]);
 
         if (profileError) throw profileError;
@@ -349,6 +412,22 @@ export default function BriefingPage() {
           setPulseSeries({ state: 'off' });
         }
 
+        if (liveSignalsRes.ok) {
+          const sigJson = (await liveSignalsRes.json()) as { data?: Array<Record<string, unknown>> };
+          setLiveSignals(
+            (sigJson.data ?? []).map((s) => ({
+              id: String(s.id ?? ''),
+              signalKey: String(s.signalKey ?? ''),
+              companyName: typeof s.companyName === 'string' ? s.companyName : null,
+              companyDomain: typeof s.companyDomain === 'string' ? s.companyDomain : null,
+              sourceTitle: typeof s.sourceTitle === 'string' ? s.sourceTitle : null,
+              sourceSummary: typeof s.sourceSummary === 'string' ? s.sourceSummary : null,
+              observedAt: String(s.observedAt ?? ''),
+              eventAt: typeof s.eventAt === 'string' ? s.eventAt : null,
+            }))
+          );
+        }
+
         const profileComplete = Boolean(profileData);
         const companiesComplete = icps.length > 0;
         const contactsComplete = contacts.length > 0;
@@ -408,61 +487,25 @@ export default function BriefingPage() {
   const syncProblemCount = (hubspotSyncLog?.contacts_errors ?? 0) + (hubspotSyncLog?.contacts_skipped ?? 0);
 
   const signalRows = useMemo((): BriefingSignalRow[] => {
-    const rows: BriefingSignalRow[] = [];
-    for (const j of runningJobs.slice(0, 2)) {
-      rows.push({
-        id: `run-${j.id}`,
-        glyph: '◐',
-        strong: 'Enrichment',
-        rest: j.title,
-        what: j.subtitle ? `Running · ${j.subtitle}` : 'Running',
-        ago: 'now',
-      });
-    }
-    for (const j of failedJobs.slice(0, 2)) {
-      rows.push({
-        id: `fail-${j.id}`,
-        glyph: '◈',
-        strong: 'Failed job',
-        rest: j.title,
-        what: j.subtitle ? `${j.subtitle} · needs a retry` : 'Needs a retry or inspection',
-        ago: '',
-      });
-    }
-    if (showImportReady) {
-      rows.push({
-        id: 'import-ready-feed',
-        glyph: '✦',
-        strong: 'Import',
-        rest: 'ready',
-        what: 'New contacts are waiting in Leads',
-        ago: 'today',
-      });
-    }
-    if (hubspotSyncLog?.synced_at && syncProblemCount > 0) {
-      rows.push({
-        id: 'hubspot-sync-feed',
-        glyph: '◇',
-        strong: 'HubSpot sync',
-        rest: `${syncProblemCount} exceptions`,
-        what: `${hubspotSyncLog.contacts_synced ?? 0} synced cleanly`,
-        ago: '',
-      });
-    }
-    if (
-      rows.length === 0
-    ) {
-      rows.push({
+    if (liveSignals.length === 0) {
+      return [{
         id: 'quiet',
         glyph: '○',
-        strong: 'Workspace',
-        rest: 'quiet',
-        what: 'No live jobs or import events right now',
+        strong: 'No signals yet',
+        rest: '',
+        what: 'Signals will appear here as your accounts are monitored',
         ago: '',
-      });
+      }];
     }
-    return rows.slice(0, 4);
-  }, [runningJobs, failedJobs, showImportReady, hubspotSyncLog, syncProblemCount]);
+    return liveSignals.slice(0, 8).map((s) => ({
+      id: s.id,
+      glyph: signalGlyph(s.signalKey),
+      strong: s.companyName ?? s.companyDomain ?? 'Unknown',
+      rest: signalLabel(s.signalKey),
+      what: s.sourceSummary ?? s.sourceTitle ?? s.signalKey.replace(/_/g, ' '),
+      ago: relativeTime(s.eventAt ?? s.observedAt),
+    }));
+  }, [liveSignals]);
 
   const agenda: AgendaItem[] = [
     // Replies are the highest-leverage thing on the page when present —
