@@ -756,7 +756,7 @@
 }
 
 .briefing-today .bt-sig-line {
-  font-size: 1rem;
+  font-size: 1.0625rem;
   color: var(--bt-ink);
   white-space: nowrap;
   overflow: hidden;
@@ -768,7 +768,7 @@
 }
 
 .briefing-today .bt-sig-what {
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
   color: var(--bt-ink-mute);
 }
 
