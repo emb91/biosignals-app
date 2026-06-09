@@ -159,11 +159,12 @@ type SignalGroupRow = {
 
 function signalGlyph(key: string): string {
   if (key.includes('patent') || key === 'assignee_portfolio_acceleration') return '◎';
-  if (key === 'publication') return '◈';
-  if (key.includes('clinical') || key.includes('trial') || key.includes('indication')) return '⬡';
-  if (key.includes('hiring') || key === 'hiring_expansion') return '✦';
-  if (key.includes('crm') || key.includes('opportunity')) return '◇';
-  return '◎';
+  if (key.includes('publication') || key === 'new_paper_published') return '◈';
+  if (key.includes('clinical') || key.includes('trial') || key.includes('indication') || key.includes('fda') || key.includes('program_discontinuation')) return '⬡';
+  if (key.includes('hiring') || key === 'hiring_expansion' || key === 'job_surge') return '✦';
+  if (key.includes('grant') || key === 'funding_round' || key === 'series_announcement' || key === 'acquisition' || key === 'partnership_announcement') return '◆';
+  if (key.includes('crm') || key.includes('opportunity') || key === 'new_to_role' || key === 'title_change' || key === 'new_internal_role') return '◇';
+  return '·';
 }
 
 const SIGNAL_LABELS: Record<string, string> = {
@@ -178,6 +179,7 @@ const SIGNAL_LABELS: Record<string, string> = {
   executive_hiring:          'Executive hiring',
   clinical_ops_hiring:       'Clinical ops hiring',
   bd_hiring:                 'BD hiring',
+  regulatory_hiring:         'Regulatory hiring',
   // Research
   assignee_portfolio_acceleration: 'Patent portfolio surge',
   patent_filed_or_granted:         'Patent filed',
@@ -206,6 +208,7 @@ const SIGNAL_LABELS: Record<string, string> = {
   funding_round:               'Funding round',
   series_announcement:         'Series funding',
   acquisition:                 'Acquisition',
+  partnership_announcement:    'Partnership',
   // People
   new_to_role:                 'New to role',
   title_change:                'Title change',
@@ -245,6 +248,7 @@ const SIGNAL_FAMILIES: SignalFamilyDef[] = [
   { key: 'hiring',   eyebrow: 'Talent',   title: 'Hiring'   },
   { key: 'research', eyebrow: 'Science',  title: 'Research' },
   { key: 'pipeline', eyebrow: 'Clinical', title: 'Pipeline' },
+  { key: 'funding',  eyebrow: 'Market',   title: 'Funding'  },
   { key: 'people',   eyebrow: 'Moves',    title: 'People'   },
 ];
 
@@ -254,6 +258,7 @@ const FAMILY_MAX_AGE_MS: Record<string, number> = {
   people:   14 * 86_400_000,
   research: 30 * 86_400_000,
   pipeline: 30 * 86_400_000,
+  funding:  30 * 86_400_000,
 };
 
 const SIGNAL_KEY_TO_FAMILY: Record<string, string> = {
@@ -278,11 +283,13 @@ const SIGNAL_KEY_TO_FAMILY: Record<string, string> = {
   publication:                     'research',
   publication_surge:               'research',
   new_paper_published:             'research',
-  nih_grant_awarded:               'research',
-  grant_award:                     'research',
-  funding_round:                   'research', // financial runway = R&D capacity signal
-  series_announcement:             'research',
-  acquisition:                     'research',
+  // Funding — grants, rounds, deals
+  nih_grant_awarded:               'funding',
+  grant_award:                     'funding',
+  funding_round:                   'funding',
+  series_announcement:             'funding',
+  acquisition:                     'funding',
+  partnership_announcement:        'funding',
   // Pipeline — ClinicalTrials.gov, FDA
   clinical_trial_recruiting:       'pipeline',
   clinical_trial_registered:       'pipeline',
@@ -326,14 +333,15 @@ const DOCUMENT_TITLE_KEYS = new Set([
   'assignee_portfolio_acceleration',
   'fda_approval', 'fda_submission',
   'funding_round', 'series_announcement', 'acquisition',
-  'grant_award', 'nih_grant_awarded',
   'clinical_trial_recruiting', 'clinical_trial_registered', 'clinical_trial_phase_start',
   'clinical_trial_completion', 'clinical_trial_completed', 'trial_site_expansion',
   'trial_failure_or_halt', 'program_discontinuation', 'indication_expansion',
+  // grant_award / nih_grant_awarded excluded: their title is a DB artifact;
+  // the summary field carries the useful text (award amount, agency, grant number)
 ]);
 
 /** Patterns in titles/summaries that indicate internal tooling provenance — hide from users. */
-const INTERNAL_PROVENANCE = /\b(apify|manual[_ ]test|hubspot[_ ]contact|linkedin[_ ]scrape)\b/i;
+const INTERNAL_PROVENANCE = /\b(apify|manual[_ ]test|test[_ ]emission|admin[_ ]signals|hubspot[_ ]contact|linkedin[_ ]scrape)\b/i;
 /** DB-generated event titles like "hiring_expansion detected at Revvity" */
 const DB_EVENT_TITLE = /^[\w_]+\s+(detected|found|updated|created|added|changed|entered|identified)\b/i;
 
@@ -343,36 +351,49 @@ function cleanSubItemTitle(
   summary: string | null,
   contactName?: string | null,
 ): string | null {
-  // Document-titled signals: show the actual title (it's from PubMed, USPTO, etc.)
+  // Sanitiser: null-out any string that looks like internal tooling text
+  const safe = (s: string | null | undefined): string | null => {
+    if (!s) return null;
+    if (INTERNAL_PROVENANCE.test(s)) return null;
+    if (DB_EVENT_TITLE.test(s)) return null;
+    return s;
+  };
+
+  // Aggregate hiring signals: pills carry all the info; never show a sub-item title
+  // (checked first so the summary "X has 47 open roles..." doesn't sneak through)
+  if (signalKey === 'hiring_expansion' || signalKey === 'job_surge') return null;
+
+  // Document-titled signals get their actual source title (PubMed, USPTO, ClinicalTrials, etc.)
+  // For grants we skip this — title is a DB artifact; summary has the good text
   if (DOCUMENT_TITLE_KEYS.has(signalKey)) {
-    const t = title ?? summary;
-    if (t && !INTERNAL_PROVENANCE.test(t)) return t;
-    return null;
+    return safe(title) ?? safe(summary);
   }
 
-  // Operational signals: sanitise or generate friendly text
-  const candidates = [title, summary].filter((s): s is string => !!s);
-  for (const c of candidates) {
-    if (!INTERNAL_PROVENANCE.test(c) && !DB_EVENT_TITLE.test(c)) return c;
+  // For grants: summary is "SBIR award to X: $1.4M from NIDA..." — the useful field
+  if (signalKey === 'grant_award' || signalKey === 'nih_grant_awarded') {
+    return safe(summary) ?? safe(title);
   }
 
-  // Fallback: generate from signal key
+  // All other operational signals: try data fields first, then a friendly fallback
+  const fromData = safe(summary) ?? safe(title);
+  if (fromData) return fromData;
+
   switch (signalKey) {
     case 'hiring_expansion':
-    case 'job_surge':            return null; // pills carry all the info
+    case 'job_surge':               return null; // (already handled above, belt-and-suspenders)
     case 'open_opportunity_in_crm': return 'Deal entered active stage';
     case 'new_contact_added_in_crm': return contactName ? `${contactName} added` : 'Contact added';
-    case 'new_to_role':          return contactName ? `${contactName} — new role` : 'New role';
-    case 'title_change':         return contactName ? `${contactName} — title changed` : 'Title changed';
-    case 'new_internal_role':    return contactName ? `${contactName} — promotion` : 'Internal promotion';
-    case 'trial_site_expansion': return summary ?? 'Site expansion';
-    case 'indication_expansion': return summary ?? 'Indication expansion';
+    case 'new_to_role':             return contactName ? `${contactName} — new role` : 'New role';
+    case 'title_change':            return contactName ? `${contactName} — title changed` : 'Title changed';
+    case 'new_internal_role':       return contactName ? `${contactName} — promotion` : 'Internal promotion';
+    case 'trial_site_expansion':    return 'Site expansion';
+    case 'indication_expansion':    return 'Indication expansion';
     case 'clinical_trial_phase_start':
-    case 'clinical_trial_recruiting': return summary ?? 'Phase started';
+    case 'clinical_trial_recruiting': return 'Phase started';
     case 'clinical_trial_completion':
-    case 'clinical_trial_completed':  return summary ?? 'Phase completed';
-    case 'clinical_trial_enrollment': return summary ?? 'Enrollment update';
-    default: return summary ?? null;
+    case 'clinical_trial_completed': return 'Phase completed';
+    case 'clinical_trial_enrollment': return 'Enrollment update';
+    default: return null;
   }
 }
 
@@ -674,11 +695,15 @@ export default function BriefingPage() {
       const company = s.companyName ?? s.companyDomain ?? 'Unknown';
       const rowKey = `${company}||${s.signalKey}`;
 
+      // Aggregate hiring signals: pills already tell the whole story; a single
+      // job posting URL out of 40+ roles would be misleading — suppress it.
+      const isHiringAggregate = s.signalKey === 'hiring_expansion' || s.signalKey === 'job_surge';
+
       // Build sub-item with sanitised title + URL
       const subItem: SignalSubItem = {
         id: s.id,
         title: cleanSubItemTitle(s.signalKey, s.sourceTitle, s.sourceSummary, s.contactName),
-        url: cleanSubItemUrl(s.sourceUrl),
+        url: isHiringAggregate ? null : cleanSubItemUrl(s.sourceUrl),
         what: null,
         ago: relativeTime(s.eventAt ?? s.observedAt),
       };
@@ -1029,14 +1054,16 @@ export default function BriefingPage() {
                   <ul className="bt-sig-list">
                     {group.rows.map((row, i) => {
                       const isOpen = expandedSignalRows.has(row.key);
+                      // Only expandable if there's at least one sub-item with content
+                      const expandableItems = row.items.filter(item => item.title || item.url);
+                      const isExpandable = expandableItems.length > 0;
+                      const RowEl = isExpandable ? 'button' : 'div';
                       return (
                         <li key={row.key} className="bt-sig-group-item" style={{ animationDelay: `${i * 40}ms` }}>
                           {/* Collapsed row — always visible */}
-                          <button
-                            type="button"
-                            className={cn('bt-sig-row bt-sig-row--group', isOpen && 'is-open')}
-                            onClick={() => toggleSignalRow(row.key)}
-                            aria-expanded={isOpen}
+                          <RowEl
+                            {...(isExpandable ? { type: 'button' as const, onClick: () => toggleSignalRow(row.key), 'aria-expanded': isOpen } : {})}
+                            className={cn('bt-sig-row bt-sig-row--group', isOpen && 'is-open', !isExpandable && 'bt-sig-row--static')}
                           >
                             <span className="bt-sig-glyph" style={{ color: BT_ACCENT }}>{row.glyph}</span>
                             <span className="bt-sig-body">
@@ -1058,13 +1085,15 @@ export default function BriefingPage() {
                               )}
                             </span>
                             <span className="bt-sig-ago">{row.ago}</span>
-                            <ChevronRight className="bt-sig-chevron h-3 w-3" strokeWidth={2.2} />
-                          </button>
+                            {isExpandable && (
+                              <ChevronRight className="bt-sig-chevron h-3 w-3" strokeWidth={2.2} />
+                            )}
+                          </RowEl>
 
                           {/* Expanded sub-items */}
-                          {isOpen && (
+                          {isOpen && isExpandable && (
                             <ul className="bt-sig-sub-list">
-                              {row.items.map((item) => {
+                              {expandableItems.map((item) => {
                                 const label = item.title ?? item.what;
                                 if (!label && !item.url) return null;
                                 return (

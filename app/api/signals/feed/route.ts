@@ -85,6 +85,8 @@ export async function GET(request: Request) {
     const scope = scopeParam === 'contact' || scopeParam === 'company' ? scopeParam : null;
     const companyIdParam = (searchParams.get('company_id') || '').trim() || null;
     const contactIdParam = (searchParams.get('contact_id') || '').trim() || null;
+    // skipPatentCollapse=1: return all individual patent signals (today page groups them itself)
+    const skipPatentCollapse = searchParams.get('skipPatentCollapse') === '1';
 
     let query = supabase
       .from('normalized_signals')
@@ -315,20 +317,26 @@ export async function GET(request: Request) {
       'patent_application_published',
       'patent_granted',
     ]);
-    const companiesWithPatentAggregate = new Set(
-      filtered
-        .filter((it) => it.sourceEventType === 'assignee_portfolio_acceleration')
-        .map((it) => it.companyId),
-    );
-    const keptPatentRepByCompany = new Set<string>();
-    const patentCollapsed = filtered.filter((it) => {
-      if (!PATENT_DETAIL_TYPES.has(it.sourceEventType)) return true;
-      if (companiesWithPatentAggregate.has(it.companyId)) return false; // summarised by the aggregate
-      const key = it.companyId ?? 'none';
-      if (keptPatentRepByCompany.has(key)) return false; // keep one representative
-      keptPatentRepByCompany.add(key);
-      return true;
-    });
+    // skipPatentCollapse=1 → today page groups them itself and wants all individual patents
+    // Default → suppress individual patents when an aggregate exists; keep one rep otherwise
+    const patentCollapsed = skipPatentCollapse
+      ? filtered
+      : (() => {
+          const companiesWithPatentAggregate = new Set(
+            filtered
+              .filter((it) => it.sourceEventType === 'assignee_portfolio_acceleration')
+              .map((it) => it.companyId),
+          );
+          const keptPatentRepByCompany = new Set<string>();
+          return filtered.filter((it) => {
+            if (!PATENT_DETAIL_TYPES.has(it.sourceEventType)) return true;
+            if (companiesWithPatentAggregate.has(it.companyId)) return false;
+            const key = it.companyId ?? 'none';
+            if (keptPatentRepByCompany.has(key)) return false;
+            keptPatentRepByCompany.add(key);
+            return true;
+          });
+        })();
 
     // Collapse hiring noise: when a company has a hiring_expansion signal, the
     // individual category signals (research_hiring, cmc_hiring, etc.) are already
@@ -337,6 +345,7 @@ export async function GET(request: Request) {
     const HIRING_DETAIL_KEYS = new Set([
       'research_hiring', 'cmc_hiring', 'data_informatics_hiring', 'quality_hiring',
       'executive_hiring', 'clinical_ops_hiring', 'medical_hiring', 'bd_hiring',
+      'regulatory_hiring', 'job_surge',
     ]);
     const companiesWithHiringExpansion = new Set(
       patentCollapsed

@@ -836,9 +836,13 @@
   grid-template-columns: auto 1fr auto auto;
 }
 
-.briefing-today .bt-sig-row--group:hover {
+.briefing-today .bt-sig-row--group:not(.bt-sig-row--static):hover {
   background: rgba(13, 53, 71, 0.025);
   border-radius: 0.5rem;
+}
+
+.briefing-today .bt-sig-row--static {
+  cursor: default;
 }
 
 .briefing-today .bt-sig-chevron {

@@ -190,13 +190,6 @@ function ReadinessBand({
   const displayLabel = isCapped && effectiveScore != null ? scoreLabel(effectiveScore) : r.overallLabel;
   const arcColor = readinessArcColor(pct);
 
-  const dims = [
-    { key: 'new_budget', label: 'Budget', score: r.newBudgetScore },
-    { key: 'new_needs', label: 'Needs', score: r.newNeedsScore },
-    { key: 'new_people', label: 'People', score: r.newPeopleScore },
-    { key: 'new_strategy', label: 'Strategy', score: r.newStrategyScore },
-  ].filter((d) => d.score != null && d.score > 0);
-
   return (
     <div className="mb-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-3">
       <div className="flex items-center gap-3">
@@ -217,9 +210,9 @@ function ReadinessBand({
           />
         </div>
 
-        {/* Label + dimensions */}
+        {/* Label */}
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 mb-1.5">
+          <div className="flex items-center gap-2">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Readiness</p>
             <span
               className={cn(
@@ -230,21 +223,11 @@ function ReadinessBand({
               {displayLabel}
             </span>
           </div>
-          {dims.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
-              {dims.map((d) => (
-                <div key={d.key} className="flex items-center gap-1">
-                  <div className={cn('h-1.5 w-1.5 rounded-full', DIMENSION_COLORS[d.key] ?? 'bg-slate-300')} />
-                  <span className="text-[10px] text-slate-500">{d.label}</span>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       </div>
       {isCapped && cappedReason && (
         <p className="mt-2 text-[11px] leading-snug text-amber-800">
-          Raw signal readiness is {rawPct}; effective readiness is capped at {effectivePct}.
+          Effective readiness is capped at {effectivePct} due to {cappedReason}.
         </p>
       )}
     </div>
@@ -393,23 +376,6 @@ function SignalCard({ item }: { item: SignalItem }) {
           </span>
         </div>
 
-        {/* Dimension pills */}
-        {item.dimensions.length > 0 && (
-          <div className="flex flex-wrap gap-1">
-            {item.dimensions.map((d) => (
-              <span
-                key={d}
-                className={cn(
-                  'rounded-full px-1.5 py-px text-[10px] font-medium',
-                  DIMENSION_PILL_STYLES[d] ?? 'bg-slate-100 text-slate-500',
-                )}
-              >
-                {d.replace(/_/g, ' ')}
-              </span>
-            ))}
-          </div>
-        )}
-
         {/* Excerpt / rationale */}
         {excerpt && (
           <p className="text-[12px] leading-snug text-slate-500 line-clamp-2">{excerpt}</p>
@@ -464,7 +430,6 @@ function buildReadinessSummary({
     const topSignals = items
       .slice(0, 3)
       .map((item) => signalLabel(item.signalKey).toLowerCase());
-    const dims = [...new Set(items.flatMap((item) => item.dimensions))].slice(0, 3);
     const signalText =
       topSignals.length === 0
         ? 'recent activity'
@@ -473,43 +438,26 @@ function buildReadinessSummary({
           : topSignals.length === 2
             ? `${topSignals[0]} and ${topSignals[1]}`
             : `${topSignals[0]}, ${topSignals[1]}, and ${topSignals[2]}`;
-    const dimText =
-      dims.length === 0
-        ? ''
-        : ` These signals are mostly in ${dims.map((d) => d.replace(/_/g, ' ')).join(', ')}.`;
-    return `Recent signals for ${entityLabel} include ${signalText}.${dimText}`.trim();
+    return `Recent signals for ${entityLabel} include ${signalText}.`;
   }
-
-  const activeDims = [
-    { label: 'new budget', score: readiness.newBudgetScore },
-    { label: 'new needs', score: readiness.newNeedsScore },
-    { label: 'new people', score: readiness.newPeopleScore },
-    { label: 'new strategy', score: readiness.newStrategyScore },
-  ]
-    .filter((d) => d.score != null && d.score >= 0.2)
-    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
-    .map((d) => d.label);
 
   const score = effectiveScore ?? readiness.overallScore;
   const label = scoreLabel(score);
-  if (activeDims.length === 0) {
+  const hasActiveSignals =
+    [readiness.newBudgetScore, readiness.newNeedsScore, readiness.newPeopleScore, readiness.newStrategyScore]
+      .some((s) => s != null && s >= 0.2);
+
+  if (!hasActiveSignals) {
     return `${entityLabel} has low readiness because there are not enough recent buying signals yet. This can change as new account or contact activity appears.`;
   }
 
-  const joined =
-    activeDims.length === 1
-      ? activeDims[0]
-      : activeDims.length === 2
-        ? `${activeDims[0]} and ${activeDims[1]}`
-        : `${activeDims.slice(0, -1).join(', ')}, and ${activeDims[activeDims.length - 1]}`;
-
   if (label === 'high') {
-    return `A combination of ${joined} signals means ${entityLabel} is ready for outreach now.`;
+    return `${entityLabel} has strong recent buying signals and is ready for outreach now.`;
   }
   if (label === 'medium') {
-    return `${entityLabel} has some readiness from ${joined}, but the evidence is still building.`;
+    return `${entityLabel} shows some positive activity, but the signals are still building.`;
   }
-  return `${entityLabel} has limited readiness right now. The strongest evidence is ${joined}, but it is not enough to make this a strong outreach moment yet.`;
+  return `${entityLabel} has limited readiness right now. The signals are there, but not yet enough to make this a strong outreach moment.`;
 }
 
 async function fetchSignals(params: URLSearchParams): Promise<SignalItem[]> {
