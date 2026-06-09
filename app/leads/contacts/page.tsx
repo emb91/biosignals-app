@@ -33,7 +33,7 @@ import { looksLikeEmail, type ContactEmailRow } from '@/lib/contact-emails';
 import { looksLikePhone, type ContactPhoneRow } from '@/lib/contact-phones';
 import {
   buildContactEmailDisplayRows,
-  formatContactLocationDisplay,
+  parseContactLocation,
 } from '@/lib/contact-profile-display';
 import { cn } from '@/lib/utils';
 import { cachedJson, invalidateCache } from '@/lib/page-fetch-cache';
@@ -4351,23 +4351,32 @@ export function ContactsWorkspace() {
                                             '—'}
                                         </p>
                                       </div>
-                                      <div className="min-w-0">
-                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
-                                          Location
-                                        </p>
-                                        {(() => {
-                                          const line = formatContactLocationDisplay(
-                                            selectedLead.location,
-                                            selectedLead.city,
-                                            selectedLead.country,
-                                          );
-                                          return (
-                                            <p className="mt-2 break-words text-sm leading-snug text-[#0d3547]">
-                                              {line ?? '—'}
+                                      {(() => {
+                                        // Location split into City / State / Country sub-fields.
+                                        // The `location` string is the reliable source (LinkedIn
+                                        // "City, State, Country"); the separate city/country columns
+                                        // are unreliable. See lib/contact-profile-display.
+                                        const parts = parseContactLocation(
+                                          selectedLead.location,
+                                          selectedLead.city,
+                                          selectedLead.country,
+                                        );
+                                        const cells: Array<{ label: string; value: string }> = [];
+                                        if (parts.city) cells.push({ label: 'City', value: parts.city });
+                                        if (parts.state) cells.push({ label: 'State', value: parts.state });
+                                        if (parts.country) cells.push({ label: 'Country', value: parts.country });
+                                        if (cells.length === 0) cells.push({ label: 'Location', value: '—' });
+                                        return cells.map((c) => (
+                                          <div key={c.label} className="min-w-0">
+                                            <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                              {c.label}
                                             </p>
-                                          );
-                                        })()}
-                                      </div>
+                                            <p className="mt-2 break-words text-sm leading-snug text-[#0d3547]">
+                                              {c.value}
+                                            </p>
+                                          </div>
+                                        ));
+                                      })()}
                                       <div className="min-w-0">
                                         <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
                                           Emails
