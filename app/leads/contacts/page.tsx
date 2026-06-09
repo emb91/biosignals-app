@@ -1569,7 +1569,7 @@ export function ContactsWorkspace() {
       .catch(() => {});
   }, []);
 
-  const handleHubSpotReconnect = useCallback(async (afterReconnect?: () => void) => {
+  const handleHubSpotReconnect = useCallback(async (afterReconnect?: () => void): Promise<boolean> => {
     try {
       const nango = new Nango({ publicKey: process.env.NEXT_PUBLIC_NANGO_PUBLIC_KEY ?? '' });
       const connectionId = `hubspot-${user?.id ?? 'unknown'}`;
@@ -1583,7 +1583,13 @@ export function ContactsWorkspace() {
       setHubspotSyncResult(null);
       setHubspotPullResult(null);
       afterReconnect?.();
-    } catch { /* user cancelled or popup blocked */ }
+      return true;
+    } catch (e) {
+      // Nango throws { type: 'user_cancelled' } when the user closes the popup — stay silent.
+      // Any other error (missing public key, network, etc.) means we couldn't reconnect.
+      const isUserCancel = (e as { type?: string })?.type === 'user_cancelled';
+      return isUserCancel; // return false so callers can show a fallback
+    }
   }, [user?.id]);
 
   const handlePushToHubspot = useCallback(async () => {
@@ -1603,7 +1609,10 @@ export function ContactsWorkspace() {
       } else {
         const code = (data?.code as string) || undefined;
         if (code === 'token_error') {
-          handleHubSpotReconnect(handlePushToHubspot);
+          const reconnected = await handleHubSpotReconnect(handlePushToHubspot);
+          if (!reconnected) {
+            setHubspotSyncResult({ contacts: { upserted: 0, errors: 0 }, skipped: 0, skippedContacts: [], error: 'HubSpot token expired — reconnect HubSpot in Settings to continue.', code });
+          }
         } else {
           const msg = (data?.error as string) || text || `HTTP ${res.status}`;
           setHubspotSyncResult({ contacts: { upserted: 0, errors: 0 }, skipped: 0, skippedContacts: [], error: msg, code });
@@ -1629,7 +1638,10 @@ export function ContactsWorkspace() {
       if (!res.ok) {
         const code = (data?.code as string) || undefined;
         if (code === 'token_error') {
-          handleHubSpotReconnect(handlePullHubspotCrm);
+          const reconnected = await handleHubSpotReconnect(handlePullHubspotCrm);
+          if (!reconnected) {
+            setHubspotPullResult({ fetchedContacts: 0, mirroredContacts: 0, contactEventsEmitted: 0, contactContextOnlyEvents: 0, contactRecomputedCompanies: 0, contactSkippedUnresolvedCompanies: 0, fetchedDeals: 0, mirroredDeals: 0, emittedEvents: 0, recomputedCompanies: 0, skippedUnresolvedCompanies: 0, error: 'HubSpot token expired — reconnect HubSpot in Settings to continue.', code });
+          }
           return;
         }
         const msg = (data?.error as string) || text || `HTTP ${res.status}`;
@@ -3035,7 +3047,7 @@ export function ContactsWorkspace() {
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
-                className="inline-flex items-center gap-2 px-3 py-2 bg-arcova-teal text-white rounded-lg text-sm font-medium hover:bg-arcova-teal/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
+                className="inline-flex items-center gap-2 px-3 py-2 bg-arcova-teal text-white rounded-lg text-sm font-medium hover:bg-arcova-teal/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm focus-visible:outline-none"
                 title="Actions"
               >
                 {pullingHubspotCrm || pushingToHubspot ? (
