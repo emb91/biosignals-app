@@ -38,7 +38,7 @@ export function resolveContactDataProvenance(row: {
   }
 
   const src = typeof row.source === 'string' ? row.source.trim().toLowerCase() : '';
-  if (src === 'arcova' || src === 'fiber' || src === 'apollo') {
+  if (src === 'arcova' || src === 'apollo') {
     return { channels: ['arcova'], importedAt };
   }
 

@@ -90,7 +90,7 @@ function parseThreshold(raw: string | null, fallback: number): number {
 
 function channelFromSource(source: string | null): DataProvenanceChannel[] {
   const src = (source || '').trim().toLowerCase();
-  if (src === 'arcova' || src === 'fiber' || src === 'apollo' || src === 'job_change_monitor') return ['arcova'];
+  if (src === 'arcova' || src === 'apollo' || src === 'job_change_monitor') return ['arcova'];
   if (src === 'hubspot') return ['hubspot'];
   if (src) return ['csv'];
   return [];

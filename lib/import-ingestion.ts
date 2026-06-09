@@ -13,7 +13,7 @@ export type EnrichedImportRecord = {
   raw_upload_id: string;
   batch_id?: string;
   user_id: string;
-  enrichment_provider?: 'apollo' | 'fiber';
+  enrichment_provider?: 'apollo';
   full_name?: string;
   first_name?: string;
   last_name?: string;
@@ -55,7 +55,6 @@ export type EnrichedImportRecord = {
   raw_company_response?: unknown;
   raw_person?: unknown;
   raw_company?: unknown;
-  fiber_lookup_metadata?: unknown;
   apollo_person_response_raw?: unknown;
   apollo_person_raw?: unknown;
   apollo_organization_raw?: unknown;
@@ -400,11 +399,6 @@ export async function ingestEnrichedRecords(
         apollo_company_domain: record.company_domain?.trim().toLowerCase() || null,
         company_linkedin_url: record.company_linkedin_url || null,
         company_id: companyId,
-        fiber_person_response_raw: record.raw_person_response ?? null,
-        fiber_company_response_raw: record.raw_company_response ?? null,
-        fiber_person_raw: record.raw_person ?? null,
-        fiber_company_raw: record.raw_company ?? null,
-        fiber_lookup_metadata: record.fiber_lookup_metadata ?? null,
         apollo_person_response_raw: record.apollo_person_response_raw ?? null,
         apollo_person_raw: record.apollo_person_raw ?? null,
         apollo_organization_raw: record.apollo_organization_raw ?? null,

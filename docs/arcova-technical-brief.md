@@ -10,7 +10,7 @@ Arcova is a B2B sales intelligence platform for life sciences. It helps commerci
 The core product loop:
 1. User defines **personas** (who they want to sell to — job title, seniority, business function)
 2. User imports a **contact list** (CSV from LinkedIn Sales Navigator, HubSpot, Apollo etc.)
-3. Contacts are **enriched** via an external data provider (originally Clay, now evaluating Fiber AI)
+3. Contacts are **enriched** via an external data provider (originally Clay)
 4. An **LLM scores each contact** for fit against the user's personas (0–1 fit score)
 5. Contacts are **ranked by priority** (fit × intent) in the Leads view
 6. As **signals** arrive (funding rounds, clinical trial registrations, job changes), the intent score updates and contacts re-rank
@@ -82,7 +82,6 @@ Dedup key: `(user_id, source_url)`
 Accepts a CSV (as parsed headers/rows/columnMappings JSON), creates an `upload_batches` record, inserts rows into `raw_uploads`, deduplicates against existing contacts, and forwards non-duplicate rows to the enrichment provider.
 
 Current enrichment provider: Clay webhook (fire-and-forget, batched at 100 rows).
-**This route needs updating to call Fiber AI instead of Clay.**
 
 Mappable import fields: `first_name`, `last_name`, `full_name`, `company_name`, `job_title`, `email_address`, `linkedin_url`, `company_linkedin_url`
 
@@ -90,8 +89,6 @@ Missing mappable fields that should be added: `location`, `company_domain`
 
 #### `POST /api/import-clay-callback`
 Receives enriched contact data back from Clay, runs LLM fit scoring, upserts to `contacts` and `companies` tables.
-
-**This route will be replaced or adapted for Fiber AI.** If Fiber AI is synchronous (API call → immediate response), this callback becomes unnecessary — enrichment happens inline in the import route.
 
 Key behaviours:
 - Accepts `{ records: [...] }` array or single record
@@ -141,7 +138,7 @@ Seniority levels (exact strings):
 Business areas / teams (exact strings):
 `Executive Leadership`, `Business Development`, `Partnerships`, `Clinical Operations`, `Research & Development`, `Regulatory Affairs`, `Manufacturing & CMC`, `Medical Affairs`, `Commercial`, `Sales Operations`, `Procurement`, `Strategy & Corporate Development`, `Lab Operations`, `Technology & Systems`, `AI & Machine Learning`, `Data & Informatics`, `Quality & Compliance`, `Marketing`
 
-These taxonomies must be used consistently in: LLM prompts, Clay/Fiber AI enrichment column prompts, persona form UI options, and scoring comparison logic.
+These taxonomies must be used consistently in: LLM prompts, enrichment column prompts, persona form UI options, and scoring comparison logic.
 
 #### `lib/rescore.ts`
 Bulk rescoring utility. Uses a Supabase service-role client (bypasses RLS). Pages through contacts 100 at a time, scores via `scoreContacts()`, updates fit fields in bulk. Safe to call fire-and-forget.
@@ -209,34 +206,16 @@ Clay was configured to:
 
 ---
 
-## 4. Planned Enrichment Switch: Fiber AI
+## 4. Enrichment Provider
 
-We are evaluating replacing Clay with **Fiber AI** (`fiber.ai`) as the enrichment provider.
-
-**Key difference:** Fiber AI is an enrichment API (synchronous call → enriched response) rather than a workflow tool with tables and callbacks. This simplifies the architecture significantly.
-
-**New flow if Fiber AI is used:**
-```
-CSV Import → raw_uploads → Fiber AI API call (inline) → enriched response → contacts table
-```
-
-No callback endpoint needed. The import route would call Fiber AI synchronously (or via async await), get the enriched record back, then score and store it — all in one flow.
-
-**What needs to happen:**
-1. Audit Fiber AI's API docs for available fields — specifically: LinkedIn person data, company firmographics, and whether they support life-sciences-specific fields (therapeutic areas, modalities, clinical stage)
-2. If Fiber AI doesn't return `seniority_level` and `business_area` classified to our taxonomy, we run those through Claude ourselves (same approach as scoring — a quick LLM classification call)
-3. Rewrite `app/api/import-contacts/route.ts` to call Fiber AI inline instead of forwarding to Clay
-4. Deprecate or repurpose `app/api/import-clay-callback/route.ts`
-5. Update `raw_uploads.status` flow accordingly
-
-**Critical nuance:** If Fiber AI requires a LinkedIn URL to do person enrichment (as Clay does), then we need a two-step flow: (1) find LinkedIn URL from name + company, (2) enrich using the URL. Fiber AI may have a single endpoint that does this in one call — confirm from docs.
+Enrichment runs via **Apollo** (person/contact identity + company firmographics) and **Apify / HarvestAPI** (LinkedIn profile + company scraping), called inline from the contact-resolution pipeline rather than through an external workflow tool with callbacks.
 
 ---
 
 ## 5. What Needs Focus Next (Priority Order)
 
-### 5.1 Fiber AI integration (immediate)
-Replace Clay with Fiber AI in the enrichment flow. See Section 4.
+### 5.1 Enrichment (implemented)
+Enrichment runs via Apollo + Apify (see Section 4).
 
 ### 5.2 Import field expansion
 Add `location` and `company_domain` as mappable import fields (they appear in common CSV exports like LinkedIn Sales Navigator but aren't currently accepted). Update `app/api/import-contacts/route.ts`.
@@ -256,7 +235,7 @@ The Arcova plugin (installed in Cowork) has a full spec for this in:
 - `skills/clay-arcova-workflow/references/enrichment-columns.md`
 
 ### 5.4 Persona form — taxonomy alignment
-The `seniority_level` and `business_area` values classified by the enrichment provider (Clay or Fiber AI) must match exactly the options shown in `components/PersonaForm.tsx`. Currently there are minor discrepancies between what the form shows and what old plugin files specify. The persona form taxonomy is the source of truth.
+The `seniority_level` and `business_area` values classified by the enrichment provider must match exactly the options shown in `components/PersonaForm.tsx`. Currently there are minor discrepancies between what the form shows and what old plugin files specify. The persona form taxonomy is the source of truth.
 
 ### 5.5 `rescore-contacts` — trigger on signal
 When a new signal is ingested for a company, intent scores should update and contacts should re-rank. Wire signal ingestion → intent recalculation → `priority_score` updates.
@@ -268,7 +247,7 @@ When a new signal is ingested for a company, intent scores should update and con
 ### 6.1 Net-new contact discovery (Phase 2)
 Phase 2 is finding contacts the user hasn't imported — proactive prospecting. This is a fundamentally different capability from the current import-and-enrich flow. It requires:
 - Defining search criteria (persona + signals = "find me BD Directors at companies that just filed a Form D in oncology")
-- Querying Fiber AI / other APIs to find matching profiles
+- Querying enrichment / discovery APIs to find matching profiles
 - Presenting results as a separate discovery queue (not mixed with imported leads)
 
 ### 6.2 Company-level scoring
@@ -292,13 +271,8 @@ NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=          # Required for lib/rescore.ts (bypasses RLS)
 ANTHROPIC_API_KEY=                  # Required for lib/scoring.ts
-CLAY_IMPORT_WEBHOOK_URL=            # Clay inbound webhook (replace with Fiber AI key)
+CLAY_IMPORT_WEBHOOK_URL=            # Clay inbound webhook (legacy)
 IMPORT_WEBHOOK_SECRET=              # Shared secret for Clay callback auth header
-```
-
-When Fiber AI replaces Clay, add:
-```
-FIBER_AI_API_KEY=
 ```
 
 ---
@@ -329,7 +303,7 @@ FIBER_AI_API_KEY=
 - **Headline matters.** The LinkedIn `headline` field (e.g. "Head of Clinical Operations | ex-Pfizer | mRNA") is included in the scoring prompt and meaningfully improves accuracy for edge cases.
 - **Taxonomy must be exact.** `seniority_level` and `business_area` values from enrichment must match the persona form taxonomy character-for-character. Any drift silently breaks scoring.
 - **Priority score is generated.** `contacts.priority_score` is a Postgres generated column (`fit_score * intent_score`). Never write to it directly.
-- **Two dedup passes.** First dedup is at import time (before Clay/Fiber). Second dedup is at callback time (after enrichment, before scoring). Both are necessary because enrichment can surface a LinkedIn URL that reveals a duplicate not caught on raw name alone.
+- **Two dedup passes.** First dedup is at import time (before enrichment). Second dedup is at callback time (after enrichment, before scoring). Both are necessary because enrichment can surface a LinkedIn URL that reveals a duplicate not caught on raw name alone.
 - **Rescore is fire-and-forget.** When a persona changes, all contacts are rescored in the background. The response to the persona save does not wait for rescoring to complete.
 - **intent_score is a placeholder.** Currently hardcoded to `1.0`. The column and schema are ready for real signal-based intent scoring but it is not yet implemented.
 - **All customers are US-based in v1.** Location parsing, defaults, and any future compliance considerations should assume US.
