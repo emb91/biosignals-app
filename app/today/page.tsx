@@ -870,34 +870,6 @@ export default function BriefingPage() {
               </ul>
             </section>
 
-            <div className="bt-stats-wrap">
-              <div className="bt-stat-row">
-                <div className="bt-stat-tile">
-                  <span className="bt-stat-glyph" style={{ color: BT_ACCENT }}>
-                    ✦
-                  </span>
-                  <p className="bt-stat-val">{pipeReady}</p>
-                  <p className="bt-stat-label">Ready to work</p>
-                  <p className="bt-stat-sub">high-fit, surfaced on Leads</p>
-                </div>
-                <div className="bt-stat-tile">
-                  <span className="bt-stat-glyph" style={{ color: BT_ACCENT }}>
-                    ◈
-                  </span>
-                  <p className="bt-stat-val">{runningJobs.length + failedJobs.length}</p>
-                  <p className="bt-stat-label">Jobs in view</p>
-                  <p className="bt-stat-sub">active or failed enrichment</p>
-                </div>
-                <div className="bt-stat-tile">
-                  <span className="bt-stat-glyph" style={{ color: BT_ACCENT }}>
-                    ◐
-                  </span>
-                  <p className="bt-stat-val">{healthIssues.length}</p>
-                  <p className="bt-stat-label">ICPs to review</p>
-                  <p className="bt-stat-sub">pipeline health attention</p>
-                </div>
-              </div>
-            </div>
           </div>
         </div>
       </main>

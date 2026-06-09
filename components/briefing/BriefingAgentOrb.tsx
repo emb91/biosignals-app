@@ -19,7 +19,7 @@ export function BriefingAgentOrb({
   energised?: boolean;
 }) {
   return (
-    <div className={cn('flex w-full max-w-full flex-col items-center px-2 pt-4 sm:pt-6', className)}>
+    <div className={cn('bt-orb-host flex w-full max-w-full flex-col items-center px-2 pt-4 sm:pt-6', className)}>
       <div
         className="relative flex shrink-0 items-center justify-center"
         style={{ width: `${ORB_STAGE_REM}rem`, height: `${ORB_STAGE_REM}rem` }}
