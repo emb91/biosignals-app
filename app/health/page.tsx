@@ -861,6 +861,10 @@ export default function HealthPage() {
             coverageTarget: target,
           }}
           pendingMessage={agentTrigger}
+          onGtmTargetMutation={() => {
+            setCeilings(null); // target changed → prior supply plan is stale
+            void loadTarget();
+          }}
         />
       </div>
     </div>

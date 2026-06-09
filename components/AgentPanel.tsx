@@ -68,6 +68,8 @@ export interface AgentPanelProps {
   onJobStarted?: (job: { requestType: string; icpId?: string; companyId?: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[]; quantity: number }) => void;
   /** Fires after the agent has written to the ICPs table (update / delete). Parent should re-fetch the ICP list. */
   onIcpMutation?: (mutations: Array<{ kind: 'updated' | 'deleted'; icpId: string; name: string | null; reasoning: string }>) => void;
+  /** Fires after the agent set a GTM target (Coverage page). Parent should re-fetch the target + plan. */
+  onGtmTargetMutation?: (mutation: { period: string; type: 'revenue' | 'deals'; value: number; reasoning: string }) => void;
   /** Hide the Arcova Agent title row (full-bleed chat, e.g. Data page). */
   hideHeader?: boolean;
   /** Hide suggested prompt chips when the parent is providing state-aware onboarding. */
@@ -248,7 +250,7 @@ function stripMarkdown(text: string): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, onLeadsFilter, onTableClear, wide, onJobStarted, onIcpMutation, hideHeader, suppressPrompts, embedInBriefingBento, onBusyChange, briefingWelcome, briefingIdleChips, surfaceClassName, headerSubtitle, className, variant = 'side-rail' }: AgentPanelProps) {
+export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, onLeadsFilter, onTableClear, wide, onJobStarted, onIcpMutation, onGtmTargetMutation, hideHeader, suppressPrompts, embedInBriefingBento, onBusyChange, briefingWelcome, briefingIdleChips, surfaceClassName, headerSubtitle, className, variant = 'side-rail' }: AgentPanelProps) {
   const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -387,6 +389,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
         suggestedNavigation?: { href: string; label: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[] };
         pendingJobStart?: { requestType: string; icpId?: string; companyId?: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[]; quantity: number };
         icpMutations?: Array<{ kind: 'updated' | 'deleted'; icpId: string; name: string | null; reasoning: string }>;
+        gtmTargetMutation?: { period: string; type: 'revenue' | 'deals'; value: number; reasoning: string };
       } = await res.json();
 
       // Update the pending placeholder with the real response
@@ -424,6 +427,11 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
         if (onIcpMutation) onIcpMutation(data.icpMutations);
         clearIcpPrioritiesCache();
         setPriorityRefreshKey((k) => k + 1);
+      }
+
+      // Agent set a GTM target on the Coverage page — refresh the target + plan.
+      if (data.gtmTargetMutation && onGtmTargetMutation) {
+        onGtmTargetMutation(data.gtmTargetMutation);
       }
 
       // If this response closes out a priority-card conversation, remove the card.

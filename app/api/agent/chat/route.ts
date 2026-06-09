@@ -40,6 +40,13 @@ import {
 } from '@/lib/prompts/agent-voice';
 import { ROUTES, withQuery } from '@/lib/routes';
 import { redactInternalIdsFromAgentUserText } from '@/lib/agent-redact';
+import {
+  quarterOf,
+  quarterLabel,
+  priorQuarter,
+  quarterDateRange,
+  isValidPeriod,
+} from '@/lib/coverage/period';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -107,6 +114,16 @@ interface PageContext {
   sequenceCount?: number;
   selectedSequenceId?: string | null;
   selectedStepIndex?: number | null;
+  // Coverage page (health route) — passed from the client; actuals are server-computed.
+  coveragePeriod?: string;
+  coverageTarget?: { type: 'revenue' | 'deals'; value: number } | null;
+  coverageActuals?: {
+    priorPeriod: string;
+    priorWonUsd: number;
+    priorWonCount: number;
+    currentWonUsd: number;
+    currentWonCount: number;
+  } | null;
 }
 
 interface TableFilter {
@@ -140,6 +157,13 @@ interface ChatResponse {
     name: string | null;
     reasoning: string;
   }>;
+  /** GTM target set this turn (Coverage page). Client should refresh the target + plan. */
+  gtmTargetMutation?: {
+    period: string;
+    type: 'revenue' | 'deals';
+    value: number;
+    reasoning: string;
+  };
 }
 
 // ─── Anthropic client ─────────────────────────────────────────────────────────
@@ -552,6 +576,21 @@ const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'set_gtm_target',
+    description:
+      "Set or update the user's overall GTM target for a quarter (Coverage page). Call this when the rep states a goal — e.g. \"my target is $2M this quarter\", \"I want to close 40 deals\", \"set Q3 to 3 million\". It is ONE overall number per quarter; Arcova splits it across ICPs by throughput. Confirm the number and unit (revenue $ vs deal count) before calling, and explain in `reasoning` why it's sensible (e.g. grounded in last quarter's actuals). Defaults to the current quarter when the user doesn't name one.",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        type: { type: 'string', enum: ['revenue', 'deals'], description: 'Whether the target is revenue (USD) or a deal count.' },
+        value: { type: 'number', description: 'The target value — dollars for revenue, a whole number for deals. Must be positive.' },
+        period: { type: 'string', description: "Quarter as 'YYYY-Qn' (e.g. '2026-Q3'). Omit to use the current quarter." },
+        reasoning: { type: 'string', description: 'One sentence on why this target makes sense, grounded in the user\'s data. Shown to the user.' },
+      },
+      required: ['type', 'value', 'reasoning'],
+    },
+  },
+  {
     name: 'load_outreach_context',
     description:
       'Load the full generator context for an outreach sequence so you can help the rep refine the copy. Returns: seller company (value props, capabilities, differentiated value), the contact (title, seniority, bio, fit summary), the contact\'s company (modalities, TAs, dev stages), the chosen anchor signal, the buying group functions, the current draft of all 7 messages, the structural cadence rules, and the banned-phrase list. Call this whenever the rep on /outreach asks about editing a sequence, improving a step, or critiquing the copy. The sequenceId is usually in pageContext.selectedSequenceId; the optional stepIndex (0-based) focuses the response on one step.',
@@ -691,6 +730,29 @@ ${icpsBlock}`;
       })()
     : '';
 
+  // Coverage page (health route): current target + CRM-anchored actuals so the
+  // agent can open with last quarter's number and capture this quarter's via set_gtm_target.
+  const coverageContext = page === 'health'
+    ? (() => {
+        const period = context?.coveragePeriod || quarterOf();
+        const usd = (n: number) =>
+          n >= 1_000_000 ? `$${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M` : n >= 1_000 ? `$${Math.round(n / 1_000)}k` : `$${Math.round(n)}`;
+        const a = context?.coverageActuals;
+        const target = context?.coverageTarget ?? null;
+        const targetLine = target
+          ? `The user's current ${quarterLabel(period)} target is **${target.type === 'revenue' ? usd(target.value) : `${Math.round(target.value)} deals`}**.`
+          : `The user has **not set a ${quarterLabel(period)} target yet**.`;
+        const actualsLine = a
+          ? `CRM actuals: last quarter (${quarterLabel(a.priorPeriod)}) they closed **${usd(a.priorWonUsd)} across ${a.priorWonCount} deal${a.priorWonCount === 1 ? '' : 's'}**; this quarter so far **${usd(a.currentWonUsd)} / ${a.currentWonCount} deal${a.currentWonCount === 1 ? '' : 's'}**.`
+          : '';
+        return `
+## Coverage planning context
+${targetLine}
+${actualsLine}
+This page turns ONE overall quarterly target into a per-ICP sourcing plan (it splits the number across ICPs by throughput and back-calculates how many contacts to buy). When the user has no target, open by anchoring on last quarter's closed number and asking what they want to hit this quarter — offer a sensible bracket (e.g. flat, +20%, +50% vs last quarter). When they commit to a number, confirm the unit (revenue $ vs deal count) and call **set_gtm_target**. Never invent actuals — only cite the CRM numbers above. Do not repeat raw UUIDs.`;
+      })()
+    : '';
+
   const routePlaceholders = {
     dataHref: ROUTES.data,
     importHref: ROUTES.import,
@@ -710,6 +772,7 @@ ${leadsViewContext}
 ${selectedLeadContext}
 ${logContext}
 ${icpAuditContext}
+${coverageContext}
 
 ${COPILOT_JOURNEY_MODEL}
 
@@ -1434,6 +1497,98 @@ async function toolDeleteIcp(
   };
 }
 
+/**
+ * Closed-won totals for the prior and current quarter — the CRM anchor the
+ * Coverage agent opens with ("last quarter you closed $X"). Deals are few per
+ * user, so we load won deals and bucket by close_date in app code.
+ */
+async function fetchCoverageActuals(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  period: string,
+): Promise<NonNullable<PageContext['coverageActuals']>> {
+  const prior = priorQuarter(period);
+  const priorRange = quarterDateRange(prior);
+  const curRange = quarterDateRange(period);
+
+  const { data } = await supabase
+    .from('crm_deals')
+    .select('amount, close_date, deal_stage')
+    .eq('user_id', userId);
+
+  let priorWonUsd = 0;
+  let priorWonCount = 0;
+  let currentWonUsd = 0;
+  let currentWonCount = 0;
+
+  for (const row of (data ?? []) as Array<{ amount: number | null; close_date: string | null; deal_stage: string | null }>) {
+    if ((row.deal_stage ?? '').trim().toLowerCase() !== 'closedwon' || !row.close_date) continue;
+    const closeIso = new Date(row.close_date).toISOString();
+    const amt = typeof row.amount === 'number' && Number.isFinite(row.amount) ? row.amount : 0;
+    if (priorRange && closeIso >= priorRange.startIso && closeIso < priorRange.endIso) {
+      priorWonUsd += amt;
+      priorWonCount += 1;
+    } else if (curRange && closeIso >= curRange.startIso && closeIso < curRange.endIso) {
+      currentWonUsd += amt;
+      currentWonCount += 1;
+    }
+  }
+
+  return { priorPeriod: prior, priorWonUsd, priorWonCount, currentWonUsd, currentWonCount };
+}
+
+// ─── GTM target tool (Coverage page) ─────────────────────────────────────────
+
+type GtmTargetMutationSummary = {
+  period: string;
+  type: 'revenue' | 'deals';
+  value: number;
+  reasoning: string;
+};
+
+const GTM_TARGET_MAX_VALUE = 1_000_000_000;
+
+/**
+ * Upsert the user's overall GTM target for a quarter. Mirrors the validation in
+ * PUT /api/coverage/target. Returns a tool-result string for the agent plus a
+ * mutation record so the Coverage page refreshes its target + allocation plan.
+ */
+async function toolSetGtmTarget(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  input: Record<string, unknown>,
+): Promise<{ result: string; mutation?: GtmTargetMutationSummary }> {
+  const type: 'revenue' | 'deals' = input.type === 'deals' ? 'deals' : 'revenue';
+  const reasoning = typeof input.reasoning === 'string' ? input.reasoning : '';
+  const period =
+    typeof input.period === 'string' && isValidPeriod(input.period) ? input.period : quarterOf();
+
+  const rawValue = typeof input.value === 'number' ? input.value : Number(input.value);
+  if (!Number.isFinite(rawValue) || rawValue <= 0 || rawValue > GTM_TARGET_MAX_VALUE) {
+    return { result: JSON.stringify({ success: false, error: 'Invalid target value — must be a positive number.' }) };
+  }
+  const value = type === 'deals' ? Math.round(rawValue) : Math.round(rawValue * 100) / 100;
+
+  const { error } = await supabase.from('gtm_targets').upsert(
+    {
+      user_id: userId,
+      period,
+      target_type: type,
+      target_value: value,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'user_id,period' },
+  );
+  if (error) {
+    return { result: JSON.stringify({ success: false, error: error.message }) };
+  }
+
+  return {
+    result: JSON.stringify({ success: true, period, type, value }),
+    mutation: { period, type, value, reasoning },
+  };
+}
+
 // ─── load_outreach_context tool ───────────────────────────────────────────────
 // Hands the agent the same grounding the generator had: seller, contact +
 // their company, anchor, buying group, current 7-message draft, plus the
@@ -1587,7 +1742,7 @@ async function runAgentLoop(
   page: Page,
   messages: ChatMessage[],
   pageContext?: PageContext,
-): Promise<{ message: string; toolsUsed: string[]; tableFilter?: TableFilter; tableAccounts?: import('@/lib/accounts-data').QueryAccount[]; leadsFilter?: LeadsTableFilter; tableLeads?: QueryLead[]; suggestedNavigation?: { href: string; label: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[] }; pendingJobStart?: { requestType: string; icpId?: string; companyId?: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[]; quantity: number }; icpMutations?: IcpMutationSummary[] }> {
+): Promise<{ message: string; toolsUsed: string[]; tableFilter?: TableFilter; tableAccounts?: import('@/lib/accounts-data').QueryAccount[]; leadsFilter?: LeadsTableFilter; tableLeads?: QueryLead[]; suggestedNavigation?: { href: string; label: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[] }; pendingJobStart?: { requestType: string; icpId?: string; companyId?: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[]; quantity: number }; icpMutations?: IcpMutationSummary[]; gtmTargetMutation?: GtmTargetMutationSummary }> {
   // For the ICPs page, fetch the user's full ICP set + company profile server-side so the
   // agent always reasons over fresh evidence (client doesn't need to pass anything).
   let resolvedPageContext: PageContext | undefined = pageContext;
@@ -1612,6 +1767,15 @@ async function runAgentLoop(
       },
     };
   }
+  // Coverage page: anchor the agent on CRM actuals so it can open with
+  // "last quarter you closed $X — target for this quarter?".
+  if (page === 'health') {
+    const period = (pageContext?.coveragePeriod && isValidPeriod(pageContext.coveragePeriod))
+      ? pageContext.coveragePeriod
+      : quarterOf();
+    const coverageActuals = await fetchCoverageActuals(supabase, userId, period);
+    resolvedPageContext = { ...(pageContext ?? {}), coveragePeriod: period, coverageActuals };
+  }
   const systemPrompt = buildSystemPrompt(page, resolvedPageContext);
   const toolsUsed: string[] = [];
   let tableFilter: TableFilter | undefined;
@@ -1621,6 +1785,7 @@ async function runAgentLoop(
   let suggestedNavigation: { href: string; label: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[] } | undefined;
   let pendingJobStart: { requestType: string; icpId?: string; companyId?: string; batchCompanies?: { id: string; name: string; icpId?: string | null }[]; quantity: number } | undefined;
   const icpMutations: IcpMutationSummary[] = [];
+  let gtmTargetMutation: GtmTargetMutationSummary | undefined;
 
   const DATA_PAGE_OPEN_TRIGGER = '__OPEN__';
 
@@ -1661,7 +1826,7 @@ async function runAgentLoop(
   // *next* turn — where the model reasons about the mutation result and writes the
   // user-facing follow-up — escalates to Sonnet 4.6 so the reasoning is careful.
   // See memory/llm_cost_concerns.md for the policy. Read-only tool turns stay on Haiku.
-  const WRITE_TOOLS = new Set(['update_icp', 'delete_icp']);
+  const WRITE_TOOLS = new Set(['update_icp', 'delete_icp', 'set_gtm_target']);
   const HAIKU_MODEL = 'claude-haiku-4-5';
   const SONNET_MODEL = 'claude-sonnet-4-6';
   let escalateNextTurn = false;
@@ -1705,7 +1870,7 @@ async function runAgentLoop(
       const finalMessage = redactInternalIdsFromAgentUserText(
         [spilloverText, turnText].filter(Boolean).join(' '),
       );
-      return { message: finalMessage, toolsUsed, tableFilter, tableAccounts, leadsFilter, tableLeads, suggestedNavigation, pendingJobStart, icpMutations: icpMutations.length > 0 ? icpMutations : undefined };
+      return { message: finalMessage, toolsUsed, tableFilter, tableAccounts, leadsFilter, tableLeads, suggestedNavigation, pendingJobStart, icpMutations: icpMutations.length > 0 ? icpMutations : undefined, gtmTargetMutation };
     }
 
     // The model wrote text alongside tool calls — save it so it isn't lost
@@ -1939,6 +2104,12 @@ async function runAgentLoop(
             if (mutation) icpMutations.push(mutation);
             break;
           }
+          case 'set_gtm_target': {
+            const { result: r, mutation } = await toolSetGtmTarget(supabase, userId, toolInput);
+            result = r;
+            if (mutation) gtmTargetMutation = mutation; // last-wins within a turn
+            break;
+          }
           case 'load_outreach_context':
             result = await toolLoadOutreachContext(supabase, userId, toolInput);
             break;
@@ -2005,7 +2176,7 @@ async function runAgentLoop(
     ].filter(Boolean).join(' '),
   );
 
-  return { message: finalText, toolsUsed, tableFilter, tableAccounts, leadsFilter, tableLeads, suggestedNavigation, pendingJobStart, icpMutations: icpMutations.length > 0 ? icpMutations : undefined };
+  return { message: finalText, toolsUsed, tableFilter, tableAccounts, leadsFilter, tableLeads, suggestedNavigation, pendingJobStart, icpMutations: icpMutations.length > 0 ? icpMutations : undefined, gtmTargetMutation };
 }
 
 // ─── Route handler ─────────────────────────────────────────────────────────────
