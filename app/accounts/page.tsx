@@ -2425,7 +2425,6 @@ export default function AccountsPage() {
                           ) : (
                             <div className="space-y-2">
                               {contacts.map((contact) => {
-                                const isExpanded = expandedContactId === contact.id;
                                 const title = contact.resolved_current_job_title || contact.job_title || null;
                                 const fitPct = formatPct(contact.contact_fit_score);
                                 const fit = contactFitCache[contact.id];
@@ -2433,12 +2432,9 @@ export default function AccountsPage() {
                                 return (
                                   <div
                                     key={contact.id}
-                                    className={cn(
-                                      'rounded-xl border bg-gray-50/60 overflow-hidden transition-colors',
-                                      isExpanded ? 'border-arcova-teal/30' : 'border-gray-100',
-                                    )}
+                                    className="rounded-xl border border-arcova-teal/20 bg-gray-50/60 overflow-hidden"
                                   >
-                                    {/* Row header — click to toggle */}
+                                    {/* Contact header */}
                                     <div className="px-3 py-2.5">
                                       <div className="flex items-start justify-between gap-2">
                                         <div className="min-w-0">
@@ -2446,21 +2442,10 @@ export default function AccountsPage() {
                                           {title && <p className="text-xs text-gray-500 truncate mt-0.5">{title}</p>}
                                           {contact.email && <p className="text-xs text-gray-400 truncate mt-0.5">{contact.email}</p>}
                                         </div>
-                                        <div className="flex items-center gap-2 shrink-0">
-                                          {fitPct && (
-                                            <span className="text-sm font-semibold tabular-nums text-gray-900">{fitPct}</span>
-                                          )}
-                                          <button
-                                            type="button"
-                                            onClick={() => toggleContact(contact.id)}
-                                            className="p-0.5 -m-0.5 text-gray-400 hover:text-gray-600 transition-colors"
-                                            aria-label={isExpanded ? 'Collapse' : 'Expand'}
-                                          >
-                                            <ChevronDown className={cn('w-3.5 h-3.5 transition-transform duration-200 shrink-0', isExpanded ? 'rotate-0' : '-rotate-90')} />
-                                          </button>
-                                        </div>
+                                        {fitPct && (
+                                          <span className="text-sm font-semibold tabular-nums text-gray-900 shrink-0">{fitPct}</span>
+                                        )}
                                       </div>
-                                      {/* View contact — always visible */}
                                       <button
                                         type="button"
                                         onClick={() => router.push(withQuery(ROUTES.contacts, `lead=${encodeURIComponent(contact.id)}`))}
@@ -2470,65 +2455,52 @@ export default function AccountsPage() {
                                       </button>
                                     </div>
 
-                                    {/* Expanded fit breakdown */}
-                                    {isExpanded && (
-                                      <div className="border-t border-gray-100 px-3 py-3 space-y-2.5">
-                                        {fitLoading ? (
-                                          <p className="text-xs text-gray-400">Loading fit…</p>
-                                        ) : fit?.winning_breakdown ? (
-                                          <>
-                                            {CONTACT_FIT_COMPONENT_ORDER.map((key) => {
-                                              const component = fit.winning_breakdown!.components[key];
-                                              if (!component?.active) return null;
-                                              const componentPct = formatPct(component.score01);
-                                              const barKey = `${contact.id}:${key}`;
-                                              const isOpen = expandedBars.has(barKey);
-                                              const showPill = Boolean(component.matchedValue) && component.matchStatus !== 'mismatch';
-                                              const detailText: string | null = (() => {
-                                                if (component.matchStatus === 'exact') return 'Exact match';
-                                                if (key === 'seniority' && contact.seniority_level) return `Contact is ${contact.seniority_level}. This is not the target buying group for this ICP`;
-                                                return component.detail || null;
-                                              })();
-                                              return (
-                                                <div key={key}>
-                                                  <button
-                                                    type="button"
-                                                    onClick={() => toggleBar(barKey)}
-                                                    className="w-full rounded-md px-1 -mx-1 py-0.5 text-left transition-colors hover:bg-gray-100/80"
-                                                  >
-                                                    <div className="flex items-center justify-between gap-2">
-                                                      <p className="text-xs font-medium text-gray-700">{component.label}</p>
-                                                      <div className="flex items-center gap-1 shrink-0">
-                                                        {componentPct && <span className="text-[11px] text-slate-500">{componentPct}</span>}
-                                                        <ChevronDown className={cn('h-3 w-3 shrink-0 text-gray-400 transition-transform duration-200', isOpen ? 'rotate-0' : '-rotate-90')} aria-hidden />
-                                                      </div>
-                                                    </div>
-                                                    <div className="mt-1 h-1 overflow-hidden rounded-full bg-slate-200">
-                                                      <div
-                                                        className={`h-full rounded-full ${component.available ? 'bg-arcova-teal' : 'bg-slate-300'}`}
-                                                        style={{ width: `${Math.max(0, Math.min(100, Math.round(component.score01 * 100)))}%` }}
-                                                      />
-                                                    </div>
-                                                  </button>
-                                                  {isOpen && (showPill || detailText) && (
-                                                    <div className="mt-1.5 space-y-1">
-                                                      {showPill && (
-                                                        <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal">
-                                                          {component.matchedValue}
-                                                        </span>
-                                                      )}
-                                                      {detailText && <p className="text-[11px] leading-relaxed text-gray-400">{detailText}</p>}
-                                                    </div>
-                                                  )}
+                                    {/* Fit breakdown — always visible */}
+                                    <div className="border-t border-gray-100 px-3 py-3 space-y-2.5">
+                                      {fitLoading ? (
+                                        <p className="text-xs text-gray-400">Loading fit…</p>
+                                      ) : fit?.winning_breakdown ? (
+                                        <>
+                                          {CONTACT_FIT_COMPONENT_ORDER.map((key) => {
+                                            const component = fit.winning_breakdown!.components[key];
+                                            if (!component?.active) return null;
+                                            const componentPct = formatPct(component.score01);
+                                            const showPill = Boolean(component.matchedValue) && component.matchStatus !== 'mismatch';
+                                            const detailText: string | null = (() => {
+                                              if (component.matchStatus === 'exact') return 'Exact match';
+                                              if (key === 'seniority' && contact.seniority_level) return `Contact is ${contact.seniority_level}. This is not the target buying group for this ICP`;
+                                              return component.detail || null;
+                                            })();
+                                            return (
+                                              <div key={key}>
+                                                <div className="flex items-center justify-between gap-2">
+                                                  <p className="text-xs font-medium text-gray-700">{component.label}</p>
+                                                  {componentPct && <span className="text-[11px] text-slate-500 shrink-0">{componentPct}</span>}
                                                 </div>
-                                              );
-                                            })}
-                                          </>
-                                        ) : (
-                                          <p className="text-xs text-gray-400">No contact fit data yet.</p>
-                                        )}
-                                      </div>
-                                    )}
+                                                <div className="mt-1 h-1 overflow-hidden rounded-full bg-slate-200">
+                                                  <div
+                                                    className={`h-full rounded-full ${component.available ? 'bg-arcova-teal' : 'bg-slate-300'}`}
+                                                    style={{ width: `${Math.max(0, Math.min(100, Math.round(component.score01 * 100)))}%` }}
+                                                  />
+                                                </div>
+                                                {(showPill || detailText) && (
+                                                  <div className="mt-1.5 space-y-1">
+                                                    {showPill && (
+                                                      <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2 py-0.5 text-[11px] font-medium text-arcova-teal">
+                                                        {component.matchedValue}
+                                                      </span>
+                                                    )}
+                                                    {detailText && <p className="text-[11px] leading-relaxed text-gray-400">{detailText}</p>}
+                                                  </div>
+                                                )}
+                                              </div>
+                                            );
+                                          })}
+                                        </>
+                                      ) : (
+                                        <p className="text-xs text-gray-400">No contact fit data yet.</p>
+                                      )}
+                                    </div>
                                   </div>
                                 );
                               })}
