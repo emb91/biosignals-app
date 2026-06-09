@@ -2049,7 +2049,7 @@ export default function AccountsPage() {
                                     {selectedAccount.company_type && (
                                       <div>
                                         <p className="text-gray-400 text-xs mb-1">Company type</p>
-                                        <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2.5 py-0.5 text-xs font-medium text-arcova-teal">{selectedAccount.company_type}</span>
+                                        <span className="inline-flex items-center rounded-full bg-arcova-teal/10 px-2.5 py-1 text-sm font-medium text-arcova-teal">{selectedAccount.company_type}</span>
                                       </div>
                                     )}
                                     {/* Raw Apollo `industry` intentionally hidden — it's free-text,
