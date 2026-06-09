@@ -1425,10 +1425,14 @@ export function ContactsWorkspace() {
     emittedEvents: number;
     recomputedCompanies: number;
     skippedUnresolvedCompanies: number;
+    contactItems?: { name: string | null; company: string | null }[];
+    dealItems?: { name: string | null; company: string | null }[];
     error?: string;
     code?: string;
   } | null>(null);
   const [syncResultExpanded, setSyncResultExpanded] = useState(false);
+  // Which pull-banner metric's item list is expanded ('contacts' | 'deals' | null).
+  const [pullDetailOpen, setPullDetailOpen] = useState<string | null>(null);
   const [stoppingLeadId, setStoppingLeadId] = useState<string | null>(null);
   const [stopEnrichmentError, setStopEnrichmentError] = useState<string | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
@@ -1674,6 +1678,7 @@ export function ContactsWorkspace() {
     if (pullingHubspotCrm) return;
     setPullingHubspotCrm(true);
     setHubspotPullResult(null);
+    setPullDetailOpen(null);
     try {
       const res = await fetch('/api/hubspot/pull-crm', { method: 'POST' });
       const text = await res.text();
@@ -3247,14 +3252,22 @@ export function ContactsWorkspace() {
     const noun = (n: number, s: string) => `${s}${n === 1 ? '' : 's'}`;
     const accountsUpdated = r.contactRecomputedCompanies + r.recomputedCompanies;
     const unresolved = r.contactSkippedUnresolvedCompanies + r.skippedUnresolvedCompanies;
+    const contactItems = r.contactItems ?? [];
+    const dealItems = r.dealItems ?? [];
     // Contacts fetched is the headline; everything else is a chip shown only when
-    // non-zero (zeros are noise) — same pattern as the push banner.
-    const stats: { value: number; label: string }[] = [];
-    if (r.fetchedDeals > 0) stats.push({ value: r.fetchedDeals, label: `${noun(r.fetchedDeals, 'deal')} fetched` });
+    // non-zero (zeros are noise). Chips with `detailKey` expand to list the items
+    // (same affordance as the push banner's "skipped"). Deals fetched + mirrored
+    // are the same set, so both reveal `dealItems`.
+    const stats: { value: number; label: string; detailKey?: string; items?: { name: string | null; company: string | null }[] }[] = [];
+    if (r.fetchedDeals > 0) stats.push({ value: r.fetchedDeals, label: `${noun(r.fetchedDeals, 'deal')} fetched`, detailKey: 'deals', items: dealItems });
     if (r.contactEventsEmitted > 0) stats.push({ value: r.contactEventsEmitted, label: noun(r.contactEventsEmitted, 'contact signal') });
-    if (r.mirroredDeals > 0) stats.push({ value: r.mirroredDeals, label: `${noun(r.mirroredDeals, 'deal')} mirrored` });
+    if (r.mirroredDeals > 0) stats.push({ value: r.mirroredDeals, label: `${noun(r.mirroredDeals, 'deal')} mirrored`, detailKey: 'deals', items: dealItems });
     if (r.emittedEvents > 0) stats.push({ value: r.emittedEvents, label: noun(r.emittedEvents, 'deal signal') });
     if (accountsUpdated > 0) stats.push({ value: accountsUpdated, label: `${noun(accountsUpdated, 'account')} updated` });
+
+    const openItems = pullDetailOpen === 'contacts' ? contactItems : pullDetailOpen === 'deals' ? dealItems : null;
+    const contactsClickable = contactItems.length > 0;
+    const toggle = (key: string) => setPullDetailOpen((cur) => (cur === key ? null : key));
 
     return (
       <div className={`mb-4 shrink-0 rounded-xl border bg-white px-4 py-3 flex items-start justify-between gap-4 ${r.error ? 'border-rose-200' : 'border-gray-200'}`}>
@@ -3262,7 +3275,7 @@ export function ContactsWorkspace() {
           <svg className="w-4 h-4 shrink-0 mt-0.5 text-[#ff7a59]" viewBox="0 0 24 24" fill="currentColor">
             <path d="M18.164 7.932V5.085a2.198 2.198 0 0 0 1.268-1.978V3.06A2.199 2.199 0 0 0 17.235.862h-.047a2.199 2.199 0 0 0-2.197 2.197v.047a2.199 2.199 0 0 0 1.268 1.978v2.847a6.232 6.232 0 0 0-2.962 1.302L5.028 3.617a2.44 2.44 0 0 0 .072-.573A2.455 2.455 0 1 0 2.645 5.5a2.43 2.43 0 0 0 1.194-.315l8.122 4.707a6.248 6.248 0 0 0 0 4.208L4.123 18.5a2.432 2.432 0 0 0-1.478-.498 2.455 2.455 0 1 0 2.455 2.455 2.43 2.43 0 0 0-.388-1.337l7.91-4.583a6.266 6.266 0 0 0 8.976-5.628 6.25 6.25 0 0 0-3.434-5.977zm-1.023 9.565a3.59 3.59 0 1 1 0-7.181 3.59 3.59 0 0 1 0 7.181z"/>
           </svg>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             {r.error ? (
               <div>
                 <span className="text-sm font-semibold text-rose-700">HubSpot CRM pull failed</span>
@@ -3270,26 +3283,72 @@ export function ContactsWorkspace() {
               </div>
             ) : (
               <>
-                <span className="text-sm font-semibold text-gray-900">
-                  {r.fetchedContacts} contact{r.fetchedContacts !== 1 ? 's' : ''} fetched from HubSpot
-                </span>
+                {contactsClickable ? (
+                  <button
+                    type="button"
+                    onClick={() => toggle('contacts')}
+                    className="group inline-flex items-center gap-1 text-left"
+                  >
+                    <span className="text-sm font-semibold text-gray-900">
+                      {r.fetchedContacts} contact{r.fetchedContacts !== 1 ? 's' : ''} fetched from HubSpot
+                    </span>
+                    <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform ${pullDetailOpen === 'contacts' ? 'rotate-180' : ''}`} />
+                  </button>
+                ) : (
+                  <span className="text-sm font-semibold text-gray-900">
+                    {r.fetchedContacts} contact{r.fetchedContacts !== 1 ? 's' : ''} fetched from HubSpot
+                  </span>
+                )}
                 {(stats.length > 0 || unresolved > 0) && (
                   <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                    {stats.map((s, i) => (
-                      <span
-                        key={i}
-                        className="inline-flex items-baseline gap-1 rounded-md border border-gray-200/70 bg-gray-50 px-2 py-0.5 text-xs text-gray-500"
-                      >
-                        <span className="font-semibold tabular-nums text-gray-900">{s.value}</span>
-                        {s.label}
-                      </span>
-                    ))}
+                    {stats.map((s, i) => {
+                      const clickable = Boolean(s.detailKey && s.items && s.items.length > 0);
+                      const open = clickable && pullDetailOpen === s.detailKey;
+                      const inner = (
+                        <>
+                          <span className="font-semibold tabular-nums text-gray-900">{s.value}</span>
+                          {s.label}
+                          {clickable && (
+                            <ChevronDown className={`w-3 h-3 self-center text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+                          )}
+                        </>
+                      );
+                      return clickable ? (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => toggle(s.detailKey!)}
+                          className="inline-flex items-baseline gap-1 rounded-md border border-gray-200/70 bg-gray-50 px-2 py-0.5 text-xs text-gray-500 transition-colors hover:bg-gray-100"
+                        >
+                          {inner}
+                        </button>
+                      ) : (
+                        <span
+                          key={i}
+                          className="inline-flex items-baseline gap-1 rounded-md border border-gray-200/70 bg-gray-50 px-2 py-0.5 text-xs text-gray-500"
+                        >
+                          {inner}
+                        </span>
+                      );
+                    })}
                     {unresolved > 0 && (
                       <span className="inline-flex items-baseline gap-1 rounded-md border border-amber-200/70 bg-amber-50 px-2 py-0.5 text-xs text-amber-700">
                         <span className="font-semibold tabular-nums">{unresolved}</span>
                         unresolved
                       </span>
                     )}
+                  </div>
+                )}
+                {openItems && openItems.length > 0 && (
+                  <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                    <ul className="space-y-1">
+                      {openItems.map((it, i) => (
+                        <li key={i} className="text-xs text-gray-600">
+                          <span className="font-medium text-gray-800">{it.name || 'Unknown'}</span>
+                          {it.company && <span className="text-gray-400"> · {it.company}</span>}
+                        </li>
+                      ))}
+                    </ul>
                   </div>
                 )}
               </>

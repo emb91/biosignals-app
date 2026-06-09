@@ -491,6 +491,9 @@ function previousAssociatedCompanyIds(previous: CrmContactMirrorRecord | null): 
   return stringArrayFromUnknown(previous.raw_payload?.associated_hubspot_company_ids);
 }
 
+/** Lightweight per-contact summary for surfacing "which contacts" in the pull banner. */
+export type CrmContactSyncItem = { name: string | null; company: string | null };
+
 export type HubSpotContactReadinessSyncResult = {
   fetchedContacts: number;
   mirroredContacts: number;
@@ -501,6 +504,8 @@ export type HubSpotContactReadinessSyncResult = {
   checkpoint: string | null;
   emittedSignalTypes: string[];
   contextOnlySignalTypes: string[];
+  /** One entry per mirrored contact (name + primary associated company). */
+  contactItems: CrmContactSyncItem[];
 };
 
 export async function syncHubSpotContactsIntoReadiness(
@@ -547,6 +552,7 @@ export async function syncHubSpotContactsIntoReadiness(
         checkpoint: checkpointRecord.last_synced_remote_at,
         emittedSignalTypes: [],
         contextOnlySignalTypes: [],
+        contactItems: [],
       };
     }
 
@@ -600,6 +606,7 @@ export async function syncHubSpotContactsIntoReadiness(
     const affectedCompanyIds = new Set<string>();
     const emittedSignalTypes = new Set<string>();
     const contextOnlySignalTypes = new Set<string>();
+    const contactItems: CrmContactSyncItem[] = [];
 
     for (const contact of contacts) {
       const hubspotContactId = String(contact.id);
@@ -650,6 +657,10 @@ export async function syncHubSpotContactsIntoReadiness(
         rawPayload: currentRawPayload,
       });
       mirroredContacts += 1;
+      contactItems.push({
+        name: fullName(contact),
+        company: associatedCompanyRows[0]?.hubspotCompanyName ?? null,
+      });
 
       await replaceCrmContactCompanyLinks(supabase, {
         userId: input.userId,
@@ -828,6 +839,7 @@ export async function syncHubSpotContactsIntoReadiness(
       checkpoint: checkpointRecord.last_synced_remote_at,
       emittedSignalTypes: [...emittedSignalTypes],
       contextOnlySignalTypes: [...contextOnlySignalTypes],
+      contactItems,
     };
   } catch (error) {
     await upsertCrmSyncCheckpoint(supabase, {
