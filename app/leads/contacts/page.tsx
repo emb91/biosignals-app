@@ -3173,54 +3173,67 @@ export function ContactsWorkspace() {
     </div>
   ) : null;
 
-  const hubspotPullBanner = hubspotPullResult ? (
-    <div className={`mb-4 shrink-0 rounded-lg border bg-white px-4 py-3.5 flex items-start justify-between gap-4 ${hubspotPullResult.error ? 'border-rose-200' : 'border-gray-200'}`}>
-      <div className="min-w-0">
-        {hubspotPullResult.error ? (
-          <div>
-            <span className="text-sm font-semibold text-rose-700">HubSpot CRM pull failed</span>
-            <p className="mt-0.5 text-xs text-rose-600 break-words">{hubspotPullResult.error}</p>
-          </div>
-        ) : (
-          <div className="flex items-center gap-3 flex-wrap">
-            <span className="text-sm font-semibold text-gray-900">
-              HubSpot CRM pulled
-            </span>
-            <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
-              {hubspotPullResult.fetchedContacts} contacts fetched
-            </span>
-            <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
-              {hubspotPullResult.contactEventsEmitted} contact signals
-            </span>
-            <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
-              {hubspotPullResult.fetchedDeals} deals fetched
-            </span>
-            <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
-              {hubspotPullResult.mirroredDeals} deals mirrored
-            </span>
-            <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
-              {hubspotPullResult.emittedEvents} deal signals
-            </span>
-            <span className="text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded-full">
-              {hubspotPullResult.contactRecomputedCompanies + hubspotPullResult.recomputedCompanies} accounts updated
-            </span>
-            {(hubspotPullResult.contactContextOnlyEvents > 0 || hubspotPullResult.contactSkippedUnresolvedCompanies > 0 || hubspotPullResult.skippedUnresolvedCompanies > 0) && (
-              <span className="text-xs font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">
-                {hubspotPullResult.contactContextOnlyEvents} context-only · {hubspotPullResult.contactSkippedUnresolvedCompanies + hubspotPullResult.skippedUnresolvedCompanies} unresolved
-              </span>
+  const hubspotPullBanner = hubspotPullResult ? (() => {
+    const r = hubspotPullResult;
+    const noun = (n: number, s: string) => `${s}${n === 1 ? '' : 's'}`;
+    const accountsUpdated = r.contactRecomputedCompanies + r.recomputedCompanies;
+    const unresolved = r.contactSkippedUnresolvedCompanies + r.skippedUnresolvedCompanies;
+    // Primary fetch counts always show; derived metrics only when non-zero (zeros are noise).
+    const stats: { value: number; label: string }[] = [
+      { value: r.fetchedContacts, label: `${noun(r.fetchedContacts, 'contact')} fetched` },
+      { value: r.fetchedDeals, label: `${noun(r.fetchedDeals, 'deal')} fetched` },
+    ];
+    if (r.contactEventsEmitted > 0) stats.push({ value: r.contactEventsEmitted, label: noun(r.contactEventsEmitted, 'contact signal') });
+    if (r.mirroredDeals > 0) stats.push({ value: r.mirroredDeals, label: `${noun(r.mirroredDeals, 'deal')} mirrored` });
+    if (r.emittedEvents > 0) stats.push({ value: r.emittedEvents, label: noun(r.emittedEvents, 'deal signal') });
+    if (accountsUpdated > 0) stats.push({ value: accountsUpdated, label: `${noun(accountsUpdated, 'account')} updated` });
+
+    return (
+      <div className={`mb-4 shrink-0 rounded-xl border bg-white px-4 py-3 flex items-start justify-between gap-4 ${r.error ? 'border-rose-200' : 'border-gray-200'}`}>
+        <div className="flex items-start gap-3 min-w-0">
+          <svg className="w-4 h-4 shrink-0 mt-0.5 text-[#ff7a59]" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M18.164 7.932V5.085a2.198 2.198 0 0 0 1.268-1.978V3.06A2.199 2.199 0 0 0 17.235.862h-.047a2.199 2.199 0 0 0-2.197 2.197v.047a2.199 2.199 0 0 0 1.268 1.978v2.847a6.232 6.232 0 0 0-2.962 1.302L5.028 3.617a2.44 2.44 0 0 0 .072-.573A2.455 2.455 0 1 0 2.645 5.5a2.43 2.43 0 0 0 1.194-.315l8.122 4.707a6.248 6.248 0 0 0 0 4.208L4.123 18.5a2.432 2.432 0 0 0-1.478-.498 2.455 2.455 0 1 0 2.455 2.455 2.43 2.43 0 0 0-.388-1.337l7.91-4.583a6.266 6.266 0 0 0 8.976-5.628 6.25 6.25 0 0 0-3.434-5.977zm-1.023 9.565a3.59 3.59 0 1 1 0-7.181 3.59 3.59 0 0 1 0 7.181z"/>
+          </svg>
+          <div className="min-w-0">
+            {r.error ? (
+              <div>
+                <span className="text-sm font-semibold text-rose-700">HubSpot CRM pull failed</span>
+                <p className="mt-0.5 text-xs text-rose-600 break-words">{r.error}</p>
+              </div>
+            ) : (
+              <>
+                <span className="text-sm font-semibold text-gray-900">HubSpot CRM pulled</span>
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  {stats.map((s, i) => (
+                    <span
+                      key={i}
+                      className="inline-flex items-baseline gap-1 rounded-md border border-gray-200/70 bg-gray-50 px-2 py-0.5 text-xs text-gray-500"
+                    >
+                      <span className="font-semibold tabular-nums text-gray-900">{s.value}</span>
+                      {s.label}
+                    </span>
+                  ))}
+                  {unresolved > 0 && (
+                    <span className="inline-flex items-baseline gap-1 rounded-md border border-amber-200/70 bg-amber-50 px-2 py-0.5 text-xs text-amber-700">
+                      <span className="font-semibold tabular-nums">{unresolved}</span>
+                      unresolved
+                    </span>
+                  )}
+                </div>
+              </>
             )}
           </div>
-        )}
+        </div>
+        <button
+          onClick={() => setHubspotPullResult(null)}
+          className="shrink-0 text-gray-400 hover:text-gray-600 mt-0.5"
+          aria-label="Dismiss"
+        >
+          <X className="w-4 h-4" />
+        </button>
       </div>
-      <button
-        onClick={() => setHubspotPullResult(null)}
-        className="shrink-0 text-gray-400 hover:text-gray-600 mt-0.5"
-        aria-label="Dismiss"
-      >
-        <X className="w-4 h-4" />
-      </button>
-    </div>
-  ) : null;
+    );
+  })() : null;
 
   return (
     <div className="flex min-h-0 h-screen bg-transparent">
