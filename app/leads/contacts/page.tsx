@@ -2044,6 +2044,38 @@ export function ContactsWorkspace() {
             : lead
         )
       );
+      // Also patch the per-lead DETAIL cache. selectedLead is the merge of the
+      // lean list AND selectedLeadDetailById with DETAIL winning — so without
+      // this, the freshly-saved fields stay hidden behind the stale detail copy
+      // until the user re-selects. Mirror stopLeadEnrichment (patch both), and
+      // invalidate the detail fetch cache so the next server read is fresh.
+      setSelectedLeadDetailById((prev) =>
+        leadId in prev
+          ? {
+              ...prev,
+              [leadId]: {
+                ...prev[leadId],
+                full_name: d.full_name ?? prev[leadId].full_name,
+                first_name: d.first_name ?? prev[leadId].first_name,
+                last_name: d.last_name ?? prev[leadId].last_name,
+                email: d.email ?? prev[leadId].email,
+                job_title: d.job_title ?? prev[leadId].job_title,
+                headline: d.headline ?? prev[leadId].headline,
+                linkedin_url: d.linkedin_url ?? prev[leadId].linkedin_url,
+                company_name: d.company_name ?? prev[leadId].company_name,
+                company_domain: d.company_domain ?? prev[leadId].company_domain,
+                company_linkedin_url: d.company_linkedin_url ?? prev[leadId].company_linkedin_url,
+                location: d.location ?? prev[leadId].location,
+                city: d.city ?? prev[leadId].city,
+                country: d.country ?? prev[leadId].country,
+                contact_emails: Array.isArray(d.contact_emails) ? d.contact_emails : prev[leadId].contact_emails,
+                contact_phones: Array.isArray(d.contact_phones) ? d.contact_phones : prev[leadId].contact_phones,
+                updated_at: d.updated_at ?? prev[leadId].updated_at,
+              },
+            }
+          : prev,
+      );
+      invalidateCache(`/api/leads/${encodeURIComponent(leadId)}`);
       cancelEditingLead();
     } catch (error) {
       console.error('Error updating lead:', error);
