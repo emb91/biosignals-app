@@ -44,6 +44,8 @@ type LiveSignal = {
   sourceMetadata: Record<string, unknown>;
   observedAt: string;
   eventAt: string | null;
+  /** Only on patent portfolio surge: the individual patents behind it. */
+  recentPatents?: { key: string; title: string; url: string | null; date: string | null }[];
 };
 
 type TopLead = {
@@ -157,6 +159,11 @@ type SignalGroupRow = {
   /** Category breakdown pills — shown only in the expanded area. */
   pills?: string[];
   items: SignalSubItem[];
+  /** Patent surge: items already built server-side; absorb pass must not re-add. */
+  serverPatents?: boolean;
+  /** Trailing "+N more" link (e.g. patents beyond the display cap → Google Patents). */
+  moreCount?: number;
+  moreUrl?: string | null;
 };
 
 function signalGlyph(key: string): string {
@@ -445,6 +452,9 @@ const PATENT_INDIVIDUAL_KEYS = new Set([
   'new_therapeutic_area_patent',
 ]);
 
+/** Max individual patents listed under a surge row before a "+N more" link. */
+const PATENT_DISPLAY_CAP = 12;
+
 function cleanSubItemUrl(url: string | null): string | null {
   if (!url) return null;
   if (url.includes('apify.com') || url.includes('api.apify.com')) return null;
@@ -577,7 +587,7 @@ export default function BriefingPage() {
           fetch('/api/pipeline/icp-cards'),
           fetch('/api/import-ready'),
           fetch('/api/outreach/replied'),
-          fetch('/api/signals/feed?pageSize=50&page=1&skipPatentCollapse=1'),
+          fetch('/api/signals/feed?pageSize=100&page=1&skipPatentCollapse=1'),
         ]);
 
         if (profileError) throw profileError;
@@ -662,6 +672,14 @@ export default function BriefingPage() {
                 : {},
               observedAt: String(s.observedAt ?? ''),
               eventAt: typeof s.eventAt === 'string' ? s.eventAt : null,
+              recentPatents: Array.isArray(s.recentPatents)
+                ? (s.recentPatents as Array<Record<string, unknown>>).map((p) => ({
+                    key: String(p.key ?? ''),
+                    title: typeof p.title === 'string' ? p.title : '',
+                    url: typeof p.url === 'string' ? p.url : null,
+                    date: typeof p.date === 'string' ? p.date : null,
+                  }))
+                : undefined,
             }))
           );
         }
@@ -751,6 +769,57 @@ export default function BriefingPage() {
       const groupKey = SIGNAL_KEY_NORMALIZE[s.signalKey] ?? s.signalKey;
       const rowKey = `${company}||${groupKey}`;
 
+      // Patent portfolio surge: build the row from the individual patents the feed
+      // attached (real titles + their own google.com/patent/<id> links), newest
+      // filing first. Show a count, list up to PATENT_DISPLAY_CAP, and link the
+      // rest to the company's full Google Patents portfolio. Replaces the old
+      // behaviour of surfacing a bare "?assignee=" search URL.
+      if (s.signalKey === 'assignee_portfolio_acceleration') {
+        const patents = (s.recentPatents ?? []).filter((p) => p.url || p.title);
+        if (patents.length > 0) {
+          const shown = patents.slice(0, PATENT_DISPLAY_CAP);
+          family.set(rowKey, {
+            key: rowKey,
+            glyph: signalGlyph(groupKey),
+            company,
+            label: signalLabel(groupKey),
+            count: patents.length,
+            ago: relativeTime(s.eventAt ?? s.observedAt),
+            countLabel: `${patents.length} patent${patents.length !== 1 ? 's' : ''}`,
+            items: shown.map((p) => ({
+              id: p.key,
+              title: p.title || null,
+              url: cleanSubItemUrl(p.url),
+              what: null,
+              ago: relativeTime(p.date),
+            })),
+            serverPatents: true,
+            moreCount: patents.length > PATENT_DISPLAY_CAP ? patents.length - PATENT_DISPLAY_CAP : 0,
+            moreUrl: patents.length > PATENT_DISPLAY_CAP ? cleanSubItemUrl(s.sourceUrl) : null,
+          });
+          continue;
+        }
+        // No individual patents attached — fall back to a friendly portfolio link
+        // rather than rendering a raw search URL as the label.
+        family.set(rowKey, {
+          key: rowKey,
+          glyph: signalGlyph(groupKey),
+          company,
+          label: signalLabel(groupKey),
+          count: 1,
+          ago: relativeTime(s.eventAt ?? s.observedAt),
+          items: [{
+            id: s.id,
+            title: 'View patent portfolio',
+            url: cleanSubItemUrl(s.sourceUrl),
+            what: null,
+            ago: relativeTime(s.eventAt ?? s.observedAt),
+          }],
+          serverPatents: true,
+        });
+        continue;
+      }
+
       // Aggregate hiring signals: pills already tell the whole story; a single
       // job posting URL out of 40+ roles would be misleading — suppress it.
       const isHiringAggregate = s.signalKey === 'hiring_expansion' || s.signalKey === 'job_surge';
@@ -814,9 +883,11 @@ export default function BriefingPage() {
       }
     }
 
-    // Second pass: for companies that have a patent portfolio surge row, absorb
-    // individual patent rows into it so expanding the surge row lists all patents
-    // (mirrors how publication sub-items work). Count reflects number of patents.
+    // Second pass: for companies that have a patent portfolio surge row, remove the
+    // now-duplicate individual patent rows so they don't also appear standalone.
+    // When the surge already carries server-attached patents (the normal path), we
+    // just delete the duplicates. Only when the feed couldn't attach any do we fall
+    // back to absorbing whatever individual rows did arrive.
     for (const family of familyMap.values()) {
       for (const [rowKey, surgeRow] of family) {
         if (!rowKey.endsWith('||assignee_portfolio_acceleration')) continue;
@@ -826,13 +897,16 @@ export default function BriefingPage() {
           const indivRowKey = `${company}||${pKey}`;
           const indivRow = family.get(indivRowKey);
           if (!indivRow) continue;
-          surgeRow.items.push(...indivRow.items);
-          absorbedCount += indivRow.count;
+          if (!surgeRow.serverPatents) {
+            surgeRow.items.push(...indivRow.items);
+            absorbedCount += indivRow.count;
+          }
           family.delete(indivRowKey);
         }
-        // Replace the count (was 1 for the surge event itself) with the number
-        // of absorbed individual patents so the badge is meaningful.
-        if (absorbedCount > 0) surgeRow.count = absorbedCount;
+        if (!surgeRow.serverPatents && absorbedCount > 0) {
+          surgeRow.count = absorbedCount;
+          surgeRow.countLabel = `${absorbedCount} patent${absorbedCount !== 1 ? 's' : ''}`;
+        }
       }
     }
 
@@ -1204,6 +1278,19 @@ export default function BriefingPage() {
                                       </li>
                                     );
                                   })}
+                                  {row.moreCount != null && row.moreCount > 0 && row.moreUrl && (
+                                    <li className="bt-sig-sub-item">
+                                      <a
+                                        href={row.moreUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="bt-sig-sub-link bt-sig-sub-more"
+                                      >
+                                        {`+${row.moreCount} more on Google Patents`}
+                                        <ExternalLink className="bt-sig-sub-ext h-2.5 w-2.5" strokeWidth={2} />
+                                      </a>
+                                    </li>
+                                  )}
                                 </ul>
                               )}
                             </>

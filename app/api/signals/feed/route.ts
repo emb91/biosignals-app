@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
+import { collectRecentPatentsByCompany, type RecentPatent } from '@/lib/signals/patent-surge';
 
 type SignalFeedItem = {
   id: string;
@@ -45,6 +46,8 @@ type SignalFeedItem = {
     whyNow: string | null;
     suggestedAngle: string | null;
   } | null;
+  /** Only on assignee_portfolio_acceleration: the individual patents behind the surge. */
+  recentPatents?: RecentPatent[];
 };
 
 function normalizeString(value: unknown): string | null {
@@ -286,6 +289,28 @@ export async function GET(request: Request) {
           : null,
       };
     });
+
+    // Attach the individual patents behind each "Patent Portfolio Surge" so the
+    // surge carries them through pagination (individual patent_* rows sort to the
+    // bottom by event_at — old filing dates — and get sliced off otherwise). The
+    // patents are deduped across overlapping signal keys and HTML-decoded.
+    const recentPatentsByCompany = collectRecentPatentsByCompany(
+      mapped.map((m) => ({
+        sourceEventType: m.sourceEventType,
+        companyId: m.companyId,
+        sourceUrl: m.sourceUrl,
+        sourceTitle: m.sourceTitle,
+        sourceSummary: m.sourceSummary,
+        metadata: m.sourceMetadata,
+        eventAt: m.eventAt,
+        observedAt: m.observedAt,
+      })),
+    );
+    for (const item of mapped) {
+      if (item.sourceEventType === 'assignee_portfolio_acceleration' && item.companyId) {
+        item.recentPatents = recentPatentsByCompany.get(item.companyId) ?? [];
+      }
+    }
 
     const filtered = search
       ? mapped.filter((item) => {

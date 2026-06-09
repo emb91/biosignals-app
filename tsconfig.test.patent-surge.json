@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/private/tmp/arcova-patent-surge-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/signals/patent-surge.ts",
+    "lib/signals/patent-surge.test.ts"
+  ]
+}

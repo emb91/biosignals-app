@@ -921,6 +921,17 @@
   text-decoration-color: var(--bt-accent);
 }
 
+/* "+N more on Google Patents" — quieter than a real patent title */
+.briefing-today .bt-sig-sub-more {
+  font-size: 0.6875rem;
+  color: rgba(13, 53, 71, 0.5);
+  text-decoration-color: rgba(13, 53, 71, 0.2);
+}
+.briefing-today .bt-sig-sub-more:hover {
+  color: var(--bt-accent);
+  text-decoration-color: var(--bt-accent);
+}
+
 .briefing-today .bt-sig-sub-ext {
   flex-shrink: 0;
   opacity: 0.55;
