@@ -1024,7 +1024,7 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
           <div
             className={cn(
               'flex shrink-0 flex-col items-center justify-center transition-[max-height,opacity,margin] duration-300 ease-out',
-              showBriefingOrb ? 'max-h-[min(17.5rem,42vh)] overflow-visible opacity-100' : 'pointer-events-none max-h-0 overflow-hidden opacity-0',
+              showBriefingOrb ? 'max-h-[min(17.5rem,42cqh)] overflow-visible opacity-100' : 'pointer-events-none max-h-0 overflow-hidden opacity-0',
             )}
             aria-hidden={!showBriefingOrb}
           >

@@ -750,23 +750,6 @@ export function SignalsWorkspace({
                               </div>
 
                               <div className="min-w-0">
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setSelectedSignalId(row.id);
-                                    setSelectedPreview('signal');
-                                  }}
-                                  className={cn(
-                                    'inline-flex max-w-full items-center rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors hover:opacity-85',
-                                    readinessCategoryPillClass(primaryDimension(row)),
-                                  )}
-                                >
-                                  <span className="truncate">{dimensionLabel(primaryDimension(row))}</span>
-                                </button>
-                              </div>
-
-                              <div className="min-w-0">
                                 {row.readiness ? (
                                   <button
                                     type="button"
@@ -924,30 +907,13 @@ export function SignalsWorkspace({
                                   <span className={cn('inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-medium', effectPillClass(selectedSignal))}>
                                     {effectLabel(selectedSignal)}
                                   </span>
-                                  <span className={cn('inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-medium', readinessCategoryPillClass(primaryDimension(selectedSignal)))}>
-                                    {dimensionLabel(primaryDimension(selectedSignal))}
-                                  </span>
                                   <span className="inline-flex items-center rounded-full border border-[rgba(13,53,71,0.1)] bg-white/80 px-2.5 py-1 text-[11px] font-medium text-[#4a6470]">
                                     Source: {sourceLabel(selectedSignal)}
                                   </span>
                                 </div>
 
                                 <div className="rounded-2xl border border-[rgba(13,53,71,0.08)] bg-white/70 p-4">
-                                  <p className="text-sm font-semibold text-[#0d3547]">Readiness category</p>
-                                  <div className="mt-3 flex flex-wrap gap-2">
-                                    {selectedSignal.dimensions.map((dimension) => (
-                                      <span
-                                        key={dimension}
-                                        className={cn(
-                                          'inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-medium',
-                                          readinessCategoryPillClass(dimension),
-                                        )}
-                                      >
-                                        {dimensionLabel(dimension)}
-                                      </span>
-                                    ))}
-                                  </div>
-                                  <div className="mt-4 rounded-xl border border-[rgba(13,53,71,0.08)] bg-[rgba(245,248,254,0.8)] p-3">
+                                  <div className="rounded-xl border border-[rgba(13,53,71,0.08)] bg-[rgba(245,248,254,0.8)] p-3">
                                     <div className="flex items-start justify-between gap-4">
                                       <div>
                                         <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#7d909a]">

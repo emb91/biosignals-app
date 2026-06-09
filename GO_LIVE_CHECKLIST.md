@@ -22,7 +22,6 @@
 
 - Regenerate all development and test API keys before launch.
 - Rotate `APOLLO_API_KEY`.
-- Rotate any `FIBER_API_KEY` or equivalent legacy provider credentials that were used in development.
 - Rotate Anthropic keys used during development.
 - Rotate any other provider or admin keys touched during testing.
 - Verify `.env.local` values are not production values and are not being committed.

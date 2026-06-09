@@ -58,6 +58,7 @@ type AccountRow = {
   domain: string | null;
   website: string | null;
   logo_url: string | null;
+  logo_cached: string | null;
   company_fit_score: number | null;
   company_fit_coverage: number | null;
   matched_icp_id: string | null;
@@ -511,6 +512,10 @@ function getAccountSortValue(account: AccountRow | QueryAccount, col: string): s
       return account.contact_count;
     case 'priority':
       return (account as AccountRow).priority_score ?? -1;
+    case 'added':
+      // ISO timestamps sort lexically = chronologically; '' (no date) sorts oldest.
+      // Used by the /today "new accounts" deep-link (?sort=newest).
+      return (account as AccountRow).data_provenance_imported_at ?? '';
     case 'therapeutic_areas':
       return ((account.therapeutic_areas || [])[0] || '').toLowerCase();
     case 'modalities':
@@ -582,7 +587,11 @@ export default function AccountsPage() {
   const agentTaskFiredRef = useRef<string | null>(null);
 
   const [agentFilterIds, setAgentFilterIds] = useState<Set<string> | null>(null);
-  const [tableSortCol, setTableSortCol] = useState<string | null>('priority');
+  // ?sort=newest (from the /today "new accounts" priority) lands sorted by most-recently
+  // added, so just-added accounts aren't buried at the bottom of the default priority sort.
+  const [tableSortCol, setTableSortCol] = useState<string | null>(
+    searchParams.get('sort') === 'newest' ? 'added' : 'priority',
+  );
   const [tableSortDir, setTableSortDir] = useState<'asc' | 'desc'>('desc');
   const [editAccountOpen, setEditAccountOpen] = useState(false);
 
@@ -687,7 +696,7 @@ export default function AccountsPage() {
   useEffect(() => {
     if (!selectedAccountId) return;
     const selected = accounts.find((account) => account.id === selectedAccountId);
-    if (!selected?.logo_url) return;
+    if (!selected?.logo_cached && !selected?.logo_url) return;
     setFailedLogoByAccountId((prev) => {
       if (!prev[selectedAccountId]) return prev;
       const next = { ...prev };
@@ -1761,9 +1770,9 @@ export default function AccountsPage() {
                       </div>
                       {/* Logo + close (right, matches Leads company panel) */}
                       <div className="flex items-start gap-2 shrink-0">
-                        {selectedAccount.logo_url && !failedLogoByAccountId[selectedAccount.id] ? (
+                        {(selectedAccount.logo_cached || selectedAccount.logo_url) && !failedLogoByAccountId[selectedAccount.id] ? (
                           <img
-                            src={selectedAccount.logo_url}
+                            src={selectedAccount.logo_cached ?? selectedAccount.logo_url ?? ''}
                             alt=""
                             className="w-16 h-16 rounded-xl object-contain bg-gray-50 border border-gray-100 p-1"
                             onError={() =>
@@ -2821,7 +2830,16 @@ export default function AccountsPage() {
                       // (list + per-id detail module cache + detail state) then refetch.
                       // The old code missed invalidating the /api/accounts/[id] module
                       // cache, so the detail effect refetched stale overrides.
-                      if (selectedAccountId) invalidateAccountCaches(selectedAccountId);
+                      const editedId = selectedAccountId;
+                      if (editedId) {
+                        invalidateAccountCaches(editedId);
+                        // Keep the just-edited account SELECTED after the refetch. Without
+                        // this, fetchAccounts() resets selection to null whenever the edited
+                        // account isn't in the refetched page (an override edit can change
+                        // its fit → re-sort/filter drops it off the page). Setting the focus
+                        // ref makes fetchAccounts include it (companyId param) and re-select it.
+                        accountsDeepLinkCompanyIdRef.current = editedId;
+                      }
                       fetchAccounts();
                     }}
                   />

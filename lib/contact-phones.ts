@@ -128,7 +128,7 @@ export async function ensureImportPhoneEntry(
 
 /**
  * Ensure an enriched phone is recorded. Called from enrichment pipeline after
- * apollo/apify/fiber return phone data. Idempotent — re-enrichment that
+ * apollo/apify return phone data. Idempotent — re-enrichment that
  * returns the same phone is a no-op; new phones stack.
  */
 export async function ensureEnrichedPhoneEntry(

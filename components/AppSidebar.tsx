@@ -147,8 +147,9 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
     ? [
         ...bottomNavigation,
         { name: 'Admin Dash', href: ROUTES.admin.llmUsage, icon: NavIconSettings },
-        { name: 'Signals TODO', href: ROUTES.admin.signalsTodo, icon: NavIconSignals },
-        { name: 'Signals Test', href: ROUTES.admin.signalsTest, icon: NavIconSignals },
+        // TODO(pre-prod): delete Signals TODO + Signals Test nav items and their routes/pages
+        // { name: 'Signals TODO', href: ROUTES.admin.signalsTodo, icon: NavIconSignals },
+        // { name: 'Signals Test', href: ROUTES.admin.signalsTest, icon: NavIconSignals },
       ]
     : bottomNavigation;
 

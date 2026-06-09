@@ -31,7 +31,7 @@ Precedent: `companies` (canonical, no `user_id`) + `user_companies` (per-user) +
   `company_linkedin_url`, `apollo_company_domain`, `resolved_current_company_name`,
   `resolved_current_company_domain`, `resolved_current_job_title`,
   `resolved_employment_history`, `resolved_company_firmographics`
-- **Raw enrichment payloads (the paid outputs):** all `fiber_*`, `apollo_*`, `apify_*`
+- **Raw enrichment payloads (the paid outputs):** all `apollo_*`, `apify_*`
   (person + company raw + lookup_metadata), `profile_enrichment_alignment_metadata`
 - **Enrichment state machine:** `linkedin_resolution_*` (source/confidence/summary/status/
   error/started/completed), `profile_enrichment_*` (status/provider/error/started/completed),

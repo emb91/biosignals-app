@@ -17,7 +17,11 @@ export type PrioritySource =
   | 'hubspot-sync'
   | 'setup-incomplete'
   | 'top-leads'
-  | 'stale-ready-queue';
+  | 'stale-ready-queue'
+  | 'send-outreach'
+  | 'new-accounts'
+  | 'contact-priority-changes'
+  | 'account-priority-changes';
 
 /** Single agenda-item shape used on /today. Always one entry per source per groupKey. */
 export interface TodayPriority {

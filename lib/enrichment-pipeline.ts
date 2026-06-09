@@ -4,8 +4,9 @@
 // profile enrichment  = Apify LinkedIn profile scrape + company scrape + Apollo company enrich + LLM bio summary
 import { completeLlm } from '@/lib/llm-client';
 import { stickyIdentity } from '@/lib/company-merge';
-import { cacheProfilePhoto } from '@/lib/photo-cache';
+import { cacheProfilePhoto, cacheCompanyLogo } from '@/lib/photo-cache';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
+import { recordProviderUsage } from '@/lib/provider-usage';
 import {
   enrichOrganizationWithApollo,
   tryApolloPersonalEmailRevealForLookup,
@@ -670,6 +671,9 @@ async function upsertResolvedCompany(
   const apifyFirmographics = input.apifyFirmographics;
   const apolloFirmographics = input.apolloFirmographics || null;
 
+  const freshLogoUrl = pickCanonicalString(apifyFirmographics.logo_url, existingCompany?.logo_url);
+  const logoCached = freshLogoUrl ? await cacheCompanyLogo(freshLogoUrl) : null;
+
   const payload: Record<string, unknown> = {
     domain,
     // IDENTITY fields are STICKY — when a canonical row already has them, the
@@ -688,7 +692,8 @@ async function upsertResolvedCompany(
     description: pickCanonicalString(apifyFirmographics.description, existingCompany?.description),
     bio_summary: pickCanonicalString(apifyFirmographics.bio_summary, existingCompany?.bio_summary),
     tagline: pickCanonicalString(apifyFirmographics.tagline, existingCompany?.tagline),
-    logo_url: pickCanonicalString(apifyFirmographics.logo_url, existingCompany?.logo_url),
+    logo_url: freshLogoUrl,
+    logo_cached: logoCached,
     follower_count: pickCanonicalNumber(apifyFirmographics.follower_count, existingCompany?.follower_count),
     industry: pickCanonicalString(
       apolloFirmographics?.industry,
@@ -1143,6 +1148,10 @@ export async function runContactResolutionPipelineForContact(
     await throwIfLeadRefreshCancelled(supabase, contactId, userId);
 
     const apifyProfile = await runApifyProfileEnrichment(resolvedLinkedin.linkedin_url);
+    if (apifyProfile) {
+      // Non-blocking cost metering — see /admin/llm-usage "Data & enrichment cost".
+      recordProviderUsage({ userId, contactId, provider: 'apify', eventType: 'apify_profile_scrape' }).catch(() => {});
+    }
     const alignment = compareApolloAndApify({
       contact: typedContact,
       apolloPerson,
@@ -1178,6 +1187,7 @@ export async function runContactResolutionPipelineForContact(
         apifyCompanyRaw = await runApifyCompanyEnrichment(resolved.currentCompanyLinkedinUrl);
         apifyCompanyFirmographicsRefreshedAt = new Date().toISOString();
         if (apifyCompanyRaw) {
+          recordProviderUsage({ userId, contactId, provider: 'apify', eventType: 'apify_company_scrape' }).catch(() => {});
           const extracted = extractCompanyFirmographics(apifyCompanyRaw);
           const bioSummary = extracted.description
             ? await summariseCompanyBio(extracted.description as string)

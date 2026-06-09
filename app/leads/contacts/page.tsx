@@ -13,6 +13,7 @@ import {
   type LeadAction,
   type SequenceDispatchStatus,
   applyOutreachOverride,
+  applyFixOverride,
   effectiveReadiness,
   isCrmSuppressed,
   getActionFromScores,
@@ -32,7 +33,7 @@ import { looksLikeEmail, type ContactEmailRow } from '@/lib/contact-emails';
 import { looksLikePhone, type ContactPhoneRow } from '@/lib/contact-phones';
 import {
   buildContactEmailDisplayRows,
-  formatContactLocationDisplay,
+  parseContactLocation,
 } from '@/lib/contact-profile-display';
 import { cn } from '@/lib/utils';
 import { cachedJson, invalidateCache } from '@/lib/page-fetch-cache';
@@ -599,11 +600,23 @@ function getHubSpotTableBadge(lead: Lead): {
       };
     // 'context_only' (in HubSpot, no actionable deal) and 'none' both render
     // as "No deal" — same neutral pill, since users don't distinguish them.
-    default:
+    default: {
+      // A contact that's not in HubSpot at all AND can't be pushed (bad/missing
+      // email) reads as "Not synced" so the sync blocker is visible in the CRM
+      // column — matches the "Fix" action. context_only already lives in HubSpot,
+      // so it stays "No deal".
+      const notInHubspot = lead.hubspot_lead_state == null || lead.hubspot_lead_state === 'none';
+      if (notInHubspot && contactHasSyncIssue(lead)) {
+        return {
+          label: 'Not synced',
+          className: 'border-[rgba(179,74,38,0.24)] bg-[#ffe7dd] text-[#b34a26]',
+        };
+      }
       return {
         label: 'No deal',
         className: 'border-[rgba(13,53,71,0.08)] bg-[rgba(13,53,71,0.03)] text-[#7d909a]',
       };
+    }
   }
 }
 
@@ -841,6 +854,23 @@ function ScoreRow({
  * live on a Lead (lead.company_fit_score, lead.companies.company_fit_score,
  * lead.fit_score).
  */
+/**
+ * Why a contact can't be pushed to HubSpot, or null if it can. Mirrors the
+ * push-enrichment route's filter (which keys on the primary `email` field):
+ * no email, or an email that doesn't look valid. Drives the "Fix" action and
+ * the "Not synced" CRM badge.
+ */
+function contactSyncIssueReason(lead: Pick<Lead, 'email'>): 'no_email' | 'invalid_email' | null {
+  const email = lead.email?.trim() ?? '';
+  if (!email) return 'no_email';
+  if (!looksLikeEmail(email)) return 'invalid_email';
+  return null;
+}
+
+function contactHasSyncIssue(lead: Pick<Lead, 'email'>): boolean {
+  return contactSyncIssueReason(lead) !== null;
+}
+
 function getContactAction(
   lead: Lead,
 ): LeadAction {
@@ -867,11 +897,14 @@ function getContactAction(
   // to "Send outreach"; a sent sequence to "Await reply". Pass crmState so a
   // closed-won / closed-lost contact still reads as Deprioritise even with a
   // historic sequence on file (during cooldown only).
-  return applyOutreachOverride(
+  const withOutreach = applyOutreachOverride(
     base,
     (lead.latest_sequence_status ?? null) as SequenceDispatchStatus,
     crmForAction,
   );
+  // Data-quality overlay wins last: a contact we'd otherwise engage but can't
+  // push to HubSpot (bad/missing email) surfaces as "Fix".
+  return applyFixOverride(withOutreach, contactHasSyncIssue(lead));
 }
 
 const LEAD_EDIT_INPUT_CLASS =
@@ -1392,10 +1425,14 @@ export function ContactsWorkspace() {
     emittedEvents: number;
     recomputedCompanies: number;
     skippedUnresolvedCompanies: number;
+    contactItems?: { name: string | null; company: string | null }[];
+    dealItems?: { name: string | null; company: string | null }[];
     error?: string;
     code?: string;
   } | null>(null);
   const [syncResultExpanded, setSyncResultExpanded] = useState(false);
+  // Which pull-banner metric's item list is expanded ('contacts' | 'deals' | null).
+  const [pullDetailOpen, setPullDetailOpen] = useState<string | null>(null);
   const [stoppingLeadId, setStoppingLeadId] = useState<string | null>(null);
   const [stopEnrichmentError, setStopEnrichmentError] = useState<string | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
@@ -1641,6 +1678,7 @@ export function ContactsWorkspace() {
     if (pullingHubspotCrm) return;
     setPullingHubspotCrm(true);
     setHubspotPullResult(null);
+    setPullDetailOpen(null);
     try {
       const res = await fetch('/api/hubspot/pull-crm', { method: 'POST' });
       const text = await res.text();
@@ -2044,6 +2082,38 @@ export function ContactsWorkspace() {
             : lead
         )
       );
+      // Also patch the per-lead DETAIL cache. selectedLead is the merge of the
+      // lean list AND selectedLeadDetailById with DETAIL winning — so without
+      // this, the freshly-saved fields stay hidden behind the stale detail copy
+      // until the user re-selects. Mirror stopLeadEnrichment (patch both), and
+      // invalidate the detail fetch cache so the next server read is fresh.
+      setSelectedLeadDetailById((prev) =>
+        leadId in prev
+          ? {
+              ...prev,
+              [leadId]: {
+                ...prev[leadId],
+                full_name: d.full_name ?? prev[leadId].full_name,
+                first_name: d.first_name ?? prev[leadId].first_name,
+                last_name: d.last_name ?? prev[leadId].last_name,
+                email: d.email ?? prev[leadId].email,
+                job_title: d.job_title ?? prev[leadId].job_title,
+                headline: d.headline ?? prev[leadId].headline,
+                linkedin_url: d.linkedin_url ?? prev[leadId].linkedin_url,
+                company_name: d.company_name ?? prev[leadId].company_name,
+                company_domain: d.company_domain ?? prev[leadId].company_domain,
+                company_linkedin_url: d.company_linkedin_url ?? prev[leadId].company_linkedin_url,
+                location: d.location ?? prev[leadId].location,
+                city: d.city ?? prev[leadId].city,
+                country: d.country ?? prev[leadId].country,
+                contact_emails: Array.isArray(d.contact_emails) ? d.contact_emails : prev[leadId].contact_emails,
+                contact_phones: Array.isArray(d.contact_phones) ? d.contact_phones : prev[leadId].contact_phones,
+                updated_at: d.updated_at ?? prev[leadId].updated_at,
+              },
+            }
+          : prev,
+      );
+      invalidateCache(`/api/leads/${encodeURIComponent(leadId)}`);
       cancelEditingLead();
     } catch (error) {
       console.error('Error updating lead:', error);
@@ -3182,15 +3252,22 @@ export function ContactsWorkspace() {
     const noun = (n: number, s: string) => `${s}${n === 1 ? '' : 's'}`;
     const accountsUpdated = r.contactRecomputedCompanies + r.recomputedCompanies;
     const unresolved = r.contactSkippedUnresolvedCompanies + r.skippedUnresolvedCompanies;
-    // Primary fetch counts always show; derived metrics only when non-zero (zeros are noise).
-    const stats: { value: number; label: string }[] = [
-      { value: r.fetchedContacts, label: `${noun(r.fetchedContacts, 'contact')} fetched` },
-      { value: r.fetchedDeals, label: `${noun(r.fetchedDeals, 'deal')} fetched` },
-    ];
+    const contactItems = r.contactItems ?? [];
+    const dealItems = r.dealItems ?? [];
+    // Contacts fetched is the headline; everything else is a chip shown only when
+    // non-zero (zeros are noise). Chips with `detailKey` expand to list the items
+    // (same affordance as the push banner's "skipped"). Deals fetched + mirrored
+    // are the same set, so both reveal `dealItems`.
+    const stats: { value: number; label: string; detailKey?: string; items?: { name: string | null; company: string | null }[] }[] = [];
+    if (r.fetchedDeals > 0) stats.push({ value: r.fetchedDeals, label: `${noun(r.fetchedDeals, 'deal')} fetched`, detailKey: 'deals', items: dealItems });
     if (r.contactEventsEmitted > 0) stats.push({ value: r.contactEventsEmitted, label: noun(r.contactEventsEmitted, 'contact signal') });
-    if (r.mirroredDeals > 0) stats.push({ value: r.mirroredDeals, label: `${noun(r.mirroredDeals, 'deal')} mirrored` });
+    if (r.mirroredDeals > 0) stats.push({ value: r.mirroredDeals, label: `${noun(r.mirroredDeals, 'deal')} mirrored`, detailKey: 'deals', items: dealItems });
     if (r.emittedEvents > 0) stats.push({ value: r.emittedEvents, label: noun(r.emittedEvents, 'deal signal') });
     if (accountsUpdated > 0) stats.push({ value: accountsUpdated, label: `${noun(accountsUpdated, 'account')} updated` });
+
+    const openItems = pullDetailOpen === 'contacts' ? contactItems : pullDetailOpen === 'deals' ? dealItems : null;
+    const contactsClickable = contactItems.length > 0;
+    const toggle = (key: string) => setPullDetailOpen((cur) => (cur === key ? null : key));
 
     return (
       <div className={`mb-4 shrink-0 rounded-xl border bg-white px-4 py-3 flex items-start justify-between gap-4 ${r.error ? 'border-rose-200' : 'border-gray-200'}`}>
@@ -3198,7 +3275,7 @@ export function ContactsWorkspace() {
           <svg className="w-4 h-4 shrink-0 mt-0.5 text-[#ff7a59]" viewBox="0 0 24 24" fill="currentColor">
             <path d="M18.164 7.932V5.085a2.198 2.198 0 0 0 1.268-1.978V3.06A2.199 2.199 0 0 0 17.235.862h-.047a2.199 2.199 0 0 0-2.197 2.197v.047a2.199 2.199 0 0 0 1.268 1.978v2.847a6.232 6.232 0 0 0-2.962 1.302L5.028 3.617a2.44 2.44 0 0 0 .072-.573A2.455 2.455 0 1 0 2.645 5.5a2.43 2.43 0 0 0 1.194-.315l8.122 4.707a6.248 6.248 0 0 0 0 4.208L4.123 18.5a2.432 2.432 0 0 0-1.478-.498 2.455 2.455 0 1 0 2.455 2.455 2.43 2.43 0 0 0-.388-1.337l7.91-4.583a6.266 6.266 0 0 0 8.976-5.628 6.25 6.25 0 0 0-3.434-5.977zm-1.023 9.565a3.59 3.59 0 1 1 0-7.181 3.59 3.59 0 0 1 0 7.181z"/>
           </svg>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             {r.error ? (
               <div>
                 <span className="text-sm font-semibold text-rose-700">HubSpot CRM pull failed</span>
@@ -3206,24 +3283,74 @@ export function ContactsWorkspace() {
               </div>
             ) : (
               <>
-                <span className="text-sm font-semibold text-gray-900">HubSpot CRM pulled</span>
-                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                  {stats.map((s, i) => (
-                    <span
-                      key={i}
-                      className="inline-flex items-baseline gap-1 rounded-md border border-gray-200/70 bg-gray-50 px-2 py-0.5 text-xs text-gray-500"
-                    >
-                      <span className="font-semibold tabular-nums text-gray-900">{s.value}</span>
-                      {s.label}
+                {contactsClickable ? (
+                  <button
+                    type="button"
+                    onClick={() => toggle('contacts')}
+                    className="group inline-flex items-center gap-1 text-left"
+                  >
+                    <span className="text-sm font-semibold text-gray-900">
+                      {r.fetchedContacts} contact{r.fetchedContacts !== 1 ? 's' : ''} fetched from HubSpot
                     </span>
-                  ))}
-                  {unresolved > 0 && (
-                    <span className="inline-flex items-baseline gap-1 rounded-md border border-amber-200/70 bg-amber-50 px-2 py-0.5 text-xs text-amber-700">
-                      <span className="font-semibold tabular-nums">{unresolved}</span>
-                      unresolved
-                    </span>
-                  )}
-                </div>
+                    <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform ${pullDetailOpen === 'contacts' ? 'rotate-180' : ''}`} />
+                  </button>
+                ) : (
+                  <span className="text-sm font-semibold text-gray-900">
+                    {r.fetchedContacts} contact{r.fetchedContacts !== 1 ? 's' : ''} fetched from HubSpot
+                  </span>
+                )}
+                {(stats.length > 0 || unresolved > 0) && (
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                    {stats.map((s, i) => {
+                      const clickable = Boolean(s.detailKey && s.items && s.items.length > 0);
+                      const open = clickable && pullDetailOpen === s.detailKey;
+                      const inner = (
+                        <>
+                          <span className="font-semibold tabular-nums text-gray-900">{s.value}</span>
+                          {s.label}
+                          {clickable && (
+                            <ChevronDown className={`w-3 h-3 self-center text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+                          )}
+                        </>
+                      );
+                      return clickable ? (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => toggle(s.detailKey!)}
+                          className="inline-flex items-baseline gap-1 rounded-md border border-gray-200/70 bg-gray-50 px-2 py-0.5 text-xs text-gray-500 transition-colors hover:bg-gray-100"
+                        >
+                          {inner}
+                        </button>
+                      ) : (
+                        <span
+                          key={i}
+                          className="inline-flex items-baseline gap-1 rounded-md border border-gray-200/70 bg-gray-50 px-2 py-0.5 text-xs text-gray-500"
+                        >
+                          {inner}
+                        </span>
+                      );
+                    })}
+                    {unresolved > 0 && (
+                      <span className="inline-flex items-baseline gap-1 rounded-md border border-amber-200/70 bg-amber-50 px-2 py-0.5 text-xs text-amber-700">
+                        <span className="font-semibold tabular-nums">{unresolved}</span>
+                        unresolved
+                      </span>
+                    )}
+                  </div>
+                )}
+                {openItems && openItems.length > 0 && (
+                  <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                    <ul className="space-y-1">
+                      {openItems.map((it, i) => (
+                        <li key={i} className="text-xs text-gray-600">
+                          <span className="font-medium text-gray-800">{it.name || 'Unknown'}</span>
+                          {it.company && <span className="text-gray-400"> · {it.company}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -4224,23 +4351,32 @@ export function ContactsWorkspace() {
                                             '—'}
                                         </p>
                                       </div>
-                                      <div className="min-w-0">
-                                        <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
-                                          Location
-                                        </p>
-                                        {(() => {
-                                          const line = formatContactLocationDisplay(
-                                            selectedLead.location,
-                                            selectedLead.city,
-                                            selectedLead.country,
-                                          );
-                                          return (
-                                            <p className="mt-2 break-words text-sm leading-snug text-[#0d3547]">
-                                              {line ?? '—'}
+                                      {(() => {
+                                        // Location split into City / State / Country sub-fields.
+                                        // The `location` string is the reliable source (LinkedIn
+                                        // "City, State, Country"); the separate city/country columns
+                                        // are unreliable. See lib/contact-profile-display.
+                                        const parts = parseContactLocation(
+                                          selectedLead.location,
+                                          selectedLead.city,
+                                          selectedLead.country,
+                                        );
+                                        const cells: Array<{ label: string; value: string }> = [];
+                                        if (parts.city) cells.push({ label: 'City', value: parts.city });
+                                        if (parts.state) cells.push({ label: 'State', value: parts.state });
+                                        if (parts.country) cells.push({ label: 'Country', value: parts.country });
+                                        if (cells.length === 0) cells.push({ label: 'Location', value: '—' });
+                                        return cells.map((c) => (
+                                          <div key={c.label} className="min-w-0">
+                                            <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
+                                              {c.label}
                                             </p>
-                                          );
-                                        })()}
-                                      </div>
+                                            <p className="mt-2 break-words text-sm leading-snug text-[#0d3547]">
+                                              {c.value}
+                                            </p>
+                                          </div>
+                                        ));
+                                      })()}
                                       <div className="min-w-0">
                                         <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
                                           Emails
@@ -4897,6 +5033,35 @@ export function ContactsWorkspace() {
                                     </p>
                                   </div>
                                 )}
+
+                                {action === 'fix' && (() => {
+                                  const reason = contactSyncIssueReason(selectedLead);
+                                  return (
+                                    <div className="space-y-3">
+                                      <p className="text-[13.5px] leading-[1.55] text-[#0d3547]">
+                                        {contactName || 'This contact'} can&apos;t be synced to HubSpot yet because{' '}
+                                        {reason === 'no_email'
+                                          ? 'they have no email address on file'
+                                          : 'their email address looks invalid'}
+                                        . Add a valid work email (e.g. name@company.com) to unblock CRM sync and
+                                        outreach.
+                                      </p>
+                                      <div className="rounded-xl border border-[#f6c3ac] bg-[#ffe7dd]/40 p-4">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setSelectedPreview('contact');
+                                            startEditingLead(selectedLead);
+                                          }}
+                                          className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-[#e8a07e] bg-white px-4 py-2.5 text-sm font-semibold text-[#b34a26] transition-colors hover:bg-[#fff3ee]"
+                                        >
+                                          Edit contact email
+                                          <ChevronRight className="w-4 h-4" aria-hidden />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
 
                               </div>
                             );

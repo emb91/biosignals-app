@@ -101,6 +101,9 @@ export async function POST() {
         attributionSnapshotsRecomputed: attributionResult.recomputedContacts,
         checkpoint: result.checkpoint,
         dealSignalTypes: result.emittedSignalTypes,
+        // Per-item detail so the pull banner can reveal WHICH contacts/deals.
+        contactItems: contactResult.contactItems,
+        dealItems: result.dealItems,
       },
     });
   } catch (error) {

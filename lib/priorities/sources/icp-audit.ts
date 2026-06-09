@@ -345,18 +345,23 @@ ${JSON.stringify(icps, null, 2)}`;
  */
 export function groupIcpAuditForToday(items: IcpPriority[]): TodayPriority | null {
   if (items.length === 0) return null;
-  // Highest severity in the bucket dictates the row's severity.
   const sevRank: Record<IcpPrioritySeverity, number> = { high: 3, medium: 2, low: 1 };
-  const topSeverity = items.reduce<IcpPrioritySeverity>((acc, p) => {
-    return sevRank[p.severity] > sevRank[acc] ? p.severity : acc;
-  }, 'low');
+  // Lead with the single highest-severity finding's OWN words, so /today calls out the
+  // actual issue ("ICP 2 & ICP 3 overlap…") instead of a generic "Review your ICPs".
+  // Items are already dismissal-filtered upstream, so the top one is real + undismissed.
+  const [top] = [...items].sort((a, b) => sevRank[b.severity] - sevRank[a.severity]);
+  const others = items.length - 1;
+
+  const title = top.headline?.trim() || 'Review your ICPs';
+  const baseDetail = top.detail?.trim() || 'Arcova flagged something to look at in your ICP set.';
+  const detail = others > 0 ? `${baseDetail} (+${others} more ICP issue${others === 1 ? '' : 's'})` : baseDetail;
 
   return {
     source: 'icp-audit',
     groupKey: 'default',
-    severity: topSeverity,
-    title: 'Review your ICPs',
-    detail: 'Arcova has some observations about your ICP set — take a look when you have a moment.',
+    severity: top.severity,
+    title,
+    detail,
     href: ROUTES.setup.icps,
     cta: 'Open ICPs',
   };

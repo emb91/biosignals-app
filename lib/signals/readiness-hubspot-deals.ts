@@ -121,6 +121,9 @@ function errorToMessage(error: unknown): string {
   return String(error);
 }
 
+/** Lightweight per-deal summary for surfacing "which deals" in the pull banner. */
+export type CrmDealSyncItem = { name: string | null; company: string | null };
+
 export type HubSpotDealReadinessSyncResult = {
   fetchedDeals: number;
   mirroredDeals: number;
@@ -129,6 +132,8 @@ export type HubSpotDealReadinessSyncResult = {
   skippedUnresolvedCompanies: number;
   checkpoint: string | null;
   emittedSignalTypes: string[];
+  /** One entry per mirrored deal (name + primary associated company). */
+  dealItems: CrmDealSyncItem[];
 };
 
 function normalizeStage(value?: string | null): string | null {
@@ -419,6 +424,7 @@ export async function syncHubSpotDealsIntoReadiness(
         skippedUnresolvedCompanies: 0,
         checkpoint: checkpoint?.last_synced_remote_at ?? null,
         emittedSignalTypes: [],
+        dealItems: [],
       };
     }
 
@@ -501,6 +507,7 @@ export async function syncHubSpotDealsIntoReadiness(
     let skippedUnresolvedCompanies = 0;
     const affectedCompanyIds = new Set<string>();
     const emittedSignalTypes = new Set<string>();
+    const dealItems: CrmDealSyncItem[] = [];
 
     for (const deal of deals) {
       const previous = existingDeals.get(deal.id) ?? null;
@@ -536,6 +543,11 @@ export async function syncHubSpotDealsIntoReadiness(
           hsLastModifiedDate,
           rawPayload: company ? (company as unknown as Record<string, unknown>) : { hubspot_company_id: hubspotCompanyId },
         };
+      });
+
+      dealItems.push({
+        name: deal.properties.dealname ?? null,
+        company: associatedCompanyRows[0]?.hubspotCompanyName ?? null,
       });
 
       const associatedContactRows: DealAssociatedContactRow[] = (dealContactMap.get(deal.id) ?? []).map((hubspotContactId) => {
@@ -710,6 +722,7 @@ export async function syncHubSpotDealsIntoReadiness(
       skippedUnresolvedCompanies,
       checkpoint: maxModifiedAt ?? checkpoint?.last_synced_remote_at ?? null,
       emittedSignalTypes: [...emittedSignalTypes],
+      dealItems,
     };
   } catch (error) {
     const message = errorToMessage(error);

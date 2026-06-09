@@ -26,9 +26,28 @@ import {
   getIcpAuditHash,
   groupIcpAuditForToday,
 } from '@/lib/priorities/sources/icp-audit';
+import { computeSendOutreachPriority } from '@/lib/priorities/sources/send-outreach';
+import { computeNewAccountsPriority } from '@/lib/priorities/sources/new-accounts';
+import {
+  computeContactPriorityChanges,
+  computeAccountPriorityChanges,
+} from '@/lib/priorities/sources/priority-changes';
 
 const SEV_RANK: Record<PrioritySeverity, number> = { high: 3, medium: 2, low: 1 };
 
+/**
+ * Response contract:
+ *   { cheap: TodayPriority[], icp: TodayPriority | null, icpUnchanged: boolean, icpHash: string }
+ *
+ * Two tiers, for cost reasons:
+ * - `cheap` sources (send-outreach, …) are heuristic DB queries with NO LLM. They run
+ *   on EVERY request so a fresh draft / new account shows immediately. They are NOT
+ *   gated on any hash.
+ * - `icp` is the Claude ICP audit. It is gated on its OWN inputs-hash so that a draft
+ *   being sent (or any non-ICP change) never triggers a paid re-audit. When the client's
+ *   cached `icpHash` still matches, the server skips the Claude call and sets
+ *   `icpUnchanged: true`; the client keeps its cached icp row.
+ */
 export async function GET(request: Request) {
   try {
     const supabase = await createClient();
@@ -38,32 +57,37 @@ export async function GET(request: Request) {
     }
 
     const { searchParams } = new URL(request.url);
-    const knownHash = searchParams.get('h') ?? '';
+    const knownIcpHash = searchParams.get('h') ?? '';
 
-    // Cheap hash check — no LLM. If the client's cached hash still matches the current
-    // inputs, return `unchanged: true` so the client keeps its cached priorities.
-    const currentHash = await getIcpAuditHash(supabase, user.id);
-    if (knownHash && knownHash === currentHash) {
-      return NextResponse.json({ unchanged: true, hash: currentHash });
-    }
-
-    // Each source runs in parallel. New heuristic sources can be added here without
-    // additional LLM cost; LLM sources (icp-audit) should manage their own caching.
-    const results = await Promise.all([
-      computeIcpAuditPriorities(supabase, user.id, user.email).then(groupIcpAuditForToday),
-      // Future sources:
-      // computeEnrichmentFailures(supabase, user.id),
-      // computePipelineHealth(supabase, user.id),
-      // computeStaleReadyQueue(supabase, user.id),
+    // Run the (cheap) icp-audit inputs-hash alongside the cheap sources. No LLM yet.
+    const [icpHash, cheapResults] = await Promise.all([
+      getIcpAuditHash(supabase, user.id),
+      Promise.all([
+        computeSendOutreachPriority(supabase, user.id),
+        computeNewAccountsPriority(supabase, user.id),
+        computeContactPriorityChanges(supabase, user.id),
+        computeAccountPriorityChanges(supabase, user.id),
+        // Future cheap sources:
+        // computeEnrichmentFailures(supabase, user.id),
+      ]),
     ]);
 
-    const priorities: TodayPriority[] = results
+    const cheap: TodayPriority[] = cheapResults
       .filter((p): p is TodayPriority => p !== null)
       .sort((a, b) => SEV_RANK[b.severity] - SEV_RANK[a.severity]);
 
-    return NextResponse.json({ priorities, hash: currentHash });
+    // Only pay for the Claude audit when its inputs actually moved.
+    const icpUnchanged = Boolean(knownIcpHash) && knownIcpHash === icpHash;
+    const icp = icpUnchanged
+      ? null
+      : await computeIcpAuditPriorities(supabase, user.id, user.email).then(groupIcpAuditForToday);
+
+    return NextResponse.json({ cheap, icp, icpUnchanged, icpHash });
   } catch (err) {
     console.error('[today/priorities] failed:', err);
-    return NextResponse.json({ priorities: [] satisfies TodayPriority[] }, { status: 200 });
+    return NextResponse.json(
+      { cheap: [] satisfies TodayPriority[], icp: null, icpUnchanged: false, icpHash: '' },
+      { status: 200 },
+    );
   }
 }

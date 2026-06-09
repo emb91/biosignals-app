@@ -3,6 +3,7 @@
  * the daily HubSpot cron so they both trigger the same background pipeline.
  */
 import { enrichContact } from '@/lib/enrichment-provider';
+import { recordProviderUsage } from '@/lib/provider-usage';
 import { ingestEnrichedRecords, type EnrichedImportRecord } from '@/lib/import-ingestion';
 import { runContactResolutionPipelineForContact } from '@/lib/contact-resolution-pipeline';
 import { createAdminClient } from '@/lib/supabase-admin';
@@ -274,6 +275,14 @@ export async function processQueuedRowsInBackground(params: {
           apollo_organization_raw: enrichmentResult.apollo_organization_raw,
           apollo_lookup_metadata: enrichmentResult.apollo_lookup_metadata,
         });
+
+        // Non-blocking cost metering for the Apollo enrichment just performed.
+        if (enrichmentResult.apollo_person_raw) {
+          recordProviderUsage({ userId, provider: 'apollo', eventType: 'apollo_person_enrichment' }).catch(() => {});
+        }
+        if (enrichmentResult.apollo_organization_raw) {
+          recordProviderUsage({ userId, provider: 'apollo', eventType: 'apollo_company_enrichment' }).catch(() => {});
+        }
       } catch (error) {
         console.error('Contact enrichment failed for row:', row.id, error);
         if (!(await keepForLinkedinFallback())) {
