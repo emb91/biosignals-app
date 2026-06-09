@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/private/tmp/arcova-company-merge-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/company-merge.ts",
+    "lib/company-merge.test.ts"
+  ]
+}

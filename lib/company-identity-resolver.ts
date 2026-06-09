@@ -31,6 +31,7 @@ import {
   type ApolloOrganization,
 } from '@/lib/apollo';
 import { normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
+import { pickStrongestIdentifier } from '@/lib/company-merge';
 import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 
@@ -188,9 +189,14 @@ export async function resolveCompanyIdentity(input: {
     reason,
   });
 
+  // Lead with the single strongest identifier (domain > name). Never pass a
+  // fuzzy name alongside a domain to Apollo — that's what let "Moderna"
+  // resolve to "Moderna Housewares". See lib/company-merge#pickStrongestIdentifier.
+  const strongest = pickStrongestIdentifier({ domain: requestedDomain, name: companyName });
+
   // ── Tier 1: domain-exact ───────────────────────────────────────────────
-  if (requestedDomain) {
-    const byDomain = await enrichOrganizationWithApollo({ company_domain: requestedDomain }).catch(
+  if (strongest?.kind === 'domain') {
+    const byDomain = await enrichOrganizationWithApollo({ company_domain: strongest.value }).catch(
       (): ApolloOrganizationEnrichmentResult => ({}),
     );
     const returnedDomain = normalizeDomain(byDomain.company_domain);
