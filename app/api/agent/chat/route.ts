@@ -50,12 +50,13 @@ import {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Page = 'accounts' | 'leads' | 'today' | 'health' | 'signals' | 'imports' | 'data' | 'icps' | 'log';
+type Page = 'accounts' | 'leads' | 'today' | 'coverage' | 'signals' | 'imports' | 'data' | 'icps' | 'log';
 
-const AGENT_PAGES: readonly Page[] = ['accounts', 'leads', 'today', 'health', 'signals', 'imports', 'data'];
+const AGENT_PAGES: readonly Page[] = ['accounts', 'leads', 'today', 'coverage', 'signals', 'imports', 'data'];
 
 function normalizeAgentPage(raw: unknown): Page {
   if (raw === 'dashboard') return 'today';
+  if (raw === 'health') return 'coverage'; // legacy alias (page was renamed Health → Coverage)
   const s = typeof raw === 'string' ? raw : '';
   if ((AGENT_PAGES as readonly string[]).includes(s)) return s as Page;
   return 'accounts';
@@ -732,7 +733,7 @@ ${icpsBlock}`;
 
   // Coverage page (health route): current target + CRM-anchored actuals so the
   // agent can open with last quarter's number and capture this quarter's via set_gtm_target.
-  const coverageContext = page === 'health'
+  const coverageContext = page === 'coverage'
     ? (() => {
         const period = context?.coveragePeriod || quarterOf();
         const usd = (n: number) =>
@@ -1769,7 +1770,7 @@ async function runAgentLoop(
   }
   // Coverage page: anchor the agent on CRM actuals so it can open with
   // "last quarter you closed $X — target for this quarter?".
-  if (page === 'health') {
+  if (page === 'coverage') {
     const period = (pageContext?.coveragePeriod && isValidPeriod(pageContext.coveragePeriod))
       ? pageContext.coveragePeriod
       : quarterOf();

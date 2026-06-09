@@ -9,7 +9,7 @@
  * netNewCompanies, estimate }].
  *
  * CREDIT-SPENDING — invoked ONLY on an explicit user action (the "Check supply"
- * button on /health), never on page load. Body may carry observed
+ * button on /coverage), never on page load. Body may carry observed
  * contacts/company per ICP (from the icp-cards the page already holds) to make
  * the contact estimate ICP-specific.
  */

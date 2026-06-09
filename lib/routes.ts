@@ -14,7 +14,7 @@ export const ROUTES = {
   customers: '/customers',
   signals: '/signals',
   settings: '/settings',
-  health: '/health',
+  coverage: '/coverage',
   data: '/data',
   contactUs: '/contact-us',
   setup: {

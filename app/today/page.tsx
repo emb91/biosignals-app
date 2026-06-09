@@ -873,19 +873,19 @@ export default function BriefingPage() {
       ? [{
           id: 'pipeline-health',
           label: '2',
-          title: 'Review pipeline health',
+          title: 'Review coverage',
           detail:
             healthIssues.length === 1
               ? `${healthIssues[0].label} needs attention.`
               : `${healthIssues.length} ICPs need review.`,
           href: withQuery(
-            ROUTES.health,
+            ROUTES.coverage,
             new URLSearchParams({
-              agentTask: 'health_review',
+              agentTask: 'coverage_review',
               from: 'today',
             }),
           ),
-          cta: 'Open Health',
+          cta: 'Open Coverage',
         }]
       : []),
     ...(topLeads.length > 0

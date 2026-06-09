@@ -222,7 +222,7 @@ function buildHealthHandoffPrompt(card: IcpPipelineCard, task: string): string {
       mode: 'companies',
       icpId: card.icp_id,
       requestType: 'expand_companies',
-      source: 'health',
+      source: 'coverage',
     }),
   );
 
@@ -266,7 +266,7 @@ function buildAllHealthHandoffPrompt(cards: IcpPipelineCard[]): string {
           mode: 'companies',
           icpId: firstCoverageGap.icp_id,
           requestType: 'expand_companies',
-          source: 'health',
+          source: 'coverage',
         }),
       )
     : null;
@@ -391,9 +391,10 @@ export default function HealthPage() {
 
     let prompt: string | null = null;
     let threadPreview = '';
-    if (healthAgentTask === 'health_review') {
+    if (healthAgentTask === 'coverage_review' || healthAgentTask === 'health_review') {
+      // 'health_review' kept as a legacy alias for older deep-links.
       prompt = buildAllHealthHandoffPrompt(cards);
-      threadPreview = 'Review my pipeline health';
+      threadPreview = 'Review my coverage';
     } else if (healthAgentIcpId) {
       const card = cards.find((candidate) => candidate.icp_id === healthAgentIcpId);
       if (!card) return;
@@ -420,7 +421,7 @@ export default function HealthPage() {
       mode,
       icpId: card.icp_id,
       requestType,
-      source: 'health',
+      source: 'coverage',
     });
     router.push(withQuery(ROUTES.data, params));
   };
@@ -852,7 +853,7 @@ export default function HealthPage() {
         </div>
 
         <AgentPanel
-          page="health"
+          page="coverage"
           pageContext={{
             healthCards: cards ?? [],
             healthTask: healthAgentTask || null,
