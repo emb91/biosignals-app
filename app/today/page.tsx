@@ -693,7 +693,15 @@ export default function BriefingPage() {
       const family = familyMap.get(familyKey)!;
 
       const company = s.companyName ?? s.companyDomain ?? 'Unknown';
-      const rowKey = `${company}||${s.signalKey}`;
+
+      // Normalise signal keys that represent the same underlying event type so
+      // they collapse into a single row rather than appearing as duplicates.
+      const SIGNAL_KEY_NORMALIZE: Record<string, string> = {
+        new_paper_published: 'publication',   // same concept, two source keys
+        nih_grant_awarded:   'grant_award',   // NIH-specific vs generic grant key
+      };
+      const groupKey = SIGNAL_KEY_NORMALIZE[s.signalKey] ?? s.signalKey;
+      const rowKey = `${company}||${groupKey}`;
 
       // Aggregate hiring signals: pills already tell the whole story; a single
       // job posting URL out of 40+ roles would be misleading — suppress it.
@@ -740,9 +748,9 @@ export default function BriefingPage() {
 
         family.set(rowKey, {
           key: rowKey,
-          glyph: signalGlyph(s.signalKey),
+          glyph: signalGlyph(groupKey),
           company,
-          label: signalLabel(s.signalKey),
+          label: signalLabel(groupKey),
           count: 1,
           ago: relativeTime(s.eventAt ?? s.observedAt),
           pills,
@@ -1118,7 +1126,7 @@ export default function BriefingPage() {
                                     ) : (
                                       <span className="bt-sig-sub-text">{label}</span>
                                     )}
-                                    {item.ago && <span className="bt-sig-sub-ago">{item.ago}</span>}
+                                    {item.ago && item.ago !== row.ago && <span className="bt-sig-sub-ago">{item.ago}</span>}
                                   </li>
                                 );
                               })}
