@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel, type AgentPendingMessage } from '@/components/AgentPanel';
 import { PageHeader } from '@/components/PageHeader';
-import { Activity, AlertTriangle, Kanban, Loader2, Plus } from 'lucide-react';
+import { Activity, AlertTriangle, Kanban, Loader2, Plus, Trophy } from 'lucide-react';
 import {
   healthLabel,
   isWeakDim,
@@ -14,6 +14,7 @@ import {
   type HealthDim,
   type PipelineDataRequestType,
 } from '@/lib/pipeline-icp-health';
+import type { IcpPerformance } from '@/lib/coverage/icp-performance';
 import { cn } from '@/lib/utils';
 import { ROUTES, withQuery } from '@/lib/routes';
 
@@ -31,6 +32,8 @@ interface IcpPipelineCard {
   contact_fit: HealthDim;
   depth: HealthDim;
   overall: HealthDim;
+  /** Bottom-up CRM deal performance (null when no deals map to this ICP). */
+  performance: IcpPerformance | null;
 }
 
 /**
@@ -120,6 +123,62 @@ function formatFitValue(avg: number | null): string {
 function formatDepthValue(avg: number | null): string {
   if (avg == null || !Number.isFinite(avg)) return '—';
   return `${avg.toFixed(1)}`;
+}
+
+/** Compact USD, e.g. $1.2M / $45k / $900. */
+function formatUsd(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value) || value === 0) return '—';
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return `$${(value / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`;
+  if (abs >= 1_000) return `$${Math.round(value / 1_000)}k`;
+  return `$${Math.round(value)}`;
+}
+
+function formatPct(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—';
+  return `${Math.round(value * 100)}%`;
+}
+
+function formatCycle(days: number | null | undefined): string {
+  if (days == null || !Number.isFinite(days)) return '—';
+  if (days >= 60) return `${(days / 30).toFixed(1)}mo`;
+  return `${Math.round(days)}d`;
+}
+
+/** Active deals + won, for the "deals" column. */
+function formatDealCount(p: IcpPerformance | null): string {
+  if (!p) return '—';
+  const total = p.active_deal_count + p.won_count + p.lost_count;
+  return total > 0 ? total.toLocaleString() : '—';
+}
+
+const CONFIDENCE_LABEL: Record<IcpPerformance['confidence'], string> = {
+  high: 'Strong sample',
+  medium: 'Some signal',
+  low: 'Thin sample',
+};
+
+/**
+ * The "non-obvious winner": when ≥2 ICPs have throughput, surface the top
+ * converter — and flag it when it ISN'T the ICP with the most companies (the
+ * "rep thinks ICP 1; the data says ICP 2" moment).
+ */
+function bestThroughputInsight(cards: IcpPipelineCard[]): { best: IcpPipelineCard; surprise: boolean } | null {
+  const ranked = cards
+    .filter((c) => c.performance?.throughput != null && (c.performance.throughput ?? 0) > 0)
+    .sort((a, b) => (b.performance!.throughput ?? 0) - (a.performance!.throughput ?? 0));
+  if (ranked.length < 2) return null;
+  const best = ranked[0];
+  const mostCompanies = [...cards].sort((a, b) => b.company_count - a.company_count)[0];
+  return { best, surprise: mostCompanies != null && mostCompanies.icp_id !== best.icp_id };
+}
+
+/** Rank (1 = best) by throughput among ICPs that have it; null otherwise. */
+function throughputRankMap(cards: IcpPipelineCard[]): Map<string, number> {
+  const ranked = cards
+    .filter((c) => c.performance?.throughput != null && (c.performance.throughput ?? 0) > 0)
+    .sort((a, b) => (b.performance!.throughput ?? 0) - (a.performance!.throughput ?? 0));
+  return new Map(ranked.map((c, i) => [c.icp_id, i + 1]));
 }
 
 function buildHealthHandoffPrompt(card: IcpPipelineCard, task: string): string {
@@ -279,6 +338,9 @@ export default function HealthPage() {
   };
 
   const gapIcps = cards ? getCoverageGapIcps(cards) : [];
+  const insight = cards ? bestThroughputInsight(cards) : null;
+  const rankMap = cards ? throughputRankMap(cards) : new Map<string, number>();
+  const hasAnyPerformance = !!cards?.some((c) => c.performance);
 
   if (authLoading) {
     return (
@@ -298,10 +360,10 @@ export default function HealthPage() {
         <div className="bg-transparent flex-1 overflow-auto px-6 py-8 lg:px-10">
           <div className="mx-auto w-full max-w-[1180px]">
             <PageHeader
-              eyebrow="Pipeline"
+              eyebrow="Coverage"
               eyebrowIcon={<Activity className="h-3 w-3" />}
-              title="Pipeline health"
-              subtitle="One row per ICP — weakest overall health sorts first."
+              title="Coverage"
+              subtitle="How each ICP converts — sourced coverage, real deal performance, and what to buy to hit your number."
             />
 
             {/* Coverage gap banner */}
@@ -327,6 +389,33 @@ export default function HealthPage() {
                   <span className="font-normal text-red-600">Click to learn more.</span>
                 </p>
                 <Activity className="ml-auto h-4 w-4 shrink-0 text-red-400" />
+              </button>
+            )}
+
+            {/* Best-converting ICP — the non-obvious winner the deal data reveals */}
+            {insight && (
+              <button
+                type="button"
+                onClick={() => {
+                  const p = insight.best.performance!;
+                  fireAgent(
+                    `"${insight.best.label}" is my strongest-converting ICP by throughput (win rate ${formatPct(p.win_rate)}, avg ACV ${formatUsd(p.avg_acv)}, avg cycle ${formatCycle(p.avg_cycle_days)}). ${insight.surprise ? 'It is NOT the ICP with the most companies. ' : ''}Explain what makes it my best ICP and whether I should lean into it.`,
+                    `Why is ${insight.best.label} my best ICP?`,
+                  );
+                }}
+                className="w-full mb-5 flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-left transition-colors hover:bg-emerald-100"
+              >
+                <Trophy className="h-4 w-4 shrink-0 text-emerald-500" />
+                <p className="text-sm font-medium text-emerald-900">
+                  {insight.surprise
+                    ? `${insight.best.label} converts best — not the ICP with the most companies.`
+                    : `${insight.best.label} is your strongest-converting ICP.`}{' '}
+                  <span className="font-normal text-emerald-700">
+                    Win rate {formatPct(insight.best.performance!.win_rate)}, cycle{' '}
+                    {formatCycle(insight.best.performance!.avg_cycle_days)}. Click to explore.
+                  </span>
+                </p>
+                <Activity className="ml-auto h-4 w-4 shrink-0 text-emerald-400" />
               </button>
             )}
 
@@ -358,14 +447,19 @@ export default function HealthPage() {
               </div>
             ) : (
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden overflow-x-auto">
-                <table className="w-full min-w-[880px] border-collapse">
+                <table className="w-full min-w-[1080px] border-collapse">
                   <thead>
                     <tr className="border-b border-gray-200 bg-gray-50">
                       <th className={TH_HEAD}>ICP name</th>
                       <th className={`${TH_HEAD} text-right`}>Companies</th>
-                      <th className={`${TH_HEAD} text-right`}>Avg company fit</th>
                       <th className={`${TH_HEAD} text-right`}>Contacts</th>
-                      <th className={`${TH_HEAD} text-right`}>Depth</th>
+                      {/* Bottom-up deal performance (from connected CRM) */}
+                      <th className={`${TH_HEAD} text-right`}>Deals</th>
+                      <th className={`${TH_HEAD} text-right`}>Pipeline</th>
+                      <th className={`${TH_HEAD} text-right`}>Win rate</th>
+                      <th className={`${TH_HEAD} text-right`}>Avg ACV</th>
+                      <th className={`${TH_HEAD} text-right`}>Cycle</th>
+                      <th className={`${TH_HEAD} text-right`}>Throughput</th>
                       <th className={TH_HEAD}>Health</th>
                     </tr>
                   </thead>
@@ -388,9 +482,33 @@ export default function HealthPage() {
                             </div>
                           </td>
                           <td className={TD_NUM}>{card.company_count.toLocaleString()}</td>
-                          <td className={TD_NUM}>{formatFitValue(card.avg_company_fit)}</td>
                           <td className={TD_NUM}>{card.contact_count.toLocaleString()}</td>
-                          <td className={TD_NUM}>{formatDepthValue(card.avg_contacts_per_company)}</td>
+                          <td className={TD_NUM}>{formatDealCount(card.performance)}</td>
+                          <td className={TD_NUM}>{formatUsd(card.performance?.pipeline_usd)}</td>
+                          <td className={TD_NUM}>{formatPct(card.performance?.win_rate)}</td>
+                          <td className={TD_NUM}>{formatUsd(card.performance?.avg_acv)}</td>
+                          <td className={TD_NUM}>{formatCycle(card.performance?.avg_cycle_days)}</td>
+                          <td className={TD_NUM}>
+                            {rankMap.has(card.icp_id) ? (
+                              <span
+                                title={
+                                  card.performance
+                                    ? `${CONFIDENCE_LABEL[card.performance.confidence]} · throughput rank`
+                                    : 'throughput rank'
+                                }
+                                className={cn(
+                                  'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold',
+                                  rankMap.get(card.icp_id) === 1
+                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                    : 'border-gray-200 bg-gray-50 text-gray-600',
+                                )}
+                              >
+                                #{rankMap.get(card.icp_id)}
+                              </span>
+                            ) : (
+                              '—'
+                            )}
+                          </td>
                           <td className={`${TD} whitespace-nowrap`}>
                             <HealthBadge
                               dim={card.overall}
@@ -408,6 +526,14 @@ export default function HealthPage() {
                   </tbody>
                 </table>
               </div>
+            )}
+
+            {cards && cards.length > 0 && (
+              <p className="mt-3 text-xs text-gray-400">
+                {hasAnyPerformance
+                  ? 'Deal performance is from your connected CRM. Throughput ranks ICPs by win-rate-weighted won revenue per day — your fastest, surest path to revenue.'
+                  : 'Connect your CRM (Settings → Integrations) to unlock deal performance — win rate, ACV, sales cycle and throughput per ICP.'}
+              </p>
             )}
           </div>
         </div>
