@@ -717,12 +717,19 @@ export default function BriefingPage() {
             ? (meta.categories as Record<string, number>) : null;
           pills = [];
           if (total !== null) pills.push(`${total} open roles`);
+          let categorisedSum = 0;
           if (categories) {
             for (const [key, count] of Object.entries(categories)) {
               const lbl = HIRING_CATEGORY_LABELS[key];
-              if (lbl) pills.push(count > 1 ? `${lbl} · ${count}` : lbl);
+              if (lbl) {
+                pills.push(count > 1 ? `${lbl} · ${count}` : lbl);
+                categorisedSum += count;
+              }
             }
           }
+          // Show unclassified remainder so the headline total adds up
+          const other = total !== null ? total - categorisedSum : 0;
+          if (other > 0) pills.push(`+ ${other} general roles`);
         } else if (s.signalKey === 'job_surge') {
           const count = typeof meta.total_postings === 'number' ? meta.total_postings : null;
           pills = count !== null ? [`${count} open roles`] : undefined;
