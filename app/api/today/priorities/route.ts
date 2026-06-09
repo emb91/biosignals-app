@@ -28,7 +28,10 @@ import {
 } from '@/lib/priorities/sources/icp-audit';
 import { computeSendOutreachPriority } from '@/lib/priorities/sources/send-outreach';
 import { computeNewAccountsPriority } from '@/lib/priorities/sources/new-accounts';
-import { computePriorityChangesPriority } from '@/lib/priorities/sources/priority-changes';
+import {
+  computeContactPriorityChanges,
+  computeAccountPriorityChanges,
+} from '@/lib/priorities/sources/priority-changes';
 
 const SEV_RANK: Record<PrioritySeverity, number> = { high: 3, medium: 2, low: 1 };
 
@@ -62,7 +65,8 @@ export async function GET(request: Request) {
       Promise.all([
         computeSendOutreachPriority(supabase, user.id),
         computeNewAccountsPriority(supabase, user.id),
-        computePriorityChangesPriority(supabase, user.id),
+        computeContactPriorityChanges(supabase, user.id),
+        computeAccountPriorityChanges(supabase, user.id),
         // Future cheap sources:
         // computeEnrichmentFailures(supabase, user.id),
       ]),
