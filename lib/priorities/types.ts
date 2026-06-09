@@ -19,7 +19,8 @@ export type PrioritySource =
   | 'top-leads'
   | 'stale-ready-queue'
   | 'send-outreach'
-  | 'new-accounts';
+  | 'new-accounts'
+  | 'priority-changes';
 
 /** Single agenda-item shape used on /today. Always one entry per source per groupKey. */
 export interface TodayPriority {
