@@ -260,7 +260,7 @@ export async function GET(request: Request) {
         routes: buildTimeSeries(rows, 'route', start, endExclusive, granularity),
         features: buildTimeSeries(rows, 'feature', start, endExclusive, granularity),
       },
-      recent: rows.slice(0, 100).map((row) => ({
+      recent: rows.slice(0, 500).map((row) => ({
         ...row,
         estimated_cost_usd: estimatedRowCost(row),
       })),

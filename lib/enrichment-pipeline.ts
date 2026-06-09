@@ -6,6 +6,7 @@ import { completeLlm } from '@/lib/llm-client';
 import { stickyIdentity } from '@/lib/company-merge';
 import { cacheProfilePhoto, cacheCompanyLogo } from '@/lib/photo-cache';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
+import { recordProviderUsage } from '@/lib/provider-usage';
 import {
   enrichOrganizationWithApollo,
   tryApolloPersonalEmailRevealForLookup,
@@ -1147,6 +1148,10 @@ export async function runContactResolutionPipelineForContact(
     await throwIfLeadRefreshCancelled(supabase, contactId, userId);
 
     const apifyProfile = await runApifyProfileEnrichment(resolvedLinkedin.linkedin_url);
+    if (apifyProfile) {
+      // Non-blocking cost metering — see /admin/llm-usage "Data & enrichment cost".
+      recordProviderUsage({ userId, contactId, provider: 'apify', eventType: 'apify_profile_scrape' }).catch(() => {});
+    }
     const alignment = compareApolloAndApify({
       contact: typedContact,
       apolloPerson,
@@ -1182,6 +1187,7 @@ export async function runContactResolutionPipelineForContact(
         apifyCompanyRaw = await runApifyCompanyEnrichment(resolved.currentCompanyLinkedinUrl);
         apifyCompanyFirmographicsRefreshedAt = new Date().toISOString();
         if (apifyCompanyRaw) {
+          recordProviderUsage({ userId, contactId, provider: 'apify', eventType: 'apify_company_scrape' }).catch(() => {});
           const extracted = extractCompanyFirmographics(apifyCompanyRaw);
           const bioSummary = extracted.description
             ? await summariseCompanyBio(extracted.description as string)

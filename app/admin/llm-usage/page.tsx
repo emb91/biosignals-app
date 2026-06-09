@@ -1,6 +1,7 @@
 'use client';
 
 import AppSidebar from '@/components/AppSidebar';
+import DataEnrichmentCost from '@/components/admin/DataEnrichmentCost';
 import { Button } from '@/components/ui/button';
 import {
   ChartContainer,
@@ -271,9 +272,9 @@ export default function AdminLlmUsagePage() {
         <div className="mx-auto max-w-7xl space-y-6">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <h1 className="text-2xl font-semibold text-slate-950">LLM Usage</h1>
+              <h1 className="text-2xl font-semibold text-slate-950">Usage &amp; cost</h1>
               <p className="mt-2 text-sm text-slate-500">
-                Internal admin view of Anthropic usage by feature, route, model, and user.
+                Internal admin view of LLM spend (Anthropic + OpenRouter) and paid data-provider usage (Apify, Apollo).
               </p>
             </div>
 
@@ -432,6 +433,9 @@ export default function AdminLlmUsagePage() {
               </section>
             </>
           ) : null}
+
+          <div className="border-t border-slate-200 pt-2" />
+          <DataEnrichmentCost />
         </div>
       </main>
     </div>
