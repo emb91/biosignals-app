@@ -732,7 +732,7 @@ export default function AccountsPage() {
       // The endpoint returns immediately (work runs in after()). Refresh once
       // now so the server-confirmed "running" state lands; the 5s poll picks
       // up the eventual succeeded/failed flip.
-      invalidateCache('/api/accounts');
+      invalidateAccountCaches(companyId, { clearDetailState: false });
       await fetchAccounts(true);
       await loadAccountDetail(companyId, true);
     } catch (err) {
@@ -758,7 +758,7 @@ export default function AccountsPage() {
     if (refreshingCompanyId === companyId) setRefreshingCompanyId(null);
     try {
       await fetch(`/api/companies/${companyId}/enrich`, { method: 'DELETE' });
-      invalidateCache('/api/accounts');
+      invalidateAccountCaches(companyId, { clearDetailState: false });
       await fetchAccounts(true);
       await loadAccountDetail(companyId, true);
     } catch (err) {
@@ -794,7 +794,7 @@ export default function AccountsPage() {
       const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
       if (focusId) params.set('companyId', focusId);
       // Module-level cache: tab-switch-and-back doesn't refetch within TTL.
-      // After mutations (edit/archive) we call invalidateCache('/api/accounts').
+      // After mutations (enrich/stop/edit/archive) we call invalidateAccountCaches().
       const { data: result } = await cachedJson<{
         data?: AccountRow[];
         total?: number;
@@ -841,6 +841,32 @@ export default function AccountsPage() {
       console.error('Error fetching account detail:', e);
     }
   }, []);
+
+  // Invalidate EVERY cache layer for an account after a mutation. There are
+  // THREE and forgetting any one leaves the side panel showing stale data
+  // (see memory/project_enrichment_safety.md):
+  //   1. the module-level list cache       (/api/accounts)
+  //   2. the module-level per-id detail    (/api/accounts/[id])
+  //   3. the per-id detail in React state  (selectedAccountDetailById)
+  // Pass clearDetailState:false when the caller will immediately force-reload
+  // the detail (loadAccountDetail(id, true)) — keeping the existing state entry
+  // avoids a flicker (used by the enrichment refresh/poll path, which also
+  // wants its optimistic "running" patch to survive until the reload lands).
+  const invalidateAccountCaches = useCallback(
+    (companyId: string, opts?: { clearDetailState?: boolean }) => {
+      invalidateCache('/api/accounts');
+      invalidateCache(`/api/accounts/${encodeURIComponent(companyId)}`);
+      if (opts?.clearDetailState ?? true) {
+        setSelectedAccountDetailById((prev) => {
+          if (!(companyId in prev)) return prev;
+          const next = { ...prev };
+          delete next[companyId];
+          return next;
+        });
+      }
+    },
+    [],
+  );
 
   // Fetch full detail for the selected account (firmographics, products,
   // funding detail, etc.) — these fields aren't in the lean list response.
@@ -2442,7 +2468,7 @@ export default function AccountsPage() {
                                           <>
                                             <button
                                               type="button"
-                                              onClick={() => router.push(withQuery(ROUTES.contacts, `lead=${encodeURIComponent(contact.id)}&search=${encodeURIComponent(contact.full_name || contact.email || '')}`))}
+                                              onClick={() => router.push(withQuery(ROUTES.contacts, `lead=${encodeURIComponent(contact.id)}`))}
                                               className="inline-flex items-center gap-1 rounded-full border border-arcova-teal/30 bg-white px-2.5 py-1 text-xs font-semibold text-arcova-teal hover:border-arcova-teal hover:bg-arcova-teal/10 transition-colors"
                                             >
                                               View contact
@@ -2777,7 +2803,7 @@ export default function AccountsPage() {
                                   throw new Error(result.error || 'Failed to archive account.');
                                 }
 
-                                invalidateCache('/api/accounts');
+                                invalidateAccountCaches(selectedAccount.id);
                                 setAccounts((prev) => prev.filter((account) => account.id !== selectedAccount.id));
                                 setSelectedAccountId(null);
                               } catch (error) {
@@ -2802,16 +2828,11 @@ export default function AccountsPage() {
                     open={editAccountOpen}
                     onClose={() => setEditAccountOpen(false)}
                     onSaved={() => {
-                      // Edit changed user_overrides — drop the list cache AND the
-                      // per-account detail cache so both refresh with new overrides.
-                      invalidateCache('/api/accounts');
-                      if (selectedAccountId) {
-                        setSelectedAccountDetailById((prev) => {
-                          const next = { ...prev };
-                          delete next[selectedAccountId];
-                          return next;
-                        });
-                      }
+                      // Edit changed user_overrides — invalidate ALL cache layers
+                      // (list + per-id detail module cache + detail state) then refetch.
+                      // The old code missed invalidating the /api/accounts/[id] module
+                      // cache, so the detail effect refetched stale overrides.
+                      if (selectedAccountId) invalidateAccountCaches(selectedAccountId);
                       fetchAccounts();
                     }}
                   />
