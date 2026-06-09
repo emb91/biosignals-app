@@ -1061,6 +1061,20 @@ export default function AccountsPage() {
     return () => { cancelled = true; };
   }, [selectedAccountId, panelMode]);
 
+  // Auto-fetch fit for all contacts once they load (fit breakdown is always visible now)
+  useEffect(() => {
+    for (const contact of contacts) {
+      if (contact.id in contactFitCache || contactFitLoadingIds.has(contact.id)) continue;
+      setContactFitLoadingIds((s) => new Set(s).add(contact.id));
+      fetch(`/api/contacts/${encodeURIComponent(contact.id)}/fit`)
+        .then((r) => r.json())
+        .then((result) => setContactFitCache((c) => ({ ...c, [contact.id]: result.data ?? null })))
+        .catch(() => setContactFitCache((c) => ({ ...c, [contact.id]: null })))
+        .finally(() => setContactFitLoadingIds((s) => { const n = new Set(s); n.delete(contact.id); return n; }));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contacts]);
+
   const handleTableFilter = (_filter: AgentTableFilter, filteredAccounts: QueryAccount[]) => {
     setAgentFilterIds(new Set(filteredAccounts.map((a) => a.id)));
     setTableSortCol(null);
