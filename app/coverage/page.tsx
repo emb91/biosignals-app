@@ -1336,8 +1336,8 @@ export default function CoveragePage() {
                         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
                         <p className="text-xs text-amber-800">
                           <span className="font-semibold">
-                            {meta.unattributed.dealCount} of {meta.totalDeals} deal
-                            {meta.totalDeals === 1 ? '' : 's'}
+                            {meta.unattributed.dealCount} of {meta.totalDeals}{' '}
+                            {meta.totalDeals === 1 ? 'deal' : 'deals'}
                             {meta.unattributed.openUsd + meta.unattributed.wonUsd > 0 &&
                               ` (${formatUsd(meta.unattributed.openUsd + meta.unattributed.wonUsd)})`}{' '}
                             couldn&apos;t be attributed to an ICP
@@ -1372,7 +1372,7 @@ export default function CoveragePage() {
                       className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-semibold text-red-700 transition-colors hover:bg-red-100"
                     >
                       <AlertTriangle className="h-3 w-3" />
-                      {gapIcps.length} coverage gap{gapIcps.length === 1 ? '' : 's'}
+                      {gapIcps.length} {gapIcps.length === 1 ? 'coverage gap' : 'coverage gaps'}
                     </button>
                   )}
                 </SectionHeader>

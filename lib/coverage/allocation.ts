@@ -134,7 +134,10 @@ export function allocateTarget(input: {
     if (distributed <= 1e-6) break; // no one has room
   }
 
-  const shortfall = clampPos(remaining);
+  // Float residue from repeated proportional splits is not a real shortfall:
+  // ignore anything below one part-per-million of the target (min 1e-6).
+  const epsilon = Math.max(1e-6, target.value * 1e-6);
+  const shortfall = remaining > epsilon ? remaining : 0;
   if (shortfall > 0) {
     notes.push('Target exceeds the addressable supply across your ICPs — broaden an ICP, raise the timeline, or accept a lower number.');
   }
