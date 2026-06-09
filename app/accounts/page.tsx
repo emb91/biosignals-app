@@ -58,6 +58,7 @@ type AccountRow = {
   domain: string | null;
   website: string | null;
   logo_url: string | null;
+  logo_cached: string | null;
   company_fit_score: number | null;
   company_fit_coverage: number | null;
   matched_icp_id: string | null;
@@ -687,7 +688,7 @@ export default function AccountsPage() {
   useEffect(() => {
     if (!selectedAccountId) return;
     const selected = accounts.find((account) => account.id === selectedAccountId);
-    if (!selected?.logo_url) return;
+    if (!selected?.logo_cached && !selected?.logo_url) return;
     setFailedLogoByAccountId((prev) => {
       if (!prev[selectedAccountId]) return prev;
       const next = { ...prev };
@@ -1761,9 +1762,9 @@ export default function AccountsPage() {
                       </div>
                       {/* Logo + close (right, matches Leads company panel) */}
                       <div className="flex items-start gap-2 shrink-0">
-                        {selectedAccount.logo_url && !failedLogoByAccountId[selectedAccount.id] ? (
+                        {(selectedAccount.logo_cached || selectedAccount.logo_url) && !failedLogoByAccountId[selectedAccount.id] ? (
                           <img
-                            src={selectedAccount.logo_url}
+                            src={selectedAccount.logo_cached ?? selectedAccount.logo_url ?? ''}
                             alt=""
                             className="w-16 h-16 rounded-xl object-contain bg-gray-50 border border-gray-100 p-1"
                             onError={() =>

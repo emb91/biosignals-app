@@ -4,7 +4,7 @@
 // profile enrichment  = Apify LinkedIn profile scrape + company scrape + Apollo company enrich + LLM bio summary
 import { completeLlm } from '@/lib/llm-client';
 import { stickyIdentity } from '@/lib/company-merge';
-import { cacheProfilePhoto } from '@/lib/photo-cache';
+import { cacheProfilePhoto, cacheCompanyLogo } from '@/lib/photo-cache';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import {
   enrichOrganizationWithApollo,
@@ -670,6 +670,9 @@ async function upsertResolvedCompany(
   const apifyFirmographics = input.apifyFirmographics;
   const apolloFirmographics = input.apolloFirmographics || null;
 
+  const freshLogoUrl = pickCanonicalString(apifyFirmographics.logo_url, existingCompany?.logo_url);
+  const logoCached = freshLogoUrl ? await cacheCompanyLogo(freshLogoUrl) : null;
+
   const payload: Record<string, unknown> = {
     domain,
     // IDENTITY fields are STICKY — when a canonical row already has them, the
@@ -688,7 +691,8 @@ async function upsertResolvedCompany(
     description: pickCanonicalString(apifyFirmographics.description, existingCompany?.description),
     bio_summary: pickCanonicalString(apifyFirmographics.bio_summary, existingCompany?.bio_summary),
     tagline: pickCanonicalString(apifyFirmographics.tagline, existingCompany?.tagline),
-    logo_url: pickCanonicalString(apifyFirmographics.logo_url, existingCompany?.logo_url),
+    logo_url: freshLogoUrl,
+    logo_cached: logoCached,
     follower_count: pickCanonicalNumber(apifyFirmographics.follower_count, existingCompany?.follower_count),
     industry: pickCanonicalString(
       apolloFirmographics?.industry,

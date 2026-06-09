@@ -36,6 +36,7 @@ import {
   normalizeLinkedInCompanyUrl,
   type ApifyFirmographics,
 } from '@/lib/my-company-enrichment';
+import { cacheCompanyLogo } from '@/lib/photo-cache';
 import { runCompanyMonitor } from '@/lib/company-monitor';
 import { employeeCountToSizeBucket } from '@/lib/arcova-taxonomy';
 import {
@@ -276,6 +277,9 @@ export async function runCompanyEnrichmentById(
     const bioSummary =
       (rawDescription ? await summariseCompanyBio(rawDescription) : null) ?? company.bio_summary;
 
+    const freshLogoUrl = pickString(apifyFirmographics.logo_url, company.logo_url);
+    const logoCached = freshLogoUrl ? await cacheCompanyLogo(freshLogoUrl) : null;
+
     const payload: Record<string, unknown> = {
       domain: resolvedDomain,
       bio_summary: bioSummary,
@@ -290,7 +294,8 @@ export async function runCompanyEnrichmentById(
       ),
       description: pickString(apifyFirmographics.description, company.description),
       tagline: pickString(apifyFirmographics.tagline, company.tagline),
-      logo_url: pickString(apifyFirmographics.logo_url, company.logo_url),
+      logo_url: freshLogoUrl,
+      logo_cached: logoCached,
       follower_count: pickNumber(apifyFirmographics.follower_count, company.follower_count),
       industry: pickString(
         typeof apollo.company_industry === 'string' ? apollo.company_industry : null,

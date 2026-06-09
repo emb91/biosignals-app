@@ -20,6 +20,7 @@ type AccountRpcRow = {
   domain: string | null;
   website: string | null;
   logo_url: string | null;
+  logo_cached: string | null;
   company_fit_score: number | null;
   company_fit_coverage: number | null;
   matched_icp_id: string | null;
@@ -371,6 +372,7 @@ export async function GET(request: Request) {
         company_name: overrideFor('company_name') ?? row.company_name,
         domain: row.domain,
         logo_url: row.logo_url,
+        logo_cached: row.logo_cached,
         // ICP
         matched_icp_id: row.matched_icp_id,
         matched_icp_label: row.matched_icp_id ? icpLabels.get(row.matched_icp_id) ?? null : null,
