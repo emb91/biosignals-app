@@ -1569,28 +1569,39 @@ export function ContactsWorkspace() {
       .catch(() => {});
   }, []);
 
+  // Opens the Nango Connect UI (same flow as /import). Returns true once the modal
+  // is open; the actual reconnect + retry happen in the onEvent 'connect' handler.
+  // Returns false only if we couldn't get a session token / open the modal at all.
   const handleHubSpotReconnect = useCallback(async (afterReconnect?: () => void): Promise<boolean> => {
     try {
-      const nango = new Nango({ publicKey: process.env.NEXT_PUBLIC_NANGO_PUBLIC_KEY ?? '' });
-      const connectionId = `hubspot-${user?.id ?? 'unknown'}`;
-      await nango.auth('hubspot', connectionId);
-      await fetch('/api/hubspot/connect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ integrationId: 'hubspot', connectionId }),
+      const sessionRes = await fetch('/api/nango/session', { method: 'POST' });
+      if (!sessionRes.ok) return false;
+      const { sessionToken } = await sessionRes.json();
+      if (!sessionToken) return false;
+
+      const nangoClient = new Nango();
+      const connectUI = nangoClient.openConnectUI({
+        onEvent: async (event) => {
+          if (event.type === 'connect') {
+            const { connectionId, providerConfigKey } = event.payload;
+            await fetch('/api/nango/connection', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ integrationId: providerConfigKey, connectionId }),
+            });
+            setHubspotConnected(true);
+            setHubspotSyncResult(null);
+            setHubspotPullResult(null);
+            afterReconnect?.();
+          }
+        },
       });
-      setHubspotConnected(true);
-      setHubspotSyncResult(null);
-      setHubspotPullResult(null);
-      afterReconnect?.();
+      connectUI.setSessionToken(sessionToken);
       return true;
-    } catch (e) {
-      // Nango throws { type: 'user_cancelled' } when the user closes the popup — stay silent.
-      // Any other error (missing public key, network, etc.) means we couldn't reconnect.
-      const isUserCancel = (e as { type?: string })?.type === 'user_cancelled';
-      return isUserCancel; // return false so callers can show a fallback
+    } catch {
+      return false;
     }
-  }, [user?.id]);
+  }, []);
 
   const handlePushToHubspot = useCallback(async () => {
     if (pushingToHubspot) return;
