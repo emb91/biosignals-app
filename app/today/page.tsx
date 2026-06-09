@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel } from '@/components/AgentPanel';
-import { BriefingSparkline } from '@/components/briefing/BriefingSparkline';
+import { BriefingSparkline, type PulseDayBreakdown } from '@/components/briefing/BriefingSparkline';
 import { supabase } from '@/lib/supabase';
 import { ArrowRight, Check, Loader2, TrendingUp } from 'lucide-react';
 import './briefing-today.css';
@@ -35,7 +35,7 @@ type ContactRecord = {
 
 type BriefingPulseSeriesState =
   | { state: 'loading' }
-  | { state: 'ready'; values: number[] }
+  | { state: 'ready'; values: number[]; breakdown: PulseDayBreakdown[] }
   | { state: 'off' };
 
 type LiveSignal = {
@@ -401,10 +401,26 @@ export default function BriefingPage() {
         }
 
         if (pulseSeriesRes.ok) {
-          const pulseJson = (await pulseSeriesRes.json()) as { data?: unknown };
+          const pulseJson = (await pulseSeriesRes.json()) as {
+            data?: unknown;
+            breakdown?: Array<{
+              date: string;
+              count: number;
+              top: Array<{ signalKey: string; companyName: string | null }>;
+            }>;
+          };
           const arr = pulseJson.data;
           if (Array.isArray(arr) && arr.length >= 2 && arr.every((n) => typeof n === 'number' && Number.isFinite(n))) {
-            setPulseSeries({ state: 'ready', values: arr as number[] });
+            const breakdown: PulseDayBreakdown[] = (pulseJson.breakdown ?? []).map((day) => ({
+              date: day.date,
+              count: day.count,
+              top: day.top.map((s) => ({
+                glyph: signalGlyph(s.signalKey),
+                label: signalLabel(s.signalKey),
+                company: s.companyName ?? '',
+              })),
+            }));
+            setPulseSeries({ state: 'ready', values: arr as number[], breakdown });
           } else {
             setPulseSeries({ state: 'off' });
           }
@@ -793,20 +809,10 @@ export default function BriefingPage() {
                   )}
                 </span>
               </header>
-              <div className="bt-pipe-grid">
-                <div>
-                  <p className="bt-pipe-num">{formatInt(totalCoveredCompanies)}</p>
-                  <p className="bt-pipe-label">prioritised companies</p>
-                </div>
-                <div>
-                  <p className="bt-pipe-num bt-pipe-num-sub">{pipeReady}</p>
-                  <p className="bt-pipe-label">high-fit · surfaced</p>
-                </div>
-              </div>
               <div className="bt-pipe-series-slot">
                 {pulseSeries.state === 'ready' ? (
                   <>
-                    <BriefingSparkline accent={BT_ACCENT} values={pulseSeries.values} />
+                    <BriefingSparkline accent={BT_ACCENT} values={pulseSeries.values} breakdown={pulseSeries.breakdown} />
                     <div className="bt-pipe-legend">
                       <span>
                         <i style={{ background: BT_ACCENT }} />
