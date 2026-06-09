@@ -5,9 +5,8 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
 import { AgentPanel } from '@/components/AgentPanel';
-import { BriefingSparkline, type PulseDayBreakdown } from '@/components/briefing/BriefingSparkline';
 import { supabase } from '@/lib/supabase';
-import { ArrowRight, Check, Loader2, TrendingUp } from 'lucide-react';
+import { ArrowRight, Check, ChevronRight, ExternalLink, Loader2 } from 'lucide-react';
 import './briefing-today.css';
 import { ROUTES, withQuery } from '@/lib/routes';
 import { fetchTodayPriorities } from '@/lib/today-priorities-client';
@@ -33,18 +32,15 @@ type ContactRecord = {
   signals?: string[] | null;
 };
 
-type BriefingPulseSeriesState =
-  | { state: 'loading' }
-  | { state: 'ready'; values: number[]; breakdown: PulseDayBreakdown[] }
-  | { state: 'off' };
-
 type LiveSignal = {
   id: string;
   signalKey: string;
   companyName: string | null;
   companyDomain: string | null;
+  contactName: string | null;
   sourceTitle: string | null;
   sourceSummary: string | null;
+  sourceUrl: string | null;
   sourceMetadata: Record<string, unknown>;
   observedAt: string;
   eventAt: string | null;
@@ -139,15 +135,26 @@ function formatInt(n: number) {
   return new Intl.NumberFormat('en-GB').format(n);
 }
 
-type BriefingSignalRow = {
+/** One individual event within a grouped signal row (e.g. one paper, one patent). */
+type SignalSubItem = {
   id: string;
-  glyph: string;
-  strong: string;
-  rest: string;
+  title: string | null;
+  url: string | null;
   what: string | null;
   ago: string;
-  /** First pill is always styled as "lead" (teal accent). Rest are plain chips. */
+};
+
+/** One collapsed row = one (company, signal type) combination. */
+type SignalGroupRow = {
+  key: string;
+  glyph: string;
+  company: string;
+  label: string;
+  count: number;
+  ago: string;
+  /** Lead pill = summary count, rest = breakdown. Hiring expansion only. */
   pills?: string[];
+  items: SignalSubItem[];
 };
 
 function signalGlyph(key: string): string {
@@ -160,27 +167,51 @@ function signalGlyph(key: string): string {
 }
 
 const SIGNAL_LABELS: Record<string, string> = {
-  patent_filed_or_granted: 'Patent filed / granted',
-  patent_application_published: 'Patent application',
-  patent_granted: 'Patent granted',
-  new_therapeutic_area_patent: 'New TA patent',
+  // Hiring
+  hiring_expansion:          'Hiring expansion',
+  job_surge:                 'Hiring surge',
+  research_hiring:           'Research hiring',
+  cmc_hiring:                'CMC hiring',
+  data_informatics_hiring:   'Data & informatics hiring',
+  medical_hiring:            'Medical affairs hiring',
+  quality_hiring:            'Quality hiring',
+  executive_hiring:          'Executive hiring',
+  clinical_ops_hiring:       'Clinical ops hiring',
+  bd_hiring:                 'BD hiring',
+  // Research
   assignee_portfolio_acceleration: 'Patent portfolio surge',
-  publication: 'Publication',
-  clinical_trial_recruiting: 'Trial recruiting',
-  clinical_trial_completed: 'Trial completed',
-  trial_site_expansion: 'Trial site expansion',
-  indication_expansion: 'Indication expansion',
-  hiring_expansion: 'Hiring expansion',
-  cmc_hiring: 'CMC hiring',
-  research_hiring: 'Research hiring',
-  data_informatics_hiring: 'Data / informatics hiring',
-  medical_hiring: 'Medical affairs hiring',
-  quality_hiring: 'Quality hiring',
-  executive_hiring: 'Executive hiring',
-  clinical_ops_hiring: 'Clinical ops hiring',
-  bd_hiring: 'BD hiring',
-  new_contact_added_in_crm: 'New CRM contact',
-  open_opportunity_in_crm: 'Open opportunity',
+  patent_filed_or_granted:         'Patent filed',
+  patent_application_published:    'Patent application',
+  patent_granted:                  'Patent granted',
+  new_therapeutic_area_patent:     'New TA patent',
+  publication:                     'Publication',
+  publication_surge:               'Publication surge',
+  nih_grant_awarded:               'NIH grant awarded',
+  grant_award:                     'Grant awarded',
+  // Pipeline
+  clinical_trial_recruiting:   'Trial recruiting',
+  clinical_trial_registered:   'Trial registered',
+  clinical_trial_phase_start:  'Trial phase start',
+  clinical_trial_completion:   'Trial completed',
+  clinical_trial_completed:    'Trial completed',
+  clinical_trial_enrollment:   'Trial enrollment update',
+  trial_site_expansion:        'Trial site expansion',
+  trial_failure_or_halt:       'Trial halted',
+  program_discontinuation:     'Programme discontinued',
+  indication_expansion:        'Indication expansion',
+  fda_submission:              'FDA submission',
+  fda_approval:                'FDA approval',
+  // Research extras
+  new_paper_published:         'New publication',
+  funding_round:               'Funding round',
+  series_announcement:         'Series funding',
+  acquisition:                 'Acquisition',
+  // People
+  new_to_role:                 'New to role',
+  title_change:                'Title change',
+  new_internal_role:           'Internal promotion',
+  new_contact_added_in_crm:    'Contact added',
+  open_opportunity_in_crm:     'Deal in pipeline',
 };
 
 function signalLabel(key: string): string {
@@ -204,6 +235,75 @@ const INDIVIDUAL_HIRING_KEYS = new Set([
   'executive_hiring', 'clinical_ops_hiring', 'medical_hiring', 'bd_hiring',
 ]);
 
+type SignalFamilyDef = {
+  key: string;
+  eyebrow: string;
+  title: string;
+};
+
+const SIGNAL_FAMILIES: SignalFamilyDef[] = [
+  { key: 'hiring',   eyebrow: 'Talent',   title: 'Hiring'   },
+  { key: 'research', eyebrow: 'Science',  title: 'Research' },
+  { key: 'pipeline', eyebrow: 'Clinical', title: 'Pipeline' },
+  { key: 'people',   eyebrow: 'Moves',    title: 'People'   },
+];
+
+/** Age gate per family. Signals older than this are excluded from the today view. */
+const FAMILY_MAX_AGE_MS: Record<string, number> = {
+  hiring:   14 * 86_400_000,
+  people:   14 * 86_400_000,
+  research: 30 * 86_400_000,
+  pipeline: 30 * 86_400_000,
+};
+
+const SIGNAL_KEY_TO_FAMILY: Record<string, string> = {
+  // Hiring — LinkedIn Jobs + derived aggregates
+  hiring_expansion:                'hiring',
+  job_surge:                       'hiring',
+  research_hiring:                 'hiring',
+  cmc_hiring:                      'hiring',
+  data_informatics_hiring:         'hiring',
+  quality_hiring:                  'hiring',
+  executive_hiring:                'hiring',
+  clinical_ops_hiring:             'hiring',
+  medical_hiring:                  'hiring',
+  bd_hiring:                       'hiring',
+  regulatory_hiring:               'hiring',
+  // Research — PatentsView, PubMed, NIH
+  assignee_portfolio_acceleration: 'research',
+  patent_filed_or_granted:         'research',
+  patent_application_published:    'research',
+  patent_granted:                  'research',
+  new_therapeutic_area_patent:     'research',
+  publication:                     'research',
+  publication_surge:               'research',
+  new_paper_published:             'research',
+  nih_grant_awarded:               'research',
+  grant_award:                     'research',
+  funding_round:                   'research', // financial runway = R&D capacity signal
+  series_announcement:             'research',
+  acquisition:                     'research',
+  // Pipeline — ClinicalTrials.gov, FDA
+  clinical_trial_recruiting:       'pipeline',
+  clinical_trial_registered:       'pipeline',
+  clinical_trial_completed:        'pipeline',
+  clinical_trial_phase_start:      'pipeline',
+  clinical_trial_completion:       'pipeline',
+  clinical_trial_enrollment:       'pipeline',
+  trial_site_expansion:            'pipeline',
+  trial_failure_or_halt:           'pipeline',
+  program_discontinuation:         'pipeline',
+  indication_expansion:            'pipeline',
+  fda_submission:                  'pipeline',
+  fda_approval:                    'pipeline',
+  // People — LinkedIn moves, HubSpot CRM
+  new_to_role:                     'people',
+  title_change:                    'people',
+  new_internal_role:               'people',
+  new_contact_added_in_crm:        'people',
+  open_opportunity_in_crm:         'people',
+};
+
 function relativeTime(isoStr: string | null | undefined): string {
   if (!isoStr) return '';
   const t = Date.parse(isoStr);
@@ -214,6 +314,73 @@ function relativeTime(isoStr: string | null | undefined): string {
   if (diffDays < 7) return `${diffDays}d ago`;
   if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
   return `${Math.floor(diffDays / 30)}mo ago`;
+}
+
+/**
+ * Signals whose sourceTitle is a real document title (paper name, patent title, deal name)
+ * that should be shown as-is. Everything else gets a friendly generated label.
+ */
+const DOCUMENT_TITLE_KEYS = new Set([
+  'publication', 'publication_surge', 'new_paper_published',
+  'patent_filed_or_granted', 'patent_application_published', 'patent_granted', 'new_therapeutic_area_patent',
+  'assignee_portfolio_acceleration',
+  'fda_approval', 'fda_submission',
+  'funding_round', 'series_announcement', 'acquisition',
+  'grant_award', 'nih_grant_awarded',
+  'clinical_trial_recruiting', 'clinical_trial_registered', 'clinical_trial_phase_start',
+  'clinical_trial_completion', 'clinical_trial_completed', 'trial_site_expansion',
+  'trial_failure_or_halt', 'program_discontinuation', 'indication_expansion',
+]);
+
+/** Patterns in titles/summaries that indicate internal tooling provenance — hide from users. */
+const INTERNAL_PROVENANCE = /\b(apify|manual[_ ]test|hubspot[_ ]contact|linkedin[_ ]scrape)\b/i;
+/** DB-generated event titles like "hiring_expansion detected at Revvity" */
+const DB_EVENT_TITLE = /^[\w_]+\s+(detected|found|updated|created|added|changed|entered|identified)\b/i;
+
+function cleanSubItemTitle(
+  signalKey: string,
+  title: string | null,
+  summary: string | null,
+  contactName?: string | null,
+): string | null {
+  // Document-titled signals: show the actual title (it's from PubMed, USPTO, etc.)
+  if (DOCUMENT_TITLE_KEYS.has(signalKey)) {
+    const t = title ?? summary;
+    if (t && !INTERNAL_PROVENANCE.test(t)) return t;
+    return null;
+  }
+
+  // Operational signals: sanitise or generate friendly text
+  const candidates = [title, summary].filter((s): s is string => !!s);
+  for (const c of candidates) {
+    if (!INTERNAL_PROVENANCE.test(c) && !DB_EVENT_TITLE.test(c)) return c;
+  }
+
+  // Fallback: generate from signal key
+  switch (signalKey) {
+    case 'hiring_expansion':
+    case 'job_surge':            return null; // pills carry all the info
+    case 'open_opportunity_in_crm': return 'Deal entered active stage';
+    case 'new_contact_added_in_crm': return contactName ? `${contactName} added` : 'Contact added';
+    case 'new_to_role':          return contactName ? `${contactName} — new role` : 'New role';
+    case 'title_change':         return contactName ? `${contactName} — title changed` : 'Title changed';
+    case 'new_internal_role':    return contactName ? `${contactName} — promotion` : 'Internal promotion';
+    case 'trial_site_expansion': return summary ?? 'Site expansion';
+    case 'indication_expansion': return summary ?? 'Indication expansion';
+    case 'clinical_trial_phase_start':
+    case 'clinical_trial_recruiting': return summary ?? 'Phase started';
+    case 'clinical_trial_completion':
+    case 'clinical_trial_completed':  return summary ?? 'Phase completed';
+    case 'clinical_trial_enrollment': return summary ?? 'Enrollment update';
+    default: return summary ?? null;
+  }
+}
+
+/** Strip internal scraper URLs — only show real source URLs to users. */
+function cleanSubItemUrl(url: string | null): string | null {
+  if (!url) return null;
+  if (url.includes('apify.com') || url.includes('api.apify.com')) return null;
+  return url;
 }
 
 export default function BriefingPage() {
@@ -238,15 +405,13 @@ export default function BriefingPage() {
   } | null>(null);
   const [doneTaskIds, setDoneTaskIds] = useState<Set<string>>(() => new Set());
   const [agentBusy, setAgentBusy] = useState(false);
+  const [expandedSignalRows, setExpandedSignalRows] = useState<Set<string>>(new Set());
   const [clock, setClock] = useState(() => new Date());
   // Cross-page priorities aggregated server-side. Each source (icp-audit today,
   // enrichment-failures / pipeline-health / etc. tomorrow) returns at most one grouped
   // TodayPriority row. /today is a dumb consumer — never knows what's in the list.
   const [aggregatedPriorities, setAggregatedPriorities] = useState<TodayPriority[]>([]);
-  /** Pulse chart: stable layout while series loads so the card height (and shadow) does not jump */
-  const [pulseSeries, setPulseSeries] = useState<BriefingPulseSeriesState>({ state: 'loading' });
   const [liveSignals, setLiveSignals] = useState<LiveSignal[]>([]);
-  const prevBriefingUserIdRef = useRef<string | undefined>(undefined);
 
   const taskStateStorageKey = user
     ? `${TASK_STATE_STORAGE_PREFIX}:${user.id}:${todayStorageDate()}`
@@ -319,12 +484,6 @@ export default function BriefingPage() {
   useEffect(() => {
     if (!user) return;
 
-    const uid = user.id;
-    if (prevBriefingUserIdRef.current !== undefined && prevBriefingUserIdRef.current !== uid) {
-      setPulseSeries({ state: 'loading' });
-    }
-    prevBriefingUserIdRef.current = uid;
-
     const fetchDashboardData = async () => {
       try {
         const [
@@ -337,7 +496,6 @@ export default function BriefingPage() {
           icpCoverageRes,
           icpHealthRes,
           importReadyRes,
-          pulseSeriesRes,
           repliedRes,
           liveSignalsRes,
         ] = await Promise.all([
@@ -350,9 +508,8 @@ export default function BriefingPage() {
           fetch('/api/accounts/icp-coverage'),
           fetch('/api/pipeline/icp-cards'),
           fetch('/api/import-ready'),
-          fetch('/api/today/pulse-series'),
           fetch('/api/outreach/replied'),
-          fetch('/api/signals/feed?pageSize=12&page=1'),
+          fetch('/api/signals/feed?pageSize=50&page=1&skipPatentCollapse=1'),
         ]);
 
         if (profileError) throw profileError;
@@ -420,34 +577,6 @@ export default function BriefingPage() {
           setShowImportReady(Boolean(readyJson.ready));
         }
 
-        if (pulseSeriesRes.ok) {
-          const pulseJson = (await pulseSeriesRes.json()) as {
-            data?: unknown;
-            breakdown?: Array<{
-              date: string;
-              count: number;
-              top: Array<{ signalKey: string; companyName: string | null }>;
-            }>;
-          };
-          const arr = pulseJson.data;
-          if (Array.isArray(arr) && arr.length >= 2 && arr.every((n) => typeof n === 'number' && Number.isFinite(n))) {
-            const breakdown: PulseDayBreakdown[] = (pulseJson.breakdown ?? []).map((day) => ({
-              date: day.date,
-              count: day.count,
-              top: day.top.map((s) => ({
-                glyph: signalGlyph(s.signalKey),
-                label: signalLabel(s.signalKey),
-                company: s.companyName ?? '',
-              })),
-            }));
-            setPulseSeries({ state: 'ready', values: arr as number[], breakdown });
-          } else {
-            setPulseSeries({ state: 'off' });
-          }
-        } else {
-          setPulseSeries({ state: 'off' });
-        }
-
         if (liveSignalsRes.ok) {
           const sigJson = (await liveSignalsRes.json()) as { data?: Array<Record<string, unknown>> };
           setLiveSignals(
@@ -456,8 +585,10 @@ export default function BriefingPage() {
               signalKey: String(s.signalKey ?? ''),
               companyName: typeof s.companyName === 'string' ? s.companyName : null,
               companyDomain: typeof s.companyDomain === 'string' ? s.companyDomain : null,
+              contactName: typeof s.contactName === 'string' ? s.contactName : null,
               sourceTitle: typeof s.sourceTitle === 'string' ? s.sourceTitle : null,
               sourceSummary: typeof s.sourceSummary === 'string' ? s.sourceSummary : null,
+              sourceUrl: typeof s.sourceUrl === 'string' ? s.sourceUrl : null,
               sourceMetadata: (s.sourceMetadata && typeof s.sourceMetadata === 'object' && !Array.isArray(s.sourceMetadata))
                 ? (s.sourceMetadata as Record<string, unknown>)
                 : {},
@@ -483,7 +614,6 @@ export default function BriefingPage() {
         ]);
       } catch (error) {
         console.error('Error loading dashboard data:', error);
-        setPulseSeries({ state: 'off' });
       } finally {
         setLoadingDashboard(false);
       }
@@ -525,60 +655,88 @@ export default function BriefingPage() {
   const healthIssues = icpHealthCards.filter(isHealthIssue);
   const syncProblemCount = (hubspotSyncLog?.contacts_errors ?? 0) + (hubspotSyncLog?.contacts_skipped ?? 0);
 
-  const signalRows = useMemo((): BriefingSignalRow[] => {
-    if (liveSignals.length === 0) {
-      return [{
-        id: 'quiet',
-        glyph: '○',
-        strong: 'No signals yet',
-        rest: '',
-        what: 'Signals will appear here as your accounts are monitored',
-        ago: '',
-      }];
-    }
-    return liveSignals.slice(0, 12).map((s) => {
+  const signalGroups = useMemo((): Array<{ family: SignalFamilyDef; rows: SignalGroupRow[] }> => {
+    const now = Date.now();
+    const familyMap = new Map<string, Map<string, SignalGroupRow>>();
+
+    for (const s of liveSignals) {
       const meta = s.sourceMetadata as Record<string, unknown>;
-      let what: string | null = s.sourceSummary ?? s.sourceTitle ?? s.signalKey.replace(/_/g, ' ');
-      let pills: string[] | undefined;
+      const familyKey = SIGNAL_KEY_TO_FAMILY[s.signalKey] ?? 'funding';
 
-      if (s.signalKey === 'hiring_expansion') {
-        // Lead pill = total count; remaining pills = category breakdown
-        const total = typeof meta.total_postings === 'number' ? meta.total_postings : null;
-        const categories = meta.categories && typeof meta.categories === 'object'
-          ? (meta.categories as Record<string, number>)
-          : null;
-        pills = [];
-        if (total !== null) pills.push(`${total} open roles`);
-        if (categories) {
-          for (const [key, count] of Object.entries(categories)) {
-            const lbl = HIRING_CATEGORY_LABELS[key];
-            if (lbl) pills.push(count > 1 ? `${lbl} · ${count}` : lbl);
-          }
-        }
-        // Strip the "Functions: …" tail from the summary — it's now in pills
-        const funcIdx = what?.indexOf(' Functions:') ?? -1;
-        if (funcIdx > 0) what = what!.slice(0, funcIdx).trim();
-      } else if (INDIVIDUAL_HIRING_KEYS.has(s.signalKey)) {
-        // Individual hiring signal: count pill + up to 3 role title pills; no sentence
-        const count = typeof meta.count === 'number' ? meta.count : null;
-        const titles = Array.isArray(meta.titles) ? (meta.titles as string[]) : [];
-        pills = [];
-        if (count !== null) pills.push(`${count} role${count !== 1 ? 's' : ''}`);
-        pills.push(...titles.slice(0, 3));
-        what = null;
-      }
+      // Age gate: skip signals outside the family's window
+      const maxAgeMs = FAMILY_MAX_AGE_MS[familyKey] ?? 30 * 86_400_000;
+      const sigDate = Date.parse(s.eventAt ?? s.observedAt) || 0;
+      if (now - sigDate > maxAgeMs) continue;
 
-      return {
+      if (!familyMap.has(familyKey)) familyMap.set(familyKey, new Map());
+      const family = familyMap.get(familyKey)!;
+
+      const company = s.companyName ?? s.companyDomain ?? 'Unknown';
+      const rowKey = `${company}||${s.signalKey}`;
+
+      // Build sub-item with sanitised title + URL
+      const subItem: SignalSubItem = {
         id: s.id,
-        glyph: signalGlyph(s.signalKey),
-        strong: s.companyName ?? s.companyDomain ?? 'Unknown',
-        rest: signalLabel(s.signalKey),
-        what,
+        title: cleanSubItemTitle(s.signalKey, s.sourceTitle, s.sourceSummary, s.contactName),
+        url: cleanSubItemUrl(s.sourceUrl),
+        what: null,
         ago: relativeTime(s.eventAt ?? s.observedAt),
-        pills,
       };
-    });
+
+      if (!family.has(rowKey)) {
+        // Row-level pills for aggregate hiring signals
+        let pills: string[] | undefined;
+        if (s.signalKey === 'hiring_expansion') {
+          const total = typeof meta.total_postings === 'number' ? meta.total_postings : null;
+          const categories = meta.categories && typeof meta.categories === 'object'
+            ? (meta.categories as Record<string, number>) : null;
+          pills = [];
+          if (total !== null) pills.push(`${total} open roles`);
+          if (categories) {
+            for (const [key, count] of Object.entries(categories)) {
+              const lbl = HIRING_CATEGORY_LABELS[key];
+              if (lbl) pills.push(count > 1 ? `${lbl} · ${count}` : lbl);
+            }
+          }
+        } else if (s.signalKey === 'job_surge') {
+          const count = typeof meta.total_postings === 'number' ? meta.total_postings : null;
+          pills = count !== null ? [`${count} open roles`] : undefined;
+        } else if (INDIVIDUAL_HIRING_KEYS.has(s.signalKey)) {
+          const count = typeof meta.count === 'number' ? meta.count : null;
+          pills = count !== null ? [`${count} role${count !== 1 ? 's' : ''}`] : undefined;
+        }
+
+        family.set(rowKey, {
+          key: rowKey,
+          glyph: signalGlyph(s.signalKey),
+          company,
+          label: signalLabel(s.signalKey),
+          count: 1,
+          ago: relativeTime(s.eventAt ?? s.observedAt),
+          pills,
+          items: [subItem],
+        });
+      } else {
+        const row = family.get(rowKey)!;
+        row.count++;
+        row.items.push(subItem);
+      }
+    }
+
+    // Always return all 5 families — empty tiles show a quiet-state message
+    return SIGNAL_FAMILIES.map((f) => ({
+      family: f,
+      rows: familyMap.has(f.key) ? [...familyMap.get(f.key)!.values()] : [],
+    }));
   }, [liveSignals]);
+
+  const toggleSignalRow = (key: string) => {
+    setExpandedSignalRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
 
   const agenda: AgendaItem[] = [
     // Replies are the highest-leverage thing on the page when present —
@@ -754,7 +912,7 @@ export default function BriefingPage() {
               <div className="bt-agent-meta">
                 <span className="bt-agent-status">
                   <span className="bt-agent-status-dot" style={{ background: BT_ACCENT }} />
-                  <span>Assistant · {agentBusy ? 'thinking' : 'listening'}</span>
+                  <span>Agent · {agentBusy ? 'thinking' : 'ready'}</span>
                 </span>
                 <span className="bt-agent-time">
                   {clock.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} local
@@ -849,95 +1007,94 @@ export default function BriefingPage() {
 
             </div>
 
-            <section className="bt-bento bt-pipe-tile">
-              <header className="bt-tile-head">
-                <div>
-                  <p className="bt-tile-eyebrow">Pipeline</p>
-                  <h2 className="bt-tile-title">Pulse</h2>
-                </div>
-                <span className="bt-tile-trend" style={{ color: BT_ACCENT }}>
-                  {runningJobs.length > 0 ? (
-                    <>
-                      <TrendingUp className="h-3 w-3" strokeWidth={2.2} />
-                      {runningJobs.length} active
-                    </>
-                  ) : (
-                    <>steady</>
+            {signalGroups.map((group) => (
+              <section key={group.family.key} className="bt-bento bt-signals-tile">
+                <header className="bt-tile-head">
+                  <div>
+                    <p className="bt-tile-eyebrow">{group.family.eyebrow}</p>
+                    <h2 className="bt-tile-title">{group.family.title}</h2>
+                  </div>
+                  {group.rows.length > 0 && (
+                    <span className="bt-tile-live">
+                      <span className="bt-live-dot" style={{ background: BT_ACCENT }} />
+                      {group.rows.length === 1 ? '1 account' : `${group.rows.length} accounts`}
+                    </span>
                   )}
-                </span>
-              </header>
-              <div className="bt-pipe-series-slot">
-                {pulseSeries.state === 'ready' ? (
-                  <>
-                    <BriefingSparkline accent={BT_ACCENT} values={pulseSeries.values} breakdown={pulseSeries.breakdown} />
-                    <div className="bt-pipe-legend">
-                      <span>
-                        <i style={{ background: BT_ACCENT }} />
-                        signals / day (last 28 days)
-                      </span>
-                      <span>
-                        <i className="dim" />
-                        trailing 7-day average
-                      </span>
-                    </div>
-                  </>
-                ) : pulseSeries.state === 'loading' ? (
-                  <div className="bt-pipe-series-pending" aria-busy="true" aria-label="Loading signal trend">
-                    <div className="bt-pipe-chart-skeleton" />
-                    <div className="bt-pipe-legend-skeleton" aria-hidden>
-                      <span />
-                      <span />
-                    </div>
-                  </div>
+                </header>
+                {group.rows.length === 0 ? (
+                  <p className="bt-sig-quiet">
+                    No {group.family.title.toLowerCase()} signals in the last {(group.family.key === 'hiring' || group.family.key === 'people') ? '14' : '30'} days
+                  </p>
                 ) : (
-                  <div className="bt-pipe-series-pending bt-pipe-series-off" role="status">
-                    <p className="bt-pipe-off-text">Signal trend unavailable</p>
-                  </div>
-                )}
-              </div>
-            </section>
-
-            <section className="bt-bento bt-signals-tile">
-              <header className="bt-tile-head">
-                <div>
-                  <p className="bt-tile-eyebrow">Live</p>
-                  <h2 className="bt-tile-title">Signals</h2>
-                </div>
-                <span className="bt-tile-live">
-                  <span className="bt-live-dot" style={{ background: BT_ACCENT }} />
-                  workspace
-                </span>
-              </header>
-              <ul className="bt-sig-list">
-                {signalRows.map((s, i) => (
-                  <li key={s.id} className="bt-sig-row" style={{ animationDelay: `${i * 50}ms` }}>
-                    <span className="bt-sig-glyph" style={{ color: BT_ACCENT }}>
-                      {s.glyph}
-                    </span>
-                    <span className="bt-sig-body">
-                      <span className="bt-sig-line">
-                        <strong>{s.strong}</strong>
-                        {s.rest ? ` · ${s.rest}` : ''}
-                      </span>
-                      {s.what ? <span className="bt-sig-what">{s.what}</span> : null}
-                      {s.pills && s.pills.length > 0 ? (
-                        <span className="bt-sig-pills">
-                          {s.pills.map((pill, j) => (
-                            <span
-                              key={j}
-                              className={cn('bt-sig-pill', j === 0 && 'bt-sig-pill--lead')}
-                            >
-                              {pill}
+                  <ul className="bt-sig-list">
+                    {group.rows.map((row, i) => {
+                      const isOpen = expandedSignalRows.has(row.key);
+                      return (
+                        <li key={row.key} className="bt-sig-group-item" style={{ animationDelay: `${i * 40}ms` }}>
+                          {/* Collapsed row — always visible */}
+                          <button
+                            type="button"
+                            className={cn('bt-sig-row bt-sig-row--group', isOpen && 'is-open')}
+                            onClick={() => toggleSignalRow(row.key)}
+                            aria-expanded={isOpen}
+                          >
+                            <span className="bt-sig-glyph" style={{ color: BT_ACCENT }}>{row.glyph}</span>
+                            <span className="bt-sig-body">
+                              <span className="bt-sig-line">
+                                <strong>{row.company}</strong>
+                                {` · ${row.label}`}
+                                {row.count > 1 && (
+                                  <span className="bt-sig-count">{row.count}</span>
+                                )}
+                              </span>
+                              {row.pills && row.pills.length > 0 && (
+                                <span className="bt-sig-pills">
+                                  {row.pills.map((pill, j) => (
+                                    <span key={j} className={cn('bt-sig-pill', j === 0 && 'bt-sig-pill--lead')}>
+                                      {pill}
+                                    </span>
+                                  ))}
+                                </span>
+                              )}
                             </span>
-                          ))}
-                        </span>
-                      ) : null}
-                    </span>
-                    {s.ago ? <span className="bt-sig-ago">{s.ago}</span> : <span className="bt-sig-ago" />}
-                  </li>
-                ))}
-              </ul>
-            </section>
+                            <span className="bt-sig-ago">{row.ago}</span>
+                            <ChevronRight className="bt-sig-chevron h-3 w-3" strokeWidth={2.2} />
+                          </button>
+
+                          {/* Expanded sub-items */}
+                          {isOpen && (
+                            <ul className="bt-sig-sub-list">
+                              {row.items.map((item) => {
+                                const label = item.title ?? item.what;
+                                if (!label && !item.url) return null;
+                                return (
+                                  <li key={item.id} className="bt-sig-sub-item">
+                                    {item.url ? (
+                                      <a
+                                        href={item.url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="bt-sig-sub-link"
+                                      >
+                                        {label ?? item.url}
+                                        <ExternalLink className="bt-sig-sub-ext h-2.5 w-2.5" strokeWidth={2} />
+                                      </a>
+                                    ) : (
+                                      <span className="bt-sig-sub-text">{label}</span>
+                                    )}
+                                    {item.ago && <span className="bt-sig-sub-ago">{item.ago}</span>}
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </section>
+            ))}
 
           </div>
         </div>

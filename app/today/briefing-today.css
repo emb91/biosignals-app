@@ -81,12 +81,14 @@
 .briefing-today .bt-bento-grid {
   display: grid;
   grid-template-columns: minmax(0, 45rem) 1fr;
-  /* Row heights follow left-column content; right column (Priorities only) spans all rows */
-  grid-template-rows: auto auto auto;
+  /* Row heights follow left-column content; right column (Priorities only) spans all rows.
+     Two explicit rows (agent + pulse) plus implicit auto rows for each signal-family tile. */
+  grid-template-rows: auto auto;
+  grid-auto-rows: auto;
   gap: 1.125rem;
   align-items: start;
   margin-top: 0.875rem;
-  --bt-agent-tile-h: min(43.75rem, calc(100svh - 11.25rem));
+  --bt-agent-tile-h: 43.75rem; /* stable height — chat scrolls inside; page scrolls when the window is short (no viewport tracking) */
 }
 
 .briefing-today .bt-agent-tile {
@@ -105,10 +107,11 @@
   container-name: bt-agent;
 }
 
-/* Priorities — column 2, spans all rows but sized to its own content */
+/* Priorities — column 2, spans all rows but sized to its own content.
+   span 10 covers up to 8 signal-family tiles plus agent + pulse. */
 .briefing-today .bt-right-stack {
   grid-column: 2;
-  grid-row: 1 / -1;
+  grid-row: 1 / span 10;
   align-self: start;
   width: 100%;
   min-height: 0;
@@ -132,10 +135,10 @@
   grid-row: 2;
 }
 
-/* Signals — left column, row 3 */
+/* Signal family tiles — left column, auto-stacked in rows 3+ */
 .briefing-today .bt-signals-tile {
   grid-column: 1;
-  grid-row: 3;
+  grid-row: auto;
 }
 
 
@@ -147,7 +150,7 @@
   .briefing-today .bt-bento-grid {
     grid-template-columns: 1fr;
     grid-template-rows: none;
-    --bt-agent-tile-h: min(38.75rem, calc(100svh - 10rem));
+    --bt-agent-tile-h: 38.75rem;
   }
 
   .briefing-today .bt-agent-tile,
@@ -806,6 +809,136 @@
   background: rgba(0, 164, 180, 0.1);
   color: var(--bt-accent);
   font-weight: 600;
+}
+
+/* Count badge on grouped rows (e.g. ×4) */
+.briefing-today .bt-sig-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 0.3125rem;
+  padding: 0.0625rem 0.375rem;
+  border-radius: 62rem;
+  font-size: 0.625rem;
+  font-weight: 600;
+  background: rgba(13, 53, 71, 0.07);
+  color: rgba(13, 53, 71, 0.55);
+}
+
+/* Expandable signal row (grouped, one per company × signal type) */
+.briefing-today .bt-sig-row--group {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  /* 4-column: glyph | body | ago | chevron */
+  grid-template-columns: auto 1fr auto auto;
+}
+
+.briefing-today .bt-sig-row--group:hover {
+  background: rgba(13, 53, 71, 0.025);
+  border-radius: 0.5rem;
+}
+
+.briefing-today .bt-sig-chevron {
+  flex-shrink: 0;
+  color: rgba(13, 53, 71, 0.35);
+  transition: transform 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.briefing-today .bt-sig-row--group.is-open .bt-sig-chevron {
+  transform: rotate(90deg);
+}
+
+/* Wrapper for grouped item (collapsed row + expanded sub-list) */
+.briefing-today .bt-sig-group-item {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 0.0625rem dashed var(--bt-glass-line);
+  animation: bt-sig-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+
+.briefing-today .bt-sig-group-item:last-child {
+  border-bottom: none;
+}
+
+/* The .bt-sig-row inside a group item has no bottom border (group-item owns it) */
+.briefing-today .bt-sig-group-item .bt-sig-row {
+  border-bottom: none;
+}
+
+/* Expanded sub-item list */
+.briefing-today .bt-sig-sub-list {
+  list-style: none;
+  padding: 0.25rem 0 0.5rem 2.125rem;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3125rem;
+  border-left: 0.125rem solid rgba(0, 164, 180, 0.18);
+  margin-left: 0.5625rem;
+  margin-bottom: 0.375rem;
+}
+
+.briefing-today .bt-sig-sub-item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  min-width: 0;
+}
+
+.briefing-today .bt-sig-sub-link {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25rem;
+  color: var(--bt-accent);
+  text-decoration: underline;
+  text-decoration-color: rgba(0, 164, 180, 0.35);
+  text-underline-offset: 0.15em;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.briefing-today .bt-sig-sub-link:hover {
+  text-decoration-color: var(--bt-accent);
+}
+
+.briefing-today .bt-sig-sub-ext {
+  flex-shrink: 0;
+  opacity: 0.55;
+  position: relative;
+  top: 0.0625rem;
+}
+
+.briefing-today .bt-sig-sub-text {
+  color: rgba(13, 53, 71, 0.55);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.briefing-today .bt-sig-sub-ago {
+  font-size: 0.625rem;
+  font-variant-numeric: tabular-nums;
+  color: rgba(13, 53, 71, 0.35);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Empty state per-family tile */
+.briefing-today .bt-sig-quiet {
+  font-size: 0.8125rem;
+  color: rgba(13, 53, 71, 0.35);
+  padding: 0.75rem 0.25rem 0.5rem;
+  font-style: italic;
 }
 
 
