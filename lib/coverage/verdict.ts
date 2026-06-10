@@ -92,7 +92,9 @@ function sourceAction(top: CoverageVerdictInput['topPriority']): CoverageVerdict
     icpId: top.icpId,
     icpLabel: top.label,
     count: top.toBuy,
-    label: `Source ${top.toBuy.toLocaleString()} contacts for ${top.label}`,
+    // This CTA queues an expand_companies job, so the label talks about
+    // sourcing companies; the contact number is the coverage goal it serves.
+    label: `Source companies for ${top.toBuy.toLocaleString()} contacts (${top.label})`,
   };
 }
 
