@@ -337,6 +337,9 @@ function DataPageContent() {
   const companyName = searchParams.get('companyName') ?? '';
   const icpIdParam = searchParams.get('icpId') ?? '';
   const selectedIcp = icps.find((i) => i.icp_id === icpIdParam) ?? icps[0] ?? null;
+  // Pre-scoped quantities from the Coverage plan ("source N contacts ≈ M companies").
+  const suggestedContacts = Number(searchParams.get('count') ?? '') || 0;
+  const suggestedCompanies = Number(searchParams.get('companyCount') ?? '') || 0;
 
   const pageContext: Record<string, unknown> = {
     acquisitionMode: rawMode ?? undefined,
@@ -345,6 +348,8 @@ function DataPageContent() {
     acquisitionCompanyId: companyId || undefined,
     acquisitionCompanyName: companyName || undefined,
     acquisitionBatchCompanies: batchCompanies.length > 0 ? batchCompanies : undefined,
+    acquisitionSuggestedContacts: suggestedContacts > 0 ? suggestedContacts : undefined,
+    acquisitionSuggestedCompanies: suggestedCompanies > 0 ? suggestedCompanies : undefined,
   };
 
   // ── Render ─────────────────────────────────────────────────────────────────

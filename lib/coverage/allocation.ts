@@ -102,7 +102,7 @@ export function allocateTarget(input: {
   // Weights: throughput where we have it; equal split when no ICP has a signal.
   const anyThroughput = icps.some((i) => (i.throughput ?? 0) > 0);
   if (!anyThroughput) {
-    notes.push('No closed-deal history yet — splitting the target evenly across ICPs until performance data accrues.');
+    notes.push('No closed-deal evidence yet, so the target is split evenly across ICPs. The split becomes performance-weighted as deals close.');
   }
   const weightOf = (i: IcpAllocationInput) => (anyThroughput ? clampPos(i.throughput ?? 0) : 1);
 
@@ -134,9 +134,12 @@ export function allocateTarget(input: {
     if (distributed <= 1e-6) break; // no one has room
   }
 
-  const shortfall = clampPos(remaining);
+  // Float residue from repeated proportional splits is not a real shortfall:
+  // ignore anything below one part-per-million of the target (min 1e-6).
+  const epsilon = Math.max(1e-6, target.value * 1e-6);
+  const shortfall = remaining > epsilon ? remaining : 0;
   if (shortfall > 0) {
-    notes.push('Target exceeds the addressable supply across your ICPs — broaden an ICP, raise the timeline, or accept a lower number.');
+    notes.push('Target exceeds the addressable supply across your ICPs. Broaden an ICP, raise the timeline, or accept a lower number.');
   }
 
   const allocations: IcpAllocation[] = icps.map((i) => {

@@ -13,6 +13,7 @@ import { fetchTodayPriorities } from '@/lib/today-priorities-client';
 import type { TodayPriority } from '@/lib/priorities/types';
 import { getDisplayName } from '@/lib/auth-helpers';
 import { healthLabel, type HealthDim } from '@/lib/pipeline-icp-health';
+import { PATENT_SURGE_WINDOW_DAYS } from '@/lib/signals/patent-surge';
 import { cn } from '@/lib/utils';
 
 type SetupStep = {
@@ -44,6 +45,8 @@ type LiveSignal = {
   sourceMetadata: Record<string, unknown>;
   observedAt: string;
   eventAt: string | null;
+  /** Only on patent portfolio surge: the individual patents behind it. */
+  recentPatents?: { key: string; title: string; url: string | null; date: string | null }[];
 };
 
 type TopLead = {
@@ -152,9 +155,18 @@ type SignalGroupRow = {
   label: string;
   count: number;
   ago: string;
-  /** Lead pill = summary count, rest = breakdown. Hiring expansion only. */
+  /** Inline count shown next to the label (e.g. "54 open roles"). Never in pills. */
+  countLabel?: string;
+  /** Category breakdown pills — shown only in the expanded area. */
   pills?: string[];
   items: SignalSubItem[];
+  /** Patent surge: items already built server-side; absorb pass must not re-add. */
+  serverPatents?: boolean;
+  /** Small muted caption above the expanded sub-list (e.g. the patent recency window). */
+  listCaption?: string;
+  /** Trailing "+N more" link (e.g. patents beyond the display cap → Google Patents). */
+  moreCount?: number;
+  moreUrl?: string | null;
 };
 
 function signalGlyph(key: string): string {
@@ -171,15 +183,15 @@ const SIGNAL_LABELS: Record<string, string> = {
   // Hiring
   hiring_expansion:          'Hiring expansion',
   job_surge:                 'Hiring surge',
-  research_hiring:           'Research hiring',
-  cmc_hiring:                'CMC hiring',
-  data_informatics_hiring:   'Data & informatics hiring',
-  medical_hiring:            'Medical affairs hiring',
-  quality_hiring:            'Quality hiring',
-  executive_hiring:          'Executive hiring',
-  clinical_ops_hiring:       'Clinical ops hiring',
-  bd_hiring:                 'BD hiring',
-  regulatory_hiring:         'Regulatory hiring',
+  research_hiring:           'Research',
+  cmc_hiring:                'CMC',
+  data_informatics_hiring:   'Data & informatics',
+  medical_hiring:            'Medical affairs',
+  quality_hiring:            'Quality',
+  executive_hiring:          'Executive',
+  clinical_ops_hiring:       'Clinical ops',
+  bd_hiring:                 'BD',
+  regulatory_hiring:         'Regulatory',
   // Research
   assignee_portfolio_acceleration: 'Patent portfolio surge',
   patent_filed_or_granted:         'Patent filed',
@@ -329,16 +341,35 @@ function relativeTime(isoStr: string | null | undefined): string {
  */
 const DOCUMENT_TITLE_KEYS = new Set([
   'publication', 'publication_surge', 'new_paper_published',
+  // Individual patents: real USPTO titles shown as sub-items.
+  // assignee_portfolio_acceleration excluded — it's an aggregate; its summary
+  // ("X shows elevated recent patent velocity…") should NOT appear as a sub-item.
   'patent_filed_or_granted', 'patent_application_published', 'patent_granted', 'new_therapeutic_area_patent',
-  'assignee_portfolio_acceleration',
   'fda_approval', 'fda_submission',
   'funding_round', 'series_announcement', 'acquisition',
-  'clinical_trial_recruiting', 'clinical_trial_registered', 'clinical_trial_phase_start',
-  'clinical_trial_completion', 'clinical_trial_completed', 'trial_site_expansion',
-  'trial_failure_or_halt', 'program_discontinuation', 'indication_expansion',
   // grant_award / nih_grant_awarded excluded: their title is a DB artifact;
   // the summary field carries the useful text (award amount, agency, grant number)
 ]);
+
+/**
+ * Clinical trial signal keys whose raw source text is a verbose
+ * "ClinicalTrials.gov indicates activity for X (NCTxxxxxxxx). …" sentence.
+ * We extract just the NCT identifier so the sub-item label is clean and short.
+ */
+const CLINICAL_TRIAL_SIGNAL_KEYS = new Set([
+  'clinical_trial_recruiting', 'clinical_trial_registered', 'clinical_trial_phase_start',
+  'clinical_trial_completion', 'clinical_trial_completed', 'trial_site_expansion',
+  'trial_failure_or_halt', 'program_discontinuation', 'indication_expansion',
+]);
+
+/** Pull the NCT identifier out of verbose ClinicalTrials.gov text, or return as-is. */
+function cleanClinicalText(s: string | null): string | null {
+  if (!s) return null;
+  const m = s.match(/NCT\d{8}/);
+  // If the text is a verbose ClinicalTrials summary, surface just the NCT ID
+  if (m && (s.includes('ClinicalTrials') || s.includes('indicates activity'))) return m[0];
+  return s;
+}
 
 /** Patterns in titles/summaries that indicate internal tooling provenance — hide from users. */
 const INTERNAL_PROVENANCE = /\b(apify|manual[_ ]test|test[_ ]emission|admin[_ ]signals|hubspot[_ ]contact|linkedin[_ ]scrape)\b/i;
@@ -359,11 +390,19 @@ function cleanSubItemTitle(
     return s;
   };
 
-  // Aggregate hiring signals: pills carry all the info; never show a sub-item title
-  // (checked first so the summary "X has 47 open roles..." doesn't sneak through)
+  // Aggregate signals whose content is conveyed by the row label / pills — no sub-item needed
   if (signalKey === 'hiring_expansion' || signalKey === 'job_surge') return null;
+  // Portfolio surge is an aggregate; its verbose summary should never appear as a sub-item.
+  // Individual patents absorbed into it carry their own USPTO titles.
+  if (signalKey === 'assignee_portfolio_acceleration') return null;
 
-  // Document-titled signals get their actual source title (PubMed, USPTO, ClinicalTrials, etc.)
+  // Clinical trial signals: raw text is a verbose "ClinicalTrials.gov indicates activity…"
+  // sentence — extract just the NCT identifier so the label is clean.
+  if (CLINICAL_TRIAL_SIGNAL_KEYS.has(signalKey)) {
+    return cleanClinicalText(safe(title)) ?? cleanClinicalText(safe(summary));
+  }
+
+  // Document-titled signals get their actual source title (PubMed, USPTO, etc.)
   // For grants we skip this — title is a DB artifact; summary has the good text
   if (DOCUMENT_TITLE_KEYS.has(signalKey)) {
     return safe(title) ?? safe(summary);
@@ -415,6 +454,9 @@ const PATENT_INDIVIDUAL_KEYS = new Set([
   'patent_granted',
   'new_therapeutic_area_patent',
 ]);
+
+/** Max individual patents listed under a surge row before a "+N more" link. */
+const PATENT_DISPLAY_CAP = 12;
 
 function cleanSubItemUrl(url: string | null): string | null {
   if (!url) return null;
@@ -548,7 +590,7 @@ export default function BriefingPage() {
           fetch('/api/pipeline/icp-cards'),
           fetch('/api/import-ready'),
           fetch('/api/outreach/replied'),
-          fetch('/api/signals/feed?pageSize=50&page=1&skipPatentCollapse=1'),
+          fetch('/api/signals/feed?pageSize=100&page=1&skipPatentCollapse=1'),
         ]);
 
         if (profileError) throw profileError;
@@ -633,6 +675,14 @@ export default function BriefingPage() {
                 : {},
               observedAt: String(s.observedAt ?? ''),
               eventAt: typeof s.eventAt === 'string' ? s.eventAt : null,
+              recentPatents: Array.isArray(s.recentPatents)
+                ? (s.recentPatents as Array<Record<string, unknown>>).map((p) => ({
+                    key: String(p.key ?? ''),
+                    title: typeof p.title === 'string' ? p.title : '',
+                    url: typeof p.url === 'string' ? p.url : null,
+                    date: typeof p.date === 'string' ? p.date : null,
+                  }))
+                : undefined,
             }))
           );
         }
@@ -702,9 +752,14 @@ export default function BriefingPage() {
       const meta = s.sourceMetadata as Record<string, unknown>;
       const familyKey = SIGNAL_KEY_TO_FAMILY[s.signalKey] ?? 'funding';
 
-      // Age gate: skip signals outside the family's window
+      // Age gate: skip signals outside the family's window.
+      // Individual patent signals use observedAt (when we discovered the patent)
+      // rather than eventAt (the filing date, potentially years ago) so recently-
+      // detected historical patents still appear in the today view.
       const maxAgeMs = FAMILY_MAX_AGE_MS[familyKey] ?? 30 * 86_400_000;
-      const sigDate = Date.parse(s.eventAt ?? s.observedAt) || 0;
+      const sigDate = PATENT_INDIVIDUAL_KEYS.has(s.signalKey)
+        ? (Date.parse(s.observedAt) || 0)
+        : (Date.parse(s.eventAt ?? s.observedAt) || 0);
       if (now - sigDate > maxAgeMs) continue;
 
       if (!familyMap.has(familyKey)) familyMap.set(familyKey, new Map());
@@ -716,6 +771,58 @@ export default function BriefingPage() {
       // they collapse into a single row rather than appearing as duplicates.
       const groupKey = SIGNAL_KEY_NORMALIZE[s.signalKey] ?? s.signalKey;
       const rowKey = `${company}||${groupKey}`;
+
+      // Patent portfolio surge: build the row from the individual patents the feed
+      // attached (real titles + their own google.com/patent/<id> links), newest
+      // filing first. Show a count, list up to PATENT_DISPLAY_CAP, and link the
+      // rest to the company's full Google Patents portfolio. Replaces the old
+      // behaviour of surfacing a bare "?assignee=" search URL.
+      if (s.signalKey === 'assignee_portfolio_acceleration') {
+        const patents = (s.recentPatents ?? []).filter((p) => p.url || p.title);
+        if (patents.length > 0) {
+          const shown = patents.slice(0, PATENT_DISPLAY_CAP);
+          family.set(rowKey, {
+            key: rowKey,
+            glyph: signalGlyph(groupKey),
+            company,
+            label: signalLabel(groupKey),
+            count: patents.length,
+            ago: relativeTime(s.eventAt ?? s.observedAt),
+            countLabel: `${patents.length} in last ${PATENT_SURGE_WINDOW_DAYS} days`,
+            listCaption: `Patents filed in the last ${PATENT_SURGE_WINDOW_DAYS} days`,
+            items: shown.map((p) => ({
+              id: p.key,
+              title: p.title || null,
+              url: cleanSubItemUrl(p.url),
+              what: null,
+              ago: relativeTime(p.date),
+            })),
+            serverPatents: true,
+            moreCount: patents.length > PATENT_DISPLAY_CAP ? patents.length - PATENT_DISPLAY_CAP : 0,
+            moreUrl: patents.length > PATENT_DISPLAY_CAP ? cleanSubItemUrl(s.sourceUrl) : null,
+          });
+          continue;
+        }
+        // No individual patents attached — fall back to a friendly portfolio link
+        // rather than rendering a raw search URL as the label.
+        family.set(rowKey, {
+          key: rowKey,
+          glyph: signalGlyph(groupKey),
+          company,
+          label: signalLabel(groupKey),
+          count: 1,
+          ago: relativeTime(s.eventAt ?? s.observedAt),
+          items: [{
+            id: s.id,
+            title: 'View patent portfolio',
+            url: cleanSubItemUrl(s.sourceUrl),
+            what: null,
+            ago: relativeTime(s.eventAt ?? s.observedAt),
+          }],
+          serverPatents: true,
+        });
+        continue;
+      }
 
       // Aggregate hiring signals: pills already tell the whole story; a single
       // job posting URL out of 40+ roles would be misleading — suppress it.
@@ -731,33 +838,35 @@ export default function BriefingPage() {
       };
 
       if (!family.has(rowKey)) {
-        // Row-level pills for aggregate hiring signals
+        // Hiring signals: countLabel goes inline on the row; category pills
+        // go in the expanded area only (hidden until the user unfolds the row).
+        let countLabel: string | undefined;
         let pills: string[] | undefined;
         if (s.signalKey === 'hiring_expansion') {
           const total = typeof meta.total_postings === 'number' ? meta.total_postings : null;
           const categories = meta.categories && typeof meta.categories === 'object'
             ? (meta.categories as Record<string, number>) : null;
-          pills = [];
-          if (total !== null) pills.push(`${total} open roles`);
+          if (total !== null) countLabel = `${total} open roles`;
+          const categoryPills: string[] = [];
           let categorisedSum = 0;
           if (categories) {
             for (const [key, count] of Object.entries(categories)) {
               const lbl = HIRING_CATEGORY_LABELS[key];
               if (lbl) {
-                pills.push(count > 1 ? `${lbl} · ${count}` : lbl);
+                categoryPills.push(count > 1 ? `${lbl} · ${count}` : lbl);
                 categorisedSum += count;
               }
             }
           }
-          // Show unclassified remainder so the headline total adds up
           const other = total !== null ? total - categorisedSum : 0;
-          if (other > 0) pills.push(`+ ${other} general roles`);
+          if (other > 0) categoryPills.push(`+ ${other} general roles`);
+          if (categoryPills.length > 0) pills = categoryPills;
         } else if (s.signalKey === 'job_surge') {
-          const count = typeof meta.total_postings === 'number' ? meta.total_postings : null;
-          pills = count !== null ? [`${count} open roles`] : undefined;
+          const total = typeof meta.total_postings === 'number' ? meta.total_postings : null;
+          if (total !== null) countLabel = `${total} open roles`;
         } else if (INDIVIDUAL_HIRING_KEYS.has(s.signalKey)) {
-          const count = typeof meta.count === 'number' ? meta.count : null;
-          pills = count !== null ? [`${count} role${count !== 1 ? 's' : ''}`] : undefined;
+          const n = typeof meta.count === 'number' ? meta.count : null;
+          if (n !== null) countLabel = `${n} open role${n !== 1 ? 's' : ''}`;
         }
 
         family.set(rowKey, {
@@ -767,6 +876,7 @@ export default function BriefingPage() {
           label: signalLabel(groupKey),
           count: 1,
           ago: relativeTime(s.eventAt ?? s.observedAt),
+          countLabel,
           pills,
           items: [subItem],
         });
@@ -777,9 +887,11 @@ export default function BriefingPage() {
       }
     }
 
-    // Second pass: for companies that have a patent portfolio surge row, absorb
-    // individual patent rows into it so expanding the surge row lists all patents
-    // (mirrors how publication sub-items work). Count reflects number of patents.
+    // Second pass: for companies that have a patent portfolio surge row, remove the
+    // now-duplicate individual patent rows so they don't also appear standalone.
+    // When the surge already carries server-attached patents (the normal path), we
+    // just delete the duplicates. Only when the feed couldn't attach any do we fall
+    // back to absorbing whatever individual rows did arrive.
     for (const family of familyMap.values()) {
       for (const [rowKey, surgeRow] of family) {
         if (!rowKey.endsWith('||assignee_portfolio_acceleration')) continue;
@@ -789,13 +901,16 @@ export default function BriefingPage() {
           const indivRowKey = `${company}||${pKey}`;
           const indivRow = family.get(indivRowKey);
           if (!indivRow) continue;
-          surgeRow.items.push(...indivRow.items);
-          absorbedCount += indivRow.count;
+          if (!surgeRow.serverPatents) {
+            surgeRow.items.push(...indivRow.items);
+            absorbedCount += indivRow.count;
+          }
           family.delete(indivRowKey);
         }
-        // Replace the count (was 1 for the surge event itself) with the number
-        // of absorbed individual patents so the badge is meaningful.
-        if (absorbedCount > 0) surgeRow.count = absorbedCount;
+        if (!surgeRow.serverPatents && absorbedCount > 0) {
+          surgeRow.count = absorbedCount;
+          surgeRow.countLabel = `${absorbedCount} patent${absorbedCount !== 1 ? 's' : ''}`;
+        }
       }
     }
 
@@ -1105,9 +1220,9 @@ export default function BriefingPage() {
                   <ul className="bt-sig-list">
                     {group.rows.map((row, i) => {
                       const isOpen = expandedSignalRows.has(row.key);
-                      // Only expandable if there's at least one sub-item with content
                       const expandableItems = row.items.filter(item => item.title || item.url);
-                      const isExpandable = expandableItems.length > 0;
+                      // Expandable if has linked sub-items OR category pills to reveal
+                      const isExpandable = expandableItems.length > 0 || (row.pills != null && row.pills.length > 0);
                       const RowEl = isExpandable ? 'button' : 'div';
                       return (
                         <li key={row.key} className="bt-sig-group-item" style={{ animationDelay: `${i * 40}ms` }}>
@@ -1121,19 +1236,11 @@ export default function BriefingPage() {
                               <span className="bt-sig-line">
                                 <strong>{row.company}</strong>
                                 {` · ${row.label}`}
-                                {row.count > 1 && (
-                                  <span className="bt-sig-count">{row.count}</span>
-                                )}
+                                {row.countLabel
+                                  ? <span className="bt-sig-line-count">{` · ${row.countLabel}`}</span>
+                                  : row.count > 1 && <span className="bt-sig-count">{row.count}</span>
+                                }
                               </span>
-                              {row.pills && row.pills.length > 0 && (
-                                <span className="bt-sig-pills">
-                                  {row.pills.map((pill, j) => (
-                                    <span key={j} className={cn('bt-sig-pill', j === 0 && 'bt-sig-pill--lead')}>
-                                      {pill}
-                                    </span>
-                                  ))}
-                                </span>
-                              )}
                             </span>
                             <span className="bt-sig-ago">{row.ago}</span>
                             {isExpandable && (
@@ -1141,32 +1248,59 @@ export default function BriefingPage() {
                             )}
                           </RowEl>
 
-                          {/* Expanded sub-items */}
+                          {/* Expanded area: category pills + linked sub-items */}
                           {isOpen && isExpandable && (
-                            <ul className="bt-sig-sub-list">
-                              {expandableItems.map((item) => {
-                                const label = item.title ?? item.what;
-                                if (!label && !item.url) return null;
-                                return (
-                                  <li key={item.id} className="bt-sig-sub-item">
-                                    {item.url ? (
+                            <>
+                              {row.pills && row.pills.length > 0 && (
+                                <div className="bt-sig-expanded-pills">
+                                  {row.pills.map((pill, j) => (
+                                    <span key={j} className="bt-sig-pill">{pill}</span>
+                                  ))}
+                                </div>
+                              )}
+                              {row.listCaption && (
+                                <p className="bt-sig-list-caption">{row.listCaption}</p>
+                              )}
+                              {expandableItems.length > 0 && (
+                                <ul className="bt-sig-sub-list">
+                                  {expandableItems.map((item) => {
+                                    const label = item.title ?? item.what;
+                                    if (!label && !item.url) return null;
+                                    return (
+                                      <li key={item.id} className="bt-sig-sub-item">
+                                        {item.url ? (
+                                          <a
+                                            href={item.url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="bt-sig-sub-link"
+                                          >
+                                            {label ?? item.url}
+                                            <ExternalLink className="bt-sig-sub-ext h-2.5 w-2.5" strokeWidth={2} />
+                                          </a>
+                                        ) : (
+                                          <span className="bt-sig-sub-text">{label}</span>
+                                        )}
+                                        {item.ago && item.ago !== row.ago && <span className="bt-sig-sub-ago">{item.ago}</span>}
+                                      </li>
+                                    );
+                                  })}
+                                  {row.moreCount != null && row.moreCount > 0 && row.moreUrl && (
+                                    <li className="bt-sig-sub-item">
                                       <a
-                                        href={item.url}
+                                        href={row.moreUrl}
                                         target="_blank"
                                         rel="noopener noreferrer"
-                                        className="bt-sig-sub-link"
+                                        className="bt-sig-sub-link bt-sig-sub-more"
                                       >
-                                        {label ?? item.url}
+                                        {`+${row.moreCount} more on Google Patents`}
                                         <ExternalLink className="bt-sig-sub-ext h-2.5 w-2.5" strokeWidth={2} />
                                       </a>
-                                    ) : (
-                                      <span className="bt-sig-sub-text">{label}</span>
-                                    )}
-                                    {item.ago && item.ago !== row.ago && <span className="bt-sig-sub-ago">{item.ago}</span>}
-                                  </li>
-                                );
-                              })}
-                            </ul>
+                                    </li>
+                                  )}
+                                </ul>
+                              )}
+                            </>
                           )}
                         </li>
                       );

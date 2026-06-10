@@ -9,7 +9,8 @@ import {
   normalizeFitScore01,
   overallHealth,
 } from '@/lib/pipeline-icp-health';
-import { computeIcpPerformanceByIcp } from '@/lib/coverage/icp-performance';
+import { computeCoverageRollup } from '@/lib/coverage/icp-performance';
+import { quarterOf } from '@/lib/coverage/period';
 
 export async function GET() {
   try {
@@ -97,9 +98,12 @@ export async function GET() {
       companyFitById.set(id, normalizeFitScore01(typeof raw === 'number' ? raw : null));
     }
 
-    // Bottom-up: per-ICP deal performance from the CRM mirror (null-safe — empty
-    // map when no HubSpot data, so the page degrades to the coverage-only tier).
-    const performanceByIcp = await computeIcpPerformanceByIcp(supabase, user.id);
+    // Bottom-up: per-ICP deal performance + whole-book rollup from the CRM
+    // mirror (null-safe — empty when no HubSpot data, so the page degrades to
+    // the coverage-only tier).
+    const period = quarterOf();
+    const rollup = await computeCoverageRollup(supabase, user.id, period);
+    const performanceByIcp = rollup.byIcp;
 
     const cards = orderedIcps.map((icp) => {
       const companyIds = [...(companiesByIcp.get(icp.id) ?? [])];
@@ -156,7 +160,19 @@ export async function GET() {
 
     cards.sort(comparePipelineCards);
 
-    return NextResponse.json({ cards });
+    return NextResponse.json({
+      cards,
+      // Whole-book CRM meta the per-ICP cards can't carry: data-coverage of the
+      // deals themselves (unattributed) + period actuals for attainment pacing.
+      meta: {
+        period,
+        hasCrm: rollup.totalDeals > 0,
+        totalDeals: rollup.totalDeals,
+        attributedDeals: rollup.attributedDeals,
+        unattributed: rollup.unattributed,
+        actuals: rollup.actuals,
+      },
+    });
   } catch (e) {
     console.error('[pipeline/icp-cards]', e);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

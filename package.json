@@ -12,6 +12,7 @@
     "test:company-merge": "rm -rf /private/tmp/arcova-company-merge-tests && tsc -p tsconfig.test.company-merge.json && node --test /private/tmp/arcova-company-merge-tests/company-merge.test.js",
     "test:contact-location": "rm -rf /private/tmp/arcova-contact-location-tests && tsc -p tsconfig.test.contact-location.json && node --test /private/tmp/arcova-contact-location-tests/contact-profile-display.test.js",
     "test:coverage-allocation": "rm -rf /private/tmp/arcova-coverage-allocation-tests && tsc -p tsconfig.test.coverage-allocation.json && node --test /private/tmp/arcova-coverage-allocation-tests/allocation.test.js",
+    "test:patent-surge": "rm -rf /private/tmp/arcova-patent-surge-tests && tsc -p tsconfig.test.patent-surge.json && node --test /private/tmp/arcova-patent-surge-tests/patent-surge.test.js",
     "gen-sitemap": "node generate-sitemap.js"
   },
   "dependencies": {
