@@ -66,19 +66,10 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: 'id is required' }, { status: 400 });
     }
 
-    // Delete is owner/admin only — members can add ICPs but not delete any.
-    // (RLS enforces this too; this returns a clean 403 instead of a silent no-op.)
-    const ctx = await getOrgContext();
-    if (ctx && !canEditOrgSetup(ctx.role)) {
-      return NextResponse.json({ error: 'Only an owner or admin can delete ICPs' }, { status: 403 });
-    }
-
-    // Org-scoped delete so an admin can remove a shared ICP, not just its creator.
-    const orgId = ctx?.orgId ?? (await orgIdForUser(supabase, user.id));
-    const deleteQuery = supabase.from('icps').delete().eq('id', id);
-    const { error } = orgId
-      ? await deleteQuery.eq('org_id', orgId)
-      : await deleteQuery.eq('user_id', user.id);
+    // Visibility is enforced by RLS: a member may delete their OWN (personal) ICP;
+    // owner/admin may delete company-wide ('org') ICPs. Deleting an ICP the caller may
+    // not touch simply removes 0 rows. So just target the id and let RLS decide.
+    const { error } = await supabase.from('icps').delete().eq('id', id);
 
     if (error) {
       console.error('Error deleting ICP:', error);
@@ -134,13 +125,16 @@ export async function POST(request: Request) {
 
     const weightedSignals = assignSignalWeights(signalIds);
 
-    // Stamp org_id explicitly (the BEFORE INSERT trigger also fills it from user_id, but
-    // being explicit keeps the write self-describing and survives trigger removal).
-    const orgId = await orgIdForUser(supabase, user.id);
+    // Stamp org_id + scope. Owner/admin create company-wide ('org') ICPs the whole org
+    // sees; members create 'personal' ICPs visible only to them. RLS enforces the same.
+    const ctx = await getOrgContext();
+    const orgId = ctx?.orgId ?? (await orgIdForUser(supabase, user.id));
+    const scope = ctx && canEditOrgSetup(ctx.role) ? 'org' : 'personal';
 
     const icpData = {
       user_id: user.id,
       org_id: orgId,
+      scope,
       user_email: user.email,
       name: body.name || '',
       icp_summary: body.icpSummary || null,

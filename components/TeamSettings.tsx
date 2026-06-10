@@ -10,7 +10,7 @@
  * Self-contained so it can drop into the large settings page with a single import.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, Check, Copy, UserPlus } from 'lucide-react';
+import { Loader2, Check, Copy, UserPlus, X } from 'lucide-react';
 
 type Member = { user_id: string; email: string | null; role: string; joined_at: string | null; pending: boolean };
 type PendingInvite = { email: string; role: string; created_at: string };
@@ -18,6 +18,7 @@ type PendingInvite = { email: string; role: string; created_at: string };
 type Roster = {
   orgId: string;
   role: 'owner' | 'admin' | 'member';
+  selfUserId: string;
   members: Member[];
   pendingInvites: PendingInvite[];
 };
@@ -52,6 +53,41 @@ export default function TeamSettings() {
   }, [refresh]);
 
   const canManage = roster ? ADMIN_ROLES.includes(roster.role) : false;
+  const isOwner = roster?.role === 'owner';
+
+  const changeRole = async (userId: string, role: 'admin' | 'member') => {
+    setError(null);
+    try {
+      const res = await fetch('/api/org/members', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, role }),
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(j.error ?? 'Could not change role.');
+        return;
+      }
+      void refresh();
+    } catch {
+      setError('Could not change role.');
+    }
+  };
+
+  const removeMember = async (userId: string) => {
+    setError(null);
+    try {
+      const res = await fetch(`/api/org/members?user_id=${encodeURIComponent(userId)}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(j.error ?? 'Could not remove member.');
+        return;
+      }
+      void refresh();
+    } catch {
+      setError('Could not remove member.');
+    }
+  };
 
   const submitInvite = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -118,19 +154,46 @@ export default function TeamSettings() {
         ) : (
           <>
             <ul className="divide-y divide-slate-100">
-              {(roster?.members ?? []).map((m) => (
-                <li key={m.user_id} className="flex items-center justify-between py-2.5">
-                  <div className="min-w-0">
-                    <span className="block truncate text-sm font-medium text-slate-800">
-                      {m.email ?? m.user_id.slice(0, 8)}
-                    </span>
-                    {m.pending && <span className="text-xs text-amber-600">Invited — not joined yet</span>}
-                  </div>
-                  <span className="ml-3 shrink-0 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium capitalize text-slate-600">
-                    {m.role}
-                  </span>
-                </li>
-              ))}
+              {(roster?.members ?? []).map((m) => {
+                const isSelf = m.user_id === roster?.selfUserId;
+                const editableRole = canManage && m.role !== 'owner' && !isSelf;
+                return (
+                  <li key={m.user_id} className="flex items-center justify-between gap-3 py-2.5">
+                    <div className="min-w-0">
+                      <span className="block truncate text-sm font-medium text-slate-800">
+                        {m.email ?? m.user_id.slice(0, 8)}
+                      </span>
+                      {m.pending && <span className="text-xs text-amber-600">Invited — not joined yet</span>}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {editableRole && !isSelf ? (
+                        <select
+                          value={m.role}
+                          onChange={(e) => void changeRole(m.user_id, e.target.value as 'admin' | 'member')}
+                          className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium capitalize text-slate-700 outline-none focus:border-arcova-teal"
+                        >
+                          <option value="member">Member</option>
+                          <option value="admin">Admin</option>
+                        </select>
+                      ) : (
+                        <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium capitalize text-slate-600">
+                          {m.role}
+                        </span>
+                      )}
+                      {isOwner && m.role !== 'owner' && (
+                        <button
+                          type="button"
+                          onClick={() => void removeMember(m.user_id)}
+                          aria-label="Remove member"
+                          className="rounded-md p-1 text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
               {(roster?.pendingInvites ?? []).map((inv) => (
                 <li key={`inv-${inv.email}`} className="flex items-center justify-between py-2.5">
                   <div className="min-w-0">
