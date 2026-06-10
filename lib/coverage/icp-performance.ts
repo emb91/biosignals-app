@@ -100,7 +100,8 @@ type DealRow = {
 function normStage(value?: string | null): string {
   return (value ?? '').trim().toLowerCase();
 }
-function isWon(stage?: string | null): boolean {
+/** Closed-won predicate shared with /api/coverage/target so attainment numbers agree. */
+export function isWon(stage?: string | null): boolean {
   return normStage(stage) === 'closedwon';
 }
 function isLost(stage?: string | null): boolean {
