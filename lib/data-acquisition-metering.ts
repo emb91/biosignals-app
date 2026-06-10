@@ -27,12 +27,26 @@ export type DataAcquisitionUsageEventType =
   | 'imported_contact'
   | 'duplicate_company_skipped'
   | 'duplicate_contact_skipped'
+  | 'skipped_existing'
   | 'low_fit_company_rejected';
 
 export type DataAcquisitionSourceStrategy = 'apollo_first';
 
 export const DEFAULT_ACQUISITION_TARGET_COMPANIES = 50;
 export const DEFAULT_CONTACTS_PER_COMPANY = 2;
+
+/**
+ * Conservative monthly internal-credit cap applied when a user has no
+ * user_billing_limits row (a row overrides this default).
+ *
+ * Sizing: one imported contact costs roughly 1.2 to 1.5 internal credit units
+ * (1.0 person enrichment + 3 to 6 metered search results at 0.05 each, plus a
+ * share of company screening at 0.1 + 0.02 per screened org on company-led
+ * jobs). 500 units therefore funds roughly 300 to 400 imported contacts per
+ * month, generous for a single-seat workspace while still bounding runaway
+ * spend. Internal-only: never surfaced to end users as credit units.
+ */
+export const DEFAULT_MONTHLY_CREDIT_LIMIT = 500;
 export const DEFAULT_SCREENING_MULTIPLIER_MIN = 3;
 export const DEFAULT_SCREENING_MULTIPLIER_MAX = 6;
 
@@ -50,8 +64,17 @@ const CREDIT_WEIGHTS: Record<DataAcquisitionUsageEventType, number> = {
   imported_contact: 0,
   duplicate_company_skipped: 0,
   duplicate_contact_skipped: 0,
+  skipped_existing: 0,
   low_fit_company_rejected: 0,
 };
+
+/** Internal credit units a usage event of this type/quantity will book. */
+export function creditUnitsForEvent(
+  eventType: DataAcquisitionUsageEventType,
+  quantity: number,
+): number {
+  return Math.round(Math.max(0, quantity) * CREDIT_WEIGHTS[eventType] * 100) / 100;
+}
 
 export function normalizePositiveInt(value: unknown, fallback: number): number {
   const n = typeof value === 'number' ? value : typeof value === 'string' ? Number.parseInt(value, 10) : NaN;

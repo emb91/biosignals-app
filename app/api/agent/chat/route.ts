@@ -93,15 +93,21 @@ interface PageContext {
     contactCount?: number | null;
   };
   // Data page context
-  acquisitionMode?: 'companies' | 'contacts_at_company' | 'contacts_at_companies';
+  acquisitionMode?: 'companies' | 'contacts_at_company' | 'contacts_at_companies' | 'contacts_for_icp';
   acquisitionIcpId?: string;
   acquisitionIcpLabel?: string;
   acquisitionCompanyId?: string;
   acquisitionCompanyName?: string;
   acquisitionBatchCompanies?: { id: string; name: string; icpId?: string | null }[];
-  /** Pre-scoped quantities handed off from the Coverage plan. */
+  /** Page the user came from (coverage / accounts / contacts), for greeting context only. */
+  acquisitionSource?: string;
+  /** Pre-scoped quantities from the Coverage plan. */
   acquisitionSuggestedContacts?: number;
   acquisitionSuggestedCompanies?: number;
+  /** True when a job is currently running or queued; informs queue messaging. */
+  acquisitionJobActive?: boolean;
+  /** Compact recent-jobs summary from the page (type, status, counts, note). */
+  acquisitionRecentJobs?: Array<Record<string, unknown>>;
   todayBrief?: string;
   todayAgenda?: { title?: string; detail?: string; href?: string }[];
   // ICPs page — server-fetched at request time, not passed from the client.
@@ -459,18 +465,18 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'start_acquisition_job',
     description:
-      'Start a data acquisition job once the user has confirmed they want to proceed. Use this on the Data page only. The job will be queued and appear in the recent jobs panel.',
+      'Start a data acquisition job once the user has confirmed they want to proceed. Use this on the Data page only. Jobs run one at a time per user: if a job is already running, the new one waits in a queue and starts automatically when the current one finishes.',
     input_schema: {
       type: 'object' as const,
       properties: {
         requestType: {
           type: 'string',
-          enum: ['expand_companies', 'contacts_at_company', 'contacts_at_companies'],
-          description: '"expand_companies" = find more ICP-fit companies. "contacts_at_company" = source contacts at a single company. "contacts_at_companies" = batch-source contacts across multiple companies.',
+          enum: ['expand_companies', 'contacts_at_company', 'contacts_at_companies', 'more_contacts_at_accounts'],
+          description: '"expand_companies" = find more ICP-fit companies. "contacts_at_company" = source contacts at a single company. "contacts_at_companies" = batch-source contacts across multiple companies. "more_contacts_at_accounts" = add contacts across the user\'s existing accounts in an ICP, thinnest accounts first.',
         },
         quantity: {
           type: 'number',
-          description: 'How many companies (for expand_companies) or contacts per account (for contacts modes) to target.',
+          description: 'How many companies (expand_companies), contacts per account (contacts_at_company / contacts_at_companies), or total contacts across accounts (more_contacts_at_accounts) to target.',
         },
         icpId: {
           type: 'string',
@@ -482,6 +488,21 @@ const TOOLS: Anthropic.Tool[] = [
         },
       },
       required: ['requestType', 'quantity'],
+    },
+  },
+  {
+    name: 'get_contact_coverage_for_company',
+    description:
+      "Get the user's existing contact coverage at one company: how many contacts they already have, how many are strong persona fits, and a few sample names/titles. ALWAYS call this before confirming a contacts_at_company acquisition job so you can tell the user what they already own (e.g. \"You already have 4 contacts there, 2 strong fits. Want more anyway?\").",
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        company_id: {
+          type: 'string',
+          description: 'The company UUID (from page context or query_companies).',
+        },
+      },
+      required: ['company_id'],
     },
   },
   {
@@ -629,35 +650,65 @@ Matched ICP id: ${context.selectedAccount.matchedIcpId || 'unknown'}.
 If the user asks to find contacts, buyer personas, or more coverage for this selected account, call suggest_navigation with ${withQuery(ROUTES.data, `mode=contacts_at_company&companyId=${encodeURIComponent(context.selectedAccount.id)}&companyName=${encodeURIComponent(context.selectedAccount.name || 'Selected company')}${context.selectedAccount.matchedIcpId ? `&icpId=${encodeURIComponent(context.selectedAccount.matchedIcpId)}` : ''}`)}.`
     : '';
 
-  const dataPageContext = page === 'data' && context?.acquisitionMode
+  const dataPageContext = page === 'data'
     ? (() => {
-        const mode = context.acquisitionMode;
-        if (mode === 'contacts_at_companies' && context.acquisitionBatchCompanies?.length) {
-          const names = context.acquisitionBatchCompanies.map((c) => c.name).join(', ');
-          const n = context.acquisitionBatchCompanies.length;
-          return `
-## Queued job context
+        const mode = context?.acquisitionMode;
+        const sourceLine = context?.acquisitionSource
+          ? `The user arrived from the ${context.acquisitionSource} page; acknowledge that handoff naturally in your opening message.`
+          : '';
+        const queueLine = context?.acquisitionJobActive
+          ? 'A sourcing job is already running or waiting. Jobs run one at a time, so a new job will wait its turn in the queue and start automatically. Say this plainly if the user starts another job; never present it as a problem.'
+          : '';
+        const recentJobsBlock =
+          Array.isArray(context?.acquisitionRecentJobs) && context!.acquisitionRecentJobs!.length > 0
+            ? `
+### Recent sourcing jobs (newest first)
+\`\`\`json
+${JSON.stringify(context!.acquisitionRecentJobs, null, 2)}
+\`\`\`
+Use these to answer questions about job progress and results. If a job has a completion_note, relay it in plain language (it explains things like coverage you already own or a plan usage limit). Never mention credits, credit units, or any cost figures; pricing is not part of this product surface.`
+            : '';
+
+        const modeBlock = (() => {
+          if (mode === 'contacts_at_companies' && context?.acquisitionBatchCompanies?.length) {
+            const names = context.acquisitionBatchCompanies.map((c) => c.name).join(', ');
+            const n = context.acquisitionBatchCompanies.length;
+            return `
 The user has arrived with ${n} account${n !== 1 ? 's' : ''} queued for contact sourcing: ${names}.
 Company ids and ICP ids: ${JSON.stringify(context.acquisitionBatchCompanies)}.
 Open the conversation by summarising what you see, then ask how many contacts they want per account. Suggest 3 to 5 for typical biotech or CRO-sized companies. When they confirm, call start_acquisition_job with requestType "contacts_at_companies". The batch list will be resolved from context.`;
-        }
-        if (mode === 'contacts_at_company' && context.acquisitionCompanyId) {
-          return `
-## Queued job context
+          }
+          if (mode === 'contacts_at_companies') {
+            return `
+The user opened batch contact sourcing, but the account list did not come through with the link. Ask which accounts they want contacts for; they can also go to Leads > Accounts, select rows, and use Source contacts there. If they name accounts, use query_companies to resolve ids, then confirm and call start_acquisition_job with requestType "contacts_at_companies".`;
+          }
+          if (mode === 'contacts_at_company' && context?.acquisitionCompanyId) {
+            return `
 The user wants to source contacts at ${context.acquisitionCompanyName || 'a specific company'} (id: ${context.acquisitionCompanyId}, icpId: ${context.acquisitionIcpId || 'unknown'}).
-Open the conversation by confirming the company, then ask how many contacts they want. Suggest 3 to 5. When they confirm, call start_acquisition_job with requestType "contacts_at_company", companyId "${context.acquisitionCompanyId}", quantity [what the user said].`;
-        }
-        if (mode === 'companies' && context.acquisitionIcpId) {
-          const scoped =
-            context.acquisitionSuggestedCompanies && context.acquisitionSuggestedCompanies > 0
-              ? `The Coverage plan pre-scoped this request: it calls for roughly ${context.acquisitionSuggestedContacts && context.acquisitionSuggestedContacts > 0 ? `${context.acquisitionSuggestedContacts} new contacts, which is about ` : ''}${context.acquisitionSuggestedCompanies} companies for this ICP. Open by confirming the ICP and proposing that quantity as the default; the user can adjust it.`
-              : 'Open the conversation by confirming the ICP, then ask how many companies they want to add. Suggest 20 to 50 for an initial run.';
-          return `
-## Queued job context
+FIRST call get_contact_coverage_for_company with company_id "${context.acquisitionCompanyId}" to see what they already own. Open by confirming the company and stating existing coverage in one short sentence (e.g. "You already have 4 contacts there, 2 strong fits"). If coverage already meets a typical ask, say so and check they still want more. Then ask how many contacts they want${context.acquisitionSuggestedContacts && context.acquisitionSuggestedContacts > 0 ? ` (the plan suggests ${context.acquisitionSuggestedContacts})` : '; suggest 3 to 5'}. When they confirm, call start_acquisition_job with requestType "contacts_at_company", companyId "${context.acquisitionCompanyId}", quantity [what the user said].`;
+          }
+          if (mode === 'contacts_for_icp' && context?.acquisitionIcpId) {
+            return `
+The user wants more contacts across their EXISTING accounts in ${context.acquisitionIcpLabel || 'their ICP'} (id: ${context.acquisitionIcpId}). This deepens coverage at companies they already have; it does not add new companies.
+Open by confirming the ICP and the intent (more contacts at current accounts, thinnest accounts get filled first). ${context.acquisitionSuggestedContacts && context.acquisitionSuggestedContacts > 0 ? `The Coverage plan pre-scoped roughly ${context.acquisitionSuggestedContacts} new contacts; propose that as the default and let the user adjust.` : 'Ask how many contacts in total they want to add; suggest 10 to 25 for a typical pass.'} When they confirm, call start_acquisition_job with requestType "more_contacts_at_accounts", icpId "${context.acquisitionIcpId}", quantity [the confirmed total].`;
+          }
+          if (mode === 'companies' && context?.acquisitionIcpId) {
+            const scoped =
+              context.acquisitionSuggestedCompanies && context.acquisitionSuggestedCompanies > 0
+                ? `The Coverage plan pre-scoped this request: it calls for roughly ${context.acquisitionSuggestedContacts && context.acquisitionSuggestedContacts > 0 ? `${context.acquisitionSuggestedContacts} new contacts, which is about ` : ''}${context.acquisitionSuggestedCompanies} companies for this ICP. Open by confirming the ICP and proposing that quantity as the default; the user can adjust it.`
+                : 'Open the conversation by confirming the ICP, then ask how many companies they want to add. Suggest 20 to 50 for an initial run.';
+            return `
 The user wants to find more companies for ${context.acquisitionIcpLabel || 'their ICP'} (id: ${context.acquisitionIcpId}).
 ${scoped} When they confirm, call start_acquisition_job with requestType "expand_companies", icpId "${context.acquisitionIcpId}", quantity [the confirmed number].`;
-        }
-        return '';
+          }
+          return '';
+        })();
+
+        const lines = [modeBlock, sourceLine, queueLine, recentJobsBlock].filter(Boolean);
+        if (lines.length === 0) return '';
+        return `
+## Data page job context
+${lines.join('\n')}`;
       })()
     : '';
 
@@ -1256,6 +1307,51 @@ async function toolGetContactDetail(
   if (!data) return JSON.stringify({ error: `No contact found for id ${contactId}` });
 
   return JSON.stringify(data);
+}
+
+/**
+ * Existing-coverage lookup used by the Data page coverage gate: the agent
+ * calls this before confirming a contacts_at_company job so it can tell the
+ * user what they already own. Counts only; never any cost figures.
+ */
+async function toolGetContactCoverageForCompany(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  input: Record<string, unknown>,
+): Promise<string> {
+  const companyId = typeof input.company_id === 'string' ? input.company_id.trim() : '';
+  if (!companyId) return JSON.stringify({ error: 'company_id is required' });
+
+  const [{ data: company }, { data: contacts, error }] = await Promise.all([
+    supabase.from('companies').select('id, company_name, domain').eq('id', companyId).maybeSingle(),
+    supabase
+      .from('contacts')
+      .select('id, full_name, job_title, contact_fit_score')
+      .eq('user_id', userId)
+      .eq('company_id', companyId)
+      .is('archived_at', null)
+      .order('contact_fit_score', { ascending: false })
+      .limit(200),
+  ]);
+
+  if (error) return JSON.stringify({ error: error.message });
+
+  const rows = contacts ?? [];
+  const strongFits = rows.filter((row) => {
+    const fit = normalizeScore01(row.contact_fit_score as number | null);
+    return fit != null && fit >= 0.7;
+  });
+
+  return JSON.stringify({
+    company_id: companyId,
+    company_name: (company as { company_name?: string | null } | null)?.company_name ?? null,
+    existing_contact_count: rows.length,
+    strong_fit_count: strongFits.length,
+    sample_contacts: rows.slice(0, 5).map((row) => ({
+      name: row.full_name || 'Unknown',
+      job_title: row.job_title || null,
+    })),
+  });
 }
 
 async function toolQueryContacts(
@@ -1927,6 +2023,9 @@ async function runAgentLoop(
             break;
           case 'query_contacts':
             result = await toolQueryContacts(supabase, userId, toolInput);
+            break;
+          case 'get_contact_coverage_for_company':
+            result = await toolGetContactCoverageForCompany(supabase, userId, toolInput);
             break;
           case 'start_acquisition_job': {
             const requestType = typeof toolInput.requestType === 'string' ? toolInput.requestType : undefined;

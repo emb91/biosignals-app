@@ -11,6 +11,7 @@ import { useAuth } from "@/context/AuthContext"
 import { useSetupState, getNextSetupPath } from "@/lib/use-setup-state"
 import { Toaster } from "sonner"
 import { ROUTES } from "@/lib/routes"
+import { useViewportHeight } from "@/lib/use-viewport-height"
 
 // Routes that are part of the authenticated app (no header/footer)
 const APP_ROUTES = [
@@ -95,6 +96,7 @@ export default function ClientLayout({
   children: React.ReactNode
 }) {
   const pathname = usePathname()
+  const appViewportH = useViewportHeight()
 
   // Check if current path is an app route (authenticated area)
   const isAppRoute = APP_ROUTES.some((route) => pathname ? matchesRoutePrefix(pathname, route) : false)
@@ -105,7 +107,14 @@ export default function ClientLayout({
       <>
         <AppAmbientBackground />
         <Toaster position="top-center" richColors />
-        <div className="arcova-app-root font-jakarta">
+        <div
+          className="arcova-app-root font-jakarta"
+          style={
+            appViewportH
+              ? ({ '--arcova-viewport-height': `${appViewportH}px` } as React.CSSProperties)
+              : undefined
+          }
+        >
           <SetupGuard>{children}</SetupGuard>
         </div>
       </>

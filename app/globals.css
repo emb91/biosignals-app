@@ -1,5 +1,12 @@
-@import "tailwindcss";
+@import "tailwindcss" source(none);
 @config "../tailwind.config.ts";
+@source "../app";
+@source "../components";
+@source "../context";
+@source "../data";
+@source "../hooks";
+@source "../lib";
+@source "../utils";
 @import "./untitled.css";
 
 @custom-variant dark (&:is(.dark *));
@@ -120,6 +127,27 @@ html {
   animation: arcova-drift linear infinite;
 }
 
+.arcova-checkbox-root[data-state="checked"] {
+  background-color: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.arcova-switch-root[data-state="checked"] {
+  background-color: hsl(var(--primary));
+}
+
+.arcova-switch-root[data-state="unchecked"] {
+  background-color: hsl(var(--input));
+}
+
+.arcova-switch-thumb[data-state="checked"] {
+  transform: translateX(1.25rem);
+}
+
+.arcova-switch-thumb[data-state="unchecked"] {
+  transform: translateX(0);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .arcova-aurora-blob {
     animation: none;
@@ -131,7 +159,10 @@ html {
   position: relative;
   z-index: 1;
   isolation: isolate;
-  min-height: 100dvh;
+  height: var(--arcova-viewport-height, 100dvh);
+  min-height: var(--arcova-viewport-height, 100dvh);
+  max-height: var(--arcova-viewport-height, 100dvh);
+  overflow: hidden;
   color: var(--arcova-ink);
   letter-spacing: -0.005em;
   -webkit-font-smoothing: antialiased;

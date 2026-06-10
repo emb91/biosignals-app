@@ -464,6 +464,59 @@ function cleanSubItemUrl(url: string | null): string | null {
   return url;
 }
 
+/** All patent-family signal keys, including the aggregate surge. Merged into one row per company. */
+const PATENT_FAMILY_KEYS = new Set([
+  'assignee_portfolio_acceleration',
+  'patent_filed_or_granted', 'patent_application_published', 'patent_granted', 'new_therapeutic_area_patent',
+]);
+
+/** Clinical-trial activity keys that describe the SAME trials — merged into one row per company. */
+const TRIAL_MERGE_KEYS = new Set([
+  'clinical_trial_recruiting', 'clinical_trial_registered', 'clinical_trial_phase_start',
+  'clinical_trial_completion', 'clinical_trial_completed', 'clinical_trial_enrollment',
+  'trial_site_expansion', 'indication_expansion',
+]);
+
+/** Singular noun per merged group → consistent grey count labels ("9 patents", "4 trials"). */
+const COUNT_NOUN: Record<string, string> = {
+  patents: 'patent',
+  clinical_activity: 'trial',
+  publication: 'paper',
+  grant_award: 'grant',
+};
+
+const metaStr = (v: unknown): string | null =>
+  typeof v === 'string' && v.trim() ? v.trim() : null;
+const metaNum = (v: unknown): number | null =>
+  typeof v === 'number' && Number.isFinite(v) ? v : null;
+
+/** Compact USD: 1399878 → "$1.4M", 850000 → "$850K". */
+function formatUsdShort(n: number): string {
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`;
+  if (n >= 1_000) return `$${Math.round(n / 1_000)}K`;
+  return `$${n}`;
+}
+
+/**
+ * Clean sub-item title pulled from STRUCTURED metadata (never a generated summary
+ * sentence). Returns null when metadata can't supply one, so the caller falls back.
+ */
+function metaTitle(signalKey: string, meta: Record<string, unknown>): string | null {
+  if (PATENT_FAMILY_KEYS.has(signalKey)) return metaStr(meta.patent_title);
+  // Trials & FDA indication changes carry a real study title
+  const study = metaStr(meta.study_title);
+  if (study) return study;
+  if (signalKey === 'grant_award' || signalKey === 'nih_grant_awarded') {
+    const t = metaStr(meta.project_title);
+    const amt = metaNum(meta.award_amount);
+    if (t) return amt ? `${t} · ${formatUsdShort(amt)}` : t;
+  }
+  if (signalKey.includes('fda') || signalKey === 'indication_expansion') {
+    return metaStr(meta.trade_name);
+  }
+  return null;
+}
+
 export default function BriefingPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
@@ -748,98 +801,97 @@ export default function BriefingPage() {
     const now = Date.now();
     const familyMap = new Map<string, Map<string, SignalGroupRow>>();
 
+    const ensureFamily = (k: string) => {
+      if (!familyMap.has(k)) familyMap.set(k, new Map());
+      return familyMap.get(k)!;
+    };
+    const isoFromMs = (ms: number) => (ms > 0 ? new Date(ms).toISOString() : null);
+
+    // Per-company aggregators for families where MANY signal keys describe the SAME
+    // underlying objects: patents (deduped by patent id) and clinical trials (by NCT).
+    // Without this, one company shows up as 2–3 near-duplicate rows.
+    type PatentAgg = {
+      company: string; latestMs: number;
+      items: Map<string, SignalSubItem>; portfolioUrl: string | null; surgeCount: number;
+    };
+    type TrialAgg = { company: string; latestMs: number; items: Map<string, SignalSubItem> };
+    const patentAgg = new Map<string, PatentAgg>();
+    const trialAgg = new Map<string, TrialAgg>();
+
     for (const s of liveSignals) {
       const meta = s.sourceMetadata as Record<string, unknown>;
       const familyKey = SIGNAL_KEY_TO_FAMILY[s.signalKey] ?? 'funding';
 
       // Age gate: skip signals outside the family's window.
-      // Individual patent signals use observedAt (when we discovered the patent)
-      // rather than eventAt (the filing date, potentially years ago) so recently-
-      // detected historical patents still appear in the today view.
+      // Patents use observedAt (when we discovered them) rather than eventAt
+      // (the filing date, potentially years ago) so recently-detected patents show.
       const maxAgeMs = FAMILY_MAX_AGE_MS[familyKey] ?? 30 * 86_400_000;
-      const sigDate = PATENT_INDIVIDUAL_KEYS.has(s.signalKey)
+      const sigDate = PATENT_FAMILY_KEYS.has(s.signalKey)
         ? (Date.parse(s.observedAt) || 0)
         : (Date.parse(s.eventAt ?? s.observedAt) || 0);
       if (now - sigDate > maxAgeMs) continue;
 
-      if (!familyMap.has(familyKey)) familyMap.set(familyKey, new Map());
-      const family = familyMap.get(familyKey)!;
-
       const company = s.companyName ?? s.companyDomain ?? 'Unknown';
 
-      // Normalise signal keys that represent the same underlying event type so
-      // they collapse into a single row rather than appearing as duplicates.
-      const groupKey = SIGNAL_KEY_NORMALIZE[s.signalKey] ?? s.signalKey;
-      const rowKey = `${company}||${groupKey}`;
-
-      // Patent portfolio surge: build the row from the individual patents the feed
-      // attached (real titles + their own google.com/patent/<id> links), newest
-      // filing first. Show a count, list up to PATENT_DISPLAY_CAP, and link the
-      // rest to the company's full Google Patents portfolio. Replaces the old
-      // behaviour of surfacing a bare "?assignee=" search URL.
-      if (s.signalKey === 'assignee_portfolio_acceleration') {
-        const patents = (s.recentPatents ?? []).filter((p) => p.url || p.title);
-        if (patents.length > 0) {
-          const shown = patents.slice(0, PATENT_DISPLAY_CAP);
-          family.set(rowKey, {
-            key: rowKey,
-            glyph: signalGlyph(groupKey),
-            company,
-            label: signalLabel(groupKey),
-            count: patents.length,
-            ago: relativeTime(s.eventAt ?? s.observedAt),
-            countLabel: `${patents.length} in last ${PATENT_SURGE_WINDOW_DAYS} days`,
-            listCaption: `Patents filed in the last ${PATENT_SURGE_WINDOW_DAYS} days`,
-            items: shown.map((p) => ({
-              id: p.key,
-              title: p.title || null,
-              url: cleanSubItemUrl(p.url),
-              what: null,
-              ago: relativeTime(p.date),
-            })),
-            serverPatents: true,
-            moreCount: patents.length > PATENT_DISPLAY_CAP ? patents.length - PATENT_DISPLAY_CAP : 0,
-            moreUrl: patents.length > PATENT_DISPLAY_CAP ? cleanSubItemUrl(s.sourceUrl) : null,
-          });
-          continue;
+      // ── PATENTS → one "Patents" row per company, deduped by patent id ──
+      if (PATENT_FAMILY_KEYS.has(s.signalKey)) {
+        let agg = patentAgg.get(company);
+        if (!agg) { agg = { company, latestMs: 0, items: new Map(), portfolioUrl: null, surgeCount: 0 }; patentAgg.set(company, agg); }
+        agg.latestMs = Math.max(agg.latestMs, sigDate);
+        if (s.signalKey === 'assignee_portfolio_acceleration') {
+          agg.portfolioUrl = agg.portfolioUrl ?? cleanSubItemUrl(s.sourceUrl);
+          const n90 = metaNum(meta.recent_patents_90d);
+          if (n90 != null) agg.surgeCount = Math.max(agg.surgeCount, n90);
+          for (const p of s.recentPatents ?? []) {
+            const id = p.url ?? p.key;
+            if (id && !agg.items.has(id) && (p.title || p.url)) {
+              agg.items.set(id, { id, title: p.title || null, url: cleanSubItemUrl(p.url), what: null, ago: '' });
+            }
+          }
+        } else {
+          const id = metaStr(meta.patent_id) ?? cleanSubItemUrl(s.sourceUrl) ?? s.id;
+          const title = metaTitle(s.signalKey, meta);
+          if (id && !agg.items.has(id) && (title || s.sourceUrl)) {
+            agg.items.set(id, { id, title, url: cleanSubItemUrl(s.sourceUrl), what: null, ago: '' });
+          }
         }
-        // No individual patents attached — fall back to a friendly portfolio link
-        // rather than rendering a raw search URL as the label.
-        family.set(rowKey, {
-          key: rowKey,
-          glyph: signalGlyph(groupKey),
-          company,
-          label: signalLabel(groupKey),
-          count: 1,
-          ago: relativeTime(s.eventAt ?? s.observedAt),
-          items: [{
-            id: s.id,
-            title: 'View patent portfolio',
-            url: cleanSubItemUrl(s.sourceUrl),
-            what: null,
-            ago: relativeTime(s.eventAt ?? s.observedAt),
-          }],
-          serverPatents: true,
-        });
         continue;
       }
 
-      // Aggregate hiring signals: pills already tell the whole story; a single
-      // job posting URL out of 40+ roles would be misleading — suppress it.
+      // ── CLINICAL TRIALS → one "Clinical trials" row per company, deduped by NCT ──
+      if (TRIAL_MERGE_KEYS.has(s.signalKey) && metaStr(meta.nct_id)) {
+        let agg = trialAgg.get(company);
+        if (!agg) { agg = { company, latestMs: 0, items: new Map() }; trialAgg.set(company, agg); }
+        agg.latestMs = Math.max(agg.latestMs, sigDate);
+        const id = metaStr(meta.nct_id)!;
+        if (!agg.items.has(id)) {
+          agg.items.set(id, { id, title: metaTitle(s.signalKey, meta) ?? id, url: cleanSubItemUrl(s.sourceUrl), what: null, ago: '' });
+        }
+        continue;
+      }
+
+      // ── Everything else → per-(company, signalKey) grouping ──
+      const family = ensureFamily(familyKey);
+      const groupKey = SIGNAL_KEY_NORMALIZE[s.signalKey] ?? s.signalKey;
+      const rowKey = `${company}||${groupKey}`;
+
+      // Aggregate hiring signals: pills tell the story; a single job-posting URL
+      // out of 40+ roles would be misleading — suppress it.
       const isHiringAggregate = s.signalKey === 'hiring_expansion' || s.signalKey === 'job_surge';
 
-      // Build sub-item with sanitised title + URL
+      // Sub-item title comes from structured metadata first, generated text last.
+      // ago is intentionally blank — the row's right-column timestamp is the single
+      // source of truth (no second timestamp inside the expanded list).
       const subItem: SignalSubItem = {
         id: s.id,
-        title: cleanSubItemTitle(s.signalKey, s.sourceTitle, s.sourceSummary, s.contactName),
+        title: metaTitle(s.signalKey, meta) ?? cleanSubItemTitle(s.signalKey, s.sourceTitle, s.sourceSummary, s.contactName),
         url: isHiringAggregate ? null : cleanSubItemUrl(s.sourceUrl),
         what: null,
-        ago: relativeTime(s.eventAt ?? s.observedAt),
+        ago: '',
       };
 
       if (!family.has(rowKey)) {
-        // Hiring signals: countLabel goes inline on the row; category pills
-        // go in the expanded area only (hidden until the user unfolds the row).
+        // Hiring: inline count + category pills (pills shown in expanded area only).
         let countLabel: string | undefined;
         let pills: string[] | undefined;
         if (s.signalKey === 'hiring_expansion') {
@@ -887,29 +939,57 @@ export default function BriefingPage() {
       }
     }
 
-    // Second pass: for companies that have a patent portfolio surge row, remove the
-    // now-duplicate individual patent rows so they don't also appear standalone.
-    // When the surge already carries server-attached patents (the normal path), we
-    // just delete the duplicates. Only when the feed couldn't attach any do we fall
-    // back to absorbing whatever individual rows did arrive.
+    // Build merged patent rows
+    for (const agg of patentAgg.values()) {
+      const items = [...agg.items.values()];
+      const total = items.length > 0 ? items.length : agg.surgeCount;
+      if (total === 0) continue;
+      const portfolioUrl = agg.portfolioUrl ?? `https://patents.google.com/?assignee=${encodeURIComponent(agg.company)}`;
+      const shown = items.slice(0, PATENT_DISPLAY_CAP);
+      const fallbackItem: SignalSubItem = { id: `${agg.company}-portfolio`, title: 'View patents on Google Patents', url: portfolioUrl, what: null, ago: '' };
+      ensureFamily('research').set(`${agg.company}||patents`, {
+        key: `${agg.company}||patents`,
+        glyph: '◎',
+        company: agg.company,
+        label: 'Patents',
+        count: total,
+        countLabel: `${total} patent${total !== 1 ? 's' : ''}`,
+        ago: relativeTime(isoFromMs(agg.latestMs)),
+        items: shown.length > 0 ? shown : [fallbackItem],
+        moreCount: items.length > PATENT_DISPLAY_CAP ? items.length - PATENT_DISPLAY_CAP : 0,
+        moreUrl: items.length > PATENT_DISPLAY_CAP ? portfolioUrl : null,
+      });
+    }
+
+    // Build merged clinical-trial rows
+    for (const agg of trialAgg.values()) {
+      const items = [...agg.items.values()];
+      if (items.length === 0) continue;
+      const shown = items.slice(0, PATENT_DISPLAY_CAP);
+      ensureFamily('pipeline').set(`${agg.company}||clinical_activity`, {
+        key: `${agg.company}||clinical_activity`,
+        glyph: '⬡',
+        company: agg.company,
+        label: 'Clinical trials',
+        count: items.length,
+        countLabel: `${items.length} trial${items.length !== 1 ? 's' : ''}`,
+        ago: relativeTime(isoFromMs(agg.latestMs)),
+        items: shown,
+        moreCount: items.length > PATENT_DISPLAY_CAP ? items.length - PATENT_DISPLAY_CAP : 0,
+        moreUrl: items.length > PATENT_DISPLAY_CAP
+          ? `https://clinicaltrials.gov/search?spons=${encodeURIComponent(agg.company)}`
+          : null,
+      });
+    }
+
+    // Finalise: give every multi-item row a consistent grey count label so we never
+    // mix a number-in-pill badge with grey-sentence counts.
     for (const family of familyMap.values()) {
-      for (const [rowKey, surgeRow] of family) {
-        if (!rowKey.endsWith('||assignee_portfolio_acceleration')) continue;
-        const company = surgeRow.company;
-        let absorbedCount = 0;
-        for (const pKey of PATENT_INDIVIDUAL_KEYS) {
-          const indivRowKey = `${company}||${pKey}`;
-          const indivRow = family.get(indivRowKey);
-          if (!indivRow) continue;
-          if (!surgeRow.serverPatents) {
-            surgeRow.items.push(...indivRow.items);
-            absorbedCount += indivRow.count;
-          }
-          family.delete(indivRowKey);
-        }
-        if (!surgeRow.serverPatents && absorbedCount > 0) {
-          surgeRow.count = absorbedCount;
-          surgeRow.countLabel = `${absorbedCount} patent${absorbedCount !== 1 ? 's' : ''}`;
+      for (const row of family.values()) {
+        if (!row.countLabel && row.count > 1) {
+          const gk = row.key.split('||')[1] ?? '';
+          const noun = COUNT_NOUN[gk] ?? 'update';
+          row.countLabel = `${row.count} ${noun}${row.count !== 1 ? 's' : ''}`;
         }
       }
     }
@@ -1236,10 +1316,9 @@ export default function BriefingPage() {
                               <span className="bt-sig-line">
                                 <strong>{row.company}</strong>
                                 {` · ${row.label}`}
-                                {row.countLabel
-                                  ? <span className="bt-sig-line-count">{` · ${row.countLabel}`}</span>
-                                  : row.count > 1 && <span className="bt-sig-count">{row.count}</span>
-                                }
+                                {row.countLabel && (
+                                  <span className="bt-sig-line-count">{` · ${row.countLabel}`}</span>
+                                )}
                               </span>
                             </span>
                             <span className="bt-sig-ago">{row.ago}</span>

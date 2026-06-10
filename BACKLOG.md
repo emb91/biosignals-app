@@ -48,6 +48,18 @@ Biotech-specific ICP modelling, taxonomy (therapeutic areas, modalities, develop
 
 ---
 
+## Pre-launch readiness (engineering / ops)
+
+Operational gates to clear before going live — distinct from product/feature work. None of these are built yet.
+
+- [ ] **Automate backups.** Scheduled, verified backups of the Supabase/Postgres database (and any other stateful stores). Test a restore — an untested backup is not a backup.
+- [ ] **Set up error monitoring.** Wire Sentry (or similar) across the Next.js app, API routes, and cron/monitor jobs, with alerting on new or spiking errors.
+- [ ] **Separate staging and production environments.** Distinct Supabase projects, env vars, and deploy targets so changes are validated in staging before they touch customer data. (Also fixes the current gap where Vercel crons only fire on a live prod deploy — see the press-release monitor note below.)
+- [ ] **Document how to roll back a deployment.** A written, tested runbook for reverting a bad deploy (app + any migration), including who runs it and how to verify recovery.
+- [ ] **Senior architecture review.** Have a senior engineer spend 5–10 hours reviewing the architecture — data model, multi-tenancy/RLS, enrichment cost paths, sync reliability — before launch.
+
+---
+
 ## Accounts window (Phase 2 — upsell / new data motion)
 
 The Accounts page is a separate product motion from Leads. Rather than "work what you have", it's "here are your best-fit companies — do you have the right coverage?"

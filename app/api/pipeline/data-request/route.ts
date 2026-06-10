@@ -217,33 +217,50 @@ export async function POST(request: Request) {
       },
     });
 
-    const backgroundTask = () =>
-      runDataAcquisitionJob(job.id as string).catch((error) => {
-        console.error('[pipeline/data-request] acquisition job failed', error);
-      });
+    // Sequential per-user execution: only start this job when nothing is
+    // running and no older job is waiting. Otherwise it stays 'queued' and the
+    // queue advancer (end of runDataAcquisitionJob) or the polling safety net
+    // (GET /api/data-acquisition/jobs) starts it later. Billing caps are
+    // checked when the job actually starts, not here.
+    const [{ count: activeCount }, { count: queuedAheadCount }] = await Promise.all([
+      supabase
+        .from('data_acquisition_jobs')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .in('status', ['discovering', 'importing', 'enriching']),
+      supabase
+        .from('data_acquisition_jobs')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .eq('status', 'queued')
+        .neq('id', job.id),
+    ]);
 
-    if (process.env.NODE_ENV === 'development') {
-      setTimeout(() => {
-        void backgroundTask();
-      }, 0);
-    } else {
-      after(backgroundTask);
+    const startNow = (activeCount ?? 0) === 0 && (queuedAheadCount ?? 0) === 0;
+
+    if (startNow) {
+      const backgroundTask = () =>
+        runDataAcquisitionJob(job.id as string).catch((error) => {
+          console.error('[pipeline/data-request] acquisition job failed', error);
+        });
+
+      if (process.env.NODE_ENV === 'development') {
+        setTimeout(() => {
+          void backgroundTask();
+        }, 0);
+      } else {
+        after(backgroundTask);
+      }
     }
 
     return NextResponse.json({
       jobId: job.id as string,
       batchId: batch.id as string,
       filename,
+      queued: !startNow,
+      queuePosition: startNow ? 0 : (queuedAheadCount ?? 0) + 1,
       targetCompanyCount,
       targetContactCount: estimate.targetContactCount,
-      estimatedScreenedCompanies: {
-        min: estimate.screenedCompaniesMin,
-        max: estimate.screenedCompaniesMax,
-      },
-      estimatedCreditUnits: {
-        min: estimate.estimatedMinCreditUnits,
-        max: estimate.estimatedMaxCreditUnits,
-      },
     });
   } catch (e) {
     console.error('[pipeline/data-request]', e);
