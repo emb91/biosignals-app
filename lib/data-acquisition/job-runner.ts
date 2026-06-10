@@ -2,13 +2,17 @@ import { createAdminClient } from '@/lib/supabase-admin';
 import { processQueuedRowsInBackground, type QueuedRow } from '@/lib/import-queue';
 import {
   DEFAULT_CONTACTS_PER_COMPANY,
+  DEFAULT_MONTHLY_CREDIT_LIMIT,
+  creditUnitsForEvent,
   recordDataAcquisitionUsageEvent,
+  type DataAcquisitionUsageEventType,
 } from '@/lib/data-acquisition-metering';
 import {
   discoverApolloCompanies,
   discoverApolloPeopleForCompanies,
   type DiscoveredCompany,
   type DiscoveredPerson,
+  type PeopleSearchTarget,
 } from '@/lib/data-acquisition/apollo-discovery';
 import {
   apolloOrganizationMatchesIcpKeywords,
@@ -29,6 +33,8 @@ type DataAcquisitionJob = {
   target_contact_count: number | null;
   max_screened_companies: number | null;
   max_contact_enrichments: number | null;
+  max_credit_units: number | string | null;
+  actual_credit_units: number | string | null;
   status: string;
   metadata: Record<string, unknown> | null;
 };
@@ -50,6 +56,14 @@ type ExistingContact = {
   company_domain: string | null;
 };
 
+type OwnedContactRef = {
+  id: string;
+  email: string | null;
+  linkedin_url: string | null;
+  company_id: string | null;
+  company_domain: string | null;
+};
+
 type CompanyContext = {
   id: string;
   company_name: string | null;
@@ -68,6 +82,13 @@ type DbCompanyRow = {
   apollo_organization_raw: unknown;
   employee_count: number | null;
 };
+
+// Jobs in these states own the user's single execution slot. The FIFO queue
+// only starts the next 'queued' job when nothing is in one of these states.
+const ACTIVE_JOB_STATUSES = ['discovering', 'importing', 'enriching'] as const;
+
+/** Max owned-contact exclusion entries passed to a single Apollo people search. */
+const MAX_EXCLUSIONS_PER_CALL = 100;
 
 function apolloOrgIdFromRaw(raw: unknown): string | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -176,83 +197,119 @@ async function loadPrioritizedCompaniesForIcpAccounts(
   return scored.slice(0, limit).map((s) => s.row);
 }
 
-async function ingestPeopleAndRunImportPipeline(
+// ─── Credit guard (per-job cap + per-user monthly billing cap) ───────────────
+
+type CapKind = 'monthly' | 'job';
+
+type CreditGuard = {
+  /** Book units consumed by this job (call after each metered usage event). */
+  charge: (units: number) => void;
+  /** Which cap (if any) has been reached. */
+  capReached: () => CapKind | null;
+};
+
+function toFiniteNumber(value: unknown): number | null {
+  const n = typeof value === 'number' ? value : typeof value === 'string' ? Number.parseFloat(value) : NaN;
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Builds the runtime spend guard. Monthly usage is the sum of
+ * actual_credit_units over the user's jobs requested this calendar month
+ * (trigger-maintained per job, so no event-table scan is needed). The monthly
+ * limit comes from user_billing_limits and falls back to
+ * DEFAULT_MONTHLY_CREDIT_LIMIT when the user has no row (or a null limit).
+ * The per-job cap is the job's max_credit_units. All internal-only: the user
+ * never sees credit units, only the plain-language shortfall note.
+ */
+async function buildCreditGuard(
   admin: ReturnType<typeof createAdminClient>,
   job: DataAcquisitionJob,
-  uniquePeople: DiscoveredPerson[],
-  usageMeta: Record<string, unknown>,
-): Promise<void> {
-  const rawRows = uniquePeople.map((person) =>
-    rawUploadFromPerson(job.user_id, job.upload_batch_id!, person, job.id),
-  );
-  const { data: insertedRows, error: insertError } =
-    rawRows.length > 0
-      ? await admin
-          .from('raw_uploads')
-          .insert(rawRows)
-          .select('id, full_name, email, linkedin_url, company_name, raw_data')
-      : { data: [], error: null };
+): Promise<CreditGuard> {
+  const { data: limitRow } = await admin
+    .from('user_billing_limits')
+    .select('monthly_credit_limit')
+    .eq('user_id', job.user_id)
+    .maybeSingle();
+  const monthlyLimit =
+    toFiniteNumber((limitRow as { monthly_credit_limit?: unknown } | null)?.monthly_credit_limit) ??
+    DEFAULT_MONTHLY_CREDIT_LIMIT;
 
-  if (insertError) throw new Error(insertError.message);
+  const now = new Date();
+  const monthStartIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+  const { data: monthJobs } = await admin
+    .from('data_acquisition_jobs')
+    .select('id, actual_credit_units')
+    .eq('user_id', job.user_id)
+    .gte('requested_at', monthStartIso);
 
-  await admin
-    .from('upload_batches')
-    .update({
-      total_rows: rawRows.length,
-      status: rawRows.length > 0 ? 'processing' : 'complete',
-      completed_at: rawRows.length > 0 ? null : new Date().toISOString(),
-    })
-    .eq('id', job.upload_batch_id);
+  let monthUnits = 0;
+  let jobUnits = 0;
+  for (const row of (monthJobs ?? []) as Array<{ id: string; actual_credit_units: unknown }>) {
+    const units = toFiniteNumber(row.actual_credit_units) ?? 0;
+    monthUnits += units;
+    if (row.id === job.id) jobUnits = units;
+  }
 
-  if (rawRows.length > 0) {
+  const jobLimit = toFiniteNumber(job.max_credit_units);
+
+  return {
+    charge(units: number) {
+      jobUnits += units;
+      monthUnits += units;
+    },
+    capReached() {
+      if (monthUnits >= monthlyLimit) return 'monthly';
+      if (jobLimit != null && jobLimit > 0 && jobUnits >= jobLimit) return 'job';
+      return null;
+    },
+  };
+}
+
+type Meter = (
+  eventType: DataAcquisitionUsageEventType,
+  quantity: number,
+  metadata: Record<string, unknown>,
+  provider?: string,
+) => Promise<void>;
+
+function makeMeter(
+  admin: ReturnType<typeof createAdminClient>,
+  job: DataAcquisitionJob,
+  guard: CreditGuard,
+): Meter {
+  return async (eventType, quantity, metadata, provider = 'apollo') => {
+    if (quantity <= 0) return;
     await recordDataAcquisitionUsageEvent(admin, {
       jobId: job.id,
       userId: job.user_id,
-      eventType: 'apollo_person_enrichment',
-      provider: 'apollo',
-      quantity: rawRows.length,
-      metadata: { batchId: job.upload_batch_id, ...usageMeta },
+      eventType,
+      provider,
+      quantity,
+      metadata,
     });
-  }
-
-  const queuedRows: QueuedRow[] = (insertedRows || []).map((row) => ({
-    id: row.id as string,
-    full_name: row.full_name as string | null,
-    email: row.email as string | null,
-    linkedin_url: row.linkedin_url as string | null,
-    company_name: row.company_name as string | null,
-    raw_data: row.raw_data as Record<string, unknown>,
-  }));
-
-  await updateJob(job.id, { status: rawRows.length > 0 ? 'enriching' : 'complete' });
-
-  if (queuedRows.length > 0) {
-    await processQueuedRowsInBackground({
-      queuedRows,
-      batchId: job.upload_batch_id!,
-      userId: job.user_id,
-    });
-
-    const { count: importedContacts } = await admin
-      .from('contacts')
-      .select('id', { count: 'exact', head: true })
-      .eq('user_id', job.user_id)
-      .eq('batch_id', job.upload_batch_id);
-
-    if (importedContacts && importedContacts > 0) {
-      await recordDataAcquisitionUsageEvent(admin, {
-        jobId: job.id,
-        userId: job.user_id,
-        eventType: 'imported_contact',
-        provider: 'arcova',
-        quantity: importedContacts,
-        metadata: { batchId: job.upload_batch_id, ...usageMeta },
-      });
-    }
-  }
-
-  await updateJob(job.id, { status: 'complete', completed_at: new Date().toISOString() });
+    guard.charge(creditUnitsForEvent(eventType, quantity));
+  };
 }
+
+/**
+ * Plain-language partial-fulfillment note. Deliberately never mentions credit
+ * units: costs are internal-only (admin data-costs route).
+ */
+function shortfallNote(
+  kind: CapKind,
+  delivered: number,
+  requested: number,
+  unit: 'contacts' | 'companies',
+): string {
+  const reason =
+    kind === 'monthly'
+      ? "you've reached your plan's usage limit this month"
+      : 'this job reached its size limit';
+  return `We sourced ${delivered} of the ${requested} requested ${unit} because ${reason}.`;
+}
+
+// ─── Dedup keys ───────────────────────────────────────────────────────────────
 
 function normalizeKey(value: string | null | undefined): string {
   return (value || '')
@@ -314,6 +371,105 @@ async function updateJob(jobId: string, values: Record<string, unknown>) {
   if (error) throw new Error(error.message);
 }
 
+// ─── Pre-flight contact gap helpers ──────────────────────────────────────────
+
+/**
+ * Owned contacts at specific companies, keyed by company_id and by normalized
+ * company_domain. Used by the pre-flight gap check (skip companies whose
+ * requested coverage already exists) and to build the per-company Apollo
+ * exclusion lists. The "how many do we want" number is NOT computed here: it
+ * comes from the job's requested quantity (which itself derives from the
+ * coverage plan / persona definitions upstream).
+ */
+async function loadOwnedContactsForCompanies(
+  admin: ReturnType<typeof createAdminClient>,
+  userId: string,
+  companyIds: string[],
+  domains: string[],
+): Promise<{ byCompanyId: Map<string, OwnedContactRef[]>; byDomain: Map<string, OwnedContactRef[]> }> {
+  const byCompanyId = new Map<string, OwnedContactRef[]>();
+  const byDomain = new Map<string, OwnedContactRef[]>();
+  const seenIds = new Set<string>();
+
+  const ingest = (rows: OwnedContactRef[] | null | undefined) => {
+    for (const row of rows ?? []) {
+      if (seenIds.has(row.id)) continue;
+      seenIds.add(row.id);
+      if (row.company_id) {
+        if (!byCompanyId.has(row.company_id)) byCompanyId.set(row.company_id, []);
+        byCompanyId.get(row.company_id)!.push(row);
+      }
+      const domainKey = normalizeKey(row.company_domain);
+      if (domainKey) {
+        if (!byDomain.has(domainKey)) byDomain.set(domainKey, []);
+        byDomain.get(domainKey)!.push(row);
+      }
+    }
+  };
+
+  const select = 'id, email, linkedin_url, company_id, company_domain';
+  if (companyIds.length > 0) {
+    const { data, error } = await admin
+      .from('contacts')
+      .select(select)
+      .eq('user_id', userId)
+      .in('company_id', companyIds);
+    if (error) throw new Error(error.message);
+    ingest((data ?? []) as OwnedContactRef[]);
+  }
+  const cleanDomains = [...new Set(domains.map((d) => normalizeKey(d)).filter(Boolean))];
+  if (cleanDomains.length > 0) {
+    const { data, error } = await admin
+      .from('contacts')
+      .select(select)
+      .eq('user_id', userId)
+      .in('company_domain', cleanDomains);
+    if (error) throw new Error(error.message);
+    ingest((data ?? []) as OwnedContactRef[]);
+  }
+
+  return { byCompanyId, byDomain };
+}
+
+function ownedContactsAt(
+  owned: { byCompanyId: Map<string, OwnedContactRef[]>; byDomain: Map<string, OwnedContactRef[]> },
+  companyId: string | null,
+  domain: string | null,
+): OwnedContactRef[] {
+  const merged = new Map<string, OwnedContactRef>();
+  if (companyId) for (const c of owned.byCompanyId.get(companyId) ?? []) merged.set(c.id, c);
+  const domainKey = normalizeKey(domain);
+  if (domainKey) for (const c of owned.byDomain.get(domainKey) ?? []) merged.set(c.id, c);
+  return [...merged.values()];
+}
+
+/** Exclusion lists for one Apollo people call, capped at MAX_EXCLUSIONS_PER_CALL entries total. */
+function exclusionListsFor(contacts: OwnedContactRef[]): {
+  excludeEmails: string[];
+  excludeLinkedinUrls: string[];
+} {
+  const excludeEmails: string[] = [];
+  const excludeLinkedinUrls: string[] = [];
+  let total = 0;
+  for (const contact of contacts) {
+    if (total >= MAX_EXCLUSIONS_PER_CALL) break;
+    if (contact.linkedin_url?.trim()) {
+      excludeLinkedinUrls.push(contact.linkedin_url.trim());
+      total += 1;
+      if (total >= MAX_EXCLUSIONS_PER_CALL) break;
+    }
+    if (contact.email?.trim()) {
+      excludeEmails.push(contact.email.trim());
+      total += 1;
+    }
+  }
+  // If a company somehow exceeds the cap we truncate here; the whole-book
+  // post-fetch dedup below remains in place as the second line of defense.
+  return { excludeEmails, excludeLinkedinUrls };
+}
+
+// ─── Shared pipeline tail ─────────────────────────────────────────────────────
+
 function rawUploadFromPerson(userId: string, batchId: string, person: DiscoveredPerson, jobId: string) {
   const rawData = {
     full_name: person.full_name,
@@ -341,6 +497,93 @@ function rawUploadFromPerson(userId: string, batchId: string, person: Discovered
     company_name: person.company_name,
     status: 'enriching',
   };
+}
+
+async function ingestPeopleAndRunImportPipeline(
+  admin: ReturnType<typeof createAdminClient>,
+  job: DataAcquisitionJob,
+  uniquePeople: DiscoveredPerson[],
+  usageMeta: Record<string, unknown>,
+  meter: Meter,
+  completionNote: string | null,
+): Promise<void> {
+  const rawRows = uniquePeople.map((person) =>
+    rawUploadFromPerson(job.user_id, job.upload_batch_id!, person, job.id),
+  );
+  const { data: insertedRows, error: insertError } =
+    rawRows.length > 0
+      ? await admin
+          .from('raw_uploads')
+          .insert(rawRows)
+          .select('id, full_name, email, linkedin_url, company_name, raw_data')
+      : { data: [], error: null };
+
+  if (insertError) throw new Error(insertError.message);
+
+  await admin
+    .from('upload_batches')
+    .update({
+      total_rows: rawRows.length,
+      status: rawRows.length > 0 ? 'processing' : 'complete',
+      completed_at: rawRows.length > 0 ? null : new Date().toISOString(),
+    })
+    .eq('id', job.upload_batch_id);
+
+  if (rawRows.length > 0) {
+    await meter('apollo_person_enrichment', rawRows.length, { batchId: job.upload_batch_id, ...usageMeta });
+  }
+
+  const queuedRows: QueuedRow[] = (insertedRows || []).map((row) => ({
+    id: row.id as string,
+    full_name: row.full_name as string | null,
+    email: row.email as string | null,
+    linkedin_url: row.linkedin_url as string | null,
+    company_name: row.company_name as string | null,
+    raw_data: row.raw_data as Record<string, unknown>,
+  }));
+
+  await updateJob(job.id, { status: rawRows.length > 0 ? 'enriching' : 'complete' });
+
+  if (queuedRows.length > 0) {
+    await processQueuedRowsInBackground({
+      queuedRows,
+      batchId: job.upload_batch_id!,
+      userId: job.user_id,
+    });
+
+    const { count: importedContacts } = await admin
+      .from('contacts')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', job.user_id)
+      .eq('batch_id', job.upload_batch_id);
+
+    if (importedContacts && importedContacts > 0) {
+      await meter('imported_contact', importedContacts, { batchId: job.upload_batch_id, ...usageMeta }, 'arcova');
+    }
+  }
+
+  await updateJob(job.id, {
+    status: 'complete',
+    completed_at: new Date().toISOString(),
+    completion_note: completionNote,
+  });
+}
+
+/** Terminal completion when nothing was purchased (coverage already owned, or a cap blocked the run). */
+async function completeJobWithoutPurchase(
+  admin: ReturnType<typeof createAdminClient>,
+  job: DataAcquisitionJob,
+  note: string,
+): Promise<void> {
+  await admin
+    .from('upload_batches')
+    .update({ total_rows: 0, status: 'complete', completed_at: new Date().toISOString() })
+    .eq('id', job.upload_batch_id);
+  await updateJob(job.id, {
+    status: 'complete',
+    completed_at: new Date().toISOString(),
+    completion_note: note,
+  });
 }
 
 function getCompanyContext(job: DataAcquisitionJob): CompanyContext | null {
@@ -379,6 +622,128 @@ function discoveredCompanyFromContext(company: CompanyContext): DiscoveredCompan
   };
 }
 
+// ─── Screened-organizations cache ────────────────────────────────────────────
+
+type ScreenCache = {
+  /** 'qualified' | 'rejected:*' | null (never screened for this user+ICP). */
+  lookup: (company: DiscoveredCompany) => string | null;
+  store: (company: DiscoveredCompany, verdict: string) => Promise<void>;
+};
+
+/**
+ * Loads the (user, ICP) screening history so every Apollo org is screened at
+ * most once per ICP across all jobs: previously rejected orgs are skipped for
+ * free, previously qualified ones short-circuit to qualified.
+ */
+async function loadScreenCache(
+  admin: ReturnType<typeof createAdminClient>,
+  userId: string,
+  icpId: string,
+): Promise<ScreenCache> {
+  const byOrgId = new Map<string, string>();
+  const byDomain = new Map<string, string>();
+
+  const { data, error } = await admin
+    .from('screened_organizations')
+    .select('apollo_org_id, domain, verdict')
+    .eq('user_id', userId)
+    .eq('icp_id', icpId);
+  if (error) {
+    // Cache is an optimization: if the table is missing (migration not yet
+    // applied) screening still works, it just re-screens.
+    console.warn('[data-acquisition] screened_organizations unavailable:', error.message);
+  }
+  for (const row of (data ?? []) as Array<{ apollo_org_id: string | null; domain: string | null; verdict: string }>) {
+    if (row.apollo_org_id) byOrgId.set(row.apollo_org_id, row.verdict);
+    const domainKey = normalizeKey(row.domain);
+    if (domainKey) byDomain.set(domainKey, row.verdict);
+  }
+
+  return {
+    lookup(company) {
+      if (company.source_id && byOrgId.has(company.source_id)) return byOrgId.get(company.source_id)!;
+      const domainKey = normalizeKey(company.domain);
+      if (domainKey && byDomain.has(domainKey)) return byDomain.get(domainKey)!;
+      return null;
+    },
+    async store(company, verdict) {
+      if (company.source_id) byOrgId.set(company.source_id, verdict);
+      const domainKey = normalizeKey(company.domain);
+      if (domainKey) byDomain.set(domainKey, verdict);
+      const { error: insertError } = await admin.from('screened_organizations').insert({
+        user_id: userId,
+        icp_id: icpId,
+        apollo_org_id: company.source_id,
+        domain: domainKey || null,
+        verdict,
+      });
+      // Unique-violation (already cached by a concurrent job) and a missing
+      // table are both fine to ignore; the in-memory maps stay authoritative
+      // for this run.
+      if (insertError && insertError.code !== '23505') {
+        console.warn('[data-acquisition] screened_organizations insert failed:', insertError.message);
+      }
+    },
+  };
+}
+
+// ─── FIFO queue (one running job per user) ───────────────────────────────────
+
+/**
+ * Atomically claims a job for execution (queued/failed -> discovering).
+ * Returns false when another process already claimed it: this is the
+ * double-start guard between the end-of-job queue advancer and the poll-time
+ * recovery kick in GET /api/data-acquisition/jobs.
+ */
+async function claimJobForRun(
+  admin: ReturnType<typeof createAdminClient>,
+  jobId: string,
+): Promise<boolean> {
+  const { data, error } = await admin
+    .from('data_acquisition_jobs')
+    .update({
+      status: 'discovering',
+      started_at: new Date().toISOString(),
+      error: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', jobId)
+    .in('status', ['queued', 'failed'])
+    .select('id');
+  if (error) throw new Error(error.message);
+  return (data ?? []).length > 0;
+}
+
+/**
+ * Starts the user's oldest queued job if nothing is currently running.
+ * Called when a job reaches a terminal state (and by the polling safety net
+ * via runDataAcquisitionJob, whose atomic claim prevents double-starts).
+ */
+async function advanceQueueForUser(userId: string): Promise<void> {
+  const admin = createAdminClient();
+  const { count } = await admin
+    .from('data_acquisition_jobs')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .in('status', [...ACTIVE_JOB_STATUSES]);
+  if ((count ?? 0) > 0) return;
+
+  const { data: next } = await admin
+    .from('data_acquisition_jobs')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('status', 'queued')
+    .order('requested_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  const nextId = (next as { id?: string } | null)?.id;
+  if (!nextId) return;
+
+  await runDataAcquisitionJob(nextId);
+}
+
+// ─── Job execution ────────────────────────────────────────────────────────────
+
 export async function runDataAcquisitionJob(jobId: string): Promise<void> {
   const admin = createAdminClient();
 
@@ -396,338 +761,466 @@ export async function runDataAcquisitionJob(jobId: string): Promise<void> {
   if (!job.upload_batch_id) {
     throw new Error(`Data acquisition job ${jobId} is missing upload_batch_id`);
   }
-  if (!['queued', 'failed'].includes(job.status)) return;
+
+  const claimed = await claimJobForRun(admin, job.id);
+  if (!claimed) return;
 
   try {
-    await updateJob(job.id, { status: 'discovering', started_at: new Date().toISOString(), error: null });
-
-    const [{ data: icpData, error: icpError }, { data: personaData, error: personaError }] = await Promise.all([
-      admin
-        .from('icps')
-        .select(
-          'id, name, company_type, platform_category, therapeutic_areas, modalities, development_stages, company_sizes, funding_stages, target_customers, buyer_types',
-        )
-        .eq('user_id', job.user_id)
-        .eq('id', job.icp_id)
-        .maybeSingle(),
-      admin
-        .from('personas')
-        .select('id, name, functions, seniority_levels, job_titles')
-        .eq('user_id', job.user_id)
-        .eq('icp_id', job.icp_id),
-    ]);
-
-    if (icpError || !icpData) throw new Error(icpError?.message || 'ICP not found');
-    if (personaError) throw new Error(personaError.message);
-
-    const icp = icpData as AcquisitionIcp;
-    const personas = (personaData || []) as AcquisitionPersona[];
-
-    if (job.request_type === 'contacts_at_company') {
-      const companyContext = getCompanyContext(job);
-      if (!companyContext) {
-        throw new Error('contacts_at_company job is missing company context');
-      }
-
-      const peopleRecipe = buildApolloPeopleSearchRecipe(personas);
-      const targetContactCount = Math.max(1, job.target_contact_count || DEFAULT_CONTACTS_PER_COMPANY);
-      const company = discoveredCompanyFromContext(companyContext);
-      const people = await discoverApolloPeopleForCompanies({
-        companies: [company],
-        recipe: peopleRecipe,
-        contactsPerCompany: targetContactCount,
-        onSearchResult: async (count) => {
-          if (count <= 0) return;
-          await recordDataAcquisitionUsageEvent(admin, {
-            jobId: job.id,
-            userId: job.user_id,
-            eventType: 'apollo_people_search_result',
-            provider: 'apollo',
-            quantity: count,
-            metadata: { company: company.name, domain: company.domain, companyId: companyContext.id },
-          });
-        },
-      });
-
-      const { data: existingContacts } = await admin
-        .from('contacts')
-        .select('full_name, first_name, last_name, email, linkedin_url, company_name, company_domain')
-        .eq('user_id', job.user_id);
-      const existingContactKeySet = new Set(
-        ((existingContacts || []) as ExistingContact[]).flatMap(existingContactKeys),
-      );
-
-      const uniquePeople: DiscoveredPerson[] = [];
-      const seenContactKeys = new Set<string>();
-      for (const person of people) {
-        const key = contactKey(person);
-        if (existingContactKeySet.has(key) || seenContactKeys.has(key)) {
-          await recordDataAcquisitionUsageEvent(admin, {
-            jobId: job.id,
-            userId: job.user_id,
-            eventType: 'duplicate_contact_skipped',
-            provider: 'apollo',
-            quantity: 1,
-            metadata: { person: person.full_name, company: person.company_name, companyId: companyContext.id },
-          });
-          continue;
-        }
-        seenContactKeys.add(key);
-        uniquePeople.push(person);
-        if (uniquePeople.length >= targetContactCount) break;
-      }
-
-      await updateJob(job.id, { status: 'importing' });
-      await ingestPeopleAndRunImportPipeline(admin, job, uniquePeople, {
-        companyId: companyContext.id,
-      });
-      return;
-    }
-
-    if (job.request_type === 'better_contacts' || job.request_type === 'more_contacts_at_accounts') {
-      const targetContactCount = Math.max(1, job.target_contact_count || DEFAULT_CONTACTS_PER_COMPANY);
-      const maxAccounts = Math.min(100, Math.max(1, Math.ceil(targetContactCount / DEFAULT_CONTACTS_PER_COMPANY)));
-      const prioritizedRows = await loadPrioritizedCompaniesForIcpAccounts(
-        admin,
-        job.user_id,
-        job.icp_id,
-        job.request_type,
-        500,
-      );
-      const accountCompanies: DiscoveredCompany[] = [];
-      for (const row of prioritizedRows) {
-        const discovered = discoveredCompanyFromDbRow(row);
-        if (discovered) accountCompanies.push(discovered);
-        if (accountCompanies.length >= maxAccounts) break;
-      }
-
-      if (accountCompanies.length === 0) {
-        throw new Error(
-          'No ICP-matched accounts with a usable domain for Apollo search. Add or enrich company domains first.',
-        );
-      }
-
-      const peopleRecipe = buildApolloPeopleSearchRecipe(personas);
-      const contactsPerCompany = Math.max(1, Math.ceil(targetContactCount / accountCompanies.length));
-
-      const people = await discoverApolloPeopleForCompanies({
-        companies: accountCompanies,
-        recipe: peopleRecipe,
-        contactsPerCompany,
-        onSearchResult: async (count, company) => {
-          if (count <= 0) return;
-          await recordDataAcquisitionUsageEvent(admin, {
-            jobId: job.id,
-            userId: job.user_id,
-            eventType: 'apollo_people_search_result',
-            provider: 'apollo',
-            quantity: count,
-            metadata: { company: company.name, domain: company.domain, requestType: job.request_type },
-          });
-        },
-      });
-
-      const { data: existingContactsIcp } = await admin
-        .from('contacts')
-        .select('full_name, first_name, last_name, email, linkedin_url, company_name, company_domain')
-        .eq('user_id', job.user_id);
-      const existingContactKeySetIcp = new Set(
-        ((existingContactsIcp || []) as ExistingContact[]).flatMap(existingContactKeys),
-      );
-
-      const uniquePeopleIcp: DiscoveredPerson[] = [];
-      const seenContactKeysIcp = new Set<string>();
-      for (const person of people) {
-        const key = contactKey(person);
-        if (existingContactKeySetIcp.has(key) || seenContactKeysIcp.has(key)) {
-          await recordDataAcquisitionUsageEvent(admin, {
-            jobId: job.id,
-            userId: job.user_id,
-            eventType: 'duplicate_contact_skipped',
-            provider: 'apollo',
-            quantity: 1,
-            metadata: { person: person.full_name, company: person.company_name },
-          });
-          continue;
-        }
-        seenContactKeysIcp.add(key);
-        uniquePeopleIcp.push(person);
-        if (uniquePeopleIcp.length >= targetContactCount) break;
-      }
-
-      await updateJob(job.id, { status: 'importing' });
-      await ingestPeopleAndRunImportPipeline(admin, job, uniquePeopleIcp, {
-        requestType: job.request_type,
-      });
-      return;
-    }
-
-    if (job.request_type !== 'expand_companies') {
-      throw new Error(`Unsupported data acquisition request type: ${job.request_type}`);
-    }
-
-    const companyRecipes = buildApolloCompanySearchRecipes(icp, job.request_type);
-    const targetCompanyCount = Math.max(1, job.target_company_count || 50);
-    const maxScreenedCompanies = Math.max(
-      targetCompanyCount,
-      job.max_screened_companies || targetCompanyCount * 6,
-    );
-
-    const { data: existingOwned } = await admin
-      .from('user_companies')
-      .select('company_id')
-      .eq('user_id', job.user_id);
-    const existingOwnedIds = (existingOwned ?? [])
-      .map((r) => (r as { company_id?: unknown }).company_id)
-      .filter((v): v is string => typeof v === 'string');
-    const { data: existingCompanies } = existingOwnedIds.length > 0
-      ? await admin
-          .from('companies')
-          .select('company_name, domain, company_website, linkedin_url')
-          .in('id', existingOwnedIds)
-      : { data: [] as ExistingCompany[] };
-    const existingCompanyKeySet = new Set(
-      ((existingCompanies || []) as ExistingCompany[]).flatMap(existingCompanyKeys),
-    );
-
-    const icpKeywords = icpKeywordCorpus(icp);
-
-    const discovery = await discoverApolloCompanies({
-      recipes: companyRecipes,
-      targetCompanyCount: Math.min(maxScreenedCompanies, targetCompanyCount * 6),
-      maxScreenedCompanies,
-      onScreened: async (count, recipe) => {
-        if (count <= 0) return;
-        await recordDataAcquisitionUsageEvent(admin, {
-          jobId: job.id,
-          userId: job.user_id,
-          eventType: 'apollo_company_search_result',
-          provider: 'apollo',
-          quantity: count,
-          metadata: { recipe: recipe.name },
-        });
-        await recordDataAcquisitionUsageEvent(admin, {
-          jobId: job.id,
-          userId: job.user_id,
-          eventType: 'llm_fit_screen',
-          provider: 'arcova',
-          quantity: count,
-          metadata: { recipe: recipe.name },
-        });
-      },
-    });
-
-    const qualifiedCompanies: DiscoveredCompany[] = [];
-    for (const company of discovery.companies) {
-      const isDuplicate = companyKeys(company).some((key) => existingCompanyKeySet.has(key));
-      if (isDuplicate) {
-        await recordDataAcquisitionUsageEvent(admin, {
-          jobId: job.id,
-          userId: job.user_id,
-          eventType: 'duplicate_company_skipped',
-          provider: 'apollo',
-          quantity: 1,
-          metadata: { company: company.name, domain: company.domain },
-        });
-        continue;
-      }
-
-      if (!apolloOrganizationMatchesIcpKeywords(company.raw, icpKeywords)) {
-        await recordDataAcquisitionUsageEvent(admin, {
-          jobId: job.id,
-          userId: job.user_id,
-          eventType: 'low_fit_company_rejected',
-          provider: 'arcova',
-          quantity: 1,
-          metadata: { company: company.name, domain: company.domain },
-        });
-        continue;
-      }
-
-      qualifiedCompanies.push(company);
-      await recordDataAcquisitionUsageEvent(admin, {
-        jobId: job.id,
-        userId: job.user_id,
-        eventType: 'qualified_company',
-        provider: 'apollo',
-        quantity: 1,
-        metadata: { company: company.name, domain: company.domain },
-      });
-
-      if (qualifiedCompanies.length >= targetCompanyCount) break;
-    }
-
-    if (qualifiedCompanies.length === 0) {
-      throw new Error(
-        'No new companies passed deduplication and ICP keyword screening. Widen the ICP or try again later.',
-      );
-    }
-
-    await updateJob(job.id, { status: 'importing' });
-
-    const peopleRecipe = buildApolloPeopleSearchRecipe(personas);
-    const targetContactCount =
-      job.target_contact_count || qualifiedCompanies.length * DEFAULT_CONTACTS_PER_COMPANY;
-    const contactsPerCompany = Math.max(
-      1,
-      Math.ceil(targetContactCount / Math.max(1, qualifiedCompanies.length)),
-    );
-
-    const people = await discoverApolloPeopleForCompanies({
-      companies: qualifiedCompanies,
-      recipe: peopleRecipe,
-      contactsPerCompany,
-      onSearchResult: async (count, company) => {
-        if (count <= 0) return;
-        await recordDataAcquisitionUsageEvent(admin, {
-          jobId: job.id,
-          userId: job.user_id,
-          eventType: 'apollo_people_search_result',
-          provider: 'apollo',
-          quantity: count,
-          metadata: { company: company.name, domain: company.domain },
-        });
-      },
-    });
-
-    const { data: existingContacts } = await admin
-      .from('contacts')
-      .select('full_name, first_name, last_name, email, linkedin_url, company_name, company_domain')
-      .eq('user_id', job.user_id);
-    const existingContactKeySet = new Set(
-      ((existingContacts || []) as ExistingContact[]).flatMap(existingContactKeys),
-    );
-
-    const uniquePeople: DiscoveredPerson[] = [];
-    const seenContactKeys = new Set<string>();
-    for (const person of people) {
-      const key = contactKey(person);
-      if (existingContactKeySet.has(key) || seenContactKeys.has(key)) {
-        await recordDataAcquisitionUsageEvent(admin, {
-          jobId: job.id,
-          userId: job.user_id,
-          eventType: 'duplicate_contact_skipped',
-          provider: 'apollo',
-          quantity: 1,
-          metadata: { person: person.full_name, company: person.company_name },
-        });
-        continue;
-      }
-      seenContactKeys.add(key);
-      uniquePeople.push(person);
-      if (uniquePeople.length >= targetContactCount) break;
-    }
-
-    await ingestPeopleAndRunImportPipeline(admin, job, uniquePeople, {});
+    await executeClaimedJob(admin, job);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown data acquisition failure';
     await updateJob(job.id, { status: 'failed', error: message, completed_at: new Date().toISOString() });
-    if (job.upload_batch_id) {
-      await admin
-        .from('upload_batches')
-        .update({ status: 'failed', completed_at: new Date().toISOString() })
-        .eq('id', job.upload_batch_id);
-    }
+    await admin
+      .from('upload_batches')
+      .update({ status: 'failed', completed_at: new Date().toISOString() })
+      .eq('id', job.upload_batch_id);
     throw error;
+  } finally {
+    // Sequential per-user queue: whatever happened to this job, start the
+    // oldest queued one next. Never let advancement errors mask job errors.
+    try {
+      await advanceQueueForUser(job.user_id);
+    } catch (advanceError) {
+      console.error('[data-acquisition] queue advancement failed', advanceError);
+    }
   }
+}
+
+async function executeClaimedJob(
+  admin: ReturnType<typeof createAdminClient>,
+  job: DataAcquisitionJob,
+): Promise<void> {
+  const [{ data: icpData, error: icpError }, { data: personaData, error: personaError }] = await Promise.all([
+    admin
+      .from('icps')
+      .select(
+        'id, name, company_type, platform_category, therapeutic_areas, modalities, development_stages, company_sizes, funding_stages, target_customers, buyer_types',
+      )
+      .eq('user_id', job.user_id)
+      .eq('id', job.icp_id)
+      .maybeSingle(),
+    admin
+      .from('personas')
+      .select('id, name, functions, seniority_levels, job_titles')
+      .eq('user_id', job.user_id)
+      .eq('icp_id', job.icp_id),
+  ]);
+
+  if (icpError || !icpData) throw new Error(icpError?.message || 'ICP not found');
+  if (personaError) throw new Error(personaError.message);
+
+  const icp = icpData as AcquisitionIcp;
+  const personas = (personaData || []) as AcquisitionPersona[];
+
+  const guard = await buildCreditGuard(admin, job);
+  const meter = makeMeter(admin, job, guard);
+
+  // A queued job may start after earlier jobs already exhausted the month.
+  if (guard.capReached() === 'monthly') {
+    const requested =
+      job.request_type === 'expand_companies'
+        ? Math.max(1, job.target_company_count || 50)
+        : Math.max(1, job.target_contact_count || DEFAULT_CONTACTS_PER_COMPANY);
+    const unit = job.request_type === 'expand_companies' ? 'companies' : 'contacts';
+    await completeJobWithoutPurchase(admin, job, shortfallNote('monthly', 0, requested, unit));
+    return;
+  }
+
+  if (job.request_type === 'contacts_at_company') {
+    await runContactsAtCompanyJob(admin, job, personas, guard, meter);
+    return;
+  }
+
+  if (job.request_type === 'better_contacts' || job.request_type === 'more_contacts_at_accounts') {
+    await runContactsAtAccountsJob(admin, job, personas, guard, meter);
+    return;
+  }
+
+  if (job.request_type !== 'expand_companies') {
+    throw new Error(`Unsupported data acquisition request type: ${job.request_type}`);
+  }
+
+  await runExpandCompaniesJob(admin, job, icp, personas, guard, meter);
+}
+
+// ─── contacts_at_company ─────────────────────────────────────────────────────
+
+async function runContactsAtCompanyJob(
+  admin: ReturnType<typeof createAdminClient>,
+  job: DataAcquisitionJob,
+  personas: AcquisitionPersona[],
+  guard: CreditGuard,
+  meter: Meter,
+): Promise<void> {
+  const companyContext = getCompanyContext(job);
+  if (!companyContext) {
+    throw new Error('contacts_at_company job is missing company context');
+  }
+
+  // The requested quantity comes from the job (set upstream by the user via
+  // the agent / coverage plan); the check below is purely defensive.
+  const requested = Math.max(1, job.target_contact_count || DEFAULT_CONTACTS_PER_COMPANY);
+  const company = discoveredCompanyFromContext(companyContext);
+
+  const owned = await loadOwnedContactsForCompanies(
+    admin,
+    job.user_id,
+    [companyContext.id],
+    company.domain ? [company.domain] : [],
+  );
+  const ownedHere = ownedContactsAt(owned, companyContext.id, company.domain);
+  const gap = requested - ownedHere.length;
+
+  if (gap <= 0) {
+    await meter('skipped_existing', 1, {
+      company: company.name,
+      domain: company.domain,
+      companyId: companyContext.id,
+      existingContacts: ownedHere.length,
+      requestedContacts: requested,
+    });
+    await completeJobWithoutPurchase(
+      admin,
+      job,
+      `You already have ${ownedHere.length} contact${ownedHere.length === 1 ? '' : 's'} at ${company.name}, which covers this request. Nothing new was sourced.`,
+    );
+    return;
+  }
+
+  const peopleRecipe = buildApolloPeopleSearchRecipe(personas);
+  const target: PeopleSearchTarget = {
+    company,
+    contactsTarget: gap,
+    ...exclusionListsFor(ownedHere),
+  };
+
+  const { people, stoppedByGuard } = await discoverApolloPeopleForCompanies({
+    targets: [target],
+    recipe: peopleRecipe,
+    shouldContinue: async () => guard.capReached() === null,
+    onSearchResult: async (newCount, excludedCount, c) => {
+      await meter('apollo_people_search_result', newCount, {
+        company: c.name,
+        domain: c.domain,
+        companyId: companyContext.id,
+      });
+      await meter('duplicate_contact_skipped', excludedCount, {
+        company: c.name,
+        domain: c.domain,
+        companyId: companyContext.id,
+        reason: 'already_owned_excluded',
+      });
+    },
+  });
+
+  const uniquePeople = await dedupAgainstWholeBook(admin, job, people, gap, meter, {
+    companyId: companyContext.id,
+  });
+
+  const capKind = stoppedByGuard ? guard.capReached() : null;
+  const note = capKind ? shortfallNote(capKind, uniquePeople.length, gap, 'contacts') : null;
+
+  await updateJob(job.id, { status: 'importing' });
+  await ingestPeopleAndRunImportPipeline(admin, job, uniquePeople, { companyId: companyContext.id }, meter, note);
+}
+
+// ─── more_contacts_at_accounts (and legacy better_contacts rows) ─────────────
+
+async function runContactsAtAccountsJob(
+  admin: ReturnType<typeof createAdminClient>,
+  job: DataAcquisitionJob,
+  personas: AcquisitionPersona[],
+  guard: CreditGuard,
+  meter: Meter,
+): Promise<void> {
+  const requestType = job.request_type as 'better_contacts' | 'more_contacts_at_accounts';
+  const requestedTotal = Math.max(1, job.target_contact_count || DEFAULT_CONTACTS_PER_COMPANY);
+  const maxAccounts = Math.min(100, Math.max(1, Math.ceil(requestedTotal / DEFAULT_CONTACTS_PER_COMPANY)));
+  const perCompany = Math.max(1, Math.ceil(requestedTotal / maxAccounts));
+
+  const prioritizedRows = await loadPrioritizedCompaniesForIcpAccounts(
+    admin,
+    job.user_id,
+    job.icp_id,
+    requestType,
+    500,
+  );
+
+  if (prioritizedRows.length === 0) {
+    throw new Error(
+      'No ICP-matched accounts with a usable domain for Apollo search. Add or enrich company domains first.',
+    );
+  }
+
+  const owned = await loadOwnedContactsForCompanies(
+    admin,
+    job.user_id,
+    prioritizedRows.map((r) => r.id),
+    prioritizedRows.map((r) => r.domain || r.company_website || '').filter(Boolean),
+  );
+
+  // Pre-flight gap check per account: skip fully-covered accounts before any
+  // Apollo call; fetch only the gap at the rest.
+  const targets: PeopleSearchTarget[] = [];
+  let candidatesExamined = 0;
+  for (const row of prioritizedRows) {
+    if (targets.length >= maxAccounts) break;
+    if (candidatesExamined >= maxAccounts * 5) break;
+    const discovered = discoveredCompanyFromDbRow(row);
+    if (!discovered) continue;
+    candidatesExamined += 1;
+
+    const ownedHere = ownedContactsAt(owned, row.id, discovered.domain);
+    const gap = perCompany - ownedHere.length;
+    if (gap <= 0) {
+      await meter('skipped_existing', 1, {
+        company: discovered.name,
+        domain: discovered.domain,
+        companyId: row.id,
+        existingContacts: ownedHere.length,
+        requestedContacts: perCompany,
+        requestType,
+      });
+      continue;
+    }
+
+    targets.push({
+      company: discovered,
+      contactsTarget: gap,
+      ...exclusionListsFor(ownedHere),
+    });
+  }
+
+  if (targets.length === 0) {
+    await completeJobWithoutPurchase(
+      admin,
+      job,
+      'Your accounts in this ICP already have the requested contact coverage, so nothing new was sourced.',
+    );
+    return;
+  }
+
+  const peopleRecipe = buildApolloPeopleSearchRecipe(personas);
+  const { people, stoppedByGuard } = await discoverApolloPeopleForCompanies({
+    targets,
+    recipe: peopleRecipe,
+    shouldContinue: async () => guard.capReached() === null,
+    onSearchResult: async (newCount, excludedCount, c) => {
+      await meter('apollo_people_search_result', newCount, {
+        company: c.name,
+        domain: c.domain,
+        requestType,
+      });
+      await meter('duplicate_contact_skipped', excludedCount, {
+        company: c.name,
+        domain: c.domain,
+        requestType,
+        reason: 'already_owned_excluded',
+      });
+    },
+  });
+
+  const uniquePeople = await dedupAgainstWholeBook(admin, job, people, requestedTotal, meter, { requestType });
+
+  const capKind = stoppedByGuard ? guard.capReached() : null;
+  const note = capKind ? shortfallNote(capKind, uniquePeople.length, requestedTotal, 'contacts') : null;
+
+  await updateJob(job.id, { status: 'importing' });
+  await ingestPeopleAndRunImportPipeline(admin, job, uniquePeople, { requestType }, meter, note);
+}
+
+// ─── expand_companies ────────────────────────────────────────────────────────
+
+async function runExpandCompaniesJob(
+  admin: ReturnType<typeof createAdminClient>,
+  job: DataAcquisitionJob,
+  icp: AcquisitionIcp,
+  personas: AcquisitionPersona[],
+  guard: CreditGuard,
+  meter: Meter,
+): Promise<void> {
+  const companyRecipes = buildApolloCompanySearchRecipes(icp, job.request_type);
+  const targetCompanyCount = Math.max(1, job.target_company_count || 50);
+  const maxScreenedCompanies = Math.max(
+    targetCompanyCount,
+    job.max_screened_companies || targetCompanyCount * 6,
+  );
+
+  // Owned-company keys, loaded once. 10k+ entries are fine in memory; checking
+  // this set is the FIRST step for every Apollo result so duplicates cost
+  // nothing (no keyword screen, no metered screening event).
+  const { data: existingOwned } = await admin
+    .from('user_companies')
+    .select('company_id')
+    .eq('user_id', job.user_id);
+  const existingOwnedIds = (existingOwned ?? [])
+    .map((r) => (r as { company_id?: unknown }).company_id)
+    .filter((v): v is string => typeof v === 'string');
+  const { data: existingCompanies } = existingOwnedIds.length > 0
+    ? await admin
+        .from('companies')
+        .select('company_name, domain, company_website, linkedin_url')
+        .in('id', existingOwnedIds)
+    : { data: [] as ExistingCompany[] };
+  const existingCompanyKeySet = new Set(
+    ((existingCompanies || []) as ExistingCompany[]).flatMap(existingCompanyKeys),
+  );
+
+  const screenCache = await loadScreenCache(admin, job.user_id, job.icp_id);
+  const icpKeywords = icpKeywordCorpus(icp);
+  let screenedCount = 0;
+
+  const discovery = await discoverApolloCompanies({
+    recipes: companyRecipes,
+    targetCompanyCount,
+    maxPagesPerRecipe: 20,
+    shouldContinue: async () => guard.capReached() === null && screenedCount < maxScreenedCompanies,
+    // Evaluation order per org: (1) owned-company dedup, free; (2) screened
+    // cache, free; (3) metered keyword/fit screen, recorded to the cache.
+    evaluate: async (company, recipe) => {
+      if (companyKeys(company).some((key) => existingCompanyKeySet.has(key))) {
+        await meter('skipped_existing', 1, {
+          company: company.name,
+          domain: company.domain,
+          reason: 'already_owned',
+        });
+        return 'skip';
+      }
+
+      const cachedVerdict = screenCache.lookup(company);
+      if (cachedVerdict === 'qualified') {
+        await meter('qualified_company', 1, {
+          company: company.name,
+          domain: company.domain,
+          cached: true,
+        });
+        return 'qualified';
+      }
+      if (cachedVerdict) return 'skip'; // previously rejected for this ICP, free
+
+      if (screenedCount >= maxScreenedCompanies) return 'skip';
+      screenedCount += 1;
+      await meter('apollo_company_search_result', 1, {
+        company: company.name,
+        domain: company.domain,
+        recipe: recipe.name,
+      });
+      await meter('llm_fit_screen', 1, {
+        company: company.name,
+        domain: company.domain,
+        recipe: recipe.name,
+      }, 'arcova');
+
+      const passes = apolloOrganizationMatchesIcpKeywords(company.raw, icpKeywords);
+      await screenCache.store(company, passes ? 'qualified' : 'rejected:keyword_mismatch');
+
+      if (!passes) {
+        await meter('low_fit_company_rejected', 1, {
+          company: company.name,
+          domain: company.domain,
+        }, 'arcova');
+        return 'skip';
+      }
+
+      await meter('qualified_company', 1, { company: company.name, domain: company.domain });
+      return 'qualified';
+    },
+  });
+
+  const qualifiedCompanies = discovery.companies;
+  const companyPhaseCapKind = discovery.stoppedByGuard ? guard.capReached() : null;
+
+  if (qualifiedCompanies.length === 0) {
+    if (companyPhaseCapKind) {
+      await completeJobWithoutPurchase(
+        admin,
+        job,
+        shortfallNote(companyPhaseCapKind, 0, targetCompanyCount, 'companies'),
+      );
+      return;
+    }
+    throw new Error(
+      'No new companies passed deduplication and ICP keyword screening. Widen the ICP or try again later.',
+    );
+  }
+
+  await updateJob(job.id, { status: 'importing' });
+
+  const peopleRecipe = buildApolloPeopleSearchRecipe(personas);
+  const targetContactCount =
+    job.target_contact_count || qualifiedCompanies.length * DEFAULT_CONTACTS_PER_COMPANY;
+  const contactsPerCompany = Math.max(
+    1,
+    Math.ceil(targetContactCount / Math.max(1, qualifiedCompanies.length)),
+  );
+
+  // These companies are new by construction (owned dupes were skipped above),
+  // so there is no pre-flight gap or exclusion list to build for them.
+  const { people, stoppedByGuard: peoplePhaseCapped } = await discoverApolloPeopleForCompanies({
+    targets: qualifiedCompanies.map((company) => ({ company, contactsTarget: contactsPerCompany })),
+    recipe: peopleRecipe,
+    shouldContinue: async () => guard.capReached() === null,
+    onSearchResult: async (newCount, excludedCount, c) => {
+      await meter('apollo_people_search_result', newCount, { company: c.name, domain: c.domain });
+      await meter('duplicate_contact_skipped', excludedCount, {
+        company: c.name,
+        domain: c.domain,
+        reason: 'already_owned_excluded',
+      });
+    },
+  });
+
+  const uniquePeople = await dedupAgainstWholeBook(admin, job, people, targetContactCount, meter, {});
+
+  let note: string | null = null;
+  if (companyPhaseCapKind && qualifiedCompanies.length < targetCompanyCount) {
+    note = shortfallNote(companyPhaseCapKind, qualifiedCompanies.length, targetCompanyCount, 'companies');
+  } else if (peoplePhaseCapped && guard.capReached()) {
+    note = shortfallNote(guard.capReached()!, uniquePeople.length, targetContactCount, 'contacts');
+  }
+
+  await ingestPeopleAndRunImportPipeline(admin, job, uniquePeople, {}, meter, note);
+}
+
+// ─── Whole-book post-fetch dedup (second line of defense) ────────────────────
+
+/**
+ * The per-company exclusion lists should prevent owned contacts from coming
+ * back at all, but this whole-book key check stays in place as the safety net
+ * (name+company matches, truncated exclusion lists, contacts without a stored
+ * email/linkedin, etc.).
+ */
+async function dedupAgainstWholeBook(
+  admin: ReturnType<typeof createAdminClient>,
+  job: DataAcquisitionJob,
+  people: DiscoveredPerson[],
+  limit: number,
+  meter: Meter,
+  metadata: Record<string, unknown>,
+): Promise<DiscoveredPerson[]> {
+  const { data: existingContacts } = await admin
+    .from('contacts')
+    .select('full_name, first_name, last_name, email, linkedin_url, company_name, company_domain')
+    .eq('user_id', job.user_id);
+  const existingContactKeySet = new Set(
+    ((existingContacts || []) as ExistingContact[]).flatMap(existingContactKeys),
+  );
+
+  const uniquePeople: DiscoveredPerson[] = [];
+  const seenContactKeys = new Set<string>();
+  for (const person of people) {
+    const key = contactKey(person);
+    if (existingContactKeySet.has(key) || seenContactKeys.has(key)) {
+      await meter('duplicate_contact_skipped', 1, {
+        person: person.full_name,
+        company: person.company_name,
+        ...metadata,
+      });
+      continue;
+    }
+    seenContactKeys.add(key);
+    uniquePeople.push(person);
+    if (uniquePeople.length >= limit) break;
+  }
+  return uniquePeople;
 }
