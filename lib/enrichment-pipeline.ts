@@ -1484,6 +1484,18 @@ export async function runContactResolutionPipelineForContact(
           contactId,
           lookupInput,
         });
+        if (revealResult.gateAllowed && !revealResult.error) {
+          recordProviderUsage({
+            userId,
+            contactId,
+            provider: 'apollo',
+            eventType: 'apollo_phone_reveal',
+            metadata: {
+              pending: revealResult.pending,
+              inlinePhonesRevealed: revealResult.revealed,
+            },
+          }).catch(() => {});
+        }
         if (revealResult.revealed > 0) {
           console.log(
             `[enrichment-pipeline] Apollo phone reveal recovered ${revealResult.revealed} inline phone(s) for ${contactId}`,

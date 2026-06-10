@@ -19,7 +19,8 @@ export type ProviderUsageEventType =
   | 'apify_profile_scrape'
   | 'apify_company_scrape'
   | 'apollo_person_enrichment'
-  | 'apollo_company_enrichment';
+  | 'apollo_company_enrichment'
+  | 'apollo_phone_reveal';
 
 // ── Pricing — edit here ──────────────────────────────────────────────────
 // Apify HarvestAPI actors bill per result. The profile scraper's input mode
@@ -33,8 +34,8 @@ export const APIFY_COMPANY_SCRAPE_USD = 0.004; // estimate — confirm
 // Apollo bills in credits bundled into the plan rather than per-$, so we track
 // consumption, not dollars. people/match (person enrichment) and
 // organizations/enrich each cost ~1 credit; a phone reveal costs ~1 export
-// credit. people/company *search* results (~0.05 / 0.1 credits) aren't
-// persisted per-result, so they're not counted here.
+// credit. ICP sourcing search results are also counted in the admin API via
+// data_acquisition_usage_events.
 export const APOLLO_CREDITS = {
   person_enrichment: 1,
   company_enrichment: 1,
@@ -42,9 +43,18 @@ export const APOLLO_CREDITS = {
 } as const;
 
 // Your Apollo plan — shown as context on the dashboard. Edit to match reality.
+// monthlyCredits = credits Apollo shows for the current monthly allowance.
+// billingCycleAnchorDay/hour = Apollo renewal instant (your account shows Jun 10, 7:00 PM GMT+12 = 07:00 UTC).
+// currentPeriodBaselineCredits = Apollo dashboard credits used at baselineRecordedAt; new app-side events after
+// that timestamp are added on top until the next renewal period starts.
 export const APOLLO_PLAN = {
-  name: 'Basic ($50/mo)', // set to 'Free' if you drop to the free tier
-  monthlyUsd: 50 as number | null,
+  name: 'Free',
+  monthlyUsd: 0 as number | null,
+  monthlyCredits: 250 as number | null,
+  billingCycleAnchorDay: 10,
+  billingCycleAnchorUtcHour: 7,
+  currentPeriodBaselineCredits: 116,
+  baselineRecordedAt: '2026-06-10T02:45:00.000Z',
 } as const;
 
 export function apifyEventCostUsd(eventType: ProviderUsageEventType, quantity = 1): number | null {
@@ -56,6 +66,7 @@ export function apifyEventCostUsd(eventType: ProviderUsageEventType, quantity = 
 export function apolloEventCredits(eventType: ProviderUsageEventType, quantity = 1): number | null {
   if (eventType === 'apollo_person_enrichment') return APOLLO_CREDITS.person_enrichment * quantity;
   if (eventType === 'apollo_company_enrichment') return APOLLO_CREDITS.company_enrichment * quantity;
+  if (eventType === 'apollo_phone_reveal') return APOLLO_CREDITS.phone_reveal * quantity;
   return null;
 }
 

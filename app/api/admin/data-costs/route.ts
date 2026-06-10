@@ -31,10 +31,38 @@ type ProviderEventRow = {
   created_at: string;
 };
 
+type AcquisitionUsageEventRow = {
+  event_type: string;
+  quantity: number;
+  internal_credit_units: number | null;
+  created_at: string;
+};
+
 const RECENT_LIMIT = 200;
+const APOLLO_ACQUISITION_EVENT_TYPES = [
+  'apollo_company_search_result',
+  'apollo_company_enrichment',
+  'apollo_people_search_result',
+  'apollo_person_enrichment',
+] as const;
 
 function num(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+function currentBillingPeriodStart(now: Date, anchorDay: number, anchorUtcHour: number): string {
+  const safeAnchor = Math.min(28, Math.max(1, Math.floor(anchorDay || 1)));
+  const safeHour = Math.min(23, Math.max(0, Math.floor(anchorUtcHour || 0)));
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), safeAnchor, safeHour));
+  if (now.getTime() < start.getTime()) {
+    start.setUTCMonth(start.getUTCMonth() - 1);
+  }
+  return start.toISOString();
 }
 
 export async function GET() {
@@ -54,22 +82,69 @@ export async function GET() {
 
     const admin = createAdminClient();
 
-    const [usageRes, recentRes, firstEventRes, usersRes] = await Promise.all([
-      admin.from('data_provider_usage_by_user').select('*'),
-      admin
-        .from('provider_usage_events')
-        .select('id, user_id, provider, event_type, quantity, unit_cost_usd, cost_usd, credit_units, created_at')
-        .order('created_at', { ascending: false })
-        .limit(RECENT_LIMIT),
-      admin
-        .from('provider_usage_events')
-        .select('created_at')
-        .order('created_at', { ascending: true })
-        .limit(1),
-      admin.auth.admin.listUsers({ page: 1, perPage: 1000 }),
-    ]);
+    const now = new Date();
+    const periodStart = currentBillingPeriodStart(
+      now,
+      APOLLO_PLAN.billingCycleAnchorDay,
+      APOLLO_PLAN.billingCycleAnchorUtcHour,
+    );
+    const baselineRecordedAt = APOLLO_PLAN.baselineRecordedAt;
+    const baselineApplies =
+      baselineRecordedAt != null &&
+      new Date(baselineRecordedAt).getTime() >= new Date(periodStart).getTime() &&
+      new Date(baselineRecordedAt).getTime() <= now.getTime();
+    const meteredSince = baselineApplies ? baselineRecordedAt : periodStart;
+
+    const [usageRes, recentRes, firstEventRes, usersRes, monthlyApolloRes, monthlyAcquisitionApolloRes] =
+      await Promise.all([
+        admin.from('data_provider_usage_by_user').select('*'),
+        admin
+          .from('provider_usage_events')
+          .select('id, user_id, provider, event_type, quantity, unit_cost_usd, cost_usd, credit_units, created_at')
+          .order('created_at', { ascending: false })
+          .limit(RECENT_LIMIT),
+        admin
+          .from('provider_usage_events')
+          .select('created_at')
+          .order('created_at', { ascending: true })
+          .limit(1),
+        admin.auth.admin.listUsers({ page: 1, perPage: 1000 }),
+        admin
+          .from('provider_usage_events')
+          .select('credit_units')
+          .eq('provider', 'apollo')
+          .gte('created_at', meteredSince),
+        admin
+          .from('data_acquisition_usage_events')
+          .select('event_type, quantity, internal_credit_units, created_at')
+          .in('event_type', [...APOLLO_ACQUISITION_EVENT_TYPES])
+          .gte('created_at', meteredSince),
+      ]);
 
     if (usageRes.error) throw usageRes.error;
+    if (recentRes.error) throw recentRes.error;
+    if (firstEventRes.error) throw firstEventRes.error;
+    if (monthlyApolloRes.error) throw monthlyApolloRes.error;
+    if (monthlyAcquisitionApolloRes.error) throw monthlyAcquisitionApolloRes.error;
+
+    const directApolloCredits = (monthlyApolloRes.data ?? []).reduce(
+      (sum, row) => sum + num(row.credit_units),
+      0,
+    );
+    const acquisitionRows = (monthlyAcquisitionApolloRes.data ?? []) as AcquisitionUsageEventRow[];
+    const acquisitionApolloCredits = acquisitionRows.reduce(
+      (sum, row) => sum + num(row.internal_credit_units),
+      0,
+    );
+    const acquisitionSearchCredits = acquisitionRows.reduce((sum, row) => {
+      if (row.event_type === 'apollo_company_search_result' || row.event_type === 'apollo_people_search_result') {
+        return sum + num(row.internal_credit_units);
+      }
+      return sum;
+    }, 0);
+    const acquisitionEnrichmentCredits = acquisitionApolloCredits - acquisitionSearchCredits;
+    const baselineCredits = baselineApplies ? APOLLO_PLAN.currentPeriodBaselineCredits : 0;
+    const currentPeriodApolloCredits = baselineCredits + directApolloCredits + acquisitionApolloCredits;
 
     const emailById = new Map<string, string>();
     for (const u of usersRes.data?.users ?? []) {
@@ -151,7 +226,23 @@ export async function GET() {
           phoneReveal: APOLLO_CREDITS.phone_reveal,
         },
       },
-      apolloPlan: { name: APOLLO_PLAN.name, monthlyUsd: APOLLO_PLAN.monthlyUsd },
+      apolloPlan: {
+        name: APOLLO_PLAN.name,
+        monthlyUsd: APOLLO_PLAN.monthlyUsd,
+        monthlyCredits: APOLLO_PLAN.monthlyCredits,
+        currentPeriodCredits: Math.round(currentPeriodApolloCredits * 100) / 100,
+        currentMonthCredits: Math.round(currentPeriodApolloCredits * 100) / 100,
+        directCredits: Math.round(directApolloCredits * 100) / 100,
+        acquisitionCredits: Math.round(acquisitionApolloCredits * 100) / 100,
+        acquisitionSearchCredits: Math.round(acquisitionSearchCredits * 100) / 100,
+        acquisitionEnrichmentCredits: Math.round(acquisitionEnrichmentCredits * 100) / 100,
+        baselineCredits: Math.round(baselineCredits * 100) / 100,
+        baselineRecordedAt: baselineApplies ? baselineRecordedAt : null,
+        periodStart,
+        monthStart: periodStart,
+        billingCycleAnchorDay: APOLLO_PLAN.billingCycleAnchorDay,
+        billingCycleAnchorUtcHour: APOLLO_PLAN.billingCycleAnchorUtcHour,
+      },
       totals: { ...totals, users: byUser.length },
       byUser,
       recent,
