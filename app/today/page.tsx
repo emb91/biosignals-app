@@ -13,6 +13,7 @@ import { fetchTodayPriorities } from '@/lib/today-priorities-client';
 import type { TodayPriority } from '@/lib/priorities/types';
 import { getDisplayName } from '@/lib/auth-helpers';
 import { healthLabel, type HealthDim } from '@/lib/pipeline-icp-health';
+import { PATENT_SURGE_WINDOW_DAYS } from '@/lib/signals/patent-surge';
 import { cn } from '@/lib/utils';
 
 type SetupStep = {
@@ -161,6 +162,8 @@ type SignalGroupRow = {
   items: SignalSubItem[];
   /** Patent surge: items already built server-side; absorb pass must not re-add. */
   serverPatents?: boolean;
+  /** Small muted caption above the expanded sub-list (e.g. the patent recency window). */
+  listCaption?: string;
   /** Trailing "+N more" link (e.g. patents beyond the display cap → Google Patents). */
   moreCount?: number;
   moreUrl?: string | null;
@@ -785,7 +788,8 @@ export default function BriefingPage() {
             label: signalLabel(groupKey),
             count: patents.length,
             ago: relativeTime(s.eventAt ?? s.observedAt),
-            countLabel: `${patents.length} patent${patents.length !== 1 ? 's' : ''}`,
+            countLabel: `${patents.length} in last ${PATENT_SURGE_WINDOW_DAYS} days`,
+            listCaption: `Patents filed in the last ${PATENT_SURGE_WINDOW_DAYS} days`,
             items: shown.map((p) => ({
               id: p.key,
               title: p.title || null,
@@ -1253,6 +1257,9 @@ export default function BriefingPage() {
                                     <span key={j} className="bt-sig-pill">{pill}</span>
                                   ))}
                                 </div>
+                              )}
+                              {row.listCaption && (
+                                <p className="bt-sig-list-caption">{row.listCaption}</p>
                               )}
                               {expandableItems.length > 0 && (
                                 <ul className="bt-sig-sub-list">

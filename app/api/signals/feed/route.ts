@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
-import { collectRecentPatentsByCompany, type RecentPatent } from '@/lib/signals/patent-surge';
+import { collectRecentPatentsByCompany, PATENT_SURGE_WINDOW_DAYS, type RecentPatent } from '@/lib/signals/patent-surge';
 
 type SignalFeedItem = {
   id: string;
@@ -305,6 +305,7 @@ export async function GET(request: Request) {
         eventAt: m.eventAt,
         observedAt: m.observedAt,
       })),
+      { withinDays: PATENT_SURGE_WINDOW_DAYS },
     );
     for (const item of mapped) {
       if (item.sourceEventType === 'assignee_portfolio_acceleration' && item.companyId) {

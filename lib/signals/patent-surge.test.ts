@@ -8,6 +8,7 @@ import {
   decodeEntities,
   patentPublicationNumber,
   collectRecentPatentsByCompany,
+  PATENT_SURGE_WINDOW_DAYS,
   type PatentEventInput,
 } from './patent-surge';
 
@@ -71,6 +72,19 @@ test('falls back to summary for title; HTML-decodes; skips rows with no link or 
   const patents = collectRecentPatentsByCompany(rows).get('c1')!;
   assert.equal(patents.length, 1);
   assert.equal(patents[0].title, "Nucleosides with 3'-hydroxy blocking groups");
+});
+
+test('withinDays keeps only patents filed inside the window (excludes undated)', () => {
+  const now = Date.parse('2026-06-10T00:00:00Z');
+  const rows: PatentEventInput[] = [
+    ev({ sourceEventType: 'patent_granted', sourceUrl: 'https://patents.google.com/patent/US_RECENT', metadata: { patent_title: 'Recent' }, eventAt: '2026-05-20' }), // 21d
+    ev({ sourceEventType: 'patent_granted', sourceUrl: 'https://patents.google.com/patent/US_EDGE', metadata: { patent_title: 'Edge' }, eventAt: '2026-04-15' }),  // ~56d → in
+    ev({ sourceEventType: 'patent_granted', sourceUrl: 'https://patents.google.com/patent/US_OLD', metadata: { patent_title: 'Old' }, eventAt: '2026-01-01' }),    // ~160d → out
+    ev({ sourceEventType: 'patent_granted', sourceUrl: 'https://patents.google.com/patent/US_NODATE', metadata: { patent_title: 'No date' }, eventAt: null }),     // undated → out
+  ];
+  const patents = collectRecentPatentsByCompany(rows, { withinDays: PATENT_SURGE_WINDOW_DAYS, now }).get('c1')!;
+  assert.deepEqual(patents.map((p) => p.key), ['US_RECENT', 'US_EDGE']);
+  assert.equal(PATENT_SURGE_WINDOW_DAYS, 60);
 });
 
 test('groups by company and ignores non-patent rows', () => {

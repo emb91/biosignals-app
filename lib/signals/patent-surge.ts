@@ -45,6 +45,14 @@ export const PATENT_DETAIL_TYPES = new Set([
   'new_therapeutic_area_patent',
 ]);
 
+/**
+ * Recency window for the patents shown under a surge. Patents filed (event_at)
+ * within this many days are surfaced; older filings are excluded. The /today UI
+ * states this window on the list so the count is unambiguous. Single source of
+ * truth — imported by both the feed route and the page label.
+ */
+export const PATENT_SURGE_WINDOW_DAYS = 60;
+
 const NAMED_ENTITIES: Record<string, string> = {
   amp: '&',
   apos: "'",
@@ -99,8 +107,15 @@ function titleFromSummary(summary: string | null): string | null {
 /**
  * Group recent individual patents by company id — deduped by publication number,
  * newest filing first. Non-patent rows and rows with no usable link/title are skipped.
+ *
+ * Pass `withinDays` to keep only patents filed (event_at) within that many days
+ * of `now` (default Date.now()); rows without a parseable date are excluded when
+ * a window is set, since the window can't be honoured for them.
  */
-export function collectRecentPatentsByCompany(rows: PatentEventInput[]): Map<string, RecentPatent[]> {
+export function collectRecentPatentsByCompany(
+  rows: PatentEventInput[],
+  opts?: { withinDays?: number; now?: number },
+): Map<string, RecentPatent[]> {
   const byCompany = new Map<string, Map<string, RecentPatent>>();
 
   for (const r of rows) {
@@ -130,19 +145,31 @@ export function collectRecentPatentsByCompany(rows: PatentEventInput[]): Map<str
     if (!existing) {
       m.set(key, candidate);
     } else {
-      // Merge across duplicate keys: keep the richest fields.
+      // Merge across duplicate keys: keep the richest fields + the latest date.
       const existingHasRealTitle = existing.title && existing.title !== existing.key;
       if (!existingHasRealTitle && rawTitle) existing.title = candidate.title;
       if (!existing.url && candidate.url) existing.url = candidate.url;
-      if (!existing.date && candidate.date) existing.date = candidate.date;
+      const existingT = Date.parse(existing.date ?? '') || 0;
+      const candidateT = Date.parse(candidate.date ?? '') || 0;
+      if (candidateT > existingT) existing.date = candidate.date;
     }
   }
 
+  const cutoff =
+    opts?.withinDays != null
+      ? (opts.now ?? Date.now()) - opts.withinDays * 86_400_000
+      : null;
+
   const out = new Map<string, RecentPatent[]>();
   for (const [companyId, m] of byCompany) {
-    const list = [...m.values()].sort(
-      (a, b) => (Date.parse(b.date ?? '') || 0) - (Date.parse(a.date ?? '') || 0),
-    );
+    let list = [...m.values()];
+    if (cutoff != null) {
+      list = list.filter((p) => {
+        const t = Date.parse(p.date ?? '');
+        return Number.isFinite(t) && t >= cutoff;
+      });
+    }
+    list.sort((a, b) => (Date.parse(b.date ?? '') || 0) - (Date.parse(a.date ?? '') || 0));
     out.set(companyId, list);
   }
   return out;

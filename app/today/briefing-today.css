@@ -921,6 +921,16 @@
   text-decoration-color: var(--bt-accent);
 }
 
+/* Recency-window caption above a surge's patent list */
+.briefing-today .bt-sig-list-caption {
+  margin: 0.25rem 0 0.1rem;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: rgba(13, 53, 71, 0.4);
+}
+
 /* "+N more on Google Patents" — quieter than a real patent title */
 .briefing-today .bt-sig-sub-more {
   font-size: 0.6875rem;
