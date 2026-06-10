@@ -8,10 +8,12 @@
  * estimateIcpSupply(). Returns [{ icpId, sourceableContacts, universeCompanies,
  * netNewCompanies, estimate }].
  *
- * CREDIT-SPENDING — invoked ONLY on an explicit user action (the "Check supply"
- * button on /coverage), never on page load. Body may carry observed
- * contacts/company per ICP (from the icp-cards the page already holds) to make
- * the contact estimate ICP-specific.
+ * CREDIT-SPENDING — invoke ONLY on an explicit user action, never on page load.
+ * Body may carry observed contacts/company per ICP (from the icp-cards the page
+ * already holds) to make the contact estimate ICP-specific.
+ *
+ * NOTE: the Coverage page no longer calls this (it only SHOWS coverage); the
+ * intended home for supply checking/acquisition is the /data flow.
  */
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
