@@ -135,9 +135,9 @@ export default function DataEnrichmentCost() {
               detail={`${fmtUsd(data.pricing.apifyProfileUsd)} / scrape`}
             />
             <Card
-              title="Apollo credits used (all time)"
+              title="Stored Apollo enrichments"
               value={fmtNum(data.totals.apollo.credits)}
-              detail={`${fmtNum(data.totals.apollo.personEnrichments)} person · ${fmtNum(data.totals.apollo.orgEnrichments)} org · ${fmtNum(data.totals.apollo.phoneReveals)} phone reveal`}
+              detail={`${fmtNum(data.totals.apollo.personEnrichments)} person · ${fmtNum(data.totals.apollo.orgEnrichments)} org · ${fmtNum(data.totals.apollo.phoneReveals)} phone reveal · excludes search`}
             />
             <ApolloMonthCard plan={data.apolloPlan} />
           </div>
@@ -151,7 +151,7 @@ export default function DataEnrichmentCost() {
                     <th className="px-3 py-2 font-medium">User</th>
                     <th className="px-3 py-2 font-medium">Apify scrapes</th>
                     <th className="px-3 py-2 font-medium">Apify cost</th>
-                    <th className="px-3 py-2 font-medium">Apollo credits</th>
+                    <th className="px-3 py-2 font-medium">Stored Apollo est.</th>
                     <th className="px-3 py-2 font-medium">Phone reveals</th>
                   </tr>
                 </thead>
@@ -232,9 +232,10 @@ export default function DataEnrichmentCost() {
           <p className="text-xs leading-relaxed text-slate-400">
             Apify priced at {fmtUsd(data.pricing.apifyProfileUsd)}/profile scrape (the actor&apos;s &ldquo;$4 per 1k&rdquo;
             mode) and {fmtUsd(data.pricing.apifyCompanyUsd)}/company scrape (estimate — confirm on the Apify console).
-            Edit prices in <code className="rounded bg-slate-100 px-1 py-0.5">lib/provider-usage.ts</code>. Apollo credits
-            are consumption estimates (≈1 per person/org enrichment, 1 per phone reveal). The billing-period meter also
-            includes ICP sourcing search/enrichment events; failed Apollo calls are not counted as spend.
+            Edit prices in <code className="rounded bg-slate-100 px-1 py-0.5">lib/provider-usage.ts</code>. Stored Apollo
+            enrichments are record-based estimates only. The billing-period meter is the Apollo consumption view: it
+            starts from the Apollo dashboard baseline, then adds ICP sourcing search/enrichment events and direct
+            enrichment events tracked by the app.
           </p>
         </>
       ) : null}
