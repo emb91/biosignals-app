@@ -61,6 +61,9 @@ type AcquisitionMode = 'companies' | 'contacts_at_company' | 'contacts_at_compan
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+const COMPLETE_JOB_VISIBLE_MS = 72 * 60 * 60 * 1000;
+const FAILED_JOB_VISIBLE_MS = 12 * 60 * 60 * 1000;
+
 function jobIsActive(status: string): boolean {
   return !['complete', 'completed', 'failed', 'cancelled', 'queued'].includes(status);
 }
@@ -116,6 +119,24 @@ function formatRequestType(type: string): string {
 
 function jobTargetsCompanies(type: string): boolean {
   return type === 'expand_companies';
+}
+
+function jobTimestamp(job: AcquisitionJob): string | null {
+  return job.completed_at || job.started_at || job.requested_at;
+}
+
+function jobAgeMs(job: AcquisitionJob, nowMs: number): number {
+  const timestamp = jobTimestamp(job);
+  if (!timestamp) return Number.POSITIVE_INFINITY;
+  const parsed = new Date(timestamp).getTime();
+  return Number.isFinite(parsed) ? nowMs - parsed : Number.POSITIVE_INFINITY;
+}
+
+function jobBelongsInLivePipeline(job: AcquisitionJob, nowMs = Date.now()): boolean {
+  if (job.status === 'queued' || jobIsActive(job.status)) return true;
+  if (jobIsDone(job.status)) return jobAgeMs(job, nowMs) <= COMPLETE_JOB_VISIBLE_MS;
+  if (job.status === 'failed' || job.status === 'cancelled') return jobAgeMs(job, nowMs) <= FAILED_JOB_VISIBLE_MS;
+  return false;
 }
 
 function userFacingJobError(job: AcquisitionJob): string | null {
@@ -407,6 +428,7 @@ function DataPageContent() {
   // Pre-scoped quantities from the Coverage plan ("source N contacts ≈ M companies").
   const suggestedContacts = Number(searchParams.get('count') ?? '') || 0;
   const suggestedCompanies = Number(searchParams.get('companyCount') ?? '') || 0;
+  const pipelineJobs = jobs.filter((job) => jobBelongsInLivePipeline(job));
 
   const pageContext: Record<string, unknown> = {
     acquisitionMode: rawMode ?? undefined,
@@ -420,8 +442,8 @@ function DataPageContent() {
     acquisitionSuggestedCompanies: suggestedCompanies > 0 ? suggestedCompanies : undefined,
     acquisitionJobActive: anyJobActive || undefined,
     acquisitionRecentJobs:
-      jobs.length > 0
-        ? jobs.slice(0, 5).map((job) => ({
+      pipelineJobs.length > 0
+        ? pipelineJobs.slice(0, 5).map((job) => ({
             request_type: job.request_type,
             status: job.status,
             target: job.company_name || icps.find((icp) => icp.icp_id === job.icp_id)?.label || null,
@@ -447,7 +469,7 @@ function DataPageContent() {
 
   if (!user) return null;
 
-  const visibleJobs = jobs.slice(0, 12);
+  const visibleJobs = pipelineJobs.slice(0, 12);
 
   return (
     <div className="flex h-screen bg-transparent">
@@ -505,7 +527,7 @@ function DataPageContent() {
               {visibleJobs.length === 0 ? (
                 <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-gray-200 bg-white/60 px-4 py-10 text-center">
                   <Database className="h-6 w-6 text-gray-200" />
-                  <p className="text-xs text-gray-400">No jobs yet. Ask Arcova to source companies or contacts.</p>
+                  <p className="text-xs text-gray-400">No active sourcing jobs. Ask Arcova to source companies or contacts.</p>
                 </div>
               ) : (
                 <div className="flex min-h-0 flex-col gap-2.5 overflow-y-auto pb-1 pr-0.5">
@@ -516,9 +538,9 @@ function DataPageContent() {
                       icpLabel={icps.find((icp) => icp.icp_id === job.icp_id)?.label ?? null}
                     />
                   ))}
-                  {jobs.length > visibleJobs.length && (
+                  {pipelineJobs.length > visibleJobs.length && (
                     <p className="px-1 py-1 text-center text-[11px] text-gray-400">
-                      Showing the {visibleJobs.length} most recent jobs
+                      Showing the {visibleJobs.length} current pipeline jobs
                     </p>
                   )}
                 </div>
