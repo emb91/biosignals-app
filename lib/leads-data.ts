@@ -9,6 +9,7 @@ import {
   resolveContactDataProvenance,
 } from '@/lib/data-provenance';
 import { normalizePlatformTaxonomyFields } from '@/lib/platform-category';
+import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -381,10 +382,14 @@ export async function fetchFilteredLeads(
   let icpIndexById = new Map<string, number>();
 
   if (icpIds.length > 0) {
-    const { data: icps } = await supabase
-      .from('icps')
-      .select('id, name, created_at')
-      .order('created_at', { ascending: false });
+    // Org-scoped (company-wide + this user's personal). Explicit filter so it's correct
+    // on a service-role client too, not just under RLS.
+    const orgId = await orgIdForUser(supabase, userId);
+    const { data: icps } = await scopeIcpsToUser(
+      supabase.from('icps').select('id, name, created_at'),
+      orgId,
+      userId,
+    ).order('created_at', { ascending: false });
     if (icps) {
       const icpRows = icps as Array<{ id: string; name: string | null }>;
       icpNamesById = new Map(icpRows.map((r) => [r.id, r.name ?? null]));

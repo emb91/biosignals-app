@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { createClient } from '@/lib/supabase-server';
 import { isMissingColumnError } from '@/lib/supabase-column-compat';
+import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
 
 function isMissingRelationError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
@@ -158,11 +159,12 @@ export async function POST(
       breakdown: normalizeObject(row.breakdown),
     }));
 
-    const icpResult = await supabase
-      .from('icps')
-      .select('id, name, created_at')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
+    const fitOrgId = await orgIdForUser(supabase, user.id);
+    const icpResult = await scopeIcpsToUser(
+      supabase.from('icps').select('id, name, created_at'),
+      fitOrgId,
+      user.id,
+    ).order('created_at', { ascending: false });
 
     let namesById = new Map<string, string | null>();
     let indexById = new Map<string, number>();

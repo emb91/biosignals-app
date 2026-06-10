@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@/lib/supabase-server';
+import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import {
   buildSetupCustomerUrlPhaseSystemPrompt,
@@ -187,6 +188,7 @@ function buildToolResult(
 
 async function fetchAccountContext(supabase: Awaited<ReturnType<typeof createClient>>, userId: string): Promise<AccountContext> {
   try {
+    const orgId = await orgIdForUser(supabase, userId);
     const [analysisResult, icpsResult, personasResult] = await Promise.all([
       supabase
         .from('user_company')
@@ -195,16 +197,18 @@ async function fetchAccountContext(supabase: Awaited<ReturnType<typeof createCli
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle(),
-      supabase
-        .from('icps')
-        .select('name, company_type, therapeutic_areas, company_sizes, funding_stages')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false }),
-      supabase
-        .from('personas')
-        .select('name, functions, seniority_levels')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false }),
+      scopeIcpsToUser(
+        supabase
+          .from('icps')
+          .select('name, company_type, therapeutic_areas, company_sizes, funding_stages'),
+        orgId,
+        userId,
+      ).order('created_at', { ascending: false }),
+      // personas have no scope column; show the org's buying teams (fallback to own).
+      (orgId
+        ? supabase.from('personas').select('name, functions, seniority_levels').eq('org_id', orgId)
+        : supabase.from('personas').select('name, functions, seniority_levels').eq('user_id', userId)
+      ).order('created_at', { ascending: false }),
     ]);
 
     const ctx: AccountContext = {};
@@ -216,7 +220,10 @@ async function fetchAccountContext(supabase: Awaited<ReturnType<typeof createCli
     }
 
     if (icpsResult.data && icpsResult.data.length > 0) {
-      ctx.icps = icpsResult.data.map((icp) => ({
+      ctx.icps = (icpsResult.data as Array<Record<string, unknown> & {
+        name?: string | null; company_type?: string | null; therapeutic_areas?: unknown;
+        company_sizes?: unknown; funding_stages?: unknown;
+      }>).map((icp) => ({
         name: icp.name ?? '',
         companyType: icp.company_type ?? '',
         therapeuticAreas: Array.isArray(icp.therapeutic_areas) ? icp.therapeutic_areas : [],

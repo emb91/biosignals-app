@@ -1,4 +1,5 @@
 import { createAdminClient } from '@/lib/supabase-admin';
+import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
 import { processQueuedRowsInBackground, type QueuedRow } from '@/lib/import-queue';
 import {
   DEFAULT_CONTACTS_PER_COMPANY,
@@ -790,20 +791,33 @@ async function executeClaimedJob(
   admin: ReturnType<typeof createAdminClient>,
   job: DataAcquisitionJob,
 ): Promise<void> {
+  // Service-role client bypasses RLS, so scope the ICP explicitly to what job.user_id may
+  // see (company-wide + their own personal). Personas are fetched by the ICP itself
+  // (org-scoped) since a company ICP's personas belong to its creator, not the buyer.
+  const jobOrgId = await orgIdForUser(admin, job.user_id);
   const [{ data: icpData, error: icpError }, { data: personaData, error: personaError }] = await Promise.all([
-    admin
-      .from('icps')
-      .select(
-        'id, name, company_type, platform_category, therapeutic_areas, modalities, development_stages, company_sizes, funding_stages, target_customers, buyer_types',
-      )
-      .eq('user_id', job.user_id)
+    scopeIcpsToUser(
+      admin
+        .from('icps')
+        .select(
+          'id, name, company_type, platform_category, therapeutic_areas, modalities, development_stages, company_sizes, funding_stages, target_customers, buyer_types',
+        ),
+      jobOrgId,
+      job.user_id,
+    )
       .eq('id', job.icp_id)
       .maybeSingle(),
-    admin
-      .from('personas')
-      .select('id, name, functions, seniority_levels, job_titles')
-      .eq('user_id', job.user_id)
-      .eq('icp_id', job.icp_id),
+    (jobOrgId
+      ? admin
+          .from('personas')
+          .select('id, name, functions, seniority_levels, job_titles')
+          .eq('org_id', jobOrgId)
+          .eq('icp_id', job.icp_id)
+      : admin
+          .from('personas')
+          .select('id, name, functions, seniority_levels, job_titles')
+          .eq('user_id', job.user_id)
+          .eq('icp_id', job.icp_id)),
   ]);
 
   if (icpError || !icpData) throw new Error(icpError?.message || 'ICP not found');

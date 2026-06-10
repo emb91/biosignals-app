@@ -122,16 +122,40 @@ export async function getOrgContext(): Promise<OrgContext | null> {
  * their own membership row.
  */
 export async function orgIdForUser(
-  client: SupabaseClient,
+  // Accept any client exposing `.from()` — both the RLS SupabaseClient and the narrowed
+  // `MinimalSupabase` shapes the lib layer uses satisfy this.
+  client: { from: (table: string) => any }, // eslint-disable-line @typescript-eslint/no-explicit-any
   userId: string,
 ): Promise<string | null> {
   const { data } = await client
     .from('org_members')
     .select('org_id')
     .eq('user_id', userId)
-    .maybeSingle<{ org_id: string }>();
-  return data?.org_id ?? null;
+    .maybeSingle();
+  return (data as { org_id: string } | null)?.org_id ?? null;
 }
+
+/**
+ * Apply the "ICPs visible to user U" filter to an `icps` (or icp-child) query builder:
+ * company-wide ICPs in U's org  +  U's own personal ICPs. Correct on BOTH the RLS client
+ * and the service-role client (it encodes the same predicate the RLS policy uses), so
+ * background jobs don't leak one member's personal ICPs into another member's scoring.
+ *
+ * For a solo owner this returns exactly their own ICPs (behavior-preserving), since their
+ * org contains only their rows.
+ *
+ * Usage: `scopeIcpsToUser(supabase.from('icps').select('*'), orgId, userId)`
+ * If orgId is null (no membership resolved), falls back to a plain user filter.
+ */
+// Query builder type varies (RLS vs minimal client) and the real Supabase builder type
+// is too deep for a generic constraint here — `any` is the pragmatic choice for a filter
+// passthrough that returns the same builder.
+/* eslint-disable @typescript-eslint/no-explicit-any */
+export function scopeIcpsToUser(query: any, orgId: string | null, userId: string): any {
+  if (!orgId) return query.eq('user_id', userId);
+  return query.eq('org_id', orgId).or(`scope.eq.org,user_id.eq.${userId}`);
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
 function deriveOrgName(user: User): string {
   // Prefer a human name, fall back to the email local part. The backfill prefers the

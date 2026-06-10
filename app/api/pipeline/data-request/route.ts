@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { after } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
+import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
 import type { PipelineDataRequestType } from '@/lib/pipeline-icp-health';
 import {
   DEFAULT_ACQUISITION_TARGET_COMPANIES,
@@ -130,10 +131,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'targetContactCount must be greater than 0' }, { status: 400 });
     }
 
-    const { data: icp, error: icpErr } = await supabase
-      .from('icps')
-      .select('id')
-      .eq('user_id', user.id)
+    // The ICP must be visible to this user (company-wide or their own personal) — a
+    // member can buy data against a company ICP; billing is org-level.
+    const reqOrgId = await orgIdForUser(supabase, user.id);
+    const { data: icp, error: icpErr } = await scopeIcpsToUser(
+      supabase.from('icps').select('id'),
+      reqOrgId,
+      user.id,
+    )
       .eq('id', icpId)
       .maybeSingle();
 

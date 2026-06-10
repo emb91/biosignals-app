@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
+import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
 import { isCrmSuppressed, type SequenceDispatchStatus } from '@/lib/lead-action';
 import {
   type DataProvenanceChannel,
@@ -300,13 +301,14 @@ export async function GET(request: Request) {
 
     const needsIcps = rows.some((r) => Boolean(r.matched_icp_id));
 
+    const icpsOrgId = needsIcps ? await orgIdForUser(supabase, user.id) : null;
     const [icpResult, companyCrmStatuses, companySequenceStatuses] = await Promise.all([
       needsIcps
-        ? supabase
-            .from('icps')
-            .select('id, name, created_at')
-            .eq('user_id', user.id)
-            .order('created_at', { ascending: false })
+        ? scopeIcpsToUser(
+            supabase.from('icps').select('id, name, created_at'),
+            icpsOrgId,
+            user.id,
+          ).order('created_at', { ascending: false })
         : Promise.resolve({ data: [], error: null }),
       // CRM status scoped to this page only — the expensive per-contact lookup.
       fetchCompanyCrmStatuses(supabase, user.id, sliceCompanyIds),

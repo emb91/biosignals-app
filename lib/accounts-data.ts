@@ -8,6 +8,7 @@ import {
   type DataProvenanceChannel,
 } from '@/lib/data-provenance';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -370,11 +371,13 @@ export async function fetchAggregatedAccounts(
   // Resolve ICP labels
   const icpIds = [...new Set(accounts.map((a) => a.matched_icp_id).filter((id): id is string => Boolean(id)))];
   if (icpIds.length > 0) {
-    const { data: icps, error: icpError } = await supabase
-      .from('icps')
-      .select('id, name, created_at')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
+    // Org-scoped: company-wide ICPs + this user's personal ones.
+    const orgId = await orgIdForUser(supabase, userId);
+    const { data: icps, error: icpError } = await scopeIcpsToUser(
+      supabase.from('icps').select('id, name, created_at'),
+      orgId,
+      userId,
+    ).order('created_at', { ascending: false });
 
     if (!icpError && icps) {
       const ordered = icps as Array<{ id: string; name: string | null }>;

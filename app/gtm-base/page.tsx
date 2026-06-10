@@ -496,8 +496,10 @@ export default function DashboardPage() {
         ] = await Promise.all([
           supabase.from('user_companies').select('company_id', { count: 'exact', head: true }).eq('user_id', user.id),
           supabase.from('contacts').select('id', { count: 'exact', head: true }).eq('user_id', user.id),
-          supabase.from('icps').select('id', { count: 'exact', head: true }).eq('user_id', user.id),
-          supabase.from('icps').select('id, name').eq('user_id', user.id),
+          // ICPs are org-scoped: drop the user filter and let RLS return company-wide
+          // ICPs + this user's own personal ones. (Other tables stay user-scoped.)
+          supabase.from('icps').select('id', { count: 'exact', head: true }),
+          supabase.from('icps').select('id, name'),
           supabase.from('user_companies').select('company_id, matched_icp_id, company_fit_score').eq('user_id', user.id),
           supabase.from('contacts').select('id, company_id, contact_fit_score').eq('user_id', user.id).not('company_id', 'is', null),
           supabase.from('contact_attribution_snapshots')

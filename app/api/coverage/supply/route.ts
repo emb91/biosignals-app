@@ -17,6 +17,7 @@
  */
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
+import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
 import { estimateIcpSupply, ICP_SUPPLY_SELECT } from '@/lib/coverage/supply';
 import type { AcquisitionIcp } from '@/lib/data-acquisition/search-spec';
 
@@ -32,10 +33,12 @@ export async function POST(req: Request) {
   };
   const cpcByIcp = body.contactsPerCompany ?? {};
 
-  const { data: icpRows, error: icpErr } = await supabase
-    .from('icps')
-    .select(ICP_SUPPLY_SELECT)
-    .eq('user_id', user.id);
+  const orgId = await orgIdForUser(supabase, user.id);
+  const { data: icpRows, error: icpErr } = await scopeIcpsToUser(
+    supabase.from('icps').select(ICP_SUPPLY_SELECT),
+    orgId,
+    user.id,
+  );
   if (icpErr) {
     return NextResponse.json({ error: 'Failed to load ICPs', detail: icpErr.message }, { status: 500 });
   }
