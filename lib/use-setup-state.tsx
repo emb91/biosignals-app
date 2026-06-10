@@ -19,6 +19,10 @@ export type SetupState = {
   setupComplete: boolean;
   /** Invited members skip org setup; they're complete the moment they join. */
   isMember: boolean;
+  /** Caller's org role. Drives UI locking (members are read-only on org setup). */
+  role: 'owner' | 'admin' | 'member' | null;
+  /** Convenience: owner/admin may edit org setup (company profile, delete ICPs). */
+  canEditOrgSetup: boolean;
   loading: boolean;
 };
 
@@ -46,6 +50,8 @@ export function SetupStateProvider({ children }: { children: ReactNode }) {
     step2Complete: false,
     setupComplete: false,
     isMember: false,
+    role: null,
+    canEditOrgSetup: false,
     loading: true,
   });
 
@@ -61,6 +67,8 @@ export function SetupStateProvider({ children }: { children: ReactNode }) {
         step2Complete: false,
         setupComplete: false,
         isMember: false,
+        role: null,
+        canEditOrgSetup: false,
         loading: false,
       });
       return;
@@ -81,15 +89,19 @@ export function SetupStateProvider({ children }: { children: ReactNode }) {
           step2Complete: boolean;
           setupComplete: boolean;
           isMember: boolean;
+          role: 'owner' | 'admin' | 'member' | null;
         };
 
         if (cancelled) return;
 
+        const role = json.role ?? null;
         setState({
           step1Complete: json.step1Complete,
           step2Complete: json.step2Complete,
           setupComplete: json.setupComplete,
           isMember: json.isMember,
+          role,
+          canEditOrgSetup: role === 'owner' || role === 'admin',
           loading: false,
         });
       } catch (err) {

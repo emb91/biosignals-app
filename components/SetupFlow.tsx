@@ -50,6 +50,7 @@ import { fetchLatestUserCompanyRow } from '@/lib/fetch-latest-user-company';
 import { ArcovaWelcomeOrb } from '@/components/ArcovaWelcomeOrb';
 import { ROUTES } from '@/lib/routes';
 import { consumePendingSetupSection, setActiveSetupSection, useSetupNavigation } from '@/lib/setup-navigation';
+import { useSetupState } from '@/lib/use-setup-state';
 import { PLATFORM_CATEGORY_OPTIONS } from '@/lib/platform-category';
 import { formatCurrencyShort, extractFundingStatus } from '@/lib/funding-display';
 import { getSignalDisplayName } from '@/lib/signal-display-names';
@@ -1691,6 +1692,7 @@ function SetupTargetCompanyCard({
   onCancelIcp?: () => void;
   onSaveIcp?: () => void | Promise<void>;
   onReenrichIcp?: () => void;
+  // onDeleteIcp is omitted (undefined) for members — they may add ICPs but not delete.
   onDeleteIcp?: () => void | Promise<void>;
   onIcpFieldChange?: (field: string, value: IcpChangeValue) => void;
   showSignalPills?: boolean;
@@ -3676,6 +3678,8 @@ export default function SetupFlow({
 }: SetupFlowProps) {
   const router = useRouter();
   const { pendingSection } = useSetupNavigation();
+  // Members may add ICPs but not delete them — gate the delete affordance on role.
+  const { canEditOrgSetup } = useSetupState();
   const normalizedUserEmail = (email ?? '').trim().toLowerCase();
   const isDevSetupTestMode =
     process.env.NEXT_PUBLIC_DEV_SETUP_TEST_MODE === 'true' ||
@@ -6393,7 +6397,7 @@ export default function SetupFlow({
     onSaveIcp: () => void handleSaveIcp(),
     onCancelIcp: handleCancelIcp,
     onReenrichIcp: handleReenrichIcp,
-    onDeleteIcp: () => void handleDeleteIcp(),
+    onDeleteIcp: canEditOrgSetup ? () => void handleDeleteIcp() : undefined,
     onIcpFieldChange: handleIcpFieldChange,
     panelPersona,
     savedPersonaName,
@@ -7245,7 +7249,7 @@ export default function SetupFlow({
               onCancelIcp={handleCancelIcp}
               onSaveIcp={() => void handleSaveIcp()}
               onReenrichIcp={handleReenrichIcp}
-              onDeleteIcp={() => void handleDeleteIcp()}
+              onDeleteIcp={canEditOrgSetup ? () => void handleDeleteIcp() : undefined}
               onIcpFieldChange={handleIcpFieldChange}
             />
 
@@ -8084,7 +8088,7 @@ export default function SetupFlow({
               onSaveIcp={() => void handleSaveIcp()}
               onCancelIcp={handleCancelIcp}
               onReenrichIcp={handleReenrichIcp}
-              onDeleteIcp={() => void handleDeleteIcp()}
+              onDeleteIcp={canEditOrgSetup ? () => void handleDeleteIcp() : undefined}
               onIcpFieldChange={handleIcpFieldChange}
               panelPersona={panelPersona}
               savedPersonaName={savedPersonaName}

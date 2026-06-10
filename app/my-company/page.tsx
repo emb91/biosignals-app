@@ -12,6 +12,7 @@ import { Pencil, RefreshCw, Save, X, Building2, ArrowRight, ChevronDown, Externa
 import Image from 'next/image';
 import { supabase } from '@/lib/supabase';
 import { ROUTES } from '@/lib/routes';
+import { useSetupState } from '@/lib/use-setup-state';
 
 const REENRICH_LINKEDIN_LINES = [
   'LinkedIn located ✓ Pulling logo, tagline, and followers from the public page…',
@@ -221,6 +222,8 @@ function formatFunding(stage?: string, total?: number): string | undefined {
 export default function MyProfilePage() {
   const { user, loading } = useAuth();
   const router = useRouter();
+  // "My company" is org-level setup — only owner/admin may edit/re-enrich.
+  const { canEditOrgSetup } = useSetupState();
 
   const [analysisData, setAnalysisData] = useState<Record<string, unknown> | null>(null);
   const [editedData, setEditedData] = useState<Record<string, unknown> | null>(null);
@@ -395,7 +398,7 @@ export default function MyProfilePage() {
             eyebrow="About you · My company"
             title="Your company profile"
             subtitle="Used to build target criteria, define buying personas, and find the right leads."
-            action={analysisData && !editMode ? (
+            action={analysisData && !editMode && canEditOrgSetup ? (
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
@@ -724,14 +727,20 @@ export default function MyProfilePage() {
               </div>
             </div>
             <div className="flex justify-end border-t border-arcova-navy/[0.06] px-[22px] py-3">
-              <button
-                type="button"
-                onClick={() => setEditMode(true)}
-                disabled={isReenriching}
-                className="inline-flex items-center gap-1.5 rounded-[10px] border border-arcova-navy/10 bg-white/70 px-3.5 py-2 text-[12.5px] font-medium text-arcova-navy backdrop-blur transition-all hover:-translate-y-px hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <Pencil className="h-3.5 w-3.5 opacity-70" /> Edit
-              </button>
+              {canEditOrgSetup ? (
+                <button
+                  type="button"
+                  onClick={() => setEditMode(true)}
+                  disabled={isReenriching}
+                  className="inline-flex items-center gap-1.5 rounded-[10px] border border-arcova-navy/10 bg-white/70 px-3.5 py-2 text-[12.5px] font-medium text-arcova-navy backdrop-blur transition-all hover:-translate-y-px hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Pencil className="h-3.5 w-3.5 opacity-70" /> Edit
+                </button>
+              ) : (
+                <span className="text-[12px] text-arcova-navy/45">
+                  Only an owner or admin can edit the company profile.
+                </span>
+              )}
             </div>
           </article>
           )}

@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase-server';
 import { NextResponse } from 'next/server';
-import { orgIdForUser } from '@/lib/org-context';
+import { orgIdForUser, getOrgContext, canEditOrgSetup } from '@/lib/org-context';
 import { assignSignalWeights, extractSignalIds } from '@/lib/signal-weights';
 import { rescoreAllContactsForUser } from '@/lib/rescore';
 import {
@@ -66,9 +66,15 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: 'id is required' }, { status: 400 });
     }
 
+    // Delete is owner/admin only — members can add ICPs but not delete any.
+    // (RLS enforces this too; this returns a clean 403 instead of a silent no-op.)
+    const ctx = await getOrgContext();
+    if (ctx && !canEditOrgSetup(ctx.role)) {
+      return NextResponse.json({ error: 'Only an owner or admin can delete ICPs' }, { status: 403 });
+    }
+
     // Org-scoped delete so an admin can remove a shared ICP, not just its creator.
-    // RLS additionally gates writes to owner/admin.
-    const orgId = await orgIdForUser(supabase, user.id);
+    const orgId = ctx?.orgId ?? (await orgIdForUser(supabase, user.id));
     const deleteQuery = supabase.from('icps').delete().eq('id', id);
     const { error } = orgId
       ? await deleteQuery.eq('org_id', orgId)

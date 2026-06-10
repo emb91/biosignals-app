@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase-server';
 import { NextResponse } from 'next/server';
-import { orgIdForUser } from '@/lib/org-context';
+import { orgIdForUser, getOrgContext, canEditOrgSetup } from '@/lib/org-context';
 import { assignSignalWeights, extractSignalIds } from '@/lib/signal-weights';
 import { rescoreAllContactsForUser } from '@/lib/rescore';
 import {
@@ -174,7 +174,13 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const orgId = await orgIdForUser(supabase, user.id);
+    // Delete is owner/admin only — members can add ICPs but not delete any.
+    const ctx = await getOrgContext();
+    if (ctx && !canEditOrgSetup(ctx.role)) {
+      return NextResponse.json({ error: 'Only an owner or admin can delete ICPs' }, { status: 403 });
+    }
+
+    const orgId = ctx?.orgId ?? (await orgIdForUser(supabase, user.id));
     const delQuery = supabase.from('icps').delete().eq('id', id);
     const { error } = orgId
       ? await delQuery.eq('org_id', orgId)
