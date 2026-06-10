@@ -7,7 +7,6 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { supabase } from './supabase';
 import { useAuth } from '@/context/AuthContext';
 import { ROUTES } from '@/lib/routes';
 
@@ -18,6 +17,8 @@ export type SetupState = {
   step2Complete: boolean;
   /** Company profile + at least one ICP. Buying teams are edited on each ICP card. */
   setupComplete: boolean;
+  /** Invited members skip org setup; they're complete the moment they join. */
+  isMember: boolean;
   loading: boolean;
 };
 
@@ -44,6 +45,7 @@ export function SetupStateProvider({ children }: { children: ReactNode }) {
     step1Complete: false,
     step2Complete: false,
     setupComplete: false,
+    isMember: false,
     loading: true,
   });
 
@@ -58,6 +60,7 @@ export function SetupStateProvider({ children }: { children: ReactNode }) {
         step1Complete: false,
         step2Complete: false,
         setupComplete: false,
+        isMember: false,
         loading: false,
       });
       return;
@@ -67,27 +70,26 @@ export function SetupStateProvider({ children }: { children: ReactNode }) {
 
     const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+    // Org-aware: the server resolves the caller's org + role and reports setup at the
+    // org level (members are always complete). See /api/org/setup-state.
     const checkSetup = async (attempt: number): Promise<void> => {
       try {
-        const [profileResult, icpsResult] = await Promise.all([
-          supabase
-            .from('user_company')
-            .select('id')
-            .eq('user_id', user.id)
-            .limit(1)
-            .maybeSingle(),
-          supabase.from('icps').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
-        ]);
+        const res = await fetch('/api/org/setup-state');
+        if (!res.ok) throw new Error(`setup-state ${res.status}`);
+        const json = (await res.json()) as {
+          step1Complete: boolean;
+          step2Complete: boolean;
+          setupComplete: boolean;
+          isMember: boolean;
+        };
 
         if (cancelled) return;
 
-        const step1Complete = !!profileResult.data;
-        const step2Complete = !!icpsResult.data;
-
         setState({
-          step1Complete,
-          step2Complete,
-          setupComplete: step1Complete && step2Complete,
+          step1Complete: json.step1Complete,
+          step2Complete: json.step2Complete,
+          setupComplete: json.setupComplete,
+          isMember: json.isMember,
           loading: false,
         });
       } catch (err) {
