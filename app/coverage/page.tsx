@@ -51,7 +51,9 @@ type SupplyRow = {
   icpId: string;
   sourceableContacts: number | null;
   universeCompanies: number | null;
+  heldCompanies: number;
   netNewCompanies: number;
+  contactsPerCompany: number;
   estimate: true;
 };
 
@@ -290,17 +292,24 @@ function Th({ tip, right, children }: { tip?: string; right?: boolean; children:
   );
 }
 
-/** "ICP 5" tag pill + the ICP's own name, truncating gracefully. */
-function IcpName({ label, index }: { label: string; index: number }) {
+/** "ICP 5" tag pill + the ICP's own name, truncating gracefully. Compact mode shows just the number in the pill. */
+function IcpName({ label, index, compact }: { label: string; index: number; compact?: boolean }) {
   const name = label.replace(/^ICP \d+:\s*/, '');
   return (
     <span className="flex min-w-0 items-center gap-2">
       {index > 0 && (
-        <span className="inline-flex shrink-0 items-center rounded-full border border-gray-200 bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">
-          ICP {index}
+        <span
+          className={cn(
+            'inline-flex shrink-0 items-center rounded-full border border-gray-200 bg-gray-100 text-[10px] font-semibold text-gray-500',
+            compact ? 'px-1.5 py-px' : 'px-1.5 py-0.5',
+          )}
+        >
+          {compact ? index : `ICP ${index}`}
         </span>
       )}
-      <span className="truncate font-medium text-gray-900">{name}</span>
+      <span className={cn('font-medium text-gray-900', compact ? 'line-clamp-2' : 'truncate')} title={name}>
+        {name}
+      </span>
     </span>
   );
 }
@@ -426,8 +435,10 @@ export default function CoveragePage() {
   const [draftValue, setDraftValue] = useState('');
   const [savingTarget, setSavingTarget] = useState(false);
 
-  // Addressable-supply ceilings (opt-in, credit-spending)
+  // Addressable-supply ceilings (opt-in, credit-spending). `supplyRows` keeps
+  // the full estimates so the UI can SHOW what the check found, not just cap rows.
   const [ceilings, setCeilings] = useState<Map<string, number | null> | null>(null);
+  const [supplyRows, setSupplyRows] = useState<SupplyRow[] | null>(null);
   const [supplyLoading, setSupplyLoading] = useState(false);
   const [supplyError, setSupplyError] = useState<string | null>(null);
 
@@ -481,6 +492,7 @@ export default function CoveragePage() {
       if (res.ok) {
         setEditingTarget(false);
         setCeilings(null); // target changed → prior supply plan is stale
+        setSupplyRows(null);
         await loadTarget();
       }
     } finally {
@@ -509,6 +521,7 @@ export default function CoveragePage() {
       const map = new Map<string, number | null>();
       for (const row of payload.supply ?? []) map.set(row.icpId, row.sourceableContacts);
       setCeilings(map);
+      setSupplyRows(payload.supply ?? []);
     } catch (e) {
       setSupplyError(e instanceof Error ? e.message : 'Supply check failed');
     } finally {
@@ -1033,20 +1046,28 @@ export default function CoveragePage() {
                               in this order:
                             </p>
                             {ceilings == null ? (
-                              <button
-                                type="button"
-                                onClick={() => void checkSupply()}
-                                disabled={supplyLoading}
-                                className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50"
-                                title="Counts the addressable company universe per ICP (uses a small amount of Apollo credits)"
-                              >
-                                {supplyLoading ? (
-                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                ) : (
-                                  <Search className="h-3.5 w-3.5" />
-                                )}
-                                Check addressable supply
-                              </button>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button
+                                    type="button"
+                                    onClick={() => void checkSupply()}
+                                    disabled={supplyLoading}
+                                    className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50"
+                                  >
+                                    {supplyLoading ? (
+                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    ) : (
+                                      <Search className="h-3.5 w-3.5" />
+                                    )}
+                                    Check addressable supply
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent side="top" className="max-w-[280px] text-xs">
+                                  Sanity-checks the plan against reality: asks Apollo how many companies matching
+                                  each ICP exist, subtracts what you hold, and caps any row that wants more contacts
+                                  than are actually out there. Count-only lookup, about 0.1 Apollo credits per ICP.
+                                </TooltipContent>
+                              </Tooltip>
                             ) : (
                               <span className="text-xs font-medium text-gray-400">Supply checked (estimate)</span>
                             )}
@@ -1143,6 +1164,53 @@ export default function CoveragePage() {
                               </tbody>
                             </table>
                           </div>
+
+                          {/* What the supply check actually found: otherwise the button
+                              appears to do nothing when no row ends up capped. */}
+                          {supplyRows && (
+                            <div className="mt-3 rounded-lg border border-gray-100 bg-gray-50/70 px-3 py-2.5 text-xs text-gray-600">
+                              <p className="mb-1 font-semibold text-gray-700">What the supply check found</p>
+                              {rankedPlanRows.map((a) => {
+                                const s = supplyRows.find((r) => r.icpId === a.icpId);
+                                const idx = cardByIcpId.get(a.icpId)?.icp_index ?? 0;
+                                const name = a.label.replace(/^ICP \d+:\s*/, '');
+                                if (!s || s.sourceableContacts == null) {
+                                  return (
+                                    <p key={a.icpId} className="mt-0.5">
+                                      <span className="font-medium text-gray-700">ICP {idx} ({name})</span>: couldn&apos;t
+                                      be counted (Apollo rejected this ICP&apos;s filters), so its row stays uncapped.
+                                    </p>
+                                  );
+                                }
+                                return (
+                                  <p key={a.icpId} className="mt-0.5">
+                                    <span className="font-medium text-gray-700">ICP {idx} ({name})</span>: ~
+                                    {s.universeCompanies?.toLocaleString() ?? '?'} matching companies exist,{' '}
+                                    {s.netNewCompanies.toLocaleString()} are new to you, so roughly{' '}
+                                    {s.sourceableContacts.toLocaleString()} contacts are sourceable vs{' '}
+                                    {a.toBuy.toLocaleString()} needed:{' '}
+                                    {a.capped ? (
+                                      <span className="font-medium text-amber-700">not enough, row capped.</span>
+                                    ) : (
+                                      <span className="font-medium text-emerald-700">plenty of headroom.</span>
+                                    )}
+                                  </p>
+                                );
+                              })}
+                              {(() => {
+                                const plannedIds = new Set(rankedPlanRows.map((a) => a.icpId));
+                                const failedOthers = supplyRows.filter(
+                                  (r) => !plannedIds.has(r.icpId) && r.sourceableContacts == null,
+                                ).length;
+                                return failedOthers > 0 ? (
+                                  <p className="mt-1 text-gray-400">
+                                    {failedOthers} unplanned ICP{failedOthers === 1 ? '' : 's'} couldn&apos;t be counted
+                                    (Apollo rejected their filters, often a paid-plan filter like funding stage).
+                                  </p>
+                                ) : null;
+                              })()}
+                            </div>
+                          )}
 
                           {plan.result.shortfall > 0 && (
                             <p className="mt-3 flex items-start gap-1.5 text-xs text-amber-700">
@@ -1254,15 +1322,16 @@ export default function CoveragePage() {
                             <Th>ICP</Th>
                             <Th right tip="CRM deals attributed to this ICP: open, won, and lost.">Deals</Th>
                             <Th right tip="Open (not yet closed) deal value attributed to this ICP.">Pipeline</Th>
-                            <Th right tip="Won deals divided by closed deals (won + lost). The sample size next to it tells you how much to trust it.">
+                            <Th right tip="Total closed-won revenue attributed to this ICP.">Closed won</Th>
+                            <Th right tip="Won deals divided by closed deals (won + lost). Small samples can swing with a single deal.">
                               Win rate
                             </Th>
                             <Th right tip="Average value of this ICP's won deals.">Avg ACV</Th>
                             <Th right tip="Average days from first stage to closed-won. Uses stage history when available; otherwise falls back to created-to-close dates.">
                               Cycle
                             </Th>
-                            <Th right tip="Win rate × won revenue ÷ average cycle days: revenue per day of selling. This is what ranks ICPs and splits your target.">
-                              Throughput
+                            <Th right tip="Throughput rank: win rate × won revenue ÷ average cycle days, i.e. expected revenue per selling day. This is what splits your target across ICPs.">
+                              Rank
                             </Th>
                             <Th tip="Evidence health by closed-deal sample: 10+ closed is strong, 4+ is some signal, fewer is thin. Thin samples can flip with one deal.">
                               Health
@@ -1308,27 +1377,14 @@ export default function CoveragePage() {
                                     )}
                                   </td>
                                   <td className={TD_NUM}>{formatUsd(p?.pipeline_usd)}</td>
-                                  <td className={TD_NUM}>
-                                    {p?.win_rate != null ? (
-                                      <span>
-                                        {formatPct(p.win_rate)}{' '}
-                                        <span className="text-xs text-gray-400">
-                                          ({p.won_count}W-{p.lost_count}L)
-                                        </span>
-                                      </span>
-                                    ) : (
-                                      '—'
-                                    )}
-                                  </td>
+                                  <td className={TD_NUM}>{p && p.won_usd > 0 ? formatUsd(p.won_usd) : '—'}</td>
+                                  <td className={TD_NUM}>{p?.win_rate != null ? formatPct(p.win_rate) : '—'}</td>
                                   <td className={TD_NUM}>{formatUsd(p?.avg_acv)}</td>
                                   <td className={TD_NUM}>
                                     {p?.avg_cycle_days != null ? (
                                       <Tooltip>
                                         <TooltipTrigger asChild>
-                                          <span className="cursor-help">
-                                            {formatCycle(p.avg_cycle_days)}{' '}
-                                            <span className="text-xs text-gray-400">n={p.cycle_sample}</span>
-                                          </span>
+                                          <span className="cursor-help">{formatCycle(p.avg_cycle_days)}</span>
                                         </TooltipTrigger>
                                         <TooltipContent side="top" className="max-w-[240px] text-xs">
                                           Based on {p.cycle_sample} closed deal{p.cycle_sample === 1 ? '' : 's'}.{' '}
@@ -1539,6 +1595,7 @@ export default function CoveragePage() {
           pendingMessage={agentTrigger}
           onGtmTargetMutation={() => {
             setCeilings(null); // target changed → prior supply plan is stale
+            setSupplyRows(null);
             void loadTarget();
           }}
         />
