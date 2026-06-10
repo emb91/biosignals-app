@@ -1264,8 +1264,8 @@ export default function CoveragePage() {
                             <Th right tip="Win rate × won revenue ÷ average cycle days: revenue per day of selling. This is what ranks ICPs and splits your target.">
                               Throughput
                             </Th>
-                            <Th tip="Confidence by closed-deal sample: 10+ closed is strong, 4+ is some signal, fewer is thin. Thin samples can flip with one deal.">
-                              Sample
+                            <Th tip="Evidence health by closed-deal sample: 10+ closed is strong, 4+ is some signal, fewer is thin. Thin samples can flip with one deal.">
+                              Health
                             </Th>
                           </tr>
                         </thead>
@@ -1369,7 +1369,9 @@ export default function CoveragePage() {
                                     )}
                                   </td>
                                   <td className={`${TD} whitespace-nowrap`}>
-                                    {p ? (
+                                    {/* Thin sample is muted plain text (like "No deals yet"): both mean
+                                        "not enough evidence", only real signal earns a chip. */}
+                                    {p && p.confidence !== 'low' ? (
                                       <span
                                         className={cn(
                                           'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium',
@@ -1379,7 +1381,7 @@ export default function CoveragePage() {
                                         {CONFIDENCE_LABEL[p.confidence]}
                                       </span>
                                     ) : (
-                                      <span className="text-xs text-gray-400">No deals yet</span>
+                                      <span className="text-xs text-gray-400">{p ? 'Thin sample' : 'No deals yet'}</span>
                                     )}
                                   </td>
                                 </tr>
