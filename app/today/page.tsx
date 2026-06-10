@@ -1316,10 +1316,9 @@ export default function BriefingPage() {
                               <span className="bt-sig-line">
                                 <strong>{row.company}</strong>
                                 {` · ${row.label}`}
-                                {row.countLabel
-                                  ? <span className="bt-sig-line-count">{` · ${row.countLabel}`}</span>
-                                  : row.count > 1 && <span className="bt-sig-count">{row.count}</span>
-                                }
+                                {row.countLabel && (
+                                  <span className="bt-sig-line-count">{` · ${row.countLabel}`}</span>
+                                )}
                               </span>
                             </span>
                             <span className="bt-sig-ago">{row.ago}</span>
