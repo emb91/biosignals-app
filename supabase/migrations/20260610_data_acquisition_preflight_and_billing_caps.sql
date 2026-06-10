@@ -11,8 +11,9 @@
 --    cap was reached, or everything requested was already owned). Shown
 --    verbatim on job cards; never mentions credit units.
 -- 4. user_billing_limits: per-user monthly internal-credit cap enforced at
---    runtime by the job runner. No row (or null limit) means no cap. Users
---    can read their own row; writes happen via the service role only.
+--    runtime by the job runner. No row (or null limit) falls back to
+--    DEFAULT_MONTHLY_CREDIT_LIMIT (500) in application code. Users can read
+--    their own row; writes happen via the service role only.
 
 begin;
 
@@ -97,7 +98,7 @@ create table if not exists public.user_billing_limits (
 );
 
 comment on table public.user_billing_limits is
-  'Per-user monthly internal-credit cap for data acquisition. Absent row or null limit = uncapped. Enforced at runtime in lib/data-acquisition/job-runner.ts. Internal-only: never surfaced to end users as credit units.';
+  'Per-user monthly internal-credit cap for data acquisition. Absent row or null limit falls back to DEFAULT_MONTHLY_CREDIT_LIMIT (500) in lib/data-acquisition/job-runner.ts. Internal-only: never surfaced to end users as credit units.';
 
 alter table public.user_billing_limits enable row level security;
 
