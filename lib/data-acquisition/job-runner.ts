@@ -27,6 +27,7 @@ import {
 type DataAcquisitionJob = {
   id: string;
   user_id: string;
+  org_id: string | null;
   icp_id: string;
   upload_batch_id: string | null;
   request_type: 'expand_companies' | 'better_contacts' | 'more_contacts_at_accounts' | 'contacts_at_company';
@@ -227,22 +228,38 @@ async function buildCreditGuard(
   admin: ReturnType<typeof createAdminClient>,
   job: DataAcquisitionJob,
 ): Promise<CreditGuard> {
-  const { data: limitRow } = await admin
-    .from('user_billing_limits')
-    .select('monthly_credit_limit')
-    .eq('user_id', job.user_id)
-    .maybeSingle();
-  const monthlyLimit =
-    toFiniteNumber((limitRow as { monthly_credit_limit?: unknown } | null)?.monthly_credit_limit) ??
-    DEFAULT_MONTHLY_CREDIT_LIMIT;
+  // Org-scoped cap: data is billed to the org, so the monthly ceiling and month-to-date
+  // spend are summed across the whole org. Falls back to the per-user limit/spend when the
+  // job has no org (legacy / un-orged). org_billing_limits overrides user_billing_limits.
+  let monthlyLimit: number | null = null;
+  if (job.org_id) {
+    const { data: orgLimitRow } = await admin
+      .from('org_billing_limits')
+      .select('monthly_credit_limit')
+      .eq('org_id', job.org_id)
+      .maybeSingle();
+    monthlyLimit = toFiniteNumber((orgLimitRow as { monthly_credit_limit?: unknown } | null)?.monthly_credit_limit);
+  }
+  if (monthlyLimit == null) {
+    const { data: limitRow } = await admin
+      .from('user_billing_limits')
+      .select('monthly_credit_limit')
+      .eq('user_id', job.user_id)
+      .maybeSingle();
+    monthlyLimit =
+      toFiniteNumber((limitRow as { monthly_credit_limit?: unknown } | null)?.monthly_credit_limit) ??
+      DEFAULT_MONTHLY_CREDIT_LIMIT;
+  }
 
   const now = new Date();
   const monthStartIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
-  const { data: monthJobs } = await admin
+  const monthJobsQuery = admin
     .from('data_acquisition_jobs')
     .select('id, actual_credit_units')
-    .eq('user_id', job.user_id)
     .gte('requested_at', monthStartIso);
+  const { data: monthJobs } = await (job.org_id
+    ? monthJobsQuery.eq('org_id', job.org_id)
+    : monthJobsQuery.eq('user_id', job.user_id));
 
   let monthUnits = 0;
   let jobUnits = 0;
@@ -284,6 +301,7 @@ function makeMeter(
     await recordDataAcquisitionUsageEvent(admin, {
       jobId: job.id,
       userId: job.user_id,
+      orgId: job.org_id,
       eventType,
       provider,
       quantity,
