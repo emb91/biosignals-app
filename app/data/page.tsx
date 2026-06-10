@@ -118,6 +118,21 @@ function jobTargetsCompanies(type: string): boolean {
   return type === 'expand_companies';
 }
 
+function userFacingJobError(job: AcquisitionJob): string | null {
+  if (job.status !== 'failed') return null;
+  const error = job.error?.toLowerCase() ?? '';
+
+  // Raw provider/API errors are useful in logs, but they are not product copy.
+  // Keep this surface calm and action-oriented.
+  if (error.includes('insufficient credits') || error.includes('upgrade your plan')) {
+    return 'Apollo reported a credit or plan limit when this sourcing run executed. If credits have renewed, start a new sourcing request.';
+  }
+  if (error.includes('apollo')) {
+    return 'Apollo could not complete this sourcing run. Start a new sourcing request when the provider connection is ready.';
+  }
+  return 'This sourcing run could not complete. Start a new sourcing request to try again.';
+}
+
 // ─── Job card ─────────────────────────────────────────────────────────────────
 
 function JobCard({ job, icpLabel }: { job: AcquisitionJob; icpLabel: string | null }) {
@@ -125,6 +140,7 @@ function JobCard({ job, icpLabel }: { job: AcquisitionJob; icpLabel: string | nu
   const done = jobIsDone(job.status);
   const target = job.company_name || icpLabel;
   const skipped = (job.skipped_duplicate_count ?? 0) + (job.skipped_existing_count ?? 0);
+  const displayError = userFacingJobError(job);
 
   const counts = [
     job.screened_company_count != null && job.screened_company_count > 0
@@ -197,8 +213,10 @@ function JobCard({ job, icpLabel }: { job: AcquisitionJob; icpLabel: string | nu
         </p>
       )}
 
-      {job.error && (
-        <p className="mt-2.5 rounded-lg bg-red-50 px-2.5 py-2 text-[11px] leading-snug text-red-700">{job.error}</p>
+      {displayError && (
+        <p className="mt-2.5 rounded-lg bg-red-50 px-2.5 py-2 text-[11px] leading-snug text-red-700">
+          {displayError}
+        </p>
       )}
 
       <div className="mt-2.5 flex items-center justify-between gap-2">
@@ -411,7 +429,7 @@ function DataPageContent() {
             qualified_company_count: job.qualified_company_count,
             duplicates_skipped: (job.skipped_duplicate_count ?? 0) + (job.skipped_existing_count ?? 0),
             completion_note: job.completion_note,
-            error: job.error,
+            error: userFacingJobError(job),
             requested_at: job.requested_at,
           }))
         : undefined,
