@@ -265,9 +265,10 @@ function buildAllHealthHandoffPrompt(cards: IcpPipelineCard[]): string {
 
 // ─── Small presentational pieces ─────────────────────────────────────────────
 
-const TH_HEAD = 'text-left text-[11px] font-semibold uppercase tracking-wide text-gray-500 px-3 py-3';
-const TD = 'px-3 py-3 text-sm text-gray-900 align-top';
-const TD_NUM = 'px-3 py-3 text-sm text-gray-900 tabular-nums text-right align-top';
+const TH_HEAD =
+  'text-left text-[11px] font-semibold uppercase tracking-wide text-gray-500 px-2.5 py-3 whitespace-nowrap';
+const TD = 'px-2.5 py-3 text-sm text-gray-900 align-top';
+const TD_NUM = 'px-2.5 py-3 text-sm text-gray-900 tabular-nums text-right align-top whitespace-nowrap';
 
 /** Column header with an inline definition tooltip ("where am I looking?"). */
 function Th({ tip, right, children }: { tip?: string; right?: boolean; children: React.ReactNode }) {
@@ -286,6 +287,21 @@ function Th({ tip, right, children }: { tip?: string; right?: boolean; children:
         </TooltipContent>
       </Tooltip>
     </th>
+  );
+}
+
+/** "ICP 5" tag pill + the ICP's own name, truncating gracefully. */
+function IcpName({ label, index }: { label: string; index: number }) {
+  const name = label.replace(/^ICP \d+:\s*/, '');
+  return (
+    <span className="flex min-w-0 items-center gap-2">
+      {index > 0 && (
+        <span className="inline-flex shrink-0 items-center rounded-full border border-gray-200 bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">
+          ICP {index}
+        </span>
+      )}
+      <span className="truncate font-medium text-gray-900">{name}</span>
+    </span>
   );
 }
 
@@ -585,19 +601,33 @@ export default function CoveragePage() {
   const target = targetData?.target ?? null;
   const progress = quarterProgress(period);
 
+  // The plan covers the REMAINING gap, not the full target: what's already
+  // closed-won this quarter doesn't need to be sourced again.
+  const closedTowardTarget =
+    target && hasCrm && actuals ? (target.type === 'revenue' ? actuals.wonUsd : actuals.wonCount) : 0;
+  const remainingTargetValue = target ? Math.max(0, target.value - closedTowardTarget) : 0;
+
   const plan: CoveragePlan | null =
-    cards && cards.length > 0 && target
-      ? buildCoveragePlan({ cards, target, ceilings: ceilings ?? undefined })
+    cards && cards.length > 0 && target && remainingTargetValue > 0
+      ? buildCoveragePlan({
+          cards,
+          target: { type: target.type, value: remainingTargetValue },
+          ceilings: ceilings ?? undefined,
+        })
       : null;
 
-  // Plan rows ranked into a "do this first" order: biggest sub-target first.
+  // Plan rows ranked into a "do this first" order: biggest sub-target first,
+  // then biggest sourcing gap among equals.
   const rankedPlanRows =
     plan && plan.canPlan && cards
       ? [...plan.result.allocations]
           .filter((a) => a.subTarget > 0 || a.toBuy > 0)
-          .sort((x, y) => y.subTarget - x.subTarget)
+          .sort((x, y) => y.subTarget - x.subTarget || y.toBuy - x.toBuy)
       : [];
   const topPriorityRow = rankedPlanRows.find((a) => a.toBuy > 0) ?? null;
+  /** ICPs with no won-deal evidence get no slice once throughput ranking kicks in. */
+  const unallocatedIcpCount = plan && plan.canPlan && cards ? cards.length - rankedPlanRows.length : 0;
+  const cardByIcpId = new Map((cards ?? []).map((c) => [c.icp_id, c]));
 
   const verdict: CoverageVerdict | null =
     cards == null
@@ -768,9 +798,9 @@ export default function CoveragePage() {
                   </div>
                 )}
 
-                {/* ── 3 · Target & plan ─────────────────────────────────────── */}
+                {/* ── 1 · Target & plan ─────────────────────────────────────── */}
                 <SectionHeader
-                  step="3"
+                  step="1"
                   icon={<Target className="h-3.5 w-3.5" />}
                   title={`Target & plan · ${quarterLabel(period)}`}
                   source="Set one number; we split it across ICPs and back-calculate what to source."
@@ -963,6 +993,16 @@ export default function CoveragePage() {
                     </div>
                   )}
 
+                  {/* Target already closed: nothing left to plan. */}
+                  {!editingTarget && target && remainingTargetValue <= 0 && (
+                    <div className="flex items-center gap-2 px-5 py-4">
+                      <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
+                      <p className="text-sm text-gray-700">
+                        You&apos;ve closed your full {quarterLabel(period)} target. Nothing left to source for it.
+                      </p>
+                    </div>
+                  )}
+
                   {/* Sourcing plan: ranked into a "do this first" order. */}
                   {!editingTarget && target && plan && (
                     <div className="px-5 py-4">
@@ -976,7 +1016,17 @@ export default function CoveragePage() {
                         <>
                           <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
                             <p className="text-sm text-gray-700">
-                              To hit {formatTargetValue(target.type, target.value)}, source{' '}
+                              {closedTowardTarget > 0 ? (
+                                <>
+                                  To close the remaining{' '}
+                                  <span className="font-semibold text-gray-900">
+                                    {formatTargetValue(target.type, remainingTargetValue)}
+                                  </span>
+                                  , source{' '}
+                                </>
+                              ) : (
+                                <>To hit {formatTargetValue(target.type, target.value)}, source </>
+                              )}
                               <span className="font-semibold text-gray-900">
                                 ~{plan.result.totalToBuy.toLocaleString()} new contacts
                               </span>{' '}
@@ -1037,7 +1087,9 @@ export default function CoveragePage() {
                                           {idx === 0 ? 'First' : `#${idx + 1}`}
                                         </span>
                                       </td>
-                                      <td className={`${TD} max-w-[16rem] truncate`}>{a.label}</td>
+                                      <td className={`${TD} w-full max-w-0`}>
+                                        <IcpName label={a.label} index={cardByIcpId.get(a.icpId)?.icp_index ?? 0} />
+                                      </td>
                                       <td className={TD_NUM}>{Math.round((a.shareOfTarget ?? 0) * 100)}%</td>
                                       <td className={TD_NUM}>{formatTargetValue(target.type, a.subTarget)}</td>
                                       <td className={TD_NUM}>
@@ -1099,6 +1151,22 @@ export default function CoveragePage() {
                                 {formatTargetValue(target.type, plan.result.shortfall)} of this target is beyond your
                                 ICPs&apos; addressable supply. Broaden an ICP, extend the timeline, or trim the number.
                               </span>
+                            </p>
+                          )}
+
+                          {/* How the split was decided: even fallback vs evidence-based.
+                              (The shortfall note is skipped; the amber line above covers it.) */}
+                          {plan.result.notes.filter((n) => !n.startsWith('Target exceeds')).map((note) => (
+                            <p key={note} className="mt-3 flex items-start gap-1.5 text-xs text-sky-700">
+                              <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                              <span>{note}</span>
+                            </p>
+                          ))}
+                          {unallocatedIcpCount > 0 && (
+                            <p className="mt-2 text-xs text-gray-400">
+                              {unallocatedIcpCount} ICP{unallocatedIcpCount === 1 ? ' has' : 's have'} no closed-won
+                              evidence yet, so the ranking gives {unallocatedIcpCount === 1 ? 'it' : 'them'} no slice
+                              of this target. That changes as soon as they win deals.
                             </p>
                           )}
 
@@ -1180,7 +1248,7 @@ export default function CoveragePage() {
                     )}
 
                     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden overflow-x-auto">
-                      <table className="w-full min-w-[860px] border-collapse">
+                      <table className="w-full border-collapse">
                         <thead>
                           <tr className="border-b border-gray-200 bg-gray-50">
                             <Th>ICP</Th>
@@ -1217,8 +1285,8 @@ export default function CoveragePage() {
                               const rank = rankMap.get(card.icp_id);
                               return (
                                 <tr key={card.icp_id} className="border-b border-gray-100 last:border-b-0 hover:bg-gray-50/80">
-                                  <td className={TD}>
-                                    <p className="max-w-[18rem] truncate font-medium text-gray-900">{card.label}</p>
+                                  <td className={`${TD} w-full max-w-0`}>
+                                    <IcpName label={card.label} index={card.icp_index} />
                                     {p && p.won_count_in_period > 0 && (
                                       <p className="mt-0.5 text-[11px] text-emerald-600">
                                         +{formatUsd(p.won_usd_in_period)} closed this quarter
@@ -1350,9 +1418,9 @@ export default function CoveragePage() {
                   </>
                 )}
 
-                {/* ── 1 · Sourced coverage ──────────────────────────────────── */}
+                {/* ── 3 · Sourced coverage ──────────────────────────────────── */}
                 <SectionHeader
-                  step="1"
+                  step="3"
                   icon={<Database className="h-3.5 w-3.5" />}
                   title="Sourced coverage"
                   source="From your sourced data. The raw material the plan draws on; works with no CRM."
@@ -1378,7 +1446,7 @@ export default function CoveragePage() {
                 </SectionHeader>
 
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden overflow-x-auto">
-                  <table className="w-full min-w-[820px] border-collapse">
+                  <table className="w-full border-collapse">
                     <thead>
                       <tr className="border-b border-gray-200 bg-gray-50">
                         <Th>ICP</Th>
@@ -1410,8 +1478,8 @@ export default function CoveragePage() {
                               'last:border-b-0',
                             )}
                           >
-                            <td className={TD}>
-                              <p className="max-w-[18rem] truncate font-medium text-gray-900">{card.label}</p>
+                            <td className={`${TD} w-full max-w-0`}>
+                              <IcpName label={card.label} index={card.icp_index} />
                             </td>
                             <td className={TD_NUM}>{card.company_count.toLocaleString()}</td>
                             <td className={TD_NUM}>{formatFitValue(card.avg_company_fit)}</td>

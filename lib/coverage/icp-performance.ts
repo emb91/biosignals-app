@@ -96,8 +96,13 @@ function daysBetween(a: string | null, b: string | null): number | null {
   if (!a || !b) return null;
   const t0 = new Date(a).getTime();
   const t1 = new Date(b).getTime();
-  if (!Number.isFinite(t0) || !Number.isFinite(t1) || t1 < t0) return null;
-  return (t1 - t0) / 86_400_000;
+  if (!Number.isFinite(t0) || !Number.isFinite(t1)) return null;
+  const days = (t1 - t0) / 86_400_000;
+  // Deals entered directly as closed-won often carry a close_date a few seconds
+  // BEFORE created_date. Treat anything within a day as a same-day (0d) cycle;
+  // only reject genuinely inverted ranges.
+  if (days < -1) return null;
+  return Math.max(0, days);
 }
 function mean(values: number[]): number | null {
   return values.length ? values.reduce((s, v) => s + v, 0) / values.length : null;
@@ -332,9 +337,10 @@ export async function computeCoverageRollup(
     const avg_cycle_days = mean(a.cycles);
     // Throughput: win-rate-weighted won revenue per day. Captures conversion,
     // deal size×volume (won_usd), and velocity in one rank-able number.
+    // Cycles are floored at 1 day so same-day closes don't divide by zero.
     const throughput =
-      win_rate != null && avg_cycle_days != null && avg_cycle_days > 0
-        ? (win_rate * a.wonUsd) / avg_cycle_days
+      win_rate != null && avg_cycle_days != null
+        ? (win_rate * a.wonUsd) / Math.max(avg_cycle_days, 1)
         : null;
     const confidence: IcpPerformance['confidence'] = closed >= 10 ? 'high' : closed >= 4 ? 'medium' : 'low';
 
