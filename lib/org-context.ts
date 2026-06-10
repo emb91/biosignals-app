@@ -113,6 +113,26 @@ export async function getOrgContext(): Promise<OrgContext | null> {
   return { supabase, user, orgId: orgId as string, role: 'owner' };
 }
 
+/**
+ * Lightweight org-id lookup for a known user, for routes that already resolved the user
+ * and just need to swap an ICP query from user-scope to org-scope. Returns null if the
+ * user somehow has no membership (caller should fall back to user-scope).
+ *
+ * `client` should be an RLS-scoped request client; org_members RLS lets a user read
+ * their own membership row.
+ */
+export async function orgIdForUser(
+  client: SupabaseClient,
+  userId: string,
+): Promise<string | null> {
+  const { data } = await client
+    .from('org_members')
+    .select('org_id')
+    .eq('user_id', userId)
+    .maybeSingle<{ org_id: string }>();
+  return data?.org_id ?? null;
+}
+
 function deriveOrgName(user: User): string {
   // Prefer a human name, fall back to the email local part. The backfill prefers the
   // company profile name; for a fresh signup we don't have one yet, so this is fine —

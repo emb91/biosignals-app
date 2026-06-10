@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase-server';
 import { NextResponse } from 'next/server';
+import { orgIdForUser } from '@/lib/org-context';
 import { assignSignalWeights, extractSignalIds } from '@/lib/signal-weights';
 import { rescoreAllContactsForUser } from '@/lib/rescore';
 import {
@@ -26,11 +27,14 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { data, error } = await supabase
-      .from('icps')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
+    // Org-scoped: every seat sees the org's shared ICPs. For a solo owner this returns
+    // the same rows as a user_id filter (their ICPs carry their org_id). Falls back to
+    // user-scope only if membership is somehow missing.
+    const orgId = await orgIdForUser(supabase, user.id);
+
+    let query = supabase.from('icps').select('*').order('created_at', { ascending: false });
+    query = orgId ? query.eq('org_id', orgId) : query.eq('user_id', user.id);
+    const { data, error } = await query;
 
     if (error) {
       console.error('Error fetching ICPs:', error);
@@ -62,7 +66,13 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: 'id is required' }, { status: 400 });
     }
 
-    const { error } = await supabase.from('icps').delete().eq('id', id).eq('user_id', user.id);
+    // Org-scoped delete so an admin can remove a shared ICP, not just its creator.
+    // RLS additionally gates writes to owner/admin.
+    const orgId = await orgIdForUser(supabase, user.id);
+    const deleteQuery = supabase.from('icps').delete().eq('id', id);
+    const { error } = orgId
+      ? await deleteQuery.eq('org_id', orgId)
+      : await deleteQuery.eq('user_id', user.id);
 
     if (error) {
       console.error('Error deleting ICP:', error);
@@ -118,8 +128,13 @@ export async function POST(request: Request) {
 
     const weightedSignals = assignSignalWeights(signalIds);
 
+    // Stamp org_id explicitly (the BEFORE INSERT trigger also fills it from user_id, but
+    // being explicit keeps the write self-describing and survives trigger removal).
+    const orgId = await orgIdForUser(supabase, user.id);
+
     const icpData = {
       user_id: user.id,
+      org_id: orgId,
       user_email: user.email,
       name: body.name || '',
       icp_summary: body.icpSummary || null,
