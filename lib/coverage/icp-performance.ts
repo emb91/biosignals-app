@@ -27,6 +27,13 @@ import { priorQuarter, quarterDateRange, quarterOf } from './period';
 /** Below this many held contacts we don't trust a measured contact→deal rate. */
 export const MIN_CONTACTS_FOR_MEASURED_CONVERSION = 5;
 
+/**
+ * Cycle length (days) assumed when an ICP has closed-won evidence but no deal
+ * yielded a usable cycle AND no other ICP has a measured cycle to borrow.
+ * 90 days is roughly one quarter, a conservative B2B default.
+ */
+export const DEFAULT_ASSUMED_CYCLE_DAYS = 90;
+
 export type IcpPerformance = {
   active_deal_count: number;
   pipeline_usd: number;
@@ -40,6 +47,13 @@ export type IcpPerformance = {
   cycle_sample: number;
   /** How many cycle samples came from stage history (vs created→close fallback). */
   cycle_from_history: number;
+  /**
+   * True when throughput was computed with an ASSUMED cycle (median of other
+   * ICPs' measured cycles, else DEFAULT_ASSUMED_CYCLE_DAYS) because no deal in
+   * this ICP had usable dates. Typical for imported historical deals whose
+   * created_date is the import date. UI can disclose "cycle assumed".
+   */
+  cycle_assumed: boolean;
   throughput: number | null; // win-rate-weighted won revenue per day
   confidence: 'high' | 'medium' | 'low'; // by closed-deal sample size
   /** Held contacts mapped to this ICP (conversion denominator). */
@@ -106,6 +120,48 @@ function daysBetween(a: string | null, b: string | null): number | null {
 }
 function mean(values: number[]): number | null {
   return values.length ? values.reduce((s, v) => s + v, 0) / values.length : null;
+}
+
+/**
+ * Fallback cycle for ICPs with closed-won evidence but no usable cycle data
+ * (e.g. historical imports where created_date is the sync date and close_date
+ * is months earlier, so created→close is rejected and stage history is absent
+ * or a single jump to closedwon). Median of the user's measured per-ICP avg
+ * cycles when any exist, else DEFAULT_ASSUMED_CYCLE_DAYS. Pure; exported for
+ * unit tests.
+ */
+export function assumedCycleDays(measuredCycles: number[]): number {
+  const vals = measuredCycles.filter((v) => Number.isFinite(v) && v >= 0).sort((x, y) => x - y);
+  if (vals.length === 0) return DEFAULT_ASSUMED_CYCLE_DAYS;
+  const mid = Math.floor(vals.length / 2);
+  return vals.length % 2 === 1 ? vals[mid] : (vals[mid - 1] + vals[mid]) / 2;
+}
+
+/**
+ * Throughput = win_rate × won_usd ÷ max(cycle, 1), the allocation ranking
+ * weight. When the ICP has closed-won evidence (win rate known, won_usd > 0)
+ * but NO measured cycle, fall back to fallbackCycleDays and flag the result as
+ * assumed, so historical imports with unusable dates still rank by
+ * win_rate × won_usd instead of dropping to zero allocation weight.
+ * Pure; exported for unit tests.
+ */
+export function computeThroughput(params: {
+  winRate: number | null;
+  wonUsd: number;
+  avgCycleDays: number | null;
+  fallbackCycleDays: number;
+}): { throughput: number | null; cycleAssumed: boolean } {
+  const { winRate, wonUsd, avgCycleDays, fallbackCycleDays } = params;
+  if (winRate == null) return { throughput: null, cycleAssumed: false };
+  if (avgCycleDays != null) {
+    // Cycles are floored at 1 day so same-day closes don't divide by zero.
+    return { throughput: (winRate * wonUsd) / Math.max(avgCycleDays, 1), cycleAssumed: false };
+  }
+  if (wonUsd > 0) {
+    return { throughput: (winRate * wonUsd) / Math.max(fallbackCycleDays, 1), cycleAssumed: true };
+  }
+  // No won revenue and no cycle: nothing rankable (e.g. lost-only ICPs).
+  return { throughput: null, cycleAssumed: false };
 }
 function inRange(iso: string | null, range: { startIso: string; endIso: string } | null): boolean {
   if (!iso || !range) return false;
@@ -330,6 +386,15 @@ export async function computeCoverageRollup(
     }
   }
 
+  // Fallback cycle for ICPs whose won deals all lack usable dates (historical
+  // imports): borrow the median measured cycle from the user's other ICPs.
+  const measuredIcpCycles: number[] = [];
+  for (const a of agg.values()) {
+    const m = mean(a.cycles);
+    if (m != null) measuredIcpCycles.push(m);
+  }
+  const fallbackCycleDays = assumedCycleDays(measuredIcpCycles);
+
   for (const [icp, a] of agg) {
     const closed = a.won + a.lost;
     const win_rate = closed > 0 ? a.won / closed : null;
@@ -337,11 +402,12 @@ export async function computeCoverageRollup(
     const avg_cycle_days = mean(a.cycles);
     // Throughput: win-rate-weighted won revenue per day. Captures conversion,
     // deal size×volume (won_usd), and velocity in one rank-able number.
-    // Cycles are floored at 1 day so same-day closes don't divide by zero.
-    const throughput =
-      win_rate != null && avg_cycle_days != null
-        ? (win_rate * a.wonUsd) / Math.max(avg_cycle_days, 1)
-        : null;
+    const { throughput, cycleAssumed: cycle_assumed } = computeThroughput({
+      winRate: win_rate,
+      wonUsd: a.wonUsd,
+      avgCycleDays: avg_cycle_days,
+      fallbackCycleDays,
+    });
     const confidence: IcpPerformance['confidence'] = closed >= 10 ? 'high' : closed >= 4 ? 'medium' : 'low';
 
     const contacts_total = contactsTotalByIcp.get(icp) ?? 0;
@@ -362,6 +428,7 @@ export async function computeCoverageRollup(
       avg_cycle_days,
       cycle_sample: a.cycles.length,
       cycle_from_history: a.cyclesFromHistory,
+      cycle_assumed,
       throughput,
       confidence,
       contacts_total,

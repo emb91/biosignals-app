@@ -8,6 +8,7 @@ import { allocateTarget, type IcpAllocationInput, type CoverageDefaults } from '
 import { quarterOf, priorQuarter, quarterLabel, quarterDateRange, quarterProgress, isValidPeriod } from './period';
 import { buildCoveragePlan, DEFAULT_WIN_RATE, DEFAULT_CONTACT_TO_DEAL } from './coverage-plan';
 import { computeCoverageVerdict, type CoverageVerdictInput } from './verdict';
+import { assumedCycleDays, computeThroughput, DEFAULT_ASSUMED_CYCLE_DAYS } from './icp-performance';
 
 const D: CoverageDefaults = { winRate: 0.5, contactToDeal: 0.5, avgAcv: 10_000 };
 const approx = (a: number, b: number, eps = 1e-3) => Math.abs(a - b) <= eps;
@@ -171,6 +172,56 @@ test('buildCoveragePlan: measured contact→deal pools samples; assumed otherwis
   assert.equal(assumed.defaults.contactToDeal, DEFAULT_CONTACT_TO_DEAL);
   assert.equal(assumed.sources.contactToDeal, 'assumed');
   assert.equal(assumed.sources.winRate, 'measured');
+});
+
+// ── Cycle fallback (historical imports) ──────────────────────────────────────
+
+test('assumedCycleDays: median of measured cycles; documented default when none', () => {
+  assert.equal(assumedCycleDays([30, 90, 60]), 60); // odd count → middle value
+  assert.equal(assumedCycleDays([30, 90]), 60); // even count → mean of middle two
+  assert.equal(assumedCycleDays([45]), 45);
+  assert.equal(assumedCycleDays([]), DEFAULT_ASSUMED_CYCLE_DAYS);
+  assert.equal(assumedCycleDays([NaN, -5]), DEFAULT_ASSUMED_CYCLE_DAYS); // junk filtered out
+});
+
+test('computeThroughput: measured cycle wins; no fallback flag', () => {
+  const r = computeThroughput({ winRate: 0.5, wonUsd: 90_000, avgCycleDays: 45, fallbackCycleDays: 90 });
+  assert.equal(r.throughput, (0.5 * 90_000) / 45); // 1000/day
+  assert.equal(r.cycleAssumed, false);
+  // Same-day closes floor at 1 day rather than dividing by zero.
+  const sameDay = computeThroughput({ winRate: 1, wonUsd: 10_000, avgCycleDays: 0, fallbackCycleDays: 90 });
+  assert.equal(sameDay.throughput, 10_000);
+});
+
+test('computeThroughput: won evidence + no usable cycle → median-cycle fallback (historical import)', () => {
+  // Imported historical deals: created_date = sync date, close_date months
+  // earlier → cycle rejected → avg_cycle_days null. Other ICPs measured
+  // [30, 60, 90] days → median 60 borrowed.
+  const fallback = assumedCycleDays([30, 60, 90]);
+  const r = computeThroughput({ winRate: 0.5, wonUsd: 120_000, avgCycleDays: null, fallbackCycleDays: fallback });
+  assert.equal(r.throughput, (0.5 * 120_000) / 60); // ranks by win_rate × won_usd, not zero
+  assert.equal(r.cycleAssumed, true);
+});
+
+test('computeThroughput: default-cycle fallback when NO ICP has a measured cycle', () => {
+  const fallback = assumedCycleDays([]);
+  assert.equal(fallback, DEFAULT_ASSUMED_CYCLE_DAYS);
+  const r = computeThroughput({ winRate: 0.4, wonUsd: 90_000, avgCycleDays: null, fallbackCycleDays: fallback });
+  assert.equal(r.throughput, (0.4 * 90_000) / DEFAULT_ASSUMED_CYCLE_DAYS);
+  assert.equal(r.cycleAssumed, true);
+});
+
+test('computeThroughput: stays null without won evidence (no fake signal)', () => {
+  // No closed deals at all.
+  assert.deepEqual(
+    computeThroughput({ winRate: null, wonUsd: 0, avgCycleDays: null, fallbackCycleDays: 90 }),
+    { throughput: null, cycleAssumed: false },
+  );
+  // Lost-only ICP: win rate 0, nothing won → nothing rankable, not "assumed".
+  assert.deepEqual(
+    computeThroughput({ winRate: 0, wonUsd: 0, avgCycleDays: null, fallbackCycleDays: 90 }),
+    { throughput: null, cycleAssumed: false },
+  );
 });
 
 // ── Verdict ──────────────────────────────────────────────────────────────────
