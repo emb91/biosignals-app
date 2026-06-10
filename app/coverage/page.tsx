@@ -36,6 +36,7 @@ import type { CoverageTargetType } from '@/lib/coverage/allocation';
 import { computeCoverageVerdict, type CoverageVerdict } from '@/lib/coverage/verdict';
 import { cn } from '@/lib/utils';
 import { ROUTES, withQuery } from '@/lib/routes';
+import { useViewportHeight } from '@/lib/use-viewport-height';
 import TargetHistoryTrend from './TargetHistoryTrend';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -379,6 +380,7 @@ export default function CoveragePage() {
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const viewportH = useViewportHeight();
   const [cards, setCards] = useState<IcpPipelineCard[] | null>(null);
   const [meta, setMeta] = useState<CardsMeta | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -645,11 +647,13 @@ export default function CoveragePage() {
 
   return (
     <TooltipProvider delayDuration={150}>
-    {/* h-[100dvh] (not h-screen/100vh) matches the real viewport — .arcova-app-root
-        is sized in 100dvh, and in some browsers 100vh resolves taller than the
-        visible area, which body-scrolled the whole page. overflow-hidden then
-        guarantees the body never scrolls; all inner regions scroll on their own. */}
-    <div className="flex min-h-0 h-[100dvh] overflow-hidden bg-transparent">
+    {/* Height is pinned to the MEASURED viewport (window.innerHeight px), not a CSS
+        100vh/100dvh unit. In this app's forwarded-browser context those units
+        resolve taller than the visible area (e.g. 1088 vs 915), so the page
+        overflowed and the whole body scrolled. innerHeight is the true visible
+        height; overflow-hidden then guarantees no body scroll — inner regions
+        scroll on their own. Falls back to 100dvh for the first paint pre-mount. */}
+    <div className="flex min-h-0 overflow-hidden bg-transparent" style={{ height: viewportH ?? '100dvh' }}>
       <AppSidebar />
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden md:flex-row">

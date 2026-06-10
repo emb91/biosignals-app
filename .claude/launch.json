@@ -12,7 +12,8 @@
       "name": "biosignals-app-preview",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--", "-p", "3001"],
-      "port": 3001
+      "port": 3001,
+      "env": { "NEXT_DIST_DIR": ".next-preview" }
     }
   ]
 }

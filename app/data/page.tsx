@@ -386,7 +386,7 @@ function DataPageContent() {
   const icpIdParam = searchParams.get('icpId') ?? '';
   const sourceParam = searchParams.get('source') ?? '';
   const selectedIcp = icps.find((i) => i.icp_id === icpIdParam) ?? icps[0] ?? null;
-  // Pre-scoped quantities from the Coverage plan ("source N contacts ~= M companies").
+  // Pre-scoped quantities from the Coverage plan ("source N contacts ≈ M companies").
   const suggestedContacts = Number(searchParams.get('count') ?? '') || 0;
   const suggestedCompanies = Number(searchParams.get('companyCount') ?? '') || 0;
 
