@@ -645,12 +645,20 @@ export default function CoveragePage() {
 
   return (
     <TooltipProvider delayDuration={150}>
-    <div className="flex h-screen bg-transparent">
+    {/* h-[100dvh] (not h-screen/100vh) matches the real viewport — .arcova-app-root
+        is sized in 100dvh, and in some browsers 100vh resolves taller than the
+        visible area, which body-scrolled the whole page. overflow-hidden then
+        guarantees the body never scrolls; all inner regions scroll on their own. */}
+    <div className="flex min-h-0 h-[100dvh] overflow-hidden bg-transparent">
       <AppSidebar />
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row">
-        <div className="bg-transparent flex-1 overflow-auto px-6 py-8 lg:px-10">
-          <div className="mx-auto w-full max-w-[1180px]">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden md:flex-row">
+        {/* Scroll column: wrapper clips, inner div scrolls. The min-h-0 chain is
+            what keeps the content from inflating the row past 100vh (which would
+            body-scroll the whole page and clip everything below the fold). */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="min-h-0 flex-1 overflow-y-auto bg-transparent px-6 py-8 lg:px-10">
+            <div className="mx-auto w-full max-w-[1180px]">
             <PageHeader
               eyebrow="Coverage"
               eyebrowIcon={<Activity className="h-3 w-3" />}
@@ -1443,6 +1451,7 @@ export default function CoveragePage() {
                 <TargetHistoryTrend />
               </>
             )}
+            </div>
           </div>
         </div>
 
