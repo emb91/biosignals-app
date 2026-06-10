@@ -263,6 +263,8 @@ const TH_HEAD =
 const TD = 'px-2.5 py-3 text-sm text-gray-900 align-top';
 const TD_NUM = 'px-2.5 py-3 text-sm text-gray-900 tabular-nums text-right align-top whitespace-nowrap';
 const TD_CENTER = 'px-2.5 py-3 text-sm text-gray-900 tabular-nums text-center align-top whitespace-nowrap';
+const TABLE_SHELL = 'rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden';
+const TABLE_SCROLL = 'overflow-x-auto';
 
 /** Column header with an inline definition tooltip ("where am I looking?"). */
 function Th({ tip, right, center, children }: { tip?: string; right?: boolean; center?: boolean; children: React.ReactNode }) {
@@ -288,7 +290,7 @@ function Th({ tip, right, center, children }: { tip?: string; right?: boolean; c
 function IcpName({ label, index }: { label: string; index: number }) {
   const name = label.replace(/^ICP \d+:\s*/, '');
   return (
-    <span className="flex min-w-0 items-center gap-2">
+    <span className="flex min-w-0 max-w-full items-center gap-2">
       {index > 0 && (
         <span className="inline-flex shrink-0 items-center rounded-full border border-gray-200 bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">
           ICP {index}
@@ -716,7 +718,7 @@ export default function CoveragePage() {
               <>
                 {/* ── Top-line verdict: one status, one reason, one next action ── */}
                 {verdict && verdictStyle && (
-                  <div className={cn('mb-6 flex flex-wrap items-center gap-4 rounded-xl border px-5 py-4', verdictStyle.wrap)}>
+                  <div className={cn('mb-6 flex flex-col gap-4 rounded-xl border px-5 py-4 min-[980px]:flex-row min-[980px]:items-center', verdictStyle.wrap)}>
                     <div className="flex min-w-0 flex-1 items-start gap-3">
                       <div className="mt-0.5 shrink-0">{verdictStyle.icon}</div>
                       <div className="min-w-0">
@@ -733,9 +735,9 @@ export default function CoveragePage() {
                       <button
                         type="button"
                         onClick={runVerdictAction}
-                        className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-arcova-teal px-3.5 py-2 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/90"
+                        className="inline-flex max-w-full items-center justify-center gap-1.5 rounded-lg bg-arcova-teal px-3.5 py-2 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/90 min-[980px]:shrink-0"
                       >
-                        {verdict.action.label}
+                        <span className="truncate">{verdict.action.label}</span>
                       </button>
                     )}
                   </div>
@@ -978,7 +980,16 @@ export default function CoveragePage() {
                           </div>
 
                           <div className="overflow-hidden rounded-lg border border-gray-100">
-                            <table className="w-full border-collapse text-sm">
+                            <div className={TABLE_SCROLL}>
+                            <table className="min-w-[760px] w-full table-fixed border-collapse text-sm">
+                              <colgroup>
+                                <col className="w-[5.5rem]" />
+                                <col className="w-[34%]" />
+                                <col className="w-[6rem]" />
+                                <col className="w-[8rem]" />
+                                <col className="w-[7rem]" />
+                                <col className="w-[8.5rem]" />
+                              </colgroup>
                               <thead>
                                 <tr className="border-b border-gray-100 bg-gray-50/60">
                                   <Th>Priority</Th>
@@ -1010,7 +1021,7 @@ export default function CoveragePage() {
                                           {idx === 0 ? 'First' : `#${idx + 1}`}
                                         </span>
                                       </td>
-                                      <td className={`${TD} w-full max-w-0`}>
+                                      <td className={`${TD} max-w-0`}>
                                         <IcpName label={a.label} index={cardByIcpId.get(a.icpId)?.icp_index ?? 0} />
                                       </td>
                                       <td className={TD_NUM}>{Math.round((a.shareOfTarget ?? 0) * 100)}%</td>
@@ -1037,6 +1048,7 @@ export default function CoveragePage() {
                                 })}
                               </tbody>
                             </table>
+                            </div>
                           </div>
 
                           {plan.result.shortfall > 0 && (
@@ -1142,8 +1154,20 @@ export default function CoveragePage() {
                       </button>
                     )}
 
-                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden overflow-x-auto">
-                      <table className="w-full border-collapse">
+                    <div className={TABLE_SHELL}>
+                      <div className={TABLE_SCROLL}>
+                      <table className="min-w-[940px] w-full table-fixed border-collapse">
+                        <colgroup>
+                          <col className="w-[34%]" />
+                          <col className="w-[5rem]" />
+                          <col className="w-[6.5rem]" />
+                          <col className="w-[7.5rem]" />
+                          <col className="w-[6.5rem]" />
+                          <col className="w-[6.5rem]" />
+                          <col className="w-[5.5rem]" />
+                          <col className="w-[5.5rem]" />
+                          <col className="w-[7rem]" />
+                        </colgroup>
                         <thead>
                           <tr className="border-b border-gray-200 bg-gray-50">
                             <Th>ICP</Th>
@@ -1182,7 +1206,7 @@ export default function CoveragePage() {
                               const rank = rankMap.get(card.icp_id);
                               return (
                                 <tr key={card.icp_id} className="border-b border-gray-100 last:border-b-0 hover:bg-gray-50/80">
-                                  <td className={`${TD} w-full max-w-0`}>
+                                  <td className={`${TD} max-w-0`}>
                                     <IcpName label={card.label} index={card.icp_index} />
                                     {p && p.won_count_in_period > 0 && (
                                       <p className="mt-0.5 text-[11px] text-emerald-600">
@@ -1273,6 +1297,7 @@ export default function CoveragePage() {
                             })}
                         </tbody>
                       </table>
+                      </div>
                     </div>
 
                     {/* Data coverage of the deal data itself: what the table CAN'T see.
@@ -1362,8 +1387,19 @@ export default function CoveragePage() {
                   )}
                 </SectionHeader>
 
-                <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden overflow-x-auto">
-                  <table className="w-full border-collapse">
+                <div className={TABLE_SHELL}>
+                  <div className={TABLE_SCROLL}>
+                  <table className="min-w-[860px] w-full table-fixed border-collapse">
+                    <colgroup>
+                      <col className="w-[34%]" />
+                      <col className="w-[7rem]" />
+                      <col className="w-[8rem]" />
+                      <col className="w-[7rem]" />
+                      <col className="w-[8rem]" />
+                      <col className="w-[6rem]" />
+                      <col className="w-[4rem]" />
+                      <col className="w-[8.5rem]" />
+                    </colgroup>
                     <thead>
                       <tr className="border-b border-gray-200 bg-gray-50">
                         <Th>ICP</Th>
@@ -1395,7 +1431,7 @@ export default function CoveragePage() {
                               'last:border-b-0',
                             )}
                           >
-                            <td className={`${TD} w-full max-w-0`}>
+                            <td className={`${TD} max-w-0`}>
                               <IcpName label={card.label} index={card.icp_index} />
                             </td>
                             <td className={TD_CENTER}>{card.company_count.toLocaleString()}</td>
@@ -1443,6 +1479,7 @@ export default function CoveragePage() {
                       })}
                     </tbody>
                   </table>
+                  </div>
                 </div>
 
                 <p className="mt-3 text-xs text-gray-400">
@@ -1460,6 +1497,7 @@ export default function CoveragePage() {
         </div>
 
         <AgentPanel
+          className="max-[1439px]:!hidden min-[1440px]:!flex"
           page="coverage"
           pageContext={{
             healthCards: cards ?? [],
