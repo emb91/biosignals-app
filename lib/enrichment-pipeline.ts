@@ -444,7 +444,7 @@ function compareApolloAndApify(params: {
 const HARVESTAPI_ACTOR = 'harvestapi~linkedin-profile-scraper';
 const HARVESTAPI_COMPANY_ACTOR = 'harvestapi~linkedin-company';
 
-async function runApifyProfileEnrichment(linkedinUrl: string): Promise<Record<string, unknown> | null> {
+export async function runApifyProfileEnrichment(linkedinUrl: string): Promise<Record<string, unknown> | null> {
   const apiKey = process.env.APIFY_API_KEY;
   if (!apiKey) {
     throw new Error('Missing APIFY_API_KEY');

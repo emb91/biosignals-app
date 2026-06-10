@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ChevronRight, Loader2, CheckCircle2, X } from 'lucide-react';
 import AppSidebar from '@/components/AppSidebar';
 import TeamSettings from '@/components/TeamSettings';
+import MyDetails from '@/components/MyDetails';
 
 interface LemlistStatus {
   connected: boolean;
@@ -407,6 +408,8 @@ export default function SettingsPage() {
               </div>
             </div>
           </section>
+
+          <MyDetails />
 
           <TeamSettings />
 
