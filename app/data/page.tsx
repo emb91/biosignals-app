@@ -801,9 +801,13 @@ function DataPageContent() {
   }, []);
 
   useEffect(() => {
-    if (!user) return;
+    if (authLoading) return;
+    if (!user) {
+      setLoadingData(false);
+      return;
+    }
     void loadData();
-  }, [user, loadData]);
+  }, [authLoading, user, loadData]);
 
   const anyJobActive = jobs.some((j) => jobIsActive(j.status) || j.status === 'queued');
 
