@@ -74,6 +74,42 @@ export default function TeamSettings() {
     }
   };
 
+  const makeOwner = async (userId: string, email: string | null) => {
+    setError(null);
+    if (!window.confirm(`Make ${email ?? 'this teammate'} the owner? You'll become an admin.`)) return;
+    try {
+      const res = await fetch('/api/org/transfer-ownership', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId }),
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(j.error ?? 'Could not transfer ownership.');
+        return;
+      }
+      void refresh();
+    } catch {
+      setError('Could not transfer ownership.');
+    }
+  };
+
+  const leaveTeam = async () => {
+    setError(null);
+    if (!window.confirm('Leave this team? Your contacts and accounts stay with the team, and you’ll start with a fresh empty workspace.')) return;
+    try {
+      const res = await fetch('/api/org/leave', { method: 'POST' });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(j.error ?? 'Could not leave the team.');
+        return;
+      }
+      window.location.href = '/today';
+    } catch {
+      setError('Could not leave the team.');
+    }
+  };
+
   const removeMember = async (userId: string) => {
     setError(null);
     try {
@@ -180,6 +216,15 @@ export default function TeamSettings() {
                           {m.role}
                         </span>
                       )}
+                      {isOwner && m.role !== 'owner' && !m.pending && (
+                        <button
+                          type="button"
+                          onClick={() => void makeOwner(m.user_id, m.email)}
+                          className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50"
+                        >
+                          Make owner
+                        </button>
+                      )}
                       {isOwner && m.role !== 'owner' && (
                         <button
                           type="button"
@@ -256,6 +301,21 @@ export default function TeamSettings() {
               <p className="mt-4 border-t border-slate-100 pt-4 text-xs text-slate-400">
                 Only an owner or admin can invite teammates.
               </p>
+            )}
+
+            {roster && !isOwner && (
+              <div className="mt-4 border-t border-slate-100 pt-4">
+                <button
+                  type="button"
+                  onClick={() => void leaveTeam()}
+                  className="text-sm font-medium text-rose-600 transition-colors hover:text-rose-700"
+                >
+                  Leave team
+                </button>
+                <p className="mt-1 text-xs text-slate-400">
+                  Your contacts and accounts stay with the team.
+                </p>
+              </div>
             )}
           </>
         )}
