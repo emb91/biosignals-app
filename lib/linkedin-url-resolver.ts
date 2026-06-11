@@ -39,10 +39,12 @@ export type LinkedinResolutionResult = {
 
 const SEARCH_MODEL = 'claude-sonnet-4-6';
 const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
-// Fallback when Anthropic web search is unavailable (e.g. credits exhausted).
-// perplexity/sonar is a cheap, web-search-native model — the prompt still
+// Fallback when the direct-Anthropic web search is unavailable (e.g. credits exhausted).
+// Routes Claude Sonnet through OpenRouter with OpenRouter's web-search plugin (the
+// `:online` suffix). This bills OpenRouter rather than the direct Anthropic account, and
+// gives far more reliable person-matching than perplexity/sonar did. The prompt still
 // demands a linkedin.com/in URL + >=0.8 confidence, so off-target results filter out.
-const OPENROUTER_SEARCH_MODEL = 'perplexity/sonar';
+const OPENROUTER_SEARCH_MODEL = 'anthropic/claude-sonnet-4.5:online';
 
 function normalizeString(value?: string | null): string {
   return (value || '').trim();
@@ -130,7 +132,7 @@ function parseResolutionJson(text: string): { linkedin_url?: string | null; conf
   }
 }
 
-/** Shared prompt for both the Anthropic and perplexity searchers. */
+/** Shared prompt for both the direct-Anthropic and OpenRouter searchers. */
 function buildResolutionPrompt(input: LinkedinResolutionInput): {
   prompt: string;
   fullName: string;
@@ -235,12 +237,12 @@ async function searchLinkedinUrlWithAnthropic(input: LinkedinResolutionInput): P
 }
 
 /**
- * Fallback web-search resolution via OpenRouter (perplexity/sonar). Used when
+ * Fallback web-search resolution via OpenRouter (Claude Sonnet + web plugin). Used when
  * the direct-Anthropic web search is unavailable — most importantly when the
  * Anthropic balance is exhausted — so enrichment doesn't hard-stop on one
- * provider being down. perplexity/sonar does its own web search natively.
+ * provider being down — most importantly when the direct Anthropic balance is exhausted.
  */
-async function searchLinkedinUrlWithPerplexity(input: LinkedinResolutionInput): Promise<LinkedinResolutionResult> {
+async function searchLinkedinUrlWithOpenRouter(input: LinkedinResolutionInput): Promise<LinkedinResolutionResult> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error('Missing OPENROUTER_API_KEY');
   const { prompt, fullName, companyDomain } = buildResolutionPrompt(input);
@@ -253,7 +255,8 @@ async function searchLinkedinUrlWithPerplexity(input: LinkedinResolutionInput): 
     },
     body: JSON.stringify({
       model: OPENROUTER_SEARCH_MODEL,
-      max_tokens: 600,
+      // Claude + the web plugin needs room to reason over search results before the JSON.
+      max_tokens: 900,
       messages: [{ role: 'user', content: prompt }],
     }),
   });
@@ -272,7 +275,7 @@ async function searchLinkedinUrlWithPerplexity(input: LinkedinResolutionInput): 
   await recordLlmUsageEvent({
     provider: 'openrouter',
     feature: 'linkedin_url_resolution',
-    route: 'lib/linkedin-url-resolver#searchLinkedinUrlWithPerplexity',
+    route: 'lib/linkedin-url-resolver#searchLinkedinUrlWithOpenRouter',
     model: OPENROUTER_SEARCH_MODEL,
     usage: {
       input_tokens: json?.usage?.prompt_tokens,
@@ -282,7 +285,7 @@ async function searchLinkedinUrlWithPerplexity(input: LinkedinResolutionInput): 
       full_name: fullName || null,
       company_name: normalizeString(input.company_name) || null,
       company_domain: companyDomain,
-      tool: 'perplexity_web_search',
+      tool: 'openrouter_web_search',
     },
   });
 
@@ -302,21 +305,21 @@ export async function resolveLinkedinUrl(input: LinkedinResolutionInput): Promis
 
   // Web-search resolution: Anthropic (web_search, linkedin-scoped) is primary;
   // on failure (e.g. Anthropic credits exhausted / outage) fall back to
-  // perplexity/sonar via OpenRouter so resolution survives an Anthropic outage.
+  // OpenRouter (Claude + web) so resolution survives the direct-Anthropic balance being exhausted.
   // If BOTH fail, return a null result (don't throw) so the caller stores the
   // contact with a failure_reason instead of crashing the whole enrichment.
   try {
     return await searchLinkedinUrlWithAnthropic(input);
   } catch (anthropicError) {
     console.warn(
-      '[linkedin-resolver] Anthropic search failed, falling back to perplexity/sonar:',
+      '[linkedin-resolver] Anthropic search failed, falling back to OpenRouter web search:',
       anthropicError instanceof Error ? anthropicError.message : anthropicError,
     );
     try {
-      return await searchLinkedinUrlWithPerplexity(input);
+      return await searchLinkedinUrlWithOpenRouter(input);
     } catch (fallbackError) {
       console.error(
-        '[linkedin-resolver] perplexity fallback also failed:',
+        '[linkedin-resolver] OpenRouter web search fallback also failed:',
         fallbackError instanceof Error ? fallbackError.message : fallbackError,
       );
       return { linkedin_url: null, source: null, confidence: 0, search_summary: null };
