@@ -31,6 +31,7 @@ type ProfileRow = {
   enrichment_attempted_at: string | null;
 };
 
+type EmploymentEntry = { company_name: string | null; title: string | null; start_date: string | null; end_date: string | null; current: boolean };
 type PersonRow = {
   full_name: string | null;
   headline: string | null;
@@ -40,6 +41,10 @@ type PersonRow = {
   job_title: string | null;
   resolved_current_company_name: string | null;
   resolved_current_job_title: string | null;
+  contact_bio: string[] | null;
+  resolved_employment_history: EmploymentEntry[] | null;
+  seniority_level: string | null;
+  business_area: string | null;
 };
 
 export async function GET() {
@@ -56,7 +61,7 @@ export async function GET() {
   if (profile?.person_id) {
     const { data } = await createAdminClient()
       .from('people')
-      .select('full_name, headline, profile_photo_url, location, linkedin_url, job_title, resolved_current_company_name, resolved_current_job_title')
+      .select('full_name, headline, profile_photo_url, location, linkedin_url, job_title, resolved_current_company_name, resolved_current_job_title, contact_bio, resolved_employment_history, seniority_level, business_area')
       .eq('id', profile.person_id)
       .maybeSingle<PersonRow>();
     person = data;
@@ -76,6 +81,18 @@ export async function GET() {
           location: person.location,
           companyName: person.resolved_current_company_name,
           jobTitle: person.resolved_current_job_title ?? person.job_title,
+          bio: Array.isArray(person.contact_bio) ? person.contact_bio[0] ?? null : null,
+          seniority: person.seniority_level,
+          businessArea: person.business_area,
+          employmentHistory: Array.isArray(person.resolved_employment_history)
+            ? person.resolved_employment_history.map((e) => ({
+                company: e.company_name,
+                title: e.title,
+                start: e.start_date,
+                end: e.end_date,
+                current: e.current,
+              }))
+            : [],
         }
       : null,
     enrichedAt: profile?.enriched_at ?? null,

@@ -14,12 +14,17 @@ import { Loader2, Sparkles, Check, Pencil, X, Save } from 'lucide-react';
 import AppSidebar from '@/components/AppSidebar';
 import { PageHeader } from '@/components/PageHeader';
 
+type EmploymentItem = { company: string | null; title: string | null; start: string | null; end: string | null; current: boolean };
 type Enriched = {
   headline: string | null;
   photoUrl: string | null;
   location: string | null;
   companyName: string | null;
   jobTitle: string | null;
+  bio: string | null;
+  seniority: string | null;
+  businessArea: string | null;
+  employmentHistory: EmploymentItem[];
 };
 type Profile = {
   email: string | null;
@@ -197,8 +202,42 @@ export default function MyProfilePage() {
                   </p>
                 )}
                 <p className="mt-2 text-xs text-arcova-navy/45">{profile?.email}</p>
+                {(enriched?.seniority || enriched?.businessArea) && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {[enriched?.seniority, enriched?.businessArea].filter(Boolean).map((t) => (
+                      <span key={t as string} className="rounded-full bg-arcova-teal/10 px-2.5 py-0.5 text-[11px] font-medium capitalize text-[#00707b]">
+                        {(t as string).replace(/_/g, ' ')}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
+
+            {enriched?.bio && (
+              <div className="border-t border-arcova-navy/[0.06] px-6 py-4">
+                <p className="text-sm leading-relaxed text-arcova-navy/75">{enriched.bio}</p>
+              </div>
+            )}
+
+            {enriched && enriched.employmentHistory.length > 0 && (
+              <div className="border-t border-arcova-navy/[0.06] px-6 py-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-arcova-navy/45">Experience</p>
+                <ul className="mt-3 space-y-2.5">
+                  {enriched.employmentHistory.slice(0, 6).map((e, i) => (
+                    <li key={`${e.company}-${e.title}-${i}`} className="flex items-baseline justify-between gap-3">
+                      <span className="min-w-0 text-sm text-arcova-navy/80">
+                        <span className="font-medium">{e.title || 'Role'}</span>
+                        {e.company ? <span className="text-arcova-navy/55"> · {e.company}</span> : null}
+                      </span>
+                      <span className="shrink-0 text-xs text-arcova-navy/40">
+                        {[e.start, e.current ? 'Present' : e.end].filter(Boolean).join(' – ')}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {editMode && (
               <div className="border-t border-arcova-navy/[0.06] p-6">

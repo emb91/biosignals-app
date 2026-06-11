@@ -72,7 +72,7 @@ type Pass2Result = {
   recomputedCompanyIds?: string[];
 };
 
-type NormalizedEmployment = {
+export type NormalizedEmployment = {
   company_name: string | null;
   title: string | null;
   start_date: string | null;
@@ -578,7 +578,7 @@ async function summariseCompanyBio(description: string): Promise<string | null> 
   }
 }
 
-async function generateContactBio(params: {
+export async function generateContactBio(params: {
   fullName: string | null;
   currentTitle: string | null;
   currentCompany: string | null;
@@ -836,8 +836,8 @@ async function upsertResolvedCompany(
   return insertedId;
 }
 
-function buildResolvedContext(params: {
-  contact: ContactRow;
+export function buildResolvedContext(params: {
+  contact: { company_domain?: string | null; email?: string | null };
   apifyProfile: Record<string, unknown> | null;
 }): {
   currentCompanyName: string | null;

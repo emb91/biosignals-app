@@ -1,18 +1,20 @@
 /**
- * Self-profile enrichment: resolve a person's LinkedIn from their email + company domain,
- * scrape their public profile, and upsert a canonical `people` row — WITHOUT creating a
- * contact (a teammate isn't a sales lead). Used by the "Find my profile" action on the
- * My-details page.
+ * Self-profile enrichment: find a person's LinkedIn from their email + company, scrape
+ * their public profile, and upsert a canonical `people` row at the SAME depth a contact
+ * gets — WITHOUT creating a contact (a teammate isn't a sales lead). Used by the My
+ * Profile page.
  *
- * Reuses the existing building blocks: resolveLinkedinUrl (lib/linkedin-url-resolver) and
- * runApifyProfileEnrichment (lib/enrichment-pipeline). Writes `people` directly by its
- * canonical key (linkedin_url) via the service-role client. Cost (Apify) is metered.
- *
- * Controlled action only — never auto-run; it spends Apify + LLM credits.
+ * Reuses the exact contact-enrichment helpers (resolveLinkedinUrl,
+ * runApifyProfileEnrichment, buildResolvedContext, generateContactBio, classifyContacts)
+ * so the output matches a contact: identity, headline, location, photo, current role,
+ * full work history, a generated bio, and standardised title / seniority / business area.
+ * Company data is taken from the org's already-enriched profile rather than re-paying for
+ * a company lookup. Writes `people` directly by its canonical key (linkedin_url).
  */
 import { createAdminClient } from '@/lib/supabase-admin';
 import { resolveLinkedinUrl, normalizeLinkedinProfileUrl } from '@/lib/linkedin-url-resolver';
-import { runApifyProfileEnrichment } from '@/lib/enrichment-pipeline';
+import { runApifyProfileEnrichment, buildResolvedContext, generateContactBio } from '@/lib/enrichment-pipeline';
+import { classifyContacts } from '@/lib/contact-classification';
 import { recordProviderUsage } from '@/lib/provider-usage';
 
 export type SelfEnrichResult =
@@ -21,25 +23,6 @@ export type SelfEnrichResult =
 
 function str(v: unknown): string | null {
   return typeof v === 'string' && v.trim() ? v.trim() : null;
-}
-
-/** Pull the fields we store on `people` out of the HarvestAPI profile payload. */
-function mapProfile(raw: Record<string, unknown>) {
-  const currentPosition = Array.isArray(raw.currentPosition) ? (raw.currentPosition[0] as Record<string, unknown> | undefined) : undefined;
-  const fullName =
-    str(raw.fullName) ?? ([str(raw.firstName), str(raw.lastName)].filter(Boolean).join(' ') || null);
-  return {
-    full_name: fullName,
-    first_name: str(raw.firstName),
-    last_name: str(raw.lastName),
-    headline: str(raw.headline),
-    profile_photo_url: str(raw.profilePhotoUrl) ?? str(raw.profilePicture),
-    location: str(raw.location),
-    job_title: str(currentPosition?.position) ?? str(raw.headline),
-    resolved_current_job_title: str(currentPosition?.position),
-    resolved_current_company_name: str(currentPosition?.companyName),
-    company_linkedin_url: str(currentPosition?.companyLinkedinUrl),
-  };
 }
 
 export async function enrichSelfProfile(params: {
@@ -51,9 +34,7 @@ export async function enrichSelfProfile(params: {
   linkedinUrl?: string | null;
 }): Promise<SelfEnrichResult> {
   // 1. Resolve LinkedIn (use a provided URL if the user already entered one). Pass the
-  // company NAME as well as the domain — the name is a much stronger search signal and is
-  // what the org already knows about this person; without it the search often can't
-  // confidently identify the right profile.
+  // company NAME as well as the domain — the name is a much stronger search signal.
   const provided = normalizeLinkedinProfileUrl(params.linkedinUrl);
   const linkedinUrl =
     provided ??
@@ -77,20 +58,73 @@ export async function enrichSelfProfile(params: {
   recordProviderUsage({ userId: params.userId, contactId: null, provider: 'apify', eventType: 'apify_profile_scrape' }).catch(() => {});
   if (!raw) return { ok: false, reason: 'scrape_failed' };
 
-  // 3. Upsert the canonical people row by linkedin_url (fill identity fields).
+  // 3. Build the same resolved context a contact gets (current role, work history,
+  //    headline, location, photo) from the scraped profile.
+  const resolved = buildResolvedContext({
+    contact: { company_domain: params.companyDomain ?? null, email: params.email },
+    apifyProfile: raw,
+  });
+  const fullName =
+    str(raw.fullName) ?? ([str(raw.firstName), str(raw.lastName)].filter(Boolean).join(' ') || null) ?? params.fullName ?? null;
+
+  // 4. Bio + title/seniority/business-area classification (cheap LLM, same as contacts).
+  const [bio, classifications] = await Promise.all([
+    generateContactBio({
+      fullName,
+      currentTitle: resolved.currentJobTitle,
+      currentCompany: resolved.currentCompanyName ?? params.companyName ?? null,
+      headline: resolved.headline,
+      employmentHistory: resolved.employmentHistory,
+    }),
+    classifyContacts(
+      [
+        {
+          full_name: fullName,
+          job_title: resolved.currentJobTitle,
+          headline: resolved.headline,
+          company_name: resolved.currentCompanyName ?? params.companyName ?? null,
+          previous_titles: resolved.employmentHistory
+            .map((e) => e.title)
+            .filter((t): t is string => Boolean(t))
+            .slice(0, 5),
+        },
+      ],
+      { userId: params.userId },
+    ).catch(() => []),
+  ]);
+  const classification = classifications[0] ?? null;
+
+  // 5. Upsert the canonical people row by linkedin_url at full depth.
   const admin = createAdminClient();
-  const fields = mapProfile(raw);
+  const nowIso = new Date().toISOString();
   const { data: person, error } = await admin
     .from('people')
     .upsert(
       {
         linkedin_url: normalized,
-        ...fields,
+        full_name: fullName,
+        first_name: str(raw.firstName),
+        last_name: str(raw.lastName),
+        headline: resolved.headline,
+        location: resolved.location,
+        profile_photo_url: resolved.profilePhotoUrl,
+        job_title: resolved.currentJobTitle,
+        job_title_standardised: classification?.job_title_standardised ?? null,
+        seniority_level: classification?.seniority_level ?? null,
+        business_area: classification?.business_area ?? null,
+        contact_bio: bio ? [bio] : null,
+        resolved_current_job_title: resolved.currentJobTitle,
+        resolved_current_company_name: resolved.currentCompanyName ?? params.companyName ?? null,
+        resolved_current_company_domain: params.companyDomain ?? null,
+        resolved_employment_history: resolved.employmentHistory,
+        company_name: resolved.currentCompanyName ?? params.companyName ?? null,
+        company_domain: params.companyDomain ?? null,
+        company_linkedin_url: resolved.currentCompanyLinkedinUrl,
         profile_enrichment_status: 'completed',
         profile_enrichment_provider: 'harvestapi',
-        profile_enrichment_completed_at: new Date().toISOString(),
+        profile_enrichment_completed_at: nowIso,
         apify_profile_raw: raw,
-        updated_at: new Date().toISOString(),
+        updated_at: nowIso,
       },
       { onConflict: 'linkedin_url' },
     )
@@ -102,24 +136,24 @@ export async function enrichSelfProfile(params: {
     return { ok: false, reason: 'write_failed' };
   }
 
-  // 4. Link the person to the user's profile + stamp enriched_at. Do NOT clobber fields
+  // 6. Link the person to the user's profile + stamp enriched_at. Do NOT clobber fields
   //    the user edited by hand (edited_fields); only fill what they haven't set.
   const { data: existing } = await admin
     .from('user_profiles')
-    .select('edited_fields, full_name, role_title')
+    .select('edited_fields')
     .eq('user_id', params.userId)
-    .maybeSingle<{ edited_fields: Record<string, boolean> | null; full_name: string | null; role_title: string | null }>();
+    .maybeSingle<{ edited_fields: Record<string, boolean> | null }>();
   const edited = existing?.edited_fields ?? {};
 
   const profilePatch: Record<string, unknown> = {
     user_id: params.userId,
     person_id: person.id,
     linkedin_url: normalized,
-    enriched_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
+    enriched_at: nowIso,
+    updated_at: nowIso,
   };
-  if (!edited.full_name && fields.full_name) profilePatch.full_name = fields.full_name;
-  if (!edited.role_title && fields.resolved_current_job_title) profilePatch.role_title = fields.resolved_current_job_title;
+  if (!edited.full_name && fullName) profilePatch.full_name = fullName;
+  if (!edited.role_title && resolved.currentJobTitle) profilePatch.role_title = resolved.currentJobTitle;
 
   await admin.from('user_profiles').upsert(profilePatch, { onConflict: 'user_id' });
 
