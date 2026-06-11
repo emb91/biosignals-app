@@ -130,7 +130,7 @@ export default function MyProfilePage() {
           <PageHeader
             eyebrow="About you · My profile"
             title="Your profile"
-            subtitle="Used to personalise your outreach. Your edits are the source of truth."
+            subtitle="Your name, role and LinkedIn."
             action={
               !editMode ? (
                 <div className="flex flex-wrap items-center gap-2">
@@ -138,7 +138,7 @@ export default function MyProfilePage() {
                     type="button"
                     onClick={enrich}
                     disabled={enriching}
-                    title="Resolve your LinkedIn and pull your profile (uses credits)"
+                    title="Fill in your details from your LinkedIn"
                     className="inline-flex items-center gap-1.5 rounded-[10px] border border-arcova-teal/25 bg-arcova-teal/10 px-3.5 py-2 text-[12.5px] font-medium text-[#00707b] transition-all hover:-translate-y-px hover:bg-arcova-teal/16 disabled:opacity-50"
                   >
                     {enriching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
@@ -208,8 +208,8 @@ export default function MyProfilePage() {
 
             {!editMode && (
               <div className="flex items-center justify-between border-t border-arcova-navy/[0.06] px-6 py-3 text-xs text-arcova-navy/45">
-                <span>{profile?.linkedin_url ? profile.linkedin_url : 'No LinkedIn URL yet — add it or run “Find my profile”.'}</span>
-                {profile?.enrichedAt && <span>Enriched {new Date(profile.enrichedAt).toLocaleDateString('en-GB')}</span>}
+                <span>{profile?.linkedin_url ? profile.linkedin_url : 'Add your LinkedIn to fill in your details.'}</span>
+                {profile?.enrichedAt && <span>Updated {new Date(profile.enrichedAt).toLocaleDateString('en-GB')}</span>}
               </div>
             )}
           </article>

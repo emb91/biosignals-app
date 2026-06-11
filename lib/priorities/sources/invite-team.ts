@@ -41,8 +41,7 @@ export async function computeInviteTeamPriority(
     groupKey: 'default',
     severity: 'low',
     title: 'Invite your team',
-    detail:
-      'You’re the only seat in your workspace. Add teammates so they share your ICPs, data, and company profile — data stays billed to the org.',
+    detail: 'Add your teammates so they can work alongside you.',
     href: ROUTES.settings,
     cta: 'Open settings',
   };

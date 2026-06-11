@@ -90,7 +90,7 @@ export async function PATCH(request: Request) {
     .eq('user_id', targetId)
     .maybeSingle<{ role: string }>();
 
-  if (!target) return NextResponse.json({ error: 'Member not found in your org' }, { status: 404 });
+  if (!target) return NextResponse.json({ error: 'That teammate could not be found' }, { status: 404 });
   if (target.role === 'owner') {
     return NextResponse.json({ error: "The owner's role can't be changed" }, { status: 400 });
   }
@@ -133,7 +133,7 @@ export async function DELETE(request: Request) {
     .eq('user_id', targetId)
     .maybeSingle<{ role: string }>();
 
-  if (!target) return NextResponse.json({ error: 'Member not found in your org' }, { status: 404 });
+  if (!target) return NextResponse.json({ error: 'That teammate could not be found' }, { status: 404 });
   if (target.role === 'owner') {
     return NextResponse.json({ error: "The owner can't be removed" }, { status: 400 });
   }

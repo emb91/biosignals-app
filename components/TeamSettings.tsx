@@ -143,7 +143,7 @@ export default function TeamSettings() {
     <section className="mt-8">
       <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Team</h2>
       <p className="mt-1 text-sm text-slate-500">
-        People in your organisation share ICPs, data, and the company profile. Data is billed to the org.
+        People you add here join your team and work alongside you.
       </p>
 
       <div className="mt-4 rounded-2xl border border-white/80 bg-white/70 p-5 shadow-sm">

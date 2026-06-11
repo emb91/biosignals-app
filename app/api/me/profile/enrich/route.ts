@@ -55,7 +55,7 @@ export async function POST() {
     const messages: Record<string, string> = {
       no_linkedin: "Couldn't find your LinkedIn. Add your LinkedIn URL and try again.",
       scrape_failed: "Found your LinkedIn but couldn't read the profile. Try again shortly.",
-      write_failed: 'Could not save your enriched profile.',
+      write_failed: 'Could not save your profile.',
     };
     return NextResponse.json({ error: messages[result.reason] ?? 'Enrichment failed' }, { status: 422 });
   }
