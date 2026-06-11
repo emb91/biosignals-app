@@ -13,7 +13,7 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { syncUserOutreachStatus } from '@/lib/lemlist';
-import { pushOutreachStatusByEmail } from '@/lib/hubspot';
+import { pushOutreachStatusByEmail, resolveOrgNangoConnectionId } from '@/lib/hubspot';
 import { nango, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
 
 function authorize(req: Request): boolean {
@@ -46,18 +46,10 @@ export async function GET(req: Request) {
       // HubSpot token — best-effort; null if user hasn't connected.
       let hubspotPush: ((email: string, status: 'replied' | 'failed', anchor: string) => Promise<void>) | undefined;
       try {
-        const { data: conn } = await admin
-          .from('nango_connections')
-          .select('nango_connection_id')
-          .eq('user_id', cred.user_id)
-          .eq('integration_id', HUBSPOT_INTEGRATION_ID)
-          .maybeSingle();
-        const connRow = conn as { nango_connection_id?: string } | null;
-        if (connRow?.nango_connection_id) {
-          const token = (await nango.getToken(
-            HUBSPOT_INTEGRATION_ID,
-            connRow.nango_connection_id,
-          )) as string;
+        // Org-scoped: use the org's HubSpot connection (one per org).
+        const connectionId = await resolveOrgNangoConnectionId(admin, cred.user_id, HUBSPOT_INTEGRATION_ID);
+        if (connectionId) {
+          const token = (await nango.getToken(HUBSPOT_INTEGRATION_ID, connectionId)) as string;
           hubspotPush = async (email, status, anchor) => {
             await pushOutreachStatusByEmail(token, { email, status, anchor, channel: 'lemlist' });
           };

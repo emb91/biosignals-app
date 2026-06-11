@@ -1,5 +1,22 @@
 import { orgIdForUser } from '@/lib/org-context';
 
+/**
+ * Resolve the Nango connection id for an integration at ORG scope — one CRM per org, so a
+ * member uses the connection the owner set up. Falls back to the caller's own connection
+ * when there's no org (un-orged / legacy). Pass whichever client the caller has: an
+ * RLS-scoped client (interactive routes) or the service-role client (crons/webhooks).
+ */
+export async function resolveOrgNangoConnectionId(
+  client: { from: (table: string) => any }, // eslint-disable-line @typescript-eslint/no-explicit-any
+  userId: string,
+  integrationId: string,
+): Promise<string | null> {
+  const orgId = await orgIdForUser(client, userId);
+  const base = client.from('nango_connections').select('nango_connection_id').eq('integration_id', integrationId);
+  const { data } = await (orgId ? base.eq('org_id', orgId) : base.eq('user_id', userId)).maybeSingle();
+  return (data as { nango_connection_id?: string } | null)?.nango_connection_id ?? null;
+}
+
 export type ArcovaContactProperties = {
   arcova_contact_id: string;
   arcova_company_id: string;
