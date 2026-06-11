@@ -8,7 +8,7 @@
  */
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import { Loader2, Sparkles, Check, Pencil, X, Save } from 'lucide-react';
 import AppSidebar from '@/components/AppSidebar';
@@ -28,6 +28,7 @@ type Profile = {
   linkedin_url: string | null;
   enriched: Enriched | null;
   enrichedAt: string | null;
+  enrichmentAttempted: boolean;
 };
 
 export default function MyProfilePage() {
@@ -43,6 +44,7 @@ export default function MyProfilePage() {
   const [saving, setSaving] = useState(false);
   const [enriching, setEnriching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const autoRanRef = useRef(false);
 
   useEffect(() => {
     if (!loading && !user) router.push('/login');
@@ -55,20 +57,52 @@ export default function MyProfilePage() {
     setLinkedinUrl(p.linkedin_url ?? '');
   }, []);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<Profile | null> => {
     try {
       const res = await fetch('/api/me/profile');
-      if (res.ok) hydrate(await res.json());
+      if (res.ok) {
+        const p = (await res.json()) as Profile;
+        hydrate(p);
+        return p;
+      }
     } catch {
       /* best-effort */
     } finally {
       setLoadingData(false);
     }
+    return null;
   }, [hydrate]);
 
+  const enrich = useCallback(async () => {
+    setEnriching(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/me/profile/enrich', { method: 'POST' });
+      const j = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setError(j.error ?? 'We couldn’t find your details automatically.');
+        return;
+      }
+      await refresh();
+    } catch {
+      setError('We couldn’t find your details automatically.');
+    } finally {
+      setEnriching(false);
+    }
+  }, [refresh]);
+
+  // First visit: automatically find and fill the user's details from their email +
+  // company (same as how imported contacts are resolved). Runs once.
   useEffect(() => {
-    if (user) void refresh();
-  }, [user, refresh]);
+    if (!user) return;
+    void (async () => {
+      const p = await refresh();
+      if (p && !p.enrichmentAttempted && !autoRanRef.current) {
+        autoRanRef.current = true;
+        void enrich();
+      }
+    })();
+  }, [user, refresh, enrich]);
 
   const save = async () => {
     setSaving(true);
@@ -90,24 +124,6 @@ export default function MyProfilePage() {
       setError('Could not save.');
     } finally {
       setSaving(false);
-    }
-  };
-
-  const enrich = async () => {
-    setEnriching(true);
-    setError(null);
-    try {
-      const res = await fetch('/api/me/profile/enrich', { method: 'POST' });
-      const j = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) {
-        setError(j.error ?? 'Could not find your profile.');
-        return;
-      }
-      await refresh();
-    } catch {
-      setError('Enrichment failed.');
-    } finally {
-      setEnriching(false);
     }
   };
 
@@ -138,11 +154,11 @@ export default function MyProfilePage() {
                     type="button"
                     onClick={enrich}
                     disabled={enriching}
-                    title="Fill in your details from your LinkedIn"
+                    title="Refresh your details from LinkedIn"
                     className="inline-flex items-center gap-1.5 rounded-[10px] border border-arcova-teal/25 bg-arcova-teal/10 px-3.5 py-2 text-[12.5px] font-medium text-[#00707b] transition-all hover:-translate-y-px hover:bg-arcova-teal/16 disabled:opacity-50"
                   >
                     {enriching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-                    {enriching ? 'Finding…' : 'Find my profile'}
+                    {enriching ? 'Updating…' : 'Update from LinkedIn'}
                   </button>
                   <button
                     type="button"
@@ -166,7 +182,13 @@ export default function MyProfilePage() {
                 </div>
               )}
               <div className="min-w-0 flex-1">
-                <h2 className="text-lg font-semibold text-arcova-navy">{fullName || '—'}</h2>
+                {enriching && !enriched && !fullName ? (
+                  <p className="flex items-center gap-2 text-sm text-arcova-navy/60">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Setting up your profile…
+                  </p>
+                ) : (
+                  <h2 className="text-lg font-semibold text-arcova-navy">{fullName || '—'}</h2>
+                )}
                 {roleTitle && <p className="text-sm text-arcova-navy/70">{roleTitle}</p>}
                 {enriched?.headline && <p className="mt-1 text-sm text-arcova-navy/55">{enriched.headline}</p>}
                 {(enriched?.companyName || enriched?.location) && (
@@ -208,7 +230,13 @@ export default function MyProfilePage() {
 
             {!editMode && (
               <div className="flex items-center justify-between border-t border-arcova-navy/[0.06] px-6 py-3 text-xs text-arcova-navy/45">
-                <span>{profile?.linkedin_url ? profile.linkedin_url : 'Add your LinkedIn to fill in your details.'}</span>
+                <span>
+                  {profile?.linkedin_url
+                    ? profile.linkedin_url
+                    : enriching
+                      ? 'Looking you up…'
+                      : "We couldn't find you automatically — add your LinkedIn above to fill in your details."}
+                </span>
                 {profile?.enrichedAt && <span>Updated {new Date(profile.enrichedAt).toLocaleDateString('en-GB')}</span>}
               </div>
             )}

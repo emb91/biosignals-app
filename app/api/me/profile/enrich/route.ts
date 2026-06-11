@@ -42,6 +42,15 @@ export async function POST() {
     companyDomain = ctx.user.email.split('@')[1] ?? null;
   }
 
+  // Mark the attempt up front so an empty result doesn't auto-retry on every page load
+  // (the user can still trigger a manual refresh).
+  await admin
+    .from('user_profiles')
+    .upsert(
+      { user_id: ctx.user.id, org_id: ctx.orgId, email: ctx.user.email, enrichment_attempted_at: new Date().toISOString() },
+      { onConflict: 'user_id' },
+    );
+
   const displayName = getDisplayName(ctx.user);
   const result = await enrichSelfProfile({
     userId: ctx.user.id,

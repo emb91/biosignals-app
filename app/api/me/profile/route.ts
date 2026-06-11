@@ -28,6 +28,7 @@ type ProfileRow = {
   linkedin_url: string | null;
   edited_fields: Record<string, boolean> | null;
   enriched_at: string | null;
+  enrichment_attempted_at: string | null;
 };
 
 type PersonRow = {
@@ -47,7 +48,7 @@ export async function GET() {
 
   const { data: profile } = await ctx.supabase
     .from('user_profiles')
-    .select('user_id, org_id, person_id, email, full_name, role_title, linkedin_url, edited_fields, enriched_at')
+    .select('user_id, org_id, person_id, email, full_name, role_title, linkedin_url, edited_fields, enriched_at, enrichment_attempted_at')
     .eq('user_id', ctx.user.id)
     .maybeSingle<ProfileRow>();
 
@@ -78,6 +79,9 @@ export async function GET() {
         }
       : null,
     enrichedAt: profile?.enriched_at ?? null,
+    // Whether we've already tried to auto-find this person's profile (so the page only
+    // auto-runs it once). Treated as "attempted" if there's already a linked profile.
+    enrichmentAttempted: Boolean(profile?.enrichment_attempted_at || profile?.person_id),
     editedFields: profile?.edited_fields ?? {},
   });
 }
