@@ -146,7 +146,7 @@ export default function MyProfilePage() {
           <PageHeader
             eyebrow="About you · My profile"
             title="Your profile"
-            subtitle="Your name, role and LinkedIn."
+            subtitle="Your name, role and links."
             action={
               !editMode ? (
                 <div className="flex flex-wrap items-center gap-2">
@@ -154,11 +154,11 @@ export default function MyProfilePage() {
                     type="button"
                     onClick={() => enrich(true)}
                     disabled={enriching}
-                    title="Refresh your details from LinkedIn"
+                    title="Refresh your details"
                     className="inline-flex items-center gap-1.5 rounded-[10px] border border-arcova-teal/25 bg-arcova-teal/10 px-3.5 py-2 text-[12.5px] font-medium text-[#00707b] transition-all hover:-translate-y-px hover:bg-arcova-teal/16 disabled:opacity-50"
                   >
                     {enriching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-                    {enriching ? 'Updating…' : 'Update from LinkedIn'}
+                    {enriching ? 'Updating…' : 'Refresh details'}
                   </button>
                   <button
                     type="button"
@@ -235,7 +235,7 @@ export default function MyProfilePage() {
                     ? profile.linkedin_url
                     : enriching
                       ? 'Looking you up…'
-                      : "We couldn't find you automatically — add your LinkedIn above to fill in your details."}
+                      : "We couldn't fill this in automatically — add your details above."}
                 </span>
                 {profile?.enrichedAt && <span>Updated {new Date(profile.enrichedAt).toLocaleDateString('en-GB')}</span>}
               </div>

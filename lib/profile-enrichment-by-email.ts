@@ -46,16 +46,21 @@ export async function enrichSelfProfile(params: {
   userId: string;
   email: string | null;
   fullName?: string | null;
+  companyName?: string | null;
   companyDomain?: string | null;
   linkedinUrl?: string | null;
 }): Promise<SelfEnrichResult> {
-  // 1. Resolve LinkedIn (use a provided URL if the user already entered one).
+  // 1. Resolve LinkedIn (use a provided URL if the user already entered one). Pass the
+  // company NAME as well as the domain — the name is a much stronger search signal and is
+  // what the org already knows about this person; without it the search often can't
+  // confidently identify the right profile.
   const provided = normalizeLinkedinProfileUrl(params.linkedinUrl);
   const linkedinUrl =
     provided ??
     (await resolveLinkedinUrl({
       email: params.email,
       full_name: params.fullName,
+      company_name: params.companyName,
       company_domain: params.companyDomain,
     })).linkedin_url;
 

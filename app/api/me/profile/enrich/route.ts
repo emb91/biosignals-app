@@ -46,19 +46,23 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, skipped: 'already_attempted' });
   }
 
-  // Company domain: the org's profile (any member's user_company), else the email domain.
+  // Company name + domain from the org's profile (any member's user_company). The NAME is
+  // the strongest signal for finding the right person; the domain is a secondary hint.
   const { data: members } = await admin.from('org_members').select('user_id').eq('org_id', ctx.orgId);
   const memberIds = (members ?? []).map((m) => (m as { user_id: string }).user_id);
   let companyDomain: string | null = null;
+  let companyName: string | null = null;
   if (memberIds.length > 0) {
     const { data: uc } = await admin
       .from('user_company')
-      .select('domain')
+      .select('domain, company_name')
       .in('user_id', memberIds)
-      .not('domain', 'is', null)
+      .not('company_name', 'is', null)
+      .order('analyzed_at', { ascending: false, nullsFirst: false })
       .limit(1)
-      .maybeSingle<{ domain: string | null }>();
+      .maybeSingle<{ domain: string | null; company_name: string | null }>();
     companyDomain = uc?.domain ?? null;
+    companyName = uc?.company_name ?? null;
   }
   if (!companyDomain && ctx.user.email?.includes('@')) {
     companyDomain = ctx.user.email.split('@')[1] ?? null;
@@ -80,6 +84,7 @@ export async function POST(request: Request) {
     userId: ctx.user.id,
     email: ctx.user.email ?? null,
     fullName: profile?.full_name ?? metaFull ?? nameFromEmail(ctx.user.email),
+    companyName,
     companyDomain,
     linkedinUrl: profile?.linkedin_url ?? null,
   });
