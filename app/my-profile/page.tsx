@@ -73,11 +73,11 @@ export default function MyProfilePage() {
     return null;
   }, [hydrate]);
 
-  const enrich = useCallback(async () => {
+  const enrich = useCallback(async (force = false) => {
     setEnriching(true);
     setError(null);
     try {
-      const res = await fetch('/api/me/profile/enrich', { method: 'POST' });
+      const res = await fetch(`/api/me/profile/enrich${force ? '?force=1' : ''}`, { method: 'POST' });
       const j = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) {
         setError(j.error ?? 'We couldn’t find your details automatically.');
@@ -152,7 +152,7 @@ export default function MyProfilePage() {
                 <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
-                    onClick={enrich}
+                    onClick={() => enrich(true)}
                     disabled={enriching}
                     title="Refresh your details from LinkedIn"
                     className="inline-flex items-center gap-1.5 rounded-[10px] border border-arcova-teal/25 bg-arcova-teal/10 px-3.5 py-2 text-[12.5px] font-medium text-[#00707b] transition-all hover:-translate-y-px hover:bg-arcova-teal/16 disabled:opacity-50"
