@@ -1054,18 +1054,20 @@ export function AgentPanel({ page, pageContext, pendingMessage, onTableFilter, o
       )}
 
       {embedGlass && briefingWelcome && messages.length === 0 ? (
-        <div className="flex min-h-0 flex-1 flex-col justify-start px-1 pt-5 pb-2 sm:px-3 sm:pt-6 sm:pb-3">
+        <div className="flex min-h-0 flex-1 flex-col px-1 pb-2 sm:px-3 sm:pb-3">
           <div
             className={cn(
-              'flex shrink-0 flex-col items-center justify-center transition-[max-height,opacity,margin] duration-300 ease-out',
-              showBriefingOrb ? 'max-h-[min(17.5rem,42cqh)] overflow-visible opacity-100' : 'pointer-events-none max-h-0 overflow-hidden opacity-0',
+              'flex min-h-0 flex-col items-center justify-center transition-[flex,opacity] duration-300 ease-out',
+              showBriefingOrb
+                ? 'min-h-[8rem] flex-1 opacity-100'
+                : 'pointer-events-none max-h-0 min-h-0 flex-[0] overflow-hidden opacity-0',
             )}
             aria-hidden={!showBriefingOrb}
           >
-            <BriefingAgentOrb />
+            <BriefingAgentOrb className="pt-0 sm:pt-0" />
           </div>
           {showBriefingIdleWelcome && briefingWelcome ? (
-            <div className="mt-auto shrink-0 px-0.5 pb-0.5 sm:px-1 sm:pb-1">
+            <div className="shrink-0 px-0.5 pb-0.5 sm:px-1 sm:pb-1">
               <p className="font-manrope text-sm font-medium text-slate-400">{briefingWelcome.greeting}</p>
               <p className="mt-3 font-manrope text-[1.25rem] leading-[1.42] tracking-[-0.02em] text-slate-800">
                 {briefingWelcome.body}
