@@ -637,7 +637,8 @@ export default function BriefingPage() {
           fetch(ROUTES.api.icps),
           fetch('/api/contacts'),
           supabase.from('raw_uploads').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
-          fetch('/api/leads?pageSize=5&page=1'),
+          // Over-fetch so teammate-worked leads can be excluded and still leave a top 5.
+          fetch('/api/leads?pageSize=15&page=1'),
           fetch('/api/hubspot/sync-log'),
           fetch('/api/accounts/icp-coverage'),
           fetch('/api/pipeline/icp-cards'),
@@ -656,8 +657,30 @@ export default function BriefingPage() {
 
         if (topLeadsRes.ok) {
           const leadJson = (await topLeadsRes.json()) as { data?: Array<Record<string, unknown>> };
+          let leadRows = (leadJson.data ?? []).filter((lead) => typeof lead.id === 'string');
+
+          // Never recommend a lead a teammate is already working — two reps must not be
+          // pointed at the same person. Best-effort: if the lookup fails, show unfiltered.
+          try {
+            const ids = leadRows.map((lead) => lead.id as string);
+            if (ids.length > 0) {
+              const actRes = await fetch('/api/org/outreach-activity', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contactIds: ids }),
+              });
+              if (actRes.ok) {
+                const actJson = (await actRes.json()) as { byContactId?: Record<string, unknown> };
+                const taken = new Set(Object.keys(actJson.byContactId ?? {}));
+                leadRows = leadRows.filter((lead) => !taken.has(lead.id as string));
+              }
+            }
+          } catch {
+            /* best-effort */
+          }
+
           setTopLeads(
-            (leadJson.data ?? []).slice(0, 5).map((lead) => {
+            leadRows.slice(0, 5).map((lead) => {
               const name =
                 (typeof lead.full_name === 'string' && lead.full_name.trim()
                   ? lead.full_name
