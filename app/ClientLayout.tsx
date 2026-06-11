@@ -63,21 +63,40 @@ function SetupGuard({ children }: { children: React.ReactNode }) {
     : getNextSetupPath({ step1Complete, step2Complete })
 
   useEffect(() => {
-    // Wait for both auth and setup state to resolve
-    if (authLoading || setupLoading) return
+    // Auth is the first gate. If the user is signed out, send app routes to
+    // login immediately instead of waiting on setup-state, which may be slow or
+    // unauthorized after a stale session.
+    if (authLoading) return
+    if (!user && isAppRoute) {
+      router.replace('/login')
+      return
+    }
+    // Wait for setup state only after we know a user exists.
+    if (setupLoading) return
     // Only apply the guard when the user is logged in and on a non-setup app route
-    if (!user || !isNonSetupAppRoute) return
+    if (!isNonSetupAppRoute) return
     // If setup is already complete, no redirect needed
     if (setupComplete) return
     // If we're already on the right step, don't redirect
     if (!nextSetupPath || matchesRoutePrefix(pathname, nextSetupPath)) return
 
     router.replace(nextSetupPath)
-  }, [authLoading, setupLoading, setupComplete, nextSetupPath, user, isNonSetupAppRoute, pathname, router])
+  }, [authLoading, setupLoading, setupComplete, nextSetupPath, user, isAppRoute, isNonSetupAppRoute, pathname, router])
 
-  // Still waiting for auth or setup state — render nothing to avoid a flash of the
+  // Still waiting for auth — render nothing to avoid a flash of the
   // wrong page before the redirect fires.
-  if (authLoading || setupLoading) {
+  if (authLoading) {
+    return <div className="min-h-dvh bg-transparent" />
+  }
+
+  // Signed-out users on app routes are being redirected to login. Keep the
+  // blank shell for one tick rather than mounting pages that may show spinners.
+  if (!user && isAppRoute) {
+    return <div className="min-h-dvh bg-transparent" />
+  }
+
+  // Setup state only matters after auth has confirmed a user.
+  if (setupLoading) {
     return <div className="min-h-dvh bg-transparent" />
   }
 
