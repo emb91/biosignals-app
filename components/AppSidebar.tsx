@@ -3,7 +3,7 @@
 import { useEffect, useState, Suspense, useMemo } from 'react';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
-import { ChevronDown, ChevronLeft, Menu, X } from 'lucide-react';
+import { ChevronDown, ChevronLeft, Menu, X, User } from 'lucide-react';
 import {
   NavIconAccount,
   NavIconContact,
@@ -37,6 +37,7 @@ interface NavItem {
 
 const setupItems: NavItem[] = [
   { name: 'My Company', href: ROUTES.setup.company, icon: NavIconMyCompany },
+  { name: 'My Profile', href: ROUTES.setup.profile, icon: User },
   { name: 'My ICPs', href: ROUTES.setup.icps, icon: NavIconMyIcps },
 ];
 
@@ -142,6 +143,9 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileHidden, setMobileHidden] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  // Cramped band: sidebar still rendered (≥1280) but the viewport is narrow
+  // enough that table-heavy views with the agent rail run out of room.
+  const [cramped, setCramped] = useState(false);
   const isAdminUser = user?.email?.trim().toLowerCase() === ADMIN_EMAIL;
   const bottomItems = isAdminUser
     ? [
@@ -251,8 +255,26 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
     return () => mobileMq.removeEventListener('change', update);
   }, []);
 
-  // The user-controlled toggle is the only thing that collapses the sidebar now.
-  const effectiveCollapsed = sidebarCollapsed;
+  // Auto-collapse to the icon rail in the cramped band (1280–1599px). On
+  // table-heavy views the agent rail is still shown here and the center column
+  // would otherwise be squeezed into horizontal scroll — the nav matters less
+  // than the data, so it yields the space.
+  useEffect(() => {
+    const crampedMq = window.matchMedia('(min-width: 1280px) and (max-width: 1599px)');
+    const update = () => setCramped(crampedMq.matches);
+    update();
+    crampedMq.addEventListener('change', update);
+    return () => crampedMq.removeEventListener('change', update);
+  }, []);
+
+  // Routes where the center is a wide data table that should win the space war
+  // with the nav when things get cramped.
+  const tableHeavyView =
+    pathname === ROUTES.coverage || pathname === ROUTES.accounts || pathname === ROUTES.leads.contacts;
+
+  // The user toggle collapses everywhere; cramped table-heavy views also
+  // auto-collapse (without overwriting the user's saved preference).
+  const effectiveCollapsed = sidebarCollapsed || (tableHeavyView && cramped);
 
   useEffect(() => {
     if (contactsActive) setContactsOpen(true);

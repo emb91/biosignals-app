@@ -242,10 +242,11 @@ export default function MyProfilePage() {
 
   const reloadUserCompanyFromDb = useCallback(async (): Promise<Record<string, unknown> | null> => {
     if (!user?.id) return null;
+    // Org-scoped: the whole team sees ONE company profile — the org's. No user filter; RLS
+    // returns the org's company (members read-only; the Edit affordances are role-gated).
     const { data, error } = await supabase
       .from('user_company')
       .select('*')
-      .eq('user_id', user.id)
       .order('analyzed_at', { ascending: false })
       .limit(1)
       .maybeSingle();

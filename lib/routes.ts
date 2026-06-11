@@ -21,6 +21,7 @@ export const ROUTES = {
     /** Full-screen guided onboarding (company → ICP → buying team). */
     arcova: '/arcova-setup',
     company: '/my-company',
+    profile: '/my-profile',
     icps: '/icps',
     newIcp: '/icps/new',
   },
