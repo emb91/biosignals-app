@@ -1,3 +1,5 @@
+import { orgIdForUser } from '@/lib/org-context';
+
 export type ArcovaContactProperties = {
   arcova_contact_id: string;
   arcova_company_id: string;
@@ -441,11 +443,11 @@ export async function refreshAccessToken(refreshToken: string): Promise<{
 }
 
 export async function getValidAccessToken(userId: string, supabase: any): Promise<string> {
-  const { data, error } = await supabase
-    .from('hubspot_connections')
-    .select('access_token, refresh_token, expires_at')
-    .eq('user_id', userId)
-    .single();
+  // One HubSpot per org: resolve the org's connection (a member uses the connection the
+  // owner set up). Falls back to the caller's own row when there's no org.
+  const orgId = await orgIdForUser(supabase, userId);
+  const base = supabase.from('hubspot_connections').select('id, access_token, refresh_token, expires_at');
+  const { data, error } = await (orgId ? base.eq('org_id', orgId) : base.eq('user_id', userId)).maybeSingle();
 
   if (error || !data) throw new Error('No HubSpot connection found');
 
@@ -465,7 +467,7 @@ export async function getValidAccessToken(userId: string, supabase: any): Promis
       expires_at: newExpiresAt,
       updated_at: new Date().toISOString(),
     })
-    .eq('user_id', userId);
+    .eq('id', data.id);
 
   return tokens.access_token;
 }
@@ -535,12 +537,13 @@ export async function getHubSpotTokenForUser(
     const { nango: nangoLib, HUBSPOT_INTEGRATION_ID: integrationId } = await import('./nango');
     const { createClient } = await import('./supabase-server');
     const supabase = await createClient();
-    const { data: conn } = await supabase
+    // One CRM per org: resolve the org's Nango connection (fallback to the caller's own).
+    const orgId = await orgIdForUser(supabase, userId);
+    const base = supabase
       .from('nango_connections')
       .select('nango_connection_id')
-      .eq('user_id', userId)
-      .eq('integration_id', integrationId)
-      .maybeSingle();
+      .eq('integration_id', integrationId);
+    const { data: conn } = await (orgId ? base.eq('org_id', orgId) : base.eq('user_id', userId)).maybeSingle();
     const connRow = conn as { nango_connection_id?: string } | null;
     if (!connRow?.nango_connection_id) return null;
     return (await nangoLib.getToken(integrationId, connRow.nango_connection_id)) as string;
