@@ -10,7 +10,51 @@ import { Info, Loader2, Gauge } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /* ─── Types ─── */
-type IcpRow = { name: string; avgFit: number; contactCount: number };
+type IcpRow = {
+  name: string;
+  avgFit: number;
+  contactCount: number;
+  avgAcv: number | null;
+  winRate: number | null;
+  cycleDays: number | null;
+  contactToDeal: number | null;
+};
+
+type CoveragePerformance = {
+  active_deal_count: number;
+  pipeline_usd: number;
+  won_count: number;
+  lost_count: number;
+  win_rate: number | null;
+  won_usd: number;
+  avg_acv: number | null;
+  avg_cycle_days: number | null;
+  cycle_sample: number;
+  contacts_total: number;
+  contacts_with_deals: number;
+  contact_to_deal: number | null;
+};
+
+type CoverageCard = {
+  label: string;
+  contact_count: number;
+  avg_contact_fit: number | null;
+  avg_company_fit: number | null;
+  performance: CoveragePerformance | null;
+};
+
+type CoverageCardsResponse = {
+  cards?: CoverageCard[];
+  meta?: {
+    hasCrm?: boolean;
+    actuals?: {
+      wonUsd: number;
+      wonCount: number;
+      openPipelineUsd: number;
+      openDealCount: number;
+    };
+  };
+};
 
 type DashboardStats = {
   companies: number;
@@ -35,6 +79,16 @@ type DashboardStats = {
   periodWonAfterArcovaTouch: number;
   totalClosedWonAmount: number;
   averageClosedWonDealSize: number;
+  crmHasDeals: boolean;
+  crmOpenPipelineAmount: number;
+  crmOpenDealCount: number;
+  crmClosedWonCount: number;
+  coverageAvgAcv: number;
+  coverageWinRate: number | null;
+  coverageContactToDeal: number | null;
+  coverageAvgCycleDays: number | null;
+  arcovaFirstTouchAt: string | null;
+  arcovaTenureDays: number | null;
   icpBreakdown: IcpRow[];
   // Outreach activity — surfaced as a small tile, not a full analytics view.
   outreachSequencesDispatched: number;
@@ -54,7 +108,18 @@ const emptyStats: DashboardStats = {
   engagedArcovaEnrichedContacts: 0, totalClosedWonAmount: 0,
   periodArcovaTouchedContacts: 0, periodEngagedArcovaEnrichedContacts: 0,
   periodWonAfterArcovaTouch: 0,
-  averageClosedWonDealSize: 0, icpBreakdown: [],
+  averageClosedWonDealSize: 0,
+  crmHasDeals: false,
+  crmOpenPipelineAmount: 0,
+  crmOpenDealCount: 0,
+  crmClosedWonCount: 0,
+  coverageAvgAcv: 0,
+  coverageWinRate: null,
+  coverageContactToDeal: null,
+  coverageAvgCycleDays: null,
+  arcovaFirstTouchAt: null,
+  arcovaTenureDays: null,
+  icpBreakdown: [],
   outreachSequencesDispatched: 0, outreachSequencesReplied: 0,
   outreachTotalOpens: 0, outreachTotalReplies: 0,
 };
@@ -85,10 +150,28 @@ function fmtMoney(n: unknown) {
   if (safe >= 1_000) return `$${Math.round(safe / 1_000)}K`;
   return `$${Math.round(safe)}`;
 }
+function fmtMoneyMaybe(n: number | null | undefined) {
+  if (n == null || !Number.isFinite(n)) return '—';
+  return fmtMoney(n);
+}
 function fmtDecimal(v: unknown) {
   const safe = toSafeNumber(v);
   if (safe <= 0) return '0';
   return safe.toFixed(1).replace(/\.0$/, '');
+}
+function fmtPct(v: number | null) {
+  if (v == null || !Number.isFinite(v)) return '—';
+  return `${Math.round(Math.max(0, Math.min(1, v)) * 100)}%`;
+}
+function fmtCycle(days: number | null) {
+  if (days == null || !Number.isFinite(days)) return '—';
+  return days >= 60 ? `${(days / 30).toFixed(1).replace(/\.0$/, '')} mo` : `${Math.round(days)}d`;
+}
+function fmtTenure(days: number | null) {
+  if (days == null || !Number.isFinite(days) || days < 0) return '—';
+  if (days >= 730) return `${(days / 365).toFixed(1).replace(/\.0$/, '')} yrs`;
+  if (days >= 60) return `${Math.round(days / 30)} mo`;
+  return `${Math.max(1, Math.round(days))}d`;
 }
 function formatAxisDate(date: Date) {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -493,6 +576,7 @@ export default function DashboardPage() {
           { data: crmDeals, error: crmDealsError },
           customerCountResponse,
           outreachStatsResponse,
+          coverageCardsResponse,
         ] = await Promise.all([
           supabase.from('user_companies').select('company_id', { count: 'exact', head: true }).eq('user_id', user.id),
           supabase.from('contacts').select('id', { count: 'exact', head: true }).eq('user_id', user.id),
@@ -515,6 +599,7 @@ export default function DashboardPage() {
             .eq('user_id', user.id),
           fetch('/api/leads?page=1&pageSize=1&lifecycle=customers'),
           fetch('/api/outreach/stats'),
+          fetch('/api/pipeline/icp-cards'),
         ]);
 
         const error = companyCountError || contactCountError || icpCountError || icpsError ||
@@ -524,6 +609,14 @@ export default function DashboardPage() {
         if (!customerCountResponse.ok) throw new Error('Failed to load customer totals.');
 
         const customerCountResult = await customerCountResponse.json();
+        const coveragePayload: CoverageCardsResponse = coverageCardsResponse.ok
+          ? ((await coverageCardsResponse.json().catch(() => ({}))) as CoverageCardsResponse)
+          : {};
+        const coverageCards = Array.isArray(coveragePayload.cards) ? coveragePayload.cards : [];
+        const coverageActuals = coveragePayload.meta?.actuals;
+        const coveragePerformances = coverageCards
+          .map((card) => card.performance)
+          .filter((p): p is CoveragePerformance => Boolean(p));
 
         // Outreach stats are best-effort — a failure here shouldn't break the
         // whole dashboard. Default to zeros if the call errored.
@@ -566,13 +659,30 @@ export default function DashboardPage() {
         const averageCompanyFit = average(icpIds.map((id) => average(companyFitByIcp.get(id) ?? [])));
         const averageContactFit = average(icpIds.map((id) => average(contactFitByIcp.get(id) ?? [])));
 
-        const icpBreakdown: IcpRow[] = icpIds
-          .map((id) => ({
-            name: icpNames.get(id) ?? 'Unnamed ICP',
-            avgFit: formatScorePercent(average(contactFitByIcp.get(id) ?? companyFitByIcp.get(id) ?? [])),
-            contactCount: contactCountByIcp.get(id) ?? 0,
-          }))
-          .sort((a, b) => b.avgFit - a.avgFit);
+        const icpBreakdown: IcpRow[] = coverageCards.length > 0
+          ? coverageCards.map((card) => {
+              const p = card.performance;
+              return {
+                name: card.label.replace(/^ICP \d+:\s*/, '') || 'Unnamed ICP',
+                avgFit: formatScorePercent(card.avg_contact_fit ?? card.avg_company_fit ?? 0),
+                contactCount: card.contact_count,
+                avgAcv: p?.avg_acv ?? null,
+                winRate: p?.win_rate ?? null,
+                cycleDays: p?.avg_cycle_days ?? null,
+                contactToDeal: p?.contact_to_deal ?? null,
+              };
+            })
+          : icpIds
+              .map((id) => ({
+                name: icpNames.get(id) ?? 'Unnamed ICP',
+                avgFit: formatScorePercent(average(contactFitByIcp.get(id) ?? companyFitByIcp.get(id) ?? [])),
+                contactCount: contactCountByIcp.get(id) ?? 0,
+                avgAcv: null,
+                winRate: null,
+                cycleDays: null,
+                contactToDeal: null,
+              }))
+              .sort((a, b) => b.avgFit - a.avgFit);
 
         const allAttributionSnapshots = attributionSnapshots ?? [];
         const customerSnapshots = allAttributionSnapshots.filter(
@@ -673,6 +783,23 @@ export default function DashboardPage() {
           return typeof amount === 'number' && Number.isFinite(amount) ? sum + amount : sum;
         }, 0);
         const averageClosedWonDealSize = closedWonDealIds.size > 0 ? totalClosedWonAmount / closedWonDealIds.size : 0;
+        const totalWonCount = coveragePerformances.reduce((sum, p) => sum + p.won_count, 0);
+        const totalWonUsd = coveragePerformances.reduce((sum, p) => sum + p.won_usd, 0);
+        const totalLostCount = coveragePerformances.reduce((sum, p) => sum + p.lost_count, 0);
+        const totalCycleSample = coveragePerformances.reduce((sum, p) => sum + p.cycle_sample, 0);
+        const totalCycleDays = coveragePerformances.reduce((sum, p) => {
+          return p.avg_cycle_days == null ? sum : sum + p.avg_cycle_days * p.cycle_sample;
+        }, 0);
+        const totalContactsForConversion = coveragePerformances.reduce((sum, p) => sum + p.contacts_total, 0);
+        const totalContactsWithDeals = coveragePerformances.reduce((sum, p) => sum + p.contacts_with_deals, 0);
+        const totalActiveDealCount = coveragePerformances.reduce((sum, p) => sum + p.active_deal_count, 0);
+        const earliestArcovaTouch = allAttributionSnapshots.reduce<number | null>((earliest, s) => {
+          const raw = typeof s.first_arcova_touch_at === 'string' ? s.first_arcova_touch_at : null;
+          if (!raw) return earliest;
+          const t = new Date(raw).getTime();
+          if (!Number.isFinite(t)) return earliest;
+          return earliest == null || t < earliest ? t : earliest;
+        }, null);
         const periodWonAfterArcovaTouch = allAttributionSnapshots.filter((s) => {
           if (s.won_after_arcova_touch !== true) return false;
           if (typeof s.latest_closed_won_at !== 'string' || s.latest_closed_won_at.length === 0) return false;
@@ -702,6 +829,16 @@ export default function DashboardPage() {
           periodWonAfterArcovaTouch,
           totalClosedWonAmount,
           averageClosedWonDealSize,
+          crmHasDeals: coveragePayload.meta?.hasCrm === true || coveragePerformances.length > 0,
+          crmOpenPipelineAmount: coverageActuals?.openPipelineUsd ?? coveragePerformances.reduce((sum, p) => sum + p.pipeline_usd, 0),
+          crmOpenDealCount: coverageActuals?.openDealCount ?? totalActiveDealCount,
+          crmClosedWonCount: totalWonCount,
+          coverageAvgAcv: totalWonCount > 0 ? totalWonUsd / totalWonCount : 0,
+          coverageWinRate: totalWonCount + totalLostCount > 0 ? totalWonCount / (totalWonCount + totalLostCount) : null,
+          coverageContactToDeal: totalContactsForConversion > 0 ? totalContactsWithDeals / totalContactsForConversion : null,
+          coverageAvgCycleDays: totalCycleSample > 0 ? totalCycleDays / totalCycleSample : null,
+          arcovaFirstTouchAt: earliestArcovaTouch == null ? null : new Date(earliestArcovaTouch).toISOString(),
+          arcovaTenureDays: earliestArcovaTouch == null ? null : (Date.now() - earliestArcovaTouch) / 86_400_000,
           icpBreakdown,
           outreachSequencesDispatched: outreachStats.sequencesDispatched ?? 0,
           outreachSequencesReplied: outreachStats.sequencesReplied ?? 0,
@@ -791,7 +928,7 @@ export default function DashboardPage() {
             {/* Row 2: subtitle + period switcher */}
             <div className="mt-4 flex items-end justify-between gap-6">
                 <p className="max-w-[38rem] text-[13.5px] leading-relaxed text-arcova-navy/50">
-                Arcova enriched {fmtN(stats.arcovaEnrichedContacts)} contacts across {fmtN(stats.companies)} companies and helped close {stats.wonAfterArcovaTouch} customers. The activity window only changes signals and funnel momentum; revenue, enrichment totals, and ICP coverage stay all time.
+                Arcova enriched {fmtN(stats.arcovaEnrichedContacts)} contacts across {fmtN(stats.companies)} companies and helped close {stats.wonAfterArcovaTouch} customers. You&apos;ve been working with Arcova for {fmtTenure(stats.arcovaTenureDays)}. The activity window only changes signals and funnel momentum; revenue, enrichment totals, and ICP coverage stay all time.
                 </p>
               <div className="flex shrink-0 flex-col items-end gap-2">
                 <div className="inline-flex rounded-full border border-arcova-navy/10 bg-white/70 p-1 backdrop-blur-sm">
@@ -849,7 +986,9 @@ export default function DashboardPage() {
               </p>
               <span className="mt-5 inline-flex items-center gap-2 rounded-full border border-arcova-teal/20 bg-arcova-teal/10 px-3 py-1.5 text-[11.5px] font-semibold text-arcova-teal">
                 <span className="h-1.5 w-1.5 rounded-full bg-arcova-teal shadow-[0_0_0_3px_rgba(0,164,180,0.2)]" />
-                Tracking since launch
+                {stats.arcovaFirstTouchAt
+                  ? `Working with Arcova since ${new Date(stats.arcovaFirstTouchAt).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`
+                  : 'Tracking since launch'}
               </span>
             </div>
 
@@ -864,6 +1003,45 @@ export default function DashboardPage() {
               </div>
               <AreaChart data={signalData} width={560} height={180} axisLabels={activityAxisLabels} gradientId="heroGrad" />
             </div>
+          </section>
+
+          {/* ── COVERAGE METRICS ── */}
+          <section className={cn(glassCard, 'grid grid-cols-5 gap-0 overflow-hidden')}>
+            {[
+              {
+                label: 'Avg ACV',
+                value: stats.crmHasDeals ? fmtMoney(stats.coverageAvgAcv) : '—',
+                sub: stats.crmHasDeals ? `${fmtN(stats.crmClosedWonCount)} won deals` : 'connect CRM',
+              },
+              {
+                label: 'Win rate',
+                value: fmtPct(stats.coverageWinRate),
+                sub: 'closed won / closed deals',
+              },
+              {
+                label: 'Contact → deal',
+                value: fmtPct(stats.coverageContactToDeal),
+                sub: 'held contacts linked to deals',
+              },
+              {
+                label: 'Cycle length',
+                value: fmtCycle(stats.coverageAvgCycleDays),
+                sub: 'first stage to closed-won',
+              },
+              {
+                label: 'Open pipeline',
+                value: stats.crmHasDeals ? fmtMoney(stats.crmOpenPipelineAmount) : '—',
+                sub: stats.crmHasDeals ? `${fmtN(stats.crmOpenDealCount)} open deals` : 'connect CRM',
+              },
+            ].map((metric, i) => (
+              <div key={metric.label} className={cn('p-6', i > 0 && 'border-l border-arcova-navy/[0.07]')}>
+                <p className="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-arcova-navy/45">{metric.label}</p>
+                <p className="mt-2 font-manrope text-[30px] font-medium leading-none tracking-[-0.026em] text-arcova-navy tabular-nums">
+                  {metric.value}
+                </p>
+                <p className="mt-2 text-[11.5px] leading-snug text-arcova-navy/45">{metric.sub}</p>
+              </div>
+            ))}
           </section>
 
           {/* ── 01 FOUNDATION ── */}
@@ -984,7 +1162,7 @@ export default function DashboardPage() {
                 </span>
                 <div>
                   <p className="text-[13px] font-medium text-arcova-navy">signal → conversation rate</p>
-                  <p className="mt-0.5 text-[11.5px] leading-snug text-arcova-navy/50">benchmark: 1.2% cold lists, 3–5% warm signal-driven.</p>
+                  <p className="mt-0.5 text-[11.5px] leading-snug text-arcova-navy/50">actual signal-backed contacts that became deal-linked conversations.</p>
                 </div>
               </SubCard>
 
@@ -1147,11 +1325,11 @@ export default function DashboardPage() {
                     All time
                   </span>
                 </div>
-                <span className="text-[12px] text-arcova-navy/40">avg fit % · contacts</span>
+                <span className="text-[12px] text-arcova-navy/40">fit · contacts · ACV · win · cycle</span>
               </div>
               <div className="flex flex-col gap-2.5">
                 {stats.icpBreakdown.map((row, i) => (
-                  <div key={i} className="grid items-center gap-3.5" style={{ gridTemplateColumns: '1fr minmax(0,1fr) 52px 60px' }}>
+                  <div key={i} className="grid items-center gap-3.5" style={{ gridTemplateColumns: '1.1fr minmax(0,0.8fr) 46px 58px 70px 54px 58px 54px' }}>
                     <span className="truncate text-[13px] font-medium text-arcova-navy">{row.name}</span>
                     <div className="relative h-2 overflow-hidden rounded-full bg-arcova-navy/[0.06]">
                       <div
@@ -1161,6 +1339,10 @@ export default function DashboardPage() {
                     </div>
                     <span className="text-right font-mono text-[11px] text-arcova-navy/50">{row.avgFit}%</span>
                     <span className="text-right text-[12px] font-medium text-arcova-navy/70">{row.contactCount}</span>
+                    <span className="text-right text-[12px] font-medium text-arcova-navy/70">{fmtMoneyMaybe(row.avgAcv)}</span>
+                    <span className="text-right text-[12px] font-medium text-arcova-navy/70">{fmtPct(row.winRate)}</span>
+                    <span className="text-right text-[12px] font-medium text-arcova-navy/70">{fmtCycle(row.cycleDays)}</span>
+                    <span className="text-right text-[12px] font-medium text-arcova-navy/70">{fmtPct(row.contactToDeal)}</span>
                   </div>
                 ))}
               </div>

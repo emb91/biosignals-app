@@ -43,9 +43,10 @@ export function NavIconGtmBase({ className }: IconProps) {
       className={cn('shrink-0', className)}
       aria-hidden
     >
-      <ellipse cx="12" cy="6" rx="8" ry="3" />
-      <path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6" />
-      <path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" />
+      <rect x="3" y="3" width="7" height="7" rx="1" />
+      <rect x="14" y="3" width="7" height="7" rx="1" />
+      <rect x="3" y="14" width="7" height="7" rx="1" />
+      <rect x="14" y="14" width="7" height="7" rx="1" />
     </svg>
   );
 }
@@ -63,8 +64,8 @@ export function NavIconImport({ className }: IconProps) {
       aria-hidden
     >
       <path d="M12 3v12" />
-      <path d="m7 10 5 5 5-5" />
-      <path d="M5 21h14" />
+      <path d="m17 8-5-5-5 5" />
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
     </svg>
   );
 }
@@ -101,8 +102,10 @@ export function NavIconContact({ className }: IconProps) {
       className={cn('shrink-0', className)}
       aria-hidden
     >
-      <path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-      <circle cx="10" cy="8" r="4" />
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
     </svg>
   );
 }
@@ -119,8 +122,9 @@ export function NavIconAccount({ className }: IconProps) {
       className={cn('shrink-0', className)}
       aria-hidden
     >
-      <path d="M3 21V8l9-5 9 5v13" />
-      <path d="M9 21V12h6v9" />
+      <rect x="4" y="2" width="16" height="20" rx="2" />
+      <path d="M9 22v-4h6v4" />
+      <path d="M8 6h.01M16 6h.01M8 10h.01M16 10h.01M8 14h.01M16 14h.01" />
     </svg>
   );
 }
@@ -157,7 +161,7 @@ export function NavIconHealth({ className }: IconProps) {
       className={cn('shrink-0', className)}
       aria-hidden
     >
-      <path d="M3 12h4l2-7 4 14 2-7h6" />
+      <path d="M3.5 11a4.5 4.5 0 0 1 8.5-2 4.5 4.5 0 0 1 8.5 2c0 3.5-3.5 6-8.5 10C7 17 3.5 14.5 3.5 11z" />
     </svg>
   );
 }
@@ -174,8 +178,9 @@ export function NavIconData({ className }: IconProps) {
       className={cn('shrink-0', className)}
       aria-hidden
     >
-      <rect x="3" y="4" width="18" height="6" rx="2" />
-      <rect x="3" y="14" width="18" height="6" rx="2" />
+      <ellipse cx="12" cy="5" rx="9" ry="3" />
+      <path d="M3 5v14a9 3 0 0 0 18 0V5" />
+      <path d="M3 12a9 3 0 0 0 18 0" />
     </svg>
   );
 }
@@ -228,8 +233,8 @@ export function NavIconMyCompany({ className }: IconProps) {
       className={cn('shrink-0', className)}
       aria-hidden
     >
-      <rect x="4" y="2" width="16" height="20" rx="2" />
-      <path d="M8 6h8M8 10h8M8 14h5" />
+      <path d="M3 9.5 12 3l9 6.5" />
+      <path d="M5 10v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V10" />
     </svg>
   );
 }

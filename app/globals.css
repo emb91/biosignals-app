@@ -388,6 +388,21 @@ html {
   z-index: 1;
 }
 
+/* BriefingAgentOrb equaliser bars — animate everywhere the orb is used (the
+   keyframe `bt-orb-bar` itself lives in briefing-today.css; this lifts the
+   animation out of the `.briefing-today` scope so /data's agent gets it too). */
+.bt-orb-vbar {
+  animation: bt-orb-bar 2.6s ease-in-out infinite;
+}
+@keyframes bt-orb-bar {
+  0%,
+  100% { transform: scaleY(0.55); }
+  50% { transform: scaleY(1.05); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bt-orb-vbar { animation: none; }
+}
+
 .setup-welcome-orb .swo-halo {
   position: absolute;
   inset: -50%;

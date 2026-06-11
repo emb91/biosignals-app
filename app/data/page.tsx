@@ -667,7 +667,7 @@ function PipelineRail({
   const empty = jobs.length === 0;
 
   return (
-    <aside className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-arcova-navy/[0.08] bg-white shadow-[0_24px_60px_-32px_rgba(13,53,71,0.18),0_2px_6px_-2px_rgba(13,53,71,0.06)]">
+    <aside className="flex h-full min-h-0 flex-col overflow-hidden rounded-[1.75rem] border border-white/85 bg-white/55 shadow-[0_24px_60px_-32px_rgba(13,53,71,0.18),0_2px_6px_-2px_rgba(13,53,71,0.06)] backdrop-blur-[28px] backdrop-saturate-150">
       <div className="flex items-center justify-between gap-2 border-b border-arcova-navy/[0.08] px-4 py-3.5">
         <div>
           <p className="flex items-center gap-1.5 font-manrope text-[14px] font-bold text-arcova-navy">
