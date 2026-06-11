@@ -26,6 +26,9 @@ type ProfileRow = {
   full_name: string | null;
   role_title: string | null;
   linkedin_url: string | null;
+  phone: string | null;
+  location: string | null;
+  company_name: string | null;
   edited_fields: Record<string, boolean> | null;
   enriched_at: string | null;
   enrichment_attempted_at: string | null;
@@ -53,7 +56,7 @@ export async function GET() {
 
   const { data: profile } = await ctx.supabase
     .from('user_profiles')
-    .select('user_id, org_id, person_id, email, full_name, role_title, linkedin_url, edited_fields, enriched_at, enrichment_attempted_at')
+    .select('user_id, org_id, person_id, email, full_name, role_title, linkedin_url, phone, location, company_name, edited_fields, enriched_at, enrichment_attempted_at')
     .eq('user_id', ctx.user.id)
     .maybeSingle<ProfileRow>();
 
@@ -74,6 +77,9 @@ export async function GET() {
     full_name: profile?.full_name ?? person?.full_name ?? metadataName,
     role_title: profile?.role_title ?? person?.resolved_current_job_title ?? person?.job_title ?? null,
     linkedin_url: profile?.linkedin_url ?? person?.linkedin_url ?? null,
+    phone: profile?.phone ?? null,
+    location: profile?.location ?? person?.location ?? null,
+    company_name: profile?.company_name ?? person?.resolved_current_company_name ?? null,
     enriched: person
       ? {
           headline: person.headline,
@@ -111,6 +117,9 @@ export async function PUT(request: Request) {
     full_name?: string;
     role_title?: string;
     linkedin_url?: string;
+    phone?: string;
+    location?: string;
+    company_name?: string;
   } | null;
   if (!body) return NextResponse.json({ error: 'Invalid body' }, { status: 400 });
 
@@ -130,7 +139,7 @@ export async function PUT(request: Request) {
   };
 
   // Only fields the user actually sent become source-of-truth (marked in edited_fields).
-  for (const key of ['full_name', 'role_title', 'linkedin_url'] as const) {
+  for (const key of ['full_name', 'role_title', 'linkedin_url', 'phone', 'location', 'company_name'] as const) {
     if (typeof body[key] === 'string') {
       const v = body[key]!.trim();
       patch[key] = v || null;

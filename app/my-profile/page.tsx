@@ -31,6 +31,9 @@ type Profile = {
   full_name: string | null;
   role_title: string | null;
   linkedin_url: string | null;
+  phone: string | null;
+  location: string | null;
+  company_name: string | null;
   enriched: Enriched | null;
   enrichedAt: string | null;
   enrichmentAttempted: boolean;
@@ -46,6 +49,9 @@ export default function MyProfilePage() {
   const [fullName, setFullName] = useState('');
   const [roleTitle, setRoleTitle] = useState('');
   const [linkedinUrl, setLinkedinUrl] = useState('');
+  const [phone, setPhone] = useState('');
+  const [locationVal, setLocationVal] = useState('');
+  const [companyVal, setCompanyVal] = useState('');
   const [saving, setSaving] = useState(false);
   const [enriching, setEnriching] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +66,9 @@ export default function MyProfilePage() {
     setFullName(p.full_name ?? '');
     setRoleTitle(p.role_title ?? '');
     setLinkedinUrl(p.linkedin_url ?? '');
+    setPhone(p.phone ?? '');
+    setLocationVal(p.location ?? '');
+    setCompanyVal(p.company_name ?? '');
   }, []);
 
   const refresh = useCallback(async (): Promise<Profile | null> => {
@@ -116,7 +125,14 @@ export default function MyProfilePage() {
       const res = await fetch('/api/me/profile', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ full_name: fullName, role_title: roleTitle, linkedin_url: linkedinUrl }),
+        body: JSON.stringify({
+          full_name: fullName,
+          role_title: roleTitle,
+          linkedin_url: linkedinUrl,
+          phone,
+          location: locationVal,
+          company_name: companyVal,
+        }),
       });
       if (!res.ok) {
         const j = (await res.json().catch(() => ({}))) as { error?: string };
@@ -196,12 +212,6 @@ export default function MyProfilePage() {
                 )}
                 {roleTitle && <p className="text-sm text-arcova-navy/70">{roleTitle}</p>}
                 {enriched?.headline && <p className="mt-1 text-sm text-arcova-navy/55">{enriched.headline}</p>}
-                {(enriched?.companyName || enriched?.location) && (
-                  <p className="mt-1 text-xs text-arcova-navy/45">
-                    {[enriched?.companyName, enriched?.location].filter(Boolean).join(' · ')}
-                  </p>
-                )}
-                <p className="mt-2 text-xs text-arcova-navy/45">{profile?.email}</p>
                 {(enriched?.seniority || enriched?.businessArea) && (
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {[enriched?.seniority, enriched?.businessArea].filter(Boolean).map((t) => (
@@ -214,25 +224,52 @@ export default function MyProfilePage() {
               </div>
             </div>
 
-            {enriched?.bio && (
+            {/* Details — labelled rows, read view */}
+            {!editMode && (
+              <dl className="grid gap-x-8 gap-y-4 border-t border-arcova-navy/[0.06] p-6 sm:grid-cols-2">
+                {[
+                  { label: 'Email', value: profile?.email },
+                  { label: 'Phone', value: profile?.phone },
+                  { label: 'Company', value: profile?.company_name },
+                  { label: 'Location', value: profile?.location },
+                ].map((row) => (
+                  <div key={row.label}>
+                    <dt className="text-xs font-medium uppercase tracking-wide text-arcova-navy/40">{row.label}</dt>
+                    <dd className="mt-1 text-sm text-arcova-navy/80">{row.value || <span className="text-arcova-navy/30">—</span>}</dd>
+                  </div>
+                ))}
+                <div className="sm:col-span-2">
+                  <dt className="text-xs font-medium uppercase tracking-wide text-arcova-navy/40">LinkedIn</dt>
+                  <dd className="mt-1 truncate text-sm text-arcova-navy/80">
+                    {profile?.linkedin_url || <span className="text-arcova-navy/30">—</span>}
+                  </dd>
+                </div>
+              </dl>
+            )}
+
+            {!editMode && enriched?.bio && (
               <div className="border-t border-arcova-navy/[0.06] px-6 py-4">
-                <p className="text-sm leading-relaxed text-arcova-navy/75">{enriched.bio}</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-arcova-navy/40">About</p>
+                <p className="mt-2 text-sm leading-relaxed text-arcova-navy/75">{enriched.bio}</p>
               </div>
             )}
 
-            {enriched && enriched.employmentHistory.length > 0 && (
+            {!editMode && enriched && enriched.employmentHistory.length > 0 && (
               <div className="border-t border-arcova-navy/[0.06] px-6 py-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-arcova-navy/45">Experience</p>
-                <ul className="mt-3 space-y-2.5">
-                  {enriched.employmentHistory.slice(0, 6).map((e, i) => (
-                    <li key={`${e.company}-${e.title}-${i}`} className="flex items-baseline justify-between gap-3">
-                      <span className="min-w-0 text-sm text-arcova-navy/80">
-                        <span className="font-medium">{e.title || 'Role'}</span>
-                        {e.company ? <span className="text-arcova-navy/55"> · {e.company}</span> : null}
-                      </span>
-                      <span className="shrink-0 text-xs text-arcova-navy/40">
-                        {[e.start, e.current ? 'Present' : e.end].filter(Boolean).join(' – ')}
-                      </span>
+                <p className="text-xs font-semibold uppercase tracking-wide text-arcova-navy/40">Experience</p>
+                <ul className="mt-3 space-y-3">
+                  {enriched.employmentHistory.slice(0, 8).map((e, i) => (
+                    <li key={`${e.company}-${e.title}-${i}`} className="flex gap-3">
+                      <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-arcova-teal/40" />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-arcova-navy/85">{e.title || 'Role'}</p>
+                        {e.company && <p className="text-sm text-arcova-navy/60">{e.company}</p>}
+                        {(e.start || e.end || e.current) && (
+                          <p className="mt-0.5 text-xs text-arcova-navy/40">
+                            {[e.start, e.current ? 'Present' : e.end].filter(Boolean).join(' – ')}
+                          </p>
+                        )}
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -249,6 +286,22 @@ export default function MyProfilePage() {
                   <label className="block">
                     <span className="text-xs font-medium text-arcova-navy/60">Role / title</span>
                     <input value={roleTitle} onChange={(e) => setRoleTitle(e.target.value)} placeholder="e.g. VP Sales" className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-arcova-teal" />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs font-medium text-arcova-navy/60">Email</span>
+                    <input value={profile?.email ?? ''} disabled className="mt-1 w-full cursor-not-allowed rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-arcova-navy/50" />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs font-medium text-arcova-navy/60">Phone</span>
+                    <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Add a phone number" className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-arcova-teal" />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs font-medium text-arcova-navy/60">Company</span>
+                    <input value={companyVal} onChange={(e) => setCompanyVal(e.target.value)} placeholder="Your current company" className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-arcova-teal" />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs font-medium text-arcova-navy/60">Location</span>
+                    <input value={locationVal} onChange={(e) => setLocationVal(e.target.value)} placeholder="e.g. London, UK" className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-arcova-teal" />
                   </label>
                   <label className="block sm:col-span-2">
                     <span className="text-xs font-medium text-arcova-navy/60">LinkedIn URL</span>
@@ -270,11 +323,11 @@ export default function MyProfilePage() {
             {!editMode && (
               <div className="flex items-center justify-between border-t border-arcova-navy/[0.06] px-6 py-3 text-xs text-arcova-navy/45">
                 <span>
-                  {profile?.linkedin_url
-                    ? profile.linkedin_url
-                    : enriching
-                      ? 'Looking you up…'
-                      : "We couldn't fill this in automatically — add your details above."}
+                  {enriching
+                    ? 'Looking you up…'
+                    : !profile?.enriched && profile?.enrichmentAttempted
+                      ? "We couldn't fill this in automatically — add your details above."
+                      : ''}
                 </span>
                 {profile?.enrichedAt && <span>Updated {new Date(profile.enrichedAt).toLocaleDateString('en-GB')}</span>}
               </div>
