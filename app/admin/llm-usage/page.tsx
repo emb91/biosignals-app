@@ -305,6 +305,10 @@ export default function AdminLlmUsagePage() {
             </section>
           </div>
 
+          <DataEnrichmentCost />
+
+          <div className="border-t border-slate-200" />
+
           <section className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
             Historical totals may be incomplete before May 13, 2026 because some Anthropic usage paths were not yet instrumented.
             New usage after that date should be much more complete, but this dashboard is still an app-side estimate rather than a direct Anthropic billing import, and separate tool charges like web search may not be fully reflected.
@@ -434,8 +438,6 @@ export default function AdminLlmUsagePage() {
             </>
           ) : null}
 
-          <div className="border-t border-slate-200 pt-2" />
-          <DataEnrichmentCost />
         </div>
       </main>
     </div>

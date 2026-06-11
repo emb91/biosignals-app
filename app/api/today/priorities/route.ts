@@ -22,6 +22,7 @@ import {
   computeAccountPriorityChanges,
 } from '@/lib/priorities/sources/priority-changes';
 import { computeIcpNotePriority } from '@/lib/priorities/sources/icp-note';
+import { computeInviteTeamPriority } from '@/lib/priorities/sources/invite-team';
 
 const SEV_RANK: Record<PrioritySeverity, number> = { high: 3, medium: 2, low: 1 };
 
@@ -40,6 +41,8 @@ export async function GET() {
       computeAccountPriorityChanges(supabase, user.id),
       // Reads the note the /icps audit left — no LLM on /today.
       computeIcpNotePriority(supabase, user.id),
+      // Nudge a solo owner/admin to invite teammates.
+      computeInviteTeamPriority(supabase, user.id),
       // Future cheap sources:
       // computeEnrichmentFailures(supabase, user.id),
     ]);

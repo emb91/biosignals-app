@@ -21,7 +21,8 @@ export type PrioritySource =
   | 'send-outreach'
   | 'new-accounts'
   | 'contact-priority-changes'
-  | 'account-priority-changes';
+  | 'account-priority-changes'
+  | 'invite-team';
 
 /** Single agenda-item shape used on /today. Always one entry per source per groupKey. */
 export interface TodayPriority {

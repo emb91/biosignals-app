@@ -72,7 +72,7 @@ type Pass2Result = {
   recomputedCompanyIds?: string[];
 };
 
-type NormalizedEmployment = {
+export type NormalizedEmployment = {
   company_name: string | null;
   title: string | null;
   start_date: string | null;
@@ -444,7 +444,7 @@ function compareApolloAndApify(params: {
 const HARVESTAPI_ACTOR = 'harvestapi~linkedin-profile-scraper';
 const HARVESTAPI_COMPANY_ACTOR = 'harvestapi~linkedin-company';
 
-async function runApifyProfileEnrichment(linkedinUrl: string): Promise<Record<string, unknown> | null> {
+export async function runApifyProfileEnrichment(linkedinUrl: string): Promise<Record<string, unknown> | null> {
   const apiKey = process.env.APIFY_API_KEY;
   if (!apiKey) {
     throw new Error('Missing APIFY_API_KEY');
@@ -578,7 +578,7 @@ async function summariseCompanyBio(description: string): Promise<string | null> 
   }
 }
 
-async function generateContactBio(params: {
+export async function generateContactBio(params: {
   fullName: string | null;
   currentTitle: string | null;
   currentCompany: string | null;
@@ -836,8 +836,8 @@ async function upsertResolvedCompany(
   return insertedId;
 }
 
-function buildResolvedContext(params: {
-  contact: ContactRow;
+export function buildResolvedContext(params: {
+  contact: { company_domain?: string | null; email?: string | null };
   apifyProfile: Record<string, unknown> | null;
 }): {
   currentCompanyName: string | null;
@@ -1484,6 +1484,18 @@ export async function runContactResolutionPipelineForContact(
           contactId,
           lookupInput,
         });
+        if (revealResult.gateAllowed && !revealResult.error) {
+          recordProviderUsage({
+            userId,
+            contactId,
+            provider: 'apollo',
+            eventType: 'apollo_phone_reveal',
+            metadata: {
+              pending: revealResult.pending,
+              inlinePhonesRevealed: revealResult.revealed,
+            },
+          }).catch(() => {});
+        }
         if (revealResult.revealed > 0) {
           console.log(
             `[enrichment-pipeline] Apollo phone reveal recovered ${revealResult.revealed} inline phone(s) for ${contactId}`,

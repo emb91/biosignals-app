@@ -31,6 +31,7 @@ import {
   upsertUserCompanyFromAnalysis,
 } from '@/lib/user-company-analyze-merge';
 import { encodeSSEEvent, SSE_HEADERS } from '@/lib/sse';
+import { getOrgContext, canEditOrgSetup } from '@/lib/org-context';
 
 function normalizeDomain(value?: string | null): string | null {
   const trimmed = (value ?? '').trim().toLowerCase();
@@ -51,6 +52,15 @@ export async function POST(request: NextRequest) {
 
   if (authError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Analysing/re-enriching the company profile writes "My company" — owner/admin only.
+  const ctx = await getOrgContext();
+  if (ctx && !canEditOrgSetup(ctx.role)) {
+    return NextResponse.json(
+      { error: 'Only an owner or admin can edit the company profile' },
+      { status: 403 },
+    );
   }
 
   const body = await request.json().catch(() => ({})) as { website?: string };

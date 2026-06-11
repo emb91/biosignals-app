@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { ChevronRight, Loader2, CheckCircle2, X } from 'lucide-react';
 import AppSidebar from '@/components/AppSidebar';
+import TeamSettings from '@/components/TeamSettings';
 
 interface LemlistStatus {
   connected: boolean;
@@ -407,8 +408,21 @@ export default function SettingsPage() {
             </div>
           </section>
 
+          <TeamSettings />
+
           {/* ── Other settings ────────────────────────────────────────────── */}
           <div className="mt-8 space-y-4">
+            <Link
+              href="/my-profile"
+              className="flex items-center justify-between rounded-2xl border border-white/80 bg-white/70 px-5 py-4 shadow-[0_8px_24px_-12px_rgba(13,53,71,0.15)] backdrop-blur-xl transition hover:bg-white"
+            >
+              <div>
+                <h2 className="text-base font-semibold text-[#0d3547]">My profile</h2>
+                <p className="mt-1 text-sm text-[#7d909a]">Your name, role, contact details and background.</p>
+              </div>
+              <ChevronRight className="h-5 w-5 text-[#b6c2c8]" />
+            </Link>
+
             <Link
               href="/settings/archived"
               className="flex items-center justify-between rounded-2xl border border-white/80 bg-white/70 px-5 py-4 shadow-[0_8px_24px_-12px_rgba(13,53,71,0.15)] backdrop-blur-xl transition hover:bg-white"
@@ -419,6 +433,20 @@ export default function SettingsPage() {
               </div>
               <ChevronRight className="h-5 w-5 text-[#b6c2c8]" />
             </Link>
+
+            {/* Admin dashboard — internal, visible only to the Arcova admin. */}
+            {user.email?.trim().toLowerCase() === 'emma@arcova.bio' && (
+              <Link
+                href="/admin/llm-usage"
+                className="flex items-center justify-between rounded-2xl border border-white/80 bg-white/70 px-5 py-4 shadow-[0_8px_24px_-12px_rgba(13,53,71,0.15)] backdrop-blur-xl transition hover:bg-white"
+              >
+                <div>
+                  <h2 className="text-base font-semibold text-[#0d3547]">Admin dashboard</h2>
+                  <p className="mt-1 text-sm text-[#7d909a]">Usage, spend, and internal metrics.</p>
+                </div>
+                <ChevronRight className="h-5 w-5 text-[#b6c2c8]" />
+              </Link>
+            )}
           </div>
 
           <div className="mt-8">

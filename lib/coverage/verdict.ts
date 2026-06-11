@@ -92,9 +92,8 @@ function sourceAction(top: CoverageVerdictInput['topPriority']): CoverageVerdict
     icpId: top.icpId,
     icpLabel: top.label,
     count: top.toBuy,
-    // This CTA queues an expand_companies job, so the label talks about
-    // sourcing companies; the contact number is the coverage goal it serves.
-    label: `Source companies for ${top.toBuy.toLocaleString()} contacts (${top.label})`,
+    // Unified "leads" terminology; the specific quantity/order lives in the plan.
+    label: `Source leads for ${top.label.match(/^ICP \d+/)?.[0] ?? top.label}`,
   };
 }
 
@@ -167,12 +166,12 @@ export function computeCoverageVerdict(input: CoverageVerdictInput): CoverageVer
   }
 
   const behind = attainment < elapsedFraction - PACE_GRACE;
-  const paceLine = `${fmtPct(attainment)} of target closed with ${weeksLeft} week${weeksLeft === 1 ? '' : 's'} left (pace says ${fmtPct(elapsedFraction)}).`;
+  const paceLine = `${fmtPct(attainment)} closed with ${weeksLeft} week${weeksLeft === 1 ? '' : 's'} left. Pace says you should be at ${fmtPct(elapsedFraction)}.`;
 
   if (behind) {
     return {
       status: 'behind',
-      headline: `Behind pace on your ${fmtTarget(target.type, target.value)} target.`,
+      headline: `You're behind pace on your ${fmtTarget(target.type, target.value)} target.`,
       detail: paceLine,
       action: sourceAction(topPriority) ?? (gapIcpLabels.length > 0
         ? { kind: 'add-companies', label: 'Fix coverage gaps' }

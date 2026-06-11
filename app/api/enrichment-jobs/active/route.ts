@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
+import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
 import { ROUTES, withQuery } from '@/lib/routes';
 
 type EnrichmentJob = {
@@ -54,12 +55,15 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const orgId = await orgIdForUser(supabase, user.id);
     const [icpResult, contactResult] = await Promise.all([
-      supabase
-        .from('icps')
-        .select('id, name, reenrichment_status, reenrichment_last_error, reenrichment_started_at, reenrichment_finished_at')
-        .eq('user_id', user.id)
-        .in('reenrichment_status', ['running', 'failed']),
+      scopeIcpsToUser(
+        supabase
+          .from('icps')
+          .select('id, name, reenrichment_status, reenrichment_last_error, reenrichment_started_at, reenrichment_finished_at'),
+        orgId,
+        user.id,
+      ).in('reenrichment_status', ['running', 'failed']),
       supabase
         .from('contacts')
         .select('id, full_name, first_name, last_name, company_name, resolved_current_company_name, enrichment_refresh_status, enrichment_refresh_last_error, enrichment_refresh_started_at, enrichment_refresh_finished_at')

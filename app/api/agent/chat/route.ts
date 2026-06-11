@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@/lib/supabase-server';
+import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import {
   type AccountQueryColumn,
@@ -856,6 +857,7 @@ async function toolGetWorkspaceJourneyState(
   supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string,
 ): Promise<string> {
+  const jsOrgId = await orgIdForUser(supabase, userId);
   const [companyResult, icpsResult, personasResult, batchesResult, syncLogResult, accountsResult, leadsResult] =
     await Promise.all([
       supabase
@@ -865,15 +867,14 @@ async function toolGetWorkspaceJourneyState(
         .order('analyzed_at', { ascending: false })
         .limit(1)
         .maybeSingle(),
-      supabase
-        .from('icps')
-        .select('id, name, created_at')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false }),
-      supabase
-        .from('personas')
-        .select('id, icp_id')
-        .eq('user_id', userId),
+      scopeIcpsToUser(
+        supabase.from('icps').select('id, name, created_at'),
+        jsOrgId,
+        userId,
+      ).order('created_at', { ascending: false }),
+      (jsOrgId
+        ? supabase.from('personas').select('id, icp_id').eq('org_id', jsOrgId)
+        : supabase.from('personas').select('id, icp_id').eq('user_id', userId)),
       supabase
         .from('upload_batches')
         .select('id, filename, status, total_rows, processed_rows, created_at')
@@ -891,7 +892,7 @@ async function toolGetWorkspaceJourneyState(
       fetchFilteredLeads(supabase, userId, {}, 'status_best_first', 500),
     ]);
 
-  const icps = icpsResult.data ?? [];
+  const icps = (icpsResult.data ?? []) as Array<{ id: string; name: string | null; created_at: string | null }>;
   const personas = personasResult.data ?? [];
   const batches = batchesResult.data ?? [];
   const accounts = accountsResult.accounts ?? [];
@@ -1057,11 +1058,13 @@ async function toolGetWorkspaceSummary(
     .limit(1)
     .single();
 
-  // Get ICP count
-  const { count: icpCount } = await supabase
-    .from('icps')
-    .select('*', { count: 'exact', head: true })
-    .eq('user_id', userId);
+  // Get ICP count (org-scoped: company-wide + own personal)
+  const icpCountOrgId = await orgIdForUser(supabase, userId);
+  const { count: icpCount } = await scopeIcpsToUser(
+    supabase.from('icps').select('*', { count: 'exact', head: true }),
+    icpCountOrgId,
+    userId,
+  );
 
   // Get accounts + compute coverage
   const { accounts } = await fetchAggregatedAccounts(supabase, userId);
@@ -1100,16 +1103,18 @@ async function toolGetIcpDefinitions(
   supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string,
 ): Promise<string> {
+  const icpCtxOrgId = await orgIdForUser(supabase, userId);
   const [icpsResult, personasResult] = await Promise.all([
-    supabase
-      .from('icps')
-      .select('id, name, created_at, company_type, platform_category, therapeutic_areas, modalities, development_stages, funding_stages, company_sizes')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: true }),
-    supabase
-      .from('personas')
-      .select('id, icp_id, name, functions, seniority_levels')
-      .eq('user_id', userId),
+    scopeIcpsToUser(
+      supabase
+        .from('icps')
+        .select('id, name, created_at, company_type, platform_category, therapeutic_areas, modalities, development_stages, funding_stages, company_sizes'),
+      icpCtxOrgId,
+      userId,
+    ).order('created_at', { ascending: true }),
+    (icpCtxOrgId
+      ? supabase.from('personas').select('id, icp_id, name, functions, seniority_levels').eq('org_id', icpCtxOrgId)
+      : supabase.from('personas').select('id, icp_id, name, functions, seniority_levels').eq('user_id', userId)),
   ]);
 
   if (icpsResult.error || !icpsResult.data || icpsResult.data.length === 0) {
@@ -1124,7 +1129,7 @@ async function toolGetIcpDefinitions(
   }
 
   return JSON.stringify(
-    icpsResult.data.map((icp, i) => ({
+    (icpsResult.data as Array<Record<string, unknown> & { id: string; name: string | null }>).map((icp, i) => ({
       id: icp.id,
       label: icp.name?.trim() ? `ICP ${i + 1}: ${icp.name}` : `ICP ${i + 1}`,
       company_criteria: {
@@ -1851,17 +1856,18 @@ async function runAgentLoop(
   // agent always reasons over fresh evidence (client doesn't need to pass anything).
   let resolvedPageContext: PageContext | undefined = pageContext;
   if (page === 'icps') {
+    const pcOrgId = await orgIdForUser(supabase, userId);
     const [companyRes, icpsRes] = await Promise.all([
       supabase
         .from('user_company')
         .select('*')
         .eq('user_id', userId)
         .maybeSingle(),
-      supabase
-        .from('icps')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: true }),
+      scopeIcpsToUser(
+        supabase.from('icps').select('*'),
+        pcOrgId,
+        userId,
+      ).order('created_at', { ascending: true }),
     ]);
     resolvedPageContext = {
       ...(pageContext ?? {}),

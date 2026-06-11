@@ -29,6 +29,7 @@ const APP_ROUTES = [
   ROUTES.log,
   ROUTES.settings,
   ROUTES.setup.company,
+  ROUTES.setup.profile,
   ROUTES.setup.icps,
   '/admin',
   '/arcova-setup',
@@ -40,7 +41,7 @@ const APP_ROUTES = [
 // Include `/icps` (not just `/icps/new`): the ICP list is setup-shaped; omitting it made `/icps`
 // a "generic app" route so SetupGuard could bounce Signals → `/arcova-setup` → Today during
 // brief stale setup reads or Supabase retries.
-const SETUP_ROUTES = ['/arcova-setup', ROUTES.setup.company, ROUTES.setup.icps, ROUTES.setup.newIcp, '/contacts/new', ROUTES.settings]
+const SETUP_ROUTES = ['/arcova-setup', ROUTES.setup.company, ROUTES.setup.profile, ROUTES.setup.icps, ROUTES.setup.newIcp, '/contacts/new', ROUTES.settings]
 
 function matchesRoutePrefix(pathname: string, route: string) {
   return pathname === route || pathname.startsWith(`${route}/`);

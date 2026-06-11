@@ -15,6 +15,7 @@ import {
 } from '@/lib/arcova-taxonomy';
 import { normalizePlatformCategoryForStorage } from '@/lib/platform-category';
 import { createAdminClient } from '@/lib/supabase-admin';
+import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
 
 const SCORE_VERSION = 'company_fit_v2';
 
@@ -625,13 +626,18 @@ function buildContactFitFields(winner: CompanyIcpScoreResult | null): {
 }
 
 async function loadIcpsForUser(supabase: MinimalSupabase, userId: string): Promise<IcpScoreRow[]> {
-  const { data, error } = await supabase
-    .from('icps')
-    .select(
-      'id, name, created_at, company_type, platform_category, therapeutic_areas, modalities, development_stages, company_sizes, funding_stages, example_company_enrichment',
-    )
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false });
+  // Org-scoped: company-wide ICPs + this user's own personal ICPs (see scopeIcpsToUser).
+  // For a solo owner this is exactly their own ICPs — behavior-preserving.
+  const orgId = await orgIdForUser(supabase, userId);
+  const { data, error } = await scopeIcpsToUser(
+    supabase
+      .from('icps')
+      .select(
+        'id, name, created_at, company_type, platform_category, therapeutic_areas, modalities, development_stages, company_sizes, funding_stages, example_company_enrichment',
+      ),
+    orgId,
+    userId,
+  ).order('created_at', { ascending: false });
 
   if (error) {
     throw error;

@@ -1691,6 +1691,7 @@ function SetupTargetCompanyCard({
   onCancelIcp?: () => void;
   onSaveIcp?: () => void | Promise<void>;
   onReenrichIcp?: () => void;
+  // onDeleteIcp is omitted (undefined) for members — they may add ICPs but not delete.
   onDeleteIcp?: () => void | Promise<void>;
   onIcpFieldChange?: (field: string, value: IcpChangeValue) => void;
   showSignalPills?: boolean;

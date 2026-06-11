@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
+import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
 import {
   getLeadAction,
   isMonitorOrReachOutAction,
@@ -81,11 +82,12 @@ export async function GET() {
       }
     }
 
-    const { data: icps, error: icpErr } = await supabase
-      .from('icps')
-      .select('id, name, created_at')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
+    const orgId = await orgIdForUser(supabase, user.id);
+    const { data: icps, error: icpErr } = await scopeIcpsToUser(
+      supabase.from('icps').select('id, name, created_at'),
+      orgId,
+      user.id,
+    ).order('created_at', { ascending: false });
 
     if (icpErr) {
       console.error('[icp-coverage] icps:', icpErr);

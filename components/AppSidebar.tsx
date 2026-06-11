@@ -3,7 +3,7 @@
 import { useEffect, useState, Suspense, useMemo } from 'react';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
-import { ChevronDown, ChevronLeft, Menu, X } from 'lucide-react';
+import { ChevronLeft, Menu, X } from 'lucide-react';
 import {
   NavIconAccount,
   NavIconContact,
@@ -15,7 +15,6 @@ import {
   NavIconMyIcps,
   NavIconLog,
   NavIconOutreach,
-  NavIconSettings,
   NavIconSetup,
   NavIconSignals,
   NavIconToday,
@@ -49,12 +48,12 @@ const topNavigation: NavItem[] = [
   { name: 'Outreach', href: ROUTES.outreach, icon: NavIconOutreach },
 ];
 
+// Log lives in the Workspace section now; Settings is reached via the identity
+// footer. Admin Dash is appended for admins (see bottomItems).
 const bottomNavigation: NavItem[] = [
   { name: 'Log', href: ROUTES.log, icon: NavIconLog },
-  { name: 'Settings', href: ROUTES.settings, icon: NavIconSettings },
 ];
 
-const ADMIN_EMAIL = 'emma@arcova.bio';
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'arcova_sidebar_collapsed';
 const SIDEBAR_LEGACY_HIDDEN_KEY = 'arcova_sidebar_hidden';
@@ -137,21 +136,30 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
   const [showContactsDot, setShowContactsDot] = useState(false);
   const [showAccountsDot, setShowAccountsDot] = useState(false);
   const [showHealthDot, setShowHealthDot] = useState(false);
-  const [showDataDot, setShowDataDot] = useState(false);
+  const [dataJobCount, setDataJobCount] = useState(0);
   const [showSignalsDot, setShowSignalsDot] = useState(false);
+  const [companyName, setCompanyName] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileHidden, setMobileHidden] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const isAdminUser = user?.email?.trim().toLowerCase() === ADMIN_EMAIL;
-  const bottomItems = isAdminUser
-    ? [
-        ...bottomNavigation,
-        { name: 'Admin Dash', href: ROUTES.admin.llmUsage, icon: NavIconSettings },
-        // TODO(pre-prod): delete Signals TODO + Signals Test nav items and their routes/pages
-        // { name: 'Signals TODO', href: ROUTES.admin.signalsTodo, icon: NavIconSignals },
-        // { name: 'Signals Test', href: ROUTES.admin.signalsTest, icon: NavIconSignals },
-      ]
-    : bottomNavigation;
+  // Cramped band: sidebar still rendered (≥1280) but the viewport is narrow
+  // enough that table-heavy views with the agent rail run out of room.
+  const [cramped, setCramped] = useState(false);
+
+  // Identity footer: name + company, opens Settings on click.
+  const metadata = (user?.user_metadata ?? {}) as Record<string, unknown>;
+  const metaName = [metadata.full_name, metadata.name, metadata.display_name]
+    .find((v): v is string => typeof v === 'string' && v.trim().length > 0)
+    ?.trim();
+  const emailLocal = user?.email?.split('@')[0]?.replace(/[._-]+/g, ' ').trim();
+  const displayName = metaName || emailLocal || 'Your account';
+  const accountInitials = displayName
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join('') || 'A';
+  // Log only. Settings is the identity footer; Admin Dash lives in Settings (admin-only).
+  const bottomItems = bottomNavigation;
 
   const isActive = (href: string) => {
     const qAt = href.indexOf('?');
@@ -169,44 +177,8 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
     setupItems.some((item) => isActive(item.href)) ||
     pathname === ROUTES.setup.arcova;
 
-  const setupAccordionItems: NavItem[] =
-    setupComplete || setupStateLoading
-      ? setupItems
-      : [
-          { name: 'Guided setup', href: ROUTES.setup.arcova, icon: NavIconSetup },
-          {
-            name: 'My company',
-            href: ROUTES.setup.arcova,
-            icon: NavIconMyCompany,
-            onClick: () => jumpToSetupSection('company'),
-            active: pathname === ROUTES.setup.arcova && activeSetupSection === 'company',
-          },
-          ...(showTargetIcpInGuidedNav
-            ? [{
-              name: 'Target ICP',
-              href: ROUTES.setup.arcova,
-              icon: NavIconMyIcps,
-              onClick: () => jumpToSetupSection('target'),
-              active: pathname === ROUTES.setup.arcova && activeSetupSection === 'target',
-            } as NavItem]
-            : []),
-          ...(step2Complete
-            ? [{
-              name: 'Buying team',
-              href: ROUTES.setup.arcova,
-              icon: NavIconContact,
-              onClick: () => jumpToSetupSection('buying'),
-              active: pathname === ROUTES.setup.arcova && activeSetupSection === 'buying',
-            } as NavItem]
-            : []),
-        ];
-
   const contactsActive = pathname === ROUTES.contacts;
   const accountsActive = pathname === ROUTES.accounts;
-
-  const [contactsOpen, setContactsOpen] = useState(contactsActive);
-  const [accountsOpen, setAccountsOpen] = useState(accountsActive);
-  const [setupOpen, setSetupOpen] = useState(setupActive);
 
   useEffect(() => {
     try {
@@ -251,20 +223,26 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
     return () => mobileMq.removeEventListener('change', update);
   }, []);
 
-  // The user-controlled toggle is the only thing that collapses the sidebar now.
-  const effectiveCollapsed = sidebarCollapsed;
-
+  // Auto-collapse to the icon rail in the cramped band (1280–1599px). On
+  // table-heavy views the agent rail is still shown here and the center column
+  // would otherwise be squeezed into horizontal scroll — the nav matters less
+  // than the data, so it yields the space.
   useEffect(() => {
-    if (contactsActive) setContactsOpen(true);
-  }, [contactsActive]);
+    const crampedMq = window.matchMedia('(min-width: 1280px) and (max-width: 1599px)');
+    const update = () => setCramped(crampedMq.matches);
+    update();
+    crampedMq.addEventListener('change', update);
+    return () => crampedMq.removeEventListener('change', update);
+  }, []);
 
-  useEffect(() => {
-    if (accountsActive) setAccountsOpen(true);
-  }, [accountsActive]);
+  // Routes where the center is a wide data table that should win the space war
+  // with the nav when things get cramped.
+  const tableHeavyView =
+    pathname === ROUTES.coverage || pathname === ROUTES.accounts || pathname === ROUTES.leads.contacts;
 
-  useEffect(() => {
-    if (setupActive) setSetupOpen(true);
-  }, [setupActive]);
+  // The user toggle collapses everywhere; cramped table-heavy views also
+  // auto-collapse (without overwriting the user's saved preference).
+  const effectiveCollapsed = sidebarCollapsed || (tableHeavyView && cramped);
 
   useEffect(() => {
     const loadCompletionStatus = async () => {
@@ -296,7 +274,9 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
         if (profileRes.ok) {
           const result = await profileRes.json();
           const profile = result.data;
-          const needsProfile = !(profile && typeof profile.company_name === 'string' && profile.company_name.trim());
+          const trimmedCompany = typeof profile?.company_name === 'string' ? profile.company_name.trim() : '';
+          setCompanyName(trimmedCompany || null);
+          const needsProfile = !trimmedCompany;
           setShowMyProfileDot(needsProfile);
           setupNeedsAttention = setupNeedsAttention || needsProfile;
         }
@@ -316,16 +296,13 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
         if (dataJobsRes.ok) {
           const result = await dataJobsRes.json();
           const jobs = Array.isArray(result.jobs) ? result.jobs : [];
-          const jobsNeedingAttention = jobs.filter((job: Record<string, unknown>) =>
-            job.status === 'failed' || job.status === 'running' || job.status === 'processing' || job.status === 'queued',
+          // Live = queued or in-flight (anything not finished/failed). This drives
+          // the count badge on the Data nav item ("something's cooking").
+          const liveJobs = jobs.filter((job: Record<string, unknown>) =>
+            !['complete', 'completed', 'failed', 'cancelled'].includes(String(job.status)),
           );
-          const dataSignature = jobsNeedingAttention.length > 0
-            ? jobsNeedingAttention
-                .map((job: Record<string, unknown>) => `${String(job.id)}:${String(job.status)}`)
-                .join('|')
-            : null;
-          dataNeedsAttention = dismissibleDotVisible('data', dataSignature, pathname === ROUTES.data);
-          setShowDataDot(dataNeedsAttention);
+          setDataJobCount(liveJobs.length);
+          dataNeedsAttention = liveJobs.length > 0;
         }
 
         if (healthRes.ok) {
@@ -382,13 +359,20 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
     if (itemName === 'Outreach') return false;
     if (itemName === 'Customers') return false;
     if (itemName === 'Health') return showHealthDot;
-    if (itemName === 'Data') return showDataDot;
+    // Data shows a live count badge instead of a dot (see renderNavItem).
+    if (itemName === 'Data') return false;
     if (itemName === 'My Company' || itemName === 'My company') return showMyProfileDot;
     if (itemName === 'My ICPs') return showCompaniesDot;
     if (itemName === 'Guided setup') return setupDotVisible;
     if (itemName === 'Target ICP') return showCompaniesDot;
     return false;
   };
+
+  const renderSectionLabel = (label: string) => (
+    <p className="px-2.5 pb-1.5 pt-3 text-[10px] font-semibold uppercase tracking-[0.13em] text-arcova-navy/35">
+      {label}
+    </p>
+  );
 
   const renderNavItem = (item: NavItem) => (
     <div key={item.name}>
@@ -405,66 +389,32 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
         <div className="relative">
           <item.icon className="h-[1.375rem] w-[1.375rem] shrink-0" />
           {shouldShowDot(item.name) && (
-            <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-arcova-teal shadow-[0_0_0_2px_rgba(255,255,255,0.95)]" />
+            <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-arcova-coral shadow-[0_0_0_2px_rgba(255,255,255,0.95)]" />
           )}
         </div>
-        <span>{item.name}</span>
-      </button>
-    </div>
-  );
-
-  const renderAccordion = ({
-    label,
-    icon: Icon,
-    items,
-    open,
-    onToggle,
-    active,
-    dotVisible,
-  }: {
-    label: string;
-    icon: React.ComponentType<{ className?: string }>;
-    items: NavItem[];
-    open: boolean;
-    onToggle: () => void;
-    active: boolean;
-    dotVisible?: boolean;
-  }) => (
-    <div>
-      <button
-        type="button"
-        onClick={onToggle}
-        className={cn(
-          'w-full flex items-center justify-between rounded-xl px-3.5 py-2.5 text-[0.9375rem] font-medium font-manrope leading-snug transition-colors',
-          active ? 'bg-arcova-navy text-white shadow-sm' : 'text-[#4a6470] hover:bg-white/70 hover:text-arcova-navy',
-        )}
-      >
-        <div className="flex items-center space-x-3">
-          <div className="relative">
-            <Icon className="h-[1.375rem] w-[1.375rem] shrink-0" />
-            {dotVisible && !open && (
-              <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-arcova-teal shadow-[0_0_0_2px_rgba(255,255,255,0.95)]" />
+        <span className="flex-1">{item.name}</span>
+        {item.name === 'Data' && dataJobCount > 0 && (
+          <span
+            className={cn(
+              'flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums shadow-[0_2px_8px_-2px_rgba(0,164,180,0.6)]',
+              (item.active ?? isActive(item.href)) ? 'bg-white/20 text-white' : 'bg-arcova-teal text-white',
             )}
-          </div>
-          <span>{label}</span>
-        </div>
-        <ChevronDown
-          className={cn('h-[1.125rem] w-[1.125rem] shrink-0 transition-transform duration-200', open && 'rotate-180')}
-        />
+          >
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white/80" />
+              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-white" />
+            </span>
+            {dataJobCount}
+          </span>
+        )}
       </button>
-
-      {open && (
-        <div className="ml-[1.125rem] mt-1.5 space-y-1 border-l border-[rgba(13,53,71,0.1)] pl-3.5">
-          {items.map(renderNavItem)}
-        </div>
-      )}
     </div>
   );
 
   const railIconButton = (
     key: string,
     Icon: React.ComponentType<{ className?: string }>,
-    opts: { onClick: () => void; active: boolean; title: string; dot?: boolean },
+    opts: { onClick: () => void; active: boolean; title: string; dot?: boolean; badge?: number },
   ) => (
     <div key={key} className="flex justify-center">
       <button
@@ -480,8 +430,12 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
         )}
       >
         <Icon className="h-[1.375rem] w-[1.375rem]" />
-        {opts.dot ? (
-          <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-arcova-teal ring-2 ring-[rgba(255,255,255,0.95)]" />
+        {opts.badge ? (
+          <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-arcova-teal px-1 text-[9px] font-bold tabular-nums text-white ring-2 ring-[rgba(255,255,255,0.95)]">
+            {opts.badge}
+          </span>
+        ) : opts.dot ? (
+          <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-arcova-coral ring-2 ring-[rgba(255,255,255,0.95)]" />
         ) : null}
       </button>
     </div>
@@ -528,13 +482,14 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
             active: isActive(item.href),
             title: item.name,
             dot: shouldShowDot(item.name),
+            badge: item.name === 'Data' && dataJobCount > 0 ? dataJobCount : undefined,
           }),
         )}
         {railIconButton('setup', NavIconSetup, {
           onClick: () =>
             guardedNavigate(!setupComplete && !setupStateLoading ? ROUTES.setup.arcova : ROUTES.setup.company),
           active: setupActive,
-          title: 'About you',
+          title: 'About',
           dot: setupDotVisible,
         })}
       </>
@@ -634,11 +589,14 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
               <Image
                 src="/images/network-og.png"
                 alt=""
-                width={40}
-                height={40}
+                width={32}
+                height={32}
                 className="shrink-0 rounded-lg shadow-sm ring-1 ring-black/5"
               />
-              <span className="truncate text-xl font-semibold font-manrope text-arcova-navy">arcova</span>
+              <span className="min-w-0 leading-tight">
+                <span className="block truncate font-manrope text-[15px] font-extrabold tracking-tight text-arcova-navy">arcova</span>
+                <span className="block truncate text-[10px] font-medium text-arcova-navy/40">GTM intelligence</span>
+              </span>
             </button>
             {!mobileHidden && (
               <button
@@ -659,7 +617,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
             <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden px-2 py-4">
               {renderCollapsedRail()}
             </div>
-            <div className="shrink-0 border-t border-[rgba(13,53,71,0.08)] px-2 pb-4 pt-3">
+            <div className="flex shrink-0 flex-col gap-2 border-t border-[rgba(13,53,71,0.08)] px-2 pb-4 pt-3">
               {bottomItems.map((item) =>
                 railIconButton(item.name, item.icon, {
                   onClick: () => guardedNavigate(item.href),
@@ -667,51 +625,75 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
                   title: item.name,
                 }),
               )}
+              <div className="flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => guardedNavigate(ROUTES.settings)}
+                  title={companyName ? `${displayName} · ${companyName}` : displayName}
+                  aria-label="Open settings"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-arcova-navy/10 text-[11px] font-bold text-arcova-navy transition-colors hover:bg-arcova-navy/15"
+                >
+                  {accountInitials}
+                </button>
+              </div>
             </div>
           </nav>
         ) : (
           <nav className="flex min-h-0 flex-1 flex-col">
-            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-5">
+            <div className="min-h-0 flex-1 overflow-y-auto p-5 pt-2">
               {setupFlowOnly ? (
                 setupComplete || setupStateLoading ? (
                   <div className="space-y-1">
                     {setupItems.map(renderNavItem)}
                   </div>
                 ) : (
-                  renderAccordion({
-                    label: 'Guided setup',
-                    icon: NavIconSetup,
-                    items: guidedSetupNestedItems,
-                    open: setupOpen,
-                    onToggle: () => setSetupOpen((o) => !o),
-                    active: setupActive && !setupOpen,
-                    dotVisible: setupDotVisible,
-                  })
+                  <div className="space-y-0.5">
+                    {renderNavItem({ name: 'Guided setup', href: ROUTES.setup.arcova, icon: NavIconSetup })}
+                    {guidedSetupNestedItems.map(renderNavItem)}
+                  </div>
                 )
               ) : (
                 <>
-                  {renderNavItem({ name: 'Today', href: ROUTES.today, icon: NavIconToday })}
-                  {renderNavItem({ name: 'GTM base', href: ROUTES.gtmBase, icon: NavIconGtmBase })}
-                  {renderNavItem({ name: 'Import', href: ROUTES.import, icon: NavIconImport })}
-                  {renderNavItem({ name: 'Contacts', href: ROUTES.contacts, icon: NavIconContact })}
-                  {renderNavItem({ name: 'Accounts', href: ROUTES.accounts, icon: NavIconAccount })}
-                  {renderNavItem({ name: 'Coverage', href: ROUTES.coverage, icon: NavIconHealth })}
-                  {renderNavItem({ name: 'Data', href: ROUTES.data, icon: NavIconData })}
-                  {renderNavItem({ name: 'Outreach', href: ROUTES.outreach, icon: NavIconOutreach })}
-                  {renderAccordion({
-                    label: 'About you',
-                    icon: NavIconSetup,
-                    items: setupAccordionItems,
-                    open: setupOpen,
-                    onToggle: () => setSetupOpen((o) => !o),
-                    active: setupActive && !setupOpen,
-                    dotVisible: setupDotVisible,
-                  })}
+                  {renderSectionLabel('Workspace')}
+                  <div className="space-y-0.5">
+                    {renderNavItem({ name: 'Today', href: ROUTES.today, icon: NavIconToday })}
+                    {renderNavItem({ name: 'GTM base', href: ROUTES.gtmBase, icon: NavIconGtmBase })}
+                    {renderNavItem({ name: 'Import', href: ROUTES.import, icon: NavIconImport })}
+                    {bottomItems.map(renderNavItem)}
+                  </div>
+
+                  {renderSectionLabel('Go-to-market')}
+                  <div className="space-y-0.5">
+                    {renderNavItem({ name: 'Contacts', href: ROUTES.contacts, icon: NavIconContact })}
+                    {renderNavItem({ name: 'Accounts', href: ROUTES.accounts, icon: NavIconAccount })}
+                    {renderNavItem({ name: 'Coverage', href: ROUTES.coverage, icon: NavIconHealth })}
+                    {renderNavItem({ name: 'Data', href: ROUTES.data, icon: NavIconData })}
+                    {renderNavItem({ name: 'Outreach', href: ROUTES.outreach, icon: NavIconOutreach })}
+                  </div>
+
+                  {renderSectionLabel('About')}
+                  <div className="space-y-0.5">
+                    {setupItems.map(renderNavItem)}
+                  </div>
                 </>
               )}
             </div>
-            <div className="shrink-0 border-t border-[rgba(13,53,71,0.08)] px-4 py-3.5">
-              {bottomItems.map(renderNavItem)}
+            <div className="shrink-0 border-t border-[rgba(13,53,71,0.08)] p-3">
+              <button
+                type="button"
+                onClick={() => guardedNavigate(ROUTES.settings)}
+                className="flex w-full items-center gap-2.5 rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-white/70"
+                aria-label="Open settings"
+                title="Open settings"
+              >
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-arcova-navy/10 text-[11px] font-bold text-arcova-navy">
+                  {accountInitials}
+                </span>
+                <span className="min-w-0 flex-1 leading-tight">
+                  <span className="block truncate text-[12.5px] font-semibold text-arcova-navy">{displayName}</span>
+                  {companyName && <span className="block truncate text-[10.5px] text-arcova-navy/45">{companyName}</span>}
+                </span>
+              </button>
             </div>
           </nav>
         )}

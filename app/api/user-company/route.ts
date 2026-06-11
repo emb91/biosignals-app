@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
+import { getOrgContext, canEditOrgSetup } from '@/lib/org-context'
 import {
   normalizePlatformTaxonomyFields,
   parsePlatformCategoryInput,
@@ -61,6 +62,15 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
+      )
+    }
+
+    // "My company" is org-level setup — owner/admin only. Members are read-only.
+    const ctx = await getOrgContext()
+    if (ctx && !canEditOrgSetup(ctx.role)) {
+      return NextResponse.json(
+        { error: 'Only an owner or admin can edit the company profile' },
+        { status: 403 }
       )
     }
 
@@ -153,6 +163,14 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
+      )
+    }
+
+    const ctx = await getOrgContext()
+    if (ctx && !canEditOrgSetup(ctx.role)) {
+      return NextResponse.json(
+        { error: 'Only an owner or admin can delete the company profile' },
+        { status: 403 }
       )
     }
 

@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase-server';
 import { NextResponse } from 'next/server';
+import { orgIdForUser } from '@/lib/org-context';
 import { assignSignalWeights, extractSignalIds } from '@/lib/signal-weights';
 import { rescoreAllContactsForUser } from '@/lib/rescore';
 import {
@@ -27,12 +28,13 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { data, error } = await supabase
-      .from('icps')
-      .select('*')
-      .eq('id', id)
-      .eq('user_id', user.id)
-      .single();
+    // Org-scoped so any seat can open a shared ICP (solo owner: same row set).
+    const orgId = await orgIdForUser(supabase, user.id);
+    const baseSelect = supabase.from('icps').select('*').eq('id', id);
+    const { data, error } = await (orgId
+      ? baseSelect.eq('org_id', orgId)
+      : baseSelect.eq('user_id', user.id)
+    ).single();
 
     if (error) {
       console.error('Error fetching ICP:', error);
@@ -73,6 +75,11 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     const signalIds = extractSignalIds((body.signals || []) as Parameters<typeof extractSignalIds>[0]);
     const weightedSignals = assignSignalWeights(signalIds);
 
+    // Org-scoped update so an admin can edit a shared ICP. RLS also gates to owner/admin.
+    const orgId = await orgIdForUser(supabase, user.id);
+    const scopeCol = orgId ? 'org_id' : 'user_id';
+    const scopeVal = orgId ?? user.id;
+
     const icpData: Record<string, unknown> = {
       name: body.name || '',
       company_type: body.companyType || '',
@@ -108,7 +115,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
       .from('icps')
       .update(icpData)
       .eq('id', id)
-      .eq('user_id', user.id)
+      .eq(scopeCol, scopeVal)
       .select()
       .single();
 
@@ -117,7 +124,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
         .from('icps')
         .update(withoutPlatformCategory(icpData))
         .eq('id', id)
-        .eq('user_id', user.id)
+        .eq(scopeCol, scopeVal)
         .select()
         .single();
     }
@@ -127,7 +134,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
         .from('icps')
         .update(withoutIcpSegmentColumns(icpData))
         .eq('id', id)
-        .eq('user_id', user.id)
+        .eq(scopeCol, scopeVal)
         .select()
         .single();
     }
@@ -167,7 +174,9 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { error } = await supabase.from('icps').delete().eq('id', id).eq('user_id', user.id);
+    // RLS enforces: a member may delete their OWN (personal) ICP; owner/admin may delete
+    // company-wide ('org') ICPs. Target the id and let RLS decide.
+    const { error } = await supabase.from('icps').delete().eq('id', id);
 
     if (error) {
       console.error('Error deleting ICP:', error);

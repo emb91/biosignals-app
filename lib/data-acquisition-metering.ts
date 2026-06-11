@@ -172,6 +172,7 @@ export async function recordDataAcquisitionUsageEvent(
   params: {
     jobId: string;
     userId: string;
+    orgId?: string | null;
     eventType: DataAcquisitionUsageEventType;
     quantity?: number;
     provider?: string | null;
@@ -189,6 +190,7 @@ export async function recordDataAcquisitionUsageEvent(
     .insert({
       job_id: params.jobId,
       user_id: params.userId,
+      org_id: params.orgId ?? null,
       event_type: params.eventType,
       provider: params.provider ?? null,
       quantity,

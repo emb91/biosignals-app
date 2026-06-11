@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { after } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
+import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
+import { computeCriteriaHash } from '@/lib/data-acquisition/criteria-hash';
 import type { PipelineDataRequestType } from '@/lib/pipeline-icp-health';
 import {
   DEFAULT_ACQUISITION_TARGET_COMPANIES,
@@ -130,10 +132,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'targetContactCount must be greater than 0' }, { status: 400 });
     }
 
-    const { data: icp, error: icpErr } = await supabase
-      .from('icps')
-      .select('id')
-      .eq('user_id', user.id)
+    // The ICP must be visible to this user (company-wide or their own personal) — a
+    // member can buy data against a company ICP; billing is org-level.
+    const reqOrgId = await orgIdForUser(supabase, user.id);
+    const { data: icp, error: icpErr } = await scopeIcpsToUser(
+      supabase.from('icps').select('id'),
+      reqOrgId,
+      user.id,
+    )
       .eq('id', icpId)
       .maybeSingle();
 
@@ -167,10 +173,23 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Failed to record data request' }, { status: 500 });
     }
 
+    // Org-level concurrent-dedup gate: fingerprint the request. A partial unique index on
+    // (org_id, criteria_hash) over in-flight statuses makes a duplicate insert fail with
+    // 23505 — so two reps firing the SAME buy collapse to one job (race-proof at the DB).
+    const criteriaHash = computeCriteriaHash({
+      requestType,
+      icpId,
+      targetCompanyCount,
+      targetContactCount: estimate.targetContactCount,
+      companyId: companyContext?.id ?? null,
+    });
+
     const { data: job, error: jobErr } = await supabase
       .from('data_acquisition_jobs')
       .insert({
         user_id: user.id,
+        org_id: reqOrgId,
+        criteria_hash: criteriaHash,
         icp_id: icpId,
         upload_batch_id: batch.id,
         request_type: requestType,
@@ -193,6 +212,27 @@ export async function POST(request: Request) {
       .single();
 
     if (jobErr || !job) {
+      // Duplicate in-flight request for this org → attach to the existing job instead of
+      // buying twice. (Only fires when org_id + criteria_hash are both set.)
+      if ((jobErr as { code?: string } | null)?.code === '23505' && reqOrgId) {
+        await supabase.from('upload_batches').delete().eq('id', batch.id);
+        const { data: existingJob } = await supabase
+          .from('data_acquisition_jobs')
+          .select('id')
+          .eq('org_id', reqOrgId)
+          .eq('criteria_hash', criteriaHash)
+          .in('status', ['queued', 'discovering', 'importing', 'enriching'])
+          .order('requested_at', { ascending: true })
+          .limit(1)
+          .maybeSingle();
+        if (existingJob?.id) {
+          return NextResponse.json({
+            jobId: existingJob.id as string,
+            attached: true,
+            message: "A teammate is already running this exact request — you'll share the results.",
+          });
+        }
+      }
       console.error('[pipeline/data-request] job', jobErr);
       return NextResponse.json({ error: 'Failed to create acquisition job' }, { status: 500 });
     }
@@ -205,6 +245,7 @@ export async function POST(request: Request) {
     await recordDataAcquisitionUsageEvent(supabase, {
       jobId: job.id as string,
       userId: user.id,
+      orgId: reqOrgId,
       eventType: 'job_requested',
       quantity: jobRequestQuantity,
       provider: 'arcova',

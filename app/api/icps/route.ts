@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase-server';
 import { NextResponse } from 'next/server';
+import { orgIdForUser, getOrgContext, canEditOrgSetup } from '@/lib/org-context';
 import { assignSignalWeights, extractSignalIds } from '@/lib/signal-weights';
 import { rescoreAllContactsForUser } from '@/lib/rescore';
 import {
@@ -26,11 +27,14 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { data, error } = await supabase
-      .from('icps')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
+    // Org-scoped: every seat sees the org's shared ICPs. For a solo owner this returns
+    // the same rows as a user_id filter (their ICPs carry their org_id). Falls back to
+    // user-scope only if membership is somehow missing.
+    const orgId = await orgIdForUser(supabase, user.id);
+
+    let query = supabase.from('icps').select('*').order('created_at', { ascending: false });
+    query = orgId ? query.eq('org_id', orgId) : query.eq('user_id', user.id);
+    const { data, error } = await query;
 
     if (error) {
       console.error('Error fetching ICPs:', error);
@@ -62,7 +66,10 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: 'id is required' }, { status: 400 });
     }
 
-    const { error } = await supabase.from('icps').delete().eq('id', id).eq('user_id', user.id);
+    // Visibility is enforced by RLS: a member may delete their OWN (personal) ICP;
+    // owner/admin may delete company-wide ('org') ICPs. Deleting an ICP the caller may
+    // not touch simply removes 0 rows. So just target the id and let RLS decide.
+    const { error } = await supabase.from('icps').delete().eq('id', id);
 
     if (error) {
       console.error('Error deleting ICP:', error);
@@ -118,8 +125,16 @@ export async function POST(request: Request) {
 
     const weightedSignals = assignSignalWeights(signalIds);
 
+    // Stamp org_id + scope. Owner/admin create company-wide ('org') ICPs the whole org
+    // sees; members create 'personal' ICPs visible only to them. RLS enforces the same.
+    const ctx = await getOrgContext();
+    const orgId = ctx?.orgId ?? (await orgIdForUser(supabase, user.id));
+    const scope = ctx && canEditOrgSetup(ctx.role) ? 'org' : 'personal';
+
     const icpData = {
       user_id: user.id,
+      org_id: orgId,
+      scope,
       user_email: user.email,
       name: body.name || '',
       icp_summary: body.icpSummary || null,

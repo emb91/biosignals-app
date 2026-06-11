@@ -33,7 +33,23 @@ type DataCostResponse = {
     apifyCompanyUsd: number;
     apolloCredits: { person: number; company: number; phoneReveal: number };
   };
-  apolloPlan: { name: string; monthlyUsd: number | null };
+  apolloPlan: {
+    name: string;
+    monthlyUsd: number | null;
+    monthlyCredits: number | null;
+    currentPeriodCredits: number;
+    currentMonthCredits: number;
+    directCredits: number;
+    acquisitionCredits: number;
+    acquisitionSearchCredits: number;
+    acquisitionEnrichmentCredits: number;
+    baselineCredits: number;
+    baselineRecordedAt: string | null;
+    periodStart: string;
+    monthStart: string;
+    billingCycleAnchorDay: number;
+    billingCycleAnchorUtcHour: number;
+  };
   totals: {
     apify: { profileScrapes: number; companyScrapes: number; costUsd: number };
     apollo: { personEnrichments: number; orgEnrichments: number; phoneReveals: number; credits: number };
@@ -49,6 +65,7 @@ const EVENT_LABELS: Record<string, string> = {
   apify_company_scrape: 'Apify · company scrape',
   apollo_person_enrichment: 'Apollo · person enrichment',
   apollo_company_enrichment: 'Apollo · company enrichment',
+  apollo_phone_reveal: 'Apollo · phone reveal',
 };
 
 function fmtUsd(value: number | null | undefined): string {
@@ -118,15 +135,11 @@ export default function DataEnrichmentCost() {
               detail={`${fmtUsd(data.pricing.apifyProfileUsd)} / scrape`}
             />
             <Card
-              title="Apollo credits used"
+              title="Stored Apollo enrichments"
               value={fmtNum(data.totals.apollo.credits)}
-              detail={`${fmtNum(data.totals.apollo.personEnrichments)} person · ${fmtNum(data.totals.apollo.orgEnrichments)} org · ${fmtNum(data.totals.apollo.phoneReveals)} phone reveal`}
+              detail={`${fmtNum(data.totals.apollo.personEnrichments)} person · ${fmtNum(data.totals.apollo.orgEnrichments)} org · ${fmtNum(data.totals.apollo.phoneReveals)} phone reveal · excludes search`}
             />
-            <Card
-              title="Apollo plan"
-              value={data.apolloPlan.name}
-              detail="Credits bundled in plan — tracking consumption"
-            />
+            <ApolloMonthCard plan={data.apolloPlan} />
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -138,7 +151,7 @@ export default function DataEnrichmentCost() {
                     <th className="px-3 py-2 font-medium">User</th>
                     <th className="px-3 py-2 font-medium">Apify scrapes</th>
                     <th className="px-3 py-2 font-medium">Apify cost</th>
-                    <th className="px-3 py-2 font-medium">Apollo credits</th>
+                    <th className="px-3 py-2 font-medium">Stored Apollo est.</th>
                     <th className="px-3 py-2 font-medium">Phone reveals</th>
                   </tr>
                 </thead>
@@ -219,13 +232,86 @@ export default function DataEnrichmentCost() {
           <p className="text-xs leading-relaxed text-slate-400">
             Apify priced at {fmtUsd(data.pricing.apifyProfileUsd)}/profile scrape (the actor&apos;s &ldquo;$4 per 1k&rdquo;
             mode) and {fmtUsd(data.pricing.apifyCompanyUsd)}/company scrape (estimate — confirm on the Apify console).
-            Edit prices in <code className="rounded bg-slate-100 px-1 py-0.5">lib/provider-usage.ts</code>. Apollo credits
-            are consumption (≈1 per person/org enrichment, 1 per phone reveal); failed matches and people/company
-            search results also consume credits but aren&apos;t counted here.
+            Edit prices in <code className="rounded bg-slate-100 px-1 py-0.5">lib/provider-usage.ts</code>. Stored Apollo
+            enrichments are record-based estimates only. The billing-period meter is the Apollo consumption view: it
+            starts from the Apollo dashboard baseline, then adds ICP sourcing search/enrichment events and direct
+            enrichment events tracked by the app.
           </p>
         </>
       ) : null}
     </section>
+  );
+}
+
+function ApolloMonthCard({ plan }: { plan: DataCostResponse['apolloPlan'] }) {
+  const {
+    name,
+    monthlyCredits,
+    currentPeriodCredits,
+    directCredits,
+    acquisitionCredits,
+    acquisitionSearchCredits,
+    acquisitionEnrichmentCredits,
+    baselineCredits,
+    baselineRecordedAt,
+    periodStart,
+    billingCycleAnchorDay,
+  } = plan;
+  const periodLabel = new Date(`${periodStart.slice(0, 10)}T12:00:00Z`).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+  });
+  const pct = monthlyCredits ? Math.min(100, (currentPeriodCredits / monthlyCredits) * 100) : null;
+  const isWarning = pct != null && pct >= 80;
+  const isDanger = pct != null && pct >= 95;
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="text-sm text-slate-500">Apollo billing period — since {periodLabel}</div>
+      <div className="mt-2 text-2xl font-semibold text-slate-950">{name}</div>
+      <div className="mt-3 space-y-1.5">
+        {monthlyCredits != null ? (
+          <>
+            <div className="flex items-baseline justify-between text-xs">
+              <span className="text-slate-600">
+                {fmtNum(currentPeriodCredits)} / {fmtNum(monthlyCredits)} tracked credits
+              </span>
+              <span
+                className={
+                  isDanger
+                    ? 'font-semibold text-red-600'
+                    : isWarning
+                      ? 'font-semibold text-amber-600'
+                      : 'text-slate-400'
+                }
+              >
+                {Math.round(pct!)}%
+              </span>
+            </div>
+            <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+              <div
+                className={`h-full rounded-full transition-all ${
+                  isDanger ? 'bg-red-500' : isWarning ? 'bg-amber-400' : 'bg-teal-500'
+                }`}
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+            <p className="text-xs text-slate-400">
+              {fmtNum(Math.max(0, monthlyCredits - currentPeriodCredits))} remaining · configured renewal day{' '}
+              {billingCycleAnchorDay}
+            </p>
+            <p className="text-xs leading-relaxed text-slate-500">
+              Apollo baseline {fmtNum(baselineCredits)} cr
+              {baselineRecordedAt ? ` · since ${new Date(baselineRecordedAt).toLocaleDateString()}` : ''} · direct
+              enrichment {fmtNum(directCredits)} cr · ICP sourcing {fmtNum(acquisitionCredits)} cr (
+              {fmtNum(acquisitionSearchCredits)} search, {fmtNum(acquisitionEnrichmentCredits)} enrichment)
+            </p>
+          </>
+        ) : (
+          <p className="text-xs text-slate-400">Credit limit unknown — set monthlyCredits in lib/provider-usage.ts</p>
+        )}
+      </div>
+    </div>
   );
 }
 

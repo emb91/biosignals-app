@@ -280,9 +280,12 @@ async function attachMatchedIcpNames(
     }));
   }
 
+  // Names for the ICPs referenced by these rows. Scoped to those ids (RLS still applies),
+  // so it returns company-wide + the caller's own personal ICPs without a user filter.
   const { data, error } = await supabase
     .from('icps')
     .select('id, name, created_at')
+    .in('id', icpIds)
     .order('created_at', { ascending: false });
 
   if (error) {

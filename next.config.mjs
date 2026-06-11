@@ -98,11 +98,6 @@ const nextConfig = {
         permanent: false,
       },
       {
-        source: '/my-profile',
-        destination: '/my-company',
-        permanent: false,
-      },
-      {
         source: '/company-criteria',
         destination: '/icps',
         permanent: false,

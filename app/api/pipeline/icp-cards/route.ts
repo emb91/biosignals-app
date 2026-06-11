@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
+import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
 import {
   PIPELINE_MIN_COMPANIES_FOR_ASSESSMENT,
   comparePipelineCards,
@@ -24,11 +25,12 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { data: icpRows, error: icpErr } = await supabase
-      .from('icps')
-      .select('id, name, created_at')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
+    const orgId = await orgIdForUser(supabase, user.id);
+    const { data: icpRows, error: icpErr } = await scopeIcpsToUser(
+      supabase.from('icps').select('id, name, created_at'),
+      orgId,
+      user.id,
+    ).order('created_at', { ascending: false });
 
     if (icpErr) {
       console.error('[pipeline/icp-cards] icps', icpErr);
