@@ -25,7 +25,9 @@ import {
   LemlistError,
 } from '@/lib/lemlist';
 import { getHubSpotTokenForUser, pushOutreachStatusByEmail } from '@/lib/hubspot';
-import { fetchOrgOutreachActivityByPerson } from '@/lib/org-outreach';
+import { fetchOrgOutreachActivityByPerson, releaseExpiredAndFindBlocker } from '@/lib/org-outreach';
+import { orgIdForUser } from '@/lib/org-context';
+import { createAdminClient } from '@/lib/supabase-admin';
 
 function messageFromUnknown(error: unknown): string {
   return error instanceof Error ? error.message : 'Internal server error';
@@ -139,6 +141,28 @@ export async function POST(req: Request) {
         await markFailed(supabase, row.id, user.id, 'Sequence has no messages');
         results.push({ id: row.id, ok: false, error: 'Sequence has no messages' });
         continue;
+      }
+
+      // Cooldown sweep: release any EXPIRED in-flight claims on this person (stuck queued
+      // >1h, sent >30d with no reply, replied >90d) so a dead sequence doesn't hold the
+      // person forever. If a FRESH claim remains, reject before touching anything.
+      if (row.person_id) {
+        const orgId = await orgIdForUser(supabase, user.id);
+        if (orgId) {
+          const blocker = await releaseExpiredAndFindBlocker(createAdminClient(), {
+            userId: user.id,
+            orgId,
+            personId: row.person_id,
+          });
+          if (blocker) {
+            results.push({
+              id: row.id,
+              ok: false,
+              error: `${blocker.userName} already has an active sequence with this contact.`,
+            });
+            continue;
+          }
+        }
       }
 
       // Claim the person org-wide BEFORE sending (one active outreach per person per org).

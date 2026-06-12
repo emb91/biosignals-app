@@ -30,6 +30,37 @@ export interface OrgOutreachActivity {
 const ACTIVE_STATUSES: OrgOutreachStatus[] = ['draft', 'queued', 'sent', 'replied'];
 const STATUS_RANK: Record<OrgOutreachStatus, number> = { replied: 4, sent: 3, queued: 2, draft: 1 };
 
+/**
+ * Claim cooldowns — how long each status holds the one-active-outreach-per-person claim
+ * (and keeps steering teammates away). Past its window a claim is treated as expired:
+ * the badge/Today exclusion drop it, and the next dispatch attempt releases it for real
+ * (claim_released_at) before claiming. Shared by every surface so they never disagree.
+ *   queued  — a send that crashed mid-flight; release fast.
+ *   sent    — sequence steps span ~21 days; hold a few days past the end.
+ *   replied — the rep owns the live conversation; hold a quarter.
+ *   draft   — not a claim (not in the unique index), but a stale draft stops steering.
+ */
+export const CLAIM_WINDOW_MS: Record<OrgOutreachStatus, number> = {
+  queued: 60 * 60 * 1000, // 1 hour
+  sent: 30 * 86_400_000, // 30 days
+  replied: 90 * 86_400_000, // 90 days
+  draft: 14 * 86_400_000, // 14 days
+};
+
+/** Is this sequence still actively holding (or steering) given its age + release flag? */
+export function isClaimFresh(
+  row: { dispatch_status: string; last_status_at: string | null; created_at?: string | null; claim_released_at?: string | null },
+  nowMs: number = Date.now(),
+): boolean {
+  if (row.claim_released_at) return false;
+  const status = row.dispatch_status as OrgOutreachStatus;
+  const windowMs = CLAIM_WINDOW_MS[status];
+  if (!windowMs) return false;
+  const anchor = Date.parse(row.last_status_at ?? row.created_at ?? '') || 0;
+  if (!anchor) return true; // no timestamp — be conservative, treat as fresh
+  return nowMs - anchor <= windowMs;
+}
+
 type MinimalClient = { from: (table: string) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 /**
@@ -49,18 +80,23 @@ export async function fetchOrgOutreachActivityByPerson(
 
   const { data } = await client
     .from('outreach_sequences')
-    .select('person_id, user_id, dispatch_status, last_status_at')
+    .select('person_id, user_id, dispatch_status, last_status_at, created_at, claim_released_at')
     .eq('org_id', orgId)
     .neq('user_id', params.userId)
     .in('person_id', personIds)
     .in('dispatch_status', ACTIVE_STATUSES);
 
-  const rows = (data ?? []) as Array<{
+  // Drop released + expired claims (cooldown windows) — a 30-day-old sent sequence with
+  // no reply shouldn't keep steering teammates away.
+  const nowMs = Date.now();
+  const rows = ((data ?? []) as Array<{
     person_id: string;
     user_id: string;
     dispatch_status: OrgOutreachStatus;
     last_status_at: string | null;
-  }>;
+    created_at: string | null;
+    claim_released_at: string | null;
+  }>).filter((r) => isClaimFresh(r, nowMs));
   if (rows.length === 0) return out;
 
   // Teammate names from their profiles (org-readable), fallback handled below.
@@ -89,6 +125,67 @@ export async function fetchOrgOutreachActivityByPerson(
     });
   }
   return out;
+}
+
+/**
+ * Dispatch-time gatekeeping: release any EXPIRED in-flight claims on this person (lazy
+ * cooldown — stamps claim_released_at via the service-role client so the unique index
+ * frees the slot), then report whether a FRESH claim still blocks. Returns the fresh
+ * holder's activity (for the friendly rejection message) or null when the way is clear.
+ *
+ * `admin` must be the service-role client: releasing a teammate's stale claim is a write
+ * to their row, which RLS (rightly) won't allow the caller to do.
+ */
+export async function releaseExpiredAndFindBlocker(
+  admin: MinimalClient,
+  params: { userId: string; orgId: string; personId: string },
+): Promise<OrgOutreachActivity | null> {
+  const { data } = await admin
+    .from('outreach_sequences')
+    .select('id, person_id, user_id, dispatch_status, last_status_at, created_at, claim_released_at')
+    .eq('org_id', params.orgId)
+    .eq('person_id', params.personId)
+    .in('dispatch_status', ['queued', 'sent', 'replied'])
+    .is('claim_released_at', null);
+
+  const rows = (data ?? []) as Array<{
+    id: string;
+    person_id: string;
+    user_id: string;
+    dispatch_status: OrgOutreachStatus;
+    last_status_at: string | null;
+    created_at: string | null;
+    claim_released_at: string | null;
+  }>;
+  if (rows.length === 0) return null;
+
+  const nowMs = Date.now();
+  const expired = rows.filter((r) => !isClaimFresh(r, nowMs));
+  if (expired.length > 0) {
+    await admin
+      .from('outreach_sequences')
+      .update({ claim_released_at: new Date().toISOString() })
+      .in('id', expired.map((r) => r.id));
+  }
+
+  const fresh = rows.filter((r) => isClaimFresh(r, nowMs) && r.user_id !== params.userId);
+  if (fresh.length === 0) return null;
+
+  const blocker = fresh.sort((a, b) => STATUS_RANK[b.dispatch_status] - STATUS_RANK[a.dispatch_status])[0];
+  const { data: profile } = await admin
+    .from('user_profiles')
+    .select('full_name, email')
+    .eq('user_id', blocker.user_id)
+    .maybeSingle();
+  const p = profile as { full_name: string | null; email: string | null } | null;
+  return {
+    personId: blocker.person_id,
+    userId: blocker.user_id,
+    userName: p?.full_name?.trim() || p?.email?.split('@')[0] || 'a teammate',
+    status: blocker.dispatch_status,
+    customerFacing: blocker.dispatch_status !== 'draft',
+    lastStatusAt: blocker.last_status_at,
+  };
 }
 
 /**
