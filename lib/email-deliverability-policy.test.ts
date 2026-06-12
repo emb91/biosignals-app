@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { ContactEmailRow } from './contact-emails';
+import {
+  getContactEmailDeliverabilityDisplayMeta,
+  isVerifiedButOutdatedEmailRow,
+} from './contact-emails';
 import { shouldOfferFindNewEmailForContact } from './contact-profile-display';
 
 function row(
@@ -55,17 +59,57 @@ test('ZeroBounce invalid offers find-new-email', () => {
   );
 });
 
-test('ZeroBounce verified hides find-new-email', () => {
+test('ZeroBounce verified at current company hides find-new-email', () => {
   assert.equal(
     shouldOfferFindNewEmailForContact(
       0.8,
-      'kurt@example.com',
-      [row({ email: 'kurt@example.com', email_deliverability: 'verified', email_deliverability_provider: 'zerobounce' })],
+      'kurt@acme.com',
+      [row({ email: 'kurt@acme.com', email_deliverability: 'verified', email_deliverability_provider: 'zerobounce' })],
+      { emailStatus: 'aligned_current', currentCompanyDomain: 'acme.com' },
     ),
     false,
   );
 });
 
+test('ZeroBounce verified at prior employer offers find-new-email when stale', () => {
+  assert.equal(
+    shouldOfferFindNewEmailForContact(
+      0.8,
+      'alex@mtbiogroup.com',
+      [row({ email: 'alex@mtbiogroup.com', email_deliverability: 'verified', email_deliverability_provider: 'zerobounce' })],
+      { emailStatus: 'stale_suspected', currentCompanyDomain: 'newco.com' },
+    ),
+    true,
+  );
+});
+
 test('no usable email offers find-new-email', () => {
   assert.equal(shouldOfferFindNewEmailForContact(0.8, null, []), true);
+});
+
+test('verified stale email shows outdated badge instead of verified', () => {
+  assert.deepEqual(
+    getContactEmailDeliverabilityDisplayMeta('verified', {
+      email: 'alex@mtbiogroup.com',
+      companyDomain: 'newco.com',
+    }),
+    { label: 'Outdated', icon: 'warning', className: 'text-amber-600' },
+  );
+});
+
+test('isVerifiedButOutdatedEmailRow detects prior-employer verified addresses', () => {
+  assert.equal(
+    isVerifiedButOutdatedEmailRow(
+      { email: 'alex@mtbiogroup.com', email_deliverability: 'verified', email_deliverability_provider: 'zerobounce' },
+      'newco.com',
+    ),
+    true,
+  );
+  assert.equal(
+    isVerifiedButOutdatedEmailRow(
+      { email: 'alex@newco.com', email_deliverability: 'verified', email_deliverability_provider: 'zerobounce' },
+      'newco.com',
+    ),
+    false,
+  );
 });

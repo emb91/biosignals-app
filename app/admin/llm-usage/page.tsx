@@ -274,7 +274,7 @@ export default function AdminLlmUsagePage() {
             <div>
               <h1 className="text-2xl font-semibold text-slate-950">Usage &amp; cost</h1>
               <p className="mt-2 text-sm text-slate-500">
-                Internal admin view of LLM spend (Anthropic + OpenRouter) and paid data-provider usage (Apify, Apollo).
+                Internal admin view of LLM spend (Anthropic + OpenRouter) and paid data-provider usage (Apify, Apollo, ZeroBounce).
               </p>
             </div>
 

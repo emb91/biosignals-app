@@ -13,6 +13,9 @@ type ByUser = {
   apolloOrgEnrichments: number;
   phoneReveals: number;
   apolloCredits: number;
+  zerobounceValidations: number;
+  zerobounceFinderSuccesses: number;
+  zerobounceCredits: number;
 };
 
 type RecentEvent = {
@@ -32,6 +35,7 @@ type DataCostResponse = {
     apifyProfileUsd: number;
     apifyCompanyUsd: number;
     apolloCredits: { person: number; company: number; phoneReveal: number };
+    zerobounceCredits: { validate: number; finder: number };
   };
   apolloPlan: {
     name: string;
@@ -50,9 +54,18 @@ type DataCostResponse = {
     billingCycleAnchorDay: number;
     billingCycleAnchorUtcHour: number;
   };
+  zerobouncePlan: {
+    name: string;
+    liveCreditsBalance: number | null;
+    trackedPeriodCredits: number;
+    trackedValidations: number;
+    trackedFinderSuccesses: number;
+    periodStart: string;
+  };
   totals: {
     apify: { profileScrapes: number; companyScrapes: number; costUsd: number };
     apollo: { personEnrichments: number; orgEnrichments: number; phoneReveals: number; credits: number };
+    zerobounce: { validations: number; finderSuccesses: number; credits: number };
     users: number;
   };
   byUser: ByUser[];
@@ -66,6 +79,8 @@ const EVENT_LABELS: Record<string, string> = {
   apollo_person_enrichment: 'Apollo · person enrichment',
   apollo_company_enrichment: 'Apollo · company enrichment',
   apollo_phone_reveal: 'Apollo · phone reveal',
+  zerobounce_email_validate: 'ZeroBounce · email validate',
+  zerobounce_email_finder: 'ZeroBounce · email finder',
 };
 
 function fmtUsd(value: number | null | undefined): string {
@@ -109,8 +124,9 @@ export default function DataEnrichmentCost() {
       <div>
         <h2 className="text-xl font-semibold text-slate-950">Data &amp; enrichment cost</h2>
         <p className="mt-1 text-sm text-slate-500">
-          Paid data-provider usage across all users. Apify (LinkedIn scraping) is priced in dollars; Apollo is shown
-          as credit consumption. Totals are counted from every enriched record, so they cover all history.
+          Paid data-provider usage across all users. Apify (LinkedIn scraping) is priced in dollars; Apollo and
+          ZeroBounce are shown as credit consumption. Stored totals cover all history; the billing-period meters use
+          per-call events (and ZeroBounce live balance when configured).
         </p>
       </div>
 
@@ -123,7 +139,7 @@ export default function DataEnrichmentCost() {
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
       ) : data ? (
         <>
-          <div className="grid gap-4 md:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
             <Card
               title="Apify cost"
               value={fmtUsd(data.totals.apify.costUsd)}
@@ -140,6 +156,7 @@ export default function DataEnrichmentCost() {
               detail={`${fmtNum(data.totals.apollo.personEnrichments)} person · ${fmtNum(data.totals.apollo.orgEnrichments)} org · ${fmtNum(data.totals.apollo.phoneReveals)} phone reveal · excludes search`}
             />
             <ApolloMonthCard plan={data.apolloPlan} />
+            <ZeroBounceCreditsCard plan={data.zerobouncePlan} storedCredits={data.totals.zerobounce.credits} pricing={data.pricing.zerobounceCredits} />
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -152,6 +169,7 @@ export default function DataEnrichmentCost() {
                     <th className="px-3 py-2 font-medium">Apify scrapes</th>
                     <th className="px-3 py-2 font-medium">Apify cost</th>
                     <th className="px-3 py-2 font-medium">Stored Apollo est.</th>
+                    <th className="px-3 py-2 font-medium">Stored ZeroBounce est.</th>
                     <th className="px-3 py-2 font-medium">Phone reveals</th>
                   </tr>
                 </thead>
@@ -165,12 +183,20 @@ export default function DataEnrichmentCost() {
                         </td>
                         <td className="px-3 py-2 text-slate-900">{fmtUsd(u.apifyCostUsd)}</td>
                         <td className="px-3 py-2 text-slate-600">{fmtNum(u.apolloCredits)}</td>
+                        <td className="px-3 py-2 text-slate-600">
+                          {fmtNum(u.zerobounceCredits)}
+                          {u.zerobounceCredits > 0 ? (
+                            <span className="block text-xs text-slate-400">
+                              {fmtNum(u.zerobounceValidations)} validate · {fmtNum(u.zerobounceFinderSuccesses)} finder
+                            </span>
+                          ) : null}
+                        </td>
                         <td className="px-3 py-2 text-slate-600">{fmtNum(u.phoneReveals)}</td>
                       </tr>
                     ))
                   ) : (
                     <tr className="border-t border-slate-100">
-                      <td className="px-3 py-6 text-sm text-slate-500" colSpan={5}>
+                      <td className="px-3 py-6 text-sm text-slate-500" colSpan={6}>
                         No enriched records yet.
                       </td>
                     </tr>
@@ -235,11 +261,48 @@ export default function DataEnrichmentCost() {
             Edit prices in <code className="rounded bg-slate-100 px-1 py-0.5">lib/provider-usage.ts</code>. Stored Apollo
             enrichments are record-based estimates only. The billing-period meter is the Apollo consumption view: it
             starts from the Apollo dashboard baseline, then adds ICP sourcing search/enrichment events and direct
-            enrichment events tracked by the app.
+            enrichment events tracked by the app. ZeroBounce shows live account balance via the getcredits API when{' '}
+            <code className="rounded bg-slate-100 px-1 py-0.5">ZEROBOUNCE_API_KEY</code> is set, plus tracked consumption
+            since {new Date(data.zerobouncePlan.periodStart).toLocaleDateString(undefined, { month: 'long' })} (
+            {fmtNum(data.pricing.zerobounceCredits.validate)} cr/validate, {fmtNum(data.pricing.zerobounceCredits.finder)}{' '}
+            cr/finder success; unknown validate results are free).
           </p>
         </>
       ) : null}
     </section>
+  );
+}
+
+function ZeroBounceCreditsCard({
+  plan,
+  storedCredits,
+  pricing,
+}: {
+  plan: DataCostResponse['zerobouncePlan'];
+  storedCredits: number;
+  pricing: DataCostResponse['pricing']['zerobounceCredits'];
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="text-sm text-slate-500">ZeroBounce credits</div>
+      <div className="mt-2 text-2xl font-semibold text-slate-950">
+        {plan.liveCreditsBalance != null ? fmtNum(plan.liveCreditsBalance) : '—'}
+      </div>
+      <div className="mt-3 space-y-1.5 text-xs text-slate-500">
+        <p>{plan.name} · live balance from ZeroBounce API</p>
+        <p>
+          {fmtNum(plan.trackedPeriodCredits)} cr tracked this month (
+          {fmtNum(plan.trackedValidations)} validate · {fmtNum(plan.trackedFinderSuccesses)} finder)
+        </p>
+        <p>
+          {fmtNum(storedCredits)} cr stored estimate all time · {fmtNum(pricing.validate)} cr/validate ·{' '}
+          {fmtNum(pricing.finder)} cr/finder
+        </p>
+        {plan.liveCreditsBalance == null ? (
+          <p className="text-slate-400">Set ZEROBOUNCE_API_KEY to show live balance.</p>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
