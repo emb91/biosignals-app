@@ -7,6 +7,10 @@ import {
   type ContactEmailRow,
 } from '@/lib/contact-emails';
 import { shouldOfferFindNewEmailForContact } from '@/lib/contact-profile-display';
+import {
+  recordProviderUsage,
+  zerobounceValidationBillableQuantity,
+} from '@/lib/provider-usage';
 
 type ContactForFinder = {
   id: string;
@@ -15,6 +19,7 @@ type ContactForFinder = {
   last_name: string | null;
   full_name: string | null;
   email: string | null;
+  email_status: string | null;
   email_deliverability: string | null;
   priority_score: number | null;
   crm_is_suppressed: boolean | null;
@@ -118,7 +123,7 @@ export async function POST(
 
     const { data: contact, error: contactError } = await supabase
       .from('contacts')
-      .select('id, user_id, first_name, last_name, full_name, email, email_deliverability, priority_score, crm_is_suppressed, company_name, company_domain, resolved_current_company_name, resolved_current_company_domain')
+      .select('id, user_id, first_name, last_name, full_name, email, email_status, email_deliverability, priority_score, crm_is_suppressed, company_name, company_domain, resolved_current_company_name, resolved_current_company_domain')
       .eq('id', id)
       .eq('user_id', user.id)
       .maybeSingle();
@@ -152,12 +157,17 @@ export async function POST(
         typedContact.priority_score,
         typedContact.email,
         (contactEmailRows ?? []) as ContactEmailRow[],
+        {
+          emailStatus: typedContact.email_status,
+          currentCompanyDomain:
+            typedContact.resolved_current_company_domain || typedContact.company_domain,
+        },
       )
     ) {
       return NextResponse.json(
         {
           error:
-            'Verify the on-file email with ZeroBounce before finding a new address. Email finder is only offered after ZeroBounce rejects existing addresses.',
+            'Verify the on-file email with ZeroBounce before finding a new address, or confirm the contact has a stale email from a prior employer.',
         },
         { status: 409 },
       );
@@ -169,9 +179,26 @@ export async function POST(
       return NextResponse.json({ error: finder.failure_reason || 'ZeroBounce did not find a usable email.' }, { status: 404 });
     }
 
+    recordProviderUsage({
+      userId: user.id,
+      contactId: id,
+      provider: 'zerobounce',
+      eventType: 'zerobounce_email_finder',
+      metadata: { email, domain: finder.domain ?? null },
+    }).catch(() => {});
+
     const validation = await validateWithZeroBounce(email);
     const emailDeliverability = normalizeZeroBounceStatus(validation);
     const checkedAt = new Date().toISOString();
+
+    recordProviderUsage({
+      userId: user.id,
+      contactId: id,
+      provider: 'zerobounce',
+      eventType: 'zerobounce_email_validate',
+      quantity: zerobounceValidationBillableQuantity(validation.status),
+      metadata: { email, status: validation.status ?? null, sub_status: validation.sub_status ?? null },
+    }).catch(() => {});
 
     const category = classifyEnrichedEmail(
       email,

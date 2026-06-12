@@ -29,7 +29,7 @@ import {
 import { formatProvenanceImportedAt } from '@/lib/data-provenance';
 import { ROUTES, withQuery } from '@/lib/routes';
 import Nango from '@nangohq/frontend';
-import { looksLikeEmail, type ContactEmailRow, type EmailVerificationResultItem, EMAIL_DELIVERABILITY_USER_OPTIONS, emailDeliverabilityEditKey } from '@/lib/contact-emails';
+import { looksLikeEmail, type ContactEmailRow, type EmailVerificationResultItem, EMAIL_DELIVERABILITY_USER_OPTIONS, emailDeliverabilityEditKey, contactEmailMayBeOutdated, getContactEmailDeliverabilityDisplayMeta } from '@/lib/contact-emails';
 import { looksLikePhone, type ContactPhoneRow } from '@/lib/contact-phones';
 import {
   buildContactEmailDisplayRows,
@@ -1338,32 +1338,11 @@ const getLeadRefreshStatusMeta = (
   }
 };
 
-function getEmailDeliverabilityMeta(status: string | null | undefined): {
-  label: string;
-  icon: 'check' | 'warning';
-  className: string;
-} {
-  switch (status) {
-    case 'verified':
-      return { label: 'Verified', icon: 'check', className: 'text-emerald-500' };
-    case 'invalid':
-    case 'spamtrap':
-    case 'abuse':
-    case 'do_not_mail':
-      return { label: 'Not deliverable', icon: 'warning', className: 'text-rose-500' };
-    case 'catch-all':
-      return { label: 'Catch-all', icon: 'warning', className: 'text-amber-500' };
-    case 'unknown':
-      return { label: 'Unknown', icon: 'warning', className: 'text-amber-500' };
-    case 'extrapolated':
-    case 'unavailable':
-    case null:
-    case undefined:
-    case '':
-      return { label: 'Not verified', icon: 'warning', className: 'text-amber-500' };
-    default:
-      return { label: status, icon: 'warning', className: 'text-amber-500' };
-  }
+function getEmailDeliverabilityMeta(
+  status: string | null | undefined,
+  options?: { email?: string; companyDomain?: string | null },
+) {
+  return getContactEmailDeliverabilityDisplayMeta(status, options);
 }
 
 function getSortValue(lead: Lead | QueryLead, col: string): string | number {
@@ -3531,48 +3510,121 @@ export function ContactsWorkspace() {
     </div>
   ) : null;
 
-  const emailVerificationBanner = emailVerificationResult ? (
-    <div className={`mb-4 shrink-0 rounded-xl border bg-white px-4 py-3 flex items-start justify-between gap-4 ${emailVerificationResult.error ? 'border-rose-200' : 'border-gray-200'}`}>
-      <div className="flex min-w-0 items-start gap-3">
-        <MailCheck className={`mt-0.5 h-4 w-4 shrink-0 ${emailVerificationResult.error ? 'text-rose-500' : 'text-arcova-teal'}`} />
-        <div className="min-w-0">
-          {emailVerificationResult.error ? (
+  const emailVerificationBanner = emailVerificationResult ? (() => {
+    const r = emailVerificationResult;
+    const notVerifiedCount = r.catchAll + r.unknown;
+    const items = r.items ?? [];
+    const pills: Array<{
+      key: string;
+      count: number;
+      label: string;
+      className: string;
+    }> = [];
+    if (r.verified > 0) {
+      pills.push({
+        key: 'verified',
+        count: r.verified,
+        label: 'Verified',
+        className: 'border-emerald-200/70 bg-emerald-50 text-emerald-700',
+      });
+    }
+    if (r.invalid > 0) {
+      pills.push({
+        key: 'not_deliverable',
+        count: r.invalid,
+        label: 'Not deliverable',
+        className: 'border-rose-200/70 bg-rose-50 text-rose-600',
+      });
+    }
+    if (notVerifiedCount > 0) {
+      pills.push({
+        key: 'not_verified',
+        count: notVerifiedCount,
+        label: 'Not verified',
+        className: 'border-amber-200/70 bg-amber-50 text-amber-700',
+      });
+    }
+    if (r.failed > 0) {
+      pills.push({
+        key: 'failed',
+        count: r.failed,
+        label: 'Could not check',
+        className: 'border-rose-200/70 bg-rose-50 text-rose-600',
+      });
+    }
+    const openItems =
+      emailVerificationDetailOpen != null
+        ? items.filter((item) => item.category === emailVerificationDetailOpen)
+        : null;
+    const toggleVerificationDetail = (key: string) => {
+      setEmailVerificationDetailOpen((cur) => (cur === key ? null : key));
+    };
+
+    return (
+    <div className={`mb-4 shrink-0 rounded-xl border bg-white px-4 py-3 flex items-start justify-between gap-4 ${r.error ? 'border-rose-200' : 'border-gray-200'}`}>
+      <div className="flex min-w-0 flex-1 items-start gap-3">
+        <MailCheck className={`mt-0.5 h-4 w-4 shrink-0 ${r.error ? 'text-rose-500' : 'text-arcova-teal'}`} />
+        <div className="min-w-0 flex-1">
+          {r.error ? (
             <>
               <span className="text-sm font-semibold text-rose-700">Email verification failed</span>
-              <p className="mt-0.5 break-words text-xs text-rose-600">{emailVerificationResult.error}</p>
+              <p className="mt-0.5 break-words text-xs text-rose-600">{r.error}</p>
             </>
           ) : (
             <>
               <span className="text-sm font-semibold text-gray-900">
-                {emailVerificationResult.eligible} email address{emailVerificationResult.eligible !== 1 ? 'es' : ''} checked
+                {r.eligible} email address{r.eligible !== 1 ? 'es' : ''} checked
               </span>
-              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                {emailVerificationResult.verified > 0 && (
-                  <span className="rounded-md border border-emerald-200/70 bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">
-                    <span className="font-semibold tabular-nums">{emailVerificationResult.verified}</span> Verified
-                  </span>
-                )}
-                {emailVerificationResult.invalid > 0 && (
-                  <span className="rounded-md border border-rose-200/70 bg-rose-50 px-2 py-0.5 text-xs text-rose-600">
-                    <span className="font-semibold tabular-nums">{emailVerificationResult.invalid}</span> Not deliverable
-                  </span>
-                )}
-                {(emailVerificationResult.catchAll > 0 || emailVerificationResult.unknown > 0) && (
-                  <span className="rounded-md border border-amber-200/70 bg-amber-50 px-2 py-0.5 text-xs text-amber-700">
-                    <span className="font-semibold tabular-nums">
-                      {emailVerificationResult.catchAll + emailVerificationResult.unknown}
-                    </span>{' '}
-                    Not verified
-                  </span>
-                )}
-                {emailVerificationResult.failed > 0 && (
-                  <span className="rounded-md border border-rose-200/70 bg-rose-50 px-2 py-0.5 text-xs text-rose-600">
-                    <span className="font-semibold tabular-nums">{emailVerificationResult.failed}</span> Could not check
-                  </span>
-                )}
-              </div>
+              {pills.length > 0 && (
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  {pills.map((pill) => {
+                    const pillItems = items.filter((item) => item.category === pill.key);
+                    const clickable = pillItems.length > 0;
+                    const open = clickable && emailVerificationDetailOpen === pill.key;
+                    const inner = (
+                      <>
+                        <span className="font-semibold tabular-nums">{pill.count}</span> {pill.label}
+                        {clickable && (
+                          <ChevronDown className={`h-3 w-3 self-center opacity-70 transition-transform ${open ? 'rotate-180' : ''}`} />
+                        )}
+                      </>
+                    );
+                    return clickable ? (
+                      <button
+                        key={pill.key}
+                        type="button"
+                        onClick={() => toggleVerificationDetail(pill.key)}
+                        className={`inline-flex items-baseline gap-1 rounded-md border px-2 py-0.5 text-xs transition-colors hover:brightness-95 ${pill.className}`}
+                      >
+                        {inner}
+                      </button>
+                    ) : (
+                      <span
+                        key={pill.key}
+                        className={`inline-flex items-baseline gap-1 rounded-md border px-2 py-0.5 text-xs ${pill.className}`}
+                      >
+                        {inner}
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+              {openItems && openItems.length > 0 && (
+                <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                  <ul className="space-y-1">
+                    {openItems.map((item, i) => (
+                      <li key={`${item.contactId}-${item.email}-${i}`} className="text-xs text-gray-600">
+                        <span className="font-medium text-gray-800">{item.contactName || 'Unknown contact'}</span>
+                        {item.companyName && <span className="text-gray-400"> · {item.companyName}</span>}
+                        {item.email && <span className="text-gray-500"> · {item.email}</span>}
+                        {item.error && <span className="text-rose-600"> · {item.error}</span>}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <p className="mt-1 text-xs text-gray-500">
-                Checked email verification on active contacts above {Math.round(emailVerificationResult.priorityMin * 100)}% priority.
+                Checked email verification on active contacts above {Math.round(r.priorityMin * 100)}% priority.
               </p>
             </>
           )}
@@ -3580,14 +3632,18 @@ export function ContactsWorkspace() {
       </div>
       <button
         type="button"
-        onClick={() => setEmailVerificationResult(null)}
+        onClick={() => {
+          setEmailVerificationResult(null);
+          setEmailVerificationDetailOpen(null);
+        }}
         className="mt-0.5 shrink-0 text-gray-400 transition-colors hover:text-gray-600"
         aria-label="Dismiss"
       >
         <X className="h-4 w-4" />
       </button>
     </div>
-  ) : null;
+    );
+  })() : null;
 
   const hubspotPullBanner = hubspotPullResult ? (() => {
     const r = hubspotPullResult;
@@ -4794,7 +4850,12 @@ export function ContactsWorkspace() {
                                               );
                                             }
                                             return emailRows.map((r, i) => {
-                                              const meta = getEmailDeliverabilityMeta(r.email_deliverability);
+                                              const meta = getEmailDeliverabilityMeta(r.email_deliverability, {
+                                                email: r.email,
+                                                companyDomain:
+                                                  selectedLead.resolved_current_company_domain ??
+                                                  selectedLead.company_domain,
+                                              });
                                               const VerificationIcon = meta.icon === 'check' ? Check : AlertTriangle;
                                               return (
                                                 <div
@@ -4818,6 +4879,12 @@ export function ContactsWorkspace() {
                                           displayContactPriority(selectedLead),
                                           selectedLead.email,
                                           selectedLead.contact_emails,
+                                          {
+                                            emailStatus: selectedLead.email_status,
+                                            currentCompanyDomain:
+                                              selectedLead.resolved_current_company_domain ??
+                                              selectedLead.company_domain,
+                                          },
                                         ) && (
                                           <div className="mt-3 space-y-1.5">
                                             <div className="flex flex-wrap gap-2">
@@ -4864,11 +4931,14 @@ export function ContactsWorkspace() {
                                         )}
                                       </div>
                                     </div>
-                                    {selectedLead.email &&
-                                      (selectedLead.email_status === 'candidate' ||
-                                        selectedLead.email_status === 'stale_suspected') && (
-                                        <p className="mt-4 text-xs leading-snug text-[#7d909a]">
-                                          One or more emails may be outdated.
+                                    {selectedLead.email && contactEmailMayBeOutdated(selectedLead.email_status) && (
+                                        <p className="mt-4 flex items-start gap-1.5 text-xs leading-snug text-amber-700">
+                                          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                                          <span>
+                                            {selectedLead.email_status === 'stale_suspected'
+                                              ? 'This email is from a prior employer and is likely to bounce. Find a new work email before outreach.'
+                                              : 'One or more emails may be outdated. Verify or find a current work email before outreach.'}
+                                          </span>
                                         </p>
                                       )}
                                   </div>

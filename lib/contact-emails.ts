@@ -133,6 +133,90 @@ export function isTrustedVerifiedEmailRow(row: EmailDeliverabilityRow): boolean 
   return isZeroBounceDeliverabilityProvider(row.email_deliverability_provider) || row.email_deliverability_provider === 'user';
 }
 
+export function isEmailDomainAlignedWithCompany(
+  email: string | null | undefined,
+  companyDomain: string | null | undefined,
+): boolean {
+  const emailDomain = extractDomainFromEmail(email || '');
+  const company = normalizeCompanyDomain(companyDomain);
+  return Boolean(emailDomain && company && emailDomain === company);
+}
+
+/** Contact-level heuristic: on-file email domain does not match resolved current company. */
+export function contactHasStaleEmailStatus(emailStatus: string | null | undefined): boolean {
+  return emailStatus === 'stale_suspected';
+}
+
+/** Shown in the contact panel when enrichment cannot confirm the email is still current. */
+export function contactEmailMayBeOutdated(emailStatus: string | null | undefined): boolean {
+  return emailStatus === 'stale_suspected' || emailStatus === 'candidate';
+}
+
+/** Verified with ZeroBounce/user and aligned to the resolved current company domain. */
+export function isTrustedCurrentCompanyEmailRow(
+  row: EmailDeliverabilityRow,
+  companyDomain: string | null | undefined,
+): boolean {
+  return isTrustedVerifiedEmailRow(row) && isEmailDomainAlignedWithCompany(row.email, companyDomain);
+}
+
+/** Deliverability was verified, but the domain belongs to a prior employer. */
+export function isVerifiedButOutdatedEmailRow(
+  row: EmailDeliverabilityRow,
+  companyDomain: string | null | undefined,
+): boolean {
+  if (!isTrustedVerifiedEmailRow(row)) return false;
+  if (!normalizeCompanyDomain(companyDomain)) return false;
+  return !isEmailDomainAlignedWithCompany(row.email, companyDomain);
+}
+
+export type EmailDeliverabilityDisplayMeta = {
+  label: string;
+  icon: 'check' | 'warning';
+  className: string;
+};
+
+/** UI badge for a contact email row; downgrades verified when the domain is stale. */
+export function getContactEmailDeliverabilityDisplayMeta(
+  deliverability: string | null | undefined,
+  options?: {
+    email?: string;
+    companyDomain?: string | null;
+  },
+): EmailDeliverabilityDisplayMeta {
+  const companyDomain = normalizeCompanyDomain(options?.companyDomain);
+  if (
+    options?.email &&
+    companyDomain &&
+    deliverability === 'verified' &&
+    !isEmailDomainAlignedWithCompany(options.email, companyDomain)
+  ) {
+    return { label: 'Outdated', icon: 'warning', className: 'text-amber-600' };
+  }
+
+  switch (deliverability) {
+    case 'verified':
+      return { label: 'Verified', icon: 'check', className: 'text-emerald-500' };
+    case 'invalid':
+    case 'spamtrap':
+    case 'abuse':
+    case 'do_not_mail':
+      return { label: 'Not deliverable', icon: 'warning', className: 'text-rose-500' };
+    case 'catch-all':
+      return { label: 'Catch-all', icon: 'warning', className: 'text-amber-500' };
+    case 'unknown':
+      return { label: 'Unknown', icon: 'warning', className: 'text-amber-500' };
+    case 'extrapolated':
+    case 'unavailable':
+    case null:
+    case undefined:
+    case '':
+      return { label: 'Not verified', icon: 'warning', className: 'text-amber-500' };
+    default:
+      return { label: deliverability, icon: 'warning', className: 'text-amber-500' };
+  }
+}
+
 /** Apollo-sourced or never checked — verify the on-file address with ZeroBounce first. */
 export function emailRowAwaitingZeroBounceVerification(row: EmailDeliverabilityRow): boolean {
   if (!looksLikeEmail(row.email)) return false;
@@ -162,7 +246,7 @@ export function emailRowHasUserNonValidOverride(row: EmailDeliverabilityRow): bo
 }
 
 /** Minimum priority (strictly above) for bulk email verification and find-new-email. */
-export const DEFAULT_EMAIL_VERIFICATION_PRIORITY_MIN = 0.3;
+export const DEFAULT_EMAIL_VERIFICATION_PRIORITY_MIN = 0.6;
 
 export function meetsEmailVerificationPriorityThreshold(
   priorityScore: number | null | undefined,

@@ -5,13 +5,17 @@
 import type { ContactEmailCategory, ContactEmailRow } from './contact-emails';
 import {
   DEFAULT_EMAIL_VERIFICATION_PRIORITY_MIN,
+  contactHasStaleEmailStatus,
   emailRowAwaitingZeroBounceVerification,
   emailRowHasUserNonValidOverride,
   emailRowHasZeroBounceNonValidResult,
   emailsEqual,
+  isEmailDomainAlignedWithCompany,
+  isTrustedCurrentCompanyEmailRow,
   isTrustedVerifiedEmailRow,
   looksLikeEmail,
   meetsEmailVerificationPriorityThreshold,
+  normalizeCompanyDomain,
 } from './contact-emails';
 
 const CATEGORY_ORDER: { cat: ContactEmailCategory; label: string }[] = [
@@ -192,18 +196,40 @@ export function buildContactEmailDisplayRows(
 }
 
 /**
- * Offer email finder only when ZeroBounce (or the user) has rejected on-file addresses,
- * or when there is no usable email yet. Apollo "not verified" still needs ZeroBounce validate first.
+ * Offer email finder when ZeroBounce (or the user) has rejected on-file addresses,
+ * when there is no usable email yet, or when verified emails belong to a prior employer.
+ * Apollo "not verified" still needs ZeroBounce validate first.
  */
 export function shouldOfferFindNewEmailForContact(
   priorityScore: number | null | undefined,
   primaryEmail: string | null | undefined,
   contactEmails: ContactEmailRow[] | null | undefined,
-  priorityMin: number = DEFAULT_EMAIL_VERIFICATION_PRIORITY_MIN,
+  options?: {
+    emailStatus?: string | null;
+    currentCompanyDomain?: string | null;
+    priorityMin?: number;
+  },
 ): boolean {
+  const priorityMin = options?.priorityMin ?? DEFAULT_EMAIL_VERIFICATION_PRIORITY_MIN;
   if (!meetsEmailVerificationPriorityThreshold(priorityScore, priorityMin)) return false;
 
   const emailRows = buildContactEmailDisplayRows(primaryEmail, contactEmails, 'full');
+  const currentCompanyDomain = normalizeCompanyDomain(options?.currentCompanyDomain);
+
+  if (emailRows.some((row) => isTrustedCurrentCompanyEmailRow(row, currentCompanyDomain))) {
+    return false;
+  }
+
+  const hasEmailAtCurrentCompany = currentCompanyDomain
+    ? emailRows.some(
+        (row) => looksLikeEmail(row.email) && isEmailDomainAlignedWithCompany(row.email, currentCompanyDomain),
+      )
+    : false;
+
+  if (contactHasStaleEmailStatus(options?.emailStatus) && !hasEmailAtCurrentCompany) {
+    return true;
+  }
+
   if (emailRows.some(isTrustedVerifiedEmailRow)) return false;
 
   const usableRows = emailRows.filter((row) => looksLikeEmail(row.email));

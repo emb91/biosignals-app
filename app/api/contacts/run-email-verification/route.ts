@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 import { classifyEnrichedEmail, emailsEqual, looksLikeEmail, shouldRunAutomatedEmailVerification, DEFAULT_EMAIL_VERIFICATION_PRIORITY_MIN, emailVerificationBannerCategory, type EmailVerificationResultItem } from '@/lib/contact-emails';
+import {
+  recordProviderUsage,
+  zerobounceValidationBillableQuantity,
+} from '@/lib/provider-usage';
 
 type ContactForVerification = {
   id: string;
@@ -293,6 +297,13 @@ export async function POST(request: Request) {
           if (seen.has(key)) continue;
           seen.add(key);
           finderFound += 1;
+          recordProviderUsage({
+            userId: user.id,
+            contactId: contact.id,
+            provider: 'zerobounce',
+            eventType: 'zerobounce_email_finder',
+            metadata: { email: foundEmail, domain: found?.domain ?? null },
+          }).catch(() => {});
           emailsToVerify.push({
             contactId: contact.id,
             contactEmailId: null,
@@ -344,6 +355,20 @@ export async function POST(request: Request) {
         const verification = await verifyWithZeroBounce(email);
         const emailDeliverability = normalizeZeroBounceStatus(verification);
         const checkedAt = new Date().toISOString();
+
+        recordProviderUsage({
+          userId: user.id,
+          contactId: item.contactId,
+          provider: 'zerobounce',
+          eventType: 'zerobounce_email_validate',
+          quantity: zerobounceValidationBillableQuantity(verification.status),
+          metadata: {
+            email,
+            status: verification.status ?? null,
+            sub_status: verification.sub_status ?? null,
+            source: item.source,
+          },
+        }).catch(() => {});
 
         if (item.contactEmailId) {
           const { error: updateEmailError } = await supabase
