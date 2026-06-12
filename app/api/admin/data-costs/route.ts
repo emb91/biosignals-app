@@ -7,6 +7,9 @@ import {
   APIFY_COMPANY_SCRAPE_USD,
   APOLLO_CREDITS,
   APOLLO_PLAN,
+  ZEROBOUNCE_CREDITS,
+  ZEROBOUNCE_PLAN,
+  fetchZeroBounceCreditsBalance,
 } from '@/lib/provider-usage';
 
 type UsageByUserRow = {
@@ -17,6 +20,8 @@ type UsageByUserRow = {
   apollo_org_enrichments: number;
   phone_reveal_requests: number;
   phone_reveals_received: number;
+  zerobounce_email_validations: number;
+  zerobounce_email_finder_successes: number;
 };
 
 type ProviderEventRow = {
@@ -53,6 +58,10 @@ function num(value: unknown): number {
     return Number.isFinite(parsed) ? parsed : 0;
   }
   return 0;
+}
+
+function currentCalendarMonthStart(now: Date): string {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
 }
 
 function currentBillingPeriodStart(now: Date, anchorDay: number, anchorUtcHour: number): string {
@@ -94,8 +103,9 @@ export async function GET() {
       new Date(baselineRecordedAt).getTime() >= new Date(periodStart).getTime() &&
       new Date(baselineRecordedAt).getTime() <= now.getTime();
     const meteredSince = baselineApplies ? baselineRecordedAt : periodStart;
+    const zeroBouncePeriodStart = currentCalendarMonthStart(now);
 
-    const [usageRes, recentRes, firstEventRes, usersRes, monthlyApolloRes, monthlyAcquisitionApolloRes] =
+    const [usageRes, recentRes, firstEventRes, usersRes, monthlyApolloRes, monthlyAcquisitionApolloRes, monthlyZeroBounceRes, liveZeroBounceCredits] =
       await Promise.all([
         admin.from('data_provider_usage_by_user').select('*'),
         admin
@@ -119,6 +129,12 @@ export async function GET() {
           .select('event_type, quantity, internal_credit_units, created_at')
           .in('event_type', [...APOLLO_ACQUISITION_EVENT_TYPES])
           .gte('created_at', meteredSince),
+        admin
+          .from('provider_usage_events')
+          .select('event_type, quantity, credit_units')
+          .eq('provider', 'zerobounce')
+          .gte('created_at', zeroBouncePeriodStart),
+        fetchZeroBounceCreditsBalance(),
       ]);
 
     if (usageRes.error) throw usageRes.error;
@@ -126,6 +142,22 @@ export async function GET() {
     if (firstEventRes.error) throw firstEventRes.error;
     if (monthlyApolloRes.error) throw monthlyApolloRes.error;
     if (monthlyAcquisitionApolloRes.error) throw monthlyAcquisitionApolloRes.error;
+    if (monthlyZeroBounceRes.error) throw monthlyZeroBounceRes.error;
+
+    const zeroBounceRows = (monthlyZeroBounceRes.data ?? []) as Array<{
+      event_type: string;
+      quantity: number;
+      credit_units: number | null;
+    }>;
+    const trackedZeroBounceCredits = zeroBounceRows.reduce((sum, row) => sum + num(row.credit_units), 0);
+    const trackedZeroBounceValidations = zeroBounceRows.reduce((sum, row) => {
+      if (row.event_type === 'zerobounce_email_validate') return sum + num(row.quantity);
+      return sum;
+    }, 0);
+    const trackedZeroBounceFinderSuccesses = zeroBounceRows.reduce((sum, row) => {
+      if (row.event_type === 'zerobounce_email_finder') return sum + num(row.quantity);
+      return sum;
+    }, 0);
 
     const directApolloCredits = (monthlyApolloRes.data ?? []).reduce(
       (sum, row) => sum + num(row.credit_units),
@@ -167,6 +199,11 @@ export async function GET() {
           apolloPersonEnrichments * APOLLO_CREDITS.person_enrichment +
           apolloOrgEnrichments * APOLLO_CREDITS.company_enrichment +
           phoneReveals * APOLLO_CREDITS.phone_reveal;
+        const zerobounceValidations = num(row.zerobounce_email_validations);
+        const zerobounceFinderSuccesses = num(row.zerobounce_email_finder_successes);
+        const zerobounceCredits =
+          zerobounceValidations * ZEROBOUNCE_CREDITS.email_validate +
+          zerobounceFinderSuccesses * ZEROBOUNCE_CREDITS.email_finder;
 
         return {
           userId: row.user_id,
@@ -178,9 +215,12 @@ export async function GET() {
           apolloOrgEnrichments,
           phoneReveals,
           apolloCredits: Math.round(apolloCredits * 100) / 100,
+          zerobounceValidations,
+          zerobounceFinderSuccesses,
+          zerobounceCredits: Math.round(zerobounceCredits * 100) / 100,
         };
       })
-      .sort((a, b) => b.apifyCostUsd - a.apifyCostUsd || b.apolloCredits - a.apolloCredits);
+      .sort((a, b) => b.apifyCostUsd - a.apifyCostUsd || b.apolloCredits - a.apolloCredits || b.zerobounceCredits - a.zerobounceCredits);
 
     const totals = byUser.reduce(
       (acc, u) => {
@@ -191,15 +231,20 @@ export async function GET() {
         acc.apollo.orgEnrichments += u.apolloOrgEnrichments;
         acc.apollo.phoneReveals += u.phoneReveals;
         acc.apollo.credits += u.apolloCredits;
+        acc.zerobounce.validations += u.zerobounceValidations;
+        acc.zerobounce.finderSuccesses += u.zerobounceFinderSuccesses;
+        acc.zerobounce.credits += u.zerobounceCredits;
         return acc;
       },
       {
         apify: { profileScrapes: 0, companyScrapes: 0, costUsd: 0 },
         apollo: { personEnrichments: 0, orgEnrichments: 0, phoneReveals: 0, credits: 0 },
+        zerobounce: { validations: 0, finderSuccesses: 0, credits: 0 },
       },
     );
     totals.apify.costUsd = Math.round(totals.apify.costUsd * 1_000_000) / 1_000_000;
     totals.apollo.credits = Math.round(totals.apollo.credits * 100) / 100;
+    totals.zerobounce.credits = Math.round(totals.zerobounce.credits * 100) / 100;
 
     const recentRows = (recentRes.data ?? []) as ProviderEventRow[];
     const recent = recentRows.map((row) => ({
@@ -225,6 +270,10 @@ export async function GET() {
           company: APOLLO_CREDITS.company_enrichment,
           phoneReveal: APOLLO_CREDITS.phone_reveal,
         },
+        zerobounceCredits: {
+          validate: ZEROBOUNCE_CREDITS.email_validate,
+          finder: ZEROBOUNCE_CREDITS.email_finder,
+        },
       },
       apolloPlan: {
         name: APOLLO_PLAN.name,
@@ -242,6 +291,14 @@ export async function GET() {
         monthStart: periodStart,
         billingCycleAnchorDay: APOLLO_PLAN.billingCycleAnchorDay,
         billingCycleAnchorUtcHour: APOLLO_PLAN.billingCycleAnchorUtcHour,
+      },
+      zerobouncePlan: {
+        name: ZEROBOUNCE_PLAN.name,
+        liveCreditsBalance: liveZeroBounceCredits,
+        trackedPeriodCredits: Math.round(trackedZeroBounceCredits * 100) / 100,
+        trackedValidations: trackedZeroBounceValidations,
+        trackedFinderSuccesses: trackedZeroBounceFinderSuccesses,
+        periodStart: zeroBouncePeriodStart,
       },
       totals: { ...totals, users: byUser.length },
       byUser,

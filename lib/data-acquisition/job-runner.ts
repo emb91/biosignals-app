@@ -1,6 +1,7 @@
 import { createAdminClient } from '@/lib/supabase-admin';
 import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
 import { processQueuedRowsInBackground, type QueuedRow } from '@/lib/import-queue';
+import type { ImportProgressCallback } from '@/lib/import-ingestion';
 import {
   DEFAULT_CONTACTS_PER_COMPANY,
   DEFAULT_MONTHLY_CREDIT_LIMIT,
@@ -87,7 +88,10 @@ type DbCompanyRow = {
 
 // Jobs in these states own the user's single execution slot. The FIFO queue
 // only starts the next 'queued' job when nothing is in one of these states.
-const ACTIVE_JOB_STATUSES = ['discovering', 'importing', 'enriching'] as const;
+const ACTIVE_JOB_STATUSES = ['discovering', 'processing', 'importing', 'enriching'] as const;
+
+/** Chunk imports so the /data pipeline rail can show stepped progress like the demo. */
+const IMPORT_PROGRESS_CHUNKS = 4;
 
 /** Max owned-contact exclusion entries passed to a single Apollo people search. */
 const MAX_EXCLUSIONS_PER_CALL = 100;
@@ -548,10 +552,6 @@ async function ingestPeopleAndRunImportPipeline(
     })
     .eq('id', job.upload_batch_id);
 
-  if (rawRows.length > 0) {
-    await meter('apollo_person_enrichment', rawRows.length, { batchId: job.upload_batch_id, ...usageMeta });
-  }
-
   const queuedRows: QueuedRow[] = (insertedRows || []).map((row) => ({
     id: row.id as string,
     full_name: row.full_name as string | null,
@@ -561,24 +561,48 @@ async function ingestPeopleAndRunImportPipeline(
     raw_data: row.raw_data as Record<string, unknown>,
   }));
 
-  await updateJob(job.id, { status: rawRows.length > 0 ? 'enriching' : 'complete' });
+  if (queuedRows.length === 0) {
+    await updateJob(job.id, {
+      status: 'complete',
+      completed_at: new Date().toISOString(),
+      completion_note: completionNote,
+    });
+    return;
+  }
 
-  if (queuedRows.length > 0) {
+  await updateJob(job.id, { status: 'enriching' });
+
+  if (rawRows.length > 0) {
+    await meter('apollo_person_enrichment', rawRows.length, { batchId: job.upload_batch_id, ...usageMeta });
+  }
+
+  const chunkSize = Math.max(1, Math.ceil(queuedRows.length / IMPORT_PROGRESS_CHUNKS));
+  let importPhaseStarted = false;
+
+  const onProgress: ImportProgressCallback = async (event) => {
+    if (job.request_type !== 'expand_companies' && event.type === 'imported_company') return;
+    await meter(
+      event.type,
+      event.quantity,
+      { batchId: job.upload_batch_id, ...usageMeta, ...event.metadata },
+      'arcova',
+    );
+  };
+
+  for (let i = 0; i < queuedRows.length; i += chunkSize) {
+    const chunk = queuedRows.slice(i, i + chunkSize);
     await processQueuedRowsInBackground({
-      queuedRows,
+      queuedRows: chunk,
       batchId: job.upload_batch_id!,
       userId: job.user_id,
+      onBeforeIngest: async () => {
+        if (!importPhaseStarted) {
+          importPhaseStarted = true;
+          await updateJob(job.id, { status: 'importing' });
+        }
+      },
+      onProgress,
     });
-
-    const { count: importedContacts } = await admin
-      .from('contacts')
-      .select('id', { count: 'exact', head: true })
-      .eq('user_id', job.user_id)
-      .eq('batch_id', job.upload_batch_id);
-
-    if (importedContacts && importedContacts > 0) {
-      await meter('imported_contact', importedContacts, { batchId: job.upload_batch_id, ...usageMeta }, 'arcova');
-    }
   }
 
   await updateJob(job.id, {
@@ -952,7 +976,7 @@ async function runContactsAtCompanyJob(
   const capKind = stoppedByGuard ? guard.capReached() : null;
   const note = capKind ? shortfallNote(capKind, uniquePeople.length, gap, 'contacts') : null;
 
-  await updateJob(job.id, { status: 'importing' });
+  await updateJob(job.id, { status: 'processing' });
   await ingestPeopleAndRunImportPipeline(admin, job, uniquePeople, { companyId: companyContext.id }, meter, note);
 }
 
@@ -1057,7 +1081,7 @@ async function runContactsAtAccountsJob(
   const capKind = stoppedByGuard ? guard.capReached() : null;
   const note = capKind ? shortfallNote(capKind, uniquePeople.length, requestedTotal, 'contacts') : null;
 
-  await updateJob(job.id, { status: 'importing' });
+  await updateJob(job.id, { status: 'processing' });
   await ingestPeopleAndRunImportPipeline(admin, job, uniquePeople, { requestType }, meter, note);
 }
 
@@ -1176,7 +1200,7 @@ async function runExpandCompaniesJob(
     );
   }
 
-  await updateJob(job.id, { status: 'importing' });
+  await updateJob(job.id, { status: 'processing' });
 
   const peopleRecipe = buildApolloPeopleSearchRecipe(personas);
   const targetContactCount =

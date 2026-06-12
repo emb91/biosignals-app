@@ -2,8 +2,11 @@ import { NextResponse } from 'next/server';
 import {
   fetchContactEmailsForContacts,
   looksLikeEmail,
+  normalizeUserEmailDeliverability,
+  syncEmailDeliverabilityOverrides,
   syncUserAddedContactEmails,
   syncPrimaryEmailAsUserRowIfNeeded,
+  type EmailDeliverabilityOverride,
 } from '@/lib/contact-emails';
 import {
   fetchContactPhonesForContacts,
@@ -30,6 +33,8 @@ type LeadUpdateBody = {
   user_secondary_emails?: unknown;
   /** Phones with category `user` — manual entry block on the contact panel. */
   user_phones?: unknown;
+  /** Manual deliverability overrides keyed by email address. */
+  email_deliverability_overrides?: unknown;
 };
 
 const normalizeString = (value: unknown): string | null => {
@@ -86,7 +91,7 @@ export async function GET(
       .select(
         // Note: matched_icp_id + company_fit_score moved to user_companies in
         // Phase 1d; not selectable on the canonical companies row.
-        'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, headline, email, email_status, linkedin_url, profile_photo_url, profile_photo_cached, company_name, company_domain, company_linkedin_url, location, city, country, contact_bio, contact_panel_summary, contact_fit_summary, fit_score, readiness_score, overall_fit_score, contact_fit_score, priority_score, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, enrichment_refresh_status, enrichment_refresh_finished_at, profile_enrichment_status, profile_enrichment_completed_at, linkedin_resolution_status, source, created_at, updated_at, company_id, companies(id, company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, sub_industry, employee_count, employee_range, company_size_bucket, founded_year, headquarters_city, headquarters_state, headquarters_country, specialties, products_services, services, technologies, company_type, company_type_display, platform_category, funding_stage, funding_status_label, total_funding_usd, latest_funding_date, funding_data_source, funding_resolution_summary, therapeutic_areas, modalities, development_stages, clinical_stage, last_enriched_at)'
+        'id, full_name, first_name, last_name, job_title, job_title_standardised, seniority_level, business_area, headline, email, email_status, email_deliverability, linkedin_url, profile_photo_url, profile_photo_cached, company_name, company_domain, company_linkedin_url, location, city, country, contact_bio, contact_panel_summary, contact_fit_summary, fit_score, readiness_score, overall_fit_score, contact_fit_score, priority_score, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, resolved_employment_history, enrichment_refresh_status, enrichment_refresh_finished_at, profile_enrichment_status, profile_enrichment_completed_at, linkedin_resolution_status, source, created_at, updated_at, company_id, companies(id, company_name, domain, website, linkedin_url, description, bio_summary, tagline, logo_url, follower_count, industry, sub_industry, employee_count, employee_range, company_size_bucket, founded_year, headquarters_city, headquarters_state, headquarters_country, specialties, products_services, services, technologies, company_type, company_type_display, platform_category, funding_stage, funding_status_label, total_funding_usd, latest_funding_date, funding_data_source, funding_resolution_summary, therapeutic_areas, modalities, development_stages, clinical_stage, last_enriched_at)'
       )
       .eq('user_id', user.id)
       .eq('id', id)
@@ -258,6 +263,43 @@ export async function PUT(
       console.error('syncPrimaryEmailAsUserRowIfNeeded failed:', syncErr);
       return NextResponse.json(
         { error: `Could not sync primary email: ${messageFromUnknown(syncErr)}` },
+        { status: 500 },
+      );
+    }
+
+    const emailDeliverabilityOverrides: EmailDeliverabilityOverride[] = [];
+    if (Array.isArray(body.email_deliverability_overrides)) {
+      for (const item of body.email_deliverability_overrides) {
+        if (!item || typeof item !== 'object') continue;
+        const row = item as Record<string, unknown>;
+        const email = normalizeString(row.email);
+        if (!email || !looksLikeEmail(email)) continue;
+        if (!('email_deliverability' in row)) continue;
+        const deliverability =
+          row.email_deliverability == null || row.email_deliverability === ''
+            ? null
+            : normalizeUserEmailDeliverability(row.email_deliverability);
+        if (row.email_deliverability != null && row.email_deliverability !== '' && deliverability == null) {
+          return NextResponse.json(
+            { error: 'Each email status override must be a supported deliverability value.' },
+            { status: 400 },
+          );
+        }
+        emailDeliverabilityOverrides.push({ email, email_deliverability: deliverability });
+      }
+    }
+
+    try {
+      await syncEmailDeliverabilityOverrides(supabase, {
+        contactId: id,
+        userId: user.id,
+        primaryEmail: normalizeString(body.email),
+        overrides: emailDeliverabilityOverrides,
+      });
+    } catch (deliverabilityErr) {
+      console.error('syncEmailDeliverabilityOverrides failed:', deliverabilityErr);
+      return NextResponse.json(
+        { error: `Could not save email status overrides: ${messageFromUnknown(deliverabilityErr)}` },
         { status: 500 },
       );
     }

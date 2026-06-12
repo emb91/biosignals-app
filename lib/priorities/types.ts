@@ -36,4 +36,9 @@ export interface TodayPriority {
   cta: string;
   /** When >1, render a small count pill on the agenda row. */
   count?: number;
+  /** Optional source-specific metadata for direct actions on /today. */
+  action?: {
+    type: 'reenrich-contacts';
+    contactIds: string[];
+  };
 }

@@ -90,6 +90,7 @@ type AgendaItem = {
   detail: string;
   href: string;
   cta: string;
+  action?: TodayPriority['action'];
 };
 
 const hasSignals = (signals?: string[] | null) => Array.isArray(signals) && signals.length > 0;
@@ -538,6 +539,7 @@ export default function BriefingPage() {
     contacts_skipped: number;
   } | null>(null);
   const [doneTaskIds, setDoneTaskIds] = useState<Set<string>>(() => new Set());
+  const [busyTaskIds, setBusyTaskIds] = useState<Set<string>>(() => new Set());
   const [agentBusy, setAgentBusy] = useState(false);
   const [expandedSignalRows, setExpandedSignalRows] = useState<Set<string>>(new Set());
   const [clock, setClock] = useState(() => new Date());
@@ -593,14 +595,53 @@ export default function BriefingPage() {
     });
   };
 
-  const openTask = (item: AgendaItem) => {
+  const markTaskDone = (item: AgendaItem) => {
     setDoneTaskIds((current) => {
       const next = new Set(current);
       next.add(item.id);
       persistDoneIds(next);
       return next;
     });
+  };
+
+  const openTask = (item: AgendaItem) => {
+    markTaskDone(item);
     router.push(item.href);
+  };
+
+  const runAgendaAction = async (item: AgendaItem) => {
+    if (item.action?.type !== 'reenrich-contacts') {
+      openTask(item);
+      return;
+    }
+
+    const contactIds = item.action.contactIds.filter(Boolean);
+    if (contactIds.length === 0) {
+      openTask(item);
+      return;
+    }
+
+    setBusyTaskIds((current) => new Set(current).add(item.id));
+    try {
+      const results = await Promise.allSettled(
+        contactIds.map((id) => fetch(`/api/enrich/${encodeURIComponent(id)}`, { method: 'POST' })),
+      );
+      const okCount = results.filter((result) => result.status === 'fulfilled' && result.value.ok).length;
+      if (okCount > 0) {
+        markTaskDone(item);
+        void fetchEnrichmentJobs();
+        const priorities = await fetchTodayPriorities();
+        setAggregatedPriorities(priorities);
+      }
+    } catch (error) {
+      console.error('Error re-enriching failed contacts:', error);
+    } finally {
+      setBusyTaskIds((current) => {
+        const next = new Set(current);
+        next.delete(item.id);
+        return next;
+      });
+    }
   };
 
   const fetchEnrichmentJobs = useCallback(async () => {
@@ -637,7 +678,8 @@ export default function BriefingPage() {
           fetch(ROUTES.api.icps),
           fetch('/api/contacts'),
           supabase.from('raw_uploads').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
-          fetch('/api/leads?pageSize=5&page=1'),
+          // Over-fetch so teammate-worked leads can be excluded and still leave a top 5.
+          fetch('/api/leads?pageSize=15&page=1'),
           fetch('/api/hubspot/sync-log'),
           fetch('/api/accounts/icp-coverage'),
           fetch('/api/pipeline/icp-cards'),
@@ -656,8 +698,30 @@ export default function BriefingPage() {
 
         if (topLeadsRes.ok) {
           const leadJson = (await topLeadsRes.json()) as { data?: Array<Record<string, unknown>> };
+          let leadRows = (leadJson.data ?? []).filter((lead) => typeof lead.id === 'string');
+
+          // Never recommend a lead a teammate is already working — two reps must not be
+          // pointed at the same person. Best-effort: if the lookup fails, show unfiltered.
+          try {
+            const ids = leadRows.map((lead) => lead.id as string);
+            if (ids.length > 0) {
+              const actRes = await fetch('/api/org/outreach-activity', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contactIds: ids }),
+              });
+              if (actRes.ok) {
+                const actJson = (await actRes.json()) as { byContactId?: Record<string, unknown> };
+                const taken = new Set(Object.keys(actJson.byContactId ?? {}));
+                leadRows = leadRows.filter((lead) => !taken.has(lead.id as string));
+              }
+            }
+          } catch {
+            /* best-effort */
+          }
+
           setTopLeads(
-            (leadJson.data ?? []).slice(0, 5).map((lead) => {
+            leadRows.slice(0, 5).map((lead) => {
               const name =
                 (typeof lead.full_name === 'string' && lead.full_name.trim()
                   ? lead.full_name
@@ -1045,6 +1109,7 @@ export default function BriefingPage() {
       detail: p.detail,
       href: p.href,
       cta: p.cta,
+      action: p.action,
     })),
     ...(showImportReady
       ? [{
@@ -1056,14 +1121,6 @@ export default function BriefingPage() {
           cta: 'Open leads',
         }]
       : []),
-    ...failedJobs.slice(0, 2).map((job, index) => ({
-      id: job.id,
-      label: String(index + 1 + (nextStep ? 1 : 0) + (showImportReady ? 1 : 0)),
-      title: 'Review enrichment failure',
-      detail: `${job.title}${job.subtitle ? ` at ${job.subtitle}` : ''} needs a retry or inspection.`,
-      href: job.href,
-      cta: 'Inspect',
-    })),
     ...(healthIssues.length > 0 && !nextStep
       ? [{
           id: 'pipeline-health',
@@ -1251,9 +1308,20 @@ export default function BriefingPage() {
                             <span className="bt-p-title">{item.title}</span>
                             <span className="bt-p-detail">{item.detail}</span>
                           </button>
-                          <button type="button" className="bt-p-cta" onClick={() => openTask(item)}>
-                            {item.cta}
-                            <ArrowRight className="h-3 w-3" strokeWidth={2} />
+                          <button
+                            type="button"
+                            className="bt-p-cta"
+                            onClick={() => void runAgendaAction(item)}
+                            disabled={busyTaskIds.has(item.id)}
+                          >
+                            {busyTaskIds.has(item.id) ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <>
+                                {item.cta}
+                                <ArrowRight className="h-3 w-3" strokeWidth={2} />
+                              </>
+                            )}
                           </button>
                         </li>
                       ))}

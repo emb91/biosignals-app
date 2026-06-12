@@ -25,6 +25,7 @@ import {
   LemlistError,
 } from '@/lib/lemlist';
 import { getHubSpotTokenForUser, pushOutreachStatusByEmail } from '@/lib/hubspot';
+import { fetchOrgOutreachActivityByPerson } from '@/lib/org-outreach';
 
 function messageFromUnknown(error: unknown): string {
   return error instanceof Error ? error.message : 'Internal server error';
@@ -43,6 +44,7 @@ interface ContactRow {
 interface SequenceRow {
   id: string;
   contact_id: string;
+  person_id: string | null;
   anchor_hook_text: string;
   anchor_signal_type: string | null;
   messages: AppSequenceStep[];
@@ -98,7 +100,7 @@ export async function POST(req: Request) {
     // Load the staged rows + their contacts.
     const { data: seqRowsRaw, error: seqErr } = await supabase
       .from('outreach_sequences')
-      .select('id, contact_id, anchor_hook_text, anchor_signal_type, messages, dispatch_status')
+      .select('id, contact_id, person_id, anchor_hook_text, anchor_signal_type, messages, dispatch_status')
       .eq('user_id', user.id)
       .in('id', sequenceIds);
 
@@ -136,6 +138,30 @@ export async function POST(req: Request) {
       if (messages.length === 0) {
         await markFailed(supabase, row.id, user.id, 'Sequence has no messages');
         results.push({ id: row.id, ok: false, error: 'Sequence has no messages' });
+        continue;
+      }
+
+      // Claim the person org-wide BEFORE sending (one active outreach per person per org).
+      // The draft→'queued' update trips the DB's partial unique in-flight index if a
+      // teammate already has an active sequence with this person — race-proof, so two reps
+      // clicking send in the same second can't both email the prospect. The email only
+      // goes out after the claim holds; the row stays 'draft' if it doesn't.
+      const { error: claimError } = await supabase
+        .from('outreach_sequences')
+        .update({ dispatch_status: 'queued', last_status_at: new Date().toISOString() })
+        .eq('id', row.id)
+        .eq('user_id', user.id);
+      if (claimError) {
+        let blockedMsg = 'A teammate already has an active sequence with this contact.';
+        if ((claimError as { code?: string }).code === '23505' && row.person_id) {
+          const activity = await fetchOrgOutreachActivityByPerson(supabase, {
+            userId: user.id,
+            personIds: [row.person_id],
+          });
+          const holder = activity.get(row.person_id);
+          if (holder) blockedMsg = `${holder.userName} already has an active sequence with this contact.`;
+        }
+        results.push({ id: row.id, ok: false, error: blockedMsg });
         continue;
       }
 

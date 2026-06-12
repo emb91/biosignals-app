@@ -7,9 +7,8 @@
  * audit runs only on the /icps side. Sources run in parallel; one TodayPriority per
  * source-bucket, sorted by severity.
  *
- * Roadmap (TODO): enrichment-failures, pipeline-health, hubspot-sync, stale Ready queue,
- * import-ready. As each migrates here the equivalent local logic in /today/page.tsx can
- * be deleted.
+ * Roadmap (TODO): pipeline-health, hubspot-sync, stale Ready queue, import-ready. As
+ * each migrates here the equivalent local logic in /today/page.tsx can be deleted.
  */
 
 import { NextResponse } from 'next/server';
@@ -23,6 +22,7 @@ import {
 } from '@/lib/priorities/sources/priority-changes';
 import { computeIcpNotePriority } from '@/lib/priorities/sources/icp-note';
 import { computeInviteTeamPriority } from '@/lib/priorities/sources/invite-team';
+import { computeEnrichmentFailuresPriority } from '@/lib/priorities/sources/enrichment-failures';
 
 const SEV_RANK: Record<PrioritySeverity, number> = { high: 3, medium: 2, low: 1 };
 
@@ -43,8 +43,7 @@ export async function GET() {
       computeIcpNotePriority(supabase, user.id),
       // Nudge a solo owner/admin to invite teammates.
       computeInviteTeamPriority(supabase, user.id),
-      // Future cheap sources:
-      // computeEnrichmentFailures(supabase, user.id),
+      computeEnrichmentFailuresPriority(supabase, user.id),
     ]);
 
     const priorities: TodayPriority[] = results

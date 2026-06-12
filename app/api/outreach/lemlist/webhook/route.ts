@@ -28,7 +28,7 @@
 import { NextResponse } from 'next/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { nango, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
-import { pushOutreachStatusByEmail, applyReplyEffectsToHubSpot } from '@/lib/hubspot';
+import { pushOutreachStatusByEmail, applyReplyEffectsToHubSpot, resolveOrgNangoConnectionId } from '@/lib/hubspot';
 
 interface LemlistWebhookPayload {
   type?: string;
@@ -158,18 +158,10 @@ export async function POST(req: Request) {
       const email = row.external_ref?.lemlist_lead_email ?? leadEmail;
       if (!email) return;
       try {
-        const { data: conn } = await supabase
-          .from('nango_connections')
-          .select('nango_connection_id')
-          .eq('user_id', row.user_id)
-          .eq('integration_id', HUBSPOT_INTEGRATION_ID)
-          .maybeSingle();
-        const connRow = conn as { nango_connection_id?: string } | null;
-        if (!connRow?.nango_connection_id) return;
-        const token = (await nango.getToken(
-          HUBSPOT_INTEGRATION_ID,
-          connRow.nango_connection_id,
-        )) as string;
+        // Org-scoped: use the org's HubSpot connection (one per org).
+        const connectionId = await resolveOrgNangoConnectionId(supabase, row.user_id, HUBSPOT_INTEGRATION_ID);
+        if (!connectionId) return;
+        const token = (await nango.getToken(HUBSPOT_INTEGRATION_ID, connectionId)) as string;
         await pushOutreachStatusByEmail(token, {
           email,
           status,

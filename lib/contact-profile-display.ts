@@ -3,7 +3,20 @@
  */
 
 import type { ContactEmailCategory, ContactEmailRow } from './contact-emails';
-import { emailsEqual } from './contact-emails';
+import {
+  DEFAULT_EMAIL_VERIFICATION_PRIORITY_MIN,
+  contactHasStaleEmailStatus,
+  emailRowAwaitingZeroBounceVerification,
+  emailRowHasUserNonValidOverride,
+  emailRowHasZeroBounceNonValidResult,
+  emailsEqual,
+  isEmailDomainAlignedWithCompany,
+  isTrustedCurrentCompanyEmailRow,
+  isTrustedVerifiedEmailRow,
+  looksLikeEmail,
+  meetsEmailVerificationPriorityThreshold,
+  normalizeCompanyDomain,
+} from './contact-emails';
 
 const CATEGORY_ORDER: { cat: ContactEmailCategory; label: string }[] = [
   { cat: 'import', label: 'Imported' },
@@ -107,7 +120,13 @@ export function parseContactLocation(
   };
 }
 
-export type ContactEmailDisplayRow = { label: string; email: string };
+export type ContactEmailDisplayRow = {
+  id: string | null;
+  label: string;
+  email: string;
+  email_deliverability: string | null;
+  email_deliverability_provider: string | null;
+};
 
 function sortByCreated(list: ContactEmailRow[]): ContactEmailRow[] {
   return [...list].sort((a, b) => a.created_at.localeCompare(b.created_at));
@@ -126,9 +145,18 @@ export function buildContactEmailDisplayRows(
   const list = sortByCreated(contactEmails ?? []);
 
   const alreadyListed = (email: string) => rows.some((r) => emailsEqual(r.email, email));
+  const primaryDirectoryRow = primary
+    ? list.find((r) => emailsEqual(r.email, primary))
+    : null;
 
   if (mode === 'full' && primary) {
-    rows.push({ label: 'Primary', email: primary });
+    rows.push({
+      id: primaryDirectoryRow?.id ?? null,
+      label: 'Primary',
+      email: primary,
+      email_deliverability: primaryDirectoryRow?.email_deliverability ?? null,
+      email_deliverability_provider: primaryDirectoryRow?.email_deliverability_provider ?? null,
+    });
   }
 
   for (const { cat, label } of CATEGORY_ORDER) {
@@ -137,7 +165,13 @@ export function buildContactEmailDisplayRows(
       if (!em) continue;
       if (primary && emailsEqual(em, primary)) continue;
       if (alreadyListed(em)) continue;
-      rows.push({ label, email: em });
+      rows.push({
+        id: r.id,
+        label,
+        email: em,
+        email_deliverability: r.email_deliverability ?? null,
+        email_deliverability_provider: r.email_deliverability_provider ?? null,
+      });
     }
   }
 
@@ -147,10 +181,63 @@ export function buildContactEmailDisplayRows(
       const em = r.email.trim();
       if (!em) continue;
       if (alreadyListed(em)) continue;
-      rows.push({ label: `Email ${userSlot}`, email: em });
+      rows.push({
+        id: r.id,
+        label: `Email ${userSlot}`,
+        email: em,
+        email_deliverability: r.email_deliverability ?? null,
+        email_deliverability_provider: r.email_deliverability_provider ?? null,
+      });
       userSlot += 1;
     }
   }
 
   return rows;
+}
+
+/**
+ * Offer email finder when ZeroBounce (or the user) has rejected on-file addresses,
+ * when there is no usable email yet, or when verified emails belong to a prior employer.
+ * Apollo "not verified" still needs ZeroBounce validate first.
+ */
+export function shouldOfferFindNewEmailForContact(
+  priorityScore: number | null | undefined,
+  primaryEmail: string | null | undefined,
+  contactEmails: ContactEmailRow[] | null | undefined,
+  options?: {
+    emailStatus?: string | null;
+    currentCompanyDomain?: string | null;
+    priorityMin?: number;
+  },
+): boolean {
+  const priorityMin = options?.priorityMin ?? DEFAULT_EMAIL_VERIFICATION_PRIORITY_MIN;
+  if (!meetsEmailVerificationPriorityThreshold(priorityScore, priorityMin)) return false;
+
+  const emailRows = buildContactEmailDisplayRows(primaryEmail, contactEmails, 'full');
+  const currentCompanyDomain = normalizeCompanyDomain(options?.currentCompanyDomain);
+
+  if (emailRows.some((row) => isTrustedCurrentCompanyEmailRow(row, currentCompanyDomain))) {
+    return false;
+  }
+
+  const hasEmailAtCurrentCompany = currentCompanyDomain
+    ? emailRows.some(
+        (row) => looksLikeEmail(row.email) && isEmailDomainAlignedWithCompany(row.email, currentCompanyDomain),
+      )
+    : false;
+
+  if (contactHasStaleEmailStatus(options?.emailStatus) && !hasEmailAtCurrentCompany) {
+    return true;
+  }
+
+  if (emailRows.some(isTrustedVerifiedEmailRow)) return false;
+
+  const usableRows = emailRows.filter((row) => looksLikeEmail(row.email));
+  if (usableRows.length === 0) return true;
+
+  if (usableRows.some(emailRowAwaitingZeroBounceVerification)) return false;
+
+  return usableRows.some(
+    (row) => emailRowHasZeroBounceNonValidResult(row) || emailRowHasUserNonValidOverride(row),
+  );
 }

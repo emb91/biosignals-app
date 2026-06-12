@@ -4,7 +4,7 @@
  */
 import { enrichContact } from '@/lib/enrichment-provider';
 import { recordProviderUsage } from '@/lib/provider-usage';
-import { ingestEnrichedRecords, type EnrichedImportRecord } from '@/lib/import-ingestion';
+import { ingestEnrichedRecords, type EnrichedImportRecord, type ImportProgressCallback } from '@/lib/import-ingestion';
 import { runContactResolutionPipelineForContact } from '@/lib/contact-resolution-pipeline';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { resolveLinkedinUrl } from '@/lib/linkedin-url-resolver';
@@ -141,8 +141,10 @@ export async function processQueuedRowsInBackground(params: {
   queuedRows: QueuedRow[];
   batchId: string;
   userId: string;
+  onBeforeIngest?: () => void | Promise<void>;
+  onProgress?: ImportProgressCallback;
 }): Promise<void> {
-  const { queuedRows, batchId, userId } = params;
+  const { queuedRows, batchId, userId, onBeforeIngest, onProgress } = params;
   const allQueuedIds = queuedRows.map((row) => row.id);
 
   const admin = createAdminClient();
@@ -309,9 +311,11 @@ export async function processQueuedRowsInBackground(params: {
     }
 
     if (enrichedRecords.length > 0) {
+      if (onBeforeIngest) await onBeforeIngest();
       await ingestEnrichedRecords(
         admin as unknown as Parameters<typeof ingestEnrichedRecords>[0],
-        enrichedRecords
+        enrichedRecords,
+        { onProgress },
       );
 
       const { data: insertedContacts } = await admin

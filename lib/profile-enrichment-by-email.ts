@@ -58,6 +58,25 @@ export async function enrichSelfProfile(params: {
   recordProviderUsage({ userId: params.userId, contactId: null, provider: 'apify', eventType: 'apify_profile_scrape' }).catch(() => {});
   if (!raw) return { ok: false, reason: 'scrape_failed' };
 
+  // 2b. Guard against a structurally-valid-but-fake URL (e.g. /in/asdfgh). harvestapi
+  //     returns an empty array (→ null above) for a non-existent profile, but can also
+  //     return a stub with an `error` field or no identity. If the SCRAPE itself yields
+  //     no name/headline/role/photo/history, treat it as not found rather than writing a
+  //     blank profile. (Don't fall back to params.fullName here — that's the user's typed
+  //     name, which would mask an empty scrape.)
+  const currentPositionArr = (raw as { currentPosition?: unknown }).currentPosition;
+  const scrapeHasIdentity = Boolean(
+    str(raw.fullName) ||
+      str(raw.firstName) ||
+      str(raw.lastName) ||
+      str(raw.headline) ||
+      str(raw.photo) ||
+      (Array.isArray(currentPositionArr) && currentPositionArr.length > 0),
+  );
+  if (raw.error || !scrapeHasIdentity) {
+    return { ok: false, reason: 'scrape_failed' };
+  }
+
   // 3. Build the same resolved context a contact gets (current role, work history,
   //    headline, location, photo) from the scraped profile.
   const resolved = buildResolvedContext({
@@ -75,6 +94,7 @@ export async function enrichSelfProfile(params: {
       currentCompany: resolved.currentCompanyName ?? params.companyName ?? null,
       headline: resolved.headline,
       employmentHistory: resolved.employmentHistory,
+      variant: 'self',
     }),
     classifyContacts(
       [

@@ -29,6 +29,7 @@ import { cn } from '@/lib/utils';
 import { BATCH_CONTACTS_KEY, type BatchCompany } from '@/lib/batch-contacts';
 import { ROUTES, withQuery } from '@/lib/routes';
 import { getDisplayName } from '@/lib/auth-helpers';
+import '@/app/today/briefing-today.css';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -780,6 +781,8 @@ function DataPageContent() {
   // Auto-open trigger for the agent
   const [agentOpener, setAgentOpener] = useState<{ text: string; nonce: number; threadPreview: string } | null>(null);
   const openerFired = useRef(false);
+  const [agentBusy, setAgentBusy] = useState(false);
+  const [clock, setClock] = useState(() => new Date());
 
   // ── Load ICP cards + jobs ──────────────────────────────────────────────────
 
@@ -809,11 +812,16 @@ function DataPageContent() {
     void loadData();
   }, [authLoading, user, loadData]);
 
+  useEffect(() => {
+    const id = setInterval(() => setClock(new Date()), 30000);
+    return () => clearInterval(id);
+  }, []);
+
   const anyJobActive = jobs.some((j) => jobIsActive(j.status) || j.status === 'queued');
 
   useEffect(() => {
     if (!user || !anyJobActive) return;
-    const interval = setInterval(() => void loadData(), 8000);
+    const interval = setInterval(() => void loadData(), 2000);
     return () => clearInterval(interval);
   }, [user, anyJobActive, loadData]);
 
@@ -1016,6 +1024,26 @@ function DataPageContent() {
     body: 'What should we source today? Name an ICP to grow or accounts to expand — I’ll bring back only net-new companies and contacts, never duplicates you already have.',
   };
 
+  const agentIdleChips = [
+    {
+      label: '+ Source 1,000 contacts for ICP 2',
+      threadPreview: 'Source 1,000 contacts for ICP 2',
+      prompt: 'Source 1,000 contacts for ICP 2',
+    },
+    {
+      label: '+ Find new companies for ICP 4',
+      threadPreview: 'Find new companies for ICP 4',
+      prompt: 'Find new companies for ICP 4',
+    },
+    {
+      label: '+ More contacts at my top accounts',
+      threadPreview: 'More contacts at my top accounts',
+      prompt: 'More contacts at my top accounts',
+    },
+  ];
+
+  const BT_ACCENT = '#00a4b4';
+
   return (
     <div className="flex h-screen bg-transparent">
       <AppSidebar />
@@ -1034,22 +1062,42 @@ function DataPageContent() {
           />
 
           <div className="grid grid-cols-1 items-stretch gap-6 xl:grid-cols-[minmax(0,1fr)_388px]">
-            {/* Agent: center stage. `flex flex-col` so the panel's flex-1 fills the
-                full height (hero centred, input pinned to the bottom) instead of
-                collapsing to content height. */}
-            <div className="flex h-[min(72vh,760px)] min-h-[540px] flex-col">
-              <AgentPanel
-                page="data"
-                pageContext={pageContext}
-                wide
-                briefingWelcome={agentWelcome}
-                pendingMessage={
-                  agentOpener
-                    ? { text: agentOpener.text, nonce: agentOpener.nonce, threadPreview: agentOpener.threadPreview }
-                    : undefined
-                }
-                onJobStarted={handleJobStarted}
-              />
+            {/* Agent tile — same briefing bento embed as /today (orb top, welcome bottom). */}
+            <div
+              className="briefing-today flex h-[min(72vh,760px)] min-h-[540px] flex-col [--bt-agent-tile-h:100%]"
+            >
+              <section className="bt-bento bt-agent-tile min-h-0 flex-1">
+                <div className="bt-agent-meta">
+                  <span className="bt-agent-status">
+                    <span className="bt-agent-status-dot" style={{ background: BT_ACCENT }} />
+                    <span>Agent · {agentBusy ? 'thinking' : 'ready'}</span>
+                  </span>
+                  <span className="bt-agent-time">
+                    {clock.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} local
+                  </span>
+                </div>
+                <div className="bt-agent-panel-host bt-agent-panel-host--fill">
+                  <AgentPanel
+                    page="data"
+                    pageContext={pageContext}
+                    variant="central"
+                    wide
+                    hideHeader
+                    suppressPrompts
+                    embedInBriefingBento
+                    briefingWelcome={agentWelcome}
+                    briefingIdleChips={agentIdleChips}
+                    onBusyChange={setAgentBusy}
+                    className="min-h-0 flex-1 overflow-hidden"
+                    pendingMessage={
+                      agentOpener
+                        ? { text: agentOpener.text, nonce: agentOpener.nonce, threadPreview: agentOpener.threadPreview }
+                        : undefined
+                    }
+                    onJobStarted={handleJobStarted}
+                  />
+                </div>
+              </section>
             </div>
 
             {/* Side column: live pipeline */}

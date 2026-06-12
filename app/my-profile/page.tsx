@@ -55,6 +55,7 @@ export default function MyProfilePage() {
   const [saving, setSaving] = useState(false);
   const [enriching, setEnriching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showAllExperience, setShowAllExperience] = useState(false);
   const autoRanRef = useRef(false);
 
   useEffect(() => {
@@ -134,9 +135,21 @@ export default function MyProfilePage() {
           company_name: companyVal,
         }),
       });
+      const j = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        linkedinReverted?: boolean;
+        linkedin_url?: string | null;
+        warning?: string;
+      };
       if (!res.ok) {
-        const j = (await res.json().catch(() => ({}))) as { error?: string };
         setError(j.error ?? 'Could not save.');
+        return;
+      }
+      // The LinkedIn URL didn't check out — other fields saved, but we kept the old link.
+      // Reset the field to the previous value, show why, and stay in edit mode to fix it.
+      if (j.linkedinReverted) {
+        setLinkedinUrl(j.linkedin_url ?? '');
+        setError(j.warning ?? "We couldn't verify that LinkedIn URL, so we kept your previous one.");
         return;
       }
       setEditMode(false);
@@ -254,27 +267,44 @@ export default function MyProfilePage() {
               </div>
             )}
 
-            {!editMode && enriched && enriched.employmentHistory.length > 0 && (
-              <div className="border-t border-arcova-navy/[0.06] px-6 py-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-arcova-navy/40">Experience</p>
-                <ul className="mt-3 space-y-3">
-                  {enriched.employmentHistory.slice(0, 8).map((e, i) => (
-                    <li key={`${e.company}-${e.title}-${i}`} className="flex gap-3">
-                      <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-arcova-teal/40" />
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-arcova-navy/85">{e.title || 'Role'}</p>
-                        {e.company && <p className="text-sm text-arcova-navy/60">{e.company}</p>}
-                        {(e.start || e.end || e.current) && (
-                          <p className="mt-0.5 text-xs text-arcova-navy/40">
-                            {[e.start, e.current ? 'Present' : e.end].filter(Boolean).join(' – ')}
-                          </p>
-                        )}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            {!editMode && enriched && enriched.employmentHistory.length > 0 && (() => {
+              // Show current roles + the two most recent before that by default — enough to
+              // place someone without reading like a full CV. Everything else folds away.
+              const COLLAPSED_COUNT = 3;
+              const history = enriched.employmentHistory;
+              const visible = showAllExperience ? history : history.slice(0, COLLAPSED_COUNT);
+              const hiddenCount = history.length - visible.length;
+              return (
+                <div className="border-t border-arcova-navy/[0.06] px-6 py-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-arcova-navy/40">Experience</p>
+                  <ul className="mt-3 space-y-3">
+                    {visible.map((e, i) => (
+                      <li key={`${e.company}-${e.title}-${i}`} className="flex gap-3">
+                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-arcova-teal/40" />
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-arcova-navy/85">{e.title || 'Role'}</p>
+                          {e.company && <p className="text-sm text-arcova-navy/60">{e.company}</p>}
+                          {(e.start || e.end || e.current) && (
+                            <p className="mt-0.5 text-xs text-arcova-navy/40">
+                              {[e.start, e.current ? 'Present' : e.end].filter(Boolean).join(' – ')}
+                            </p>
+                          )}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                  {history.length > COLLAPSED_COUNT && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllExperience((v) => !v)}
+                      className="mt-3 text-xs font-medium text-[#00707b] transition-colors hover:text-arcova-teal"
+                    >
+                      {showAllExperience ? 'Show less' : `Show ${hiddenCount} more`}
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
 
             {editMode && (
               <div className="border-t border-arcova-navy/[0.06] p-6">

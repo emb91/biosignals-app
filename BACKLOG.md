@@ -136,6 +136,21 @@ The Arcova loop:
 
 **Timing.** The double-pay only bites when multiple users overlap on the same person. Today that's just the main account + one test account, so current cost is negligible — this is a **"before multi-tenant scale"** refactor, not an emergency. Do it as a deliberate staged migration (field-by-field canonical-vs-per-user split first), the way the companies split was done. See [[project_scoring_model]] / Phase 1d for the precedent.
 
+## Email & deliverability (today follow-ups)
+
+### Email change on /my-profile — Supabase confirm flow + Resend SMTP
+- Unlock the email field on `/my-profile` and route changes through `supabase.auth.updateUser({ email })`. This is the SAME confirm-by-click flow as signup — just a different trigger: Supabase emails a verification link to the new address (enable "Secure email change" to also confirm from the old one), and the swap only lands after the click. No custom token system on our side.
+- Set up **Resend as Supabase Auth's custom SMTP provider** so auth emails actually deliver in production (built-in sender is rate-limited / not for prod). One config change upgrades ALL auth emails at once (signup, magic link, recovery, email change).
+- Our code stays small: unlock field + `updateUser` call + a "check your inbox to confirm" state.
+
+### Contact email validation at the outreach gate
+- Validate a contact's email only when readiness/priority crosses the reach-out threshold (the first point the email is actually used → result is fresh + we only spend on contacts we'll email). NOT at import or on fit alone — high-fit/low-readiness emails go stale before they're ever sent.
+- **Skip Apollo-`verified` emails** (Apollo already SMTP-checked those) — only spend the verifier on `extrapolated` / `unavailable` / null statuses.
+- Lift Apollo's raw `email_status` (currently discarded — lives only in `apollo_person_raw.email_status`) into a real deliverability column. NOTE: this is DISTINCT from our existing `contacts.email_status` column, which is a domain-alignment heuristic (`aligned_current` / `stale_suspected` / `missing`), NOT a deliverability check.
+- **Big red flag in the UI when a contact's email isn't validated**, so unverified addresses can't quietly enter a sequence.
+- Keep lemlist's send-time verification as the final backstop.
+- Provider TBD (NeverBounce / ZeroBounce / Apollo's verify endpoint).
+
 ## Product workflow
 
 - Bring company, role, fit, and intent into the main Leads working view once the second-pass resolver is ready.

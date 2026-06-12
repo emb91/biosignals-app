@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { recomputeContactAttributionSnapshots } from '@/lib/contact-attribution';
 import { createClient } from '@/lib/supabase-server';
+import { resolveOrgNangoConnectionId } from '@/lib/hubspot';
 import { nango, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
 import { syncHubSpotContactsIntoReadiness } from '@/lib/signals/readiness-hubspot-contacts';
 import { syncHubSpotDealsIntoReadiness } from '@/lib/signals/readiness-hubspot-deals';
@@ -17,20 +18,16 @@ export async function POST() {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { data: conn, error: connError } = await supabase
-    .from('nango_connections')
-    .select('nango_connection_id')
-    .eq('user_id', user.id)
-    .eq('integration_id', HUBSPOT_INTEGRATION_ID)
-    .single();
+  // Org-scoped: use the org's HubSpot connection (one per org).
+  const connectionId = await resolveOrgNangoConnectionId(supabase, user.id, HUBSPOT_INTEGRATION_ID);
 
-  if (connError || !conn?.nango_connection_id) {
+  if (!connectionId) {
     return NextResponse.json({ error: 'HubSpot not connected' }, { status: 400 });
   }
 
   let accessToken: string;
   try {
-    accessToken = (await nango.getToken(HUBSPOT_INTEGRATION_ID, conn.nango_connection_id)) as string;
+    accessToken = (await nango.getToken(HUBSPOT_INTEGRATION_ID, connectionId)) as string;
   } catch (e) {
     const nangoMsg: string =
       (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? '';
@@ -46,7 +43,7 @@ export async function POST() {
     });
     const result = await syncHubSpotDealsIntoReadiness(admin, {
       userId: user.id,
-      nangoConnectionId: conn.nango_connection_id,
+      nangoConnectionId: connectionId,
       accessToken,
     });
     const attributionResult = await recomputeContactAttributionSnapshots(admin, {
