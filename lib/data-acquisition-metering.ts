@@ -30,7 +30,7 @@ export type DataAcquisitionUsageEventType =
   | 'skipped_existing'
   | 'low_fit_company_rejected';
 
-export type DataAcquisitionSourceStrategy = 'apollo_first';
+export type DataAcquisitionSourceStrategy = 'apollo_first' | 'apollo_then_web_search';
 
 export const DEFAULT_ACQUISITION_TARGET_COMPANIES = 50;
 export const DEFAULT_CONTACTS_PER_COMPANY = 2;

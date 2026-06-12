@@ -56,6 +56,9 @@ interface AcquisitionJob {
   imported_contact_count: number | null;
   skipped_duplicate_count: number | null;
   skipped_existing_count: number | null;
+  estimated_min_credit_units: number | string | null;
+  estimated_max_credit_units: number | string | null;
+  actual_credit_units: number | string | null;
   completion_note: string | null;
   company_name: string | null;
   error: string | null;
@@ -123,6 +126,35 @@ function formatDate(value: string | null): string {
   }).format(new Date(value));
 }
 
+function finiteDisplayNumber(value: number | string | null | undefined): number | null {
+  const n = typeof value === 'number' ? value : typeof value === 'string' ? Number.parseFloat(value) : NaN;
+  return Number.isFinite(n) ? n : null;
+}
+
+function formatCredits(value: number): string {
+  return value.toLocaleString(undefined, {
+    minimumFractionDigits: value % 1 === 0 ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function formatCreditRange(min: number | null, max: number | null): string | null {
+  if (min == null && max == null) return null;
+  if (min != null && max != null) {
+    if (Math.abs(min - max) < 0.01) return formatCredits(max);
+    return `${formatCredits(min)}-${formatCredits(max)}`;
+  }
+  return formatCredits((min ?? max)!);
+}
+
+function estimateFromStartPayload(payload: Record<string, unknown>): string | null {
+  const estimate = payload.estimatedCreditUnits;
+  if (!estimate || typeof estimate !== 'object') return null;
+  const min = finiteDisplayNumber((estimate as { min?: unknown }).min as number | string | null | undefined);
+  const max = finiteDisplayNumber((estimate as { max?: unknown }).max as number | string | null | undefined);
+  return formatCreditRange(min, max);
+}
+
 function formatRequestType(type: string): string {
   if (type === 'expand_companies') return 'New companies for ICP';
   if (type === 'contacts_at_company') return 'Contacts at account';
@@ -176,6 +208,9 @@ interface JobView {
   screened: number;
   matched: number;
   skipped: number;
+  actualCredits: number | null;
+  estimatedMinCredits: number | null;
+  estimatedMaxCredits: number | null;
   progress: number;
   pct: number;
   resultsHref: string | null;
@@ -189,6 +224,9 @@ function deriveJobView(job: AcquisitionJob, icpLabel: string | null): JobView {
   const screened = job.screened_company_count ?? 0;
   const matched = job.qualified_company_count ?? 0;
   const skipped = (job.skipped_duplicate_count ?? 0) + (job.skipped_existing_count ?? 0);
+  const actualCredits = finiteDisplayNumber(job.actual_credit_units);
+  const estimatedMinCredits = finiteDisplayNumber(job.estimated_min_credit_units);
+  const estimatedMaxCredits = finiteDisplayNumber(job.estimated_max_credit_units);
 
   let progress: number;
   if (jobIsDone(job.status)) progress = 1;
@@ -214,6 +252,9 @@ function deriveJobView(job: AcquisitionJob, icpLabel: string | null): JobView {
     screened,
     matched,
     skipped,
+    actualCredits,
+    estimatedMinCredits,
+    estimatedMaxCredits,
     progress,
     pct: Math.round(progress * 100),
     resultsHref,
@@ -303,6 +344,9 @@ function usePipelineSim(): { simJobs: AcquisitionJob[]; addSimJob: () => void; c
         imported_contact_count: 0,
         skipped_duplicate_count: 0,
         skipped_existing_count: 0,
+        estimated_min_credit_units: null,
+        estimated_max_credit_units: null,
+        actual_credit_units: null,
         completion_note: null,
         error: null,
         completed_at: null,
@@ -454,6 +498,7 @@ function ActivityFeed({ lines }: { lines: string[] }) {
 function ActiveJobCard({ job, view }: { job: AcquisitionJob; view: JobView }) {
   const base = Math.max(view.screened, view.matched, view.imported, 1);
   const lines = buildActivityLines(view, job.completion_note);
+  const estimate = formatCreditRange(view.estimatedMinCredits, view.estimatedMaxCredits);
 
   return (
     <div className="rounded-2xl border border-arcova-teal/35 bg-white p-4 shadow-[0_18px_50px_-30px_rgba(0,164,180,0.45)] ring-1 ring-arcova-teal/10">
@@ -495,6 +540,25 @@ function ActiveJobCard({ job, view }: { job: AcquisitionJob; view: JobView }) {
           </div>
         )}
       </div>
+      {(view.actualCredits != null || estimate) && (
+        <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 rounded-xl bg-arcova-navy/[0.035] px-3 py-2 text-[11px] text-arcova-navy/50">
+          {view.actualCredits != null && (
+            <span>
+              <span className="font-semibold tabular-nums text-arcova-navy/75">{formatCredits(view.actualCredits)}</span> credits spent
+            </span>
+          )}
+          {view.actualCredits != null && view.imported > 0 && (
+            <span>
+              <span className="font-semibold tabular-nums text-arcova-navy/75">{formatCredits(view.actualCredits / view.imported)}</span> / imported
+            </span>
+          )}
+          {estimate && (
+            <span>
+              est. <span className="font-semibold tabular-nums text-arcova-navy/70">{estimate}</span>
+            </span>
+          )}
+        </div>
+      )}
       <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-arcova-navy/[0.06]">
         <div
           className="h-full rounded-full bg-gradient-to-r from-arcova-teal to-arcova-mint transition-[width] duration-700 ease-out"
@@ -538,6 +602,7 @@ function ActiveJobCard({ job, view }: { job: AcquisitionJob; view: JobView }) {
 // ─── Queued / completed / failed rows ────────────────────────────────────────
 
 function QueuedRow({ job, view, index }: { job: AcquisitionJob; view: JobView; index: number }) {
+  const estimate = formatCreditRange(view.estimatedMinCredits, view.estimatedMaxCredits);
   return (
     <div className="flex items-center gap-3 rounded-xl border border-arcova-navy/10 bg-white/60 px-3.5 py-3">
       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-arcova-navy/[0.06] text-[11px] font-bold tabular-nums text-arcova-navy/50">
@@ -552,7 +617,9 @@ function QueuedRow({ job, view, index }: { job: AcquisitionJob; view: JobView; i
           )}
           <span className="truncate">{view.title}</span>
         </p>
-        {view.subtitle && <p className="truncate text-[11.5px] text-arcova-navy/45">{view.subtitle}</p>}
+        <p className="truncate text-[11.5px] text-arcova-navy/45">
+          {[view.subtitle, estimate ? `est. ${estimate} credits` : null].filter(Boolean).join(' · ')}
+        </p>
       </div>
       <span className="flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700 ring-1 ring-amber-200/70">
         <Clock3 className="h-3 w-3" /> Queued
@@ -567,6 +634,7 @@ function CompletedRow({ job, view }: { job: AcquisitionJob; view: JobView }) {
     view.matched > 0 ? { label: 'matched', value: view.matched } : null,
     view.skipped > 0 ? { label: 'dupes skipped', value: view.skipped } : null,
   ].filter((s): s is { label: string; value: number } => s != null);
+  const estimate = formatCreditRange(view.estimatedMinCredits, view.estimatedMaxCredits);
 
   return (
     <div className="rounded-xl border border-emerald-200/70 bg-emerald-50/40 px-3.5 py-3">
@@ -586,13 +654,28 @@ function CompletedRow({ job, view }: { job: AcquisitionJob; view: JobView }) {
           <CheckCircle2 className="h-3 w-3" /> Done
         </span>
       </div>
-      {stats.length > 0 && (
+      {(stats.length > 0 || view.actualCredits != null || estimate) && (
         <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
           {stats.map((s) => (
             <span key={s.label} className="text-[11px] text-arcova-navy/50">
               <span className="font-semibold tabular-nums text-arcova-navy/75">{fmt(s.value)}</span> {s.label}
             </span>
           ))}
+          {view.actualCredits != null && (
+            <span className="text-[11px] text-arcova-navy/50">
+              <span className="font-semibold tabular-nums text-arcova-navy/75">{formatCredits(view.actualCredits)}</span> credits spent
+            </span>
+          )}
+          {view.actualCredits != null && view.imported > 0 && (
+            <span className="text-[11px] text-arcova-navy/50">
+              <span className="font-semibold tabular-nums text-arcova-navy/75">{formatCredits(view.actualCredits / view.imported)}</span> / imported
+            </span>
+          )}
+          {view.actualCredits == null && estimate && (
+            <span className="text-[11px] text-arcova-navy/50">
+              est. <span className="font-semibold tabular-nums text-arcova-navy/75">{estimate}</span> credits
+            </span>
+          )}
         </div>
       )}
       {job.completion_note && (
@@ -909,6 +992,8 @@ function DataPageContent() {
     if (job.requestType === 'contacts_at_companies' && companies.length > 0) {
       let succeeded = 0;
       let failed = 0;
+      let estimateMin = 0;
+      let estimateMax = 0;
       for (const company of companies) {
         try {
           const res = await fetch('/api/pipeline/data-request', {
@@ -921,11 +1006,27 @@ function DataPageContent() {
               targetContactCount: job.quantity,
             }),
           });
-          if (res.ok) succeeded++;
-          else failed++;
+          if (res.ok) {
+            succeeded++;
+            const payload = await res.json().catch(() => ({}));
+            const estimate = payload.estimatedCreditUnits;
+            if (estimate && typeof estimate === 'object') {
+              const min = finiteDisplayNumber((estimate as { min?: unknown }).min as number | string | null | undefined);
+              const max = finiteDisplayNumber((estimate as { max?: unknown }).max as number | string | null | undefined);
+              estimateMin += min ?? 0;
+              estimateMax += max ?? min ?? 0;
+            }
+          } else failed++;
         } catch { failed++; }
       }
-      if (failed === 0) toast.success(`${succeeded} job${succeeded !== 1 ? 's' : ''} started. They run one at a time.`);
+      const estimate = estimateMin > 0 || estimateMax > 0 ? formatCreditRange(estimateMin, estimateMax) : null;
+      if (failed === 0) {
+        toast.success(
+          estimate
+            ? `${succeeded} job${succeeded !== 1 ? 's' : ''} started. Estimated spend: ${estimate} credits.`
+            : `${succeeded} job${succeeded !== 1 ? 's' : ''} started. They run one at a time.`,
+        );
+      }
       else toast.warning(`${succeeded} started, ${failed} failed.`);
     } else {
       const body =
@@ -944,9 +1045,19 @@ function DataPageContent() {
         if (res.ok) {
           const payload = await res.json().catch(() => ({}));
           if (payload.queued) {
-            toast.success('Job added to the queue. It starts as soon as the current job finishes.');
+            const estimate = estimateFromStartPayload(payload);
+            toast.success(
+              estimate
+                ? `Job added to the queue. Estimated spend: ${estimate} credits.`
+                : 'Job added to the queue. It starts as soon as the current job finishes.',
+            );
           } else {
-            toast.success('Job started. Watch its progress on the right.');
+            const estimate = estimateFromStartPayload(payload);
+            toast.success(
+              estimate
+                ? `Job started. Estimated spend: ${estimate} credits.`
+                : 'Job started. Watch its progress on the right.',
+            );
           }
         } else toast.error('Failed to start job.');
       } catch { toast.error('Failed to start job.'); }
@@ -992,6 +1103,9 @@ function DataPageContent() {
             imported_contact_count: job.imported_contact_count,
             qualified_company_count: job.qualified_company_count,
             duplicates_skipped: (job.skipped_duplicate_count ?? 0) + (job.skipped_existing_count ?? 0),
+            actual_credit_units: finiteDisplayNumber(job.actual_credit_units),
+            estimated_min_credit_units: finiteDisplayNumber(job.estimated_min_credit_units),
+            estimated_max_credit_units: finiteDisplayNumber(job.estimated_max_credit_units),
             completion_note: job.completion_note,
             error: userFacingJobError(job),
             requested_at: job.requested_at,

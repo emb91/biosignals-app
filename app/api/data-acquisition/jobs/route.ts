@@ -23,6 +23,9 @@ type JobRow = {
   skipped_duplicate_count: number | null;
   skipped_existing_count: number | null;
   rejected_low_fit_count: number | null;
+  estimated_min_credit_units: number | string | null;
+  estimated_max_credit_units: number | string | null;
+  actual_credit_units: number | string | null;
   completion_note: string | null;
   metadata: Record<string, unknown> | null;
   error: string | null;
@@ -50,9 +53,6 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // NOTE: credit-unit columns are intentionally NOT selected. Costs are
-    // internal-only (see app/api/admin/data-costs); the user-facing surface
-    // shows counts and plain-language notes instead.
     const { data, error } = await supabase
       .from('data_acquisition_jobs')
       .select(
@@ -75,6 +75,9 @@ export async function GET() {
         skipped_duplicate_count,
         skipped_existing_count,
         rejected_low_fit_count,
+        estimated_min_credit_units,
+        estimated_max_credit_units,
+        actual_credit_units,
         completion_note,
         metadata,
         error,
@@ -93,6 +96,32 @@ export async function GET() {
     }
 
     const rows = (data || []) as JobRow[];
+    const jobIds = rows.map((row) => row.id);
+    const usageByJob = new Map<string, number>();
+    if (jobIds.length > 0) {
+      const { data: usageRows, error: usageError } = await supabase
+        .from('data_acquisition_usage_events')
+        .select('job_id, internal_credit_units')
+        .in('job_id', jobIds);
+
+      if (usageError) {
+        console.error('[data-acquisition/jobs] usage', usageError);
+      } else {
+        for (const usage of usageRows ?? []) {
+          const jobId = (usage as { job_id?: unknown }).job_id;
+          const rawUnits = (usage as { internal_credit_units?: unknown }).internal_credit_units;
+          const units =
+            typeof rawUnits === 'number'
+              ? rawUnits
+              : typeof rawUnits === 'string'
+                ? Number.parseFloat(rawUnits)
+                : 0;
+          if (typeof jobId === 'string' && Number.isFinite(units)) {
+            usageByJob.set(jobId, Math.round(((usageByJob.get(jobId) ?? 0) + units) * 100) / 100);
+          }
+        }
+      }
+    }
 
     // Queue safety net: jobs run strictly sequentially per user, advanced at
     // the end of each run. If a previous process died mid-run nothing would
@@ -118,10 +147,14 @@ export async function GET() {
       }
     }
 
-    const jobs = rows.map(({ metadata, ...row }) => ({
-      ...row,
-      company_name: companyNameFromMetadata(metadata),
-    }));
+    const jobs = rows.map(({ metadata, ...row }) => {
+      const eventActual = usageByJob.get(row.id);
+      return {
+        ...row,
+        actual_credit_units: eventActual ?? row.actual_credit_units ?? null,
+        company_name: companyNameFromMetadata(metadata),
+      };
+    });
 
     return NextResponse.json({ jobs });
   } catch (error) {

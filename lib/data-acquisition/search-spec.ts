@@ -61,6 +61,33 @@ function companyTypeKeywords(companyType: string | null): string[] {
   return [companyType];
 }
 
+function quoteKeyword(value: string): string {
+  const cleaned = value.trim();
+  return /\s/.test(cleaned) ? `"${cleaned}"` : cleaned;
+}
+
+function combineKeywordGroups(groups: string[][], limit = 8): string[] {
+  const combos: string[] = [];
+  const [first, second, third] = groups.map((group) => cleanList(group, 5));
+  if (first?.length && second?.length) {
+    for (const a of first) {
+      for (const b of second) {
+        combos.push(`${quoteKeyword(a)} ${quoteKeyword(b)}`);
+        if (combos.length >= limit) return combos;
+      }
+    }
+  }
+  if (first?.length && third?.length) {
+    for (const a of first) {
+      for (const c of third) {
+        combos.push(`${quoteKeyword(a)} ${quoteKeyword(c)}`);
+        if (combos.length >= limit) return combos;
+      }
+    }
+  }
+  return combos;
+}
+
 export function buildApolloCompanySearchRecipes(
   icp: AcquisitionIcp,
   _requestType: PipelineDataRequestType,
@@ -78,23 +105,25 @@ export function buildApolloCompanySearchRecipes(
   const core = cleanList([...companyType, ...platform]);
   const science = cleanList([...therapeuticAreas, ...modalities, ...developmentStages], 8);
   const market = cleanList([...customers, ...buyerTypes], 6);
+  const strictCombos = combineKeywordGroups([core, science, market], 10);
+  const marketCombos = combineKeywordGroups([core, market, science], 10);
 
   const recipes: ApolloCompanySearchRecipe[] = [
     {
       name: 'strict_icp',
-      keywords: cleanList([...core, ...science], 10),
+      keywords: cleanList(strictCombos.length > 0 ? strictCombos : [...core, ...science], 10),
       employeeRanges,
       fundingStages,
     },
     {
       name: 'science_broad',
-      keywords: cleanList([...science, ...market], 10),
+      keywords: cleanList([...science.slice(0, 4), ...marketCombos.slice(0, 4)], 10),
       employeeRanges,
       fundingStages: [],
     },
     {
       name: 'company_type_broad',
-      keywords: cleanList([...core, ...market], 10),
+      keywords: cleanList(marketCombos.length > 0 ? marketCombos : [...core, ...market], 10),
       employeeRanges,
       fundingStages,
     },
