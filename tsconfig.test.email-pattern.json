@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/private/tmp/arcova-email-pattern-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/email-pattern.ts",
+    "lib/email-pattern.test.ts",
+    "lib/contact-emails.ts"
+  ]
+}

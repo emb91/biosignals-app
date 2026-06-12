@@ -113,7 +113,12 @@ export function shouldRunAutomatedEmailVerification(
   provider: string | null | undefined,
 ): boolean {
   if (isUserEmailDeliverabilityOverride(provider)) return false;
-  return deliverability == null || deliverability === 'extrapolated' || deliverability === 'unavailable';
+  return (
+    deliverability == null ||
+    deliverability === 'extrapolated' ||
+    deliverability === 'unavailable' ||
+    deliverability === 'pattern_guessed'
+  );
 }
 
 export type EmailDeliverabilityRow = {
@@ -204,6 +209,8 @@ export function getContactEmailDeliverabilityDisplayMeta(
       return { label: 'Not deliverable', icon: 'warning', className: 'text-rose-500' };
     case 'catch-all':
       return { label: 'Catch-all', icon: 'warning', className: 'text-amber-500' };
+    case 'pattern_guessed':
+      return { label: 'Guessed — not verified', icon: 'warning', className: 'text-amber-600' };
     case 'unknown':
       return { label: 'Unknown', icon: 'warning', className: 'text-amber-500' };
     case 'extrapolated':
@@ -225,10 +232,16 @@ export function emailRowAwaitingZeroBounceVerification(row: EmailDeliverabilityR
 
   const provider = row.email_deliverability_provider;
   const status = row.email_deliverability;
-  const isApolloOrUnchecked = provider === 'apollo' || provider == null;
+  const isApolloOrUnchecked = provider === 'apollo' || provider === 'pattern' || provider == null;
   if (!isApolloOrUnchecked) return false;
 
-  return status == null || status === 'extrapolated' || status === 'unavailable' || status === 'verified';
+  return (
+    status == null ||
+    status === 'extrapolated' ||
+    status === 'unavailable' ||
+    status === 'verified' ||
+    status === 'pattern_guessed'
+  );
 }
 
 /** ZeroBounce ran on this address and did not return valid. */

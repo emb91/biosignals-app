@@ -13,6 +13,7 @@ import {
   type ApolloLookupInput,
 } from '@/lib/apollo';
 import { trimEmail as trimContactEmail, ensureEnrichedEmailEntry, emailsEqual } from '@/lib/contact-emails';
+import { applyPatternGuessedEmail, PATTERN_GUESSED_DELIVERABILITY } from '@/lib/email-pattern';
 import {
   writeApolloPhonesToContact,
   attemptApolloPhoneRevealForContact,
@@ -1387,8 +1388,34 @@ export async function runContactResolutionPipelineForContact(
       });
     }
 
+    // Pattern-guess fallback: the contact has no email on file and the provider
+    // returned none — synthesize one from this domain's verified address pattern
+    // (derived only from this user's own verified contacts). The guess lands with
+    // email_deliverability 'pattern_guessed' so it is always shown as unverified.
+    let patternGuessedEmail: string | null = null;
+    if (!manualPrimaryEmail && !apolloMailbox) {
+      try {
+        const fullNameParts = (typedContact.full_name ?? '').trim().split(/\s+/).filter(Boolean);
+        const guess = await applyPatternGuessedEmail(supabase, {
+          userId,
+          contactId,
+          domain: resolvedDomainFromCompany || typedContact.company_domain,
+          firstName: typedContact.first_name ?? fullNameParts[0] ?? null,
+          lastName:
+            typedContact.last_name ??
+            (fullNameParts.length > 1 ? fullNameParts[fullNameParts.length - 1] : null),
+        });
+        if (guess) patternGuessedEmail = guess.email;
+      } catch (patternErr) {
+        console.warn(
+          '[enrichment-pipeline] email pattern guess failed (non-fatal):',
+          patternErr instanceof Error ? patternErr.message : patternErr,
+        );
+      }
+    }
+
     const emailAssessment = assessEmailStatus({
-      email: typedContact.email,
+      email: typedContact.email ?? patternGuessedEmail,
       resolvedCurrentCompanyName: resolved.currentCompanyName,
       // Prefer domain from company scrape; fall back to profile enrichment result.
       // Never use the imported company_domain — that would cause false alignment.
@@ -1448,9 +1475,11 @@ export async function runContactResolutionPipelineForContact(
       nextResolvedCompanyName: resolved.currentCompanyName,
       nextResolvedCompanyDomain,
     });
-    const emailDeliverability = preserveEmailDeliverability
-      ? typedContact.email_deliverability
-      : apolloEmailStatusForDirectory ?? null;
+    const emailDeliverability = patternGuessedEmail && !typedContact.email
+      ? PATTERN_GUESSED_DELIVERABILITY
+      : preserveEmailDeliverability
+        ? typedContact.email_deliverability
+        : apolloEmailStatusForDirectory ?? null;
     const shouldResetEmailDirectory = resolvedCompanyChanged({
       existingResolvedCompanyName: typedContact.resolved_current_company_name,
       existingResolvedCompanyDomain: typedContact.resolved_current_company_domain,
@@ -1508,6 +1537,12 @@ export async function runContactResolutionPipelineForContact(
       email_deliverability: emailDeliverability,
       updated_at: completedAt,
     };
+
+    // The contact had no email at all — promote the pattern guess to the primary
+    // slot so it is visible and verifiable; deliverability above flags it as a guess.
+    if (patternGuessedEmail && !typedContact.email) {
+      updatePayload.email = patternGuessedEmail;
+    }
 
     updatePayload.job_title = resolved.currentJobTitle;
     updatePayload.company_name = resolved.currentCompanyName;

@@ -36,6 +36,7 @@ function messageFromUnknown(error: unknown): string {
 interface ContactRow {
   id: string;
   email: string | null;
+  email_deliverability: string | null;
   first_name: string | null;
   last_name: string | null;
   full_name: string | null;
@@ -61,10 +62,13 @@ export async function POST(req: Request) {
 
     const body = (await req.json().catch(() => ({}))) as {
       sequenceIds?: unknown;
+      /** Caller explicitly confirmed sending to guessed (pattern-inferred) emails. */
+      allowGuessedEmails?: unknown;
     };
     const sequenceIds = Array.isArray(body.sequenceIds)
       ? (body.sequenceIds.filter((v) => typeof v === 'string') as string[])
       : [];
+    const allowGuessedEmails = body.allowGuessedEmails === true;
 
     if (sequenceIds.length === 0) {
       return NextResponse.json(
@@ -117,14 +121,14 @@ export async function POST(req: Request) {
     const contactIds = Array.from(new Set(seqRows.map((r) => r.contact_id)));
     const { data: contactRowsRaw } = await supabase
       .from('contacts')
-      .select('id, email, first_name, last_name, full_name, linkedin_url, company_name')
+      .select('id, email, email_deliverability, first_name, last_name, full_name, linkedin_url, company_name')
       .eq('user_id', user.id)
       .in('id', contactIds);
     const contactById = new Map<string, ContactRow>(
       ((contactRowsRaw ?? []) as ContactRow[]).map((c) => [c.id, c]),
     );
 
-    const results: Array<{ id: string; ok: boolean; error?: string }> = [];
+    const results: Array<{ id: string; ok: boolean; error?: string; heldGuessedEmail?: boolean }> = [];
 
     // Dispatch sequentially — lemlist API doesn't love bursty per-account
     // traffic, and per-lead errors should be surfaced row-by-row.
@@ -133,6 +137,20 @@ export async function POST(req: Request) {
       if (!contact || !contact.email) {
         await markFailed(supabase, row.id, user.id, 'Contact has no email');
         results.push({ id: row.id, ok: false, error: 'Contact has no email' });
+        continue;
+      }
+
+      // Guessed (pattern-inferred) emails are held by default: a wrong guess
+      // bounces and damages sender reputation. The row stays draft (NOT failed)
+      // so the user can verify the address or resend with explicit confirmation.
+      if (contact.email_deliverability === 'pattern_guessed' && !allowGuessedEmails) {
+        results.push({
+          id: row.id,
+          ok: false,
+          heldGuessedEmail: true,
+          error:
+            'This email is a best guess from the company’s address pattern and has not been verified. Verify it first, or confirm sending to guessed addresses.',
+        });
         continue;
       }
 
