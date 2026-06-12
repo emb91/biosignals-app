@@ -72,6 +72,12 @@ interface IcpPipelineCard {
   contact_fit: HealthDim;
   depth: HealthDim;
   overall: HealthDim;
+  recent_acquisition: {
+    imported_company_count: number;
+    imported_contact_count: number;
+    skipped_count: number;
+    last_completed_at: string | null;
+  } | null;
   /** Bottom-up CRM deal performance (null when no deals map to this ICP). */
   performance: IcpPerformance | null;
 }
@@ -1316,6 +1322,11 @@ export default function CoveragePage() {
                             </span>
                             <span className={cn('dt-num', card.contact_count === 0 && 'empty')}>
                               {card.contact_count.toLocaleString()}
+                              {card.recent_acquisition && card.recent_acquisition.imported_contact_count > 0 && (
+                                <span className="ml-1 align-middle text-[10px] font-semibold text-emerald-600">
+                                  +{card.recent_acquisition.imported_contact_count.toLocaleString()} recent
+                                </span>
+                              )}
                             </span>
                             <span style={{ textAlign: 'center' }}>
                               <FitCell v={card.avg_contact_fit} />

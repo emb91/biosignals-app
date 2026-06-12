@@ -216,7 +216,7 @@ export async function runCompanyEnrichmentById(
     // tiered pattern) validates the domain match, falls back to a name
     // search + Haiku disambiguation, and returns an authoritative
     // domain/LinkedIn or an honest "couldn't resolve" reason.
-    const contactContext = await loadContactContext(supabase, companyId);
+    const contactContext = await loadContactContext(supabase, companyId, company.company_name);
     const identity = await resolveCompanyIdentity({
       companyName: company.company_name,
       domain: company.domain,
@@ -440,17 +440,52 @@ export async function runCompanyEnrichmentById(
 async function loadContactContext(
   supabase: SupabaseClient,
   companyId: string,
+  companyName?: string | null,
 ): Promise<CompanyIdentityContext | null> {
   try {
-    const { data } = await supabase
+    const { data: byCompanyId } = await supabase
       .from('contacts')
       .select('full_name, job_title, headline')
       .eq('company_id', companyId)
       .not('full_name', 'is', null)
       .limit(1)
       .maybeSingle();
-    if (!data) return null;
-    const row = data as { full_name?: string | null; job_title?: string | null; headline?: string | null };
+
+    if (byCompanyId) {
+      const row = byCompanyId as { full_name?: string | null; job_title?: string | null; headline?: string | null };
+      if (row.full_name || row.job_title || row.headline) {
+        return {
+          contactName: row.full_name ?? null,
+          contactTitle: row.job_title ?? null,
+          contactHeadline: row.headline ?? null,
+        };
+      }
+    }
+
+    const trimmedName = (companyName ?? '').trim();
+    if (!trimmedName) return null;
+
+    const { data: userLink } = await supabase
+      .from('user_companies')
+      .select('user_id')
+      .eq('company_id', companyId)
+      .limit(1)
+      .maybeSingle();
+
+    const userId = (userLink as { user_id?: string } | null)?.user_id;
+    if (!userId) return null;
+
+    const { data: byResolvedName } = await supabase
+      .from('contacts')
+      .select('full_name, job_title, headline')
+      .eq('user_id', userId)
+      .ilike('resolved_current_company_name', trimmedName)
+      .not('full_name', 'is', null)
+      .limit(1)
+      .maybeSingle();
+
+    if (!byResolvedName) return null;
+    const row = byResolvedName as { full_name?: string | null; job_title?: string | null; headline?: string | null };
     if (!row.full_name && !row.job_title && !row.headline) return null;
     return {
       contactName: row.full_name ?? null,

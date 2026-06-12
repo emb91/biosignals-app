@@ -28,6 +28,9 @@ type AccountRpcRow = {
   therapeutic_areas: string[] | null;
   modalities: string[] | null;
   development_stages: string[] | null;
+  customer_therapeutic_areas: string[] | null;
+  customer_modalities: string[] | null;
+  customer_development_stages: string[] | null;
   funding_stage: string | null;
   funding_status_label: string | null;
   total_funding_usd: number | null;
@@ -391,6 +394,11 @@ export async function GET(request: Request) {
         therapeutic_areas: (overrideFor('therapeutic_areas') as string[] | undefined) ?? row.therapeutic_areas,
         modalities: (overrideFor('modalities') as string[] | undefined) ?? row.modalities,
         development_stages: (overrideFor('development_stages') as string[] | undefined) ?? row.development_stages,
+        // Customer-facing taxonomy (who they sell into) — populated for CRO/vendor/services
+        // accounts whose OWN therapeutic_areas/modalities are intentionally empty.
+        customer_therapeutic_areas: row.customer_therapeutic_areas,
+        customer_modalities: row.customer_modalities,
+        customer_development_stages: row.customer_development_stages,
         // Firmographics (table cols)
         employee_count: (overrideFor('employee_count') as number | undefined) ?? row.employee_count,
         employee_range: overrideFor('employee_range') ?? row.employee_range,

@@ -10,7 +10,7 @@ import type {
 } from '@/lib/data-acquisition/search-spec';
 
 export type DiscoveredCompany = {
-  source: 'apollo';
+  source: 'apollo' | 'web_search';
   source_id: string | null;
   name: string;
   domain: string | null;
@@ -181,18 +181,18 @@ export type PeopleSearchTarget = {
   company: DiscoveredCompany;
   /** How many NEW contacts to fetch at this company (the pre-flight gap, not the raw request). */
   contactsTarget: number;
-  /** Emails of contacts the user already owns at this company. Results matching these are discarded for free. */
+  /** Emails of contacts the user already owns at this company. Passed to Apollo person_not_in. */
   excludeEmails?: string[];
-  /** LinkedIn URLs of contacts the user already owns at this company. */
+  /** LinkedIn URLs of contacts the user already owns at this company. Passed to Apollo person_not_in. */
   excludeLinkedinUrls?: string[];
 };
 
 /**
- * Search Apollo people per company. Apollo's people search has no per-person
- * exclusion parameter, so exclusions are applied locally: results matching an
- * owned contact's email or LinkedIn URL are discarded before they count
- * toward the company quota or toward metered search results. The caller
- * receives separate new/excluded counts so duplicates are metered at zero.
+ * Search Apollo people per company. Owned emails / LinkedIn URLs are sent via
+ * Apollo's person_not_in exclusion list before the paid search happens; local
+ * exclusion filtering remains as a safety net for provider quirks and partial
+ * exclusion support. The caller receives separate new/excluded counts so any
+ * duplicate safety-net catches are metered at zero.
  */
 export async function discoverApolloPeopleForCompanies(params: {
   targets: PeopleSearchTarget[];
@@ -217,6 +217,10 @@ export async function discoverApolloPeopleForCompanies(params: {
     const excludedLinkedins = new Set(
       (target.excludeLinkedinUrls ?? []).map(normalizeLinkedinKey).filter(Boolean),
     );
+    const personNotIn = [
+      ...(target.excludeEmails ?? []).map((value) => value.trim()).filter(Boolean),
+      ...(target.excludeLinkedinUrls ?? []).map((value) => value.trim()).filter(Boolean),
+    ];
 
     const result = await searchPeopleWithApollo({
       page: 1,
@@ -225,6 +229,7 @@ export async function discoverApolloPeopleForCompanies(params: {
       organizationDomains: company.domain ? [company.domain] : undefined,
       personTitles: params.recipe.titles,
       personSeniorities: params.recipe.seniorities,
+      personNotIn,
     });
 
     const fresh: ApolloPerson[] = [];

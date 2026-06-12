@@ -4,8 +4,9 @@ import type { ContactEmailRow } from './contact-emails';
 import {
   getContactEmailDeliverabilityDisplayMeta,
   isVerifiedButOutdatedEmailRow,
+  classifyRefreshEmailCandidate,
 } from './contact-emails';
-import { shouldOfferFindNewEmailForContact } from './contact-profile-display';
+import { buildRefreshEmailCandidates, shouldOfferFindNewEmailForContact } from './contact-profile-display';
 
 function row(
   partial: Pick<ContactEmailRow, 'email' | 'email_deliverability' | 'email_deliverability_provider'>,
@@ -112,4 +113,74 @@ test('isVerifiedButOutdatedEmailRow detects prior-employer verified addresses', 
     ),
     false,
   );
+});
+
+test('classifyRefreshEmailCandidate skips stale and bad before verify', () => {
+  assert.equal(
+    classifyRefreshEmailCandidate(
+      { email: 'alex@mtbiogroup.com', email_deliverability: 'verified', email_deliverability_provider: 'zerobounce' },
+      'newco.com',
+    ),
+    'skip',
+  );
+  assert.equal(
+    classifyRefreshEmailCandidate(
+      { email: 'alex@newco.com', email_deliverability: 'invalid', email_deliverability_provider: 'zerobounce' },
+      'newco.com',
+    ),
+    'skip',
+  );
+  assert.equal(
+    classifyRefreshEmailCandidate(
+      { email: 'alex@newco.com', email_deliverability: 'extrapolated', email_deliverability_provider: 'apollo' },
+      'newco.com',
+    ),
+    'verify',
+  );
+  assert.equal(
+    classifyRefreshEmailCandidate(
+      { email: 'alex@newco.com', email_deliverability: 'verified', email_deliverability_provider: 'zerobounce' },
+      'newco.com',
+    ),
+    'good',
+  );
+});
+
+test('buildRefreshEmailCandidates lists primary before fallbacks', () => {
+  const candidates = buildRefreshEmailCandidates('primary@acme.com', [
+    {
+      id: '2',
+      contact_id: 'c1',
+      user_id: 'u1',
+      email: 'fallback@acme.com',
+      category: 'user',
+      label: null,
+      source_provider: null,
+      apollo_email_status: null,
+      email_deliverability: null,
+      email_deliverability_provider: null,
+      email_deliverability_checked_at: null,
+      email_deliverability_metadata: null,
+      created_at: '2026-01-02T00:00:00.000Z',
+      updated_at: '2026-01-02T00:00:00.000Z',
+    },
+    {
+      id: '1',
+      contact_id: 'c1',
+      user_id: 'u1',
+      email: 'primary@acme.com',
+      category: 'import',
+      label: null,
+      source_provider: null,
+      apollo_email_status: null,
+      email_deliverability: null,
+      email_deliverability_provider: null,
+      email_deliverability_checked_at: null,
+      email_deliverability_metadata: null,
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+    },
+  ]);
+  assert.equal(candidates[0]?.email, 'primary@acme.com');
+  assert.equal(candidates[1]?.email, 'fallback@acme.com');
 });

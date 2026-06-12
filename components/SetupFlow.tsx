@@ -337,6 +337,7 @@ type EntryPoint = 'full' | 'target-company' | 'company-only';
 interface TargetCompanyProfile {
   id: string;
   name: string;
+  example_company_url?: string | null;
   company_type: string;
   platform_category?: string | null;
   therapeutic_areas?: string[];
@@ -349,6 +350,7 @@ interface TargetCompanyProfile {
   competitors?: { name: string; url?: string }[] | null;
   example_company_enrichment?: {
     company_name?: string | null;
+    website?: string | null;
   } | null;
 }
 
@@ -6620,6 +6622,7 @@ export default function SetupFlow({
               isWorkDomain={isWorkDomain}
               emailDomain={emailDomain}
               onUseEmailDomain={() => {
+                if (!emailDomain) return;
                 pushText('user', emailDomain);
                 void runAnalysis(emailDomain);
               }}

@@ -25,7 +25,9 @@ import {
   LemlistError,
 } from '@/lib/lemlist';
 import { getHubSpotTokenForUser, pushOutreachStatusByEmail } from '@/lib/hubspot';
-import { fetchOrgOutreachActivityByPerson } from '@/lib/org-outreach';
+import { fetchOrgOutreachActivityByPerson, releaseExpiredAndFindBlocker } from '@/lib/org-outreach';
+import { orgIdForUser } from '@/lib/org-context';
+import { createAdminClient } from '@/lib/supabase-admin';
 
 function messageFromUnknown(error: unknown): string {
   return error instanceof Error ? error.message : 'Internal server error';
@@ -34,6 +36,7 @@ function messageFromUnknown(error: unknown): string {
 interface ContactRow {
   id: string;
   email: string | null;
+  email_deliverability: string | null;
   first_name: string | null;
   last_name: string | null;
   full_name: string | null;
@@ -59,10 +62,13 @@ export async function POST(req: Request) {
 
     const body = (await req.json().catch(() => ({}))) as {
       sequenceIds?: unknown;
+      /** Caller explicitly confirmed sending to guessed (pattern-inferred) emails. */
+      allowGuessedEmails?: unknown;
     };
     const sequenceIds = Array.isArray(body.sequenceIds)
       ? (body.sequenceIds.filter((v) => typeof v === 'string') as string[])
       : [];
+    const allowGuessedEmails = body.allowGuessedEmails === true;
 
     if (sequenceIds.length === 0) {
       return NextResponse.json(
@@ -115,14 +121,14 @@ export async function POST(req: Request) {
     const contactIds = Array.from(new Set(seqRows.map((r) => r.contact_id)));
     const { data: contactRowsRaw } = await supabase
       .from('contacts')
-      .select('id, email, first_name, last_name, full_name, linkedin_url, company_name')
+      .select('id, email, email_deliverability, first_name, last_name, full_name, linkedin_url, company_name')
       .eq('user_id', user.id)
       .in('id', contactIds);
     const contactById = new Map<string, ContactRow>(
       ((contactRowsRaw ?? []) as ContactRow[]).map((c) => [c.id, c]),
     );
 
-    const results: Array<{ id: string; ok: boolean; error?: string }> = [];
+    const results: Array<{ id: string; ok: boolean; error?: string; heldGuessedEmail?: boolean }> = [];
 
     // Dispatch sequentially — lemlist API doesn't love bursty per-account
     // traffic, and per-lead errors should be surfaced row-by-row.
@@ -134,11 +140,47 @@ export async function POST(req: Request) {
         continue;
       }
 
+      // Guessed (pattern-inferred) emails are held by default: a wrong guess
+      // bounces and damages sender reputation. The row stays draft (NOT failed)
+      // so the user can verify the address or resend with explicit confirmation.
+      if (contact.email_deliverability === 'pattern_guessed' && !allowGuessedEmails) {
+        results.push({
+          id: row.id,
+          ok: false,
+          heldGuessedEmail: true,
+          error:
+            'This email address was suggested from the company’s email format and hasn’t been verified yet. Verify it first, or confirm sending to suggested addresses.',
+        });
+        continue;
+      }
+
       const messages = Array.isArray(row.messages) ? row.messages : [];
       if (messages.length === 0) {
         await markFailed(supabase, row.id, user.id, 'Sequence has no messages');
         results.push({ id: row.id, ok: false, error: 'Sequence has no messages' });
         continue;
+      }
+
+      // Cooldown sweep: release any EXPIRED in-flight claims on this person (stuck queued
+      // >1h, sent >30d with no reply, replied >90d) so a dead sequence doesn't hold the
+      // person forever. If a FRESH claim remains, reject before touching anything.
+      if (row.person_id) {
+        const orgId = await orgIdForUser(supabase, user.id);
+        if (orgId) {
+          const blocker = await releaseExpiredAndFindBlocker(createAdminClient(), {
+            userId: user.id,
+            orgId,
+            personId: row.person_id,
+          });
+          if (blocker) {
+            results.push({
+              id: row.id,
+              ok: false,
+              error: `${blocker.userName} already has an active sequence with this contact.`,
+            });
+            continue;
+          }
+        }
       }
 
       // Claim the person org-wide BEFORE sending (one active outreach per person per org).

@@ -66,6 +66,9 @@ type AccountRow = {
   therapeutic_areas: string[] | null;
   modalities: string[] | null;
   development_stages: string[] | null;
+  customer_therapeutic_areas: string[] | null;
+  customer_modalities: string[] | null;
+  customer_development_stages: string[] | null;
   funding_stage: string | null;
   funding_status_label: string | null;
   company_type: string | null;
@@ -1352,30 +1355,40 @@ export default function AccountsPage() {
           </button>
         );
       }
-      case 'therapeutic_areas':
+      case 'therapeutic_areas': {
+        // For CRO/vendor/services accounts the firm's own TAs are empty by design;
+        // fall back to the disease areas they serve so the column isn't blank.
+        const taItems = (account.therapeutic_areas || []).length > 0
+          ? account.therapeutic_areas
+          : account.customer_therapeutic_areas;
         return (
           <InlinePills
-            items={account.therapeutic_areas}
+            items={taItems}
             max={2}
             onActivate={
-              (account.therapeutic_areas || []).length > 0
+              (taItems || []).length > 0
                 ? () => openDetailsWithCriteria(account.id)
                 : undefined
             }
           />
         );
-      case 'modalities':
+      }
+      case 'modalities': {
+        const modItems = (account.modalities || []).length > 0
+          ? account.modalities
+          : account.customer_modalities;
         return (
           <InlinePills
-            items={account.modalities}
+            items={modItems}
             max={2}
             onActivate={
-              (account.modalities || []).length > 0
+              (modItems || []).length > 0
                 ? () => openDetailsWithCriteria(account.id)
                 : undefined
             }
           />
         );
+      }
       case 'action': {
         const action = getAccountRowAction(account);
         const config = LEAD_ACTION_PILL_CLASS[action];
@@ -1986,7 +1999,10 @@ export default function AccountsPage() {
                           selectedAccount.platform_category ||
                           (selectedAccount.therapeutic_areas || []).length ||
                           (selectedAccount.modalities || []).length ||
-                          (selectedAccount.development_stages || []).length
+                          (selectedAccount.development_stages || []).length ||
+                          (selectedAccount.customer_therapeutic_areas || []).length ||
+                          (selectedAccount.customer_modalities || []).length ||
+                          (selectedAccount.customer_development_stages || []).length
                         );
                         const hasFirmographics = !!(
                           selectedAccount.employee_count != null ||
@@ -2131,6 +2147,26 @@ export default function AccountsPage() {
                                       <div>
                                         <p className="text-gray-400 text-xs mb-1">Development stage</p>
                                         <TaxonomyPills items={selectedAccount.development_stages} />
+                                      </div>
+                                    )}
+                                    {/* Customer-facing taxonomy: who a CRO/vendor/services account serves.
+                                        Shown when the firm's own taxonomy above is empty (or alongside it). */}
+                                    {(selectedAccount.customer_therapeutic_areas || []).length > 0 && (
+                                      <div>
+                                        <p className="text-gray-400 text-xs mb-1">Therapeutic areas served</p>
+                                        <TaxonomyPills items={selectedAccount.customer_therapeutic_areas} />
+                                      </div>
+                                    )}
+                                    {(selectedAccount.customer_modalities || []).length > 0 && (
+                                      <div>
+                                        <p className="text-gray-400 text-xs mb-1">Modalities served</p>
+                                        <TaxonomyPills items={selectedAccount.customer_modalities} />
+                                      </div>
+                                    )}
+                                    {(selectedAccount.customer_development_stages || []).length > 0 && (
+                                      <div>
+                                        <p className="text-gray-400 text-xs mb-1">Development stages served</p>
+                                        <TaxonomyPills items={selectedAccount.customer_development_stages} />
                                       </div>
                                     )}
                                   </div>

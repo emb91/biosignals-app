@@ -34,7 +34,6 @@ import { looksLikePhone, type ContactPhoneRow } from '@/lib/contact-phones';
 import {
   buildContactEmailDisplayRows,
   parseContactLocation,
-  shouldOfferFindNewEmailForContact,
 } from '@/lib/contact-profile-display';
 import { cn } from '@/lib/utils';
 import { cachedJson, invalidateCache } from '@/lib/page-fetch-cache';
@@ -1338,6 +1337,12 @@ const getLeadRefreshStatusMeta = (
   }
 };
 
+function isAvanzadoTestContact(lead: { full_name?: string | null; linkedin_url?: string | null }): boolean {
+  const name = (lead.full_name || '').toLowerCase();
+  const linkedin = (lead.linkedin_url || '').toLowerCase();
+  return name.includes('avanzado') || linkedin.includes('a-avanzado');
+}
+
 function getEmailDeliverabilityMeta(
   status: string | null | undefined,
   options?: { email?: string; companyDomain?: string | null },
@@ -1854,7 +1859,7 @@ export function ContactsWorkspace() {
         skippedInvalidEmail: 0,
         priorityMin: 0,
         limit: 25,
-        error: error instanceof Error ? error.message : 'Could not run email verification.',
+        error: error instanceof Error ? error.message : 'Could not refresh emails.',
       });
     } finally {
       setRunningEmailVerification(false);
@@ -1889,6 +1894,7 @@ export function ContactsWorkspace() {
                 ...lead,
                 email: contactPatch.email ?? lead.email,
                 email_deliverability: contactPatch.email_deliverability ?? lead.email_deliverability,
+                email_status: contactPatch.email_status ?? lead.email_status,
                 contact_emails: contactEmails ?? lead.contact_emails,
                 updated_at: contactPatch.updated_at ?? lead.updated_at,
               }
@@ -1901,6 +1907,7 @@ export function ContactsWorkspace() {
           ...prev[leadId],
           email: contactPatch.email ?? prev[leadId]?.email,
           email_deliverability: contactPatch.email_deliverability ?? prev[leadId]?.email_deliverability,
+          email_status: contactPatch.email_status ?? prev[leadId]?.email_status,
           contact_emails: contactEmails ?? prev[leadId]?.contact_emails,
           updated_at: contactPatch.updated_at ?? prev[leadId]?.updated_at,
         },
@@ -3409,7 +3416,7 @@ export function ContactsWorkspace() {
                 ) : (
                   <MailCheck className="w-3.5 h-3.5" />
                 )}
-                {runningEmailVerification ? 'Verifying…' : 'Run email verification'}
+                {runningEmailVerification ? 'Refreshing…' : 'Refresh emails'}
               </DropdownMenuItem>
               {hubspotConnected && (
                 <>
@@ -3567,14 +3574,19 @@ export function ContactsWorkspace() {
         <div className="min-w-0 flex-1">
           {r.error ? (
             <>
-              <span className="text-sm font-semibold text-rose-700">Email verification failed</span>
+              <span className="text-sm font-semibold text-rose-700">Email refresh failed</span>
               <p className="mt-0.5 break-words text-xs text-rose-600">{r.error}</p>
             </>
           ) : (
             <>
               <span className="text-sm font-semibold text-gray-900">
-                {r.eligible} email address{r.eligible !== 1 ? 'es' : ''} checked
+                {r.eligible} email address{r.eligible !== 1 ? 'es' : ''} refreshed
               </span>
+              {(r.finderFound ?? 0) > 0 && (
+                <p className="mt-1 text-xs text-gray-600">
+                  Found {r.finderFound} new email address{(r.finderFound ?? 0) !== 1 ? 'es' : ''} via lookup.
+                </p>
+              )}
               {pills.length > 0 && (
                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                   {pills.map((pill) => {
@@ -3624,7 +3636,7 @@ export function ContactsWorkspace() {
                 </div>
               )}
               <p className="mt-1 text-xs text-gray-500">
-                Checked email verification on active contacts above {Math.round(r.priorityMin * 100)}% priority.
+                Refreshed emails on active contacts above {Math.round(r.priorityMin * 100)}% priority.
               </p>
             </>
           )}
@@ -4570,7 +4582,7 @@ export function ContactsWorkspace() {
                                             <span className="text-xs text-gray-500">Deliverability</span>
                                             <EmailDeliverabilitySelect
                                               value={
-                                                editingFields.email_deliverability_by_email[
+                                                editingFields?.email_deliverability_by_email[
                                                   emailDeliverabilityEditKey(addr)
                                                 ] ?? null
                                               }
@@ -4875,31 +4887,23 @@ export function ContactsWorkspace() {
                                             });
                                           })()}
                                         </div>
-                                        {shouldOfferFindNewEmailForContact(
-                                          displayContactPriority(selectedLead),
-                                          selectedLead.email,
-                                          selectedLead.contact_emails,
-                                          {
-                                            emailStatus: selectedLead.email_status,
-                                            currentCompanyDomain:
-                                              selectedLead.resolved_current_company_domain ??
-                                              selectedLead.company_domain,
-                                          },
-                                        ) && (
+                                        {isAvanzadoTestContact(selectedLead) && (
                                           <div className="mt-3 space-y-1.5">
                                             <div className="flex flex-wrap gap-2">
                                               <button
                                                 type="button"
                                                 onClick={() => void handleFindNewEmail(selectedLead.id)}
                                                 disabled={findingEmailLeadId === selectedLead.id}
-                                                className="inline-flex items-center gap-1.5 rounded-lg border border-arcova-teal/20 bg-arcova-teal/10 px-2.5 py-1.5 text-xs font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/15 disabled:cursor-not-allowed disabled:opacity-60"
+                                                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300/60 bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-800 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
                                               >
                                                 {findingEmailLeadId === selectedLead.id ? (
                                                   <RotateCw className="h-3.5 w-3.5 animate-spin" />
                                                 ) : (
                                                   <MailCheck className="h-3.5 w-3.5" />
                                                 )}
-                                                {findingEmailLeadId === selectedLead.id ? 'Finding...' : 'Find new email'}
+                                                {findingEmailLeadId === selectedLead.id
+                                                  ? 'Testing…'
+                                                  : 'Test: get new email'}
                                               </button>
                                             </div>
                                             {findEmailErrorByLeadId[selectedLead.id] && (

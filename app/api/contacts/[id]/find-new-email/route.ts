@@ -250,15 +250,22 @@ export async function POST(
       }
     }
 
-    const shouldReplacePrimary = !typedContact.email || !looksLikeEmail(typedContact.email);
+    const shouldReplacePrimary =
+      !typedContact.email ||
+      !looksLikeEmail(typedContact.email) ||
+      typedContact.email_status === 'stale_suspected';
     const contactPatch: Record<string, unknown> = { email_deliverability: emailDeliverability };
     if (shouldReplacePrimary) contactPatch.email = email;
+    if (category === 'enriched_work' && emailDeliverability === 'verified') {
+      contactPatch.email_status = 'aligned_current';
+      contactPatch.email_status_reasoning = 'Email domain matches the resolved current company.';
+    }
     const { data: updatedContact, error: contactUpdateError } = await supabase
       .from('contacts')
       .update(contactPatch)
       .eq('id', id)
       .eq('user_id', user.id)
-      .select('id, email, email_deliverability, updated_at')
+      .select('id, email, email_deliverability, email_status, updated_at')
       .maybeSingle();
 
     if (contactUpdateError) return NextResponse.json({ error: contactUpdateError.message }, { status: 500 });

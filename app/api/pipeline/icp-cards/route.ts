@@ -106,6 +106,41 @@ export async function GET() {
     const period = quarterOf();
     const rollup = await computeCoverageRollup(supabase, user.id, period);
     const performanceByIcp = rollup.byIcp;
+    const recentCutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: recentJobs } = await supabase
+      .from('data_acquisition_jobs')
+      .select('icp_id, imported_company_count, imported_contact_count, skipped_existing_count, skipped_duplicate_count, completed_at')
+      .eq('user_id', user.id)
+      .eq('status', 'complete')
+      .gte('completed_at', recentCutoff);
+
+    const recentAcquisitionByIcp = new Map<
+      string,
+      { imported_company_count: number; imported_contact_count: number; skipped_count: number; last_completed_at: string | null }
+    >();
+    for (const job of (recentJobs ?? []) as Array<{
+      icp_id: string | null;
+      imported_company_count: number | null;
+      imported_contact_count: number | null;
+      skipped_existing_count: number | null;
+      skipped_duplicate_count: number | null;
+      completed_at: string | null;
+    }>) {
+      if (!job.icp_id) continue;
+      const current = recentAcquisitionByIcp.get(job.icp_id) ?? {
+        imported_company_count: 0,
+        imported_contact_count: 0,
+        skipped_count: 0,
+        last_completed_at: null,
+      };
+      current.imported_company_count += job.imported_company_count ?? 0;
+      current.imported_contact_count += job.imported_contact_count ?? 0;
+      current.skipped_count += (job.skipped_existing_count ?? 0) + (job.skipped_duplicate_count ?? 0);
+      if (job.completed_at && (!current.last_completed_at || job.completed_at > current.last_completed_at)) {
+        current.last_completed_at = job.completed_at;
+      }
+      recentAcquisitionByIcp.set(job.icp_id, current);
+    }
 
     const cards = orderedIcps.map((icp) => {
       const companyIds = [...(companiesByIcp.get(icp.id) ?? [])];
@@ -155,6 +190,7 @@ export async function GET() {
         contact_fit,
         depth,
         overall,
+        recent_acquisition: recentAcquisitionByIcp.get(icp.id) ?? null,
         // Bottom-up deal performance (null when no CRM deals mapped to this ICP).
         performance: performanceByIcp.get(icp.id) ?? null,
       };

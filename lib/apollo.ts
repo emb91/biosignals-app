@@ -202,6 +202,8 @@ export type ApolloPeopleSearchParams = {
   personTitles?: string[];
   personSeniorities?: string[];
   locations?: string[];
+  /** Apollo people search exclusion list. Accepts owned emails / LinkedIn URLs. */
+  personNotIn?: string[];
 };
 
 export type ApolloPeopleSearchResult = {
@@ -550,6 +552,7 @@ export async function searchPeopleWithApollo(input: ApolloPeopleSearchParams): P
     person_titles: input.personTitles,
     person_seniorities: input.personSeniorities,
     person_locations: input.locations,
+    person_not_in: input.personNotIn,
   });
 
   const response = await fetch('https://api.apollo.io/api/v1/mixed_people/search', {

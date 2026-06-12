@@ -302,6 +302,10 @@ export async function POST(request: Request) {
       queuePosition: startNow ? 0 : (queuedAheadCount ?? 0) + 1,
       targetCompanyCount,
       targetContactCount: estimate.targetContactCount,
+      estimatedCreditUnits: {
+        min: estimate.estimatedMinCreditUnits,
+        max: estimate.estimatedMaxCreditUnits,
+      },
     });
   } catch (e) {
     console.error('[pipeline/data-request]', e);

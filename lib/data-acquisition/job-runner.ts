@@ -24,6 +24,7 @@ import {
   type AcquisitionIcp,
   type AcquisitionPersona,
 } from '@/lib/data-acquisition/search-spec';
+import { discoverCompaniesWithWebSearch } from '@/lib/data-acquisition/web-discovery';
 
 type DataAcquisitionJob = {
   id: string;
@@ -562,10 +563,12 @@ async function ingestPeopleAndRunImportPipeline(
   }));
 
   if (queuedRows.length === 0) {
+    const metadata = await buildCoverageWritebackMetadata(admin, job);
     await updateJob(job.id, {
       status: 'complete',
       completed_at: new Date().toISOString(),
       completion_note: completionNote,
+      metadata,
     });
     return;
   }
@@ -605,10 +608,12 @@ async function ingestPeopleAndRunImportPipeline(
     });
   }
 
+  const metadata = await buildCoverageWritebackMetadata(admin, job);
   await updateJob(job.id, {
     status: 'complete',
     completed_at: new Date().toISOString(),
     completion_note: completionNote,
+    metadata,
   });
 }
 
@@ -622,11 +627,69 @@ async function completeJobWithoutPurchase(
     .from('upload_batches')
     .update({ total_rows: 0, status: 'complete', completed_at: new Date().toISOString() })
     .eq('id', job.upload_batch_id);
+  const metadata = await buildCoverageWritebackMetadata(admin, job);
   await updateJob(job.id, {
     status: 'complete',
     completed_at: new Date().toISOString(),
     completion_note: note,
+    metadata,
   });
+}
+
+async function buildCoverageWritebackMetadata(
+  admin: ReturnType<typeof createAdminClient>,
+  job: DataAcquisitionJob,
+): Promise<Record<string, unknown>> {
+  const [{ data: currentJob }, { data: companies }] = await Promise.all([
+    admin
+      .from('data_acquisition_jobs')
+      .select('metadata, imported_company_count, imported_contact_count, skipped_existing_count, skipped_duplicate_count')
+      .eq('id', job.id)
+      .maybeSingle(),
+    admin
+      .from('user_companies')
+      .select('company_id')
+      .eq('user_id', job.user_id)
+      .eq('matched_icp_id', job.icp_id),
+  ]);
+
+  const companyIds = ((companies ?? []) as Array<{ company_id?: unknown }>)
+    .map((row) => row.company_id)
+    .filter((value): value is string => typeof value === 'string');
+
+  let contactCount = 0;
+  if (companyIds.length > 0) {
+    const { count } = await admin
+      .from('contacts')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', job.user_id)
+      .in('company_id', companyIds);
+    contactCount = count ?? 0;
+  }
+
+  const existingMetadata =
+    currentJob?.metadata && typeof currentJob.metadata === 'object'
+      ? (currentJob.metadata as Record<string, unknown>)
+      : (job.metadata ?? {});
+  const counters = (currentJob ?? {}) as {
+    imported_company_count?: number | null;
+    imported_contact_count?: number | null;
+    skipped_existing_count?: number | null;
+    skipped_duplicate_count?: number | null;
+  };
+
+  return {
+    ...existingMetadata,
+    coverage_writeback: {
+      written_at: new Date().toISOString(),
+      icp_id: job.icp_id,
+      current_company_count: companyIds.length,
+      current_contact_count: contactCount,
+      imported_company_count: counters.imported_company_count ?? 0,
+      imported_contact_count: counters.imported_contact_count ?? 0,
+      skipped_count: (counters.skipped_existing_count ?? 0) + (counters.skipped_duplicate_count ?? 0),
+    },
+  };
 }
 
 function getCompanyContext(job: DataAcquisitionJob): CompanyContext | null {
@@ -1125,65 +1188,113 @@ async function runExpandCompaniesJob(
   const screenCache = await loadScreenCache(admin, job.user_id, job.icp_id);
   const icpKeywords = icpKeywordCorpus(icp);
   let screenedCount = 0;
+  const acceptedCompanyKeys = new Set<string>();
+
+  const evaluateCompany = async (
+    company: DiscoveredCompany,
+    recipe: { name: string },
+    provider: 'apollo' | 'web_search',
+  ) => {
+    const keys = companyKeys(company);
+    if (keys.some((key) => existingCompanyKeySet.has(key) || acceptedCompanyKeys.has(key))) {
+      await meter('skipped_existing', 1, {
+        company: company.name,
+        domain: company.domain,
+        reason: 'already_owned_or_selected',
+        provider,
+      });
+      return 'skip' as const;
+    }
+
+    const cachedVerdict = screenCache.lookup(company);
+    if (cachedVerdict === 'qualified') {
+      keys.forEach((key) => acceptedCompanyKeys.add(key));
+      await meter('qualified_company', 1, {
+        company: company.name,
+        domain: company.domain,
+        cached: true,
+        provider,
+      });
+      return 'qualified' as const;
+    }
+    if (cachedVerdict) return 'skip' as const; // previously rejected for this ICP, free
+
+    const passes = apolloOrganizationMatchesIcpKeywords(company.raw, icpKeywords);
+    await screenCache.store(company, passes ? 'qualified' : 'rejected:keyword_mismatch');
+    if (!passes) {
+      return 'skip' as const;
+    }
+
+    if (screenedCount >= maxScreenedCompanies) return 'skip' as const;
+    screenedCount += 1;
+    if (provider === 'apollo') {
+      await meter('apollo_company_search_result', 1, {
+        company: company.name,
+        domain: company.domain,
+        recipe: recipe.name,
+        provider,
+      });
+    } else {
+      await meter('llm_fit_screen', 1, {
+        company: company.name,
+        domain: company.domain,
+        recipe: recipe.name,
+        provider,
+        reason: 'web_discovery_fallback',
+      }, 'anthropic_search');
+    }
+
+    keys.forEach((key) => acceptedCompanyKeys.add(key));
+    await meter('qualified_company', 1, { company: company.name, domain: company.domain, provider });
+    return 'qualified' as const;
+  };
 
   const discovery = await discoverApolloCompanies({
     recipes: companyRecipes,
     targetCompanyCount,
     maxPagesPerRecipe: 20,
     shouldContinue: async () => guard.capReached() === null && screenedCount < maxScreenedCompanies,
-    // Evaluation order per org: (1) owned-company dedup, free; (2) screened
-    // cache, free; (3) metered keyword/fit screen, recorded to the cache.
-    evaluate: async (company, recipe) => {
-      if (companyKeys(company).some((key) => existingCompanyKeySet.has(key))) {
-        await meter('skipped_existing', 1, {
-          company: company.name,
-          domain: company.domain,
-          reason: 'already_owned',
-        });
-        return 'skip';
-      }
-
-      const cachedVerdict = screenCache.lookup(company);
-      if (cachedVerdict === 'qualified') {
-        await meter('qualified_company', 1, {
-          company: company.name,
-          domain: company.domain,
-          cached: true,
-        });
-        return 'qualified';
-      }
-      if (cachedVerdict) return 'skip'; // previously rejected for this ICP, free
-
-      if (screenedCount >= maxScreenedCompanies) return 'skip';
-      screenedCount += 1;
-      await meter('apollo_company_search_result', 1, {
-        company: company.name,
-        domain: company.domain,
-        recipe: recipe.name,
-      });
-      await meter('llm_fit_screen', 1, {
-        company: company.name,
-        domain: company.domain,
-        recipe: recipe.name,
-      }, 'arcova');
-
-      const passes = apolloOrganizationMatchesIcpKeywords(company.raw, icpKeywords);
-      await screenCache.store(company, passes ? 'qualified' : 'rejected:keyword_mismatch');
-
-      if (!passes) {
-        await meter('low_fit_company_rejected', 1, {
-          company: company.name,
-          domain: company.domain,
-        }, 'arcova');
-        return 'skip';
-      }
-
-      await meter('qualified_company', 1, { company: company.name, domain: company.domain });
-      return 'qualified';
-    },
+    // Evaluation order per org: (1) owned/selected dedup, free; (2) screened
+    // cache, free; (3) cheap keyword screen, free; (4) metered qualified screen.
+    evaluate: async (company, recipe) => evaluateCompany(company, recipe, 'apollo'),
   });
 
-  const qualifiedCompanies = discovery.companies;
+  const qualifiedCompanies = [...discovery.companies];
+  if (
+    qualifiedCompanies.length < targetCompanyCount &&
+    guard.capReached() === null &&
+    process.env.ANTHROPIC_API_KEY
+  ) {
+    const fallbackTarget = targetCompanyCount - qualifiedCompanies.length;
+    try {
+      const fallbackCompanies = await discoverCompaniesWithWebSearch({
+        icp,
+        targetCompanyCount: fallbackTarget,
+      });
+      for (const company of fallbackCompanies) {
+        if (qualifiedCompanies.length >= targetCompanyCount) break;
+        if (guard.capReached() !== null || screenedCount >= maxScreenedCompanies) break;
+        const verdict = await evaluateCompany(company, { name: 'web_search_fallback' }, 'web_search');
+        if (verdict === 'qualified') qualifiedCompanies.push(company);
+      }
+      if (fallbackCompanies.length > 0) {
+        await updateJob(job.id, {
+          source_strategy: 'apollo_then_web_search',
+          metadata: {
+            ...(job.metadata ?? {}),
+            secondary_source: {
+              provider: 'anthropic_web_search',
+              attempted_at: new Date().toISOString(),
+              candidate_count: fallbackCompanies.length,
+              accepted_count: qualifiedCompanies.filter((company) => company.source === 'web_search').length,
+            },
+          },
+        });
+      }
+    } catch (error) {
+      console.warn('[data-acquisition] web discovery fallback failed:', error);
+    }
+  }
   const companyPhaseCapKind = discovery.stoppedByGuard ? guard.capReached() : null;
 
   if (qualifiedCompanies.length === 0) {
