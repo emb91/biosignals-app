@@ -61,6 +61,10 @@ export type LlmFeature =
   // fallback works when ANTHROPIC_API_KEY runs out of credit.
   | 'company_bio_summarization'
   | 'contact_bio_generation'
+  // The user's OWN profile bio (a few sentences, third-person summary). Fires
+  // once per user at (re-)enrichment, so Sonnet is affordable here and the prose
+  // quality matters — it's the person reading about themselves.
+  | 'self_bio_generation'
   // Web-search-backed enrichment. These call Anthropic's server-side
   // web_search tool when on Anthropic; on fallback they use OpenRouter's
   // `web` plugin so they keep working when Anthropic credits are dry.
@@ -178,6 +182,11 @@ const FEATURE_MODELS: Record<LlmFeature, { openrouter: string; anthropic: string
   contact_bio_generation: {
     openrouter: 'anthropic/claude-haiku-4-5',
     anthropic: 'claude-haiku-4-5',
+  },
+  // Self-profile bio — Sonnet for natural, well-formed prose (fires once per user).
+  self_bio_generation: {
+    openrouter: 'anthropic/claude-sonnet-4-6',
+    anthropic: 'claude-sonnet-4-6',
   },
   // Web-search enrichment — Sonnet for quality reasoning over live results.
   // OpenRouter route runs the same model + the `web` plugin (see

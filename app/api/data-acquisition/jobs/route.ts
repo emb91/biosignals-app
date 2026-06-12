@@ -2,7 +2,7 @@ import { after, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 import { runDataAcquisitionJob } from '@/lib/data-acquisition/job-runner';
 
-const ACTIVE_JOB_STATUSES = ['discovering', 'importing', 'enriching'];
+const ACTIVE_JOB_STATUSES = ['discovering', 'processing', 'importing', 'enriching'];
 
 type JobRow = {
   id: string;

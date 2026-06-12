@@ -17,6 +17,8 @@ import { NextResponse } from 'next/server';
 import { getOrgContext } from '@/lib/org-context';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { getDisplayName } from '@/lib/auth-helpers';
+import { normalizeLinkedinProfileUrl } from '@/lib/linkedin-url-resolver';
+import { enrichSelfProfile } from '@/lib/profile-enrichment-by-email';
 
 type ProfileRow = {
   user_id: string;
@@ -126,9 +128,9 @@ export async function PUT(request: Request) {
   const admin = createAdminClient();
   const { data: existing } = await admin
     .from('user_profiles')
-    .select('edited_fields')
+    .select('edited_fields, linkedin_url, full_name, company_name')
     .eq('user_id', ctx.user.id)
-    .maybeSingle<{ edited_fields: Record<string, boolean> | null }>();
+    .maybeSingle<{ edited_fields: Record<string, boolean> | null; linkedin_url: string | null; full_name: string | null; company_name: string | null }>();
 
   const edited = { ...(existing?.edited_fields ?? {}) };
   const patch: Record<string, unknown> = {
@@ -138,14 +140,62 @@ export async function PUT(request: Request) {
     updated_at: new Date().toISOString(),
   };
 
+  // LinkedIn URL is handled separately below (it's verified, not blindly saved).
   // Only fields the user actually sent become source-of-truth (marked in edited_fields).
-  for (const key of ['full_name', 'role_title', 'linkedin_url', 'phone', 'location', 'company_name'] as const) {
+  for (const key of ['full_name', 'role_title', 'phone', 'location', 'company_name'] as const) {
     if (typeof body[key] === 'string') {
       const v = body[key]!.trim();
       patch[key] = v || null;
       if (v) edited[key] = true;
     }
   }
+
+  // LinkedIn URL: don't trust it on faith. If the user changes it, verify the link
+  // resolves to a real, scrapeable profile (and re-enrich off it). If it's malformed or
+  // dead, keep their previous URL and tell them — never silently store a bogus link.
+  const oldLinkedin = existing?.linkedin_url ?? null;
+  let linkedinWarning: string | null = null;
+  let reEnriched = false;
+  if (typeof body.linkedin_url === 'string') {
+    const raw = body.linkedin_url.trim();
+    const normNew = normalizeLinkedinProfileUrl(raw);
+    const normOld = normalizeLinkedinProfileUrl(oldLinkedin);
+    const changed = (normNew ?? (raw || null)) !== (normOld ?? oldLinkedin ?? null);
+
+    if (!raw) {
+      // Cleared on purpose — allowed, no verification needed.
+      patch.linkedin_url = null;
+      delete edited.linkedin_url;
+    } else if (!changed) {
+      // Same link as before — keep it, no need to re-scrape.
+      patch.linkedin_url = normNew ?? raw;
+      edited.linkedin_url = true;
+    } else if (!normNew) {
+      // Doesn't even look like a LinkedIn profile URL — reject, keep the old one.
+      linkedinWarning = "That doesn't look like a LinkedIn profile URL, so we kept your previous link.";
+    } else {
+      // Looks valid — verify it's a real profile by re-enriching off it.
+      const result = await enrichSelfProfile({
+        userId: ctx.user.id,
+        email: ctx.user.email ?? null,
+        fullName: (typeof body.full_name === 'string' ? body.full_name.trim() : null) || existing?.full_name || null,
+        companyName: (typeof body.company_name === 'string' ? body.company_name.trim() : null) || existing?.company_name || null,
+        companyDomain: ctx.user.email?.split('@')[1] ?? null,
+        linkedinUrl: normNew,
+      });
+      if (result.ok) {
+        // enrichSelfProfile already wrote linkedin_url + relinked the person + refreshed
+        // the bio. Just mark it edited so future auto-enrichment won't override it.
+        patch.linkedin_url = result.linkedinUrl;
+        edited.linkedin_url = true;
+        reEnriched = true;
+      } else {
+        linkedinWarning =
+          "We couldn't find a LinkedIn profile at that link, so we kept your previous one. Double-check the URL and try again.";
+      }
+    }
+  }
+
   patch.edited_fields = edited;
 
   const { error } = await admin.from('user_profiles').upsert(patch, { onConflict: 'user_id' });
@@ -153,5 +203,13 @@ export async function PUT(request: Request) {
     console.error('[me/profile PUT] upsert failed:', error);
     return NextResponse.json({ error: 'Could not save profile' }, { status: 500 });
   }
-  return NextResponse.json({ ok: true });
+  // Other fields saved fine, but the LinkedIn change was rejected — surface that so the UI
+  // can reset the field to the previous value and show the reason.
+  if (linkedinWarning) {
+    return NextResponse.json(
+      { ok: true, linkedinReverted: true, linkedin_url: oldLinkedin, warning: linkedinWarning },
+      { status: 200 },
+    );
+  }
+  return NextResponse.json({ ok: true, reEnriched });
 }

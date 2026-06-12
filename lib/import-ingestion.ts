@@ -186,9 +186,9 @@ async function upsertCompany(
   supabase: MinimalSupabase,
   userId: string,
   record: EnrichedImportRecord
-): Promise<string | null> {
+): Promise<{ companyId: string | null; created: boolean }> {
   const domain = record.company_domain?.trim().toLowerCase();
-  if (!domain) return null;
+  if (!domain) return { companyId: null, created: false };
 
   const context = `user=${userId} domain=${domain}`;
 
@@ -265,7 +265,7 @@ async function upsertCompany(
         { onConflict: 'user_id,company_id' },
       );
 
-    return existingCompany.id;
+    return { companyId: existingCompany.id, created: false };
   }
 
   const insertResult = (await supabase
@@ -318,12 +318,20 @@ async function upsertCompany(
         console.warn(`[import-ingestion] phase-4 backfill failed for ${insertedId} (${context}):`, err instanceof Error ? err.message : String(err));
       });
   }
-  return insertedId;
+  return { companyId: insertedId, created: Boolean(insertedId) };
 }
+
+export type ImportProgressEvent =
+  | { type: 'imported_contact'; quantity: number; metadata?: Record<string, unknown> }
+  | { type: 'imported_company'; quantity: number; metadata?: Record<string, unknown> }
+  | { type: 'duplicate_contact_skipped'; quantity: number; metadata?: Record<string, unknown> };
+
+export type ImportProgressCallback = (event: ImportProgressEvent) => void | Promise<void>;
 
 export async function ingestEnrichedRecords(
   supabase: MinimalSupabase,
-  records: EnrichedImportRecord[]
+  records: EnrichedImportRecord[],
+  options?: { onProgress?: ImportProgressCallback },
 ): Promise<{ inserted: number; duplicates: number; failed: number }> {
   if (records.length === 0) {
     return { inserted: 0, duplicates: 0, failed: 0 };
@@ -353,6 +361,12 @@ export async function ingestEnrichedRecords(
       .from('raw_uploads')
       .update({ status: 'duplicate', enriched_at: new Date().toISOString() })
       .in('id', duplicateIds);
+    if (options?.onProgress) {
+      await options.onProgress({
+        type: 'duplicate_contact_skipped',
+        quantity: duplicateIds.length,
+      });
+    }
   }
 
   let inserted = 0;
@@ -365,8 +379,18 @@ export async function ingestEnrichedRecords(
     const parsedLocation = splitLocation(record.location);
 
     try {
-      const companyId = await upsertCompany(supabase, userId, record);
+      const { companyId, created } = await upsertCompany(supabase, userId, record);
       if (companyId) touchedCompanyIds.add(companyId);
+      if (created && options?.onProgress) {
+        await options.onProgress({
+          type: 'imported_company',
+          quantity: 1,
+          metadata: {
+            company_domain: record.company_domain?.trim().toLowerCase() || null,
+            company_name: record.company_name || null,
+          },
+        });
+      }
 
       const contactPayload = {
         user_id: userId,
@@ -490,6 +514,9 @@ export async function ingestEnrichedRecords(
         .eq('id', record.raw_upload_id);
 
       inserted += 1;
+      if (options?.onProgress) {
+        await options.onProgress({ type: 'imported_contact', quantity: 1 });
+      }
     } catch (error) {
       console.error('[import-ingestion] Failed to store contact:', record.raw_upload_id, error);
       failed += 1;

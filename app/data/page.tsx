@@ -821,7 +821,7 @@ function DataPageContent() {
 
   useEffect(() => {
     if (!user || !anyJobActive) return;
-    const interval = setInterval(() => void loadData(), 8000);
+    const interval = setInterval(() => void loadData(), 2000);
     return () => clearInterval(interval);
   }, [user, anyJobActive, loadData]);
 

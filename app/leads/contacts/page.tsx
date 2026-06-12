@@ -29,11 +29,12 @@ import {
 import { formatProvenanceImportedAt } from '@/lib/data-provenance';
 import { ROUTES, withQuery } from '@/lib/routes';
 import Nango from '@nangohq/frontend';
-import { looksLikeEmail, type ContactEmailRow } from '@/lib/contact-emails';
+import { looksLikeEmail, type ContactEmailRow, EMAIL_DELIVERABILITY_USER_OPTIONS, emailDeliverabilityEditKey } from '@/lib/contact-emails';
 import { looksLikePhone, type ContactPhoneRow } from '@/lib/contact-phones';
 import {
   buildContactEmailDisplayRows,
   parseContactLocation,
+  shouldOfferFindNewEmailForContact,
 } from '@/lib/contact-profile-display';
 import { cn } from '@/lib/utils';
 import { cachedJson, invalidateCache } from '@/lib/page-fetch-cache';
@@ -64,8 +65,10 @@ import {
   Ban,
   Upload,
   Download,
+  MailCheck,
   Check,
   Plus,
+  AlertTriangle,
 } from 'lucide-react';
 import { EntitySignalsList } from '@/components/EntitySignalsList';
 
@@ -308,6 +311,7 @@ interface Lead {
   email: string | null;
   email_status: string | null;
   email_status_reasoning: string | null;
+  email_deliverability: string | null;
   linkedin_url: string | null;
   profile_photo_url: string | null;
   profile_photo_cached: string | null;
@@ -432,6 +436,8 @@ type EditableLeadFields = {
   country: string;
   user_secondary_emails: string[];
   user_phones: string[];
+  /** Normalized email address -> deliverability status (null = not verified). */
+  email_deliverability_by_email: Record<string, string | null>;
 };
 
 type EnrichmentStageKey =
@@ -936,6 +942,69 @@ function userPhonesFromLead(lead: Lead): string[] {
   return out;
 }
 
+function emailDeliverabilityFromLead(lead: Lead): Record<string, string | null> {
+  const rows = buildContactEmailDisplayRows(lead.email, lead.contact_emails, 'full');
+  const out: Record<string, string | null> = {};
+  for (const row of rows) {
+    out[emailDeliverabilityEditKey(row.email)] = row.email_deliverability ?? null;
+  }
+  return out;
+}
+
+function collectEmailDeliverabilityOverrides(
+  lead: Lead,
+  editingFields: EditableLeadFields,
+): Array<{ email: string; email_deliverability: string | null }> {
+  const primaryTrim = editingFields.email.trim();
+  const secondaryTrimmed = editingFields.user_secondary_emails.map((s) => s.trim()).filter(Boolean);
+  const enrichmentRows = buildContactEmailDisplayRows(lead.email, lead.contact_emails, 'enrichmentOnly');
+
+  const emails: string[] = [];
+  if (primaryTrim) emails.push(primaryTrim);
+  emails.push(...secondaryTrimmed);
+  for (const row of enrichmentRows) emails.push(row.email.trim());
+
+  const seen = new Set<string>();
+  const overrides: Array<{ email: string; email_deliverability: string | null }> = [];
+  for (const email of emails) {
+    const key = emailDeliverabilityEditKey(email);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (!(key in editingFields.email_deliverability_by_email)) continue;
+    overrides.push({
+      email,
+      email_deliverability: editingFields.email_deliverability_by_email[key] ?? null,
+    });
+  }
+  return overrides;
+}
+
+const LEAD_EDIT_SELECT_CLASS =
+  'rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-arcova-teal/30';
+
+function EmailDeliverabilitySelect({
+  value,
+  onChange,
+}: {
+  value: string | null;
+  onChange: (next: string | null) => void;
+}) {
+  return (
+    <select
+      value={value ?? ''}
+      onChange={(e) => onChange(e.target.value ? e.target.value : null)}
+      className={LEAD_EDIT_SELECT_CLASS}
+      aria-label="Email deliverability status"
+    >
+      {EMAIL_DELIVERABILITY_USER_OPTIONS.map((option) => (
+        <option key={option.value || 'not-verified'} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 function actionDrawerRelativeTime(iso?: string | null): string | null {
   if (!iso) return null;
   const diff = Date.now() - new Date(iso).getTime();
@@ -1269,7 +1338,33 @@ const getLeadRefreshStatusMeta = (
   }
 };
 
-
+function getEmailDeliverabilityMeta(status: string | null | undefined): {
+  label: string;
+  icon: 'check' | 'warning';
+  className: string;
+} {
+  switch (status) {
+    case 'verified':
+      return { label: 'Verified', icon: 'check', className: 'text-emerald-500' };
+    case 'invalid':
+    case 'spamtrap':
+    case 'abuse':
+    case 'do_not_mail':
+      return { label: 'Not deliverable', icon: 'warning', className: 'text-rose-500' };
+    case 'catch-all':
+      return { label: 'Catch-all', icon: 'warning', className: 'text-amber-500' };
+    case 'unknown':
+      return { label: 'Unknown', icon: 'warning', className: 'text-amber-500' };
+    case 'extrapolated':
+    case 'unavailable':
+    case null:
+    case undefined:
+    case '':
+      return { label: 'Not verified', icon: 'warning', className: 'text-amber-500' };
+    default:
+      return { label: status, icon: 'warning', className: 'text-amber-500' };
+  }
+}
 
 function getSortValue(lead: Lead | QueryLead, col: string): string | number {
   switch (col) {
@@ -1403,9 +1498,28 @@ export function ContactsWorkspace() {
   const [savingLeadId, setSavingLeadId] = useState<string | null>(null);
   const [deletingLeadId, setDeletingLeadId] = useState<string | null>(null);
   const [refreshingLeadId, setRefreshingLeadId] = useState<string | null>(null);
+  const [findingEmailLeadId, setFindingEmailLeadId] = useState<string | null>(null);
+  const [findEmailErrorByLeadId, setFindEmailErrorByLeadId] = useState<Record<string, string>>({});
   const [hubspotConnected, setHubspotConnected] = useState(false);
   const [pushingToHubspot, setPushingToHubspot] = useState(false);
   const [pullingHubspotCrm, setPullingHubspotCrm] = useState(false);
+  const [runningEmailVerification, setRunningEmailVerification] = useState(false);
+  const [emailVerificationResult, setEmailVerificationResult] = useState<{
+    scanned: number;
+    eligible: number;
+    finderAttempts?: number;
+    finderFound?: number;
+    finderFailed?: number;
+    verified: number;
+    invalid: number;
+    catchAll: number;
+    unknown: number;
+    failed: number;
+    skippedInvalidEmail: number;
+    contactFitMin: number;
+    limit: number;
+    error?: string;
+  } | null>(null);
   const [hubspotSyncResult, setHubspotSyncResult] = useState<{
     contacts: { upserted: number; errors: number };
     skipped: number;
@@ -1709,6 +1823,118 @@ export function ContactsWorkspace() {
     }
   }, [pullingHubspotCrm, fetchLeads]);
 
+  const handleRunEmailVerification = useCallback(async () => {
+    if (runningEmailVerification) return;
+    setRunningEmailVerification(true);
+    setEmailVerificationResult(null);
+    try {
+      const res = await fetch('/api/contacts/run-email-verification', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit: 25 }),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        setEmailVerificationResult({
+          scanned: 0,
+          eligible: 0,
+          finderAttempts: 0,
+          finderFound: 0,
+          finderFailed: 0,
+          verified: 0,
+          invalid: 0,
+          catchAll: 0,
+          unknown: 0,
+          failed: 0,
+          skippedInvalidEmail: 0,
+          contactFitMin: 0,
+          limit: 25,
+          error: typeof data.error === 'string' ? data.error : `HTTP ${res.status}`,
+        });
+        return;
+      }
+
+      setEmailVerificationResult(data.result ?? null);
+      await fetchLeads(true);
+    } catch (error) {
+      setEmailVerificationResult({
+        scanned: 0,
+        eligible: 0,
+        finderAttempts: 0,
+        finderFound: 0,
+        finderFailed: 0,
+        verified: 0,
+        invalid: 0,
+        catchAll: 0,
+        unknown: 0,
+        failed: 0,
+        skippedInvalidEmail: 0,
+        contactFitMin: 0,
+        limit: 25,
+        error: error instanceof Error ? error.message : 'Could not run email verification.',
+      });
+    } finally {
+      setRunningEmailVerification(false);
+    }
+  }, [runningEmailVerification, fetchLeads]);
+
+  const handleFindNewEmail = useCallback(async (leadId: string) => {
+    if (findingEmailLeadId) return;
+    setFindingEmailLeadId(leadId);
+    setFindEmailErrorByLeadId((prev) => {
+      const next = { ...prev };
+      delete next[leadId];
+      return next;
+    });
+    try {
+      const res = await fetch(`/api/contacts/${encodeURIComponent(leadId)}/find-new-email`, {
+        method: 'POST',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const message = typeof data.error === 'string' ? data.error : `HTTP ${res.status}`;
+        setFindEmailErrorByLeadId((prev) => ({ ...prev, [leadId]: message }));
+        return;
+      }
+
+      const contactPatch = (data.data?.contact ?? {}) as Partial<Lead>;
+      const contactEmails = (data.data?.contact_emails ?? null) as ContactEmailRow[] | null;
+      setLeads((prev) =>
+        prev.map((lead) =>
+          lead.id === leadId
+            ? {
+                ...lead,
+                email: contactPatch.email ?? lead.email,
+                email_deliverability: contactPatch.email_deliverability ?? lead.email_deliverability,
+                contact_emails: contactEmails ?? lead.contact_emails,
+                updated_at: contactPatch.updated_at ?? lead.updated_at,
+              }
+            : lead,
+        ),
+      );
+      setSelectedLeadDetailById((prev) => ({
+        ...prev,
+        [leadId]: {
+          ...prev[leadId],
+          email: contactPatch.email ?? prev[leadId]?.email,
+          email_deliverability: contactPatch.email_deliverability ?? prev[leadId]?.email_deliverability,
+          contact_emails: contactEmails ?? prev[leadId]?.contact_emails,
+          updated_at: contactPatch.updated_at ?? prev[leadId]?.updated_at,
+        },
+      }));
+      invalidateCache(`/api/leads/${encodeURIComponent(leadId)}`);
+      await fetchLeads(true);
+    } catch (error) {
+      setFindEmailErrorByLeadId((prev) => ({
+        ...prev,
+        [leadId]: error instanceof Error ? error.message : 'Could not find a new email.',
+      }));
+    } finally {
+      setFindingEmailLeadId(null);
+    }
+  }, [findingEmailLeadId, fetchLeads]);
+
   const handleDownloadCsv = useCallback(async () => {
     // Fetch all leads (loop pages)
     const allLeads: Lead[] = [];
@@ -1890,6 +2116,7 @@ export function ContactsWorkspace() {
       country: lead.country || '',
       user_secondary_emails: [...userSecondaryEmailsFromLead(lead)],
       user_phones: [...userPhonesFromLead(lead)],
+      email_deliverability_by_email: emailDeliverabilityFromLead(lead),
     });
   };
 
@@ -1988,6 +2215,23 @@ export function ContactsWorkspace() {
     });
   };
 
+  const updateEmailDeliverabilityForAddress = (email: string, value: string | null) => {
+    const key = emailDeliverabilityEditKey(email);
+    if (!key) return;
+    setLeadEditError(null);
+    setEditingFields((prev) =>
+      prev
+        ? {
+            ...prev,
+            email_deliverability_by_email: {
+              ...prev.email_deliverability_by_email,
+              [key]: value,
+            },
+          }
+        : prev,
+    );
+  };
+
   const saveLead = async (leadId: string) => {
     if (!editingFields) return;
 
@@ -2015,6 +2259,7 @@ export function ContactsWorkspace() {
 
     setLeadEditError(null);
     setSavingLeadId(leadId);
+    const leadBeingEdited = leads.find((lead) => lead.id === leadId);
     try {
       const response = await fetch(`/api/leads/${leadId}`, {
         method: 'PUT',
@@ -2037,6 +2282,9 @@ export function ContactsWorkspace() {
             (s) => s.toLowerCase() !== primaryTrim.toLowerCase(),
           ),
           user_phones: phonesTrimmed,
+          email_deliverability_overrides: leadBeingEdited
+            ? collectEmailDeliverabilityOverrides(leadBeingEdited, editingFields)
+            : [],
         }),
       });
 
@@ -2062,6 +2310,16 @@ export function ContactsWorkspace() {
                 first_name: d.first_name ?? lead.first_name,
                 last_name: d.last_name ?? lead.last_name,
                 email: d.email ?? lead.email,
+                email_deliverability:
+                  (d as Lead).email_deliverability ??
+                  (() => {
+                    const primary = (d.email ?? lead.email)?.trim();
+                    if (!primary) return lead.email_deliverability;
+                    const match = (d.contact_emails ?? lead.contact_emails ?? []).find(
+                      (row) => row.email.trim().toLowerCase() === primary.toLowerCase(),
+                    );
+                    return match?.email_deliverability ?? lead.email_deliverability;
+                  })(),
                 job_title: d.job_title ?? lead.job_title,
                 headline: d.headline ?? lead.headline,
                 linkedin_url: d.linkedin_url ?? lead.linkedin_url,
@@ -2097,6 +2355,16 @@ export function ContactsWorkspace() {
                 first_name: d.first_name ?? prev[leadId].first_name,
                 last_name: d.last_name ?? prev[leadId].last_name,
                 email: d.email ?? prev[leadId].email,
+                email_deliverability:
+                  (d as Lead).email_deliverability ??
+                  (() => {
+                    const primary = (d.email ?? prev[leadId].email)?.trim();
+                    if (!primary) return prev[leadId].email_deliverability;
+                    const match = (d.contact_emails ?? prev[leadId].contact_emails ?? []).find(
+                      (row) => row.email.trim().toLowerCase() === primary.toLowerCase(),
+                    );
+                    return match?.email_deliverability ?? prev[leadId].email_deliverability;
+                  })(),
                 job_title: d.job_title ?? prev[leadId].job_title,
                 headline: d.headline ?? prev[leadId].headline,
                 linkedin_url: d.linkedin_url ?? prev[leadId].linkedin_url,
@@ -2444,6 +2712,7 @@ export function ContactsWorkspace() {
   const isSelectedLeadRefreshRunning = selectedLead ? isLeadRefreshRunning(selectedLead) : false;
   const selectedLeadRefreshStatus = selectedLead ? getLeadRefreshStatus(selectedLead) : 'idle';
   const selectedLeadRefreshStatusMeta = getLeadRefreshStatusMeta(selectedLeadRefreshStatus);
+  const selectedLeadEnrichmentProgress = selectedLead ? getEnrichmentProgress(selectedLead) : null;
   // Effective status: roll the rolled-up `enrichment_refresh_status` together
   // with the per-stage statuses (linkedin_resolution_status,
   // profile_enrichment_status). If ANY per-stage queue entry is still pending
@@ -3131,7 +3400,7 @@ export function ContactsWorkspace() {
                 className="inline-flex items-center gap-2 px-3 py-2 bg-arcova-teal text-white rounded-lg text-sm font-medium hover:bg-arcova-teal/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm focus-visible:outline-none"
                 title="Actions"
               >
-                {pullingHubspotCrm || pushingToHubspot ? (
+                {pullingHubspotCrm || pushingToHubspot || runningEmailVerification ? (
                   <RotateCw className="w-4 h-4 animate-spin" />
                 ) : (
                   <ChevronDown className="w-4 h-4" />
@@ -3147,6 +3416,18 @@ export function ContactsWorkspace() {
               <DropdownMenuItem onSelect={handleDownloadCsv}>
                 <Download className="w-3.5 h-3.5" />
                 Export CSV
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onSelect={handleRunEmailVerification}
+                disabled={runningEmailVerification}
+              >
+                {runningEmailVerification ? (
+                  <RotateCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <MailCheck className="w-3.5 h-3.5" />
+                )}
+                {runningEmailVerification ? 'Verifying…' : 'Run email verification'}
               </DropdownMenuItem>
               {hubspotConnected && (
                 <>
@@ -3243,6 +3524,63 @@ export function ContactsWorkspace() {
         aria-label="Dismiss"
       >
         <X className="w-4 h-4" />
+      </button>
+    </div>
+  ) : null;
+
+  const emailVerificationBanner = emailVerificationResult ? (
+    <div className={`mb-4 shrink-0 rounded-xl border bg-white px-4 py-3 flex items-start justify-between gap-4 ${emailVerificationResult.error ? 'border-rose-200' : 'border-gray-200'}`}>
+      <div className="flex min-w-0 items-start gap-3">
+        <MailCheck className={`mt-0.5 h-4 w-4 shrink-0 ${emailVerificationResult.error ? 'text-rose-500' : 'text-arcova-teal'}`} />
+        <div className="min-w-0">
+          {emailVerificationResult.error ? (
+            <>
+              <span className="text-sm font-semibold text-rose-700">Email verification failed</span>
+              <p className="mt-0.5 break-words text-xs text-rose-600">{emailVerificationResult.error}</p>
+            </>
+          ) : (
+            <>
+              <span className="text-sm font-semibold text-gray-900">
+                {emailVerificationResult.eligible} email address{emailVerificationResult.eligible !== 1 ? 'es' : ''} checked with ZeroBounce
+              </span>
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                <span className="rounded-md border border-emerald-200/70 bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">
+                  <span className="font-semibold tabular-nums">{emailVerificationResult.verified}</span> verified
+                </span>
+                <span className="rounded-md border border-rose-200/70 bg-rose-50 px-2 py-0.5 text-xs text-rose-600">
+                  <span className="font-semibold tabular-nums">{emailVerificationResult.invalid}</span> invalid
+                </span>
+                <span className="rounded-md border border-amber-200/70 bg-amber-50 px-2 py-0.5 text-xs text-amber-700">
+                  <span className="font-semibold tabular-nums">{emailVerificationResult.catchAll}</span> catch-all
+                </span>
+                <span className="rounded-md border border-gray-200/70 bg-gray-50 px-2 py-0.5 text-xs text-gray-600">
+                  <span className="font-semibold tabular-nums">{emailVerificationResult.unknown}</span> unknown
+                </span>
+                {emailVerificationResult.failed > 0 && (
+                  <span className="rounded-md border border-rose-200/70 bg-rose-50 px-2 py-0.5 text-xs text-rose-600">
+                    <span className="font-semibold tabular-nums">{emailVerificationResult.failed}</span> failed
+                  </span>
+                )}
+                {(emailVerificationResult.finderAttempts ?? 0) > 0 && (
+                  <span className="rounded-md border border-sky-200/70 bg-sky-50 px-2 py-0.5 text-xs text-sky-700">
+                    <span className="font-semibold tabular-nums">{emailVerificationResult.finderFound ?? 0}</span> found
+                  </span>
+                )}
+              </div>
+              <p className="mt-1 text-xs text-gray-500">
+                Checked unverified addresses on contacts above {Math.round(emailVerificationResult.contactFitMin * 100)}% contact fit. Skipped Apollo-verified and already-classified addresses.
+              </p>
+            </>
+          )}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={() => setEmailVerificationResult(null)}
+        className="mt-0.5 shrink-0 text-gray-400 transition-colors hover:text-gray-600"
+        aria-label="Dismiss"
+      >
+        <X className="h-4 w-4" />
       </button>
     </div>
   ) : null;
@@ -3376,6 +3714,7 @@ export function ContactsWorkspace() {
             {loadingLeads ? (
               <>
                 {contactsPageTitleBlock}
+                {emailVerificationBanner}
                 {hubspotPullBanner}
                 {hubspotSyncBanner}
                 <div className="flex items-center justify-center py-24">
@@ -3385,6 +3724,7 @@ export function ContactsWorkspace() {
             ) : leads.length === 0 && !search && !agentFilterIds ? (
               <>
                 {contactsPageTitleBlock}
+                {emailVerificationBanner}
                 {hubspotPullBanner}
                 {hubspotSyncBanner}
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-16 text-center">
@@ -3406,6 +3746,7 @@ export function ContactsWorkspace() {
             ) : leads.length === 0 && search && !agentFilterIds ? (
               <>
                 {contactsPageTitleBlock}
+                {emailVerificationBanner}
                 {hubspotPullBanner}
                 {hubspotSyncBanner}
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
@@ -3422,6 +3763,7 @@ export function ContactsWorkspace() {
                 )}
               >
                 {contactsPageTitleBlock}
+                {emailVerificationBanner}
                 {hubspotPullBanner}
                 {hubspotSyncBanner}
                 {/* ── Leads table ── */}
@@ -4004,7 +4346,10 @@ export function ContactsWorkspace() {
                             <div className="space-y-3">
                               <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50/80 px-3 py-2">
                                 <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
-                                  Import and enrichment emails (read-only)
+                                  Import and enrichment emails
+                                </p>
+                                <p className="mt-1 text-[11px] text-gray-500">
+                                  Addresses are read-only here. You can override deliverability status.
                                 </p>
                                 <div className="mt-2 space-y-2 text-xs text-gray-700">
                                   {(() => {
@@ -4017,10 +4362,23 @@ export function ContactsWorkspace() {
                                       return <p className="text-gray-500">None on file yet.</p>;
                                     }
                                     return dirRows.map((r, i) => (
-                                      <p key={`${r.label}-${r.email}-${i}`} className="break-all leading-snug">
-                                        <span className="font-medium text-gray-600">{r.label}: </span>
-                                        {r.email}
-                                      </p>
+                                      <div
+                                        key={`${r.label}-${r.email}-${i}`}
+                                        className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 leading-snug"
+                                      >
+                                        <p className="min-w-0 break-all">
+                                          <span className="font-medium text-gray-600">{r.label}: </span>
+                                          {r.email}
+                                        </p>
+                                        <EmailDeliverabilitySelect
+                                          value={
+                                            editingFields?.email_deliverability_by_email[
+                                              emailDeliverabilityEditKey(r.email)
+                                            ] ?? r.email_deliverability
+                                          }
+                                          onChange={(next) => updateEmailDeliverabilityForAddress(r.email, next)}
+                                        />
+                                      </div>
                                     ));
                                   })()}
                                 </div>
@@ -4092,6 +4450,21 @@ export function ContactsWorkspace() {
                                   onKeyDown={blurInputOnEnter}
                                   className={LEAD_EDIT_INPUT_CLASS}
                                 />
+                                {editingFields?.email.trim() ? (
+                                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                                    <span className="text-xs text-gray-500">Deliverability</span>
+                                    <EmailDeliverabilitySelect
+                                      value={
+                                        editingFields.email_deliverability_by_email[
+                                          emailDeliverabilityEditKey(editingFields.email)
+                                        ] ?? selectedLead.email_deliverability
+                                      }
+                                      onChange={(next) =>
+                                        updateEmailDeliverabilityForAddress(editingFields.email, next)
+                                      }
+                                    />
+                                  </div>
+                                ) : null}
                               </div>
                               <div className="space-y-1">
                                 <div className="flex items-center justify-between gap-2">
@@ -4112,24 +4485,39 @@ export function ContactsWorkspace() {
                                     </p>
                                   ) : (
                                     (editingFields?.user_secondary_emails ?? []).map((addr, idx) => (
-                                      <div key={idx} className="flex items-center gap-2">
-                                        <input
-                                          type="email"
-                                          autoComplete="off"
-                                          value={addr}
-                                          onChange={(e) => updateUserSecondaryEmailAt(idx, e.target.value)}
-                                          onKeyDown={blurInputOnEnter}
-                                          className={LEAD_EDIT_INPUT_CLASS}
-                                          placeholder="name@company.com"
-                                        />
-                                        <button
-                                          type="button"
-                                          onClick={() => removeUserSecondaryEmailAt(idx)}
-                                          className="shrink-0 rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
-                                          aria-label="Remove email"
-                                        >
-                                          <Trash2 className="h-4 w-4" />
-                                        </button>
+                                      <div key={idx} className="space-y-1">
+                                        <div className="flex items-center gap-2">
+                                          <input
+                                            type="email"
+                                            autoComplete="off"
+                                            value={addr}
+                                            onChange={(e) => updateUserSecondaryEmailAt(idx, e.target.value)}
+                                            onKeyDown={blurInputOnEnter}
+                                            className={LEAD_EDIT_INPUT_CLASS}
+                                            placeholder="name@company.com"
+                                          />
+                                          <button
+                                            type="button"
+                                            onClick={() => removeUserSecondaryEmailAt(idx)}
+                                            className="shrink-0 rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+                                            aria-label="Remove email"
+                                          >
+                                            <Trash2 className="h-4 w-4" />
+                                          </button>
+                                        </div>
+                                        {addr.trim() ? (
+                                          <div className="flex flex-wrap items-center gap-2 pl-0.5">
+                                            <span className="text-xs text-gray-500">Deliverability</span>
+                                            <EmailDeliverabilitySelect
+                                              value={
+                                                editingFields.email_deliverability_by_email[
+                                                  emailDeliverabilityEditKey(addr)
+                                                ] ?? null
+                                              }
+                                              onChange={(next) => updateEmailDeliverabilityForAddress(addr, next)}
+                                            />
+                                          </div>
+                                        ) : null}
                                       </div>
                                     ))
                                   )}
@@ -4269,22 +4657,30 @@ export function ContactsWorkspace() {
                           ) : (
                             /* ── View mode ── */
                             <div className="space-y-4">
-                              {(() => {
-                                const contactSummaryText =
-                                  selectedPanelSummaries?.contactSummary?.trim() ||
-                                  selectedLead.contact_panel_summary?.trim() ||
-                                  '';
-                                if (!selectedPanelSummariesState?.loading && !contactSummaryText) return null;
-                                return (
-                                <div className="rounded-xl border border-[rgba(13,53,71,0.1)] bg-[rgba(13,53,71,0.03)] px-3 py-2.5">
-                                  <p className="text-[12.5px] leading-[1.55] text-[#1f475a]">
-                                    {selectedPanelSummariesState?.loading
-                                      ? 'Summarising contact context...'
-                                      : contactSummaryText}
-                                  </p>
+                              {isSelectedLeadRefreshRunning && selectedLeadEnrichmentProgress && (
+                                <div className="rounded-xl border border-arcova-teal/25 bg-arcova-teal/5 px-3.5 py-3 flex gap-2.5">
+                                  <RotateCw className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-arcova-teal" aria-hidden />
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-[12.5px] font-semibold text-arcova-teal">Enriching this contact…</p>
+                                    <p className="mt-0.5 text-[12px] leading-relaxed text-[#1f475a]">
+                                      {selectedLeadEnrichmentProgress.label}…
+                                    </p>
+                                    <div className="mt-2.5 flex items-center gap-3">
+                                      <div className="relative h-2.5 flex-1 overflow-hidden rounded-full bg-arcova-teal/12">
+                                        <div
+                                          className="arcova-enrichment-progress absolute inset-y-0 left-0 rounded-full transition-[width] duration-700 ease-out"
+                                          style={{ width: `${selectedLeadEnrichmentProgress.percent}%` }}
+                                        >
+                                          <div className="arcova-enrichment-glow absolute inset-y-0 right-0 w-14 rounded-full" />
+                                        </div>
+                                      </div>
+                                      <span className="text-[11px] font-medium tabular-nums text-arcova-teal">
+                                        {selectedLeadEnrichmentProgress.percent}%
+                                      </span>
+                                    </div>
+                                  </div>
                                 </div>
-                                );
-                              })()}
+                              )}
 
                               {selectedLead.contact_bio && selectedLead.contact_bio.length > 0 && (
                                 <div className="overflow-hidden rounded-xl border border-[rgba(13,53,71,0.08)] bg-[rgba(255,255,255,0.82)] shadow-[0_1px_4px_-2px_rgba(13,53,71,0.08)]">
@@ -4393,17 +4789,55 @@ export function ContactsWorkspace() {
                                                 <p className="break-words text-sm leading-snug text-[#0d3547]">—</p>
                                               );
                                             }
-                                            return emailRows.map((r, i) => (
-                                              <p
-                                                key={`${r.label}-${r.email}-${i}`}
-                                                className="break-all text-sm leading-snug text-[#0d3547]"
-                                              >
-                                                <span className="font-medium text-[#7d909a]">{r.label}: </span>
-                                                {r.email}
-                                              </p>
-                                            ));
+                                            return emailRows.map((r, i) => {
+                                              const meta = getEmailDeliverabilityMeta(r.email_deliverability);
+                                              const VerificationIcon = meta.icon === 'check' ? Check : AlertTriangle;
+                                              return (
+                                                <div
+                                                  key={`${r.label}-${r.email}-${i}`}
+                                                  className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-sm leading-snug text-[#0d3547]"
+                                                >
+                                                  <p className="min-w-0 break-all">
+                                                    <span className="font-medium text-[#7d909a]">{r.label}: </span>
+                                                    {r.email}
+                                                  </p>
+                                                  <span className={`inline-flex shrink-0 items-center gap-1 ${meta.className}`}>
+                                                    <VerificationIcon className="h-3.5 w-3.5" aria-hidden />
+                                                    <span className="text-xs font-medium">{meta.label}</span>
+                                                  </span>
+                                                </div>
+                                              );
+                                            });
                                           })()}
                                         </div>
+                                        {shouldOfferFindNewEmailForContact(
+                                          selectedLead.contact_fit_score,
+                                          selectedLead.email,
+                                          selectedLead.contact_emails,
+                                        ) && (
+                                          <div className="mt-3 space-y-1.5">
+                                            <div className="flex flex-wrap gap-2">
+                                              <button
+                                                type="button"
+                                                onClick={() => void handleFindNewEmail(selectedLead.id)}
+                                                disabled={findingEmailLeadId === selectedLead.id}
+                                                className="inline-flex items-center gap-1.5 rounded-lg border border-arcova-teal/20 bg-arcova-teal/10 px-2.5 py-1.5 text-xs font-semibold text-arcova-teal transition-colors hover:bg-arcova-teal/15 disabled:cursor-not-allowed disabled:opacity-60"
+                                              >
+                                                {findingEmailLeadId === selectedLead.id ? (
+                                                  <RotateCw className="h-3.5 w-3.5 animate-spin" />
+                                                ) : (
+                                                  <MailCheck className="h-3.5 w-3.5" />
+                                                )}
+                                                {findingEmailLeadId === selectedLead.id ? 'Finding...' : 'Find new email'}
+                                              </button>
+                                            </div>
+                                            {findEmailErrorByLeadId[selectedLead.id] && (
+                                              <p className="text-xs leading-snug text-rose-600">
+                                                {findEmailErrorByLeadId[selectedLead.id]}
+                                              </p>
+                                            )}
+                                          </div>
+                                        )}
                                       </div>
                                       <div className="min-w-0">
                                         <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[#7d909a]">
@@ -4430,7 +4864,7 @@ export function ContactsWorkspace() {
                                       (selectedLead.email_status === 'candidate' ||
                                         selectedLead.email_status === 'stale_suspected') && (
                                         <p className="mt-4 text-xs leading-snug text-[#7d909a]">
-                                          This email may be outdated.
+                                          One or more emails may be outdated.
                                         </p>
                                       )}
                                   </div>

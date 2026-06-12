@@ -221,7 +221,7 @@ export async function POST(request: Request) {
           .select('id')
           .eq('org_id', reqOrgId)
           .eq('criteria_hash', criteriaHash)
-          .in('status', ['queued', 'discovering', 'importing', 'enriching'])
+          .in('status', ['queued', 'discovering', 'processing', 'importing', 'enriching'])
           .order('requested_at', { ascending: true })
           .limit(1)
           .maybeSingle();
@@ -268,7 +268,7 @@ export async function POST(request: Request) {
         .from('data_acquisition_jobs')
         .select('id', { count: 'exact', head: true })
         .eq('user_id', user.id)
-        .in('status', ['discovering', 'importing', 'enriching']),
+        .in('status', ['discovering', 'processing', 'importing', 'enriching']),
       supabase
         .from('data_acquisition_jobs')
         .select('id', { count: 'exact', head: true })

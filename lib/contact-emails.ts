@@ -11,6 +11,10 @@ export type ContactEmailRow = {
   label: string | null;
   source_provider: string | null;
   apollo_email_status: string | null;
+  email_deliverability: string | null;
+  email_deliverability_provider: string | null;
+  email_deliverability_checked_at: string | null;
+  email_deliverability_metadata: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 };
@@ -63,6 +67,102 @@ export function looksLikeEmail(value: string | null | undefined): boolean {
 
 export function emailsEqual(a: string, b: string): boolean {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+/** Options users can pick when overriding provider verification in the contact editor. */
+export const EMAIL_DELIVERABILITY_USER_OPTIONS = [
+  { value: '', label: 'Not verified' },
+  { value: 'verified', label: 'Verified' },
+  { value: 'invalid', label: 'Not deliverable' },
+  { value: 'catch-all', label: 'Catch-all' },
+  { value: 'unknown', label: 'Unknown' },
+] as const;
+
+const ALLOWED_EMAIL_DELIVERABILITY = new Set([
+  'verified',
+  'invalid',
+  'spamtrap',
+  'abuse',
+  'do_not_mail',
+  'catch-all',
+  'unknown',
+  'extrapolated',
+  'unavailable',
+]);
+
+export type EmailDeliverabilityOverride = {
+  email: string;
+  email_deliverability: string | null;
+};
+
+export function normalizeUserEmailDeliverability(value: unknown): string | null {
+  if (value == null || value === '') return null;
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  if (!ALLOWED_EMAIL_DELIVERABILITY.has(normalized)) return null;
+  return normalized;
+}
+
+/** Skip ZeroBounce when the user manually set deliverability in the contact editor. */
+export function isUserEmailDeliverabilityOverride(provider: string | null | undefined): boolean {
+  return provider === 'user';
+}
+
+export function shouldRunAutomatedEmailVerification(
+  deliverability: string | null | undefined,
+  provider: string | null | undefined,
+): boolean {
+  if (isUserEmailDeliverabilityOverride(provider)) return false;
+  return deliverability == null || deliverability === 'extrapolated' || deliverability === 'unavailable';
+}
+
+export type EmailDeliverabilityRow = {
+  email: string;
+  email_deliverability: string | null;
+  email_deliverability_provider: string | null;
+};
+
+export function isZeroBounceDeliverabilityProvider(provider: string | null | undefined): boolean {
+  return provider === 'zerobounce' || provider === 'zerobounce_finder';
+}
+
+/** ZeroBounce-validated or user-confirmed verified — do not offer email finder. */
+export function isTrustedVerifiedEmailRow(row: EmailDeliverabilityRow): boolean {
+  if (!looksLikeEmail(row.email)) return false;
+  if (row.email_deliverability !== 'verified') return false;
+  return isZeroBounceDeliverabilityProvider(row.email_deliverability_provider) || row.email_deliverability_provider === 'user';
+}
+
+/** Apollo-sourced or never checked — verify the on-file address with ZeroBounce first. */
+export function emailRowAwaitingZeroBounceVerification(row: EmailDeliverabilityRow): boolean {
+  if (!looksLikeEmail(row.email)) return false;
+  if (isUserEmailDeliverabilityOverride(row.email_deliverability_provider)) return false;
+  if (isZeroBounceDeliverabilityProvider(row.email_deliverability_provider)) return false;
+
+  const provider = row.email_deliverability_provider;
+  const status = row.email_deliverability;
+  const isApolloOrUnchecked = provider === 'apollo' || provider == null;
+  if (!isApolloOrUnchecked) return false;
+
+  return status == null || status === 'extrapolated' || status === 'unavailable' || status === 'verified';
+}
+
+/** ZeroBounce ran on this address and did not return valid. */
+export function emailRowHasZeroBounceNonValidResult(row: EmailDeliverabilityRow): boolean {
+  if (!looksLikeEmail(row.email)) return false;
+  if (!isZeroBounceDeliverabilityProvider(row.email_deliverability_provider)) return false;
+  return row.email_deliverability !== 'verified';
+}
+
+/** User manually marked this address as not good enough to use. */
+export function emailRowHasUserNonValidOverride(row: EmailDeliverabilityRow): boolean {
+  if (!looksLikeEmail(row.email)) return false;
+  if (!isUserEmailDeliverabilityOverride(row.email_deliverability_provider)) return false;
+  return row.email_deliverability !== 'verified';
+}
+
+export function emailDeliverabilityEditKey(email: string): string {
+  return email.trim().toLowerCase();
 }
 
 export function extractDomainFromEmail(email: string): string | null {
@@ -179,6 +279,10 @@ export async function ensureEnrichedEmailEntry(
       label: null,
       source_provider: 'apollo',
       apollo_email_status: params.apolloEmailStatus ?? null,
+      email_deliverability: params.apolloEmailStatus ?? null,
+      email_deliverability_provider: params.apolloEmailStatus ? 'apollo' : null,
+      email_deliverability_checked_at: null,
+      email_deliverability_metadata: null,
       updated_at: new Date().toISOString(),
     });
 
@@ -199,7 +303,7 @@ export async function fetchContactEmailsForContacts(
   const { data, error } = await supabase
     .from('contact_emails')
     .select(
-      'id, contact_id, user_id, email, category, label, source_provider, apollo_email_status, created_at, updated_at',
+      'id, contact_id, user_id, email, category, label, source_provider, apollo_email_status, email_deliverability, email_deliverability_provider, email_deliverability_checked_at, email_deliverability_metadata, created_at, updated_at',
     )
     .in('contact_id', contactIds)
     .order('created_at', { ascending: true });
@@ -292,8 +396,77 @@ export async function syncUserAddedContactEmails(
 }
 
 /**
- * Ensures contacts.email appears in the directory when it is neither import nor enriched.
+ * Applies manual deliverability overrides from the contact editor.
+ * Updates contact_emails rows and the primary contacts.email_deliverability when matched.
+ * Provider metadata from ZeroBounce/Apollo is left intact; provider is set to `user`.
  */
+export async function syncEmailDeliverabilityOverrides(
+  supabase: SupabaseFrom,
+  params: {
+    contactId: string;
+    userId: string;
+    primaryEmail: string | null;
+    overrides: EmailDeliverabilityOverride[];
+  },
+): Promise<void> {
+  if (params.overrides.length === 0) return;
+
+  const now = new Date().toISOString();
+  const primaryEmail = trimEmail(params.primaryEmail);
+  let primaryDeliverability: string | null | undefined;
+
+  const { data: rows, error: selErr } = await supabase
+    .from('contact_emails')
+    .select('id, email')
+    .eq('contact_id', params.contactId)
+    .eq('user_id', params.userId);
+
+  if (selErr) {
+    if (isMissingContactEmailsTableError(selErr)) return;
+    throw selErr;
+  }
+
+  const directoryRows = (rows ?? []) as Array<{ id: string; email: string }>;
+
+  for (const item of params.overrides) {
+    const email = trimEmail(item.email);
+    if (!email || !looksLikeEmail(email)) continue;
+
+    const status = normalizeUserEmailDeliverability(item.email_deliverability);
+    const matching = directoryRows.find((row) => emailsEqual(row.email, email));
+
+    if (matching) {
+      const { error: updErr } = await supabase
+        .from('contact_emails')
+        .update({
+          email_deliverability: status,
+          email_deliverability_provider: 'user',
+          email_deliverability_checked_at: now,
+          updated_at: now,
+        })
+        .eq('id', matching.id)
+        .eq('user_id', params.userId);
+
+      if (updErr) throw updErr;
+    }
+
+    if (primaryEmail && emailsEqual(primaryEmail, email)) {
+      primaryDeliverability = status;
+    }
+  }
+
+  if (primaryDeliverability !== undefined && primaryEmail) {
+    const { error: contactErr } = await supabase
+      .from('contacts')
+      .update({ email_deliverability: primaryDeliverability, updated_at: now })
+      .eq('id', params.contactId)
+      .eq('user_id', params.userId);
+
+    if (contactErr) throw contactErr;
+  }
+}
+
+/** Ensures contacts.email appears in the directory when it is neither import nor enriched. */
 export async function syncPrimaryEmailAsUserRowIfNeeded(
   supabase: SupabaseFrom,
   params: { contactId: string; userId: string; primaryEmail: string | null },

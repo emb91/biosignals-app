@@ -53,6 +53,7 @@ type ContactRow = {
   company_domain: string | null;
   company_id?: string | null;
   job_title?: string | null;
+  email_deliverability?: string | null;
   seniority_level?: string | null;
   business_area?: string | null;
   resolved_current_company_name?: string | null;
@@ -155,6 +156,29 @@ async function updateContactWithOptionalRefreshJobFields(
   });
 
   if (error) {
+    throw error;
+  }
+}
+
+async function resetContactEmailDeliverabilityForReverification(
+  supabase: MinimalSupabase,
+  params: { contactId: string; userId: string },
+): Promise<void> {
+  const { error } = await supabase
+    .from('contact_emails')
+    .update({
+      email_deliverability: null,
+      email_deliverability_provider: null,
+      email_deliverability_checked_at: null,
+      email_deliverability_metadata: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('contact_id', params.contactId)
+    .eq('user_id', params.userId);
+
+  if (error) {
+    const msg = formatSupabaseErrorMessage(error) || '';
+    if (msg.includes('contact_emails') || msg.includes('does not exist')) return;
     throw error;
   }
 }
@@ -584,8 +608,11 @@ export async function generateContactBio(params: {
   currentCompany: string | null;
   headline: string | null;
   employmentHistory: NormalizedEmployment[];
+  // 'prospect' (default): one-line "why they're a relevant contact" for a sales target.
+  // 'self': a short professional summary for the user's OWN profile — no prospect framing.
+  variant?: 'prospect' | 'self';
 }): Promise<string | null> {
-  const { fullName, currentTitle, currentCompany, headline, employmentHistory } = params;
+  const { fullName, currentTitle, currentCompany, headline, employmentHistory, variant = 'prospect' } = params;
   if (!currentTitle && !currentCompany && employmentHistory.length === 0) return null;
 
   const historyText = employmentHistory
@@ -595,25 +622,30 @@ export async function generateContactBio(params: {
     )
     .join('\n');
 
-  const sourceBlock = `Contact: ${fullName || 'Unknown'}
+  const sourceBlock = `${variant === 'self' ? 'Person' : 'Contact'}: ${fullName || 'Unknown'}
 Current role: ${currentTitle || '—'} at ${currentCompany || '—'}
 LinkedIn headline: ${headline || '—'}
 Work history:
 ${historyText || '— No history available'}`;
 
-  const instruction = `Write a single plain sentence (10–20 words) describing this person as a prospect in a B2B sales context — current role, organization, and why they are a relevant contact. Be factual and specific; use title, company, or domain of focus when the source material supports it. No preamble, no bullet points, no labels, no punctuation beyond the closing period.`;
+  const instruction =
+    variant === 'self'
+      ? `Write a short professional summary (2–3 sentences, 35–55 words) of this person for their own profile. Cover what they do now, their focus or expertise, and a thread of relevant prior experience. Write in the third person, factual and grounded in the source — no marketing adjectives, no "prospect" or sales framing, no preamble, no labels, no bullet points.`
+      : `Write a single plain sentence (10–20 words) describing this person as a prospect in a B2B sales context — current role, organization, and why they are a relevant contact. Be factual and specific; use title, company, or domain of focus when the source material supports it. No preamble, no bullet points, no labels, no punctuation beyond the closing period.`;
 
-  // Anthropic-direct preferred (cheaper); OpenRouter fallback if Anthropic
-  // errors. See lib/llm-client.ts.
+  // Self bio: Sonnet for natural prose (fires once per user). Contact bios stay
+  // on Haiku. Anthropic-direct preferred (cheaper); OpenRouter fallback if
+  // Anthropic errors. See lib/llm-client.ts.
+  const feature = variant === 'self' ? 'self_bio_generation' : 'contact_bio_generation';
   try {
     const result = await completeLlm({
-      feature: 'contact_bio_generation',
-      maxTokens: 100,
+      feature,
+      maxTokens: variant === 'self' ? 220 : 100,
       prompt: `${instruction}\n\n${sourceBlock}`,
     });
     await recordLlmUsageEvent({
       provider: result.provider,
-      feature: 'contact_bio_generation',
+      feature,
       route: 'lib/enrichment-pipeline#generateContactBio',
       model: result.model,
       usage: result.usage,
@@ -874,9 +906,14 @@ export function buildResolvedContext(params: {
   const currentCompanyLinkedinUrl =
     getFirstString(currentPositionObj, ['companyLinkedinUrl']) || null;
 
-  // harvestapi location is an object: { linkedinText: "United States", ... }
+  // harvestapi location is an object. Prefer the parsed `text` ("City, Country" /
+  // "City, State, Country") which includes the country, over `linkedinText` — the latter
+  // is often a metro-area label that drops the country ("Auckland Metropolitan Area",
+  // "San Francisco Bay Area"). parseContactLocation expects the comma-joined form.
   const locationObj = getObject(profile?.location);
+  const parsedLocationObj = getObject(locationObj?.parsed);
   const location =
+    getFirstString(parsedLocationObj, ['text']) ||
     getFirstString(locationObj, ['linkedinText']) ||
     normalizeString(profile?.location) ||
     null;
@@ -956,6 +993,55 @@ function assessEmailStatus(params: {
   };
 }
 
+function normalizeComparableText(value: string | null | undefined): string | null {
+  const normalized = normalizeString(value).toLowerCase().replace(/\s+/g, ' ');
+  return normalized || null;
+}
+
+function shouldPreserveEmailDeliverability(params: {
+  existingEmail: string | null;
+  existingDeliverability: string | null | undefined;
+  existingResolvedCompanyName: string | null | undefined;
+  existingResolvedCompanyDomain: string | null | undefined;
+  nextEmail: string | null;
+  nextResolvedCompanyName: string | null;
+  nextResolvedCompanyDomain: string | null;
+}): boolean {
+  if (!params.existingDeliverability) return false;
+
+  const sameEmail =
+    trimContactEmail(params.existingEmail) !== null &&
+    trimContactEmail(params.nextEmail) !== null &&
+    emailsEqual(params.existingEmail!, params.nextEmail!);
+
+  if (!sameEmail) return false;
+
+  const existingDomain = normalizeDomain(params.existingResolvedCompanyDomain);
+  const nextDomain = normalizeDomain(params.nextResolvedCompanyDomain);
+  if (existingDomain || nextDomain) return existingDomain === nextDomain;
+
+  return (
+    normalizeComparableText(params.existingResolvedCompanyName) ===
+    normalizeComparableText(params.nextResolvedCompanyName)
+  );
+}
+
+function resolvedCompanyChanged(params: {
+  existingResolvedCompanyName: string | null | undefined;
+  existingResolvedCompanyDomain: string | null | undefined;
+  nextResolvedCompanyName: string | null;
+  nextResolvedCompanyDomain: string | null;
+}): boolean {
+  const existing =
+    normalizeDomain(params.existingResolvedCompanyDomain) ||
+    normalizeComparableText(params.existingResolvedCompanyName);
+  const next =
+    normalizeDomain(params.nextResolvedCompanyDomain) ||
+    normalizeComparableText(params.nextResolvedCompanyName);
+
+  return Boolean(existing && next && existing !== next);
+}
+
 export async function runContactResolutionPipelineForContact(
   supabase: MinimalSupabase,
   params: { contactId: string; userId: string; emitExternalSignals?: boolean }
@@ -966,7 +1052,7 @@ export async function runContactResolutionPipelineForContact(
   const { data: contact, error: contactError } = await supabase
     .from('contacts')
     .select(
-      'id, user_id, raw_upload_id, full_name, first_name, last_name, email, linkedin_url, location, company_name, company_domain, company_id, job_title, seniority_level, business_area, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, profile_enrichment_status, apollo_person_raw, apollo_organization_raw'
+      'id, user_id, raw_upload_id, full_name, first_name, last_name, email, email_deliverability, linkedin_url, location, company_name, company_domain, company_id, job_title, seniority_level, business_area, resolved_current_company_name, resolved_current_company_domain, resolved_current_job_title, profile_enrichment_status, apollo_person_raw, apollo_organization_raw'
     )
     .eq('user_id', userId)
     .eq('id', contactId)
@@ -1352,6 +1438,30 @@ export async function runContactResolutionPipelineForContact(
 
     const profileEnrichmentStatus = alignment.alignment === 'low' ? 'ambiguous' : 'completed';
     const completedAt = new Date().toISOString();
+    const nextResolvedCompanyDomain = resolvedDomainFromCompany || resolved.resolvedCompanyDomainForEmailCheck;
+    const preserveEmailDeliverability = shouldPreserveEmailDeliverability({
+      existingEmail: typedContact.email,
+      existingDeliverability: typedContact.email_deliverability,
+      existingResolvedCompanyName: typedContact.resolved_current_company_name,
+      existingResolvedCompanyDomain: typedContact.resolved_current_company_domain,
+      nextEmail: typedContact.email,
+      nextResolvedCompanyName: resolved.currentCompanyName,
+      nextResolvedCompanyDomain,
+    });
+    const emailDeliverability = preserveEmailDeliverability
+      ? typedContact.email_deliverability
+      : apolloEmailStatusForDirectory ?? null;
+    const shouldResetEmailDirectory = resolvedCompanyChanged({
+      existingResolvedCompanyName: typedContact.resolved_current_company_name,
+      existingResolvedCompanyDomain: typedContact.resolved_current_company_domain,
+      nextResolvedCompanyName: resolved.currentCompanyName,
+      nextResolvedCompanyDomain,
+    });
+
+    if (shouldResetEmailDirectory || (typedContact.email_deliverability && !preserveEmailDeliverability)) {
+      await resetContactEmailDeliverabilityForReverification(supabase, { contactId, userId });
+    }
+
     const updatePayload: Record<string, unknown> = {
       linkedin_url: resolvedLinkedin.linkedin_url,
       linkedin_resolution_source: resolvedLinkedin.source,
@@ -1395,6 +1505,7 @@ export async function runContactResolutionPipelineForContact(
       contact_bio: contactBio,
       email_status: emailAssessment.status,
       email_status_reasoning: emailAssessment.reasoning,
+      email_deliverability: emailDeliverability,
       updated_at: completedAt,
     };
 
