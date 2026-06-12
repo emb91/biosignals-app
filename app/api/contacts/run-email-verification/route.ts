@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
-import { classifyEnrichedEmail, emailsEqual, looksLikeEmail, shouldRunAutomatedEmailVerification } from '@/lib/contact-emails';
+import { classifyEnrichedEmail, emailsEqual, looksLikeEmail, shouldRunAutomatedEmailVerification, DEFAULT_EMAIL_VERIFICATION_PRIORITY_MIN, emailVerificationBannerCategory, type EmailVerificationResultItem } from '@/lib/contact-emails';
 
 type ContactForVerification = {
   id: string;
@@ -10,7 +10,6 @@ type ContactForVerification = {
   full_name: string | null;
   email: string | null;
   email_deliverability: string | null;
-  contact_fit_score: number | null;
   company_name: string | null;
   company_domain: string | null;
   resolved_current_company_name: string | null;
@@ -32,7 +31,7 @@ type EmailForVerification = {
   isPrimary: boolean;
   source: 'existing' | 'finder';
   finderMetadata?: ZeroBounceFinderResponse;
-  contact?: ContactForVerification;
+  contact: ContactForVerification;
 };
 
 type ZeroBounceResponse = {
@@ -54,11 +53,14 @@ type ZeroBounceFinderResponse = {
 
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
-const DEFAULT_CONTACT_FIT_MIN = 0.6;
 
-function configuredContactFitMin(): number {
-  const raw = Number(process.env.EMAIL_VERIFICATION_CONTACT_FIT_MIN ?? DEFAULT_CONTACT_FIT_MIN);
-  if (!Number.isFinite(raw)) return DEFAULT_CONTACT_FIT_MIN;
+function configuredPriorityMin(): number {
+  const raw = Number(
+    process.env.EMAIL_VERIFICATION_PRIORITY_MIN ??
+      process.env.EMAIL_VERIFICATION_CONTACT_FIT_MIN ??
+      DEFAULT_EMAIL_VERIFICATION_PRIORITY_MIN,
+  );
+  if (!Number.isFinite(raw)) return DEFAULT_EMAIL_VERIFICATION_PRIORITY_MIN;
   return Math.max(0, Math.min(1, raw));
 }
 
@@ -66,6 +68,17 @@ function normalizeLimit(value: unknown): number {
   const parsed = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(parsed)) return DEFAULT_LIMIT;
   return Math.max(1, Math.min(MAX_LIMIT, Math.floor(parsed)));
+}
+
+function contactDisplayName(contact: ContactForVerification): string | null {
+  const full = contact.full_name?.trim();
+  if (full) return full;
+  const parts = [contact.first_name, contact.last_name].filter(Boolean).join(' ').trim();
+  return parts || null;
+}
+
+function contactCompanyName(contact: ContactForVerification): string | null {
+  return contact.resolved_current_company_name?.trim() || contact.company_name?.trim() || null;
 }
 
 function normalizeZeroBounceStatus(response: ZeroBounceResponse): string {
@@ -170,15 +183,16 @@ export async function POST(request: Request) {
 
     const body = (await request.json().catch(() => ({}))) as { limit?: unknown };
     const limit = normalizeLimit(body.limit);
-    const contactFitMin = configuredContactFitMin();
+    const priorityMin = configuredPriorityMin();
 
     const { data, error } = await supabase
       .from('contacts')
-      .select('id, user_id, first_name, last_name, full_name, email, email_deliverability, contact_fit_score, company_name, company_domain, resolved_current_company_name, resolved_current_company_domain')
+      .select('id, user_id, first_name, last_name, full_name, email, email_deliverability, company_name, company_domain, resolved_current_company_name, resolved_current_company_domain')
       .eq('user_id', user.id)
       .is('archived_at', null)
-      .gt('contact_fit_score', contactFitMin)
-      .order('contact_fit_score', { ascending: false, nullsFirst: false })
+      .eq('crm_is_suppressed', false)
+      .gt('priority_score', priorityMin)
+      .order('priority_score', { ascending: false, nullsFirst: false })
       .limit(limit);
 
     if (error) {
@@ -242,6 +256,7 @@ export async function POST(request: Request) {
           email,
           isPrimary,
           source: 'existing',
+          contact,
         });
       }
 
@@ -260,6 +275,7 @@ export async function POST(request: Request) {
             email: primary,
             isPrimary: true,
             source: 'existing',
+            contact,
           });
         }
       } else if (primary && !primaryRepresented && !looksLikeEmail(primary)) {
@@ -311,13 +327,19 @@ export async function POST(request: Request) {
       unknown: 0,
       failed: 0,
       skippedInvalidEmail,
-      contactFitMin,
+      priorityMin,
       limit,
       errors: resultlessErrors,
+      items: [] as EmailVerificationResultItem[],
+    };
+
+    const pushVerificationItem = (item: EmailVerificationResultItem) => {
+      result.items.push(item);
     };
 
     for (const item of emailsToVerify) {
       const email = item.email;
+      const contact = item.contact;
       try {
         const verification = await verifyWithZeroBounce(email);
         const emailDeliverability = normalizeZeroBounceStatus(verification);
@@ -337,10 +359,10 @@ export async function POST(request: Request) {
             .eq('user_id', user.id);
 
           if (updateEmailError) throw updateEmailError;
-        } else if (item.source === 'finder' && item.contact) {
+        } else if (item.source === 'finder') {
           const category = classifyEnrichedEmail(
             email,
-            item.contact.resolved_current_company_domain || item.contact.company_domain,
+            contact.resolved_current_company_domain || contact.company_domain,
           );
           const { error: insertEmailError } = await supabase
             .from('contact_emails')
@@ -384,14 +406,45 @@ export async function POST(request: Request) {
         else if (emailDeliverability === 'invalid') result.invalid += 1;
         else if (emailDeliverability === 'catch-all') result.catchAll += 1;
         else result.unknown += 1;
+
+        pushVerificationItem({
+          contactId: item.contactId,
+          contactName: contactDisplayName(contact),
+          companyName: contactCompanyName(contact),
+          email,
+          category: emailVerificationBannerCategory(emailDeliverability),
+        });
       } catch (e) {
         result.failed += 1;
+        const message = e instanceof Error ? e.message : String(e);
         result.errors.push({
           contactId: item.contactId,
           email,
-          error: e instanceof Error ? e.message : String(e),
+          error: message,
+        });
+        pushVerificationItem({
+          contactId: item.contactId,
+          contactName: contactDisplayName(contact),
+          companyName: contactCompanyName(contact),
+          email,
+          category: 'failed',
+          error: message,
         });
       }
+    }
+
+    for (const err of resultlessErrors) {
+      if (result.items.some((row) => row.contactId === err.contactId && row.category === 'failed')) continue;
+      const contact = contacts.find((row) => row.id === err.contactId);
+      if (!contact) continue;
+      pushVerificationItem({
+        contactId: err.contactId,
+        contactName: contactDisplayName(contact),
+        companyName: contactCompanyName(contact),
+        email: err.email,
+        category: 'failed',
+        error: err.error,
+      });
     }
 
     return NextResponse.json({ success: true, result });

@@ -16,7 +16,8 @@ type ContactForFinder = {
   full_name: string | null;
   email: string | null;
   email_deliverability: string | null;
-  contact_fit_score: number | null;
+  priority_score: number | null;
+  crm_is_suppressed: boolean | null;
   company_name: string | null;
   company_domain: string | null;
   resolved_current_company_name: string | null;
@@ -117,7 +118,7 @@ export async function POST(
 
     const { data: contact, error: contactError } = await supabase
       .from('contacts')
-      .select('id, user_id, first_name, last_name, full_name, email, email_deliverability, contact_fit_score, company_name, company_domain, resolved_current_company_name, resolved_current_company_domain')
+      .select('id, user_id, first_name, last_name, full_name, email, email_deliverability, priority_score, crm_is_suppressed, company_name, company_domain, resolved_current_company_name, resolved_current_company_domain')
       .eq('id', id)
       .eq('user_id', user.id)
       .maybeSingle();
@@ -139,9 +140,16 @@ export async function POST(
       return NextResponse.json({ error: contactEmailError.message }, { status: 500 });
     }
 
+    if (typedContact.crm_is_suppressed) {
+      return NextResponse.json(
+        { error: 'Email finder is not offered for CRM-suppressed contacts (closed-won or closed-lost).' },
+        { status: 409 },
+      );
+    }
+
     if (
       !shouldOfferFindNewEmailForContact(
-        typedContact.contact_fit_score,
+        typedContact.priority_score,
         typedContact.email,
         (contactEmailRows ?? []) as ContactEmailRow[],
       )

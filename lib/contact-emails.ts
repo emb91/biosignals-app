@@ -161,8 +161,45 @@ export function emailRowHasUserNonValidOverride(row: EmailDeliverabilityRow): bo
   return row.email_deliverability !== 'verified';
 }
 
+/** Minimum priority (strictly above) for bulk email verification and find-new-email. */
+export const DEFAULT_EMAIL_VERIFICATION_PRIORITY_MIN = 0.3;
+
+export function meetsEmailVerificationPriorityThreshold(
+  priorityScore: number | null | undefined,
+  min: number = DEFAULT_EMAIL_VERIFICATION_PRIORITY_MIN,
+): boolean {
+  return typeof priorityScore === 'number' && Number.isFinite(priorityScore) && priorityScore > min;
+}
+
 export function emailDeliverabilityEditKey(email: string): string {
   return email.trim().toLowerCase();
+}
+
+export type EmailVerificationBannerCategory = 'verified' | 'not_deliverable' | 'not_verified' | 'failed';
+
+export type EmailVerificationResultItem = {
+  contactId: string;
+  contactName: string | null;
+  companyName: string | null;
+  email: string;
+  category: EmailVerificationBannerCategory;
+  error?: string;
+};
+
+/** Map stored deliverability to the user-facing banner pill groups. */
+export function emailVerificationBannerCategory(
+  deliverability: string | null | undefined,
+): Exclude<EmailVerificationBannerCategory, 'failed'> {
+  if (deliverability === 'verified') return 'verified';
+  if (
+    deliverability === 'invalid' ||
+    deliverability === 'spamtrap' ||
+    deliverability === 'abuse' ||
+    deliverability === 'do_not_mail'
+  ) {
+    return 'not_deliverable';
+  }
+  return 'not_verified';
 }
 
 export function extractDomainFromEmail(email: string): string | null {

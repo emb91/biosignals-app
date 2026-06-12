@@ -4,12 +4,14 @@
 
 import type { ContactEmailCategory, ContactEmailRow } from './contact-emails';
 import {
+  DEFAULT_EMAIL_VERIFICATION_PRIORITY_MIN,
   emailRowAwaitingZeroBounceVerification,
   emailRowHasUserNonValidOverride,
   emailRowHasZeroBounceNonValidResult,
   emailsEqual,
   isTrustedVerifiedEmailRow,
   looksLikeEmail,
+  meetsEmailVerificationPriorityThreshold,
 } from './contact-emails';
 
 const CATEGORY_ORDER: { cat: ContactEmailCategory; label: string }[] = [
@@ -194,11 +196,12 @@ export function buildContactEmailDisplayRows(
  * or when there is no usable email yet. Apollo "not verified" still needs ZeroBounce validate first.
  */
 export function shouldOfferFindNewEmailForContact(
-  contactFitScore: number | null | undefined,
+  priorityScore: number | null | undefined,
   primaryEmail: string | null | undefined,
   contactEmails: ContactEmailRow[] | null | undefined,
+  priorityMin: number = DEFAULT_EMAIL_VERIFICATION_PRIORITY_MIN,
 ): boolean {
-  if (typeof contactFitScore !== 'number' || contactFitScore <= 0.6) return false;
+  if (!meetsEmailVerificationPriorityThreshold(priorityScore, priorityMin)) return false;
 
   const emailRows = buildContactEmailDisplayRows(primaryEmail, contactEmails, 'full');
   if (emailRows.some(isTrustedVerifiedEmailRow)) return false;

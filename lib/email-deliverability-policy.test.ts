@@ -22,6 +22,17 @@ function row(
   };
 }
 
+test('low priority hides find-new-email', () => {
+  assert.equal(
+    shouldOfferFindNewEmailForContact(
+      0.5,
+      'kurt@example.com',
+      [row({ email: 'kurt@example.com', email_deliverability: 'invalid', email_deliverability_provider: 'zerobounce' })],
+    ),
+    false,
+  );
+});
+
 test('Apollo not verified hides find-new-email until ZeroBounce runs', () => {
   assert.equal(
     shouldOfferFindNewEmailForContact(

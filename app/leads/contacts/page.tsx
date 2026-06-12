@@ -29,7 +29,7 @@ import {
 import { formatProvenanceImportedAt } from '@/lib/data-provenance';
 import { ROUTES, withQuery } from '@/lib/routes';
 import Nango from '@nangohq/frontend';
-import { looksLikeEmail, type ContactEmailRow, EMAIL_DELIVERABILITY_USER_OPTIONS, emailDeliverabilityEditKey } from '@/lib/contact-emails';
+import { looksLikeEmail, type ContactEmailRow, type EmailVerificationResultItem, EMAIL_DELIVERABILITY_USER_OPTIONS, emailDeliverabilityEditKey } from '@/lib/contact-emails';
 import { looksLikePhone, type ContactPhoneRow } from '@/lib/contact-phones';
 import {
   buildContactEmailDisplayRows,
@@ -1516,8 +1516,9 @@ export function ContactsWorkspace() {
     unknown: number;
     failed: number;
     skippedInvalidEmail: number;
-    contactFitMin: number;
+    priorityMin: number;
     limit: number;
+    items?: EmailVerificationResultItem[];
     error?: string;
   } | null>(null);
   const [hubspotSyncResult, setHubspotSyncResult] = useState<{
@@ -1547,6 +1548,7 @@ export function ContactsWorkspace() {
   const [syncResultExpanded, setSyncResultExpanded] = useState(false);
   // Which pull-banner metric's item list is expanded ('contacts' | 'deals' | null).
   const [pullDetailOpen, setPullDetailOpen] = useState<string | null>(null);
+  const [emailVerificationDetailOpen, setEmailVerificationDetailOpen] = useState<string | null>(null);
   const [stoppingLeadId, setStoppingLeadId] = useState<string | null>(null);
   const [stopEnrichmentError, setStopEnrichmentError] = useState<string | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
@@ -1827,6 +1829,7 @@ export function ContactsWorkspace() {
     if (runningEmailVerification) return;
     setRunningEmailVerification(true);
     setEmailVerificationResult(null);
+    setEmailVerificationDetailOpen(null);
     try {
       const res = await fetch('/api/contacts/run-email-verification', {
         method: 'POST',
@@ -1848,7 +1851,7 @@ export function ContactsWorkspace() {
           unknown: 0,
           failed: 0,
           skippedInvalidEmail: 0,
-          contactFitMin: 0,
+          priorityMin: 0,
           limit: 25,
           error: typeof data.error === 'string' ? data.error : `HTTP ${res.status}`,
         });
@@ -1870,7 +1873,7 @@ export function ContactsWorkspace() {
         unknown: 0,
         failed: 0,
         skippedInvalidEmail: 0,
-        contactFitMin: 0,
+        priorityMin: 0,
         limit: 25,
         error: error instanceof Error ? error.message : 'Could not run email verification.',
       });
@@ -3541,34 +3544,35 @@ export function ContactsWorkspace() {
           ) : (
             <>
               <span className="text-sm font-semibold text-gray-900">
-                {emailVerificationResult.eligible} email address{emailVerificationResult.eligible !== 1 ? 'es' : ''} checked with ZeroBounce
+                {emailVerificationResult.eligible} email address{emailVerificationResult.eligible !== 1 ? 'es' : ''} checked
               </span>
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                <span className="rounded-md border border-emerald-200/70 bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">
-                  <span className="font-semibold tabular-nums">{emailVerificationResult.verified}</span> verified
-                </span>
-                <span className="rounded-md border border-rose-200/70 bg-rose-50 px-2 py-0.5 text-xs text-rose-600">
-                  <span className="font-semibold tabular-nums">{emailVerificationResult.invalid}</span> invalid
-                </span>
-                <span className="rounded-md border border-amber-200/70 bg-amber-50 px-2 py-0.5 text-xs text-amber-700">
-                  <span className="font-semibold tabular-nums">{emailVerificationResult.catchAll}</span> catch-all
-                </span>
-                <span className="rounded-md border border-gray-200/70 bg-gray-50 px-2 py-0.5 text-xs text-gray-600">
-                  <span className="font-semibold tabular-nums">{emailVerificationResult.unknown}</span> unknown
-                </span>
-                {emailVerificationResult.failed > 0 && (
-                  <span className="rounded-md border border-rose-200/70 bg-rose-50 px-2 py-0.5 text-xs text-rose-600">
-                    <span className="font-semibold tabular-nums">{emailVerificationResult.failed}</span> failed
+                {emailVerificationResult.verified > 0 && (
+                  <span className="rounded-md border border-emerald-200/70 bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">
+                    <span className="font-semibold tabular-nums">{emailVerificationResult.verified}</span> Verified
                   </span>
                 )}
-                {(emailVerificationResult.finderAttempts ?? 0) > 0 && (
-                  <span className="rounded-md border border-sky-200/70 bg-sky-50 px-2 py-0.5 text-xs text-sky-700">
-                    <span className="font-semibold tabular-nums">{emailVerificationResult.finderFound ?? 0}</span> found
+                {emailVerificationResult.invalid > 0 && (
+                  <span className="rounded-md border border-rose-200/70 bg-rose-50 px-2 py-0.5 text-xs text-rose-600">
+                    <span className="font-semibold tabular-nums">{emailVerificationResult.invalid}</span> Not deliverable
+                  </span>
+                )}
+                {(emailVerificationResult.catchAll > 0 || emailVerificationResult.unknown > 0) && (
+                  <span className="rounded-md border border-amber-200/70 bg-amber-50 px-2 py-0.5 text-xs text-amber-700">
+                    <span className="font-semibold tabular-nums">
+                      {emailVerificationResult.catchAll + emailVerificationResult.unknown}
+                    </span>{' '}
+                    Not verified
+                  </span>
+                )}
+                {emailVerificationResult.failed > 0 && (
+                  <span className="rounded-md border border-rose-200/70 bg-rose-50 px-2 py-0.5 text-xs text-rose-600">
+                    <span className="font-semibold tabular-nums">{emailVerificationResult.failed}</span> Could not check
                   </span>
                 )}
               </div>
               <p className="mt-1 text-xs text-gray-500">
-                Checked unverified addresses on contacts above {Math.round(emailVerificationResult.contactFitMin * 100)}% contact fit. Skipped Apollo-verified and already-classified addresses.
+                Checked email verification on active contacts above {Math.round(emailVerificationResult.priorityMin * 100)}% priority.
               </p>
             </>
           )}
@@ -4811,7 +4815,7 @@ export function ContactsWorkspace() {
                                           })()}
                                         </div>
                                         {shouldOfferFindNewEmailForContact(
-                                          selectedLead.contact_fit_score,
+                                          displayContactPriority(selectedLead),
                                           selectedLead.email,
                                           selectedLead.contact_emails,
                                         ) && (
