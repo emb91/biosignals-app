@@ -667,13 +667,8 @@ If the user asks to find contacts, buyer personas, or more coverage for this sel
 \`\`\`json
 ${JSON.stringify(context!.acquisitionRecentJobs, null, 2)}
 \`\`\`
-Use these to answer questions about job progress, results, and sourcing cost. If a job has a completion_note, relay it in plain language (it explains things like coverage you already own or a plan usage limit). When credit fields are present, call them "credits" and keep it matter-of-fact: actual spend, duplicates/skips, and cost per imported contact when useful.`
+Use these to answer questions about job progress and results. If a job has a completion_note, relay it in plain language (it explains things like coverage you already own or a plan usage limit). If icp_coverage_after is present, you can tell the user where that ICP's coverage landed after the job (companies and contacts). Never mention credits, credit units, or any cost figures; pricing is not part of this product surface.`
             : '';
-        const costEstimateRule = `
-Before calling start_acquisition_job, include a rough credit estimate in the confirmation sentence:
-- contacts_at_company / contacts_at_companies / more_contacts_at_accounts: about 1.15-1.3 credits per requested contact.
-- expand_companies: about 3.9-5.7 credits per requested company for a normal company-led run.
-Example: "That should be roughly 6-7 credits, and I'll exclude contacts you already own before Apollo search."`;
 
         const modeBlock = (() => {
           if (mode === 'contacts_at_companies' && context?.acquisitionBatchCompanies?.length) {
@@ -710,7 +705,7 @@ ${scoped} When they confirm, call start_acquisition_job with requestType "expand
           return '';
         })();
 
-        const lines = [modeBlock, costEstimateRule, sourceLine, queueLine, recentJobsBlock].filter(Boolean);
+        const lines = [modeBlock, sourceLine, queueLine, recentJobsBlock].filter(Boolean);
         if (lines.length === 0) return '';
         return `
 ## Data page job context

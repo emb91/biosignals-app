@@ -640,6 +640,10 @@ async function buildCoverageWritebackMetadata(
   admin: ReturnType<typeof createAdminClient>,
   job: DataAcquisitionJob,
 ): Promise<Record<string, unknown>> {
+  // The receipt is an ICP coverage snapshot; without an ICP there is nothing
+  // meaningful to snapshot (an unscoped query would just record zeros).
+  if (!job.icp_id) return job.metadata ?? {};
+
   const [{ data: currentJob }, { data: companies }] = await Promise.all([
     admin
       .from('data_acquisition_jobs')
