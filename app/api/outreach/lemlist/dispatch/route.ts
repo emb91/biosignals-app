@@ -149,7 +149,7 @@ export async function POST(req: Request) {
           ok: false,
           heldGuessedEmail: true,
           error:
-            'This email is a best guess from the company’s address pattern and has not been verified. Verify it first, or confirm sending to guessed addresses.',
+            'This email address was suggested from the company’s email format and hasn’t been verified yet. Verify it first, or confirm sending to suggested addresses.',
         });
         continue;
       }

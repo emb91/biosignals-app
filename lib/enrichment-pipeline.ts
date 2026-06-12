@@ -30,6 +30,7 @@ import { ensureCompanyAliases } from '@/lib/signals/company-aliases';
 import { ensureCompanyCik } from '@/lib/signals/company-cik';
 import { backfillRecentMentionsForCompany } from '@/lib/companies/backfill-mentions-for-company';
 import { createAdminClient } from '@/lib/supabase-admin';
+import { syncContactCompanyLink } from '@/lib/contact-company-link';
 
 type MinimalSupabase = {
   from: (table: string) => any;
@@ -1552,7 +1553,16 @@ export async function runContactResolutionPipelineForContact(
       updatePayload.resolved_current_company_domain = resolvedDomainFromCompany;
     }
     updatePayload.company_linkedin_url = resolved.currentCompanyLinkedinUrl;
-    updatePayload.company_id = companyId;
+
+    const linkedCompanyId = await syncContactCompanyLink(supabase, {
+      userId,
+      contactId,
+      resolvedCompanyName: resolved.currentCompanyName,
+      resolvedCompanyDomain: resolvedDomainFromCompany || nextResolvedCompanyDomain,
+      preferredCompanyId: companyId,
+      currentCompanyId: typedContact.company_id,
+    });
+    updatePayload.company_id = linkedCompanyId;
 
     await throwIfLeadRefreshCancelled(supabase, contactId, userId);
 

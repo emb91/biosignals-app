@@ -284,20 +284,25 @@ export async function runCompanyMonitor(
       (current as Record<string, unknown>)?.customer_development_stages
     );
     const canOverwrite = taxonomy.confidence !== 'low';
+    // Sticky arrays: a run that returns an EMPTY list never clobbers previously
+    // classified values (same principle as stickyIdentity in company-merge).
+    // A monitor-only re-run has thinner context than the original enrichment,
+    // so "found nothing" is weak evidence that nothing exists.
+    const stickyArray = (next: string[], previous: string[]): string[] =>
+      canOverwrite && next.length > 0 ? next : previous.length > 0 ? previous : next;
 
     const nextCompanyType =
       canOverwrite && taxonomy.company_type ? taxonomy.company_type : previousCompanyType;
     const nextCompanyTypeDisplay =
       canOverwrite && taxonomy.company_type_display ? taxonomy.company_type_display : previousCompanyTypeDisplay;
     const nextPlatformCategory =
-      canOverwrite ? taxonomy.platform_category : previousPlatformCategory;
-    const nextTherapeuticAreas = canOverwrite ? taxonomy.therapeutic_areas : previousTherapeuticAreas;
-    const nextModalities = canOverwrite ? taxonomy.modalities : previousModalities;
-    const nextDevelopmentStages =
-      canOverwrite ? taxonomy.development_stages : previousDevelopmentStages;
-    const nextCustomerTa = canOverwrite ? taxonomy.customer_therapeutic_areas : previousCustomerTa;
-    const nextCustomerMo = canOverwrite ? taxonomy.customer_modalities : previousCustomerMo;
-    const nextCustomerDs = canOverwrite ? taxonomy.customer_development_stages : previousCustomerDs;
+      canOverwrite && taxonomy.platform_category ? taxonomy.platform_category : previousPlatformCategory;
+    const nextTherapeuticAreas = stickyArray(taxonomy.therapeutic_areas, previousTherapeuticAreas);
+    const nextModalities = stickyArray(taxonomy.modalities, previousModalities);
+    const nextDevelopmentStages = stickyArray(taxonomy.development_stages, previousDevelopmentStages);
+    const nextCustomerTa = stickyArray(taxonomy.customer_therapeutic_areas, previousCustomerTa);
+    const nextCustomerMo = stickyArray(taxonomy.customer_modalities, previousCustomerMo);
+    const nextCustomerDs = stickyArray(taxonomy.customer_development_stages, previousCustomerDs);
 
     const changed =
       nextCompanyType !== previousCompanyType ||

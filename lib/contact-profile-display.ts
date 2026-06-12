@@ -195,6 +195,28 @@ export function buildContactEmailDisplayRows(
   return rows;
 }
 
+export type RefreshEmailCandidate = {
+  email: string;
+  contactEmailId: string | null;
+  isPrimary: boolean;
+  email_deliverability: string | null;
+  email_deliverability_provider: string | null;
+};
+
+/** Primary first, then import/work/personal/user slots — same order as the contact panel. */
+export function buildRefreshEmailCandidates(
+  primaryEmail: string | null | undefined,
+  contactEmails: ContactEmailRow[] | null | undefined,
+): RefreshEmailCandidate[] {
+  return buildContactEmailDisplayRows(primaryEmail, contactEmails, 'full').map((row) => ({
+    email: row.email,
+    contactEmailId: row.id,
+    isPrimary: row.label === 'Primary',
+    email_deliverability: row.email_deliverability,
+    email_deliverability_provider: row.email_deliverability_provider,
+  }));
+}
+
 /**
  * Offer email finder when ZeroBounce (or the user) has rejected on-file addresses,
  * when there is no usable email yet, or when verified emails belong to a prior employer.

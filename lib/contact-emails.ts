@@ -210,7 +210,7 @@ export function getContactEmailDeliverabilityDisplayMeta(
     case 'catch-all':
       return { label: 'Catch-all', icon: 'warning', className: 'text-amber-500' };
     case 'pattern_guessed':
-      return { label: 'Guessed — not verified', icon: 'warning', className: 'text-amber-600' };
+      return { label: 'Suggested — verify before use', icon: 'warning', className: 'text-amber-500' };
     case 'unknown':
       return { label: 'Unknown', icon: 'warning', className: 'text-amber-500' };
     case 'extrapolated':
@@ -256,6 +256,66 @@ export function emailRowHasUserNonValidOverride(row: EmailDeliverabilityRow): bo
   if (!looksLikeEmail(row.email)) return false;
   if (!isUserEmailDeliverabilityOverride(row.email_deliverability_provider)) return false;
   return row.email_deliverability !== 'verified';
+}
+
+const KNOWN_BAD_DELIVERABILITY = new Set([
+  'invalid',
+  'spamtrap',
+  'abuse',
+  'do_not_mail',
+  'catch-all',
+  'unknown',
+]);
+
+/** Already checked and not usable — try the next on-file address before paying for a lookup. */
+export function isKnownBadEmailDeliverability(
+  deliverability: string | null | undefined,
+  provider: string | null | undefined,
+): boolean {
+  if (isUserEmailDeliverabilityOverride(provider) && deliverability !== 'verified') return true;
+  if (!deliverability || !KNOWN_BAD_DELIVERABILITY.has(deliverability)) return false;
+  return isZeroBounceDeliverabilityProvider(provider) || provider === 'user';
+}
+
+/** Wrong employer domain — skip without a paid validation when current company domain is known. */
+export function isRefreshEmailCandidateStale(
+  email: string | null | undefined,
+  companyDomain: string | null | undefined,
+): boolean {
+  if (!normalizeCompanyDomain(companyDomain)) return false;
+  if (!looksLikeEmail(email)) return false;
+  return !isEmailDomainAlignedWithCompany(email, companyDomain);
+}
+
+export type RefreshEmailCandidateAction = 'good' | 'skip' | 'verify';
+
+/** Walk on-file addresses in UI order: good → done; stale/bad → next; else verify. */
+export function classifyRefreshEmailCandidate(
+  row: EmailDeliverabilityRow,
+  companyDomain: string | null | undefined,
+): RefreshEmailCandidateAction {
+  if (!looksLikeEmail(row.email)) return 'skip';
+  if (isUserEmailDeliverabilityOverride(row.email_deliverability_provider)) return 'skip';
+  if (isTrustedCurrentCompanyEmailRow(row, companyDomain)) return 'good';
+  if (isKnownBadEmailDeliverability(row.email_deliverability, row.email_deliverability_provider)) {
+    return 'skip';
+  }
+  if (isRefreshEmailCandidateStale(row.email, companyDomain)) return 'skip';
+  if (isVerifiedButOutdatedEmailRow(row, companyDomain)) return 'skip';
+  return 'verify';
+}
+
+/** Verified with ZeroBounce and aligned to the resolved current company. */
+export function isUsableVerifiedWorkEmail(
+  deliverability: string | null | undefined,
+  email: string,
+  companyDomain: string | null | undefined,
+): boolean {
+  if (deliverability !== 'verified') return false;
+  if (!looksLikeEmail(email)) return false;
+  const company = normalizeCompanyDomain(companyDomain);
+  if (!company) return true;
+  return isEmailDomainAlignedWithCompany(email, company);
 }
 
 /** Minimum priority (strictly above) for bulk email verification and find-new-email. */

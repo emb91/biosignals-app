@@ -75,6 +75,9 @@ export interface QueryAccount {
   therapeutic_areas: string[] | null;
   modalities: string[] | null;
   development_stages: string[] | null;
+  customer_therapeutic_areas: string[] | null;
+  customer_modalities: string[] | null;
+  customer_development_stages: string[] | null;
   funding_stage: string | null;
   funding_status_label: string | null;
   company_type: string | null;
@@ -134,6 +137,9 @@ type CompanyAggRow = {
   therapeutic_areas: string[] | null;
   modalities: string[] | null;
   development_stages: string[] | null;
+  customer_therapeutic_areas: string[] | null;
+  customer_modalities: string[] | null;
+  customer_development_stages: string[] | null;
   funding_stage: string | null;
   funding_status_label: string | null;
   total_funding_usd: number | null;
@@ -213,6 +219,9 @@ function finalizeScratch(row: ScratchAgg): QueryAccount {
     therapeutic_areas: row.therapeutic_areas,
     modalities: row.modalities,
     development_stages: row.development_stages,
+    customer_therapeutic_areas: row.customer_therapeutic_areas,
+    customer_modalities: row.customer_modalities,
+    customer_development_stages: row.customer_development_stages,
     funding_stage: row.funding_stage,
     funding_status_label: row.funding_status_label,
     company_type: row.company_type,
@@ -278,6 +287,9 @@ export async function fetchAggregatedAccounts(
         therapeutic_areas,
         modalities,
         development_stages,
+        customer_therapeutic_areas,
+        customer_modalities,
+        customer_development_stages,
         funding_stage,
         funding_status_label,
         company_type,
