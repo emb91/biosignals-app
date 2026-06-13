@@ -23,8 +23,9 @@ would be a security regression on the highest-abuse-surface route. So:
 - **Dashboard (Emma):** Part A (point Confirm-signup template at `/auth/confirm`) so the link works;
   Part B SMTP (send via Resend/`mail.arcova.bio`, escape the 2/hr cap); enable CAPTCHA before public
   launch (Supabase → Auth → Settings, hCaptcha/Turnstile).
-- **Before public launch (code, deferred):** add a per-IP rate limit to `/api/auth/validate-email`
-  (it's public + spends a ZeroBounce credit per call). No traffic to abuse it pre-launch.
+- **DONE (code):** per-IP rate limit on `/api/auth/validate-email` (30/IP/hour, DB-backed via
+  `api_rate_limits` + `checkRateLimit`); over the limit it skips the paid ZeroBounce check rather
+  than blocking signup. Bounds credit drain on the public endpoint.
 
 **Sender domain — FINAL: `mail.arcova.bio`** (one subdomain for ALL app-sent transactional mail —
 auth now, product notifications later — to stay on Resend's free tier, which allows 1 domain).
