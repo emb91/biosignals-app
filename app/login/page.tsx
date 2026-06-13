@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -25,6 +25,18 @@ export default function LoginPage() {
   
   const { login, signup, loginWithGoogle } = useAuth();
   const router = useRouter();
+
+  // Failed email links (expired/used invite or confirmation) land here as
+  // /login?error=auth_failed via /auth/callback — explain instead of showing
+  // a bare sign-in form with no context.
+  useEffect(() => {
+    const param = new URLSearchParams(window.location.search).get('error');
+    if (param === 'auth_failed') {
+      setError(
+        'That sign-in link didn’t work — it may have expired or already been used. Sign in below, or ask your teammate to send a fresh invite.',
+      );
+    }
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
