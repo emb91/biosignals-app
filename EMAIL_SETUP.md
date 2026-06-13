@@ -4,9 +4,13 @@ Two independent things. **Part A** makes emailed auth links actually work (the i
 dead-end bug) and needs no Resend. **Part B** moves sending to Resend so we drop
 Supabase's ~2-emails/hour cap and the bounce-suspension risk.
 
-Domain split (deliberate): **`arcovabio.com` is reserved for outbound/sales warming — do
-NOT put auth email on it.** Auth email goes on a subdomain of the product domain:
-**`auth.arcova.bio`**. Keeps transactional reputation isolated from the warmed outbound domain.
+Domain decision (Emma, 2026-06-13): auth email sends from **`auth.arcovabio.com`** — a
+subdomain of the outbound domain. Rationale isn't reputation "isolation" (that's partial and
+debated); it's **stream hygiene**: keep must-always-deliver auth mail off the same identity that's
+being actively warmed for risky cold outbound, so a bad outbound week can't knock out logins. The
+root `arcovabio.com` already carries Google Workspace human mail (MX → Google, SPF →
+`_spf.google.com`) **and** the outbound warming — a subdomain keeps Resend's machine-sent
+transactional cleanly apart from both.
 
 ---
 
@@ -57,17 +61,21 @@ Package is official: `github.com/resend/resend-mcp` (v2.6.1, maintained by the R
 Restart Claude Code afterward so the tools load into the session.
 
 ### B2. Create + verify the sending domain
-Once the MCP is loaded, Claude can create `auth.arcova.bio` and read back the exact DNS records.
-(Or do it in the Resend dashboard → Domains → Add Domain.) Resend returns a set of records:
-- **SPF**: MX + TXT on a `send.auth.arcova.bio` subdomain
-- **DKIM**: a TXT record (`resend._domainkey…`)
+Create **`auth.arcovabio.com`** in Resend (dashboard → Domains → Add Domain, ~30s — or Claude via
+the MCP / a full-access key). Resend returns records to add:
+- **SPF**: MX + TXT on a `send.auth.arcovabio.com` subdomain
+- **DKIM**: a TXT record (`resend._domainkey.auth.arcovabio.com`)
 - Optional **DMARC** TXT
+The exact DKIM value is generated per-domain at creation, so the records can't be pre-written — they
+come from this step.
 
 ### B3. Add the DNS records
-`arcova.bio` is on **Google Cloud DNS** (nameservers `ns-cloud-b*.googledomains.com`). Add the
-records from B2 in that zone. If the zone lives in the same GCP project as our service account,
-Claude may be able to add them via the Cloud DNS API — ask, and confirm the project/zone first.
-Otherwise add them in the Google Cloud console. Wait for Resend to show the domain **Verified**.
+`arcovabio.com` is on **Google Cloud DNS** (nameservers `ns-cloud-c*.googledomains.com` — note: a
+DIFFERENT zone from arcova.bio's `ns-cloud-b*`). The root already has Google Workspace records
+(MX `smtp.google.com`, SPF `v=spf1 include:_spf.google.com ~all`, a google-site-verification TXT) —
+the new records are all on the `auth`/`send.auth` subdomain, so they don't touch those. Add them in
+the Google Cloud console, or Claude can add them via the Cloud DNS API IF that zone is in the same
+GCP project as our service account (unconfirmed — needs a check). Wait for Resend to show **Verified**.
 
 ### B4. Point Supabase at Resend (SMTP)
 **Supabase dashboard → Project Settings → Authentication → SMTP Settings → Enable custom SMTP:**
@@ -75,7 +83,7 @@ Otherwise add them in the Google Cloud console. Wait for Resend to show the doma
 - Port: `465` (or `587`)
 - Username: `resend`
 - Password: a Resend **SMTP** API key
-- Sender email: `noreply@auth.arcova.bio` · Sender name: `Arcova`
+- Sender email: `noreply@auth.arcovabio.com` · Sender name: `Arcova`
 - Raise the auth rate limit (Authentication → Rate Limits) once SMTP is live — the default 2/hour
   is the Supabase built-in-sender cap we kept hitting.
 
@@ -90,6 +98,6 @@ emailed `/auth/confirm` link lands signed-in on `/today`. A retained QA owner fi
 - [x] `/auth/confirm` route shipped (token_hash sign-in) + `?error=auth_failed` surfaced on /login
 - [ ] Part A templates pasted (Emma — dashboard)
 - [ ] Resend MCP installed w/ full-access key + restart (Emma)
-- [ ] `auth.arcova.bio` created + DNS verified
+- [ ] `auth.arcovabio.com` created in Resend + DNS verified
 - [ ] Supabase custom SMTP enabled + rate limit raised
 - [ ] End-to-end invite re-test (Claude, via connected inbox)
