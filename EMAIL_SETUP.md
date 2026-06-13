@@ -1,31 +1,34 @@
 # Email setup — auth links + Resend SMTP
 
-**What's already fixed in code (no action needed):** org **invites** no longer touch Supabase's
-sender or templates at all — the app generates the `/auth/confirm` sign-in link itself and sends a
-branded email via Resend (`lib/auth-email.ts`, `app/api/org/invite`). Verified end-to-end: invite →
-user created + attached to org → link signs the member in. So the invite dead-end + rate-limit bugs
-are **resolved in code**; the only upgrade left for invites is swapping the sender from the shared
-`onboarding@resend.dev` to your own `auth.arcovabio.com` (Part B) for reliable inbox delivery.
+**Done in code, verified end-to-end against a real inbox (no action needed):**
+- **Org invites** — `app/api/org/invite` generates the `/auth/confirm` link itself, stores it behind
+  a short one-time code, and emails it via Resend (`lib/auth-email.ts` + `lib/auth-links.ts`).
+- **Password reset** — `app/api/auth/reset` does the same with a recovery token; `/auth/confirm`
+  establishes the recovery session server-side before `/reset-password` loads.
 
-**What still needs the dashboard:** **signup-confirmation** and **password-reset** emails still go
-through Supabase's own sender + templates (they're client-initiated; routing them through admin
-endpoints would add an account-creation/email-bombing abuse surface, so they're intentionally left
-on Supabase). Those two need **Part A** to stop dead-ending. **Part B** (Resend SMTP) then drops the
-~2/hour cap and bounce risk for them too.
+Both bypass Supabase's ~2/hour cap and its broken default template entirely. They deliver from the
+verified `auth.arcovabio.com` sender and were each tested through the connected inbox (invite signs
+the member in; reset changes the password — new works, old rejected). The short-code indirection
+exists because a raw 56-char token in the URL gets corrupted by email line-wrapping.
 
-Domain note for the verified sender below: it lives in Resend; see the domain rationale at the foot.
+**Still needs the dashboard — signup confirmation only:** signup is the public front door, so it
+stays on Supabase's `signUp` to keep its built-in rate-limit + CAPTCHA protections against mass
+account creation / email-bombing (the abuse + bounce surface that flagged the project). Routing it
+through an admin endpoint would lose those. So signup keeps Supabase's sender and just needs **Part
+A** (point the Confirm-signup template at `/auth/confirm`) to stop dead-ending, and benefits from
+**Part B** (SMTP) to escape the 2/hour cap.
 
-Domain decision (Emma, 2026-06-13): auth email sends from **`auth.arcovabio.com`** — a
-subdomain of the outbound domain. Rationale isn't reputation "isolation" (that's partial and
-debated); it's **stream hygiene**: keep must-always-deliver auth mail off the same identity that's
-being actively warmed for risky cold outbound, so a bad outbound week can't knock out logins. The
-root `arcovabio.com` already carries Google Workspace human mail (MX → Google, SPF →
-`_spf.google.com`) **and** the outbound warming — a subdomain keeps Resend's machine-sent
-transactional cleanly apart from both.
+**Sender domain — FINAL: `auth.arcova.app`** (currently live on `auth.arcovabio.com` as interim;
+flip pending Emma verifying the new domain). Reasoning: subdomains only *partially* isolate
+reputation (Gmail/Spamhaus roll subdomain → org-domain — researched), so must-deliver auth shouldn't
+sit on `arcovabio.com`, the deliberately-sacrificial cold-outbound domain. `arcova.bio` stays at
+**zero sending** (hard priority). `arcova.app` is the app domain — brand-recognized, off the burn
+domain, and its only existing mail config is stale Firebase (safe to delete). Move = verify
+`auth.arcova.app` in Resend → DNS into its zone (`ns-cloud-e*`) → flip `RESEND_AUTH_FROM`.
 
 ---
 
-## Part A — Auth email templates (fixes signup-confirm + password-reset links)
+## Part A — Auth email templates (signup-confirmation only; reset + invites are handled in code)
 
 `/auth/confirm` (committed) signs users in from email links via the `token_hash` pattern. The
 default Supabase templates use `{{ .ConfirmationURL }}`, which routes through `/auth/v1/verify` and
@@ -99,19 +102,19 @@ GCP project as our service account (unconfirmed — needs a check). Wait for Res
   is the Supabase built-in-sender cap we kept hitting. (This covers signup-confirm + reset; invites
   already send via Resend's API, not this SMTP path.)
 
-### B4b. Flip the invite sender to the verified domain (one env var)
-Invites send via Resend's HTTP API using `RESEND_AUTH_FROM` (currently `Arcova <onboarding@resend.dev>`,
-the shared sandbox sender — which Google Workspace filters, so test invites don't land). Once
-`auth.arcovabio.com` shows **Verified**, set in `.env.local` (and Vercel):
+### B4b. Flip the Resend sender to `auth.arcova.app` (one env var)
+Invites + password reset send via Resend's HTTP API using `RESEND_AUTH_FROM` (currently
+`Arcova <noreply@auth.arcovabio.com>`, the verified interim domain). Once **`auth.arcova.app`** shows
+Verified in Resend, set in `.env.local` (and Vercel):
 ```
-RESEND_AUTH_FROM=Arcova <noreply@auth.arcovabio.com>
+RESEND_AUTH_FROM=Arcova <noreply@auth.arcova.app>
 ```
-Then invites deliver from our own domain. No code change.
+No code change. Don't set it before the domain is Verified — sending from an unverified domain 403s.
 
 ### B5. Verify end-to-end
-Claude re-sends an invite to a real inbox (`emma@arcovabio.com`, connected here) and confirms it
-arrives + the `/auth/confirm` link lands signed-in on `/today`. The QA owner fixture
-(`emma+qa2@arcova.bio` / pw retained) is standing by to send that invite.
+Claude re-sends invite + reset to the connected inbox (`emma@arcovabio.com`) and confirms they arrive
+and the `/auth/confirm` link works. QA owner fixture `emma+qa2@arcova.bio` (pw retained) is standing
+by to send the invite.
 
 ---
 
@@ -119,9 +122,11 @@ arrives + the `/auth/confirm` link lands signed-in on `/today`. The QA owner fix
 - [x] `/auth/confirm` sign-in route (short `?code` + direct `?token_hash`) + `?error=auth_failed` on /login
 - [x] `auth.arcovabio.com` created in Resend + DNS verified (Emma)
 - [x] `RESEND_AUTH_FROM` set to `Arcova <noreply@auth.arcovabio.com>`
-- [x] **Org invites: DONE end-to-end.** Sent via Resend from the verified domain → lands in inbox
-      (not spam) → short `?code` link (one-time, expiring; raw-token URLs got corrupted by email
-      line-wrapping) → click signs the member into the workspace. Verified against the real inbox.
-- [ ] Part A templates pasted — for **signup-confirm + password-reset** only (Emma, dashboard)
-- [ ] Supabase custom SMTP enabled + rate limit raised (B4) — so signup-confirm + reset also leave
-      via Resend (invites already do, via the API)
+- [x] **Org invites: DONE end-to-end** via Resend (verified sender → inbox → short `?code` link →
+      signs member in). Tested against the real inbox.
+- [x] **Password reset: DONE end-to-end** via Resend (`/api/auth/reset` → `/auth/confirm` recovery
+      session → `/reset-password`). Tested: new password works, old rejected. Rate-limited + no enumeration.
+- [ ] **Move sender to `auth.arcova.app`** (Emma verifies domain → Claude flips `RESEND_AUTH_FROM`, B4b)
+- [ ] **Part A template — signup confirmation only** (Emma, dashboard). Reset + invites no longer need it.
+- [ ] Supabase custom SMTP + raise rate limit (B4) — for signup confirmation (the one flow still on Supabase)
+- [ ] Delete stale Firebase records off `arcova.app` (Emma, housekeeping)
