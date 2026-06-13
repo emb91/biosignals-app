@@ -4,14 +4,15 @@
  * Invite a teammate to the caller's org. Owner/admin only.
  *
  * Two delivery paths (audit #4 — invite-first, handle existing accounts):
- *  - Fresh email: Supabase `inviteUserByEmail` creates the auth user (invited state)
- *    and sends the invite email. We embed { org_id, org_role } in user_metadata so the
- *    member's first login attaches them to this org (see lib/org-context.ts). We then
- *    write a pending org_members row with the returned user id.
- *  - Already-registered email: `inviteUserByEmail` errors. We fall back to an
- *    `org_invites` row and return a copy-link the owner can send; the invitee accepts
- *    it while logged in via /api/org/invites/accept (consent required — we never move
- *    an existing account silently).
+ *  - Fresh email: we admin-`generateLink` (type invite) to create the auth user in
+ *    invited state with { org_id, org_role } metadata, then send a token_hash link to
+ *    /auth/confirm via Resend (lib/auth-email) — no Supabase rate limit, and the link
+ *    actually establishes a session. A pending org_members row is written with the
+ *    returned user id. Falls back to Supabase's own sender if Resend isn't configured;
+ *    if the Resend send fails after user creation, returns the link for the owner to copy.
+ *  - Already-registered email: generateLink errors. We fall back to an `org_invites`
+ *    row and return a copy-link the owner can send; the invitee accepts it while logged
+ *    in via /org/accept (consent required — we never move an existing account silently).
  *
  * Body: { email: string, role?: 'admin' | 'member' }
  * Returns: { delivered: 'email' } | { delivered: 'link', acceptUrl: string }
@@ -21,6 +22,7 @@ import { getOrgContext, canEditOrgSetup, type OrgRole } from '@/lib/org-context'
 import { createAdminClient } from '@/lib/supabase-admin';
 import { getOrgEntitlements } from '@/lib/billing/entitlements';
 import { billingEnforcementEnabled } from '@/lib/billing/consume';
+import { isResendConfigured, sendAuthEmail, buildOrgInviteEmail } from '@/lib/auth-email';
 
 function isAlreadyRegistered(error: { message?: string; status?: number; code?: string } | null): boolean {
   if (!error) return false;
@@ -77,27 +79,69 @@ export async function POST(request: Request) {
     );
   }
 
-  // ── Path 1: fresh email — Supabase creates + emails the user ──────────────
-  const { data: invited, error: inviteError } = await admin.auth.admin.inviteUserByEmail(email, {
-    data: { org_id: ctx.orgId, org_role: role },
-    redirectTo: `${origin}/auth/callback?next=/today`,
-  });
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || origin;
 
-  if (!inviteError && invited?.user) {
+  const attachMembership = async (userId: string) => {
     const { error: memberError } = await admin.from('org_members').upsert(
-      {
-        org_id: ctx.orgId,
-        user_id: invited.user.id,
-        role,
-        invited_at: new Date().toISOString(),
-      },
+      { org_id: ctx.orgId, user_id: userId, role, invited_at: new Date().toISOString() },
       { onConflict: 'user_id' },
     );
-    if (memberError) {
-      console.error('[org/invite] member upsert failed:', memberError);
-      return NextResponse.json({ error: 'Invite sent but membership failed; retry.' }, { status: 500 });
+    if (memberError) console.error('[org/invite] member upsert failed:', memberError);
+    return !memberError;
+  };
+
+  // ── Path 1: fresh email ───────────────────────────────────────────────────
+  // Preferred: generate the sign-in link ourselves and send it via Resend — no
+  // Supabase rate limit, and the link targets /auth/confirm (token_hash) which
+  // actually establishes a session, unlike the default fragment-based link.
+  // Falls back to Supabase's own sender when Resend isn't configured.
+  let inviteError: { message?: string; status?: number; code?: string } | null = null;
+
+  if (isResendConfigured()) {
+    const { data: gen, error: genErr } = await admin.auth.admin.generateLink({
+      type: 'invite',
+      email,
+      options: { data: { org_id: ctx.orgId, org_role: role } },
+    });
+
+    if (!genErr && gen?.user && gen.properties?.hashed_token) {
+      if (!(await attachMembership(gen.user.id))) {
+        return NextResponse.json({ error: 'Invite created but membership failed; retry.' }, { status: 500 });
+      }
+
+      const acceptUrl = `${appUrl}/auth/confirm?token_hash=${gen.properties.hashed_token}&type=invite&next=/today`;
+      const { data: org } = await admin
+        .from('organizations')
+        .select('name')
+        .eq('id', ctx.orgId)
+        .maybeSingle<{ name: string | null }>();
+      const inviterName =
+        ((ctx.user.user_metadata as Record<string, unknown> | undefined)?.full_name as string | undefined) ||
+        ctx.user.email ||
+        null;
+
+      const mail = buildOrgInviteEmail({ acceptUrl, orgName: org?.name ?? null, inviterName });
+      const sent = await sendAuthEmail({ to: email, subject: mail.subject, html: mail.html });
+      if (sent.ok) return NextResponse.json({ delivered: 'email', email });
+
+      // Created the user but couldn't email them — hand the owner a copy-link so
+      // the invite isn't lost.
+      console.error('[org/invite] resend send failed:', sent.error);
+      return NextResponse.json({ delivered: 'link', email, acceptUrl });
     }
-    return NextResponse.json({ delivered: 'email', email });
+    inviteError = genErr;
+  } else {
+    const { data: invited, error } = await admin.auth.admin.inviteUserByEmail(email, {
+      data: { org_id: ctx.orgId, org_role: role },
+      redirectTo: `${appUrl}/auth/confirm?next=/today`,
+    });
+    if (!error && invited?.user) {
+      if (!(await attachMembership(invited.user.id))) {
+        return NextResponse.json({ error: 'Invite sent but membership failed; retry.' }, { status: 500 });
+      }
+      return NextResponse.json({ delivered: 'email', email });
+    }
+    inviteError = error;
   }
 
   // ── Path 2: already-registered email — copy-link accept flow ──────────────
