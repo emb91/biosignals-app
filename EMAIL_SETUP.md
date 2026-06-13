@@ -116,11 +116,12 @@ arrives + the `/auth/confirm` link lands signed-in on `/today`. The QA owner fix
 ---
 
 ## Status
-- [x] `/auth/confirm` token_hash sign-in route + `?error=auth_failed` surfaced on /login
-- [x] **Invites rebuilt to send via Resend** (self-generated link) — no template/rate-limit dependency;
-      verified end-to-end (user created + attached + link signs in). Sends from `resend.dev` until B4b.
+- [x] `/auth/confirm` sign-in route (short `?code` + direct `?token_hash`) + `?error=auth_failed` on /login
+- [x] `auth.arcovabio.com` created in Resend + DNS verified (Emma)
+- [x] `RESEND_AUTH_FROM` set to `Arcova <noreply@auth.arcovabio.com>`
+- [x] **Org invites: DONE end-to-end.** Sent via Resend from the verified domain → lands in inbox
+      (not spam) → short `?code` link (one-time, expiring; raw-token URLs got corrupted by email
+      line-wrapping) → click signs the member into the workspace. Verified against the real inbox.
 - [ ] Part A templates pasted — for **signup-confirm + password-reset** only (Emma, dashboard)
-- [ ] `auth.arcovabio.com` created in Resend + DNS records added to Google Cloud DNS + Verified
-- [ ] `RESEND_AUTH_FROM` flipped to the verified domain (B4b)
-- [ ] Supabase custom SMTP enabled + rate limit raised (B4) — for signup-confirm + reset
-- [ ] Final inbox-delivery re-test once the domain is verified (Claude, via connected inbox)
+- [ ] Supabase custom SMTP enabled + rate limit raised (B4) — so signup-confirm + reset also leave
+      via Resend (invites already do, via the API)
