@@ -71,7 +71,18 @@ export type LlmFeature =
   | 'company_monitor_funding'
   | 'company_monitor_taxonomy'
   | 'my_company_enrichment_analysis'
-  | 'my_company_enrichment_bullet_condense';
+  | 'my_company_enrichment_bullet_condense'
+  // ICP setup / onboarding features — plain text or JSON completions that
+  // previously called the Anthropic SDK directly with no fallback.
+  | 'suggest_icp_companies'
+  | 'onboarding_chat'
+  | 'leads_query'
+  | 'accounts_query'
+  | 'generate_icp_summary'
+  | 'company_fit_summary'
+  | 'icp_signal_recommendation'
+  // Web-search-backed company discovery for data acquisition.
+  | 'web_company_discovery';
 
 /**
  * Default models per (feature, route). Override via the `model` arg.
@@ -208,6 +219,47 @@ const FEATURE_MODELS: Record<LlmFeature, { openrouter: string; anthropic: string
   my_company_enrichment_bullet_condense: {
     openrouter: 'anthropic/claude-haiku-4-5',
     anthropic: 'claude-haiku-4-5',
+  },
+  // ICP model-account suggestions during setup — Sonnet (same model the route
+  // used when calling the SDK directly).
+  suggest_icp_companies: {
+    openrouter: 'anthropic/claude-sonnet-4-6',
+    anthropic: 'claude-sonnet-4-6',
+  },
+  // Onboarding chat narration / phase help — short conversational copy.
+  onboarding_chat: {
+    openrouter: 'anthropic/claude-haiku-4-5',
+    anthropic: 'claude-haiku-4-5',
+  },
+  // Natural-language → structured query filters (contacts table).
+  leads_query: {
+    openrouter: 'anthropic/claude-sonnet-4-6',
+    anthropic: 'claude-sonnet-4-6',
+  },
+  // Natural-language → structured query filters (accounts table).
+  accounts_query: {
+    openrouter: 'anthropic/claude-sonnet-4-6',
+    anthropic: 'claude-sonnet-4-6',
+  },
+  // One-sentence ICP card summary — Haiku is plenty.
+  generate_icp_summary: {
+    openrouter: 'anthropic/claude-haiku-4-5',
+    anthropic: 'claude-haiku-4-5',
+  },
+  // One-sentence company-vs-ICP fit explanation — Haiku is plenty.
+  company_fit_summary: {
+    openrouter: 'anthropic/claude-haiku-4-5',
+    anthropic: 'claude-haiku-4-5',
+  },
+  // Signal-id selection for an ICP (structured JSON output) — Haiku.
+  icp_signal_recommendation: {
+    openrouter: 'anthropic/claude-haiku-4-5',
+    anthropic: 'claude-haiku-4-5',
+  },
+  // Web-search company discovery — Sonnet for reasoning over live results.
+  web_company_discovery: {
+    openrouter: 'anthropic/claude-sonnet-4-6',
+    anthropic: 'claude-sonnet-4-6',
   },
 };
 

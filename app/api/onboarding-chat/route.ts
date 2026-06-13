@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
+import { completeLlm } from '@/lib/llm-client';
 import { createClient } from '@/lib/supabase-server';
 import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
@@ -167,6 +168,32 @@ function normalizeWebsiteUrl(value: string): string {
   return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
 
+/** Serialize a chat history into a single prompt for the provider-routing llm-client. */
+function flattenConversationToPrompt(msgs: Anthropic.MessageParam[]): string {
+  const renderContent = (content: Anthropic.MessageParam['content']): string => {
+    if (typeof content === 'string') return content;
+    return content
+      .map((block) =>
+        block && typeof block === 'object' && 'type' in block && block.type === 'text' && typeof (block as { text?: unknown }).text === 'string'
+          ? (block as { text: string }).text
+          : '',
+      )
+      .filter(Boolean)
+      .join('\n');
+  };
+
+  if (msgs.length <= 1) return renderContent(msgs[0]?.content ?? '');
+
+  const prior = msgs.slice(0, -1);
+  const last = msgs[msgs.length - 1];
+  return [
+    'Previous conversation:',
+    ...prior.map((m) => `${m.role}: ${renderContent(m.content)}`),
+    '',
+    `Current message: ${renderContent(last.content)}`,
+  ].join('\n');
+}
+
 function getAssistantText(blocks: Anthropic.ContentBlock[]): string {
   return blocks
     .filter((block) => block.type === 'text')
@@ -303,20 +330,20 @@ export async function POST(request: Request) {
       const system =
         resolvedMode === 'narration' ? buildSetupNarrationSystemPrompt() : buildSetupPhaseHelpSystemPrompt(phase ?? '');
 
-      const response = await client.messages.create({
-        model: 'claude-haiku-4-5',
-        max_tokens: 512,
+      const completion = await completeLlm({
+        feature: 'onboarding_chat',
+        prompt: flattenConversationToPrompt(conversation),
         system,
-        messages: conversation,
+        maxTokens: 512,
       });
       await recordLlmUsageEvent({
         userId: user.id,
         userEmail: user.email,
-        provider: 'anthropic',
+        provider: completion.provider,
         feature: resolvedMode === 'narration' ? 'onboarding_narration' : 'onboarding_phase_help',
         route: '/api/onboarding-chat',
-        model: 'claude-haiku-4-5',
-        usage: response.usage,
+        model: completion.model,
+        usage: completion.usage,
         metadata: {
           mode: resolvedMode,
           phase: phase ?? null,
@@ -324,7 +351,7 @@ export async function POST(request: Request) {
         },
       });
 
-      const text = getAssistantText(response.content);
+      const text = completion.text;
       return NextResponse.json({
         role: 'assistant',
         text,

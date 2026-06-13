@@ -1,13 +1,13 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { NextResponse } from 'next/server';
+import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 
 export async function POST(request: Request) {
   try {
-    if (!process.env.ANTHROPIC_API_KEY) {
-      console.error('ANTHROPIC_API_KEY is not set');
+    if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENROUTER_API_KEY) {
+      console.error('No LLM provider API key is set');
       return NextResponse.json(
-        { error: 'Anthropic API key not configured' },
+        { error: 'LLM provider API key not configured' },
         { status: 500 }
       );
     }
@@ -56,8 +56,6 @@ export async function POST(request: Request) {
     if (sizes.length) contextLines.push(`Typical company sizes: ${sizes.join(', ')}`);
     if (funding.length) contextLines.push(`Funding stages: ${funding.join(', ')}`);
 
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
     const prompt = `You are writing a concise summary for an ICP (ideal customer profile) card in a B2B life sciences sales product.
 
 ${contextLines.join('\n')}
@@ -86,23 +84,23 @@ Rules:
 - If you are about to mention the underlying company in any way, rewrite the sentence to stay generic
 - Output only the sentence`;
 
-    const message = await anthropic.messages.create({
-      model: 'claude-haiku-4-5',
-      max_tokens: 80,
-      temperature: 0.3,
+    const completion = await completeLlm({
+      feature: 'generate_icp_summary',
+      prompt,
       system: 'Output only the requested sentence. Never mention the underlying company. Start exactly with "This ICP defines". Avoid promotional phrasing like "powered by".',
-      messages: [{ role: 'user', content: prompt }],
+      maxTokens: 80,
+      temperature: 0.3,
     });
 
     await recordLlmUsageEvent({
-      provider: 'anthropic',
+      provider: completion.provider,
       feature: 'generate_icp_summary',
       route: 'app/api/generate-icp-summary',
-      model: 'claude-haiku-4-5',
-      usage: message.usage,
+      model: completion.model,
+      usage: completion.usage,
     });
 
-    const rawSummary = (message.content[0] as { type: string; text: string }).text.trim();
+    const rawSummary = completion.text.trim();
     const summary = rawSummary.replace(/\s+/g, ' ').trim();
 
     return NextResponse.json({ summary });

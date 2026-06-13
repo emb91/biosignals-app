@@ -4126,26 +4126,39 @@ export default function SetupFlow({
 
     setThinking(true);
     try {
-      const res = await fetch('/api/onboarding-chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: historyRef.current,
-          firstName: firstNameRef.current,
-          mode,
-          phase: mapPhaseForOnboardingApi(phase),
-          context: {
-            entryPoint,
-            selectedCompanyName: selectedCompanyName ?? selectedCompanyRef.current?.name ?? null,
-            availableCompanyCount,
-          },
-        }),
-      });
-      if (!res.ok) {
-        const body = await res.text().catch(() => '');
-        throw new Error(`onboarding-chat ${res.status}${body ? `: ${body.slice(0, 200)}` : ''}`);
+      const doFetch = async (): Promise<ApiOnboardingJson> => {
+        const res = await fetch('/api/onboarding-chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messages: historyRef.current,
+            firstName: firstNameRef.current,
+            mode,
+            phase: mapPhaseForOnboardingApi(phase),
+            context: {
+              entryPoint,
+              selectedCompanyName: selectedCompanyName ?? selectedCompanyRef.current?.name ?? null,
+              availableCompanyCount,
+            },
+          }),
+        });
+        if (!res.ok) {
+          const body = await res.text().catch(() => '');
+          throw new Error(`onboarding-chat ${res.status}${body ? `: ${body.slice(0, 200)}` : ''}`);
+        }
+        return (await res.json()) as ApiOnboardingJson;
+      };
+
+      // One silent retry: transient provider hiccups shouldn't surface as a
+      // dead-end apology in the user's first session.
+      let data: ApiOnboardingJson;
+      try {
+        data = await doFetch();
+      } catch (firstError) {
+        console.warn('[setup-flow] onboarding-chat failed, retrying once:', firstError);
+        await new Promise((r) => setTimeout(r, 1500));
+        data = await doFetch();
       }
-      const data = (await res.json()) as ApiOnboardingJson;
 
       for (const action of data.actions || []) {
         if (action.type === 'capture_name' && action.first_name) {
@@ -4178,7 +4191,8 @@ export default function SetupFlow({
       };
     } catch (error) {
       console.error('[setup-flow] onboarding-chat error:', error);
-      const fallback = 'Sorry, I hit a snag there. Can you try that again?';
+      const fallback =
+        'I had trouble connecting just now — your progress is saved. Give it a moment, then send your message again.';
       return {
         text: fallback,
         actions: [],

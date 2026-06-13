@@ -17,11 +17,14 @@ export async function GET() {
 
   const admin = createAdminClient();
 
-  const { data: memberRows } = await admin
-    .from('org_members')
-    .select('user_id, role, joined_at, invited_at')
-    .eq('org_id', ctx.orgId)
-    .order('created_at', { ascending: true });
+  const [{ data: memberRows }, { data: orgRow }] = await Promise.all([
+    admin
+      .from('org_members')
+      .select('user_id, role, joined_at, invited_at')
+      .eq('org_id', ctx.orgId)
+      .order('created_at', { ascending: true }),
+    admin.from('organizations').select('name').eq('id', ctx.orgId).maybeSingle<{ name: string | null }>(),
+  ]);
 
   // Resolve emails from auth (best-effort; admin API paginates, our orgs are tiny).
   const members = await Promise.all(
@@ -53,6 +56,7 @@ export async function GET() {
 
   return NextResponse.json({
     orgId: ctx.orgId,
+    orgName: orgRow?.name ?? null,
     role: ctx.role,
     selfUserId: ctx.user.id,
     members,

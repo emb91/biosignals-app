@@ -48,9 +48,17 @@ export async function analyseCompanyWithClaude(
 
 Search their website, LinkedIn company page, Crunchbase, news articles, and any other relevant sources.
 
+IDENTITY GROUNDING — read this before anything else:
+- You are researching ONLY the company that operates the website ${website}. Treat the content of that website itself as the ground truth for who this company is.
+- Other companies may share the same or a similar name in completely different industries. Before using ANY source, verify it refers to the company at this exact domain (matching domain, products, location, or leadership). If a source describes a similarly-named company with a different website or a clearly different business, EXCLUDE it entirely — do not blend it in.
+- Every field you return must be consistent with what ${website} says about itself. If your description, competitors, or buyer logic would contradict the company's own homepage/tagline, you have the wrong company — discard and re-check.
+- After drafting, re-read your JSON and check internal consistency: do description, industries, competitors, and buyer fields all describe the SAME company? If any field came from a different similarly-named company, fix it before returning.
+
 Return ONLY valid JSON in this exact structure. Every array field must have 2–5 concise, factual strings (10–20 words each):
 
 {
+  "identity_confidence": "high or low — low ONLY if you found similarly-named companies and could not fully separate them",
+  "identity_note": "If identity_confidence is low: one short sentence naming the other company you may be confusing this with (e.g. 'A cybersecurity firm also called Arcova appears in searches'). Otherwise null.",
   "company_name": "Official company name",
   "linkedin_url": "https://www.linkedin.com/company/... or null if not found",
   "description": ["What the company does in plain terms", "..."],
@@ -155,6 +163,15 @@ Return ONLY the JSON object. No markdown, no explanation.`;
 
   if (!parsed || Object.keys(parsed).length === 0) {
     throw new Error(`Claude analysis returned no parseable JSON. Raw: ${text.slice(0, 400)}`);
+  }
+
+  // Wrong-entity tripwire: the model self-reports when it found similarly-named
+  // companies it couldn't fully separate. Callers can surface identity_note to
+  // the user ("Did you mean …?"); we always log it for diagnosis.
+  if (parsed.identity_confidence === 'low') {
+    console.warn(
+      `[company-enrichment] identity ambiguity for ${website}: ${String(parsed.identity_note ?? 'no detail')}`,
+    );
   }
 
   return parsed;

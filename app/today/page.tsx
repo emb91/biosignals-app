@@ -4,6 +4,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
+import MemberWelcome from '@/components/MemberWelcome';
 import { AgentPanel } from '@/components/AgentPanel';
 import { supabase } from '@/lib/supabase';
 import { ArrowRight, Check, ChevronRight, ExternalLink, Loader2 } from 'lucide-react';
@@ -674,7 +675,10 @@ export default function BriefingPage() {
           repliedRes,
           liveSignalsRes,
         ] = await Promise.all([
-          supabase.from('user_company').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
+          // Org-scoped on purpose (RLS lets members read the org's row): the company
+          // profile is set up once per workspace, so an invited member must NOT be
+          // told to "finish the company profile" their owner already completed.
+          supabase.from('user_company').select('id').limit(1).maybeSingle(),
           fetch(ROUTES.api.icps),
           fetch('/api/contacts'),
           supabase.from('raw_uploads').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
@@ -1225,6 +1229,7 @@ export default function BriefingPage() {
 
       <main className="briefing-today relative min-h-0 flex-1 overflow-y-auto bg-transparent">
         <div className="relative z-10 bt-page pb-24">
+          <MemberWelcome />
           <header className="bt-hero">
             <p className="bt-hero-eyebrow">Daily briefing · {formatBriefingHeroDate(clock)}</p>
             <h1 className="bt-hero-title font-manrope">

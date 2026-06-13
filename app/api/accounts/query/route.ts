@@ -1,6 +1,6 @@
 import { TASK_AGENT_OPENING } from '@/lib/prompts/agent-voice';
 import { NextResponse } from 'next/server';
-import Anthropic from '@anthropic-ai/sdk';
+import { completeLlm } from '@/lib/llm-client';
 import { createClient } from '@/lib/supabase-server';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import {
@@ -13,8 +13,6 @@ import {
   applySort,
   hasActiveFilters,
 } from '@/lib/accounts-data';
-
-const anthropic = new Anthropic();
 
 export const VALID_ACCOUNT_COLUMNS = [
   'company',
@@ -170,26 +168,23 @@ async function callClaude(query: string): Promise<{
   sortBy: AccountSortBy;
   conversational: string | null;
 }> {
-  const message = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 512,
-    temperature: 0,
+  const completion = await completeLlm({
+    feature: 'accounts_query',
+    prompt: `Query: "${query}"`,
     system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: `Query: "${query}"` }],
+    maxTokens: 512,
+    temperature: 0,
   });
 
   await recordLlmUsageEvent({
-    provider: 'anthropic',
+    provider: completion.provider,
     feature: 'accounts_query',
     route: 'app/api/accounts/query',
-    model: 'claude-sonnet-4-6',
-    usage: message.usage,
+    model: completion.model,
+    usage: completion.usage,
   });
 
-  const text = message.content
-    .filter((b) => b.type === 'text')
-    .map((b) => (b as { type: 'text'; text: string }).text)
-    .join('');
+  const text = completion.text;
 
   let parsed: {
     interpretation?: string | null;
