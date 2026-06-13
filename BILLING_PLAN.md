@@ -10,7 +10,11 @@ Until then every org behaves as free tier and billing routes return 503.
 
 ## Price points (v1, from measured COGS)
 
-Blended direct COGS ≈ **$0.10–0.12 per fully enriched contact** (Apify $0.006 + Apollo ~2 credits ≈ $0.06 at an assumed $0.03/credit paid plan + ZeroBounce ~$0.03 + LLM ~$0.01), plus ~$15–30/mo org-level LLM overhead. Biggest uncertainty: Apollo paid-tier credit price (currently on Free plan).
+Blended direct COGS ≈ **$0.05–0.15 per fully enriched contact** (Apify $0.006 + ZeroBounce ~$0.03 + LLM ~$0.01 + Apollo, see below), plus ~$15–30/mo org-level LLM overhead.
+
+**Apollo plan path** (confirmed 2026 pricing): upgrade Free → **Basic $49/user/mo** (unlimited email credits under fair use, 1,000 export credits/mo, 75 mobile credits/mo). Our API person-enrichments mostly draw on the unlimited email-credit pool, so the *typical* Apollo cost per contact is near zero marginal; the *worst case* (everything billed against export credits at $49/1,000 = $0.049/credit × ~2 credits/contact) is ~$0.10/contact. Saturation math: a Team-plan org consuming its full 1,000 contacts/mo needs ~2,000 export credits worst-case → move to **Professional $79/user/mo** (2,000 export credits/mo) or add a Basic seat. Either way Apollo stays under $80/mo against $199 Team revenue. Mobile credits (75/mo) are the real pinch point — phone reveals beyond that need top-ups, fine while phone enrichment stays occasional.
+
+Margin check at the proposed prices: typical case ~$0.05/contact → pack ($149/1k) ~65% margin, Team at full utilization ~70%+. Worst case ~$0.145/contact → pack is break-even and Team still clears ~$50/mo gross; if worst case materializes in shadow-metering data, raise the pack to $199 (one line in config.ts + new Stripe price via bootstrap).
 
 | Tier | Price | Seats | Contacts |
 |---|---|---|---|
