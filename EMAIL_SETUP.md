@@ -11,12 +11,20 @@ verified `auth.arcovabio.com` sender and were each tested through the connected 
 the member in; reset changes the password — new works, old rejected). The short-code indirection
 exists because a raw 56-char token in the URL gets corrupted by email line-wrapping.
 
-**Still needs the dashboard — signup confirmation only:** signup is the public front door, so it
-stays on Supabase's `signUp` to keep its built-in rate-limit + CAPTCHA protections against mass
-account creation / email-bombing (the abuse + bounce surface that flagged the project). Routing it
-through an admin endpoint would lose those. So signup keeps Supabase's sender and just needs **Part
-A** (point the Confirm-signup template at `/auth/confirm`) to stop dead-ending, and benefits from
-**Part B** (SMTP) to escape the 2/hour cap.
+**Signup confirmation — finalized architecture (decided 2026-06-13):** signup stays on Supabase's
+`signUp` deliberately — it's the public front door, and Supabase gives rate-limiting, CAPTCHA,
+enumeration protection, and leaked-password checks for free. Rebuilding those on a custom endpoint
+would be a security regression on the highest-abuse-surface route. So:
+- **DONE (code):** ZeroBounce deliverability validation on the signup email field
+  (`lib/email-validation.ts` + `POST /api/auth/validate-email`, wired into the login page). Blocks
+  undeliverable addresses (invalid/spamtrap/abuse/do_not_mail) before we email them — this is the
+  real bounce fix (switching senders doesn't escape bounces; Resend suspends for them too). Fails
+  open; ~1 ZeroBounce credit per conclusive check. Verified end-to-end.
+- **Dashboard (Emma):** Part A (point Confirm-signup template at `/auth/confirm`) so the link works;
+  Part B SMTP (send via Resend/`mail.arcova.bio`, escape the 2/hr cap); enable CAPTCHA before public
+  launch (Supabase → Auth → Settings, hCaptcha/Turnstile).
+- **Before public launch (code, deferred):** add a per-IP rate limit to `/api/auth/validate-email`
+  (it's public + spends a ZeroBounce credit per call). No traffic to abuse it pre-launch.
 
 **Sender domain — FINAL: `mail.arcova.bio`** (one subdomain for ALL app-sent transactional mail —
 auth now, product notifications later — to stay on Resend's free tier, which allows 1 domain).

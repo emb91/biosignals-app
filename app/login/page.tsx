@@ -45,6 +45,22 @@ export default function LoginPage() {
 
     try {
       if (isSignUp) {
+        // Deliverability pre-check — don't ask Supabase to email an undeliverable
+        // address (bounces hurt sender reputation). Fails open server-side.
+        const check = await fetch('/api/auth/validate-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email }),
+        });
+        const result = (await check.json().catch(() => ({ allow: true }))) as {
+          allow: boolean;
+          reason?: string;
+        };
+        if (!result.allow) {
+          setError(result.reason || 'Please double-check that email address.');
+          setLoading(false);
+          return;
+        }
         const needsEmailConfirm = await signup(email, password, fullName);
         if (needsEmailConfirm) {
           setConfirmEmailSentTo(email);
