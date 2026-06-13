@@ -9,6 +9,7 @@ import { ChevronRight, Loader2, CheckCircle2, X } from 'lucide-react';
 import AppSidebar from '@/components/AppSidebar';
 import TeamSettings from '@/components/TeamSettings';
 import BillingSettings from '@/components/BillingSettings';
+import HubSpotSyncStatus from '@/components/HubSpotSyncStatus';
 
 interface LemlistStatus {
   connected: boolean;
@@ -328,6 +329,8 @@ export default function SettingsPage() {
                 </div>
               </div>
             </div>
+
+            <HubSpotSyncStatus />
           </section>
 
           {/* ── Outreach voice ───────────────────────────────────────────── */}
