@@ -18,13 +18,13 @@ through an admin endpoint would lose those. So signup keeps Supabase's sender an
 A** (point the Confirm-signup template at `/auth/confirm`) to stop dead-ending, and benefits from
 **Part B** (SMTP) to escape the 2/hour cap.
 
-**Sender domain — FINAL: `auth.arcova.app`** (currently live on `auth.arcovabio.com` as interim;
-flip pending Emma verifying the new domain). Reasoning: subdomains only *partially* isolate
-reputation (Gmail/Spamhaus roll subdomain → org-domain — researched), so must-deliver auth shouldn't
-sit on `arcovabio.com`, the deliberately-sacrificial cold-outbound domain. `arcova.bio` stays at
-**zero sending** (hard priority). `arcova.app` is the app domain — brand-recognized, off the burn
-domain, and its only existing mail config is stale Firebase (safe to delete). Move = verify
-`auth.arcova.app` in Resend → DNS into its zone (`ns-cloud-e*`) → flip `RESEND_AUTH_FROM`.
+**Sender domain — FINAL: `auth.arcova.bio`** (currently live on `auth.arcovabio.com` as interim;
+flip pending Emma verifying the new domain). Customers sign up at arcova.bio, so auth from
+`auth.arcova.bio` is the exact brand-match. The bare `arcova.bio` root still sends nothing — only the
+`auth.` (and future `notify.`) subdomain sends, each with its own DKIM/reputation. Auth + product
+notifications are low-risk transactional, safe on the brand domain; cold outreach is quarantined on
+the separate `arcovabio.com`. Move = verify `auth.arcova.bio` in Resend → DNS into the arcova.bio
+zone (`ns-cloud-b*`) → flip `RESEND_AUTH_FROM`. (`arcova.app` drops out of the email plan — web only.)
 
 ---
 
@@ -102,12 +102,12 @@ GCP project as our service account (unconfirmed — needs a check). Wait for Res
   is the Supabase built-in-sender cap we kept hitting. (This covers signup-confirm + reset; invites
   already send via Resend's API, not this SMTP path.)
 
-### B4b. Flip the Resend sender to `auth.arcova.app` (one env var)
+### B4b. Flip the Resend sender to `auth.arcova.bio` (one env var)
 Invites + password reset send via Resend's HTTP API using `RESEND_AUTH_FROM` (currently
-`Arcova <noreply@auth.arcovabio.com>`, the verified interim domain). Once **`auth.arcova.app`** shows
+`Arcova <noreply@auth.arcovabio.com>`, the verified interim domain). Once **`auth.arcova.bio`** shows
 Verified in Resend, set in `.env.local` (and Vercel):
 ```
-RESEND_AUTH_FROM=Arcova <noreply@auth.arcova.app>
+RESEND_AUTH_FROM=Arcova <noreply@auth.arcova.bio>
 ```
 No code change. Don't set it before the domain is Verified — sending from an unverified domain 403s.
 
@@ -126,7 +126,7 @@ by to send the invite.
       signs member in). Tested against the real inbox.
 - [x] **Password reset: DONE end-to-end** via Resend (`/api/auth/reset` → `/auth/confirm` recovery
       session → `/reset-password`). Tested: new password works, old rejected. Rate-limited + no enumeration.
-- [ ] **Move sender to `auth.arcova.app`** (Emma verifies domain → Claude flips `RESEND_AUTH_FROM`, B4b)
+- [ ] **Move sender to `auth.arcova.bio`** (Emma verifies domain → Claude flips `RESEND_AUTH_FROM`, B4b)
 - [ ] **Part A template — signup confirmation only** (Emma, dashboard). Reset + invites no longer need it.
 - [ ] Supabase custom SMTP + raise rate limit (B4) — for signup confirmation (the one flow still on Supabase)
 - [ ] Delete stale Firebase records off `arcova.app` (Emma, housekeeping)
