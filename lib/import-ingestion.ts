@@ -8,6 +8,8 @@ import { createAdminClient } from '@/lib/supabase-admin';
 import { ensureCompanyAliases } from '@/lib/signals/company-aliases';
 import { backfillRecentMentionsForCompany } from '@/lib/companies/backfill-mentions-for-company';
 import { ensureCompanyCik } from '@/lib/signals/company-cik';
+import { orgIdForUser } from '@/lib/org-context';
+import { consumeContactAllowance, getContactGate } from '@/lib/billing/consume';
 
 export type EnrichedImportRecord = {
   raw_upload_id: string;
@@ -339,6 +341,14 @@ export async function ingestEnrichedRecords(
 
   const userId = records[0].user_id;
 
+  // Contact meter: resolve the org once and gate the batch. Each imported
+  // contact bills at most once per (org, person) — duplicates and teammates
+  // re-adding the same person are free. With enforcement off (shadow mode)
+  // the gate is always open and we only record usage.
+  const billingOrgId = await orgIdForUser(supabase, userId);
+  const billingGate = billingOrgId ? await getContactGate(billingOrgId) : null;
+  let allowanceLeft = billingGate?.remaining ?? Number.POSITIVE_INFINITY;
+
   const { data: existingContactsData } = await supabase
     .from('contacts')
     .select('linkedin_url, email, first_name, last_name, company_name')
@@ -377,6 +387,15 @@ export async function ingestEnrichedRecords(
   for (let index = 0; index < toProcess.length; index += 1) {
     const record = toProcess[index];
     const parsedLocation = splitLocation(record.location);
+
+    if (billingGate?.enforce && allowanceLeft <= 0) {
+      failed += 1;
+      await supabase
+        .from('raw_uploads')
+        .update({ status: 'failed', enriched_at: new Date().toISOString() })
+        .eq('id', record.raw_upload_id);
+      continue;
+    }
 
     try {
       const { companyId, created } = await upsertCompany(supabase, userId, record);
@@ -506,6 +525,17 @@ export async function ingestEnrichedRecords(
             });
           }
         }
+      }
+
+      if (billingOrgId) {
+        const consumed = await consumeContactAllowance({
+          orgId: billingOrgId,
+          userId,
+          userContactId: importedRow.contact_id,
+          source: 'import',
+          entitlements: billingGate?.entitlements,
+        });
+        if (consumed.consumedUnit) allowanceLeft -= 1;
       }
 
       await supabase

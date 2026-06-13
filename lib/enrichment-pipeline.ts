@@ -7,6 +7,7 @@ import { stickyIdentity } from '@/lib/company-merge';
 import { cacheProfilePhoto, cacheCompanyLogo } from '@/lib/photo-cache';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { recordProviderUsage } from '@/lib/provider-usage';
+import { consumeContactAllowance, CONTACT_LIMIT_MESSAGE } from '@/lib/billing/consume';
 import {
   enrichOrganizationWithApollo,
   tryApolloPersonalEmailRevealForLookup,
@@ -1080,6 +1081,29 @@ export async function runContactResolutionPipelineForContact(
   ) {
     await applyUserCancellationToLeadEnrichment(supabase, { contactId, userId });
     return { status: 'cancelled' };
+  }
+
+  // Contact meter: a person bills to the org at most once — first-time
+  // enrichment consumes allowance, refreshes are free ('already_billed').
+  // Shadow mode (BILLING_ENFORCEMENT unset) always allows.
+  const billing = await consumeContactAllowance({
+    orgId: null,
+    userId,
+    userContactId: contactId,
+    source: 'enrichment',
+  });
+  if (!billing.allowed) {
+    await updateContactWithOptionalRefreshJobFields(supabase, {
+      contactId,
+      userId,
+      payload: {
+        enrichment_refresh_status: 'failed',
+        enrichment_refresh_last_error: CONTACT_LIMIT_MESSAGE,
+        enrichment_refresh_finished_at: now,
+        updated_at: now,
+      },
+    });
+    return { status: 'failed' };
   }
 
   await updateContactWithOptionalRefreshJobFields(supabase, {

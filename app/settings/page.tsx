@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ChevronRight, Loader2, CheckCircle2, X } from 'lucide-react';
 import AppSidebar from '@/components/AppSidebar';
 import TeamSettings from '@/components/TeamSettings';
+import BillingSettings from '@/components/BillingSettings';
 
 interface LemlistStatus {
   connected: boolean;
@@ -409,6 +410,8 @@ export default function SettingsPage() {
           </section>
 
           <TeamSettings />
+
+          <BillingSettings />
 
           {/* ── Other settings ────────────────────────────────────────────── */}
           <div className="mt-8 space-y-4">

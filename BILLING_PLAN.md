@@ -1,6 +1,6 @@
 # Billing implementation plan (Stripe, org-level)
 
-Status: **Phases 1–3 built** (2026-06-13): migration applied, entitlements lib, checkout/portal routes, webhook handler, bootstrap script. Phases 4–6 (enforcement, UI, hardening) remain.
+Status: **Phases 1–5 built** (2026-06-13): schema + entitlements, checkout/portal/webhook, enforcement wired at all choke points (SHADOW MODE — set `BILLING_ENFORCEMENT=true` to enforce), and the Settings "Plan & billing" card. The meter RPC's five outcomes are DB-tested. Remaining: phase 6 hardening (Stripe test-clock run-through once keys exist), then flip enforcement on after ~a week of shadow metering.
 
 **To activate billing** (Stripe keys were not present in this repo's .env.local):
 1. Add `STRIPE_SECRET_KEY=sk_test_…` to `.env.local`.

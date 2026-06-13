@@ -19,6 +19,8 @@
 import { NextResponse } from 'next/server';
 import { getOrgContext, canEditOrgSetup, type OrgRole } from '@/lib/org-context';
 import { createAdminClient } from '@/lib/supabase-admin';
+import { getOrgEntitlements } from '@/lib/billing/entitlements';
+import { billingEnforcementEnabled } from '@/lib/billing/consume';
 
 function isAlreadyRegistered(error: { message?: string; status?: number; code?: string } | null): boolean {
   if (!error) return false;
@@ -49,6 +51,31 @@ export async function POST(request: Request) {
 
   const admin = createAdminClient();
   const origin = new URL(request.url).origin;
+
+  // Seat gate: members + pending invites must fit the plan's seat count.
+  // Shadow mode (BILLING_ENFORCEMENT unset) logs instead of blocking.
+  const entitlements = await getOrgEntitlements(ctx.orgId);
+  const [{ count: memberCount }, { count: pendingCount }] = await Promise.all([
+    admin.from('org_members').select('user_id', { count: 'exact', head: true }).eq('org_id', ctx.orgId),
+    admin
+      .from('org_invites')
+      .select('id', { count: 'exact', head: true })
+      .eq('org_id', ctx.orgId)
+      .eq('status', 'pending'),
+  ]);
+  const seatsTaken = (memberCount ?? 0) + (pendingCount ?? 0);
+  if (seatsTaken >= entitlements.seatLimit) {
+    if (billingEnforcementEnabled()) {
+      const seats = entitlements.seatLimit === 1 ? '1 seat' : `${entitlements.seatLimit} seats`;
+      return NextResponse.json(
+        { error: `Your plan includes ${seats}. Upgrade your plan in Settings to invite more teammates.` },
+        { status: 403 },
+      );
+    }
+    console.log(
+      `[billing] seat limit exceeded in shadow mode: org ${ctx.orgId} has ${seatsTaken}/${entitlements.seatLimit} seats used`,
+    );
+  }
 
   // ── Path 1: fresh email — Supabase creates + emails the user ──────────────
   const { data: invited, error: inviteError } = await admin.auth.admin.inviteUserByEmail(email, {
