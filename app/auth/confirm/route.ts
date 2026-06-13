@@ -15,10 +15,13 @@ import type { EmailOtpType } from '@supabase/supabase-js'
  * verifyOtp() establishes the session server-side via cookies.
  *
  * REQUIRES the Supabase email templates (dashboard → Auth → Email Templates)
- * to link to:
- *   {{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=invite&next=/today   (Invite user)
- *   {{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=email&next=/today    (Confirm signup)
- *   {{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=recovery&next=/reset-password (Reset password)
+ * to link HERE with the matching verifyOtp `type` (see EMAIL_SETUP.md):
+ *   Invite user      → ?token_hash={{ .TokenHash }}&type=invite&next=/today
+ *   Confirm signup   → ?token_hash={{ .TokenHash }}&type=signup&next=/today
+ *   Magic Link       → ?token_hash={{ .TokenHash }}&type=magiclink&next=/today
+ *   Reset Password   → ?token_hash={{ .TokenHash }}&type=recovery&next=/reset-password
+ *   Change Email     → ?token_hash={{ .TokenHash }}&type=email_change&next=/today
+ * all prefixed with {{ .SiteURL }}.
  */
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url)
