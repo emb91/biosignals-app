@@ -15,6 +15,7 @@ import { Loader2, CreditCard, ArrowUpRight, Plus } from 'lucide-react';
 
 type Summary = {
   available: boolean;
+  unlimited: boolean;
   role: 'owner' | 'admin' | 'member';
   plan: {
     key: string;
@@ -101,6 +102,21 @@ export default function BillingSettings() {
   if (!summary) return null;
 
   const { plan, seats, contacts, catalog } = summary;
+
+  if (summary.unlimited) {
+    return (
+      <section className="mt-8">
+        <h2 className="text-sm font-semibold uppercase tracking-[0.08em] text-[#7d909a]">Plan &amp; billing</h2>
+        <div className={CARD}>
+          <span className="text-sm font-semibold text-slate-950">{plan.name} plan</span>
+          <p className="mt-1 text-sm text-[#7d909a]">
+            This workspace has no contact or seat limits, and nothing to pay.
+          </p>
+        </div>
+      </section>
+    );
+  }
+
   const canManage = summary.role === 'owner' || summary.role === 'admin';
   const onFreePlan = plan.key === 'free';
   const usagePct =

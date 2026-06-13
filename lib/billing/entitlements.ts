@@ -19,10 +19,15 @@ export type SubscriptionStatus =
   | 'past_due'
   | 'canceled';
 
+/** Effectively-infinite allowance for billing-exempt (internal) orgs. */
+export const UNLIMITED = 1_000_000_000;
+
 export type OrgEntitlements = {
   planKey: PlanKey | 'free';
   planName: string;
   status: SubscriptionStatus;
+  /** Billing-exempt org (organizations.billing_exempt): no limits, never charged. */
+  unlimited: boolean;
   seatLimit: number;
   includedContacts: number;
   /** True when the contact allowance is lifetime (free tier), not monthly. */
@@ -54,6 +59,30 @@ const LIVE_STATUSES = new Set(['active', 'trialing', 'past_due']);
 export async function getOrgEntitlements(orgId: string): Promise<OrgEntitlements> {
   const admin = createAdminClient();
 
+  const { data: org } = await admin
+    .from('organizations')
+    .select('billing_exempt')
+    .eq('id', orgId)
+    .maybeSingle<{ billing_exempt: boolean }>();
+  if (org?.billing_exempt) {
+    return {
+      planKey: 'free',
+      planName: 'Free',
+      status: 'free',
+      unlimited: true,
+      seatLimit: UNLIMITED,
+      includedContacts: UNLIMITED,
+      lifetimeAllowance: true,
+      contactsUsedThisPeriod: 0,
+      packBalance: 0,
+      contactAllowanceRemaining: UNLIMITED,
+      currentPeriodStart: null,
+      currentPeriodEnd: null,
+      cancelAtPeriodEnd: false,
+      graceUntil: null,
+    };
+  }
+
   const { data: sub } = await admin
     .from('org_subscriptions')
     .select(
@@ -80,6 +109,7 @@ export async function getOrgEntitlements(orgId: string): Promise<OrgEntitlements
       planKey: 'free',
       planName: 'Free',
       status: 'free',
+      unlimited: false,
       seatLimit: FREE_TIER.seatLimit,
       includedContacts: FREE_TIER.lifetimeContacts,
       lifetimeAllowance: true,
@@ -102,6 +132,7 @@ export async function getOrgEntitlements(orgId: string): Promise<OrgEntitlements
     planKey: plan?.key ?? 'free',
     planName: plan?.name ?? sub.plan_key,
     status: sub.status as SubscriptionStatus,
+    unlimited: false,
     seatLimit: sub.included_seats || plan?.includedSeats || FREE_TIER.seatLimit,
     includedContacts,
     lifetimeAllowance: false,

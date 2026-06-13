@@ -37,6 +37,7 @@ export async function GET() {
   return NextResponse.json({
     available,
     role: ctx.role,
+    unlimited: entitlements.unlimited,
     plan: {
       key: entitlements.planKey,
       name: entitlements.planName,

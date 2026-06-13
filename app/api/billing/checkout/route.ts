@@ -15,6 +15,7 @@ import { getOrgContext, canEditOrgSetup } from '@/lib/org-context';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { getStripe, isBillingConfigured } from '@/lib/billing/stripe';
 import { getOrCreateStripeCustomerId } from '@/lib/billing/customer';
+import { getOrgEntitlements } from '@/lib/billing/entitlements';
 import {
   CONTACT_PACK,
   PLANS,
@@ -38,6 +39,12 @@ export async function POST(request: Request) {
     | null;
   if (!body || (body.kind !== 'plan' && body.kind !== 'pack')) {
     return NextResponse.json({ error: 'kind must be "plan" or "pack"' }, { status: 400 });
+  }
+
+  // Billing-exempt workspaces have nothing to buy.
+  const entitlements = await getOrgEntitlements(ctx.orgId);
+  if (entitlements.unlimited) {
+    return NextResponse.json({ error: 'This workspace has no limits — there is nothing to purchase' }, { status: 400 });
   }
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin;
