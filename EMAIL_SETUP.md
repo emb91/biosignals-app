@@ -122,13 +122,14 @@ by to send the invite.
 
 ## Status
 - [x] `/auth/confirm` sign-in route (short `?code` + direct `?token_hash`) + `?error=auth_failed` on /login
-- [x] `auth.arcovabio.com` created in Resend + DNS verified (Emma)
-- [x] `RESEND_AUTH_FROM` set to `Arcova <noreply@auth.arcovabio.com>`
-- [x] **Org invites: DONE end-to-end** via Resend (verified sender → inbox → short `?code` link →
-      signs member in). Tested against the real inbox.
+- [x] **Sender = `mail.arcova.bio`** (EU region) — verified in Resend, `RESEND_AUTH_FROM` flipped to
+      `Arcova <noreply@mail.arcova.bio>` in local `.env.local`. Cutover tested: invite delivered from
+      the new sender → inbox (not spam) → clean `?code` link. (Interim `auth.arcovabio.com` retired.)
+- [x] **Org invites: DONE end-to-end** via Resend → signs member in. Tested against the real inbox.
 - [x] **Password reset: DONE end-to-end** via Resend (`/api/auth/reset` → `/auth/confirm` recovery
       session → `/reset-password`). Tested: new password works, old rejected. Rate-limited + no enumeration.
-- [ ] **Move sender to `mail.arcova.bio`** (Emma verifies domain → Claude flips `RESEND_AUTH_FROM`, B4b)
+- [ ] **PROD: set `RESEND_AUTH_FROM=Arcova <noreply@mail.arcova.bio>` in Vercel** (the .env.local flip
+      is local only; gitignored). No code change.
 - [ ] **Part A template — signup confirmation only** (Emma, dashboard). Reset + invites no longer need it.
 - [ ] Supabase custom SMTP + raise rate limit (B4) — for signup confirmation (the one flow still on Supabase)
 - [ ] Delete stale Firebase records off `arcova.app` (Emma, housekeeping)
