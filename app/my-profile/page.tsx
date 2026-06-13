@@ -13,6 +13,7 @@ import Image from 'next/image';
 import { Loader2, Sparkles, Check, Pencil, X, Save } from 'lucide-react';
 import AppSidebar from '@/components/AppSidebar';
 import { PageHeader } from '@/components/PageHeader';
+import { supabase } from '@/lib/supabase';
 
 type EmploymentItem = { company: string | null; title: string | null; start: string | null; end: string | null; current: boolean };
 type Enriched = {
@@ -57,6 +58,49 @@ export default function MyProfilePage() {
   const [error, setError] = useState<string | null>(null);
   const [showAllExperience, setShowAllExperience] = useState(false);
   const autoRanRef = useRef(false);
+
+  // Email change — confirm-by-click via Supabase (verification link to the new
+  // address; the swap only lands after the click). Validated against ZeroBounce
+  // first so we don't email an undeliverable address.
+  const [changingEmail, setChangingEmail] = useState(false);
+  const [newEmail, setNewEmail] = useState('');
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [emailMsg, setEmailMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const submitEmailChange = async () => {
+    const next = newEmail.trim().toLowerCase();
+    setEmailMsg(null);
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(next)) {
+      setEmailMsg({ ok: false, text: 'Please enter a valid email address.' });
+      return;
+    }
+    if (next === (profile?.email ?? '').toLowerCase()) {
+      setEmailMsg({ ok: false, text: 'That’s already your email.' });
+      return;
+    }
+    setEmailBusy(true);
+    try {
+      const check = await fetch('/api/auth/validate-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: next }),
+      });
+      const result = (await check.json().catch(() => ({ allow: true }))) as { allow: boolean; reason?: string };
+      if (!result.allow) {
+        setEmailMsg({ ok: false, text: result.reason || 'Please double-check that email address.' });
+        return;
+      }
+      const { error: updErr } = await supabase.auth.updateUser({ email: next });
+      if (updErr) throw updErr;
+      setEmailMsg({ ok: true, text: `Confirmation sent to ${next}. Click the link there to finish the change.` });
+      setChangingEmail(false);
+      setNewEmail('');
+    } catch (e) {
+      setEmailMsg({ ok: false, text: (e as Error).message || 'Could not start the email change. Try again.' });
+    } finally {
+      setEmailBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (!loading && !user) router.push('/login');
@@ -317,10 +361,22 @@ export default function MyProfilePage() {
                     <span className="text-xs font-medium text-arcova-navy/60">Role / title</span>
                     <input value={roleTitle} onChange={(e) => setRoleTitle(e.target.value)} placeholder="e.g. VP Sales" className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-arcova-teal" />
                   </label>
-                  <label className="block">
+                  <div className="block sm:col-span-2">
                     <span className="text-xs font-medium text-arcova-navy/60">Email</span>
-                    <input value={profile?.email ?? ''} disabled className="mt-1 w-full cursor-not-allowed rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-arcova-navy/50" />
-                  </label>
+                    {!changingEmail ? (
+                      <div className="mt-1 flex items-center gap-2">
+                        <input value={profile?.email ?? ''} disabled className="w-full cursor-not-allowed rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-arcova-navy/50" />
+                        <button type="button" onClick={() => { setChangingEmail(true); setEmailMsg(null); }} className="shrink-0 rounded-lg border border-arcova-navy/10 bg-white px-3 py-2 text-sm font-medium text-arcova-navy">Change</button>
+                      </div>
+                    ) : (
+                      <div className="mt-1 flex items-center gap-2">
+                        <input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="new@email.com" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-arcova-teal" />
+                        <button type="button" onClick={submitEmailChange} disabled={emailBusy} className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-arcova-teal px-3 py-2 text-sm font-medium text-white disabled:opacity-50">{emailBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}Send</button>
+                        <button type="button" onClick={() => { setChangingEmail(false); setNewEmail(''); setEmailMsg(null); }} className="shrink-0 rounded-lg border border-arcova-navy/10 bg-white px-3 py-2 text-sm font-medium text-arcova-navy/60">Cancel</button>
+                      </div>
+                    )}
+                    {emailMsg && <p className={`mt-2 text-sm ${emailMsg.ok ? 'text-emerald-600' : 'text-rose-600'}`}>{emailMsg.text}</p>}
+                  </div>
                   <label className="block">
                     <span className="text-xs font-medium text-arcova-navy/60">Phone</span>
                     <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Add a phone number" className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-arcova-teal" />
