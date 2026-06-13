@@ -91,10 +91,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const resetPassword = async (email: string) => {
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/reset-password`,
+    // Routed server-side (/api/auth/reset) so the recovery email goes through
+    // Resend with a /auth/confirm link, like invites — no Supabase rate limit or
+    // broken template. Always resolves ok (no account enumeration).
+    const res = await fetch('/api/auth/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
     });
-    if (error) throw error;
+    if (!res.ok && res.status !== 200) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(data.error || 'Could not start password reset. Please try again.');
+    }
   };
 
   const updatePassword = async (newPassword: string) => {

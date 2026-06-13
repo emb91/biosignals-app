@@ -97,6 +97,20 @@ export function buildOrgInviteEmail(params: {
   };
 }
 
+export function buildPasswordResetEmail(params: { resetUrl: string }): { subject: string; html: string } {
+  return {
+    subject: 'Reset your Arcova password',
+    html: authEmailShell({
+      heading: 'Reset your password',
+      intro:
+        'We got a request to reset your Arcova password. Click below to choose a new one — the link signs you in to set it. It expires shortly.',
+      ctaLabel: 'Reset password',
+      ctaUrl: params.resetUrl,
+      footnote: "If you didn't request this, you can safely ignore this email — your password won't change.",
+    }),
+  };
+}
+
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }
