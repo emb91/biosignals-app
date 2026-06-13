@@ -23,6 +23,7 @@ import { createAdminClient } from '@/lib/supabase-admin';
 import { getOrgEntitlements } from '@/lib/billing/entitlements';
 import { billingEnforcementEnabled } from '@/lib/billing/consume';
 import { isResendConfigured, sendAuthEmail, buildOrgInviteEmail } from '@/lib/auth-email';
+import { createAuthLinkCode } from '@/lib/auth-links';
 
 function isAlreadyRegistered(error: { message?: string; status?: number; code?: string } | null): boolean {
   if (!error) return false;
@@ -109,7 +110,15 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Invite created but membership failed; retry.' }, { status: 500 });
       }
 
-      const acceptUrl = `${appUrl}/auth/confirm?token_hash=${gen.properties.hashed_token}&type=invite&next=/today`;
+      // Email a short ?code (resolves to the token server-side) — a raw
+      // token_hash URL is long enough to get corrupted by email line-wrapping.
+      const code = await createAuthLinkCode({
+        tokenHash: gen.properties.hashed_token,
+        otpType: 'invite',
+        next: '/today',
+        email,
+      });
+      const acceptUrl = `${appUrl}/auth/confirm?code=${code}`;
       const { data: org } = await admin
         .from('organizations')
         .select('name')

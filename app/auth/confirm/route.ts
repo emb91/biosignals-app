@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase-server'
 import { NextResponse } from 'next/server'
 import type { EmailOtpType } from '@supabase/supabase-js'
+import { consumeAuthLinkCode } from '@/lib/auth-links'
 
 /**
  * GET /auth/confirm — lands all Supabase EMAIL links (invite, signup
@@ -25,9 +26,23 @@ import type { EmailOtpType } from '@supabase/supabase-js'
  */
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url)
-  const tokenHash = searchParams.get('token_hash')
-  const type = searchParams.get('type') as EmailOtpType | null
-  const next = searchParams.get('next') ?? '/today'
+
+  // Preferred path: a short ?code resolves to the real token_hash server-side
+  // (emailed links use this — long inline tokens get corrupted by email
+  // quoted-printable wrapping; see lib/auth-links). Falls back to a direct
+  // ?token_hash&type link (e.g. Supabase-templated emails) for compatibility.
+  const code = searchParams.get('code')
+  let tokenHash = searchParams.get('token_hash')
+  let type = searchParams.get('type') as EmailOtpType | null
+  let next = searchParams.get('next') ?? '/today'
+
+  if (code) {
+    const resolved = await consumeAuthLinkCode(code)
+    if (!resolved) return NextResponse.redirect(`${origin}/login?error=auth_failed`)
+    tokenHash = resolved.tokenHash
+    type = resolved.otpType as EmailOtpType
+    next = resolved.next || '/today'
+  }
 
   if (tokenHash && type) {
     const supabase = await createClient()
