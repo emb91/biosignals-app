@@ -18,7 +18,9 @@ import { isResendConfigured, sendAuthEmail, buildPasswordResetEmail } from '@/li
 import { createAuthLinkCode } from '@/lib/auth-links';
 
 const MAX_RESETS_PER_HOUR = 5;
-const GENERIC_OK = NextResponse.json({ ok: true });
+// Fresh response per call — a NextResponse body can only be consumed once, so a
+// shared module-level instance would break across concurrent requests.
+const genericOk = () => NextResponse.json({ ok: true });
 
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => null)) as { email?: string } | null;
@@ -39,12 +41,12 @@ export async function POST(request: Request) {
     .eq('email', email)
     .eq('otp_type', 'recovery')
     .gte('created_at', sinceIso);
-  if ((count ?? 0) >= MAX_RESETS_PER_HOUR) return GENERIC_OK; // silently drop; don't reveal
+  if ((count ?? 0) >= MAX_RESETS_PER_HOUR) return genericOk(); // silently drop; don't reveal
 
   if (isResendConfigured()) {
     // generateLink errors for unknown emails — swallow it so we don't enumerate.
     const { data: gen, error } = await admin.auth.admin.generateLink({ type: 'recovery', email });
-    if (error || !gen?.properties?.hashed_token) return GENERIC_OK;
+    if (error || !gen?.properties?.hashed_token) return genericOk();
 
     const code = await createAuthLinkCode({
       tokenHash: gen.properties.hashed_token,
@@ -55,12 +57,12 @@ export async function POST(request: Request) {
     const resetUrl = `${appUrl}/auth/confirm?code=${code}`;
     const mail = buildPasswordResetEmail({ resetUrl });
     await sendAuthEmail({ to: email, subject: mail.subject, html: mail.html });
-    return GENERIC_OK;
+    return genericOk();
   }
 
   // Fallback: Supabase's own sender (requires its recovery template to point at
   // /auth/confirm — see EMAIL_SETUP.md Part A).
   const supabase = await createClient();
   await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${appUrl}/reset-password` });
-  return GENERIC_OK;
+  return genericOk();
 }
