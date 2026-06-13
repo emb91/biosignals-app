@@ -9,7 +9,7 @@ import { ensureCompanyAliases } from '@/lib/signals/company-aliases';
 import { backfillRecentMentionsForCompany } from '@/lib/companies/backfill-mentions-for-company';
 import { ensureCompanyCik } from '@/lib/signals/company-cik';
 import { orgIdForUser } from '@/lib/org-context';
-import { consumeContactAllowance, getContactGate } from '@/lib/billing/consume';
+import { getContactGate, getOrgBilledContactKeys, recordBillableContactsBatch } from '@/lib/billing/consume';
 
 export type EnrichedImportRecord = {
   raw_upload_id: string;
@@ -379,6 +379,16 @@ export async function ingestEnrichedRecords(
     }
   }
 
+  // Enforce-mode only: which of these contacts are already billed to the org
+  // (a free re-import — e.g. a teammate already added them)? They bypass the
+  // at-limit gate so users can still re-upload CSVs containing existing contacts.
+  const alreadyBilledKeys =
+    billingGate?.enforce && billingOrgId
+      ? await getOrgBilledContactKeys(billingOrgId, toProcess.map((r) => r.linkedin_url))
+      : new Set<string>();
+  const isAlreadyBilled = (url?: string | null) =>
+    !!url && alreadyBilledKeys.has(url.trim().toLowerCase().replace(/\/+$/, ''));
+
   let inserted = 0;
   let failed = 0;
   const touchedCompanyIds = new Set<string>();
@@ -388,7 +398,9 @@ export async function ingestEnrichedRecords(
     const record = toProcess[index];
     const parsedLocation = splitLocation(record.location);
 
-    if (billingGate?.enforce && allowanceLeft <= 0) {
+    // At the limit (enforcing), block only genuinely NEW contacts — already-billed
+    // re-imports cost no allowance, so let them through.
+    if (billingGate?.enforce && allowanceLeft <= 0 && !isAlreadyBilled(record.linkedin_url)) {
       failed += 1;
       await supabase
         .from('raw_uploads')
@@ -527,16 +539,9 @@ export async function ingestEnrichedRecords(
         }
       }
 
-      if (billingOrgId) {
-        const consumed = await consumeContactAllowance({
-          orgId: billingOrgId,
-          userId,
-          userContactId: importedRow.contact_id,
-          source: 'import',
-          entitlements: billingGate?.entitlements,
-        });
-        if (consumed.consumedUnit) allowanceLeft -= 1;
-      }
+      // Billing is recorded in one batch after the loop (see below). Here we only
+      // track allowance spent, so the gate can stop once the limit is reached.
+      if (billingOrgId && !isAlreadyBilled(record.linkedin_url)) allowanceLeft -= 1;
 
       await supabase
         .from('raw_uploads')
@@ -556,6 +561,19 @@ export async function ingestEnrichedRecords(
         .update({ status: 'failed', enriched_at: new Date().toISOString() })
         .eq('id', record.raw_upload_id);
     }
+  }
+
+  // Record all billable contacts in one batch (one bulk insert + at most a few
+  // pack updates) instead of an RPC round-trip per contact. Idempotent per
+  // (org, person), so already-billed re-imports are silently skipped.
+  if (billingOrgId && billingGate && touchedContactIds.size > 0) {
+    await recordBillableContactsBatch({
+      orgId: billingOrgId,
+      userId,
+      userContactIds: [...touchedContactIds],
+      source: 'import',
+      entitlements: billingGate.entitlements,
+    });
   }
 
   if (touchedCompanyIds.size > 0) {
