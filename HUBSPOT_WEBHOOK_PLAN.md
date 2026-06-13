@@ -1,5 +1,13 @@
 # HubSpot real-time webhook — implementation plan
 
+> **STATUS: BUILT (2026-06-13).** The receiver (`app/api/hubspot/webhook/route.ts`),
+> idempotency + portal_id migration, connect-flow portal capture, and the debounced
+> readiness-sync dispatch are implemented and verified against the dev server (valid
+> sig 200, dup deduped, bad sig + stale timestamp 401). **Remaining = Emma's HubSpot
+> dashboard:** register the webhook URL + subscriptions, confirm `HUBSPOT_CLIENT_SECRET`
+> is set (signing key), and backfill `hubspot_portal_id` on the existing connection
+> (reconnect once). The design below is the spec it was built to.
+
 The HubSpot sync foundation is **already ~80% built**: org-scoped Nango OAuth, 40
 custom `arcova_*` properties, daily push+pull cron (`app/api/cron/hubspot-daily`),
 readiness signal emission from contacts/deals (`lib/signals/readiness-hubspot-*`),
