@@ -1,12 +1,12 @@
 # Billing implementation plan (Stripe, org-level)
 
-Status: **Phases 1–5 built** (2026-06-13): schema + entitlements, checkout/portal/webhook, enforcement wired at all choke points (SHADOW MODE — set `BILLING_ENFORCEMENT=true` to enforce), and the Settings "Plan & billing" card. The meter RPC's five outcomes are DB-tested. Remaining: phase 6 hardening (Stripe test-clock run-through once keys exist), then flip enforcement on after ~a week of shadow metering.
+Status: **Phases 1–6 done** (2026-06-13). Stripe test-mode keys live in `.env.local`, catalog created (price IDs in env), and the full lifecycle is test-clock-verified against the webhook handler: subscribe → period renewal → payment-fail (past_due + grace) → recovery → pack purchase (idempotent on both event id and payment_intent) → cancel. Enforcement remains in SHADOW MODE.
 
-**To activate billing** (Stripe keys were not present in this repo's .env.local):
-1. Add `STRIPE_SECRET_KEY=sk_test_…` to `.env.local`.
-2. Run `node scripts/stripe-bootstrap.mjs` — creates products/prices (idempotent), prints the five `STRIPE_PRICE_*` env lines to paste in.
-3. `stripe listen --forward-to localhost:3000/api/stripe/webhook` → set `STRIPE_WEBHOOK_SECRET`.
-Until then every org behaves as free tier and billing routes return 503.
+**Remaining go-live steps**:
+1. Shadow-meter for ~a week, sanity-check `org_billable_contact_events` against real usage, then set `BILLING_ENFORCEMENT=true`.
+2. Production: add the Stripe env vars to Vercel, create a dashboard webhook endpoint → `https://<app>/api/stripe/webhook` (events: checkout.session.completed, customer.subscription.*, invoice.paid, invoice.payment_failed) and set its signing secret as `STRIPE_WEBHOOK_SECRET`.
+3. Local checkout click-throughs need the Stripe CLI (`brew install stripe/stripe-cli/stripe`, then `stripe listen --forward-to localhost:3000/api/stripe/webhook` and use ITS whsec_ as the local `STRIPE_WEBHOOK_SECRET`).
+4. Swap to live keys + a live-mode bootstrap run when ready to charge real cards.
 
 ## Price points (v1, from measured COGS)
 
