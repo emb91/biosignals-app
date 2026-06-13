@@ -128,6 +128,13 @@ export async function POST(request: Request) {
     });
   }
 
+  if (inviteError?.code === 'over_email_send_rate_limit' || inviteError?.status === 429) {
+    return NextResponse.json(
+      { error: 'Invite emails are temporarily rate-limited — please try again in about an hour.' },
+      { status: 429 },
+    );
+  }
+
   console.error('[org/invite] inviteUserByEmail failed:', inviteError);
   return NextResponse.json({ error: 'Could not send invite' }, { status: 500 });
 }

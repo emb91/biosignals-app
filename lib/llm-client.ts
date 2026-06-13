@@ -91,7 +91,7 @@ export type LlmFeature =
  *
  * Default is Claude Haiku 4.5 on both routes — preserves quality vs current
  * implementations; cost difference is negligible. Switch to a cheaper
- * OpenRouter model (e.g. `google/gemini-2.0-flash-001`) per feature once we
+ * OpenRouter model (e.g. `google/gemini-2.5-flash`) per feature once we
  * validate output quality holds.
  */
 const FEATURE_MODELS: Record<LlmFeature, { openrouter: string; anthropic: string }> = {
@@ -118,27 +118,27 @@ const FEATURE_MODELS: Record<LlmFeature, { openrouter: string; anthropic: string
   // Tier-4: Gemini Flash on the primary route. If OpenRouter fails, the
   // wrapper auto-falls back to Anthropic direct using the Haiku model below.
   suggest_buyer_functions: {
-    openrouter: 'google/gemini-2.0-flash-001',
+    openrouter: 'google/gemini-2.5-flash',
     anthropic: 'claude-haiku-4-5',
   },
   suggest_roles: {
-    openrouter: 'google/gemini-2.0-flash-001',
+    openrouter: 'google/gemini-2.5-flash',
     anthropic: 'claude-haiku-4-5',
   },
   suggest_seniority: {
-    openrouter: 'google/gemini-2.0-flash-001',
+    openrouter: 'google/gemini-2.5-flash',
     anthropic: 'claude-haiku-4-5',
   },
   generate_contact_name: {
-    openrouter: 'google/gemini-2.0-flash-001',
+    openrouter: 'google/gemini-2.5-flash',
     anthropic: 'claude-haiku-4-5',
   },
   recommend_signals: {
-    openrouter: 'google/gemini-2.0-flash-001',
+    openrouter: 'google/gemini-2.5-flash',
     anthropic: 'claude-haiku-4-5',
   },
   recommend_persona_signals: {
-    openrouter: 'google/gemini-2.0-flash-001',
+    openrouter: 'google/gemini-2.5-flash',
     anthropic: 'claude-haiku-4-5',
   },
   generate_icp_name: {
@@ -155,7 +155,7 @@ const FEATURE_MODELS: Record<LlmFeature, { openrouter: string; anthropic: string
     anthropic: 'claude-haiku-4-5',
   },
   press_release_classifier: {
-    openrouter: 'google/gemini-2.0-flash-001',
+    openrouter: 'google/gemini-2.5-flash',
     anthropic: 'claude-haiku-4-5',
   },
   // Resolver disambiguation — only called on ambiguous trigram candidates

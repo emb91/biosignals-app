@@ -664,6 +664,7 @@ export default function BriefingPage() {
       try {
         const [
           { data: profileData, error: profileError },
+          { data: personaData },
           icpsBootstrap,
           contactsBootstrap,
           { data: importData, error: importError },
@@ -679,6 +680,10 @@ export default function BriefingPage() {
           // profile is set up once per workspace, so an invited member must NOT be
           // told to "finish the company profile" their owner already completed.
           supabase.from('user_company').select('id').limit(1).maybeSingle(),
+          // Same org-scoped logic for buying teams: "Finish buying teams" must not
+          // show when the workspace already has personas (previously inferred from
+          // the member's own contact count, which was wrong on both axes).
+          supabase.from('personas').select('id').limit(1).maybeSingle(),
           fetch(ROUTES.api.icps),
           fetch('/api/contacts'),
           supabase.from('raw_uploads').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
@@ -818,7 +823,7 @@ export default function BriefingPage() {
         setSteps([
           { id: 'profile', label: 'company profile', completed: profileComplete, actionPath: profileComplete ? ROUTES.setup.company : '/arcova-setup' },
           { id: 'companies', label: 'ICPs', completed: companiesComplete, actionPath: ROUTES.setup.icps },
-          { id: 'personas', label: 'buying teams', completed: contactsComplete, actionPath: ROUTES.setup.icps },
+          { id: 'personas', label: 'buying teams', completed: Boolean(personaData), actionPath: ROUTES.setup.icps },
           { id: 'import', label: 'contact import', completed: importComplete, actionPath: ROUTES.import },
           { id: 'signals', label: 'signals setup', completed: signalsComplete, actionPath: ROUTES.setup.icps },
         ]);

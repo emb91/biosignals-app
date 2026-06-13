@@ -25,6 +25,7 @@ import SetupProfilePanel, {
   type IcpChangeValue,
 } from '@/components/SetupProfilePanel';
 import { useEnrichmentGuard } from '@/context/EnrichmentGuardContext';
+import { notifySetupComplete } from '@/lib/use-setup-state';
 import {
   BUSINESS_AREA_OPTIONS,
   COMPANY_SIZE_OPTIONS,
@@ -3686,6 +3687,13 @@ export default function SetupFlow({
   // ── UI state ─────────────────────────────────────────────────────────────
   const [phase, setPhase] = useState<Phase>('greeting');
   const [bootstrapFinished, setBootstrapFinished] = useState(false);
+
+  // Every completion leg ends in phase 'done' followed by a redirect. Flip the
+  // shared setup-state flags BEFORE that redirect, or SetupGuard races its
+  // stale "incomplete" snapshot and bounces the user back to step 1.
+  useEffect(() => {
+    if (phase === 'done') notifySetupComplete();
+  }, [phase]);
   const [thread, setThread] = useState<DisplayMsg[]>([]);
   const [thinking, setThinking] = useState(true);
   const [inputEnabled, setInput] = useState(false);
