@@ -7,7 +7,14 @@ import { stickyIdentity } from '@/lib/company-merge';
 import { cacheProfilePhoto, cacheCompanyLogo } from '@/lib/photo-cache';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { recordProviderUsage } from '@/lib/provider-usage';
-import { consumeContactAllowance, CONTACT_LIMIT_MESSAGE } from '@/lib/billing/consume';
+import {
+  consumeContactAllowance,
+  CONTACT_LIMIT_MESSAGE,
+  ACTIVE_CAP_MESSAGE,
+  getActiveLeadCount,
+  billingEnforcementEnabled,
+} from '@/lib/billing/consume';
+import { getOrgEntitlements } from '@/lib/billing/entitlements';
 import {
   enrichOrganizationWithApollo,
   tryApolloPersonalEmailRevealForLookup,
@@ -1081,6 +1088,36 @@ export async function runContactResolutionPipelineForContact(
   ) {
     await applyUserCancellationToLeadEnrichment(supabase, { contactId, userId });
     return { status: 'cancelled' };
+  }
+
+  // Active-leads cap: only checked for contacts that have never been enriched.
+  // Refreshes are already in the pipeline so the cap doesn't apply to them.
+  if (billingEnforcementEnabled() && typedContact.profile_enrichment_status !== 'completed') {
+    const capAdmin = createAdminClient();
+    const { data: capMember } = await capAdmin
+      .from('org_members')
+      .select('org_id')
+      .eq('user_id', userId)
+      .maybeSingle<{ org_id: string }>();
+    if (capMember?.org_id) {
+      const [capEnts, activeCount] = await Promise.all([
+        getOrgEntitlements(capMember.org_id),
+        getActiveLeadCount(capMember.org_id),
+      ]);
+      if (activeCount >= capEnts.activeLeadsCap) {
+        await updateContactWithOptionalRefreshJobFields(supabase, {
+          contactId,
+          userId,
+          payload: {
+            enrichment_refresh_status: 'failed',
+            enrichment_refresh_last_error: ACTIVE_CAP_MESSAGE,
+            enrichment_refresh_finished_at: now,
+            updated_at: now,
+          },
+        });
+        return { status: 'failed' };
+      }
+    }
   }
 
   // Contact meter: a person bills to the org at most once — first-time

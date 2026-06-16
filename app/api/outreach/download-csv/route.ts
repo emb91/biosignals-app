@@ -15,6 +15,9 @@
  */
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
+import { createAdminClient } from '@/lib/supabase-admin';
+import { getOrgEntitlements } from '@/lib/billing/entitlements';
+import { billingEnforcementEnabled } from '@/lib/billing/consume';
 
 interface Msg {
   day_offset: number;
@@ -36,6 +39,33 @@ export async function POST(req: Request) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  // Exports/day gate.
+  if (billingEnforcementEnabled()) {
+    const admin = createAdminClient();
+    const { data: member } = await admin
+      .from('org_members')
+      .select('org_id')
+      .eq('user_id', user.id)
+      .maybeSingle<{ org_id: string }>();
+    if (member?.org_id) {
+      const ents = await getOrgEntitlements(member.org_id);
+      const { data: newCount } = await admin.rpc('increment_org_export_count', {
+        p_org_id: member.org_id,
+        p_user_id: user.id,
+      });
+      // Rollback if over limit: decrement by re-calling with -1 equivalent is not
+      // straightforward, so we check BEFORE incrementing when possible. Here we
+      // increment first and check after — if over limit, the count is already up
+      // but we deny the download. Acceptable for MVP; tighten later if needed.
+      if (typeof newCount === 'number' && newCount > ents.exportsPerDay) {
+        return NextResponse.json(
+          { error: `You've reached your ${ents.exportsPerDay} exports/day limit. It resets at midnight UTC.` },
+          { status: 429 },
+        );
+      }
+    }
+  }
 
   const body = (await req.json().catch(() => ({}))) as { sequenceIds?: unknown };
   const sequenceIds = Array.isArray(body.sequenceIds)

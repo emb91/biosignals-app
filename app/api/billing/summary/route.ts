@@ -17,7 +17,13 @@ import { getOrgContext } from '@/lib/org-context';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { getOrgEntitlements } from '@/lib/billing/entitlements';
 import { isBillingConfigured } from '@/lib/billing/stripe';
-import { CONTACT_PACK, PLANS, contactPackPriceId, planPriceId } from '@/lib/billing/config';
+import {
+  ENRICH_PACK,
+  PLANS,
+  enrichPackPriceId,
+  planPriceId,
+  planAnnualPriceId,
+} from '@/lib/billing/config';
 
 export async function GET() {
   const ctx = await getOrgContext();
@@ -32,7 +38,7 @@ export async function GET() {
   const available =
     isBillingConfigured() &&
     Object.values(PLANS).every((plan) => Boolean(planPriceId(plan))) &&
-    Boolean(contactPackPriceId());
+    Boolean(enrichPackPriceId());
 
   return NextResponse.json({
     available,
@@ -49,23 +55,40 @@ export async function GET() {
       used: memberCountResult.count ?? 1,
       included: entitlements.seatLimit,
     },
-    contacts: {
+    enrichments: {
       used: entitlements.contactsUsedThisPeriod,
       included: entitlements.includedContacts,
       lifetime: entitlements.lifetimeAllowance,
       packBalance: entitlements.packBalance,
       remaining: entitlements.contactAllowanceRemaining,
     },
+    activeLeads: {
+      cap: entitlements.activeLeadsCap,
+    },
+    exportsPerDay: entitlements.exportsPerDay,
+    netNewLeads: {
+      included: entitlements.netNewLeadsIncluded,
+      used: entitlements.netNewLeadsUsedThisPeriod,
+      remaining: entitlements.netNewLeadsRemaining,
+      lifetime: entitlements.lifetimeAllowance,
+    },
     catalog: {
       plans: Object.values(PLANS).map((plan) => ({
         key: plan.key,
         name: plan.name,
-        monthlyUsd: plan.monthlyUsd,
-        includedSeats: plan.includedSeats,
-        includedMonthlyContacts: plan.includedMonthlyContacts,
-        extraSeatMonthlyUsd: plan.extraSeatMonthlyUsd,
+        perSeatMonthlyUsd: plan.perSeatMonthlyUsd,
+        minSeats: plan.minSeats,
+        enrichmentsPerSeat: plan.enrichmentsPerSeat,
+        activeLeadsCapPerSeat: plan.activeLeadsCapPerSeat,
+        exportsPerDayPerSeat: plan.exportsPerDayPerSeat,
+        netNewLeadsPerSeat: plan.netNewLeadsPerSeat,
+        overagePer1kEnrichments: plan.overagePer1kEnrichments,
+        overagePerLead: plan.overagePerLead,
+        annualUsd: plan.perSeatMonthlyUsd * 10,
+        available: Boolean(planPriceId(plan)),
+        annualAvailable: Boolean(planAnnualPriceId(plan)),
       })),
-      pack: { contacts: CONTACT_PACK.contacts, usd: CONTACT_PACK.usd },
+      pack: { enrichments: ENRICH_PACK.enrichments, usd: ENRICH_PACK.usd },
     },
   });
 }

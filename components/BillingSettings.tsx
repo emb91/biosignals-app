@@ -25,7 +25,7 @@ type Summary = {
     cancelAtPeriodEnd: boolean;
   };
   seats: { used: number; included: number };
-  contacts: {
+  enrichments: {
     used: number;
     included: number;
     lifetime: boolean;
@@ -36,12 +36,12 @@ type Summary = {
     plans: Array<{
       key: string;
       name: string;
-      monthlyUsd: number;
-      includedSeats: number;
-      includedMonthlyContacts: number;
-      extraSeatMonthlyUsd: number;
+      perSeatMonthlyUsd: number;
+      minSeats: number;
+      enrichmentsPerSeat: number;
+      available: boolean;
     }>;
-    pack: { contacts: number; usd: number };
+    pack: { enrichments: number; usd: number };
   };
 };
 
@@ -101,7 +101,7 @@ export default function BillingSettings() {
   }
   if (!summary) return null;
 
-  const { plan, seats, contacts, catalog } = summary;
+  const { plan, seats, enrichments: contacts, catalog } = summary;
 
   if (summary.unlimited) {
     return (
@@ -189,16 +189,22 @@ export default function BillingSettings() {
         {canManage && summary.available && (
           <div className="mt-4 flex flex-wrap gap-2">
             {onFreePlan &&
-              catalog.plans.map((p) => (
+              catalog.plans.filter((p) => p.available).map((p) => (
                 <button
                   key={p.key}
-                  onClick={() => void redirectTo('/api/billing/checkout', { kind: 'plan', planKey: p.key })}
+                  onClick={() =>
+                    void redirectTo('/api/billing/checkout', {
+                      kind: 'plan',
+                      planKey: p.key,
+                      seats: p.minSeats,
+                    })
+                  }
                   disabled={busy !== null}
                   className="inline-flex items-center gap-1.5 rounded-lg bg-[#0d3547] px-3 py-1.5 text-sm font-medium text-white transition hover:bg-[#0d3547]/90 disabled:opacity-50"
                 >
                   <ArrowUpRight className="h-3.5 w-3.5" />
-                  {p.name} — ${p.monthlyUsd}/mo · {p.includedSeats} seats ·{' '}
-                  {p.includedMonthlyContacts.toLocaleString()} contacts/mo
+                  {p.name} — ${p.perSeatMonthlyUsd}/seat/mo ·{' '}
+                  {p.enrichmentsPerSeat.toLocaleString()} contacts/seat
                 </button>
               ))}
             <button
@@ -207,7 +213,7 @@ export default function BillingSettings() {
               className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
             >
               <Plus className="h-3.5 w-3.5" />
-              Add {catalog.pack.contacts.toLocaleString()} contacts — ${catalog.pack.usd}
+              Add {catalog.pack.enrichments.toLocaleString()} contacts — ${catalog.pack.usd}
             </button>
           </div>
         )}

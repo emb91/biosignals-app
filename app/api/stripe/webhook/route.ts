@@ -21,7 +21,7 @@ import type Stripe from 'stripe';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { getStripe, isBillingConfigured } from '@/lib/billing/stripe';
 import { orgIdForStripeCustomer } from '@/lib/billing/customer';
-import { PAYMENT_GRACE_DAYS, PLANS, isPlanKey, planForPriceId } from '@/lib/billing/config';
+import { PAYMENT_GRACE_DAYS, PLANS, isPlanKey, planForPriceId, type PlanConfig } from '@/lib/billing/config';
 
 export const runtime = 'nodejs';
 
@@ -117,19 +117,31 @@ async function syncSubscription(sub: Stripe.Subscription) {
     return;
   }
 
-  // Find the base-plan item (ignore per-seat items) to identify the plan.
+  // Find the plan item (there's now only one price per subscription — the
+  // per-seat price at quantity = seat count).
   const items = sub.items?.data ?? [];
-  let planKey: string | null = isPlanKey(sub.metadata?.plan_key) ? sub.metadata.plan_key : null;
-  if (!planKey) {
+  let plan: PlanConfig | null = null;
+  let seats = 1;
+
+  // Prefer metadata plan_key (set at checkout) for reliability.
+  const metaPlanKey = sub.metadata?.plan_key;
+  if (isPlanKey(metaPlanKey)) {
+    plan = PLANS[metaPlanKey];
+  }
+  // Fall back to price-id reverse-lookup.
+  if (!plan) {
     for (const item of items) {
-      const plan = planForPriceId(item.price?.id);
-      if (plan) {
-        planKey = plan.key;
-        break;
-      }
+      const found = planForPriceId(item.price?.id);
+      if (found) { plan = found; break; }
     }
   }
-  const plan = isPlanKey(planKey) ? PLANS[planKey] : null;
+  // Seat count is the subscription item quantity (pure per-seat model).
+  const planItem = items.find((item) => planForPriceId(item.price?.id) !== null);
+  if (planItem?.quantity) seats = planItem.quantity;
+
+  // Compute org-wide quotas from seats × per-seat config.
+  const includedSeats = seats;
+  const includedMonthlyContacts = plan ? plan.enrichmentsPerSeat * seats : 0;
 
   // Newer Stripe API versions keep period bounds on the items, older on the
   // subscription itself — accept either.
@@ -143,9 +155,9 @@ async function syncSubscription(sub: Stripe.Subscription) {
       org_id: orgId,
       stripe_subscription_id: sub.id,
       status: sub.status,
-      plan_key: planKey ?? 'unknown',
-      included_seats: plan?.includedSeats ?? 1,
-      included_monthly_contacts: plan?.includedMonthlyContacts ?? 0,
+      plan_key: plan?.key ?? 'unknown',
+      included_seats: includedSeats,
+      included_monthly_contacts: includedMonthlyContacts,
       current_period_start: periodStart ? new Date(periodStart * 1000).toISOString() : null,
       current_period_end: periodEnd ? new Date(periodEnd * 1000).toISOString() : null,
       cancel_at_period_end: Boolean(sub.cancel_at_period_end),

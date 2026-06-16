@@ -30,7 +30,37 @@ export type ConsumeResult = {
 
 /** Customer-facing denial copy — plain language, no internals. */
 export const CONTACT_LIMIT_MESSAGE =
-  'Your plan’s contact limit has been reached. Upgrade your plan or add more contacts in Settings to continue.';
+  `Your plan's contact limit has been reached. Upgrade your plan or add more contacts in Settings to continue.`;
+
+export const ACTIVE_CAP_MESSAGE =
+  `Your pipeline is full. Upgrade your plan to enrich more contacts.`;
+
+/**
+ * Count enriched, non-archived contacts currently active in the org pipeline.
+ * Used to enforce the per-org active-leads cap. Two-step because Supabase
+ * client doesn't support subqueries: resolve member user_ids first, then count.
+ */
+export async function getActiveLeadCount(orgId: string): Promise<number> {
+  try {
+    const admin = createAdminClient();
+    const { data: members } = await admin
+      .from('org_members')
+      .select('user_id')
+      .eq('org_id', orgId);
+    const userIds = (members ?? []).map((m) => (m as { user_id: string }).user_id);
+    if (userIds.length === 0) return 0;
+
+    const { count } = await admin
+      .from('user_contacts')
+      .select('id', { count: 'exact', head: true })
+      .in('user_id', userIds)
+      .is('archived_at', null)
+      .not('contact_fit_score', 'is', null);
+    return count ?? 0;
+  } catch {
+    return 0;
+  }
+}
 
 export function billingEnforcementEnabled(): boolean {
   return process.env.BILLING_ENFORCEMENT === 'true';
