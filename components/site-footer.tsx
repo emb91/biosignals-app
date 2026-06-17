@@ -36,22 +36,6 @@ export function SiteFooter() {
         {/* Right column: Social Icons */}
         <div className="flex items-center justify-center sm:justify-end gap-4">
           <Link
-            href="https://github.com/emb91/"
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label="Arcova on GitHub"
-            className="hover:opacity-80 transition-opacity duration-200"
-          >
-            <svg
-              role="img"
-              viewBox="0 0 24 24"
-              className="h-5 w-5 fill-[#181717]"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path d="M12 .297a12 12 0 00-3.797 23.41c.6.111.817-.26.817-.577v-2.234c-3.34.726-4.042-1.416-4.042-1.416-.546-1.388-1.333-1.757-1.333-1.757-1.089-.745.083-.73.083-.73 1.205.084 1.84 1.236 1.84 1.236 1.07 1.834 2.809 1.303 3.495.998.108-.775.418-1.303.762-1.603-2.665-.3-5.466-1.332-5.466-5.931 0-1.311.469-2.381 1.235-3.221-.123-.303-.535-1.523.118-3.176 0 0 1.008-.322 3.3 1.23a11.52 11.52 0 013.003-.404c1.018.005 2.044.138 3.003.404 2.291-1.552 3.296-1.23 3.296-1.23.656 1.653.244 2.873.12 3.176.77.84 1.232 1.91 1.232 3.221 0 4.609-2.807 5.628-5.479 5.921.429.369.823 1.099.823 2.222v3.293c0 .319.216.694.826.576A12.003 12.003 0 0012 .297" />
-            </svg>
-          </Link>
-          <Link
             href="https://www.linkedin.com/company/arcova-bio"
             target="_blank"
             rel="noopener noreferrer"

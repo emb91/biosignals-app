@@ -33,6 +33,7 @@ import {
 } from '@/lib/signals/readiness-service';
 import { fetchWithRetry } from '@/lib/signals/fetch-with-retry';
 import { persistRunHistory } from '@/lib/signals/run-history';
+import { SWEEP_FIT_THRESHOLD } from '@/lib/signals/sweep-fit-gate';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -67,6 +68,19 @@ export type JobChangeMonitorResult = {
   recomputed_contacts: string[];
   failures: { contact_id: string; error: string }[];
 };
+
+function emptyJobChangeResult(): JobChangeMonitorResult {
+  return {
+    processed: 0,
+    no_linkedin: 0,
+    no_change: 0,
+    signals_emitted: 0,
+    failed: 0,
+    emitted_signal_types: [],
+    recomputed_contacts: [],
+    failures: [],
+  };
+}
 
 // ── Apify scraper ──────────────────────────────────────────────────────────
 
@@ -712,7 +726,33 @@ export async function runJobChangeMonitor(
     .order('job_change_checked_at', { ascending: true, nullsFirst: true })
     .limit(limit);
 
-  if (contactIds.length > 0) query.in('id', contactIds);
+  if (contactIds.length > 0) {
+    // Explicit/targeted request — the caller picked these contacts, so run
+    // them as asked (bypasses the routine-sweep fit gate).
+    query.in('id', contactIds);
+  } else {
+    // Rolling sweep — good-fit contacts at good-fit companies only
+    // (guardrail #2). The Apify profile scrape should only ever recur on a
+    // qualified person at an account worth watching, so we gate on BOTH the
+    // contact's own fit and its company's fit. Resolve the good-fit company
+    // set first, then intersect. Unscored (null fit) records are excluded.
+    const { data: fitCompanies, error: fitErr } = await admin
+      .from('user_companies')
+      .select('company_id')
+      .eq('user_id', input.userId)
+      .is('archived_at', null)
+      .gte('company_fit_score', SWEEP_FIT_THRESHOLD);
+    if (fitErr) throw new Error(`[job-change-monitor] fetch good-fit companies: ${fitErr.message}`);
+
+    const goodFitCompanyIds = (fitCompanies ?? [])
+      .map((r) => (r as { company_id?: unknown }).company_id)
+      .filter((v): v is string => typeof v === 'string' && Boolean(v));
+
+    // No good-fit companies → nothing to sweep. Skip the scrape entirely.
+    if (goodFitCompanyIds.length === 0) return emptyJobChangeResult();
+
+    query.gte('contact_fit_score', SWEEP_FIT_THRESHOLD).in('company_id', goodFitCompanyIds);
+  }
 
   const { data: contacts, error: fetchError } = await query;
   if (fetchError) throw new Error(`[job-change-monitor] fetch contacts: ${fetchError.message}`);

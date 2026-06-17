@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@/lib/supabase-server';
 import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
+import { checkAgentFairUse } from '@/lib/agent-fair-use';
 import {
   type AccountQueryColumn,
   type AccountQueryFilters,
@@ -1927,6 +1928,22 @@ async function runAgentLoop(
     ? TOOLS.filter((t) => t.name !== 'get_icp_definitions')
     : TOOLS;
 
+  // Prompt caching: the system prompt + tool definitions are a large, stable
+  // prefix re-sent on every tool-loop iteration (up to MAX_ITERATIONS) and on
+  // every conversation turn — all within seconds, well inside Anthropic's ~5-min
+  // cache window. An ephemeral breakpoint on the last tool caches the whole
+  // tools→system prefix; a second on the system block keeps it cached on the
+  // final (tool-less) call too. Cache metrics flow through response.usage into
+  // recordLlmUsageEvent (cache_read priced ~0.1× input). See memory/llm_cost_concerns.md.
+  const cachedTools: Anthropic.Tool[] = availableTools.map((tool, idx) =>
+    idx === availableTools.length - 1
+      ? { ...tool, cache_control: { type: 'ephemeral' as const } }
+      : tool,
+  );
+  const cachedSystem = [
+    { type: 'text' as const, text: systemPrompt, cache_control: { type: 'ephemeral' as const } },
+  ];
+
   // Carry text written in the same turn as tool calls — it won't appear in the
   // next turn so we preserve it and prepend to the eventual final message.
   let spilloverText = '';
@@ -1948,8 +1965,8 @@ async function runAgentLoop(
     const response = await anthropic.messages.create({
       model: turnModel,
       max_tokens: 1024,
-      system: systemPrompt,
-      tools: availableTools,
+      system: cachedSystem,
+      tools: cachedTools,
       messages: anthropicMessages,
     });
     await recordLlmUsageEvent({
@@ -2261,7 +2278,7 @@ async function runAgentLoop(
   const finalResponse = await anthropic.messages.create({
     model: HAIKU_MODEL,
     max_tokens: 512,
-    system: systemPrompt,
+    system: cachedSystem,
     messages: anthropicMessages,
   });
   await recordLlmUsageEvent({
@@ -2317,6 +2334,17 @@ export async function POST(request: Request) {
 
     if (messages.length === 0) {
       return NextResponse.json({ error: 'messages array is required' }, { status: 400 });
+    }
+
+    // Fair-use backstop: stop a botted/runaway account from quietly running up
+    // a large model bill. Genuine usage is far below the cap, so this only
+    // bites pathological volume. Returns a normal assistant message (200) so
+    // it renders as a friendly bubble rather than an error state.
+    const fairUse = await checkAgentFairUse(user.id);
+    if (!fairUse.allowed) {
+      return NextResponse.json(
+        { message: fairUse.message ?? '', toolsUsed: [] } satisfies ChatResponse,
+      );
     }
 
     const result = await runAgentLoop(supabase, user.id, user.email, page, messages, pageContext);

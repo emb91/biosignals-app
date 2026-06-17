@@ -16,6 +16,7 @@ import { createClient } from '@/lib/supabase-server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { persistRunHistory } from '@/lib/signals/run-history';
 import { runHiringMonitor } from '@/lib/signals/run-hiring-monitor';
+import { isCompanySweepEligible } from '@/lib/signals/sweep-fit-gate';
 import type { SignalKey } from '@/lib/signals/readiness-types';
 
 type RunHiringBody = {
@@ -79,12 +80,18 @@ export async function POST(request: Request) {
     if (runAll && requestedCompanyIds.length === 0) {
       const { data: linkRows } = await authClient
         .from('user_companies')
-        .select('company_id')
+        .select('company_id, company_fit_score')
         .eq('user_id', user.id)
         .is('archived_at', null);
+      // run_all still respects the routine-sweep fit gate — good-fit
+      // companies only (guardrail #2). Targeting specific company_ids
+      // (the else-branch) bypasses the gate for deliberate one-offs.
       const allIds = (linkRows ?? [])
-        .map((r) => (r as { company_id?: unknown }).company_id)
-        .filter((v): v is string => typeof v === 'string' && Boolean(v));
+        .map((r) => r as { company_id?: unknown; company_fit_score?: unknown })
+        .filter((r): r is { company_id: string; company_fit_score: number | null } =>
+          typeof r.company_id === 'string' && Boolean(r.company_id))
+        .filter((r) => isCompanySweepEligible(r.company_fit_score))
+        .map((r) => r.company_id);
       executedCompanyIds = allIds;
 
       let totalProcessed = 0, totalFailed = 0, totalScanned = 0;

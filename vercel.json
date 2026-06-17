@@ -25,10 +25,6 @@
       "schedule": "0 10 * * *"
     },
     {
-      "path": "/api/cron/funding-backfill",
-      "schedule": "*/10 * * * *"
-    },
-    {
       "path": "/api/cron/jobs-delta",
       "schedule": "0 6 * * 1"
     },

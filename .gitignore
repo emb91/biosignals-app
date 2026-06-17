@@ -41,6 +41,10 @@ yarn-error.log*
 # vercel
 .vercel
 
+# design handoffs & brand/marketing assets — reference material, kept out of the app repo
+arcova design files/
+brand & messaging/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

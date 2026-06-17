@@ -14,7 +14,8 @@
     "test:coverage-allocation": "rm -rf /private/tmp/arcova-coverage-allocation-tests && tsc -p tsconfig.test.coverage-allocation.json && node --test /private/tmp/arcova-coverage-allocation-tests/allocation.test.js",
     "test:patent-surge": "rm -rf /private/tmp/arcova-patent-surge-tests && tsc -p tsconfig.test.patent-surge.json && node --test /private/tmp/arcova-patent-surge-tests/patent-surge.test.js",
     "gen-sitemap": "node generate-sitemap.js",
-    "test:email-pattern": "rm -rf /private/tmp/arcova-email-pattern-tests && tsc -p tsconfig.test.email-pattern.json && node --test /private/tmp/arcova-email-pattern-tests/email-pattern.test.js"
+    "test:email-pattern": "rm -rf /private/tmp/arcova-email-pattern-tests && tsc -p tsconfig.test.email-pattern.json && node --test /private/tmp/arcova-email-pattern-tests/email-pattern.test.js",
+    "test:sweep-fit-gate": "rm -rf /private/tmp/arcova-sweep-fit-gate-tests && tsc -p tsconfig.test.sweep-fit-gate.json && node --test /private/tmp/arcova-sweep-fit-gate-tests/sweep-fit-gate.test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.79.0",

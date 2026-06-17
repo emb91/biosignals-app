@@ -32,6 +32,7 @@ import {
 } from '@/lib/signals/readiness-service';
 import { insertSignalSourceEvent } from '@/lib/signals/readiness-store';
 import type { BuyerFunction, SignalKey } from '@/lib/signals/readiness-types';
+import { isCompanySweepEligible } from '@/lib/signals/sweep-fit-gate';
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
@@ -654,23 +655,33 @@ export async function runHiringMonitor(input: HiringMonitorInput): Promise<Hirin
   // 1. Resolve which companies to process
   const { data: linkRows, error: linkError } = await admin
     .from('user_companies')
-    .select('company_id')
+    .select('company_id, company_fit_score')
     .eq('user_id', input.userId)
     .is('archived_at', null);
   if (linkError) throw new Error(`user_companies query: ${linkError.message}`);
 
-  let ownedIds = (linkRows ?? [])
-    .map((r) => (r as { company_id?: unknown }).company_id)
-    .filter((v): v is string => typeof v === 'string' && Boolean(v));
+  const ownedRows = (linkRows ?? [])
+    .map((r) => r as { company_id?: unknown; company_fit_score?: unknown })
+    .filter((r): r is { company_id: string; company_fit_score: number | null } =>
+      typeof r.company_id === 'string' && Boolean(r.company_id));
 
   const requestedIds = Array.isArray(input.companyIds)
     ? input.companyIds.filter((v): v is string => typeof v === 'string' && Boolean(v))
     : [];
+  let ownedIds: string[];
   if (requestedIds.length > 0) {
+    // Explicit/targeted request — run exactly the companies asked for
+    // (bypasses the routine-sweep fit gate).
     const set = new Set(requestedIds);
-    ownedIds = ownedIds.filter((id) => set.has(id));
+    ownedIds = ownedRows.filter((r) => set.has(r.company_id)).map((r) => r.company_id);
   } else {
-    ownedIds = ownedIds.slice(0, Math.min(Math.max(input.limit ?? 200, 1), 500));
+    // Rolling sweep — good-fit companies only (guardrail #2). The Apify jobs
+    // scrape should only ever recur on accounts worth watching; unscored
+    // (null fit) companies are excluded.
+    ownedIds = ownedRows
+      .filter((r) => isCompanySweepEligible(r.company_fit_score))
+      .map((r) => r.company_id)
+      .slice(0, Math.min(Math.max(input.limit ?? 200, 1), 500));
   }
 
   if (ownedIds.length === 0) {
