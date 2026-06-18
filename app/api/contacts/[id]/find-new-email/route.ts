@@ -11,6 +11,15 @@ import {
   recordProviderUsage,
   zerobounceValidationBillableQuantity,
 } from '@/lib/provider-usage';
+import { createAdminClient } from '@/lib/supabase-admin';
+import { getOrgEntitlements } from '@/lib/billing/entitlements';
+import {
+  checkAndIncrementUsage,
+  refundCredits,
+  reserveCredits,
+  settleUsage,
+  settleCredits,
+} from '@/lib/billing/credits';
 
 type ContactForFinder = {
   id: string;
@@ -83,7 +92,7 @@ async function findEmailWithZeroBounce(contact: ContactForFinder): Promise<ZeroB
 
   const res = await fetch(url, { method: 'GET', cache: 'no-store' });
   const data = (await res.json().catch(() => ({}))) as ZeroBounceFinderResponse;
-  if (!res.ok) throw new Error(data.error || data.failure_reason || `ZeroBounce Email Finder returned HTTP ${res.status}`);
+  if (!res.ok) throw new Error(data.error || data.failure_reason || `Email lookup returned HTTP ${res.status}`);
   if (data.error) throw new Error(data.error);
   return data;
 }
@@ -100,15 +109,17 @@ async function validateWithZeroBounce(email: string): Promise<ZeroBounceValidati
 
   const res = await fetch(url, { method: 'GET', cache: 'no-store' });
   const data = (await res.json().catch(() => ({}))) as ZeroBounceValidationResponse;
-  if (!res.ok) throw new Error(data.error || `ZeroBounce returned HTTP ${res.status}`);
+  if (!res.ok) throw new Error(data.error || `Email validation returned HTTP ${res.status}`);
   if (data.error) throw new Error(data.error);
   return data;
 }
 
 export async function POST(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
+  let creditTransactionId: string | null = null;
+  let usageContext: { orgId: string; operationId: string } | null = null;
   try {
     const { id } = await context.params;
     const supabase = await createClient();
@@ -167,16 +178,52 @@ export async function POST(
       return NextResponse.json(
         {
           error:
-            'Verify the on-file email with ZeroBounce before finding a new address, or confirm the contact has a stale email from a prior employer.',
+            'Verify the on-file email before finding a new address, or confirm the contact has a stale email from a prior employer.',
         },
         { status: 409 },
       );
     }
 
+    const admin = createAdminClient();
+    const { data: member } = await admin.from('org_members').select('org_id')
+      .eq('user_id', user.id).maybeSingle<{ org_id: string }>();
+    if (member?.org_id) {
+      const entitlements = await getOrgEntitlements(member.org_id);
+      const operationId = request.headers.get('x-operation-id') || crypto.randomUUID();
+      const usage = await checkAndIncrementUsage({
+        orgId: member.org_id,
+        userId: user.id,
+        action: 'email_finder',
+        operationKey: operationId,
+        limit: entitlements.caps.emailFinderRequestsDaily,
+        window: 'utc_day',
+      });
+      if (!usage.ok) return NextResponse.json(usage, { status: 429 });
+      usageContext = { orgId: member.org_id, operationId };
+      const reservation = await reserveCredits({
+        orgId: member.org_id,
+        userId: user.id,
+        action: 'email_finder',
+        idempotencyKey: `email-finder:${operationId}`,
+        entityType: 'contact',
+        entityId: id,
+      });
+      if (!reservation.ok) return NextResponse.json(reservation, { status: 402 });
+      creditTransactionId = reservation.transactionId;
+    }
+
     const finder = await findEmailWithZeroBounce(typedContact);
     const email = finder.email?.trim() || null;
     if (!email || !looksLikeEmail(email)) {
-      return NextResponse.json({ error: finder.failure_reason || 'ZeroBounce did not find a usable email.' }, { status: 404 });
+      await refundCredits(creditTransactionId);
+      if (usageContext) await settleUsage({
+        orgId: usageContext.orgId,
+        action: 'email_finder',
+        operationKey: usageContext.operationId,
+        quantity: 0,
+      });
+      creditTransactionId = null;
+      return NextResponse.json({ error: finder.failure_reason || 'No usable email was found.' }, { status: 404 });
     }
 
     recordProviderUsage({
@@ -279,20 +326,38 @@ export async function POST(
 
     if (emailRowsError) return NextResponse.json({ error: emailRowsError.message }, { status: 500 });
 
+    await settleCredits(creditTransactionId);
+    if (usageContext) await settleUsage({
+      orgId: usageContext.orgId,
+      action: 'email_finder',
+      operationKey: usageContext.operationId,
+      quantity: 1,
+    });
+    creditTransactionId = null;
     return NextResponse.json({
       success: true,
       data: {
         contact: updatedContact,
-        contact_emails: (emailRows ?? []) as ContactEmailRow[],
-        finder,
-        validation,
+        contact_emails: ((emailRows ?? []) as ContactEmailRow[]).map((row) => ({
+          ...row,
+          source_provider: row.source_provider ? 'arcova' : null,
+          email_deliverability_provider: row.email_deliverability_provider ? 'arcova' : null,
+          email_deliverability_metadata: null,
+        })),
         email_deliverability: emailDeliverability,
       },
     });
   } catch (error) {
+    await refundCredits(creditTransactionId).catch(() => {});
+    if (usageContext) await settleUsage({
+      orgId: usageContext.orgId,
+      action: 'email_finder',
+      operationKey: usageContext.operationId,
+      quantity: 0,
+    }).catch(() => {});
     console.error('[find-new-email] error:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Internal server error' },
+      { error: 'Email lookup failed. Any reserved credits were returned.' },
       { status: 500 },
     );
   }

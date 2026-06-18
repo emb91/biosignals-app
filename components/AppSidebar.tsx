@@ -137,6 +137,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
   const [showAccountsDot, setShowAccountsDot] = useState(false);
   const [showHealthDot, setShowHealthDot] = useState(false);
   const [dataJobCount, setDataJobCount] = useState(0);
+  const [creditBalance, setCreditBalance] = useState<number | null>(null);
   const [showSignalsDot, setShowSignalsDot] = useState(false);
   const [companyName, setCompanyName] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -179,6 +180,27 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
 
   const contactsActive = pathname === ROUTES.contacts;
   const accountsActive = pathname === ROUTES.accounts;
+
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    const loadCredits = () => {
+      fetch('/api/billing/summary')
+        .then((response) => response.ok ? response.json() : null)
+        .then((summary) => {
+          if (!cancelled && typeof summary?.credits?.available === 'number') {
+            setCreditBalance(summary.credits.available);
+          }
+        })
+        .catch(() => {});
+    };
+    loadCredits();
+    const interval = window.setInterval(loadCredits, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [user, pathname]);
 
   useEffect(() => {
     try {
@@ -692,6 +714,11 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
                 <span className="min-w-0 flex-1 leading-tight">
                   <span className="block truncate text-[12.5px] font-semibold text-arcova-navy">{displayName}</span>
                   {companyName && <span className="block truncate text-[10.5px] text-arcova-navy/45">{companyName}</span>}
+                  {creditBalance != null && (
+                    <span className="block truncate text-[10.5px] font-medium text-arcova-teal">
+                      {creditBalance.toLocaleString()} credits
+                    </span>
+                  )}
                 </span>
               </button>
             </div>

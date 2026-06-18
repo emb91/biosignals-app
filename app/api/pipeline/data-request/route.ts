@@ -11,6 +11,13 @@ import {
   recordDataAcquisitionUsageEvent,
 } from '@/lib/data-acquisition-metering';
 import { runDataAcquisitionJob } from '@/lib/data-acquisition/job-runner';
+import { getOrgEntitlements } from '@/lib/billing/entitlements';
+import {
+  checkAndIncrementUsage,
+  refundCredits,
+  reserveCredits,
+  settleUsage,
+} from '@/lib/billing/credits';
 
 const REQUEST_TYPES: PipelineDataRequestType[] = [
   'expand_companies',
@@ -58,6 +65,7 @@ export async function POST(request: Request) {
       targetCompanyCount?: number | string;
       targetContactCount?: number | string;
       maxCreditUnits?: number | string;
+      operationId?: string;
     };
     try {
       body = (await request.json()) as { icpId?: string; requestType?: string };
@@ -153,6 +161,37 @@ export async function POST(request: Request) {
       targetCompanyCount,
       targetContactCount: requestType === 'expand_companies' ? null : targetContactCount,
     });
+    let creditTransactionId: string | null = null;
+    let customerUsageOperationId: string | null = null;
+    const requestedLeadCount = estimate.targetContactCount ?? 0;
+    if (reqOrgId && requestedLeadCount > 0) {
+      const entitlements = await getOrgEntitlements(reqOrgId);
+      const operationId = typeof body.operationId === 'string' && body.operationId.trim()
+        ? body.operationId.trim()
+        : crypto.randomUUID();
+      const usage = await checkAndIncrementUsage({
+        orgId: reqOrgId,
+        userId: user.id,
+        action: 'net_new_enriched_lead',
+        quantity: requestedLeadCount,
+        operationKey: operationId,
+        limit: entitlements.caps.netNewEnrichedLeadsMonthly,
+        window: 'utc_month',
+      });
+      if (!usage.ok) return NextResponse.json(usage, { status: 429 });
+      customerUsageOperationId = operationId;
+      const reservation = await reserveCredits({
+        orgId: reqOrgId,
+        userId: user.id,
+        action: 'net_new_enriched_lead',
+        quantity: requestedLeadCount,
+        idempotencyKey: `data-acquisition:${operationId}`,
+        entityType: 'icp',
+        entityId: icpId,
+      });
+      if (!reservation.ok) return NextResponse.json(reservation, { status: 402 });
+      creditTransactionId = reservation.transactionId;
+    }
 
     const { data: batch, error: batchErr } = await supabase
       .from('upload_batches')
@@ -169,6 +208,15 @@ export async function POST(request: Request) {
       .single();
 
     if (batchErr || !batch) {
+      await refundCredits(creditTransactionId).catch(() => {});
+      if (reqOrgId && customerUsageOperationId) {
+        await settleUsage({
+          orgId: reqOrgId,
+          action: 'net_new_enriched_lead',
+          operationKey: customerUsageOperationId,
+          quantity: 0,
+        }).catch(() => {});
+      }
       console.error('[pipeline/data-request]', batchErr);
       return NextResponse.json({ error: 'Failed to record data request' }, { status: 500 });
     }
@@ -204,6 +252,8 @@ export async function POST(request: Request) {
         estimated_max_credit_units: estimate.estimatedMaxCreditUnits,
         metadata: {
           estimate,
+          customer_credit_transaction_id: creditTransactionId,
+          customer_usage_operation_id: customerUsageOperationId,
           requested_from: requestType === 'contacts_at_company' ? 'data' : 'pipeline',
           company: companyContext,
         },
@@ -215,6 +265,15 @@ export async function POST(request: Request) {
       // Duplicate in-flight request for this org → attach to the existing job instead of
       // buying twice. (Only fires when org_id + criteria_hash are both set.)
       if ((jobErr as { code?: string } | null)?.code === '23505' && reqOrgId) {
+        await refundCredits(creditTransactionId).catch(() => {});
+        if (customerUsageOperationId) {
+          await settleUsage({
+            orgId: reqOrgId,
+            action: 'net_new_enriched_lead',
+            operationKey: customerUsageOperationId,
+            quantity: 0,
+          }).catch(() => {});
+        }
         await supabase.from('upload_batches').delete().eq('id', batch.id);
         const { data: existingJob } = await supabase
           .from('data_acquisition_jobs')
@@ -232,6 +291,15 @@ export async function POST(request: Request) {
             message: "A teammate is already running this exact request — you'll share the results.",
           });
         }
+      }
+      await refundCredits(creditTransactionId).catch(() => {});
+      if (reqOrgId && customerUsageOperationId) {
+        await settleUsage({
+          orgId: reqOrgId,
+          action: 'net_new_enriched_lead',
+          operationKey: customerUsageOperationId,
+          quantity: 0,
+        }).catch(() => {});
       }
       console.error('[pipeline/data-request] job', jobErr);
       return NextResponse.json({ error: 'Failed to create acquisition job' }, { status: 500 });

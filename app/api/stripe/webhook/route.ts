@@ -1,18 +1,18 @@
 /**
  * POST /api/stripe/webhook — Stripe event sink. Stripe is the source of truth
  * for billing state; this handler syncs it into org_subscriptions and
- * fulfills contact-pack purchases.
+ * fulfills credit-pack purchases.
  *
  * Handled events:
- *  - checkout.session.completed       → fulfill contact packs
+ *  - checkout.session.completed       → fulfill credit packs
  *  - customer.subscription.created/updated/deleted → upsert org_subscriptions
  *  - invoice.payment_failed           → past_due + grace window
  *  - invoice.paid                     → recover to active
  *
  * Delivery is at-least-once: every event id is recorded in
  * stripe_webhook_events first, and duplicates are acknowledged without
- * reprocessing. Pack fulfillment is additionally idempotent on
- * stripe_payment_intent_id (unique column).
+ * reprocessing. Credit grants are additionally idempotent on the payment
+ * intent reference stored with each bucket.
  *
  * Local dev: stripe listen --forward-to localhost:3000/api/stripe/webhook
  */
@@ -21,7 +21,15 @@ import type Stripe from 'stripe';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { getStripe, isBillingConfigured } from '@/lib/billing/stripe';
 import { orgIdForStripeCustomer } from '@/lib/billing/customer';
-import { PAYMENT_GRACE_DAYS, PLANS, isPlanKey, planForPriceId, type PlanConfig } from '@/lib/billing/config';
+import {
+  PAYMENT_GRACE_DAYS,
+  PLANS,
+  isPlanKey,
+  intervalForPriceId,
+  planForPriceId,
+  type BillingInterval,
+  type PlanConfig,
+} from '@/lib/billing/config';
 
 export const runtime = 'nodejs';
 
@@ -85,28 +93,31 @@ export async function POST(request: Request) {
 }
 
 async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
-  if (session.metadata?.kind !== 'contact_pack') return; // subscriptions sync via their own events
+  if (session.metadata?.kind !== 'credit_pack') return; // subscriptions sync via their own events
 
   const orgId = session.metadata?.org_id || session.client_reference_id;
-  const contacts = Number.parseInt(session.metadata?.contacts ?? '', 10);
+  const credits = Number.parseInt(session.metadata?.credits ?? '', 10);
   const paymentIntentId =
     typeof session.payment_intent === 'string' ? session.payment_intent : session.payment_intent?.id;
-  if (!orgId || !Number.isFinite(contacts) || contacts <= 0 || !paymentIntentId) {
-    console.error('[stripe-webhook] contact_pack session missing org/contacts/payment_intent:', session.id);
+  if (!orgId || !Number.isFinite(credits) || credits <= 0 || !paymentIntentId) {
+    console.error('[stripe-webhook] credit_pack session missing org/credits/payment_intent:', session.id);
     return;
   }
 
   const admin = createAdminClient();
-  const { error } = await admin.from('org_contact_packs').insert({
-    org_id: orgId,
-    stripe_payment_intent_id: paymentIntentId,
-    contacts_purchased: contacts,
-    contacts_remaining: contacts,
+  const now = new Date();
+  const expiresAt = new Date(now);
+  expiresAt.setUTCFullYear(expiresAt.getUTCFullYear() + 1);
+  const { error } = await admin.rpc('grant_org_credit_bucket', {
+    p_org_id: orgId,
+    p_source: 'purchased',
+    p_credits: credits,
+    p_valid_from: now.toISOString(),
+    p_expires_at: expiresAt.toISOString(),
+    p_external_reference: `stripe-payment:${paymentIntentId}`,
+    p_metadata: { checkoutSessionId: session.id, planKey: session.metadata?.plan_key ?? null },
   });
-  // 23505 = this payment was already fulfilled (duplicate delivery) — fine.
-  if (error && error.code !== '23505') {
-    throw new Error(`pack fulfillment failed: ${error.message}`);
-  }
+  if (error) throw new Error(`credit pack fulfillment failed: ${error.message}`);
 }
 
 async function syncSubscription(sub: Stripe.Subscription) {
@@ -117,11 +128,11 @@ async function syncSubscription(sub: Stripe.Subscription) {
     return;
   }
 
-  // Find the plan item (there's now only one price per subscription — the
-  // per-seat price at quantity = seat count).
+  // Find the workspace plan item. Subscription quantity is always one; paid
+  // workspaces include unlimited users.
   const items = sub.items?.data ?? [];
   let plan: PlanConfig | null = null;
-  let seats = 1;
+  let interval: BillingInterval = 'monthly';
 
   // Prefer metadata plan_key (set at checkout) for reliability.
   const metaPlanKey = sub.metadata?.plan_key;
@@ -135,19 +146,19 @@ async function syncSubscription(sub: Stripe.Subscription) {
       if (found) { plan = found; break; }
     }
   }
-  // Seat count is the subscription item quantity (pure per-seat model).
   const planItem = items.find((item) => planForPriceId(item.price?.id) !== null);
-  if (planItem?.quantity) seats = planItem.quantity;
+  interval = sub.metadata?.billing_interval === 'annual'
+    ? 'annual'
+    : intervalForPriceId(planItem?.price?.id);
 
-  // Compute org-wide quotas from seats × per-seat config.
-  const includedSeats = seats;
-  const includedMonthlyContacts = plan ? plan.enrichmentsPerSeat * seats : 0;
-
-  // Newer Stripe API versions keep period bounds on the items, older on the
-  // subscription itself — accept either.
-  const legacy = sub as unknown as { current_period_start?: number; current_period_end?: number };
-  const periodStart = items[0]?.current_period_start ?? legacy.current_period_start ?? null;
-  const periodEnd = items[0]?.current_period_end ?? legacy.current_period_end ?? null;
+  // Stripe API versions differ on whether period bounds live on the item or
+  // subscription object, so accept either shape.
+  const subscriptionWithPeriods = sub as unknown as {
+    current_period_start?: number;
+    current_period_end?: number;
+  };
+  const periodStart = items[0]?.current_period_start ?? subscriptionWithPeriods.current_period_start ?? null;
+  const periodEnd = items[0]?.current_period_end ?? subscriptionWithPeriods.current_period_end ?? null;
 
   const admin = createAdminClient();
   const { error } = await admin.from('org_subscriptions').upsert(
@@ -156,8 +167,8 @@ async function syncSubscription(sub: Stripe.Subscription) {
       stripe_subscription_id: sub.id,
       status: sub.status,
       plan_key: plan?.key ?? 'unknown',
-      included_seats: includedSeats,
-      included_monthly_contacts: includedMonthlyContacts,
+      billing_interval: interval,
+      stripe_price_id: planItem?.price?.id ?? null,
       current_period_start: periodStart ? new Date(periodStart * 1000).toISOString() : null,
       current_period_end: periodEnd ? new Date(periodEnd * 1000).toISOString() : null,
       cancel_at_period_end: Boolean(sub.cancel_at_period_end),
@@ -195,4 +206,43 @@ async function handleInvoice(invoice: Stripe.Invoice, outcome: 'paid' | 'failed'
     .eq('org_id', orgId)
     .eq('status', 'past_due');
   if (error) throw new Error(`recovery update failed: ${error.message}`);
+
+  const { data: subscription } = await admin
+    .from('org_subscriptions')
+    .select('plan_key, billing_interval, current_period_start, current_period_end, stripe_subscription_id')
+    .eq('org_id', orgId)
+    .maybeSingle<{
+      plan_key: string;
+      billing_interval: string;
+      current_period_start: string | null;
+      current_period_end: string | null;
+      stripe_subscription_id: string | null;
+    }>();
+  if (!subscription || !isPlanKey(subscription.plan_key)) return;
+  const plan = PLANS[subscription.plan_key];
+  const annual = subscription.billing_interval === 'annual';
+  const linePeriod = invoice.lines?.data?.[0]?.period;
+  const validFrom = linePeriod?.start
+    ? new Date(linePeriod.start * 1000).toISOString()
+    : subscription.current_period_start ?? new Date().toISOString();
+  const expiresAt = linePeriod?.end
+    ? new Date(linePeriod.end * 1000).toISOString()
+    : subscription.current_period_end
+      ?? new Date(Date.now() + (annual ? 366 : 32) * 86_400_000).toISOString();
+  const { error: grantError } = await admin.rpc('grant_org_credit_bucket', {
+    p_org_id: orgId,
+    p_source: annual ? 'annual' : 'paid_monthly',
+    p_credits: annual ? plan.annualCredits : plan.monthlyCredits,
+    p_valid_from: validFrom,
+    p_expires_at: expiresAt,
+    p_external_reference: subscription.stripe_subscription_id
+      ? `subscription:${subscription.stripe_subscription_id}:${validFrom}`
+      : `stripe-invoice:${invoice.id}`,
+    p_metadata: {
+      planKey: plan.key,
+      billingInterval: annual ? 'annual' : 'monthly',
+      stripeInvoiceId: invoice.id,
+    },
+  });
+  if (grantError) throw new Error(`invoice credit grant failed: ${grantError.message}`);
 }

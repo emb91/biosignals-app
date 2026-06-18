@@ -8,24 +8,13 @@ import { cacheProfilePhoto, cacheCompanyLogo } from '@/lib/photo-cache';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { recordProviderUsage } from '@/lib/provider-usage';
 import {
-  consumeContactAllowance,
-  CONTACT_LIMIT_MESSAGE,
-  ACTIVE_CAP_MESSAGE,
-  getActiveLeadCount,
-  billingEnforcementEnabled,
-} from '@/lib/billing/consume';
-import { getOrgEntitlements } from '@/lib/billing/entitlements';
-import {
   enrichOrganizationWithApollo,
   tryApolloPersonalEmailRevealForLookup,
   type ApolloLookupInput,
 } from '@/lib/apollo';
 import { trimEmail as trimContactEmail, ensureEnrichedEmailEntry, emailsEqual } from '@/lib/contact-emails';
 import { applyPatternGuessedEmail, PATTERN_GUESSED_DELIVERABILITY } from '@/lib/email-pattern';
-import {
-  writeApolloPhonesToContact,
-  attemptApolloPhoneRevealForContact,
-} from '@/lib/contact-phone-enrichment';
+import { writeApolloPhonesToContact } from '@/lib/contact-phone-enrichment';
 import type { ApolloPhoneEntry } from '@/lib/apollo';
 import { syncContactFitForContact } from '@/lib/contact-fit';
 import { syncCompanyFitForCompany } from '@/lib/company-fit';
@@ -39,6 +28,7 @@ import { ensureCompanyCik } from '@/lib/signals/company-cik';
 import { backfillRecentMentionsForCompany } from '@/lib/companies/backfill-mentions-for-company';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { syncContactCompanyLink } from '@/lib/contact-company-link';
+import { runApifyActor } from '@/lib/apify';
 
 type MinimalSupabase = {
   from: (table: string) => any;
@@ -475,71 +465,37 @@ function compareApolloAndApify(params: {
   };
 }
 
-const HARVESTAPI_ACTOR = 'harvestapi~linkedin-profile-scraper';
-const HARVESTAPI_COMPANY_ACTOR = 'harvestapi~linkedin-company';
-
-export async function runApifyProfileEnrichment(linkedinUrl: string): Promise<Record<string, unknown> | null> {
-  const apiKey = process.env.APIFY_API_KEY;
-  if (!apiKey) {
-    throw new Error('Missing APIFY_API_KEY');
-  }
-
-  const input = {
-    queries: [linkedinUrl],
-    profileScraperMode: 'Profile details no email ($4 per 1k)',
-  };
-
-  const response = await fetch(
-    `https://api.apify.com/v2/acts/${HARVESTAPI_ACTOR}/run-sync-get-dataset-items`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(input),
-    }
-  );
-
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => '');
-    throw new Error(`Apify profile enrichment failed (${response.status}): ${errorText.slice(0, 300)}`);
-  }
-
-  const payload = (await response.json()) as unknown;
-  if (Array.isArray(payload)) {
-    return getObject(payload[0]);
-  }
-
-  return getObject(payload);
+export async function runApifyProfileEnrichment(
+  linkedinUrl: string,
+  context?: { orgId?: string | null; userId?: string | null; actionType?: string },
+): Promise<Record<string, unknown> | null> {
+  const items = await runApifyActor<Record<string, unknown>>({
+    actor: 'profile',
+    input: {
+      queries: [linkedinUrl],
+      profileScraperMode: 'Profile details no email ($4 per 1k)',
+    },
+    orgId: context?.orgId,
+    userId: context?.userId,
+    actionType: context?.actionType ?? 'contact_enrichment',
+    inputCount: 1,
+  });
+  return getObject(items[0]);
 }
 
 async function runApifyCompanyEnrichment(
-  companyLinkedinUrl: string
+  companyLinkedinUrl: string,
+  context?: { orgId?: string | null; userId?: string | null },
 ): Promise<Record<string, unknown> | null> {
-  const apiKey = process.env.APIFY_API_KEY;
-  if (!apiKey) throw new Error('Missing APIFY_API_KEY');
-
-  const response = await fetch(
-    `https://api.apify.com/v2/acts/${HARVESTAPI_COMPANY_ACTOR}/run-sync-get-dataset-items`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ companies: [companyLinkedinUrl] }),
-    }
-  );
-
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => '');
-    throw new Error(`Apify company enrichment failed (${response.status}): ${errorText.slice(0, 300)}`);
-  }
-
-  const payload = (await response.json()) as unknown;
-  if (Array.isArray(payload)) return getObject(payload[0]);
-  return getObject(payload);
+  const items = await runApifyActor<Record<string, unknown>>({
+    actor: 'company',
+    input: { companies: [companyLinkedinUrl] },
+    orgId: context?.orgId,
+    userId: context?.userId,
+    actionType: 'company_enrichment',
+    inputCount: 1,
+  });
+  return getObject(items[0]);
 }
 
 function extractCompanyFirmographics(raw: Record<string, unknown> | null): Record<string, unknown> {
@@ -1090,59 +1046,6 @@ export async function runContactResolutionPipelineForContact(
     return { status: 'cancelled' };
   }
 
-  // Active-leads cap: only checked for contacts that have never been enriched.
-  // Refreshes are already in the pipeline so the cap doesn't apply to them.
-  if (billingEnforcementEnabled() && typedContact.profile_enrichment_status !== 'completed') {
-    const capAdmin = createAdminClient();
-    const { data: capMember } = await capAdmin
-      .from('org_members')
-      .select('org_id')
-      .eq('user_id', userId)
-      .maybeSingle<{ org_id: string }>();
-    if (capMember?.org_id) {
-      const [capEnts, activeCount] = await Promise.all([
-        getOrgEntitlements(capMember.org_id),
-        getActiveLeadCount(capMember.org_id),
-      ]);
-      if (activeCount >= capEnts.activeLeadsCap) {
-        await updateContactWithOptionalRefreshJobFields(supabase, {
-          contactId,
-          userId,
-          payload: {
-            enrichment_refresh_status: 'failed',
-            enrichment_refresh_last_error: ACTIVE_CAP_MESSAGE,
-            enrichment_refresh_finished_at: now,
-            updated_at: now,
-          },
-        });
-        return { status: 'failed' };
-      }
-    }
-  }
-
-  // Contact meter: a person bills to the org at most once — first-time
-  // enrichment consumes allowance, refreshes are free ('already_billed').
-  // Shadow mode (BILLING_ENFORCEMENT unset) always allows.
-  const billing = await consumeContactAllowance({
-    orgId: null,
-    userId,
-    userContactId: contactId,
-    source: 'enrichment',
-  });
-  if (!billing.allowed) {
-    await updateContactWithOptionalRefreshJobFields(supabase, {
-      contactId,
-      userId,
-      payload: {
-        enrichment_refresh_status: 'failed',
-        enrichment_refresh_last_error: CONTACT_LIMIT_MESSAGE,
-        enrichment_refresh_finished_at: now,
-        updated_at: now,
-      },
-    });
-    return { status: 'failed' };
-  }
-
   await updateContactWithOptionalRefreshJobFields(supabase, {
     contactId,
     userId,
@@ -1296,7 +1199,13 @@ export async function runContactResolutionPipelineForContact(
 
     await throwIfLeadRefreshCancelled(supabase, contactId, userId);
 
-    const apifyProfile = await runApifyProfileEnrichment(resolvedLinkedin.linkedin_url);
+    const { data: orgMember } = await supabase.from('org_members').select('org_id')
+      .eq('user_id', userId).maybeSingle();
+    const apifyContext = {
+      orgId: (orgMember as { org_id?: string } | null)?.org_id ?? null,
+      userId,
+    };
+    const apifyProfile = await runApifyProfileEnrichment(resolvedLinkedin.linkedin_url, apifyContext);
     if (apifyProfile) {
       // Non-blocking cost metering — see /admin/llm-usage "Data & enrichment cost".
       recordProviderUsage({ userId, contactId, provider: 'apify', eventType: 'apify_profile_scrape' }).catch(() => {});
@@ -1333,7 +1242,7 @@ export async function runContactResolutionPipelineForContact(
 
     if (resolved.currentCompanyLinkedinUrl) {
       try {
-        apifyCompanyRaw = await runApifyCompanyEnrichment(resolved.currentCompanyLinkedinUrl);
+        apifyCompanyRaw = await runApifyCompanyEnrichment(resolved.currentCompanyLinkedinUrl, apifyContext);
         apifyCompanyFirmographicsRefreshedAt = new Date().toISOString();
         if (apifyCompanyRaw) {
           recordProviderUsage({ userId, contactId, provider: 'apify', eventType: 'apify_company_scrape' }).catch(() => {});
@@ -1661,69 +1570,21 @@ export async function runContactResolutionPipelineForContact(
       console.error('[enrichment-pipeline] Failed syncing contact fit score:', error);
     });
 
-    // Phone enrichment — runs AFTER fit scoring so the gate sees fresh
-    // contact_fit_score and company_fit_score. Two passes:
-    //   1. Cheap pass: write phones the initial Apollo match already returned
-    //   2. Expensive pass (only if (1) returned 0 phones): Apollo
-    //      reveal_phone_number=true. Costs extra credits — gated by fit.
+    // Phones already present in the normal enrichment response are free to
+    // display. Paid phone reveal is an explicit customer action handled by
+    // /api/contacts/[id]/reveal-phone; background enrichment never triggers it.
     try {
       const apolloPhones = Array.isArray((apolloPerson as Record<string, unknown> | null)?.phone_numbers)
         ? ((apolloPerson as Record<string, unknown>).phone_numbers as ApolloPhoneEntry[])
         : [];
-      let initialWritten = 0;
       if (apolloPhones.length > 0) {
         const phoneResult = await writeApolloPhonesToContact(supabase, {
           userId,
           contactId,
           phones: apolloPhones,
         });
-        initialWritten = phoneResult.written;
         if (!phoneResult.gateAllowed) {
           console.log(`[enrichment-pipeline] phone fit gate denied for ${contactId}`);
-        }
-      }
-      // If the initial match returned no phones, pay the extra credit cost
-      // to ask Apollo to reveal mobile/personal numbers. Same fit gate
-      // applies — only fires for high-fit contacts.
-      if (initialWritten === 0) {
-        const lookupInput: ApolloLookupInput = {
-          full_name: typedContact.full_name ?? undefined,
-          first_name: typedContact.first_name ?? undefined,
-          last_name: typedContact.last_name ?? undefined,
-          company_name: resolved.currentCompanyName ?? typedContact.company_name ?? undefined,
-          company_domain: resolvedDomainFromCompany || typedContact.company_domain || undefined,
-          email: trimContactEmail(typedContact.email) ?? undefined,
-          linkedin_url: resolvedLinkedin.linkedin_url ?? undefined,
-          location: resolved.location || typedContact.location || undefined,
-        };
-        const revealResult = await attemptApolloPhoneRevealForContact(supabase, {
-          userId,
-          contactId,
-          lookupInput,
-        });
-        if (revealResult.gateAllowed && !revealResult.error) {
-          recordProviderUsage({
-            userId,
-            contactId,
-            provider: 'apollo',
-            eventType: 'apollo_phone_reveal',
-            metadata: {
-              pending: revealResult.pending,
-              inlinePhonesRevealed: revealResult.revealed,
-            },
-          }).catch(() => {});
-        }
-        if (revealResult.revealed > 0) {
-          console.log(
-            `[enrichment-pipeline] Apollo phone reveal recovered ${revealResult.revealed} inline phone(s) for ${contactId}`,
-          );
-        }
-        if (revealResult.pending) {
-          // Mobile/personal numbers arrive asynchronously via
-          // app/api/apollo/phone-webhook/[token] and are written there later.
-          console.log(
-            `[enrichment-pipeline] Apollo async phone reveal queued for ${contactId} (numbers land via webhook)`,
-          );
         }
       }
     } catch (err) {

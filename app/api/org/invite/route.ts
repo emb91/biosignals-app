@@ -21,7 +21,7 @@ import { NextResponse } from 'next/server';
 import { getOrgContext, canEditOrgSetup, type OrgRole } from '@/lib/org-context';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { getOrgEntitlements } from '@/lib/billing/entitlements';
-import { billingEnforcementEnabled } from '@/lib/billing/consume';
+import { creditEnforcementEnabled } from '@/lib/billing/credits';
 import { isResendConfigured, sendAuthEmail, buildOrgInviteEmail } from '@/lib/auth-email';
 import { createAuthLinkCode } from '@/lib/auth-links';
 
@@ -56,7 +56,7 @@ export async function POST(request: Request) {
   const origin = new URL(request.url).origin;
 
   // Seat gate: members + pending invites must fit the plan's seat count.
-  // Shadow mode (BILLING_ENFORCEMENT unset) logs instead of blocking.
+  // Shadow mode (ARCOVA_CREDIT_ENFORCEMENT unset) logs instead of blocking.
   const entitlements = await getOrgEntitlements(ctx.orgId);
   const [{ count: memberCount }, { count: pendingCount }] = await Promise.all([
     admin.from('org_members').select('user_id', { count: 'exact', head: true }).eq('org_id', ctx.orgId),
@@ -68,7 +68,7 @@ export async function POST(request: Request) {
   ]);
   const seatsTaken = (memberCount ?? 0) + (pendingCount ?? 0);
   if (seatsTaken >= entitlements.seatLimit) {
-    if (billingEnforcementEnabled()) {
+    if (creditEnforcementEnabled('seat_invite')) {
       const seats = entitlements.seatLimit === 1 ? '1 seat' : `${entitlements.seatLimit} seats`;
       return NextResponse.json(
         { error: `Your plan includes ${seats}. Upgrade your plan in Settings to invite more teammates.` },

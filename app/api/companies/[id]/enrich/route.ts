@@ -6,6 +6,8 @@ import {
   runCompanyEnrichmentById,
 } from '@/lib/company-enrichment';
 import { syncCompanyFitForCompany } from '@/lib/company-fit';
+import { refundCredits, reserveCredits, settleCredits } from '@/lib/billing/credits';
+import { refreshMonitoringUniverse } from '@/lib/billing/monitoring';
 
 // The enrichment runs in an after() job (Apollo + Apify + the parallelized
 // funding/taxonomy/narrative web-search modules). Give it a generous ceiling so
@@ -28,7 +30,7 @@ export const maxDuration = 300;
  * new company stub from a contact's job-change event.
  */
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
@@ -46,6 +48,23 @@ export async function POST(
     // Use admin client to bypass RLS — this endpoint is gated by the auth
     // check above and only reads/writes the company row + dependent caches.
     const supabase = createAdminClient();
+    const { data: owned } = await supabase.from('user_companies').select('company_id')
+      .eq('user_id', user.id).eq('company_id', id).maybeSingle();
+    if (!owned) return NextResponse.json({ error: 'Company not found' }, { status: 404 });
+    const { data: member } = await supabase.from('org_members').select('org_id')
+      .eq('user_id', user.id).maybeSingle<{ org_id: string }>();
+    const operationId = request.headers.get('x-operation-id') || crypto.randomUUID();
+    const reservation = member?.org_id
+      ? await reserveCredits({
+          orgId: member.org_id,
+          userId: user.id,
+          action: 'company_enrichment',
+          idempotencyKey: `company-enrichment:${operationId}`,
+          entityType: 'company',
+          entityId: id,
+        })
+      : { ok: true as const, transactionId: null, reserved: 0, idempotent: false };
+    if (!reservation.ok) return NextResponse.json(reservation, { status: 402 });
 
     // Flip the row to `running` SYNCHRONOUSLY so the UI sees the new state
     // on the next refetch, before the heavy lifting starts.
@@ -62,6 +81,7 @@ export async function POST(
         // this catch is just a belt-and-braces so the after() callback
         // never throws uncaught.
         console.error('[api/companies/enrich] background run threw:', err);
+        await refundCredits(reservation.transactionId).catch(() => {});
         return;
       }
       // Resync the user's fit score after enrichment finishes. Non-fatal.
@@ -70,6 +90,10 @@ export async function POST(
       } catch (fitErr) {
         console.warn('[api/companies/enrich] syncCompanyFitForCompany failed:', fitErr);
       }
+      if (member?.org_id) await refreshMonitoringUniverse(member.org_id).catch(() => {});
+      await settleCredits(reservation.transactionId).catch((error) => {
+        console.error('[api/companies/enrich] credit settlement failed:', error);
+      });
     });
 
     return NextResponse.json({ success: true, company_id: id, status: 'running' });

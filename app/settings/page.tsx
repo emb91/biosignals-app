@@ -9,6 +9,7 @@ import { ChevronRight, Loader2, CheckCircle2, X } from 'lucide-react';
 import AppSidebar from '@/components/AppSidebar';
 import TeamSettings from '@/components/TeamSettings';
 import BillingSettings from '@/components/BillingSettings';
+import UsageSettings from '@/components/UsageSettings';
 import HubSpotSyncStatus from '@/components/HubSpotSyncStatus';
 
 interface LemlistStatus {
@@ -415,6 +416,8 @@ export default function SettingsPage() {
           <TeamSettings />
 
           <BillingSettings />
+
+          <UsageSettings />
 
           {/* ── Other settings ────────────────────────────────────────────── */}
           <div className="mt-8 space-y-4">

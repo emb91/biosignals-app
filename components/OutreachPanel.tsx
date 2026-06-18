@@ -222,6 +222,7 @@ export function OutreachPanel({ contactId, contactName }: Props) {
   // when the rep deliberately generates for a not-ready contact).
   const generateSequence = useCallback(
     async (override: boolean) => {
+      if (!window.confirm('Generate this outreach sequence for 5 credits?')) return;
       if (
         override &&
         !window.confirm(
@@ -243,6 +244,7 @@ export function OutreachPanel({ contactId, contactName }: Props) {
             contactId,
             userAngle: userAngle.trim() || undefined,
             manualOverride: override,
+            operationId: crypto.randomUUID(),
           }),
         });
         const json = await res.json();
@@ -666,4 +668,3 @@ function ContactedNotice({
     </div>
   );
 }
-

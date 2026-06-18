@@ -23,6 +23,15 @@ import { effectiveReadiness, getActionFromScores } from '@/lib/lead-action';
 import { personaFunctionNames } from '@/lib/persona-functions';
 import { fetchOutreachTone, renderToneBlock } from '@/lib/outreach-tone';
 import { fetchContactSignals, renderSignalContext, type ContactSignal } from '@/lib/outreach-signals';
+import { createAdminClient } from '@/lib/supabase-admin';
+import { getOrgEntitlements } from '@/lib/billing/entitlements';
+import {
+  checkAndIncrementUsage,
+  refundCredits,
+  reserveCredits,
+  settleUsage,
+  settleCredits,
+} from '@/lib/billing/credits';
 
 // Matches lemlist's default multichannel template — but the generator only
 // writes COPY for the 6 message steps; the Day 7 LinkedIn invite is a pure
@@ -116,6 +125,8 @@ function parseSequence(text: string): Message[] {
 }
 
 export async function POST(request: Request) {
+  let creditTransactionId: string | null = null;
+  let usageContext: { orgId: string; operationId: string } | null = null;
   try {
     const supabase = await createClient();
     const {
@@ -130,6 +141,7 @@ export async function POST(request: Request) {
       contactId?: unknown;
       userAngle?: unknown;
       manualOverride?: unknown;
+      operationId?: unknown;
     };
     const contactId = typeof body.contactId === 'string' ? body.contactId.trim() : '';
     // Optional deliberate rep steer (e.g. "I'm launching product X"). Unlike a
@@ -142,6 +154,13 @@ export async function POST(request: Request) {
     if (!contactId) {
       return NextResponse.json({ error: 'contactId required' }, { status: 400 });
     }
+    const operationId = typeof body.operationId === 'string' && body.operationId.trim()
+      ? body.operationId.trim()
+      : crypto.randomUUID();
+
+    const admin = createAdminClient();
+    const { data: member } = await admin.from('org_members').select('org_id')
+      .eq('user_id', user.id).maybeSingle<{ org_id: string }>();
 
     // Reload the same context as /hooks so the sequence is grounded in
     // the actual data (not just whatever the hook text says).
@@ -271,6 +290,37 @@ export async function POST(request: Request) {
       toneBlock,
     });
 
+    if (member?.org_id) {
+      const entitlements = await getOrgEntitlements(member.org_id);
+      if (entitlements.paymentAccessPaused) {
+        return NextResponse.json({
+          code: 'payment_access_paused',
+          message: 'Paid actions are paused while the billing issue is resolved.',
+          action: 'Update billing in Settings.',
+        }, { status: 402 });
+      }
+      const usage = await checkAndIncrementUsage({
+        orgId: member.org_id,
+        userId: user.id,
+        action: 'outreach_sequence',
+        operationKey: operationId,
+        limit: entitlements.caps.sequencesRolling24Hours,
+        window: 'rolling_24h',
+      });
+      if (!usage.ok) return NextResponse.json(usage, { status: 429 });
+      usageContext = { orgId: member.org_id, operationId };
+      const reservation = await reserveCredits({
+        orgId: member.org_id,
+        userId: user.id,
+        action: 'outreach_sequence',
+        idempotencyKey: `sequence:${operationId}`,
+        entityType: 'contact',
+        entityId: contactId,
+      });
+      if (!reservation.ok) return NextResponse.json(reservation, { status: 402 });
+      creditTransactionId = reservation.transactionId;
+    }
+
     const completion = await completeLlm({
       feature: 'outreach_sequence',
       prompt,
@@ -295,11 +345,34 @@ export async function POST(request: Request) {
     if (messages.length < 4) {
       // Sanity check — if Sonnet returned fewer than 5 messages something
       // went wrong with the parse or the prompt. 5+ is acceptable, 7 ideal.
+      await refundCredits(creditTransactionId);
+      if (usageContext) await settleUsage({
+        orgId: usageContext.orgId,
+        action: 'outreach_sequence',
+        operationKey: usageContext.operationId,
+        quantity: 0,
+      });
+      creditTransactionId = null;
       return NextResponse.json({ error: 'Generated sequence too short', count: messages.length }, { status: 502 });
     }
 
+    await settleCredits(creditTransactionId);
+    if (usageContext) await settleUsage({
+      orgId: usageContext.orgId,
+      action: 'outreach_sequence',
+      operationKey: usageContext.operationId,
+      quantity: 1,
+    });
+    creditTransactionId = null;
     return NextResponse.json({ messages });
   } catch (error) {
+    await refundCredits(creditTransactionId).catch(() => {});
+    if (usageContext) await settleUsage({
+      orgId: usageContext.orgId,
+      action: 'outreach_sequence',
+      operationKey: usageContext.operationId,
+      quantity: 0,
+    }).catch(() => {});
     console.error('Error in outreach/sequence POST:', error);
     return NextResponse.json({ error: messageFromUnknown(error) }, { status: 500 });
   }

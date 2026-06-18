@@ -9,7 +9,6 @@ type JobRow = {
   icp_id: string | null;
   upload_batch_id: string | null;
   request_type: string;
-  source_strategy: string | null;
   status: string;
   target_company_count: number | null;
   target_contact_count: number | null;
@@ -78,7 +77,6 @@ export async function GET() {
         icp_id,
         upload_batch_id,
         request_type,
-        source_strategy,
         status,
         target_company_count,
         target_contact_count,

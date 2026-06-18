@@ -33,6 +33,7 @@ import {
 import { insertSignalSourceEvent } from '@/lib/signals/readiness-store';
 import type { BuyerFunction, SignalKey } from '@/lib/signals/readiness-types';
 import { isCompanySweepEligible } from '@/lib/signals/sweep-fit-gate';
+import { runApifyActor } from '@/lib/apify';
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
@@ -41,7 +42,6 @@ import { isCompanySweepEligible } from '@/lib/signals/sweep-fit-gate';
  * Accepts an array of LinkedIn jobs search URLs — we pass one per company so
  * the whole list is scraped in a single actor run.
  */
-const APIFY_ACTOR = 'curious_coder~linkedin-jobs-scraper';
 /** Timeout for the batch call. One run covers all companies. */
 const ACTOR_TIMEOUT_MS = 120_000;
 /**
@@ -59,7 +59,7 @@ const RESULTS_PER_COMPANY = 100;
  * request RESULTS_PER_COMPANY × companyCount, bounded by this ceiling so a
  * large batch can't request an unbounded scrape.
  */
-const MAX_TOTAL_RESULTS = 1000;
+const COMPANY_CHUNK_SIZE = 20;
 
 /** Emit hiring_expansion if a company returns at least this many matching postings. */
 const JOB_SURGE_THRESHOLD = 5;
@@ -457,52 +457,38 @@ function parseRawJob(raw: RawAtsJob): ScrapedJob | null {
 
 async function fetchJobsFromLinkedIn(
   companyNames: string[],
+  context: { orgId: string | null; userId: string },
 ): Promise<{ jobs: ScrapedJob[]; rawCount: number; error: string | null }> {
-  const apiKey = process.env.APIFY_API_KEY;
-  if (!apiKey) return { jobs: [], rawCount: 0, error: 'APIFY_API_KEY is not set' };
   if (companyNames.length === 0) return { jobs: [], rawCount: 0, error: null };
-
-  // One search URL per company — no quotes around the name (quoted keywords
-  // return 0 results on LinkedIn's public job search endpoint).
-  const urls = companyNames.map(
-    (name) => `https://www.linkedin.com/jobs/search/?keywords=${encodeURIComponent(name)}&position=1&pageNum=0`,
-  );
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ACTOR_TIMEOUT_MS);
+  const rawItems: RawAtsJob[] = [];
   try {
-    const response = await fetch(
-      `https://api.apify.com/v2/acts/${APIFY_ACTOR}/run-sync-get-dataset-items`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          // `count` is a GLOBAL cap across all `urls`, so scale it by the number
-          // of companies (bounded) — otherwise N companies share one tiny budget.
+    for (let index = 0; index < companyNames.length; index += COMPANY_CHUNK_SIZE) {
+      const chunk = companyNames.slice(index, index + COMPANY_CHUNK_SIZE);
+      const urls = chunk.map(
+        (name) => `https://www.linkedin.com/jobs/search/?keywords=${encodeURIComponent(name)}&position=1&pageNum=0`,
+      );
+      const items = await runApifyActor<RawAtsJob>({
+        actor: 'jobs',
+        input: {
           urls,
-          count: Math.min(RESULTS_PER_COMPANY * urls.length, MAX_TOTAL_RESULTS),
+          count: RESULTS_PER_COMPANY * urls.length,
           scrapeCompany: false, // skip extra per-job company requests — we already have company data
-        }),
-        signal: controller.signal,
-      },
-    );
-
-    if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      return { jobs: [], rawCount: 0, error: `LinkedIn jobs scrape failed (${response.status}): ${text.slice(0, 300)}` };
+        },
+        orgId: context.orgId,
+        userId: context.userId,
+        actionType: 'company_hiring_monitoring',
+        inputCount: urls.length,
+        attemptedCount: urls.length,
+        includedMonitoring: true,
+        timeoutMs: ACTOR_TIMEOUT_MS,
+        metadata: { companyNames: chunk },
+      });
+      rawItems.push(...items);
     }
-
-    const payload = (await response.json()) as unknown;
-    const rawItems = Array.isArray(payload) ? (payload as RawAtsJob[]) : [];
     const jobs = rawItems.map(parseRawJob).filter((j): j is ScrapedJob => j !== null);
     return { jobs, rawCount: rawItems.length, error: null };
   } catch (err) {
     return { jobs: [], rawCount: 0, error: messageFromUnknown(err) };
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -651,6 +637,8 @@ async function emitHiringSignal(
 
 export async function runHiringMonitor(input: HiringMonitorInput): Promise<HiringMonitorResult> {
   const admin = createAdminClient();
+  const { data: member } = await admin.from('org_members').select('org_id')
+    .eq('user_id', input.userId).maybeSingle<{ org_id: string }>();
 
   // 1. Resolve which companies to process
   const { data: linkRows, error: linkError } = await admin
@@ -722,7 +710,10 @@ export async function runHiringMonitor(input: HiringMonitorInput): Promise<Hirin
     .map((c) => c.company_name?.trim())
     .filter((n): n is string => Boolean(n));
 
-  const { jobs, rawCount, error: atsError } = await fetchJobsFromLinkedIn(companyNames);
+  const { jobs, rawCount, error: atsError } = await fetchJobsFromLinkedIn(companyNames, {
+    orgId: member?.org_id ?? null,
+    userId: input.userId,
+  });
 
   if (atsError) {
     // Whole call failed — record a failure per company and return

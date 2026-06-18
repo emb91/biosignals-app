@@ -1483,7 +1483,9 @@ export function ContactsWorkspace() {
   const [deletingLeadId, setDeletingLeadId] = useState<string | null>(null);
   const [refreshingLeadId, setRefreshingLeadId] = useState<string | null>(null);
   const [findingEmailLeadId, setFindingEmailLeadId] = useState<string | null>(null);
+  const [revealingPhoneLeadId, setRevealingPhoneLeadId] = useState<string | null>(null);
   const [findEmailErrorByLeadId, setFindEmailErrorByLeadId] = useState<Record<string, string>>({});
+  const [activeLeadsCap, setActiveLeadsCap] = useState<{ used: number; cap: number } | null>(null);
   const [hubspotConnected, setHubspotConnected] = useState(false);
   const [pushingToHubspot, setPushingToHubspot] = useState(false);
   const [pullingHubspotCrm, setPullingHubspotCrm] = useState(false);
@@ -1706,6 +1708,15 @@ export function ContactsWorkspace() {
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    fetch('/api/billing/summary')
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (data?.activeLeads) setActiveLeadsCap(data.activeLeads);
+      })
+      .catch(() => {});
+  }, []);
+
   // Opens the Nango Connect UI (same flow as /import). Returns true once the modal
   // is open; the actual reconnect + retry happen in the onEvent 'connect' handler.
   // Returns false only if we couldn't get a session token / open the modal at all.
@@ -1868,6 +1879,7 @@ export function ContactsWorkspace() {
 
   const handleFindNewEmail = useCallback(async (leadId: string) => {
     if (findingEmailLeadId) return;
+    if (!window.confirm('Find and validate a new email for 11 credits?')) return;
     setFindingEmailLeadId(leadId);
     setFindEmailErrorByLeadId((prev) => {
       const next = { ...prev };
@@ -1877,6 +1889,7 @@ export function ContactsWorkspace() {
     try {
       const res = await fetch(`/api/contacts/${encodeURIComponent(leadId)}/find-new-email`, {
         method: 'POST',
+        headers: { 'x-operation-id': crypto.randomUUID() },
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -1923,6 +1936,26 @@ export function ContactsWorkspace() {
       setFindingEmailLeadId(null);
     }
   }, [findingEmailLeadId, fetchLeads]);
+
+  const handleRevealPhone = useCallback(async (leadId: string) => {
+    if (revealingPhoneLeadId) return;
+    if (!window.confirm('Reveal a phone number for 20 credits?')) return;
+    setRevealingPhoneLeadId(leadId);
+    try {
+      const response = await fetch(`/api/contacts/${encodeURIComponent(leadId)}/reveal-phone`, {
+        method: 'POST',
+        headers: { 'x-operation-id': crypto.randomUUID() },
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'Phone reveal could not be started.');
+      await fetchLeads(true);
+      invalidateCache(`/api/leads/${encodeURIComponent(leadId)}`);
+    } catch (error) {
+      setLeadEditError(error instanceof Error ? error.message : 'Phone reveal failed.');
+    } finally {
+      setRevealingPhoneLeadId(null);
+    }
+  }, [revealingPhoneLeadId, fetchLeads]);
 
   const handleDownloadCsv = useCallback(async () => {
     // Fetch all leads (loop pages)
@@ -2450,8 +2483,13 @@ export function ContactsWorkspace() {
     }
 
     try {
+      if (!window.confirm('Refresh this contact for 4 credits?')) {
+        await fetchLeads(true);
+        return;
+      }
       const response = await fetch(`/api/enrich/${leadId}`, {
         method: 'POST',
+        headers: { 'x-operation-id': crypto.randomUUID() },
       });
       const result = await response.json();
 
@@ -3841,6 +3879,21 @@ export function ContactsWorkspace() {
                 {/* ── Leads table ── */}
                 <div className="flex min-h-0 flex-1 flex-col gap-2">
 
+                {/* Active-leads pipeline cap banner */}
+                {activeLeadsCap && activeLeadsCap.used >= activeLeadsCap.cap && (
+                  <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5">
+                    <p className="text-xs font-medium text-amber-800">
+                      Your monitoring allowance is full — {activeLeadsCap.used.toLocaleString()} / {activeLeadsCap.cap.toLocaleString()} active leads. Additional eligible leads will wait for a monitoring slot.
+                    </p>
+                    <a
+                      href="/settings"
+                      className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-amber-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-800 transition-colors"
+                    >
+                      Upgrade
+                    </a>
+                  </div>
+                )}
+
                 {/* Agent filter banner */}
                 {agentFilterIds && (
                   <div className="flex items-center justify-between gap-3 rounded-lg border border-arcova-teal/20 bg-arcova-teal/5 px-4 py-2.5">
@@ -4483,13 +4536,18 @@ export function ContactsWorkspace() {
                                       <p key={p.id} className="break-all leading-snug">
                                         <span className="font-medium text-gray-600">{labelFor(p.category)}: </span>
                                         {p.phone}
-                                        {p.source_provider && (
-                                          <span className="ml-1 text-[10px] text-gray-400">({p.source_provider})</span>
-                                        )}
                                       </p>
                                     ));
                                   })()}
                                 </div>
+                                <button
+                                  type="button"
+                                  disabled={revealingPhoneLeadId === selectedLead.id}
+                                  onClick={() => void handleRevealPhone(selectedLead.id)}
+                                  className="mt-2 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-arcova-navy disabled:opacity-50"
+                                >
+                                  {revealingPhoneLeadId === selectedLead.id ? 'Starting reveal…' : 'Reveal phone · 20 credits'}
+                                </button>
                               </div>
 
                               <div className="space-y-1">

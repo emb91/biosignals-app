@@ -5122,7 +5122,7 @@ export default function SetupFlow({
             company_name: (eventData.company_name as string) || null,
             description: Array.isArray(eventData.description) ? (eventData.description as string[]) : null,
           });
-        } else if (event === 'step_apollo') {
+        } else if (event === 'step_firmographics') {
           customerUrlStep2AnchorRef.current = Date.now();
           setCustomerUrlAwaitingLinkedinEvent(true);
           setCustomerUrlLoadMsg(TARGET_ICP_LINKEDIN_LOOKUP_LINES[0]);
@@ -5146,7 +5146,7 @@ export default function SetupFlow({
           } else {
             setCustomerUrlLoadMsg('No strong public profile signal ✓ Continuing with web and available records…');
           }
-        } else if (event === 'step_apify') {
+        } else if (event === 'step_company_profile') {
           customerUrlStep2AnchorRef.current = null;
           setCustomerUrlLinkedinWait(false);
           setCustomerUrlLoadMsg('Sources merged ✓ Shaping the profile…');
@@ -5320,7 +5320,7 @@ export default function SetupFlow({
             company_name: (eventData.company_name as string) || null,
             description: Array.isArray(eventData.description) ? eventData.description : null,
           });
-        } else if (event === 'step_apollo') {
+        } else if (event === 'step_firmographics') {
           ownCompanyStep2AnchorRef.current = Date.now();
           setOwnEnrichAwaitingLinkedinEvent(true);
           setLoadMsg(ENRICH_GENERIC_LOOKUP_LINES[0]);
@@ -5343,7 +5343,7 @@ export default function SetupFlow({
           } else {
             setLoadMsg('No strong public profile signal ✓ Continuing with web and available records…');
           }
-        } else if (event === 'step_apify') {
+        } else if (event === 'step_company_profile') {
           ownCompanyStep2AnchorRef.current = null;
           setOwnEnrichLinkedinWait(false);
           setLoadMsg('Sources merged ✓ Shaping the profile…');

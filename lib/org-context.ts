@@ -18,6 +18,7 @@ import type { SupabaseClient, User } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase-server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { getDisplayName } from '@/lib/auth-helpers';
+import { ensureArcovaOwnerWorkspaceExempt } from '@/lib/billing/exemptions';
 
 export type OrgRole = 'owner' | 'admin' | 'member';
 
@@ -71,6 +72,11 @@ export async function getOrgContext(): Promise<OrgContext | null> {
         .update({ joined_at: new Date().toISOString() })
         .eq('user_id', user.id);
     }
+    await ensureArcovaOwnerWorkspaceExempt({
+      orgId: existing.org_id,
+      email: user.email,
+      role: existing.role,
+    });
     return { supabase, user, orgId: existing.org_id, role: existing.role };
   }
 
@@ -96,6 +102,11 @@ export async function getOrgContext(): Promise<OrgContext | null> {
         },
         { onConflict: 'user_id' },
       );
+    await ensureArcovaOwnerWorkspaceExempt({
+      orgId: invitedOrgId,
+      email: user.email,
+      role: invitedRole,
+    });
     return { supabase, user, orgId: invitedOrgId, role: invitedRole };
   }
 
@@ -110,6 +121,11 @@ export async function getOrgContext(): Promise<OrgContext | null> {
     return null;
   }
 
+  await ensureArcovaOwnerWorkspaceExempt({
+    orgId: orgId as string,
+    email: user.email,
+    role: 'owner',
+  });
   return { supabase, user, orgId: orgId as string, role: 'owner' };
 }
 

@@ -621,11 +621,17 @@ export default function BriefingPage() {
       openTask(item);
       return;
     }
+    if (!window.confirm(`Refresh ${contactIds.length} contacts for up to ${contactIds.length * 4} credits?`)) {
+      return;
+    }
 
     setBusyTaskIds((current) => new Set(current).add(item.id));
     try {
       const results = await Promise.allSettled(
-        contactIds.map((id) => fetch(`/api/enrich/${encodeURIComponent(id)}`, { method: 'POST' })),
+        contactIds.map((id) => fetch(`/api/enrich/${encodeURIComponent(id)}`, {
+          method: 'POST',
+          headers: { 'x-operation-id': crypto.randomUUID() },
+        })),
       );
       const okCount = results.filter((result) => result.status === 'fulfilled' && result.value.ok).length;
       if (okCount > 0) {

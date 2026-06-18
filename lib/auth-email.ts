@@ -9,10 +9,8 @@
  * rate limit, needs no dashboard template edits, and only requires a send-scoped
  * RESEND_API_KEY.
  *
- * Sender: RESEND_AUTH_FROM. Until auth.arcovabio.com is verified in Resend it
- * falls back to Resend's shared onboarding@resend.dev (works for delivery, just
- * not from our domain). Flip RESEND_AUTH_FROM to noreply@auth.arcovabio.com once
- * the domain shows Verified.
+ * Sender: RESEND_AUTH_FROM. Production uses
+ * Arcova <noreply@mail.arcova.bio>.
  */
 
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';

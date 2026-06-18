@@ -118,6 +118,16 @@ export default function ClientLayout({
   const pathname = usePathname()
   const appViewportH = useViewportHeight()
 
+  // Standalone marketing pages that bring their own nav/footer. Public (no auth
+  // gate) and full-bleed (no global Navigation/SiteFooter). Scoped narrowly so
+  // existing pages are unaffected.
+  const isFullBleedRoute = pathname
+    ? ['/landing-test-3', '/landing-test-4', '/landing-test-5', '/landing-test-6', '/docs'].some((r) => matchesRoutePrefix(pathname, r))
+    : false
+  if (isFullBleedRoute) {
+    return <>{children}</>
+  }
+
   // Check if current path is an app route (authenticated area)
   const isAppRoute = APP_ROUTES.some((route) => pathname ? matchesRoutePrefix(pathname, route) : false)
 

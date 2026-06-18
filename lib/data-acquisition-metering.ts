@@ -43,7 +43,7 @@ export const DEFAULT_CONTACTS_PER_COMPANY = 2;
  * (1.0 person enrichment + 3 to 6 metered search results at 0.05 each, plus a
  * share of company screening at 0.1 + 0.02 per screened org on company-led
  * jobs). 500 units therefore funds roughly 300 to 400 imported contacts per
- * month, generous for a single-seat workspace while still bounding runaway
+ * month, generous for a small workspace while still bounding runaway
  * spend. Internal-only: never surfaced to end users as credit units.
  */
 export const DEFAULT_MONTHLY_CREDIT_LIMIT = 500;

@@ -1,144 +1,104 @@
-# Email setup — auth links + Resend SMTP
+# Production email setup
 
-**Done in code, verified end-to-end against a real inbox (no action needed):**
-- **Org invites** — `app/api/org/invite` generates the `/auth/confirm` link itself, stores it behind
-  a short one-time code, and emails it via Resend (`lib/auth-email.ts` + `lib/auth-links.ts`).
-- **Password reset** — `app/api/auth/reset` does the same with a recovery token; `/auth/confirm`
-  establishes the recovery session server-side before `/reset-password` loads.
+> **Purpose:** dashboard instructions for `LAUNCH_PLAN.md` Phase A.
+> **Owner:** Emma completes the settings; Codex verifies the flows.
+> **Do this once:** before public signup.
+> **Finished when:** signup confirmation, invite, password reset, and email
+> change all arrive from `mail.arcova.bio` and their links work.
 
-Both bypass Supabase's ~2/hour cap and its broken default template entirely. They deliver from the
-verified `auth.arcovabio.com` sender and were each tested through the connected inbox (invite signs
-the member in; reset changes the password — new works, old rejected). The short-code indirection
-exists because a raw 56-char token in the URL gets corrupted by email line-wrapping.
+## What Emma needs to do
 
-**Signup confirmation — finalized architecture (decided 2026-06-13):** signup stays on Supabase's
-`signUp` deliberately — it's the public front door, and Supabase gives rate-limiting, CAPTCHA,
-enumeration protection, and leaked-password checks for free. Rebuilding those on a custom endpoint
-would be a security regression on the highest-abuse-surface route. So:
-- **DONE (code):** ZeroBounce deliverability validation on the signup email field
-  (`lib/email-validation.ts` + `POST /api/auth/validate-email`, wired into the login page). Blocks
-  undeliverable addresses (invalid/spamtrap/abuse/do_not_mail) before we email them — this is the
-  real bounce fix (switching senders doesn't escape bounces; Resend suspends for them too). Fails
-  open; ~1 ZeroBounce credit per conclusive check. Verified end-to-end.
-- **Dashboard (Emma):** Part A (point Confirm-signup template at `/auth/confirm`) so the link works;
-  Part B SMTP (send via Resend/`mail.arcova.bio`, escape the 2/hr cap); enable CAPTCHA before public
-  launch (Supabase → Auth → Settings, hCaptcha/Turnstile).
-- **DONE (code):** per-IP rate limit on `/api/auth/validate-email` (30/IP/hour, DB-backed via
-  `api_rate_limits` + `checkRateLimit`); over the limit it skips the paid ZeroBounce check rather
-  than blocking signup. Bounds credit drain on the public endpoint.
+### 1. Configure production URLs in Supabase
 
-**Sender domain — FINAL: `mail.arcova.bio`** (one subdomain for ALL app-sent transactional mail —
-auth now, product notifications later — to stay on Resend's free tier, which allows 1 domain).
-Currently live on `auth.arcovabio.com` as interim; flip pending Emma verifying `mail.arcova.bio`.
-From addresses distinguish the streams: auth `noreply@mail.arcova.bio`, notifications (later)
-`notifications@mail.arcova.bio`. A dedicated subdomain (not the arcova.bio root, which runs Google
-Workspace mail) keeps app mail separate with its own DKIM. Auth + notifications are low-risk
-transactional, safe on the brand domain; cold outreach stays on the separate `arcovabio.com` (via a
-cold-email tool, NOT Resend). Move = verify `mail.arcova.bio` in Resend → records into the arcova.bio
-zone (`ns-cloud-b*`) → flip `RESEND_AUTH_FROM`. (`arcova.app` drops out of the email plan — web only.)
+Supabase dashboard → **Authentication → URL Configuration**:
 
----
+- Set **Site URL** to the production app origin.
+- Add these paths to the redirect allow-list for production and any retained
+  local/staging origins:
+  - `/auth/confirm`
+  - `/auth/callback`
 
-## Part A — Auth email templates (signup-confirmation only; reset + invites are handled in code)
+### 2. Update the signup confirmation template
 
-`/auth/confirm` (committed) signs users in from email links via the `token_hash` pattern. The
-default Supabase templates use `{{ .ConfirmationURL }}`, which routes through `/auth/v1/verify` and
-returns the session in the URL **fragment** — invisible to the server, so those links dead-ended at
-`/login`. Point the templates at `/auth/confirm` instead. (Invites already bypass this entirely; the
-Invite-user row below is only needed if you ever fall back to Supabase-sent invites.)
+Supabase dashboard → **Authentication → Email Templates → Confirm signup**.
 
-**Supabase dashboard → Authentication → URL Configuration**
-- Site URL: the running origin (prod URL; for local testing `http://localhost:3000`).
-- Redirect URLs allow-list: add `…/auth/confirm` and `…/auth/callback` for each origin you use
-  (prod + `http://localhost:3000` + `http://localhost:3001`).
+Use this link:
 
-**Supabase dashboard → Authentication → Email Templates** — replace the link in each template
-so its `href` is (keep your own surrounding copy/branding):
+```html
+{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=signup&next=/today
+```
 
-| Template | href |
+The `type=signup` value must match the template.
+
+Optional fallback templates, if you keep Supabase delivery enabled for them:
+
+| Template | Link |
 |---|---|
 | Invite user | `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=invite&next=/today` |
-| Confirm signup | `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=signup&next=/today` |
 | Magic Link | `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=magiclink&next=/today` |
 | Reset Password | `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=recovery&next=/reset-password` |
 | Change Email | `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=email_change&next=/today` |
 
-Minimal Invite template body, for example:
-```html
-<h2>You're invited to Arcova</h2>
-<p>Follow this link to accept the invite and set up your account:</p>
-<p><a href="{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=invite&next=/today">Accept the invite</a></p>
-```
+Invites and password resets normally use Arcova's custom Resend routes, so the
+fallback templates are not part of the primary flow.
 
-The `type` MUST match the template — it's passed to `verifyOtp`. Mismatch = "auth_failed".
+### 3. Enable Resend SMTP for Supabase Auth
 
----
+Supabase dashboard → **Project Settings → Authentication → SMTP Settings**:
 
-## Part B — Resend as Supabase's SMTP provider
-
-### B1. Install the Resend MCP (lets Claude create the domain + read DNS records)
-Run yourself (the harness won't let Claude embed a key + auto-install). Use a **Full access**
-key, not the send-only one — domain tools 403 on send-only keys:
-```bash
-claude mcp add resend -e RESEND_API_KEY=re_yourFULLaccessKey -- npx -y resend-mcp
-```
-Package is official: `github.com/resend/resend-mcp` (v2.6.1, maintained by the Resend team).
-Restart Claude Code afterward so the tools load into the session.
-
-### B2. Create + verify the sending domain
-Create **`auth.arcovabio.com`** in Resend (dashboard → Domains → Add Domain, ~30s — or Claude via
-the MCP / a full-access key). Resend returns records to add:
-- **SPF**: MX + TXT on a `send.auth.arcovabio.com` subdomain
-- **DKIM**: a TXT record (`resend._domainkey.auth.arcovabio.com`)
-- Optional **DMARC** TXT
-The exact DKIM value is generated per-domain at creation, so the records can't be pre-written — they
-come from this step.
-
-### B3. Add the DNS records
-`arcovabio.com` is on **Google Cloud DNS** (nameservers `ns-cloud-c*.googledomains.com` — note: a
-DIFFERENT zone from arcova.bio's `ns-cloud-b*`). The root already has Google Workspace records
-(MX `smtp.google.com`, SPF `v=spf1 include:_spf.google.com ~all`, a google-site-verification TXT) —
-the new records are all on the `auth`/`send.auth` subdomain, so they don't touch those. Add them in
-the Google Cloud console, or Claude can add them via the Cloud DNS API IF that zone is in the same
-GCP project as our service account (unconfirmed — needs a check). Wait for Resend to show **Verified**.
-
-### B4. Point Supabase at Resend (SMTP)
-**Supabase dashboard → Project Settings → Authentication → SMTP Settings → Enable custom SMTP:**
 - Host: `smtp.resend.com`
-- Port: `465` (or `587`)
+- Port: `465` or `587`
 - Username: `resend`
-- Password: a Resend **SMTP** API key
-- Sender email: `noreply@mail.arcova.bio` (the final verified domain) · Sender name: `Arcova`
-- Raise the auth rate limit (Authentication → Rate Limits) once SMTP is live — the default 2/hour
-  is the Supabase built-in-sender cap we kept hitting. (This covers signup-confirm + reset; invites
-  already send via Resend's API, not this SMTP path.)
+- Password: a Resend SMTP API key
+- Sender email: `noreply@mail.arcova.bio`
+- Sender name: `Arcova`
 
-### B4b. Flip the Resend sender to `mail.arcova.bio` (one env var)
-Invites + password reset send via Resend's HTTP API using `RESEND_AUTH_FROM` (currently
-`Arcova <noreply@auth.arcovabio.com>`, the verified interim domain). Once **`mail.arcova.bio`** shows
-Verified in Resend, set in `.env.local` (and Vercel):
-```
+Then raise the Supabase auth email rate limit above its built-in-sender default.
+
+### 4. Set the production sender in Vercel
+
+Vercel → `biosignals-app` → production environment variables:
+
+```text
 RESEND_AUTH_FROM=Arcova <noreply@mail.arcova.bio>
 ```
-No code change. Don't set it before the domain is Verified — sending from an unverified domain 403s.
 
-### B5. Verify end-to-end
-Claude re-sends invite + reset to the connected inbox (`emma@arcovabio.com`) and confirms they arrive
-and the `/auth/confirm` link works. QA owner fixture `emma+qa2@arcova.bio` (pw retained) is standing
-by to send the invite.
+Redeploy after changing the variable.
 
----
+### 5. Enable signup abuse protection
 
-## Status
-- [x] `/auth/confirm` sign-in route (short `?code` + direct `?token_hash`) + `?error=auth_failed` on /login
-- [x] **Sender = `mail.arcova.bio`** (EU region) — verified in Resend, `RESEND_AUTH_FROM` flipped to
-      `Arcova <noreply@mail.arcova.bio>` in local `.env.local`. Cutover tested: invite delivered from
-      the new sender → inbox (not spam) → clean `?code` link. (Interim `auth.arcovabio.com` retired.)
-- [x] **Org invites: DONE end-to-end** via Resend → signs member in. Tested against the real inbox.
-- [x] **Password reset: DONE end-to-end** via Resend (`/api/auth/reset` → `/auth/confirm` recovery
-      session → `/reset-password`). Tested: new password works, old rejected. Rate-limited + no enumeration.
-- [ ] **PROD: set `RESEND_AUTH_FROM=Arcova <noreply@mail.arcova.bio>` in Vercel** (the .env.local flip
-      is local only; gitignored). No code change.
-- [ ] **Part A template — signup confirmation only** (Emma, dashboard). Reset + invites no longer need it.
-- [ ] Supabase custom SMTP + raise rate limit (B4) — for signup confirmation (the one flow still on Supabase)
-- [ ] Delete stale Firebase records off `arcova.app` (Emma, housekeeping)
+Before public traffic, enable hCaptcha or Turnstile in Supabase Auth.
+
+## Then hand back to Codex
+
+Send:
+
+> Email production setup is done—verify signup confirmation and email change.
+
+Codex will test:
+
+- signup confirmation;
+- email change;
+- password reset;
+- organization invite;
+- sender and inbox placement;
+- `/auth/confirm` link behavior.
+
+## Already completed—do not repeat
+
+- `mail.arcova.bio` is verified in Resend.
+- DNS/DKIM for the sending domain is installed.
+- Organization invites use the custom Resend flow.
+- Password reset uses the custom Resend flow.
+- `/auth/confirm` supports the short-code and token-hash flows.
+- Signup email deliverability validation and public-endpoint rate limiting are implemented.
+
+## Checklist
+
+- [ ] Production Site URL and redirect allow-list configured.
+- [ ] Confirm-signup template updated.
+- [ ] Resend SMTP enabled in Supabase.
+- [ ] Supabase auth email rate limit raised.
+- [ ] `RESEND_AUTH_FROM` set in Vercel production and redeployed.
+- [ ] CAPTCHA enabled before public signup.
+- [ ] Codex verification passed.

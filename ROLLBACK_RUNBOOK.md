@@ -1,5 +1,16 @@
 # Deployment rollback runbook
 
+> **DO NOT run this during ordinary launch setup.**
+>
+> **One-time action before launch:** fill the remaining `‹…›` placeholders,
+> confirm the named people have Vercel production and Supabase admin access, and
+> perform one app-only rollback drill in staging.
+>
+> **Use this file only when:** a production deployment breaks core flows or
+> corrupts data.
+> **Setup is complete when:** no ownership/deployment placeholders remain and
+> the staging drill has passed.
+
 How to revert a bad production deploy and verify recovery. Pre-launch gate from
 BACKLOG.md ("Document how to roll back a deployment"). **Read this before you
 need it** — the dangerous case (a deploy that includes a DB migration) is the
@@ -8,7 +19,7 @@ one people get wrong under pressure.
 > Fill in the `‹…›` placeholders once for your setup, then this is copy-paste.
 
 ## Stack assumptions
-- **App:** Next.js on **Vercel** (project `‹vercel-project›`, prod domain `‹arcova.app / app.arcova.bio›`).
+- **App:** Next.js on **Vercel** (project `biosignals-app`, prod domain `‹production-domain›`).
 - **DB:** Supabase Postgres (project ref `sbubqrsycbledkxjumjg`). Schema changes are
   forward-only migrations in `supabase/migrations/`.
 - **Integrations that can be affected by a rollback:** Stripe (webhook + price IDs),

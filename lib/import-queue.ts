@@ -8,6 +8,10 @@ import { ingestEnrichedRecords, type EnrichedImportRecord, type ImportProgressCa
 import { runContactResolutionPipelineForContact } from '@/lib/contact-resolution-pipeline';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { resolveLinkedinUrl } from '@/lib/linkedin-url-resolver';
+import { triageContacts, TRIAGE_VERSION, type TriageGroup } from '@/lib/triage';
+import { getOrgEntitlements } from '@/lib/billing/entitlements';
+import { checkAndIncrementUsage } from '@/lib/billing/credits';
+import { refreshMonitoringUniverse } from '@/lib/billing/monitoring';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -72,7 +76,7 @@ export async function refreshBatchProgress(
   if (!batchStats) return;
 
   const processed = batchStats.filter((row) =>
-    ['enriched', 'duplicate', 'failed'].includes((row as { status: string }).status)
+    ['awaiting_triage', 'awaiting_enrichment', 'enriched', 'duplicate', 'failed'].includes((row as { status: string }).status)
   ).length;
 
   const currentBatchStatus = (batchMeta?.status as string | undefined) || 'processing';
@@ -143,8 +147,10 @@ export async function processQueuedRowsInBackground(params: {
   userId: string;
   onBeforeIngest?: () => void | Promise<void>;
   onProgress?: ImportProgressCallback;
+  /** Explicitly approved acquisition/enrichment jobs may continue past triage. */
+  autoEnrich?: boolean;
 }): Promise<void> {
-  const { queuedRows, batchId, userId, onBeforeIngest, onProgress } = params;
+  const { queuedRows, batchId, userId, onBeforeIngest, onProgress, autoEnrich = false } = params;
   const allQueuedIds = queuedRows.map((row) => row.id);
 
   const admin = createAdminClient();
@@ -156,9 +162,71 @@ export async function processQueuedRowsInBackground(params: {
     failureReasons.set(id, reason);
   };
 
+  const { data: member } = await admin.from('org_members').select('org_id')
+    .eq('user_id', userId).maybeSingle<{ org_id: string }>();
+  let triageRows = queuedRows;
+  let overflowRows: QueuedRow[] = [];
+  if (member?.org_id) {
+    const entitlements = await getOrgEntitlements(member.org_id);
+    const monthStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)).toISOString();
+    const { data: usageRows } = await admin.from('org_usage_events').select('quantity')
+      .eq('org_id', member.org_id).eq('action_type', 'import_triage').gte('occurred_at', monthStart);
+    const used = (usageRows ?? []).reduce((sum, row) => sum + Number(row.quantity ?? 0), 0);
+    const remaining = Math.max(0, entitlements.caps.importedRecordsTriagedMonthly - used);
+    triageRows = queuedRows.slice(0, remaining);
+    overflowRows = queuedRows.slice(remaining);
+    if (triageRows.length) {
+      await checkAndIncrementUsage({
+        orgId: member.org_id,
+        userId,
+        action: 'import_triage',
+        quantity: triageRows.length,
+        operationKey: `import-triage:${batchId}`,
+        limit: entitlements.caps.importedRecordsTriagedMonthly,
+        window: 'utc_month',
+      });
+    }
+  }
+
+  if (overflowRows.length) {
+    await admin.from('raw_uploads').update({
+      status: 'awaiting_triage',
+      failure_reason: null,
+    }).in('id', overflowRows.map((row) => row.id));
+  }
+
+  // Batch-triage all rows before spending Apollo/Apify credits.
+  // 'low'-classified rows are stored with minimal identity data only (no enrichment).
+  const triageMap = await triageContacts(
+    triageRows.map((r) => ({
+      id: r.id,
+      job_title: (r.raw_data.job_title as string) || null,
+      company_name: r.company_name,
+      email: r.email,
+    })),
+  );
+
+  const triageNow = new Date().toISOString();
+  for (const row of triageRows) {
+    const result = triageMap.get(row.id) ?? { group: 'medium' as TriageGroup, version: TRIAGE_VERSION };
+    await admin.from('raw_uploads').update({
+      triage_group: result.group,
+      triage_version: result.version,
+      triage_scored_at: triageNow,
+      status: autoEnrich ? 'enriching' : 'awaiting_enrichment',
+      failure_reason: null,
+    }).eq('id', row.id);
+  }
+  if (!autoEnrich) {
+    await refreshBatchProgress(admin, batchId);
+    return;
+  }
+
   try {
-    for (const row of queuedRows) {
+    for (const row of triageRows) {
       if (await isBatchCancelled(admin, batchId)) break;
+
+      const triageResult = triageMap.get(row.id) ?? { group: 'medium' as TriageGroup, version: TRIAGE_VERSION };
 
       const rawData = row.raw_data;
       const location = (rawData.location as string) || '';
@@ -180,7 +248,7 @@ export async function processQueuedRowsInBackground(params: {
       // the contact from the raw CSV data and let the resolution pipeline run
       // (its profile step is an Apify LinkedIn scrape, which doesn't need Apollo).
       // Returns true if kept, false if it genuinely can't be stored (no key).
-      const keepForLinkedinFallback = async (): Promise<boolean> => {
+      const keepForLinkedinFallback = async (triage?: { group: TriageGroup; version: string }): Promise<boolean> => {
         const linkedin = await linkedinForStorage(fallbackRow.linkedin_url, fallbackRow);
         if (!linkedin) return false;
         enrichedRecords.push({
@@ -197,9 +265,20 @@ export async function processQueuedRowsInBackground(params: {
           company_domain: fallbackRow.company_domain || undefined,
           company_linkedin_url: fallbackRow.company_linkedin_url || undefined,
           location: fallbackRow.location || undefined,
+          triage_group: triage?.group,
+          triage_version: triage?.version,
         });
         return true;
       };
+
+      // 'low'-triaged contacts: store identity data only, skip Apollo/Apify.
+      if (triageResult.group === 'low') {
+        if (fallbackRow.linkedin_url) {
+          await keepForLinkedinFallback(triageResult);
+        }
+        // No LinkedIn URL + low triage = nothing to store; skip silently.
+        continue;
+      }
 
       try {
         const enrichmentResult = await enrichContact({ ...fallbackRow });
@@ -207,7 +286,7 @@ export async function processQueuedRowsInBackground(params: {
         if (await isBatchCancelled(admin, batchId)) break;
 
         if (!hasConfidentEnrichment(enrichmentResult, fallbackRow)) {
-          if (!(await keepForLinkedinFallback())) {
+          if (!(await keepForLinkedinFallback(triageResult))) {
             markFailed(
               row.id,
               fallbackRow.linkedin_url
@@ -276,6 +355,8 @@ export async function processQueuedRowsInBackground(params: {
           apollo_person_raw: enrichmentResult.apollo_person_raw,
           apollo_organization_raw: enrichmentResult.apollo_organization_raw,
           apollo_lookup_metadata: enrichmentResult.apollo_lookup_metadata,
+          triage_group: triageResult.group,
+          triage_version: triageResult.version,
         });
 
         // Non-blocking cost metering for the Apollo enrichment just performed.
@@ -343,6 +424,11 @@ export async function processQueuedRowsInBackground(params: {
     }
 
     await refreshBatchProgress(admin, batchId);
+    if (member?.org_id) {
+      await refreshMonitoringUniverse(member.org_id).catch((error) => {
+        console.error('[import-queue] monitoring refresh failed:', error);
+      });
+    }
   } catch (outerError) {
     console.error('Background enrichment worker crashed — marking remaining rows as failed', outerError);
     const processedIds = [

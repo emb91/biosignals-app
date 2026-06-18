@@ -1,4 +1,4 @@
--- Billing foundation (Phase 1 of BILLING_PLAN.md)
+-- Billing foundation (Phase 1 of strategy/pricing/pricing-model-codex-20260619/BILLING_PLAN.md)
 --
 -- The organization is the billable entity. Stripe is the source of truth for
 -- subscription state; these tables are a synced cache plus our own meter:

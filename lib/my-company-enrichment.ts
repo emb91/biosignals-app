@@ -11,8 +11,7 @@
  */
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { completeLlm, completeWithWebSearch } from '@/lib/llm-client';
-
-const HARVESTAPI_COMPANY_ACTOR = 'harvestapi~linkedin-company';
+import { runApifyActor } from '@/lib/apify';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -186,34 +185,22 @@ Return ONLY the JSON object. No markdown, no explanation.`;
 export async function scrapeLinkedInCompany(
   linkedinUrl: string,
 ): Promise<Record<string, unknown> | null> {
-  const apiKey = process.env.APIFY_API_KEY;
-  if (!apiKey) {
+  if (!process.env.APIFY_API_KEY) {
     console.warn('[company-enrichment] APIFY_API_KEY not set — skipping LinkedIn scrape');
     return null;
   }
 
-  const response = await fetch(
-    `https://api.apify.com/v2/acts/${HARVESTAPI_COMPANY_ACTOR}/run-sync-get-dataset-items`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ companies: [linkedinUrl] }),
-    },
-  );
-
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => '');
-    console.error(
-      `[company-enrichment] Apify failed (${response.status}): ${errorText.slice(0, 300)}`,
-    );
-    return null;
-  }
-
-  const payload = (await response.json()) as unknown;
-  const raw = Array.isArray(payload) ? payload[0] : payload;
+  const items = await runApifyActor<Record<string, unknown>>({
+    actor: 'company',
+    input: { companies: [linkedinUrl] },
+    actionType: 'setup_company_enrichment',
+    inputCount: 1,
+    metadata: { billingContext: 'setup' },
+  }).catch((error) => {
+    console.error('[company-enrichment] Apify failed:', error);
+    return [];
+  });
+  const raw = items[0];
   if (!raw || typeof raw !== 'object') return null;
   return raw as Record<string, unknown>;
 }

@@ -1,28 +1,14 @@
-/**
- * GET /api/billing/summary — billing state for the Settings page. Any org
- * member can view; mutations (checkout/portal) are owner/admin-gated in their
- * own routes.
- *
- * Returns: {
- *   available,            // Stripe configured + catalog priced — buttons usable
- *   role,                 // caller's org role (UI gates buttons on this)
- *   plan: { key, name, status, renewsAt, cancelAtPeriodEnd },
- *   seats: { used, included },
- *   contacts: { used, included, lifetime, packBalance, remaining },
- *   catalog: { plans: [...], pack }   // for upgrade buttons + copy
- * }
- */
 import { NextResponse } from 'next/server';
 import { getOrgContext } from '@/lib/org-context';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { getOrgEntitlements } from '@/lib/billing/entitlements';
 import { isBillingConfigured } from '@/lib/billing/stripe';
 import {
-  ENRICH_PACK,
+  CREDIT_PACK_SIZE,
   PLANS,
-  enrichPackPriceId,
-  planPriceId,
+  creditPackPriceId,
   planAnnualPriceId,
+  planPriceId,
 } from '@/lib/billing/config';
 
 export async function GET() {
@@ -30,15 +16,53 @@ export async function GET() {
   if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const admin = createAdminClient();
-  const [entitlements, memberCountResult] = await Promise.all([
-    getOrgEntitlements(ctx.orgId),
+  const entitlements = await getOrgEntitlements(ctx.orgId);
+  const now = new Date().toISOString();
+  const monthStart = new Date(Date.UTC(
+    new Date().getUTCFullYear(),
+    new Date().getUTCMonth(),
+    1,
+  )).toISOString();
+  const dayStart = new Date(Date.UTC(
+    new Date().getUTCFullYear(),
+    new Date().getUTCMonth(),
+    new Date().getUTCDate(),
+  )).toISOString();
+  const rollingStart = new Date(Date.now() - 86_400_000).toISOString();
+
+  const [
+    memberCountResult,
+    bucketsResult,
+    monitoredContactsResult,
+    waitlistedContactsResult,
+    monthlyUsageResult,
+    dailyUsageResult,
+    rollingUsageResult,
+  ] = await Promise.all([
     admin.from('org_members').select('user_id', { count: 'exact', head: true }).eq('org_id', ctx.orgId),
+    admin.from('org_credit_buckets')
+      .select('id, source, credits_granted, credits_remaining, valid_from, expires_at')
+      .eq('org_id', ctx.orgId).gt('expires_at', now).order('expires_at'),
+    admin.from('org_monitored_contacts').select('id', { count: 'exact', head: true })
+      .eq('org_id', ctx.orgId).eq('status', 'active'),
+    admin.from('org_monitored_contacts').select('id', { count: 'exact', head: true })
+      .eq('org_id', ctx.orgId).eq('status', 'waitlisted'),
+    admin.from('org_usage_events').select('action_type, quantity')
+      .eq('org_id', ctx.orgId).gte('occurred_at', monthStart),
+    admin.from('org_usage_events').select('action_type, quantity')
+      .eq('org_id', ctx.orgId).gte('occurred_at', dayStart),
+    admin.from('org_usage_events').select('action_type, quantity')
+      .eq('org_id', ctx.orgId).gte('occurred_at', rollingStart),
   ]);
 
+  const monthly = usageMap(monthlyUsageResult.data);
+  const daily = usageMap(dailyUsageResult.data);
+  const rolling = usageMap(rollingUsageResult.data);
+  const selectedPlan = entitlements.planKey === 'free' ? null : PLANS[entitlements.planKey];
+  const packAvailable = selectedPlan ? Boolean(creditPackPriceId(selectedPlan.key)) : false;
   const available =
     isBillingConfigured() &&
-    Object.values(PLANS).every((plan) => Boolean(planPriceId(plan))) &&
-    Boolean(enrichPackPriceId());
+    Object.values(PLANS).every((plan) => Boolean(planPriceId(plan)));
 
   return NextResponse.json({
     available,
@@ -48,47 +72,77 @@ export async function GET() {
       key: entitlements.planKey,
       name: entitlements.planName,
       status: entitlements.status,
+      billingInterval: entitlements.billingInterval,
       renewsAt: entitlements.currentPeriodEnd,
       cancelAtPeriodEnd: entitlements.cancelAtPeriodEnd,
+      paymentAccessPaused: entitlements.paymentAccessPaused,
     },
     seats: {
       used: memberCountResult.count ?? 1,
       included: entitlements.seatLimit,
     },
-    enrichments: {
-      used: entitlements.contactsUsedThisPeriod,
-      included: entitlements.includedContacts,
-      lifetime: entitlements.lifetimeAllowance,
-      packBalance: entitlements.packBalance,
-      remaining: entitlements.contactAllowanceRemaining,
+    credits: {
+      available: entitlements.creditsAvailable,
+      granted: entitlements.creditsGranted,
+      buckets: bucketsResult.data ?? [],
+    },
+    triage: {
+      used: monthly.import_triage ?? 0,
+      limit: entitlements.caps.importedRecordsTriagedMonthly,
+    },
+    importedEnrichments: {
+      used: monthly.imported_enrichment ?? 0,
+      included: entitlements.caps.importedEnrichmentsIncludedMonthly,
+      hardCap: entitlements.caps.importedEnrichmentsHardCapMonthly,
     },
     activeLeads: {
-      cap: entitlements.activeLeadsCap,
+      used: monitoredContactsResult.count ?? 0,
+      cap: entitlements.caps.activeMonitoredContacts,
+      waitlisted: waitlistedContactsResult.count ?? 0,
+      cadenceDays: entitlements.caps.monitoringCadenceDays,
     },
-    exportsPerDay: entitlements.exportsPerDay,
     netNewLeads: {
-      included: entitlements.netNewLeadsIncluded,
-      used: entitlements.netNewLeadsUsedThisPeriod,
-      remaining: entitlements.netNewLeadsRemaining,
-      lifetime: entitlements.lifetimeAllowance,
+      used: monthly.net_new_enriched_lead ?? 0,
+      limit: entitlements.caps.netNewEnrichedLeadsMonthly,
+    },
+    sequences: {
+      used: rolling.outreach_sequence ?? 0,
+      limit: entitlements.caps.sequencesRolling24Hours,
+    },
+    phoneReveals: {
+      used: daily.phone_reveal ?? 0,
+      limit: entitlements.caps.phoneRevealsDaily,
+    },
+    emailFinder: {
+      used: daily.email_finder ?? 0,
+      limit: entitlements.caps.emailFinderRequestsDaily,
     },
     catalog: {
       plans: Object.values(PLANS).map((plan) => ({
         key: plan.key,
         name: plan.name,
-        perSeatMonthlyUsd: plan.perSeatMonthlyUsd,
-        minSeats: plan.minSeats,
-        enrichmentsPerSeat: plan.enrichmentsPerSeat,
-        activeLeadsCapPerSeat: plan.activeLeadsCapPerSeat,
-        exportsPerDayPerSeat: plan.exportsPerDayPerSeat,
-        netNewLeadsPerSeat: plan.netNewLeadsPerSeat,
-        overagePer1kEnrichments: plan.overagePer1kEnrichments,
-        overagePerLead: plan.overagePerLead,
-        annualUsd: plan.perSeatMonthlyUsd * 10,
+        monthlyUsd: plan.monthlyUsd,
+        annualUsd: plan.annualUsd,
+        monthlyCredits: plan.monthlyCredits,
+        annualCredits: plan.annualCredits,
+        activeLeadsCap: plan.caps.activeMonitoredContacts,
+        monitoringCadenceDays: plan.caps.monitoringCadenceDays,
         available: Boolean(planPriceId(plan)),
         annualAvailable: Boolean(planAnnualPriceId(plan)),
       })),
-      pack: { enrichments: ENRICH_PACK.enrichments, usd: ENRICH_PACK.usd },
+      pack: selectedPlan ? {
+        credits: CREDIT_PACK_SIZE,
+        usd: selectedPlan.creditPackUsdPer1k,
+        available: packAvailable,
+      } : null,
     },
   });
+}
+
+function usageMap(rows: Array<{ action_type: string; quantity: number }> | null): Record<string, number> {
+  const result: Record<string, number> = {};
+  for (const row of rows ?? []) {
+    result[row.action_type] = (result[row.action_type] ?? 0) + Number(row.quantity ?? 0);
+  }
+  return result;
 }

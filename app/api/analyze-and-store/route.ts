@@ -15,6 +15,12 @@ import {
   upsertUserCompanyFromAnalysis,
 } from '@/lib/user-company-analyze-merge';
 
+function publicEnrichmentPayload(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([key]) => !/apollo|apify|zerobounce|provider/i.test(key)),
+  );
+}
+
 function normalizeDomain(value?: string | null): string | null {
   const trimmed = (value ?? '').trim().toLowerCase();
   if (!trimmed) return null;
@@ -186,7 +192,7 @@ export async function POST(request: NextRequest) {
     console.log('[analyze-and-store] Done. employee_count:', result.employee_count,
       'follower_count:', result.follower_count, 'funding_stage:', result.funding_stage);
 
-    return NextResponse.json(result);
+    return NextResponse.json(publicEnrichmentPayload(result as Record<string, unknown>));
   } catch (error) {
     logApiOperationError('[analyze-and-store] error', error, {
       ...(logCtx.userId ? { userId: logCtx.userId } : {}),

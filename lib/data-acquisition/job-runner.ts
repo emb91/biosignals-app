@@ -9,6 +9,7 @@ import {
   recordDataAcquisitionUsageEvent,
   type DataAcquisitionUsageEventType,
 } from '@/lib/data-acquisition-metering';
+import { refundCredits, settleCredits, settleUsage } from '@/lib/billing/credits';
 import {
   discoverApolloCompanies,
   discoverApolloPeopleForCompanies,
@@ -204,7 +205,7 @@ async function loadPrioritizedCompaniesForIcpAccounts(
   return scored.slice(0, limit).map((s) => s.row);
 }
 
-// ─── Credit guard (per-job cap + per-user monthly billing cap) ───────────────
+// ─── Internal provider-cost guard (never customer billing) ──────────────────
 
 type CapKind = 'monthly' | 'job';
 
@@ -221,13 +222,14 @@ function toFiniteNumber(value: unknown): number | null {
 }
 
 /**
- * Builds the runtime spend guard. Monthly usage is the sum of
+ * Builds the optional runtime provider-cost safety guard. Monthly usage is the sum of
  * actual_credit_units over the user's jobs requested this calendar month
  * (trigger-maintained per job, so no event-table scan is needed). The monthly
  * limit comes from user_billing_limits and falls back to
  * DEFAULT_MONTHLY_CREDIT_LIMIT when the user has no row (or a null limit).
- * The per-job cap is the job's max_credit_units. All internal-only: the user
- * never sees credit units, only the plain-language shortfall note.
+ * The per-job cap is the job's max_credit_units. Customer authorization is
+ * handled by the Arcova credit reservation before this runner starts. This
+ * legacy guard is analytics-only unless DATA_ACQUISITION_INTERNAL_SAFETY_CAP_ENABLED=true.
  */
 async function buildCreditGuard(
   admin: ReturnType<typeof createAdminClient>,
@@ -282,6 +284,7 @@ async function buildCreditGuard(
       monthUnits += units;
     },
     capReached() {
+      if (process.env.DATA_ACQUISITION_INTERNAL_SAFETY_CAP_ENABLED !== 'true') return null;
       if (monthUnits >= monthlyLimit) return 'monthly';
       if (jobLimit != null && jobLimit > 0 && jobUnits >= jobLimit) return 'job';
       return null;
@@ -598,6 +601,7 @@ async function ingestPeopleAndRunImportPipeline(
       queuedRows: chunk,
       batchId: job.upload_batch_id!,
       userId: job.user_id,
+      autoEnrich: true,
       onBeforeIngest: async () => {
         if (!importPhaseStarted) {
           importPhaseStarted = true;
@@ -877,6 +881,26 @@ export async function runDataAcquisitionJob(jobId: string): Promise<void> {
 
   try {
     await executeClaimedJob(admin, job);
+    const transactionId = typeof job.metadata?.customer_credit_transaction_id === 'string'
+      ? job.metadata.customer_credit_transaction_id
+      : null;
+    const { data: completed } = await admin.from('data_acquisition_jobs')
+      .select('imported_contact_count')
+      .eq('id', job.id)
+      .maybeSingle<{ imported_contact_count: number | null }>();
+    const delivered = Math.max(0, Number(completed?.imported_contact_count ?? 0));
+    await settleCredits(transactionId, delivered * 4);
+    const usageOperationId = typeof job.metadata?.customer_usage_operation_id === 'string'
+      ? job.metadata.customer_usage_operation_id
+      : null;
+    if (job.org_id && usageOperationId) {
+      await settleUsage({
+        orgId: job.org_id,
+        action: 'net_new_enriched_lead',
+        operationKey: usageOperationId,
+        quantity: delivered,
+      });
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown data acquisition failure';
     await updateJob(job.id, { status: 'failed', error: message, completed_at: new Date().toISOString() });
@@ -884,6 +908,21 @@ export async function runDataAcquisitionJob(jobId: string): Promise<void> {
       .from('upload_batches')
       .update({ status: 'failed', completed_at: new Date().toISOString() })
       .eq('id', job.upload_batch_id);
+    const transactionId = typeof job.metadata?.customer_credit_transaction_id === 'string'
+      ? job.metadata.customer_credit_transaction_id
+      : null;
+    await refundCredits(transactionId).catch(() => {});
+    const usageOperationId = typeof job.metadata?.customer_usage_operation_id === 'string'
+      ? job.metadata.customer_usage_operation_id
+      : null;
+    if (job.org_id && usageOperationId) {
+      await settleUsage({
+        orgId: job.org_id,
+        action: 'net_new_enriched_lead',
+        operationKey: usageOperationId,
+        quantity: 0,
+      }).catch(() => {});
+    }
     throw error;
   } finally {
     // Sequential per-user queue: whatever happened to this job, start the

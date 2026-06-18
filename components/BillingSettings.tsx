@@ -1,8 +1,8 @@
 'use client';
 
 /**
- * Settings → Plan & billing. Shows the org's plan, seat usage, and contact
- * usage; owner/admin can upgrade, buy a contact pack, or open the Stripe
+ * Settings → Plan & billing. Shows the workspace plan and credit usage;
+ * owner/admin can upgrade, buy a credit pack, or open the Stripe
  * customer portal (card, invoices, plan changes, cancel). Members see a
  * read-only view.
  *
@@ -25,23 +25,19 @@ type Summary = {
     cancelAtPeriodEnd: boolean;
   };
   seats: { used: number; included: number };
-  enrichments: {
-    used: number;
-    included: number;
-    lifetime: boolean;
-    packBalance: number;
-    remaining: number;
-  };
+  credits: { available: number; granted: number };
   catalog: {
     plans: Array<{
       key: string;
       name: string;
-      perSeatMonthlyUsd: number;
-      minSeats: number;
-      enrichmentsPerSeat: number;
+      monthlyUsd: number;
+      annualUsd: number;
+      monthlyCredits: number;
+      annualCredits: number;
       available: boolean;
+      annualAvailable: boolean;
     }>;
-    pack: { enrichments: number; usd: number };
+    pack: { credits: number; usd: number; available: boolean } | null;
   };
 };
 
@@ -101,7 +97,7 @@ export default function BillingSettings() {
   }
   if (!summary) return null;
 
-  const { plan, seats, enrichments: contacts, catalog } = summary;
+  const { plan, seats, credits, catalog } = summary;
 
   if (summary.unlimited) {
     return (
@@ -110,7 +106,7 @@ export default function BillingSettings() {
         <div className={CARD}>
           <span className="text-sm font-semibold text-slate-950">{plan.name} plan</span>
           <p className="mt-1 text-sm text-[#7d909a]">
-            This workspace has no contact or seat limits, and nothing to pay.
+            This Arcova workspace is complimentary, with no usage limits or payment required.
           </p>
         </div>
       </section>
@@ -120,7 +116,9 @@ export default function BillingSettings() {
   const canManage = summary.role === 'owner' || summary.role === 'admin';
   const onFreePlan = plan.key === 'free';
   const usagePct =
-    contacts.included > 0 ? Math.min(100, Math.round((contacts.used / contacts.included) * 100)) : 0;
+    credits.granted > 0
+      ? Math.min(100, Math.round(((credits.granted - credits.available) / credits.granted) * 100))
+      : 0;
   const renewsAt = plan.renewsAt
     ? new Date(plan.renewsAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
     : null;
@@ -129,7 +127,7 @@ export default function BillingSettings() {
     <section className="mt-8">
       <h2 className="text-sm font-semibold uppercase tracking-[0.08em] text-[#7d909a]">Plan &amp; billing</h2>
       <p className="mt-1 text-sm text-[#7d909a]">
-        Every feature is included on every plan — plans set how many teammates and contacts you can add.
+        Every feature is included on every plan — plans set credits, usage caps, and monitoring cadence.
       </p>
 
       <div className={CARD}>
@@ -149,7 +147,8 @@ export default function BillingSettings() {
               )}
             </div>
             <p className="mt-1 text-sm text-[#7d909a]">
-              {seats.used} of {seats.included} {seats.included === 1 ? 'seat' : 'seats'} used
+              {seats.used} {seats.used === 1 ? 'user' : 'users'}
+              {seats.included === 1 ? ' · 1 user included' : ' · unlimited workspace users'}
               {renewsAt && !plan.cancelAtPeriodEnd ? ` · renews ${renewsAt}` : ''}
             </p>
           </div>
@@ -164,16 +163,13 @@ export default function BillingSettings() {
           )}
         </div>
 
-        {/* Contact usage */}
+        {/* Credit usage */}
         <div className="mt-4">
           <div className="flex items-baseline justify-between text-sm">
             <span className="text-slate-700">
-              {contacts.used.toLocaleString()} of {contacts.included.toLocaleString()} contacts
-              {contacts.lifetime ? '' : ' this month'}
+              {credits.available.toLocaleString()} credits available
             </span>
-            {contacts.packBalance > 0 && (
-              <span className="text-[#7d909a]">+{contacts.packBalance.toLocaleString()} extra available</span>
-            )}
+            <span className="text-[#7d909a]">{credits.granted.toLocaleString()} plan credits</span>
           </div>
           <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-slate-100">
             <div
@@ -189,32 +185,41 @@ export default function BillingSettings() {
         {canManage && summary.available && (
           <div className="mt-4 flex flex-wrap gap-2">
             {onFreePlan &&
-              catalog.plans.filter((p) => p.available).map((p) => (
+              catalog.plans.filter((p) => p.available).flatMap((p) => [
                 <button
-                  key={p.key}
-                  onClick={() =>
-                    void redirectTo('/api/billing/checkout', {
-                      kind: 'plan',
-                      planKey: p.key,
-                      seats: p.minSeats,
-                    })
-                  }
+                  key={`${p.key}-monthly`}
+                  onClick={() => void redirectTo('/api/billing/checkout', {
+                    kind: 'plan', planKey: p.key, billing: 'monthly',
+                  })}
                   disabled={busy !== null}
                   className="inline-flex items-center gap-1.5 rounded-lg bg-[#0d3547] px-3 py-1.5 text-sm font-medium text-white transition hover:bg-[#0d3547]/90 disabled:opacity-50"
                 >
                   <ArrowUpRight className="h-3.5 w-3.5" />
-                  {p.name} — ${p.perSeatMonthlyUsd}/seat/mo ·{' '}
-                  {p.enrichmentsPerSeat.toLocaleString()} contacts/seat
-                </button>
-              ))}
-            <button
-              onClick={() => void redirectTo('/api/billing/checkout', { kind: 'pack' })}
-              disabled={busy !== null}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Add {catalog.pack.enrichments.toLocaleString()} contacts — ${catalog.pack.usd}
-            </button>
+                  {p.name} — ${p.monthlyUsd}/workspace/mo · {p.monthlyCredits.toLocaleString()} credits
+                </button>,
+                ...(p.annualAvailable ? [
+                  <button
+                    key={`${p.key}-annual`}
+                    onClick={() => void redirectTo('/api/billing/checkout', {
+                      kind: 'plan', planKey: p.key, billing: 'annual',
+                    })}
+                    disabled={busy !== null}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-[#0d3547]/15 bg-white px-3 py-1.5 text-sm font-medium text-[#0d3547] transition hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    {p.name} annual — ${p.annualUsd.toLocaleString()}/yr · {p.annualCredits.toLocaleString()} credits upfront
+                  </button>,
+                ] : []),
+              ])}
+            {catalog.pack?.available && (
+              <button
+                onClick={() => void redirectTo('/api/billing/checkout', { kind: 'pack' })}
+                disabled={busy !== null}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Add {catalog.pack.credits.toLocaleString()} credits — ${catalog.pack.usd}
+              </button>
+            )}
           </div>
         )}
         {canManage && !summary.available && (

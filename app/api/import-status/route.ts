@@ -49,14 +49,30 @@ export async function GET(request: Request) {
         if (status === 'duplicate') acc.duplicates += 1;
         if (status === 'enriching') acc.enriching += 1;
         if (status === 'pending') acc.pending += 1;
+        if (status === 'awaiting_triage') acc.awaiting_triage += 1;
+        if (status === 'awaiting_enrichment') acc.awaiting_enrichment += 1;
         if (status === 'enriched') acc.enriched += 1;
         if (status === 'failed') acc.not_enriched += 1;
         return acc;
       },
-      { total: 0, duplicates: 0, pending: 0, enriching: 0, enriched: 0, not_enriched: 0 },
+      {
+        total: 0,
+        duplicates: 0,
+        pending: 0,
+        enriching: 0,
+        awaiting_triage: 0,
+        awaiting_enrichment: 0,
+        enriched: 0,
+        not_enriched: 0,
+      },
     );
 
-    const processed = summary.duplicates + summary.enriched + summary.not_enriched;
+    const processed =
+      summary.duplicates +
+      summary.awaiting_triage +
+      summary.awaiting_enrichment +
+      summary.enriched +
+      summary.not_enriched;
     const remaining = Math.max(summary.total - processed, 0);
 
     return NextResponse.json({

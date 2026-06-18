@@ -1,82 +1,81 @@
-# HubSpot real-time webhook — implementation plan
+# HubSpot real-time webhook activation
 
-> **STATUS: BUILT (2026-06-13).** The receiver (`app/api/hubspot/webhook/route.ts`),
-> idempotency + portal_id migration, connect-flow portal capture, and the debounced
-> readiness-sync dispatch are implemented and verified against the dev server (valid
-> sig 200, dup deduped, bad sig + stale timestamp 401). **Remaining = Emma's HubSpot
-> dashboard:** register the webhook URL + subscriptions, confirm `HUBSPOT_CLIENT_SECRET`
-> is set (signing key), and backfill `hubspot_portal_id` on the existing connection
-> (reconnect once). The design below is the spec it was built to.
+> **Purpose:** activation instructions for `LAUNCH_PLAN.md` Phase B.
+> **Status:** the Arcova receiver and database support are already built.
+> **Owner:** Emma registers it in HubSpot/Vercel; Codex verifies a real event.
+> **Finished when:** a real HubSpot change reaches Arcova, emits the expected
+> signal, recomputes readiness, and duplicate delivery is harmless.
 
-The HubSpot sync foundation is **already ~80% built**: org-scoped Nango OAuth, 40
-custom `arcova_*` properties, daily push+pull cron (`app/api/cron/hubspot-daily`),
-readiness signal emission from contacts/deals (`lib/signals/readiness-hubspot-*`),
-and full logging (`hubspot_sync_events`). The one missing piece for the BACKLOG's
-**"webhooks as primary, nightly pull as safety net"** model is the real-time
-**inbound webhook receiver**. This is the plan for it. It's deliberately *not*
-built yet because it has an architecture fork + a connect-flow change that
-shouldn't be decided unilaterally — this doc settles those.
+## What Emma needs to do
 
-## Decisions
+### 1. Confirm the signing secret in Vercel
 
-**1. Direct HubSpot webhook (recommended) vs Nango-forwarded.**
-We own the HubSpot app (own `HUBSPOT_CLIENT_ID/SECRET`, used as a custom Nango
-integration), so HubSpot can POST directly to us and we verify with the app
-client secret — no dependency on Nango's webhook plumbing. **Recommend direct.**
-(Nango forwarding is the alternative if we ever move to Nango-managed apps; it'd
-change only the receiver's auth check.)
+Vercel → `biosignals-app` → production environment variables:
 
-**2. Org resolution — the hard part.** A webhook payload has `portalId` + object
-id, no session. Resolve org by **HubSpot portal id**:
-- Add `hubspot_portal_id bigint` to `nango_connections` (or a `hubspot_connections`
-  view). Populate it **on connect**: after the Nango connection is saved
-  (`app/api/nango/connection/route.ts`), call HubSpot `GET /account-info/v3/details`
-  with the token and store `portalId`.
-- Webhook → look up the connection by `portalId` → that's the org. One indexed lookup.
-- (Backfill existing connections once with the same account-info call.)
+```text
+HUBSPOT_CLIENT_SECRET
+```
 
-**3. Idempotency + signature — mirror the Stripe webhook** (`app/api/stripe/webhook`):
-- `hubspot_webhook_events(id text pk, type text, received_at timestamptz)` — insert
-  first; 23505 = duplicate → ack and drop. (HubSpot batches events; dedupe per
-  `eventId`.)
-- **Signature (v3):** `base64( HMAC-SHA256( clientSecret, method + uri + body + timestamp ) )`
-  in `X-HubSpot-Signature-v3`, with `X-HubSpot-Request-Timestamp`. Reject if the
-  timestamp is older than 5 min (replay guard) or the HMAC mismatches → 401.
-- Raw body needed for the HMAC (same `await request.text()` pattern as Stripe).
+This must be the client secret for the HubSpot developer app delivering the
+webhooks. Redeploy if you add or change it.
 
-## What to build
+### 2. Register the webhook receiver
 
-1. **Migration** — `hubspot_webhook_events` table + `nango_connections.hubspot_portal_id` column (indexed).
-2. **`app/api/hubspot/webhook/route.ts`** (runtime nodejs, raw body):
-   - Verify v3 signature → 401 on fail.
-   - For each event in the batch: dedupe on `eventId`; resolve org via `portalId`;
-     dispatch by subscription type.
-3. **Connect-flow addition** — store `hubspot_portal_id` on connect + a one-off backfill.
-4. **Env** — none new (signature uses the existing `HUBSPOT_CLIENT_SECRET`).
+HubSpot developer app → **Webhooks**:
 
-## Event subscriptions (register in the HubSpot app → Webhooks)
-| Subscription | Handler action |
+```text
+https://YOUR-PRODUCTION-DOMAIN/api/hubspot/webhook
+```
+
+Replace `YOUR-PRODUCTION-DOMAIN` with the actual production app hostname.
+
+Add these subscriptions:
+
+| Subscription | Relevant properties/action |
 |---|---|
-| `contact.creation` | enqueue pull/enrich for the new contact (reuse `pullNewFromHubSpot` path, single-contact) |
-| `contact.propertyChange` (jobtitle, company, lifecyclestage) | emit readiness signals immediately via `lib/signals/readiness-hubspot-contacts` (title_change / recently_changed_company / new_internal_role / lifecycle) → recompute readiness |
-| `deal.creation` / `deal.propertyChange` (dealstage) | emit `open_opportunity_in_crm` / `closed_lost_in_crm` via `lib/signals/readiness-hubspot-deals` → recompute readiness |
+| `contact.creation` | Pull the newly created contact. |
+| `contact.propertyChange` | Subscribe for `jobtitle`, `company`, and `lifecyclestage`. |
+| `deal.creation` | Pull and evaluate the new deal. |
+| `deal.propertyChange` | Subscribe for `dealstage`. |
 
-Each handler reuses the **existing** signal-emission libs — the webhook just makes
-them fire in real time instead of waiting for the daily cron. **Keep the cron** as
-the safety net (catches anything missed during downtime/rate-limits).
+Keep the existing daily HubSpot cron enabled. It is the recovery/safety net.
 
-## What Emma does (dashboard, after the code ships)
-- HubSpot developer app → **Webhooks**: set target URL `https://<app>/api/hubspot/webhook`,
-  add the subscriptions above, set the throttling/concurrency HubSpot recommends.
-- Confirm the app has the contact/deal read scopes (it already does for the cron).
+### 3. Refresh the existing connection
 
-## Verification
-- Local: `hubspot` CLI / a manual signed POST replaying a sample `contact.propertyChange`
-  batch → assert org resolves, signal row lands in `signal_source_events`, readiness recomputes, dedupe holds.
-- Mirror the Stripe webhook's test approach (sign locally with the secret, POST to the route).
+In Arcova Settings, reconnect HubSpot once. This stores the HubSpot portal ID
+needed to map incoming events to the correct workspace. New connections capture
+it automatically.
 
-## Scope / risk
-Net-new files + a small additive connect-flow change + one migration; it reuses the
-mature signal libs and doesn't modify push/pull/cron. Main untestable-by-Claude bit
-is the HubSpot-side registration (Emma's dashboard) and real event delivery — same
-shape as the Stripe webhook, which we test-clock-verified. Estimate: ~1 focused day.
+## Then hand back to Codex
+
+Send:
+
+> HubSpot webhook is registered and reconnected—verify a real event.
+
+Codex will verify:
+
+- HubSpot receives a `2xx` response;
+- the portal resolves to the correct Arcova workspace;
+- the event is recorded and deduplicated;
+- a contact/deal signal lands in `signal_source_events`;
+- readiness recomputes;
+- repeated delivery does not duplicate the effect.
+
+## What is already built
+
+- `app/api/hubspot/webhook/route.ts`
+- HubSpot v3 signature and timestamp verification
+- event idempotency storage
+- portal-ID capture during connection
+- contact and deal readiness dispatch
+- daily pull/push cron as a safety net
+- sync-status UI in Settings
+
+## Checklist
+
+- [ ] `HUBSPOT_CLIENT_SECRET` confirmed in Vercel production.
+- [ ] Production webhook URL registered in HubSpot.
+- [ ] Contact subscriptions added.
+- [ ] Deal subscriptions added.
+- [ ] HubSpot reconnected once in Arcova.
+- [ ] Codex real-event verification passed.

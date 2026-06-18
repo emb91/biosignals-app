@@ -1,37 +1,28 @@
 #!/bin/bash
-# Run this from your terminal (where you're logged into Vercel CLI).
-# Sets all billing env vars for production + preview.
-# Usage: bash scripts/vercel-env-setup.sh
+# Run scripts/stripe-bootstrap.mjs first, export the six printed price IDs,
+# then run this while authenticated with the Vercel CLI.
 
 set -e
 
-echo "Setting Stripe billing env vars on Vercel..."
+: "${STRIPE_PRICE_STARTER_WORKSPACE:?missing Starter monthly price}"
+: "${STRIPE_PRICE_STARTER_WORKSPACE_ANNUAL:?missing Starter annual price}"
+: "${STRIPE_PRICE_GROWTH_WORKSPACE:?missing Growth monthly price}"
+: "${STRIPE_PRICE_GROWTH_WORKSPACE_ANNUAL:?missing Growth annual price}"
+: "${STRIPE_PRICE_STARTER_CREDITS_1000:?missing Starter credit-pack price}"
+: "${STRIPE_PRICE_GROWTH_CREDITS_1000:?missing Growth credit-pack price}"
+: "${STRIPE_WEBHOOK_SECRET:?missing production webhook secret}"
 
-# New per-seat price IDs (created by stripe-bootstrap.mjs 2026-06-16)
-vercel env add STRIPE_PRICE_STARTER_SEAT production <<< "price_1TiqDRRxQg2ButDEPXK2NSzQ"
-vercel env add STRIPE_PRICE_STARTER_SEAT preview    <<< "price_1TiqDRRxQg2ButDEPXK2NSzQ"
+for environment in production preview; do
+  vercel env add STRIPE_PRICE_STARTER_WORKSPACE "$environment" <<< "$STRIPE_PRICE_STARTER_WORKSPACE"
+  vercel env add STRIPE_PRICE_STARTER_WORKSPACE_ANNUAL "$environment" <<< "$STRIPE_PRICE_STARTER_WORKSPACE_ANNUAL"
+  vercel env add STRIPE_PRICE_GROWTH_WORKSPACE "$environment" <<< "$STRIPE_PRICE_GROWTH_WORKSPACE"
+  vercel env add STRIPE_PRICE_GROWTH_WORKSPACE_ANNUAL "$environment" <<< "$STRIPE_PRICE_GROWTH_WORKSPACE_ANNUAL"
+  vercel env add STRIPE_PRICE_STARTER_CREDITS_1000 "$environment" <<< "$STRIPE_PRICE_STARTER_CREDITS_1000"
+  vercel env add STRIPE_PRICE_GROWTH_CREDITS_1000 "$environment" <<< "$STRIPE_PRICE_GROWTH_CREDITS_1000"
+done
 
-vercel env add STRIPE_PRICE_STARTER_SEAT_ANNUAL production <<< "price_1TiqDSRxQg2ButDEyqqYms4g"
-vercel env add STRIPE_PRICE_STARTER_SEAT_ANNUAL preview    <<< "price_1TiqDSRxQg2ButDEyqqYms4g"
+vercel env add STRIPE_WEBHOOK_SECRET production <<< "$STRIPE_WEBHOOK_SECRET"
 
-vercel env add STRIPE_PRICE_GROWTH_SEAT production <<< "price_1TiqDSRxQg2ButDENf8kDHua"
-vercel env add STRIPE_PRICE_GROWTH_SEAT preview    <<< "price_1TiqDSRxQg2ButDENf8kDHua"
-
-vercel env add STRIPE_PRICE_GROWTH_SEAT_ANNUAL production <<< "price_1TiqDTRxQg2ButDEPv8fbskZ"
-vercel env add STRIPE_PRICE_GROWTH_SEAT_ANNUAL preview    <<< "price_1TiqDTRxQg2ButDEPv8fbskZ"
-
-vercel env add STRIPE_PRICE_ENRICH_PACK production <<< "price_1TiqDURxQg2ButDEHtrtW5YT"
-vercel env add STRIPE_PRICE_ENRICH_PACK preview    <<< "price_1TiqDURxQg2ButDEHtrtW5YT"
-
-# Prod webhook signing secret (endpoint: https://app.arcova.bio/api/stripe/webhook)
-# This replaces the local-dev whsec from `stripe listen` — only set on production.
-# Paste the live value from Stripe Dashboard → Developers → Webhooks → signing secret. Never commit it.
-vercel env add STRIPE_WEBHOOK_SECRET production <<< "${STRIPE_WEBHOOK_SECRET:?set this in your shell, do not hardcode}"
-
-# Flip enforcement on
-vercel env add BILLING_ENFORCEMENT production <<< "true"
-vercel env add BILLING_ENFORCEMENT preview    <<< "true"
-
-echo ""
-echo "Done. Trigger a redeploy to pick up the new vars:"
-echo "  vercel --prod"
+# Keep enforcement off through the seven-day shadow reconciliation. Enable
+# ARCOVA_CREDIT_ENFORCEMENT only after ledger/provider totals reconcile.
+echo "Price IDs installed. Redeploy, run shadow reconciliation, then enable ARCOVA_CREDIT_ENFORCEMENT."

@@ -1,11 +1,11 @@
 /**
  * POST /api/billing/checkout — start a Stripe Checkout session.
  *
- * Body: { kind: 'plan', planKey: 'starter' | 'growth', seats?: number, billing?: 'monthly' | 'annual' }
+ * Body: { kind: 'plan', planKey: 'starter' | 'growth', billing?: 'monthly' | 'annual' }
  *     | { kind: 'pack', quantity?: number }   // quantity = number of packs
  *
- * Owner/admin only. Plans use subscription mode with a pure per-seat price
- * (quantity = seat count). Packs use payment mode; fulfillment happens in the
+ * Owner/admin only. Plans are fixed-price workspaces (quantity is always one).
+ * Packs use payment mode; fulfillment happens in the
  * webhook on checkout.session.completed.
  *
  * Returns: { url } to redirect the browser to.
@@ -17,9 +17,9 @@ import { getStripe, isBillingConfigured } from '@/lib/billing/stripe';
 import { getOrCreateStripeCustomerId } from '@/lib/billing/customer';
 import { getOrgEntitlements } from '@/lib/billing/entitlements';
 import {
-  ENRICH_PACK,
+  CREDIT_PACK_SIZE,
   PLANS,
-  enrichPackPriceId,
+  creditPackPriceId,
   isPlanKey,
   planPriceId,
   planAnnualPriceId,
@@ -36,7 +36,7 @@ export async function POST(request: Request) {
   }
 
   const body = (await request.json().catch(() => null)) as
-    | { kind?: string; planKey?: string; seats?: number; billing?: string; quantity?: number }
+    | { kind?: string; planKey?: string; billing?: string; quantity?: number }
     | null;
   if (!body || (body.kind !== 'plan' && body.kind !== 'pack')) {
     return NextResponse.json({ error: 'kind must be "plan" or "pack"' }, { status: 400 });
@@ -65,9 +65,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Billing is not available yet' }, { status: 503 });
     }
 
-    // Clamp seat count to [minSeats, 100].
-    const seats = Math.min(100, Math.max(plan.minSeats, Math.floor(body.seats ?? plan.minSeats)));
-
     // Plan changes for an existing active subscription go through the portal.
     const admin = createAdminClient();
     const { data: existing } = await admin
@@ -89,11 +86,16 @@ export async function POST(request: Request) {
       mode: 'subscription',
       customer: customerId,
       client_reference_id: ctx.orgId,
-      line_items: [{ price: priceId, quantity: seats }],
+      line_items: [{ price: priceId, quantity: 1 }],
       subscription_data: {
-        metadata: { org_id: ctx.orgId, plan_key: plan.key },
+        metadata: { org_id: ctx.orgId, plan_key: plan.key, billing_interval: annual ? 'annual' : 'monthly' },
       },
-      metadata: { kind: 'plan', org_id: ctx.orgId, plan_key: plan.key },
+      metadata: {
+        kind: 'plan',
+        org_id: ctx.orgId,
+        plan_key: plan.key,
+        billing_interval: annual ? 'annual' : 'monthly',
+      },
       success_url: `${appUrl}/settings?billing=success`,
       cancel_url: `${appUrl}/settings?billing=canceled`,
       allow_promotion_codes: true,
@@ -101,8 +103,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ url: session.url });
   }
 
-  // Enrichment pack (one-time payment).
-  const packPrice = enrichPackPriceId();
+  // Credit pack (one-time payment).
+  if (!isPlanKey(entitlements.planKey)) {
+    return NextResponse.json({ error: 'Credit packs are available on paid plans.' }, { status: 403 });
+  }
+  const packPrice = creditPackPriceId(entitlements.planKey);
   if (!packPrice) {
     return NextResponse.json({ error: 'Billing is not available yet' }, { status: 503 });
   }
@@ -114,9 +119,10 @@ export async function POST(request: Request) {
     client_reference_id: ctx.orgId,
     line_items: [{ price: packPrice, quantity }],
     metadata: {
-      kind: 'contact_pack',
+      kind: 'credit_pack',
       org_id: ctx.orgId,
-      contacts: String(ENRICH_PACK.enrichments * quantity),
+      credits: String(CREDIT_PACK_SIZE * quantity),
+      plan_key: entitlements.planKey,
     },
     success_url: `${appUrl}/settings?billing=pack_success`,
     cancel_url: `${appUrl}/settings?billing=canceled`,

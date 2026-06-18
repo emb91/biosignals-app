@@ -737,9 +737,17 @@ export default function AccountsPage() {
     );
 
     try {
+      if (!window.confirm('Refresh this company for 3 credits?')) {
+        invalidateAccountCaches(companyId, { clearDetailState: false });
+        await fetchAccounts(true);
+        return;
+      }
       await fetch(`/api/companies/${companyId}/enrich`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-operation-id': crypto.randomUUID(),
+        },
       });
       // The endpoint returns immediately (work runs in after()). Refresh once
       // now so the server-confirmed "running" state lands; the 5s poll picks
