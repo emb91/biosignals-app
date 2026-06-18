@@ -5,6 +5,7 @@ import {
   getContactEmailDeliverabilityDisplayMeta,
   isVerifiedButOutdatedEmailRow,
   classifyRefreshEmailCandidate,
+  shouldPromoteVerifiedCandidateToPrimary,
 } from './contact-emails';
 import { buildRefreshEmailCandidates, shouldOfferFindNewEmailForContact } from './contact-profile-display';
 
@@ -183,4 +184,51 @@ test('buildRefreshEmailCandidates lists primary before fallbacks', () => {
   ]);
   assert.equal(candidates[0]?.email, 'primary@acme.com');
   assert.equal(candidates[1]?.email, 'fallback@acme.com');
+});
+
+test('finder candidates must be verified before primary promotion', () => {
+  for (const deliverability of ['invalid', 'catch-all', 'unknown', 'spamtrap', null]) {
+    assert.equal(
+      shouldPromoteVerifiedCandidateToPrimary({
+        canReplacePrimary: true,
+        candidateEmail: 'alex@newco.com',
+        candidateDeliverability: deliverability,
+        currentCompanyDomain: 'newco.com',
+      }),
+      false,
+    );
+  }
+});
+
+test('verified finder candidates must match the current company domain before primary promotion', () => {
+  assert.equal(
+    shouldPromoteVerifiedCandidateToPrimary({
+      canReplacePrimary: true,
+      candidateEmail: 'alex@priorco.com',
+      candidateDeliverability: 'verified',
+      currentCompanyDomain: 'newco.com',
+    }),
+    false,
+  );
+  assert.equal(
+    shouldPromoteVerifiedCandidateToPrimary({
+      canReplacePrimary: true,
+      candidateEmail: 'alex@newco.com',
+      candidateDeliverability: 'verified',
+      currentCompanyDomain: 'newco.com',
+    }),
+    true,
+  );
+});
+
+test('verified finder candidates respect caller replacement eligibility', () => {
+  assert.equal(
+    shouldPromoteVerifiedCandidateToPrimary({
+      canReplacePrimary: false,
+      candidateEmail: 'alex@newco.com',
+      candidateDeliverability: 'verified',
+      currentCompanyDomain: 'newco.com',
+    }),
+    false,
+  );
 });
