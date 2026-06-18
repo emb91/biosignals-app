@@ -4,7 +4,7 @@
     "module": "commonjs",
     "moduleResolution": "node",
     "noEmit": false,
-    "outDir": "/private/tmp/arcova-email-deliverability-policy-tests",
+    "outDir": "/tmp/arcova-email-deliverability-policy-tests",
     "incremental": false,
     "isolatedModules": false
   },

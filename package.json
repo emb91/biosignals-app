@@ -15,7 +15,7 @@
     "test:patent-surge": "rm -rf /private/tmp/arcova-patent-surge-tests && tsc -p tsconfig.test.patent-surge.json && node --test /private/tmp/arcova-patent-surge-tests/patent-surge.test.js",
     "gen-sitemap": "node generate-sitemap.js",
     "test:email-pattern": "rm -rf /private/tmp/arcova-email-pattern-tests && tsc -p tsconfig.test.email-pattern.json && node --test /private/tmp/arcova-email-pattern-tests/email-pattern.test.js",
-    "test:email-deliverability-policy": "rm -rf /private/tmp/arcova-email-deliverability-policy-tests && tsc -p tsconfig.test.email-deliverability-policy.json && node --test /private/tmp/arcova-email-deliverability-policy-tests/email-deliverability-policy.test.js"
+    "test:email-deliverability-policy": "rm -rf /tmp/arcova-email-deliverability-policy-tests && tsc -p tsconfig.test.email-deliverability-policy.json && node --test /tmp/arcova-email-deliverability-policy-tests/email-deliverability-policy.test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.79.0",
