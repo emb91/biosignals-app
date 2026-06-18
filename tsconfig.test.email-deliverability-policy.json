@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/tmp/arcova-email-deliverability-policy-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/email-deliverability-policy.test.ts",
+    "lib/contact-emails.ts",
+    "lib/contact-profile-display.ts"
+  ]
+}
