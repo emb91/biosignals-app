@@ -318,6 +318,22 @@ export function isUsableVerifiedWorkEmail(
   return isEmailDomainAlignedWithCompany(email, company);
 }
 
+export function shouldPromoteVerifiedCandidateToPrimary(params: {
+  canReplacePrimary: boolean;
+  candidateEmail: string;
+  candidateDeliverability: string | null | undefined;
+  currentCompanyDomain: string | null | undefined;
+}): boolean {
+  return (
+    params.canReplacePrimary &&
+    isUsableVerifiedWorkEmail(
+      params.candidateDeliverability,
+      params.candidateEmail,
+      params.currentCompanyDomain,
+    )
+  );
+}
+
 /** Minimum priority (strictly above) for bulk email verification and find-new-email. */
 export const DEFAULT_EMAIL_VERIFICATION_PRIORITY_MIN = 0.6;
 

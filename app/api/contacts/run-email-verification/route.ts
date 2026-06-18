@@ -7,10 +7,12 @@ import {
 import {
   classifyEnrichedEmail,
   classifyRefreshEmailCandidate,
+  emailsEqual,
   isUsableVerifiedWorkEmail,
   looksLikeEmail,
   DEFAULT_EMAIL_VERIFICATION_PRIORITY_MIN,
   emailVerificationBannerCategory,
+  shouldPromoteVerifiedCandidateToPrimary,
   type ContactEmailRow,
   type EmailVerificationResultItem,
 } from '@/lib/contact-emails';
@@ -395,15 +397,22 @@ export async function POST(request: Request) {
         }
       }
 
-      if (params.promotePrimary) {
+      const candidateIsCurrentPrimary = Boolean(
+        params.contact.email && emailsEqual(params.contact.email, params.email),
+      );
+      const shouldPromotePrimary = shouldPromoteVerifiedCandidateToPrimary({
+        canReplacePrimary: params.promotePrimary,
+        candidateEmail: params.email,
+        candidateDeliverability: params.emailDeliverability,
+        currentCompanyDomain: contactCurrentDomain(params.contact),
+      });
+
+      if (params.promotePrimary && (candidateIsCurrentPrimary || shouldPromotePrimary)) {
         const contactPatch: Record<string, unknown> = {
-          email: params.email,
           email_deliverability: params.emailDeliverability,
         };
-        if (
-          category === 'enriched_work' &&
-          params.emailDeliverability === 'verified'
-        ) {
+        if (shouldPromotePrimary) contactPatch.email = params.email;
+        if (category === 'enriched_work' && params.emailDeliverability === 'verified') {
           contactPatch.email_status = 'aligned_current';
           contactPatch.email_status_reasoning = 'Email domain matches the resolved current company.';
         }

@@ -4,6 +4,7 @@ import {
   classifyEnrichedEmail,
   emailsEqual,
   looksLikeEmail,
+  shouldPromoteVerifiedCandidateToPrimary,
   type ContactEmailRow,
 } from '@/lib/contact-emails';
 import { shouldOfferFindNewEmailForContact } from '@/lib/contact-profile-display';
@@ -30,6 +31,7 @@ type ContactForFinder = {
   email: string | null;
   email_status: string | null;
   email_deliverability: string | null;
+  updated_at: string | null;
   priority_score: number | null;
   crm_is_suppressed: boolean | null;
   company_name: string | null;
@@ -134,7 +136,7 @@ export async function POST(
 
     const { data: contact, error: contactError } = await supabase
       .from('contacts')
-      .select('id, user_id, first_name, last_name, full_name, email, email_status, email_deliverability, priority_score, crm_is_suppressed, company_name, company_domain, resolved_current_company_name, resolved_current_company_domain')
+      .select('id, user_id, first_name, last_name, full_name, email, email_status, email_deliverability, updated_at, priority_score, crm_is_suppressed, company_name, company_domain, resolved_current_company_name, resolved_current_company_domain')
       .eq('id', id)
       .eq('user_id', user.id)
       .maybeSingle();
@@ -247,10 +249,8 @@ export async function POST(
       metadata: { email, status: validation.status ?? null, sub_status: validation.sub_status ?? null },
     }).catch(() => {});
 
-    const category = classifyEnrichedEmail(
-      email,
-      typedContact.resolved_current_company_domain || typedContact.company_domain,
-    );
+    const currentCompanyDomain = typedContact.resolved_current_company_domain || typedContact.company_domain;
+    const category = classifyEnrichedEmail(email, currentCompanyDomain);
 
     const { data: existingRows, error: existingError } = await supabase
       .from('contact_emails')
@@ -301,21 +301,49 @@ export async function POST(
       !typedContact.email ||
       !looksLikeEmail(typedContact.email) ||
       typedContact.email_status === 'stale_suspected';
-    const contactPatch: Record<string, unknown> = { email_deliverability: emailDeliverability };
-    if (shouldReplacePrimary) contactPatch.email = email;
-    if (category === 'enriched_work' && emailDeliverability === 'verified') {
+    const candidateIsCurrentPrimary = Boolean(typedContact.email && emailsEqual(typedContact.email, email));
+    const shouldPromotePrimary = shouldPromoteVerifiedCandidateToPrimary({
+      canReplacePrimary: shouldReplacePrimary,
+      candidateEmail: email,
+      candidateDeliverability: emailDeliverability,
+      currentCompanyDomain,
+    });
+    const contactPatch: Record<string, unknown> = {};
+    if (candidateIsCurrentPrimary || shouldPromotePrimary) {
+      contactPatch.email_deliverability = emailDeliverability;
+    }
+    if (shouldPromotePrimary) contactPatch.email = email;
+    if (shouldPromotePrimary && category === 'enriched_work') {
       contactPatch.email_status = 'aligned_current';
       contactPatch.email_status_reasoning = 'Email domain matches the resolved current company.';
     }
-    const { data: updatedContact, error: contactUpdateError } = await supabase
-      .from('contacts')
-      .update(contactPatch)
-      .eq('id', id)
-      .eq('user_id', user.id)
-      .select('id, email, email_deliverability, email_status, updated_at')
-      .maybeSingle();
 
-    if (contactUpdateError) return NextResponse.json({ error: contactUpdateError.message }, { status: 500 });
+    let updatedContact: {
+      id: string;
+      email: string | null;
+      email_deliverability: string | null;
+      email_status: string | null;
+      updated_at: string | null;
+    } | null = {
+      id: typedContact.id,
+      email: typedContact.email,
+      email_deliverability: typedContact.email_deliverability,
+      email_status: typedContact.email_status,
+      updated_at: typedContact.updated_at,
+    };
+
+    if (Object.keys(contactPatch).length > 0) {
+      const { data: updated, error: contactUpdateError } = await supabase
+        .from('contacts')
+        .update(contactPatch)
+        .eq('id', id)
+        .eq('user_id', user.id)
+        .select('id, email, email_deliverability, email_status, updated_at')
+        .maybeSingle();
+
+      if (contactUpdateError) return NextResponse.json({ error: contactUpdateError.message }, { status: 500 });
+      updatedContact = updated;
+    }
 
     const { data: emailRows, error: emailRowsError } = await supabase
       .from('contact_emails')
