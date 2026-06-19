@@ -1,20 +1,20 @@
-import type Stripe from 'stripe';
+type StripeObjectReference = string | { id?: unknown } | null | undefined;
 
-type InvoiceWithSubscriptionReferences = Stripe.Invoice & {
-  subscription?: string | Stripe.Subscription | null;
+type InvoiceWithSubscriptionReferences = {
+  subscription?: StripeObjectReference;
   parent?: {
     subscription_details?: {
-      subscription?: string | Stripe.Subscription | null;
+      subscription?: StripeObjectReference;
     } | null;
   } | null;
 };
 
-function stripeObjectId(value: string | { id?: unknown } | null | undefined): string | null {
+function stripeObjectId(value: StripeObjectReference): string | null {
   if (typeof value === 'string') return value;
   return typeof value?.id === 'string' ? value.id : null;
 }
 
-export function invoiceSubscriptionId(invoice: Stripe.Invoice): string | null {
+export function invoiceSubscriptionId(invoice: unknown): string | null {
   const invoiceWithRefs = invoice as InvoiceWithSubscriptionReferences;
   return (
     stripeObjectId(invoiceWithRefs.subscription) ??
