@@ -109,7 +109,9 @@ test('isFreeMailDomain', () => {
 test('pattern_guessed integrates with deliverability machinery', () => {
   const meta = getContactEmailDeliverabilityDisplayMeta('pattern_guessed');
   assert.equal(meta.icon, 'warning');
-  assert.match(meta.label.toLowerCase(), /guess/);
+  // User-facing label intentionally avoids internal terms like "guess";
+  // it signals the address is unverified and must be checked before use.
+  assert.match(meta.label.toLowerCase(), /verify/);
 
   // Guessed addresses stay eligible for ZeroBounce verification…
   assert.equal(shouldRunAutomatedEmailVerification('pattern_guessed', 'pattern'), true);

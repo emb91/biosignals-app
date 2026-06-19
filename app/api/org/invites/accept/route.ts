@@ -29,7 +29,7 @@ export async function POST(request: Request) {
 
   const { data: invite, error: inviteError } = await admin
     .from('org_invites')
-    .select('id, org_id, email, role, status')
+    .select('id, org_id, email, role, status, expires_at')
     .eq('token', token)
     .maybeSingle();
 
@@ -38,6 +38,10 @@ export async function POST(request: Request) {
   }
   if (invite.status !== 'pending') {
     return NextResponse.json({ error: 'This invite is no longer valid' }, { status: 410 });
+  }
+  if (invite.expires_at && new Date(invite.expires_at).getTime() < Date.now()) {
+    await admin.from('org_invites').update({ status: 'revoked' }).eq('id', invite.id);
+    return NextResponse.json({ error: 'This invite has expired. Ask for a new one.' }, { status: 410 });
   }
 
   // Consent guard: the logged-in user must own the invited email.
