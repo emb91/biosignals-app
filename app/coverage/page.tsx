@@ -51,6 +51,7 @@ type CoverageTargetResponse = {
 
 type CardsMeta = {
   period: string;
+  sourcingActive: boolean;
   hasCrm: boolean;
   totalDeals: number;
   attributedDeals: number;
@@ -376,6 +377,27 @@ export default function CoveragePage() {
       void loadTarget();
     }
   }, [user, loadCards, loadTarget]);
+
+  // Coverage responds to sourcing: poll while a sourcing job is in flight so
+  // counts and the "+N recent" markers move as imports land, and refresh when
+  // the tab regains focus (the user typically starts sourcing on another page).
+  const sourcingActive = meta?.sourcingActive ?? false;
+  useEffect(() => {
+    if (!user || !sourcingActive) return;
+    const interval = setInterval(() => {
+      void loadCards();
+    }, 20_000);
+    return () => clearInterval(interval);
+  }, [user, sourcingActive, loadCards]);
+
+  useEffect(() => {
+    if (!user) return;
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void loadCards();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [user, loadCards]);
 
   const saveTarget = useCallback(async () => {
     const value = Number(draftValue.replace(/[^0-9.]/g, ''));
@@ -1316,6 +1338,14 @@ export default function CoveragePage() {
                             />
                             <span className={cn('dt-num', card.company_count === 0 && 'empty')}>
                               {card.company_count.toLocaleString()}
+                              {card.recent_acquisition && card.recent_acquisition.imported_company_count > 0 && (
+                                <span
+                                  className="ml-1 align-middle text-[10px] font-semibold text-emerald-600"
+                                  title="Added by sourcing in the last 14 days"
+                                >
+                                  +{card.recent_acquisition.imported_company_count.toLocaleString()} recent
+                                </span>
+                              )}
                             </span>
                             <span style={{ textAlign: 'center' }}>
                               <FitCell v={card.avg_company_fit} />
@@ -1323,7 +1353,10 @@ export default function CoveragePage() {
                             <span className={cn('dt-num', card.contact_count === 0 && 'empty')}>
                               {card.contact_count.toLocaleString()}
                               {card.recent_acquisition && card.recent_acquisition.imported_contact_count > 0 && (
-                                <span className="ml-1 align-middle text-[10px] font-semibold text-emerald-600">
+                                <span
+                                  className="ml-1 align-middle text-[10px] font-semibold text-emerald-600"
+                                  title="Added by sourcing in the last 14 days"
+                                >
                                   +{card.recent_acquisition.imported_contact_count.toLocaleString()} recent
                                 </span>
                               )}

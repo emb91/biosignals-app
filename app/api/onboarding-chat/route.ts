@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
+import { completeLlm } from '@/lib/llm-client';
 import { createClient } from '@/lib/supabase-server';
 import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
@@ -167,6 +168,32 @@ function normalizeWebsiteUrl(value: string): string {
   return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
 
+/** Serialize a chat history into a single prompt for the provider-routing llm-client. */
+function flattenConversationToPrompt(msgs: Anthropic.MessageParam[]): string {
+  const renderContent = (content: Anthropic.MessageParam['content']): string => {
+    if (typeof content === 'string') return content;
+    return content
+      .map((block) =>
+        block && typeof block === 'object' && 'type' in block && block.type === 'text' && typeof (block as { text?: unknown }).text === 'string'
+          ? (block as { text: string }).text
+          : '',
+      )
+      .filter(Boolean)
+      .join('\n');
+  };
+
+  if (msgs.length <= 1) return renderContent(msgs[0]?.content ?? '');
+
+  const prior = msgs.slice(0, -1);
+  const last = msgs[msgs.length - 1];
+  return [
+    'Previous conversation:',
+    ...prior.map((m) => `${m.role}: ${renderContent(m.content)}`),
+    '',
+    `Current message: ${renderContent(last.content)}`,
+  ].join('\n');
+}
+
 function getAssistantText(blocks: Anthropic.ContentBlock[]): string {
   return blocks
     .filter((block) => block.type === 'text')
@@ -184,6 +211,153 @@ function buildToolResult(
     tool_use_id: toolUse.id,
     content,
   };
+}
+
+// ── Tool-turn with OpenRouter fallback ───────────────────────────────────────
+// The conversation loop needs tool calling, which lib/llm-client doesn't
+// support — so this route carries its own fallback: on an Anthropic failure
+// (credit outage, 5xx) the same turn is replayed through OpenRouter's
+// OpenAI-compatible tools API against the same Claude model, and the response
+// is converted back into Anthropic content blocks so the loop never knows.
+
+const TOOL_TURN_MODEL_ANTHROPIC = 'claude-haiku-4-5';
+const TOOL_TURN_MODEL_OPENROUTER = 'anthropic/claude-haiku-4-5';
+
+type ToolTurn = {
+  content: Anthropic.ContentBlock[];
+  usage: { input_tokens: number; output_tokens: number };
+  provider: 'anthropic' | 'openrouter';
+  model: string;
+};
+
+function toOpenAiMessages(system: string, messages: Anthropic.MessageParam[]): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [{ role: 'system', content: system }];
+  for (const msg of messages) {
+    if (typeof msg.content === 'string') {
+      out.push({ role: msg.role, content: msg.content });
+      continue;
+    }
+    const texts: string[] = [];
+    const toolCalls: Array<Record<string, unknown>> = [];
+    const toolResults: Array<{ id: string; content: string }> = [];
+    for (const block of msg.content) {
+      if (block.type === 'text') texts.push(block.text);
+      else if (block.type === 'tool_use') {
+        toolCalls.push({
+          id: block.id,
+          type: 'function',
+          function: { name: block.name, arguments: JSON.stringify(block.input ?? {}) },
+        });
+      } else if (block.type === 'tool_result') {
+        toolResults.push({
+          id: block.tool_use_id,
+          content: typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? ''),
+        });
+      }
+    }
+    if (msg.role === 'assistant') {
+      out.push({
+        role: 'assistant',
+        content: texts.join('\n') || null,
+        ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+      });
+    } else {
+      // Anthropic puts tool_result blocks in a user turn; OpenAI wants role:'tool' messages.
+      for (const tr of toolResults) out.push({ role: 'tool', tool_call_id: tr.id, content: tr.content });
+      if (texts.length > 0) out.push({ role: 'user', content: texts.join('\n') });
+      if (toolResults.length === 0 && texts.length === 0) out.push({ role: 'user', content: '' });
+    }
+  }
+  return out;
+}
+
+async function createToolTurnViaOpenRouter(params: {
+  system: string;
+  messages: Anthropic.MessageParam[];
+}): Promise<ToolTurn> {
+  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: TOOL_TURN_MODEL_OPENROUTER,
+      max_tokens: 256,
+      messages: toOpenAiMessages(params.system, params.messages),
+      tools: TOOLS.map((t) => ({
+        type: 'function',
+        function: { name: t.name, description: t.description, parameters: t.input_schema },
+      })),
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`OpenRouter tool turn failed: ${res.status} ${(await res.text().catch(() => '')).slice(0, 200)}`);
+  }
+  const data = (await res.json()) as {
+    choices?: Array<{
+      message?: {
+        content?: string | null;
+        tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }>;
+      };
+    }>;
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
+  };
+  const message = data.choices?.[0]?.message;
+  const content: Anthropic.ContentBlock[] = [];
+  if (message?.content) {
+    content.push({ type: 'text', text: message.content, citations: null } as Anthropic.ContentBlock);
+  }
+  for (const call of message?.tool_calls ?? []) {
+    if (!call.function?.name) continue;
+    let input: unknown = {};
+    try {
+      input = JSON.parse(call.function.arguments || '{}');
+    } catch {
+      /* leave as empty input; the loop's validators handle it */
+    }
+    content.push({
+      type: 'tool_use',
+      id: call.id || `or_${Math.random().toString(36).slice(2)}`,
+      name: call.function.name,
+      input,
+    } as Anthropic.ContentBlock);
+  }
+  return {
+    content,
+    usage: {
+      input_tokens: data.usage?.prompt_tokens ?? 0,
+      output_tokens: data.usage?.completion_tokens ?? 0,
+    },
+    provider: 'openrouter',
+    model: TOOL_TURN_MODEL_OPENROUTER,
+  };
+}
+
+async function createToolTurn(params: { system: string; messages: Anthropic.MessageParam[] }): Promise<ToolTurn> {
+  try {
+    const response = await client.messages.create({
+      model: TOOL_TURN_MODEL_ANTHROPIC,
+      max_tokens: 256,
+      system: params.system,
+      messages: params.messages,
+      tools: TOOLS,
+    });
+    return {
+      content: response.content,
+      usage: {
+        input_tokens: response.usage.input_tokens,
+        output_tokens: response.usage.output_tokens,
+      },
+      provider: 'anthropic',
+      model: TOOL_TURN_MODEL_ANTHROPIC,
+    };
+  } catch (error) {
+    if (!process.env.OPENROUTER_API_KEY) throw error;
+    const msg = error instanceof Error ? error.message : String(error);
+    console.warn(`[onboarding-chat] Anthropic tool turn failed, falling back to OpenRouter: ${msg.slice(0, 200)}`);
+    return createToolTurnViaOpenRouter(params);
+  }
 }
 
 async function fetchAccountContext(supabase: Awaited<ReturnType<typeof createClient>>, userId: string): Promise<AccountContext> {
@@ -303,20 +477,20 @@ export async function POST(request: Request) {
       const system =
         resolvedMode === 'narration' ? buildSetupNarrationSystemPrompt() : buildSetupPhaseHelpSystemPrompt(phase ?? '');
 
-      const response = await client.messages.create({
-        model: 'claude-haiku-4-5',
-        max_tokens: 512,
+      const completion = await completeLlm({
+        feature: 'onboarding_chat',
+        prompt: flattenConversationToPrompt(conversation),
         system,
-        messages: conversation,
+        maxTokens: 512,
       });
       await recordLlmUsageEvent({
         userId: user.id,
         userEmail: user.email,
-        provider: 'anthropic',
+        provider: completion.provider,
         feature: resolvedMode === 'narration' ? 'onboarding_narration' : 'onboarding_phase_help',
         route: '/api/onboarding-chat',
-        model: 'claude-haiku-4-5',
-        usage: response.usage,
+        model: completion.model,
+        usage: completion.usage,
         metadata: {
           mode: resolvedMode,
           phase: phase ?? null,
@@ -324,7 +498,7 @@ export async function POST(request: Request) {
         },
       });
 
-      const text = getAssistantText(response.content);
+      const text = completion.text;
       return NextResponse.json({
         role: 'assistant',
         text,
@@ -336,20 +510,17 @@ export async function POST(request: Request) {
     let finalText = '';
 
     for (let attempt = 0; attempt < 4; attempt += 1) {
-      const response = await client.messages.create({
-        model: 'claude-haiku-4-5',
-        max_tokens: 256,
+      const response = await createToolTurn({
         system: buildSystemPrompt(firstName, phase, accountCtx),
         messages: conversation,
-        tools: TOOLS,
       });
       await recordLlmUsageEvent({
         userId: user.id,
         userEmail: user.email,
-        provider: 'anthropic',
+        provider: response.provider,
         feature: 'onboarding_chat',
         route: '/api/onboarding-chat',
-        model: 'claude-haiku-4-5',
+        model: response.model,
         usage: response.usage,
         metadata: {
           mode: resolvedMode,

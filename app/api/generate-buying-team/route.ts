@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import Anthropic from '@anthropic-ai/sdk';
+import { completeLlm } from '@/lib/llm-client';
 import {
   BUSINESS_AREA_OPTIONS,
   COMPANY_SIZE_OPTIONS,
@@ -7,8 +7,6 @@ import {
   totalFundingToBracket,
 } from '@/lib/arcova-taxonomy';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
-
-const MODEL = 'claude-sonnet-4-6';
 
 const SENIORITY_LEVEL_OPTIONS = [
   'C-Level',
@@ -114,8 +112,9 @@ function orgScaleInstructions(band: OrgScaleBand): string {
 
 export async function POST(request: NextRequest) {
   try {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) return NextResponse.json({ error: 'Missing ANTHROPIC_API_KEY' }, { status: 500 });
+    if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENROUTER_API_KEY) {
+      return NextResponse.json({ error: 'Missing LLM provider API key' }, { status: 500 });
+    }
 
     const body = await request.json() as {
       // Seller profile
@@ -174,8 +173,6 @@ export async function POST(request: NextRequest) {
         ? `Total funding raised by example target account: ${fundingBracket}. Use this to calibrate how many specialist roles plausibly exist.`
         : '',
     ].filter(Boolean).join(' ');
-
-    const client = new Anthropic({ apiKey });
 
     const prompt = `You are a B2B sales intelligence analyst. Based on what a company sells and the type of accounts they target, identify the most likely buying team functions and seniority levels.
 
@@ -239,24 +236,21 @@ Return ONLY valid JSON — no markdown, no explanation:
   "job_titles": [...4–6 illustrative real-world job titles scaled to organisation size...]
 }`;
 
-    const message = await client.messages.create({
-      model: MODEL,
-      max_tokens: 768,
-      messages: [{ role: 'user', content: prompt }],
+    const completion = await completeLlm({
+      feature: 'icp_buying_team',
+      prompt,
+      maxTokens: 768,
     });
 
     await recordLlmUsageEvent({
-      provider: 'anthropic',
+      provider: completion.provider,
       feature: 'generate_buying_team',
       route: 'app/api/generate-buying-team',
-      model: MODEL,
-      usage: message.usage,
+      model: completion.model,
+      usage: completion.usage,
     });
 
-    const text = message.content
-      .filter((b) => b.type === 'text')
-      .map((b) => (b as { type: 'text'; text: string }).text)
-      .join('');
+    const text = completion.text;
 
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) return NextResponse.json({ error: 'No JSON in response' }, { status: 500 });

@@ -38,6 +38,18 @@ export function getNextSetupPath(state: Pick<SetupState, 'step1Complete' | 'step
 
 const SetupStateContext = createContext<SetupState | undefined>(undefined);
 
+const SETUP_COMPLETE_EVENT = 'arcova:setup-complete';
+
+/**
+ * Call when the guided setup flow finishes saving. The provider fetches setup
+ * state once per session, so without this the post-setup redirect races a
+ * stale "incomplete" snapshot and SetupGuard bounces the user straight back
+ * into /arcova-setup at step 1.
+ */
+export function notifySetupComplete() {
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(SETUP_COMPLETE_EVENT));
+}
+
 /**
  * Single shared source for onboarding completion flags (company profile + first ICP).
  * Avoid mounting multiple independent `useEffect` polls — duplicates briefly disagreed during
@@ -121,6 +133,21 @@ export function SetupStateProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, [user, authLoading]);
+
+  // Optimistic completion: the setup flow just saved everything, so flip the
+  // flags immediately rather than waiting for a refetch the guard would race.
+  useEffect(() => {
+    const onComplete = () =>
+      setState((prev) => ({
+        ...prev,
+        step1Complete: true,
+        step2Complete: true,
+        setupComplete: true,
+        loading: false,
+      }));
+    window.addEventListener(SETUP_COMPLETE_EVENT, onComplete);
+    return () => window.removeEventListener(SETUP_COMPLETE_EVENT, onComplete);
+  }, []);
 
   return <SetupStateContext.Provider value={state}>{children}</SetupStateContext.Provider>;
 }

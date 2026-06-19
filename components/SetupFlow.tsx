@@ -25,6 +25,7 @@ import SetupProfilePanel, {
   type IcpChangeValue,
 } from '@/components/SetupProfilePanel';
 import { useEnrichmentGuard } from '@/context/EnrichmentGuardContext';
+import { notifySetupComplete } from '@/lib/use-setup-state';
 import {
   BUSINESS_AREA_OPTIONS,
   COMPANY_SIZE_OPTIONS,
@@ -3686,6 +3687,13 @@ export default function SetupFlow({
   // ── UI state ─────────────────────────────────────────────────────────────
   const [phase, setPhase] = useState<Phase>('greeting');
   const [bootstrapFinished, setBootstrapFinished] = useState(false);
+
+  // Every completion leg ends in phase 'done' followed by a redirect. Flip the
+  // shared setup-state flags BEFORE that redirect, or SetupGuard races its
+  // stale "incomplete" snapshot and bounces the user back to step 1.
+  useEffect(() => {
+    if (phase === 'done') notifySetupComplete();
+  }, [phase]);
   const [thread, setThread] = useState<DisplayMsg[]>([]);
   const [thinking, setThinking] = useState(true);
   const [inputEnabled, setInput] = useState(false);
@@ -4126,26 +4134,39 @@ export default function SetupFlow({
 
     setThinking(true);
     try {
-      const res = await fetch('/api/onboarding-chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: historyRef.current,
-          firstName: firstNameRef.current,
-          mode,
-          phase: mapPhaseForOnboardingApi(phase),
-          context: {
-            entryPoint,
-            selectedCompanyName: selectedCompanyName ?? selectedCompanyRef.current?.name ?? null,
-            availableCompanyCount,
-          },
-        }),
-      });
-      if (!res.ok) {
-        const body = await res.text().catch(() => '');
-        throw new Error(`onboarding-chat ${res.status}${body ? `: ${body.slice(0, 200)}` : ''}`);
+      const doFetch = async (): Promise<ApiOnboardingJson> => {
+        const res = await fetch('/api/onboarding-chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messages: historyRef.current,
+            firstName: firstNameRef.current,
+            mode,
+            phase: mapPhaseForOnboardingApi(phase),
+            context: {
+              entryPoint,
+              selectedCompanyName: selectedCompanyName ?? selectedCompanyRef.current?.name ?? null,
+              availableCompanyCount,
+            },
+          }),
+        });
+        if (!res.ok) {
+          const body = await res.text().catch(() => '');
+          throw new Error(`onboarding-chat ${res.status}${body ? `: ${body.slice(0, 200)}` : ''}`);
+        }
+        return (await res.json()) as ApiOnboardingJson;
+      };
+
+      // One silent retry: transient provider hiccups shouldn't surface as a
+      // dead-end apology in the user's first session.
+      let data: ApiOnboardingJson;
+      try {
+        data = await doFetch();
+      } catch (firstError) {
+        console.warn('[setup-flow] onboarding-chat failed, retrying once:', firstError);
+        await new Promise((r) => setTimeout(r, 1500));
+        data = await doFetch();
       }
-      const data = (await res.json()) as ApiOnboardingJson;
 
       for (const action of data.actions || []) {
         if (action.type === 'capture_name' && action.first_name) {
@@ -4178,7 +4199,8 @@ export default function SetupFlow({
       };
     } catch (error) {
       console.error('[setup-flow] onboarding-chat error:', error);
-      const fallback = 'Sorry, I hit a snag there. Can you try that again?';
+      const fallback =
+        'I had trouble connecting just now — your progress is saved. Give it a moment, then send your message again.';
       return {
         text: fallback,
         actions: [],
@@ -5100,7 +5122,7 @@ export default function SetupFlow({
             company_name: (eventData.company_name as string) || null,
             description: Array.isArray(eventData.description) ? (eventData.description as string[]) : null,
           });
-        } else if (event === 'step_apollo') {
+        } else if (event === 'step_firmographics') {
           customerUrlStep2AnchorRef.current = Date.now();
           setCustomerUrlAwaitingLinkedinEvent(true);
           setCustomerUrlLoadMsg(TARGET_ICP_LINKEDIN_LOOKUP_LINES[0]);
@@ -5124,7 +5146,7 @@ export default function SetupFlow({
           } else {
             setCustomerUrlLoadMsg('No strong public profile signal ✓ Continuing with web and available records…');
           }
-        } else if (event === 'step_apify') {
+        } else if (event === 'step_company_profile') {
           customerUrlStep2AnchorRef.current = null;
           setCustomerUrlLinkedinWait(false);
           setCustomerUrlLoadMsg('Sources merged ✓ Shaping the profile…');
@@ -5298,7 +5320,7 @@ export default function SetupFlow({
             company_name: (eventData.company_name as string) || null,
             description: Array.isArray(eventData.description) ? eventData.description : null,
           });
-        } else if (event === 'step_apollo') {
+        } else if (event === 'step_firmographics') {
           ownCompanyStep2AnchorRef.current = Date.now();
           setOwnEnrichAwaitingLinkedinEvent(true);
           setLoadMsg(ENRICH_GENERIC_LOOKUP_LINES[0]);
@@ -5321,7 +5343,7 @@ export default function SetupFlow({
           } else {
             setLoadMsg('No strong public profile signal ✓ Continuing with web and available records…');
           }
-        } else if (event === 'step_apify') {
+        } else if (event === 'step_company_profile') {
           ownCompanyStep2AnchorRef.current = null;
           setOwnEnrichLinkedinWait(false);
           setLoadMsg('Sources merged ✓ Shaping the profile…');

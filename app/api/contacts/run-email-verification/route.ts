@@ -20,6 +20,8 @@ import {
   recordProviderUsage,
   zerobounceValidationBillableQuantity,
 } from '@/lib/provider-usage';
+import { createAdminClient } from '@/lib/supabase-admin';
+import { refundCredits, reserveCredits, settleCredits } from '@/lib/billing/credits';
 
 type ContactForVerification = {
   id: string;
@@ -186,7 +188,7 @@ async function verifyWithZeroBounce(email: string): Promise<ZeroBounceResponse> 
   const data = (await res.json().catch(() => ({}))) as ZeroBounceResponse;
 
   if (!res.ok) {
-    throw new Error(data.error || `ZeroBounce returned HTTP ${res.status}`);
+    throw new Error(data.error || `Email validation returned HTTP ${res.status}`);
   }
 
   if (data.error) {
@@ -223,7 +225,7 @@ async function findEmailWithZeroBounce(contact: ContactForVerification): Promise
   const data = (await res.json().catch(() => ({}))) as ZeroBounceFinderResponse;
 
   if (!res.ok) {
-    throw new Error(data.error || data.failure_reason || `ZeroBounce Email Finder returned HTTP ${res.status}`);
+    throw new Error(data.error || data.failure_reason || `Email lookup returned HTTP ${res.status}`);
   }
 
   if (data.error) throw new Error(data.error);
@@ -231,6 +233,8 @@ async function findEmailWithZeroBounce(contact: ContactForVerification): Promise
 }
 
 export async function POST(request: Request) {
+  let creditTransactionId: string | null = null;
+  let billableValidationCount = 0;
   try {
     const supabase = await createClient();
     const {
@@ -244,12 +248,12 @@ export async function POST(request: Request) {
 
     if (!process.env.ZEROBOUNCE_API_KEY) {
       return NextResponse.json(
-        { error: 'Missing ZEROBOUNCE_API_KEY. Add it to the server environment before refreshing emails.' },
+        { error: 'Email verification is temporarily unavailable.' },
         { status: 400 },
       );
     }
 
-    const body = (await request.json().catch(() => ({}))) as { limit?: unknown };
+    const body = (await request.json().catch(() => ({}))) as { limit?: unknown; operationId?: string };
     const limit = normalizeLimit(body.limit);
     const priorityMin = configuredPriorityMin();
 
@@ -291,6 +295,29 @@ export async function POST(request: Request) {
       const list = directoryByContact.get(row.contact_id) ?? [];
       list.push(row);
       directoryByContact.set(row.contact_id, list);
+    }
+    const maxValidationRequests = contacts.reduce((sum, contact) => {
+      const candidates = buildRefreshEmailCandidates(
+        contact.email?.trim() || null,
+        toContactEmailRows(contact, directoryByContact.get(contact.id) ?? []),
+      );
+      return sum + candidates.length;
+    }, 0);
+    if (maxValidationRequests > 0) {
+      const admin = createAdminClient();
+      const { data: member } = await admin.from('org_members').select('org_id')
+        .eq('user_id', user.id).maybeSingle<{ org_id: string }>();
+      if (member?.org_id) {
+        const reservation = await reserveCredits({
+          orgId: member.org_id,
+          userId: user.id,
+          action: 'email_validation',
+          quantity: maxValidationRequests,
+          idempotencyKey: `bulk-email-validation:${body.operationId?.trim() || crypto.randomUUID()}`,
+        });
+        if (!reservation.ok) return NextResponse.json(reservation, { status: 402 });
+        creditTransactionId = reservation.transactionId;
+      }
     }
 
     const result: RefreshResult = {
@@ -425,6 +452,7 @@ export async function POST(request: Request) {
           source: params.source,
         },
       }).catch(() => {});
+      billableValidationCount += zerobounceValidationBillableQuantity(verification.status);
 
       await persistValidatedEmail({
         contact: params.contact,
@@ -503,7 +531,6 @@ export async function POST(request: Request) {
       const currentDomain = contactCurrentDomain(contact);
 
       if (candidates.length === 0) {
-        await findAndValidateEmail(contact);
         continue;
       }
 
@@ -584,13 +611,15 @@ export async function POST(request: Request) {
         }
       }
 
-      if (!resolved) {
-        await findAndValidateEmail(contact);
-      }
+      // Email finding is an explicit 11-credit customer action. Background
+      // validation never starts a finder request automatically.
     }
 
+    await settleCredits(creditTransactionId, billableValidationCount * 0.5);
+    creditTransactionId = null;
     return NextResponse.json({ success: true, result });
   } catch (error) {
+    await refundCredits(creditTransactionId).catch(() => {});
     console.error('[run-email-verification] error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }

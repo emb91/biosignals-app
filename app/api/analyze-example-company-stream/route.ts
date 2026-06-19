@@ -26,6 +26,12 @@ import { resolveCompanyTaxonomy } from '@/lib/company-monitor/taxonomy';
 import { encodeSSEEvent, SSE_HEADERS } from '@/lib/sse';
 import type { TargetCompanyEnrichmentResult } from '@/lib/target-company-enrichment';
 
+function publicEnrichmentPayload(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([key]) => !/apollo|apify|zerobounce|provider/i.test(key)),
+  );
+}
+
 function normalizeDomain(value?: string | null): string | null {
   const trimmed = (value ?? '').trim().toLowerCase();
   if (!trimmed) return null;
@@ -70,7 +76,7 @@ export async function POST(request: Request) {
         const apolloPromise = enrichOrganizationWithApollo({ company_domain: domain })
           .then((result) => {
             apollo = result;
-            emit('step_apollo', result as Record<string, unknown>);
+            emit('step_firmographics', result as Record<string, unknown>);
           })
           .catch((err: unknown) => {
             console.error('[analyze-example-company-stream] Apollo failed:', err);
@@ -102,7 +108,7 @@ export async function POST(request: Request) {
         }
 
         const apify = extractApifyFirmographics(apifyRaw);
-        emit('step_apify', {
+        emit('step_company_profile', {
           logo_url: apify.logo_url ?? null,
           tagline: apify.tagline ?? null,
           follower_count: apify.follower_count ?? null,
@@ -224,7 +230,7 @@ export async function POST(request: Request) {
           apify_firmographics: apifyRaw,
         };
 
-        emit('done', result as unknown as Record<string, unknown>);
+        emit('done', publicEnrichmentPayload(result as unknown as Record<string, unknown>));
         safeClose();
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : 'Unknown error';

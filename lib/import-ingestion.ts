@@ -14,6 +14,8 @@ export type EnrichedImportRecord = {
   batch_id?: string;
   user_id: string;
   enrichment_provider?: 'apollo';
+  triage_group?: 'high' | 'medium' | 'low';
+  triage_version?: string;
   full_name?: string;
   first_name?: string;
   last_name?: string;
@@ -506,6 +508,21 @@ export async function ingestEnrichedRecords(
             });
           }
         }
+      }
+
+      // Write triage classification to user_contacts when provided.
+      if (record.triage_group && importedRow?.contact_id) {
+        void supabase
+          .from('user_contacts')
+          .update({
+            triage_group: record.triage_group,
+            triage_scored_at: new Date().toISOString(),
+            triage_version: record.triage_version ?? 'triage_v1',
+          })
+          .eq('id', importedRow.contact_id)
+          .then(({ error }: { error: unknown }) => {
+            if (error) console.error('[import-ingestion] triage update failed:', error);
+          });
       }
 
       await supabase

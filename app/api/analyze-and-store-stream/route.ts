@@ -33,6 +33,12 @@ import {
 import { encodeSSEEvent, SSE_HEADERS } from '@/lib/sse';
 import { getOrgContext, canEditOrgSetup } from '@/lib/org-context';
 
+function publicEnrichmentPayload(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([key]) => !/apollo|apify|zerobounce|provider/i.test(key)),
+  );
+}
+
 function normalizeDomain(value?: string | null): string | null {
   const trimmed = (value ?? '').trim().toLowerCase();
   if (!trimmed) return null;
@@ -115,7 +121,7 @@ export async function POST(request: NextRequest) {
         const apolloPromise = enrichOrganizationWithApollo({ company_domain: domain })
           .then((result) => {
             apollo = result as Record<string, unknown>;
-            emit('step_apollo', result as Record<string, unknown>);
+            emit('step_firmographics', result as Record<string, unknown>);
           })
           .catch((err: unknown) => {
             logApiOperationError('[analyze-and-store-stream] Apollo failed', err, {
@@ -156,7 +162,7 @@ export async function POST(request: NextRequest) {
         }
 
         const apify = extractApifyFirmographics(apifyRaw);
-        emit('step_apify', {
+        emit('step_company_profile', {
           logo_url: apify.logo_url ?? null,
           tagline: apify.tagline ?? null,
           follower_count: apify.follower_count ?? null,
@@ -254,7 +260,7 @@ export async function POST(request: NextRequest) {
         console.log('[analyze-and-store-stream] Done. employee_count:', result.employee_count,
           'follower_count:', result.follower_count, 'funding_stage:', result.funding_stage);
 
-        emit('done', result as Record<string, unknown>);
+        emit('done', publicEnrichmentPayload(result as Record<string, unknown>));
         safeClose();
       } catch (err: unknown) {
         const message = formatSupabaseWriteError(err);

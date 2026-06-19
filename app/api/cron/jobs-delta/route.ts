@@ -1,102 +1,79 @@
-/**
- * Weekly hiring signal cron — Vercel cron entrypoint.
- *
- * Runs runHiringMonitor for every active user. The monitor calls the
- * curious_coder/linkedin-jobs-scraper Apify actor in one batch call per
- * invocation, passing all company search URLs at once — no local DB mirror,
- * no separate sync step.
- *
- * Cron cadence: weekly (Mondays 06:00 UTC). Increase to daily if the
- * company list grows and you want fresher signals.
- *   { "path": "/api/cron/jobs-delta", "schedule": "0 6 * * 1" }
- */
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
-import { persistRunHistory } from '@/lib/signals/run-history';
 import { runHiringMonitor } from '@/lib/signals/run-hiring-monitor';
+import {
+  markAccountSweep,
+  monitoringRepresentativeAccounts,
+  refreshMonitoringUniverse,
+} from '@/lib/billing/monitoring';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
-function messageFromUnknown(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return String(error);
-}
-
-async function loadActiveUserIds(admin: ReturnType<typeof createAdminClient>): Promise<string[]> {
-  const { data, error } = await admin
-    .from('user_companies')
-    .select('user_id')
-    .is('archived_at', null);
-  if (error) throw new Error(`load active users: ${error.message}`);
-  const ids = new Set<string>();
-  for (const row of (data ?? []) as Array<{ user_id?: unknown }>) {
-    if (typeof row.user_id === 'string' && row.user_id) ids.add(row.user_id);
-  }
-  return [...ids];
-}
-
 export async function GET(request: Request) {
-  const cronSecret = process.env.CRON_SECRET;
-  const auth = request.headers.get('authorization');
-  if (!cronSecret || auth !== `Bearer ${cronSecret}`) {
+  if (!process.env.CRON_SECRET || request.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
+  const admin = createAdminClient();
+  const { data: orgRows, error } = await admin.from('organizations').select('id');
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  try {
-    const admin = createAdminClient();
-    const userIds = await loadActiveUserIds(admin);
-    let monitorOk = 0;
-    let monitorFailed = 0;
-    const monitorFailures: Array<{ user_id: string; error: string }> = [];
+  const dispatcherLimit = Math.max(1, Number(process.env.ACCOUNT_MONITOR_DISPATCH_LIMIT ?? '2500'));
+  let remaining = dispatcherLimit;
+  let processed = 0;
+  let failed = 0;
+  const failures: Array<{ org_id: string; error: string }> = [];
 
-    for (const userId of userIds) {
-      try {
-        const result = await runHiringMonitor({ userId });
-        monitorOk += 1;
-        await persistRunHistory(admin, {
-          userId,
-          signalKey: 'hiring_all',
-          runner: 'hiring',
-          scope: 'company',
-          status: result.failed > 0 ? 'failed' : 'success',
-          processed: result.processed,
-          failed: result.failed,
-          emittedSignalTypes: result.emitted_signal_types,
-          recomputedCompanies: result.recomputed_companies,
-          failures: result.failures.map((f) => ({
-            entity_type: 'company',
-            entity_id: f.company_id,
-            error: f.error,
-          })),
-          trigger: 'cron',
-        });
-      } catch (error) {
-        monitorFailed += 1;
-        monitorFailures.push({ user_id: userId, error: messageFromUnknown(error) });
-        console.error(`[cron/jobs-delta] monitor failed for user ${userId}:`, error);
-        await persistRunHistory(admin, {
-          userId,
-          signalKey: 'hiring_all',
-          runner: 'hiring',
-          scope: 'company',
-          status: 'failed',
-          failures: [{ error: messageFromUnknown(error) }],
-          trigger: 'cron',
-        });
+  for (const org of orgRows ?? []) {
+    if (remaining <= 0) break;
+    const orgId = org.id as string;
+    try {
+      await refreshMonitoringUniverse(orgId);
+      const due = await monitoringRepresentativeAccounts(orgId, remaining);
+      remaining -= due.length;
+      const byUser = new Map<string, typeof due>();
+      for (const item of due) {
+        const list = byUser.get(item.userId) ?? [];
+        list.push(item);
+        byUser.set(item.userId, list);
       }
+      for (const [userId, items] of byUser) {
+        const result = await runHiringMonitor({
+          userId,
+          companyIds: items.map((item) => item.companyId),
+        });
+        const failedIds = new Set(result.failures.map((item) => item.company_id));
+        const resultCounts = new Map(result.details.map((item) => [item.company_id, item.postings_scraped]));
+        await Promise.all(items.map(async (item) => {
+          const didFail = failedIds.has(item.companyId);
+          const resultCount = resultCounts.get(item.companyId) ?? 0;
+          await markAccountSweep({
+            monitorId: item.monitorId,
+            cadenceDays: item.cadenceDays,
+            status: didFail ? 'failed' : 'succeeded',
+            resultCount,
+            providerCostUsd: resultCount * 0.001,
+          });
+          if (didFail) failed += 1;
+          else processed += 1;
+        }));
+      }
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      failures.push({ org_id: orgId, error: message });
+      console.error(`[cron/jobs-delta] org ${orgId} failed:`, caught);
     }
-
-    return NextResponse.json({
-      success: true,
-      monitor: {
-        users_total: userIds.length,
-        users_succeeded: monitorOk,
-        users_failed: monitorFailed,
-        failures: monitorFailures,
-      },
-    });
-  } catch (error) {
-    return NextResponse.json({ error: messageFromUnknown(error) }, { status: 500 });
   }
+
+  const { count: overdue } = await admin.from('org_monitored_accounts')
+    .select('id', { count: 'exact', head: true })
+    .eq('status', 'active').lte('next_sweep_at', new Date().toISOString());
+  return NextResponse.json({
+    success: true,
+    processed,
+    failed,
+    overdue: overdue ?? 0,
+    dispatcherLimit,
+    failures,
+  });
 }

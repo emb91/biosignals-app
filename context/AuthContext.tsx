@@ -9,7 +9,7 @@ interface AuthContextType {
   session: Session | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  signup: (email: string, password: string) => Promise<void>;
+  signup: (email: string, password: string, fullName?: string) => Promise<boolean>;
   loginWithGoogle: () => Promise<void>;
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
@@ -55,18 +55,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (error) throw error;
   };
 
-  const signup = async (email: string, password: string) => {
+  // Returns true when the account needs email confirmation before sign-in
+  // (no session yet) — the caller must show "check your email" instead of
+  // navigating into the app.
+  const signup = async (email: string, password: string, fullName?: string): Promise<boolean> => {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
+      options: fullName?.trim() ? { data: { full_name: fullName.trim() } } : undefined,
     });
     if (error) throw error;
-    
+
     // Supabase returns a user with fake id when email already exists (security feature)
     // Check if user.identities is empty, which indicates the email is taken
     if (data?.user?.identities?.length === 0) {
       throw new Error('An account with this email already exists. Try signing in instead, or use Google if you signed up that way.');
     }
+
+    return !data.session;
   };
 
   const loginWithGoogle = async () => {
@@ -85,10 +91,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const resetPassword = async (email: string) => {
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/reset-password`,
+    // Routed server-side (/api/auth/reset) so the recovery email goes through
+    // Resend with a /auth/confirm link, like invites — no Supabase rate limit or
+    // broken template. Always resolves ok (no account enumeration).
+    const res = await fetch('/api/auth/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
     });
-    if (error) throw error;
+    if (!res.ok && res.status !== 200) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(data.error || 'Could not start password reset. Please try again.');
+    }
   };
 
   const updatePassword = async (newPassword: string) => {

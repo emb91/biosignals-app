@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -14,13 +14,29 @@ import { ROUTES } from '@/lib/routes';
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  // Set when signup succeeded but the account needs email confirmation —
+  // we show "check your email" instead of bouncing off the auth gate.
+  const [confirmEmailSentTo, setConfirmEmailSentTo] = useState<string | null>(null);
   
   const { login, signup, loginWithGoogle } = useAuth();
   const router = useRouter();
+
+  // Failed email links (expired/used invite or confirmation) land here as
+  // /login?error=auth_failed via /auth/callback — explain instead of showing
+  // a bare sign-in form with no context.
+  useEffect(() => {
+    const param = new URLSearchParams(window.location.search).get('error');
+    if (param === 'auth_failed') {
+      setError(
+        'That sign-in link didn’t work — it may have expired or already been used. Sign in below, or ask your teammate to send a fresh invite.',
+      );
+    }
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,7 +45,27 @@ export default function LoginPage() {
 
     try {
       if (isSignUp) {
-        await signup(email, password);
+        // Deliverability pre-check — don't ask Supabase to email an undeliverable
+        // address (bounces hurt sender reputation). Fails open server-side.
+        const check = await fetch('/api/auth/validate-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email }),
+        });
+        const result = (await check.json().catch(() => ({ allow: true }))) as {
+          allow: boolean;
+          reason?: string;
+        };
+        if (!result.allow) {
+          setError(result.reason || 'Please double-check that email address.');
+          setLoading(false);
+          return;
+        }
+        const needsEmailConfirm = await signup(email, password, fullName);
+        if (needsEmailConfirm) {
+          setConfirmEmailSentTo(email);
+          return;
+        }
       } else {
         await login(email, password);
       }
@@ -70,6 +106,36 @@ export default function LoginPage() {
     }
   };
 
+  if (confirmEmailSentTo) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-transparent px-4 py-12 sm:px-6 lg:px-8">
+        <div className="max-w-md w-full">
+          <Card>
+            <CardHeader className="text-center">
+              <CardTitle className="text-2xl font-bold text-gray-900">Check your email</CardTitle>
+              <CardDescription>
+                We sent a confirmation link to <strong>{confirmEmailSentTo}</strong>. Click it to
+                activate your account, then come back and sign in.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="text-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmEmailSentTo(null);
+                  setIsSignUp(false);
+                }}
+                className="text-sm text-blue-600 hover:text-blue-500"
+              >
+                Back to sign in
+              </button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-transparent px-4 py-12 sm:px-6 lg:px-8">
       <div className="max-w-md w-full space-y-8">
@@ -94,6 +160,21 @@ export default function LoginPage() {
               )}
               
               <div className="space-y-4">
+                {isSignUp && (
+                  <div>
+                    <Label htmlFor="fullName">Your name</Label>
+                    <Input
+                      id="fullName"
+                      type="text"
+                      value={fullName}
+                      onChange={(e) => setFullName(e.target.value)}
+                      required
+                      className="mt-1"
+                      placeholder="e.g. Jane Smith"
+                      autoComplete="name"
+                    />
+                  </div>
+                )}
                 <div>
                   <Label htmlFor="email">Email address</Label>
                   <Input

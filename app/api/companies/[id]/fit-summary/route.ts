@@ -1,6 +1,6 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { NextResponse } from 'next/server';
 
+import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { createClient } from '@/lib/supabase-server';
 import { isMissingColumnError } from '@/lib/supabase-column-compat';
@@ -94,7 +94,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    if (!process.env.ANTHROPIC_API_KEY) {
+    if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENROUTER_API_KEY) {
       return NextResponse.json({ summary: null as string | null, skipped: true });
     }
 
@@ -223,7 +223,6 @@ export async function POST(
       criteria: hasCriteria ? simplifiedCriteria : null,
     };
 
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const userPrompt = `Here is structured scoring output from our ICP engine (ideal customer profile fit for life science sales). Write exactly one concise sentence for a rep who is looking at this company record.
 
 Explain which ICP profile the company lines up with and the overall fit percentage. Mention score drivers only if they fit naturally inside that same single sentence.
@@ -239,28 +238,26 @@ Rules for your reply:
 - Refer to the company by the name given in "company".
 - End with a period.`;
 
-    const message = await client.messages.create({
-      model: 'claude-haiku-4-5',
-      max_tokens: 220,
-      temperature: 0.35,
+    const completion = await completeLlm({
+      feature: 'company_fit_summary',
+      prompt: userPrompt,
       system:
         'You write concise, accurate explanations for B2B sales users in life sciences. Output only the explanation sentences requested. No preamble or labels.',
-      messages: [{ role: 'user', content: userPrompt }],
+      maxTokens: 220,
+      temperature: 0.35,
     });
 
     await recordLlmUsageEvent({
       userId: user.id,
       userEmail: user.email ?? null,
-      provider: 'anthropic',
+      provider: completion.provider,
       feature: 'company_fit_summary',
       route: 'app/api/companies/[id]/fit-summary',
-      model: 'claude-haiku-4-5',
-      usage: message.usage,
+      model: completion.model,
+      usage: completion.usage,
     });
 
-    const block = message.content[0];
-    const text = block?.type === 'text' ? block.text.trim() : '';
-    const summary = toSingleSentence(text);
+    const summary = toSingleSentence(completion.text.trim());
 
     return NextResponse.json({ summary });
   } catch (error) {

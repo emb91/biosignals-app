@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Arcova — data touchpoint & cost calculator</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/3.34.0/tabler-icons.min.css" />
+<style>
+  :root {
+    --color-background-primary: #ffffff;
+    --color-background-secondary: #f5f4ef;
+    --color-background-tertiary: #ebe9e1;
+    --color-background-info: #E6F1FB;
+    --color-background-warning: #FAEEDA;
+    --color-text-primary: #1a1a18;
+    --color-text-secondary: #5F5E5A;
+    --color-text-tertiary: #888780;
+    --color-text-info: #185FA5;
+    --color-text-warning: #854F0B;
+    --color-border-tertiary: rgba(0,0,0,0.12);
+    --color-border-secondary: rgba(0,0,0,0.22);
+    --border-radius-md: 8px;
+    --border-radius-lg: 12px;
+    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --color-background-primary: #26261f;
+      --color-background-secondary: #2f2f27;
+      --color-background-tertiary: #1c1c17;
+      --color-background-info: #0C447C;
+      --color-background-warning: #633806;
+      --color-text-primary: #f3f1e9;
+      --color-text-secondary: #b4b2a9;
+      --color-text-tertiary: #888780;
+      --color-text-info: #85B7EB;
+      --color-text-warning: #FAC775;
+      --color-border-tertiary: rgba(255,255,255,0.14);
+      --color-border-secondary: rgba(255,255,255,0.24);
+    }
+  }
+  body { font-family: var(--font-sans); color: var(--color-text-primary); background: var(--color-background-tertiary); margin: 0; padding: 2rem 1rem; line-height: 1.6; }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 22px; font-weight: 500; margin: 0 0 0.25rem; }
+  .sub { color: var(--color-text-secondary); font-size: 14px; margin: 0 0 1.75rem; }
+  input[type=range] { width: 100%; accent-color: #534AB7; }
+  input[type=number] { width: 72px; font: inherit; padding: 4px 6px; border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); background: var(--color-background-primary); color: var(--color-text-primary); }
+  button.toggle { font: inherit; padding: 6px 14px; border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); background: transparent; color: var(--color-text-primary); cursor: pointer; }
+  button.toggle.on { background: var(--color-background-info); color: var(--color-text-info); border-color: transparent; }
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script>
+const fmt = (n) => Math.round(n).toLocaleString();
+const usd = (n) => '$' + (n >= 100 ? Math.round(n).toLocaleString() : n.toFixed(2));
+
+const state = {
+  existingContacts: 100,
+  existingAccounts: 100,
+  leadsBought: 100,
+  fitPct: 40,
+  churnPct: 20,
+  contactsPerCompany: 1.3,
+  phoneRevealPct: 20,
+  apolloPaid: false,
+};
+
+const RATES = { apolloPaidPerCredit: 0.02, apifyProfile: 0.004, apifyJob: 0.001, zb: 0.005 };
+const APOLLO_FREE_CAP = 250;
+const PUBLIC_TOUCHPOINTS = 195;
+
+function compute(s) {
+  const companiesBought = Math.ceil(s.leadsBought / s.contactsPerCompany);
+  const goodFitContacts = Math.round(s.existingContacts * s.fitPct / 100);
+  const goodFitAccounts = Math.round(s.existingAccounts * s.fitPct / 100);
+  const reEnrich = Math.round(s.existingContacts * s.churnPct / 100);
+
+  const buy = {
+    personEnrich: s.leadsBought,
+    companyEnrich: companiesBought,
+    companySearch: Math.ceil(companiesBought * 0.15),
+    peopleSearch: companiesBought,
+    zb: s.leadsBought,
+    apifyProfile: s.leadsBought,
+    apifyCompany: companiesBought,
+    phoneReveals: Math.round(s.leadsBought * s.phoneRevealPct / 100),
+  };
+  buy.apolloCredits = buy.personEnrich + buy.companyEnrich + buy.phoneReveals;
+
+  const jobChangeScrapes = Math.min(goodFitContacts, 20) * 30;
+  const hiringRuns = 4;
+  const jobRecords = Math.min(1000, goodFitAccounts * 100) * hiringRuns;
+
+  const re = { apolloCredits: reEnrich * 2, apifyProfile: reEnrich, zb: reEnrich, apolloCalls: reEnrich * 2 };
+
+  const apolloCredits = buy.apolloCredits + re.apolloCredits;
+  const apolloCost = s.apolloPaid ? apolloCredits * RATES.apolloPaidPerCredit : 0;
+  const apifyScrapes = buy.apifyProfile + buy.apifyCompany + jobChangeScrapes + re.apifyProfile;
+  const apifyCost = apifyScrapes * RATES.apifyProfile + jobRecords * RATES.apifyJob;
+  const zbCount = buy.zb + re.zb;
+  const zbCost = zbCount * RATES.zb;
+
+  const tp = {
+    apollo: buy.personEnrich + buy.companyEnrich + buy.companySearch + buy.peopleSearch + re.apolloCalls,
+    apify: buy.apifyProfile + buy.apifyCompany + jobChangeScrapes + re.apifyProfile + hiringRuns,
+    zb: zbCount,
+    public: PUBLIC_TOUCHPOINTS,
+  };
+  tp.total = tp.apollo + tp.apify + tp.zb + tp.public;
+
+  return { companiesBought, goodFitContacts, goodFitAccounts, reEnrich, buy, jobChangeScrapes, jobRecords, hiringRuns, re,
+    apolloCredits, apolloCost, apifyScrapes, apifyCost, zbCount, zbCost, totalCost: apolloCost + apifyCost + zbCost, tp };
+}
+
+const sliders = [
+  { key: 'existingContacts', label: 'Existing contacts', min: 0, max: 30000, step: 100 },
+  { key: 'existingAccounts', label: 'Existing accounts', min: 0, max: 30000, step: 100 },
+  { key: 'leadsBought', label: 'New leads bought / mo (/data)', min: 0, max: 1000, step: 10 },
+  { key: 'fitPct', label: 'Good-fit % (≥0.70, gates sweeps)', min: 0, max: 100, step: 5, suffix: '%' },
+  { key: 'churnPct', label: 'Re-enrich churn % / mo', min: 0, max: 100, step: 5, suffix: '%' },
+  { key: 'phoneRevealPct', label: 'Phone-reveal % of bought leads', min: 0, max: 100, step: 5, suffix: '%' },
+];
+
+const C = { apollo: '#534AB7', apify: '#1D9E75', zb: '#D85A30', public: '#888780' };
+
+function render() {
+  const r = compute(state);
+  const overCap = r.apolloCredits > APOLLO_FREE_CAP;
+  const app = document.getElementById('app');
+
+  const sliderHtml = sliders.map(s => `
+    <div style="margin-bottom: 1rem;">
+      <div style="display:flex; justify-content:space-between; font-size:13px; color:var(--color-text-secondary); margin-bottom:4px;">
+        <span>${s.label}</span><span style="color:var(--color-text-primary); font-weight:500;" id="out-${s.key}">${state[s.key].toLocaleString()}${s.suffix||''}</span>
+      </div>
+      <input type="range" min="${s.min}" max="${s.max}" step="${s.step}" value="${state[s.key]}" data-key="${s.key}" />
+    </div>`).join('');
+
+  const card = (label, value, hint, color) => `
+    <div style="background:var(--color-background-secondary); border-radius:var(--border-radius-md); padding:0.9rem 1rem;">
+      <div style="font-size:13px; color:var(--color-text-secondary);">${label}</div>
+      <div style="font-size:24px; font-weight:500; ${color?`color:${color};`:''}">${value}</div>
+      <div style="font-size:12px; color:var(--color-text-tertiary);">${hint}</div>
+    </div>`;
+
+  const bar = (label, val, total, color, sub) => `
+    <div style="margin-bottom:10px;">
+      <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:3px;">
+        <span><i class="ti ti-point-filled" style="color:${color};font-size:14px;vertical-align:-2px;"></i> ${label}<span style="color:var(--color-text-tertiary);"> · ${sub}</span></span>
+        <span style="font-weight:500;">${fmt(val)}</span>
+      </div>
+      <div style="height:8px; background:var(--color-background-tertiary); border-radius:4px; overflow:hidden;">
+        <div style="height:100%; width:${total?(val/total*100):0}%; background:${color};"></div>
+      </div>
+    </div>`;
+
+  app.innerHTML = `
+    <h1>Data touchpoint &amp; cost calculator</h1>
+    <p class="sub">One user, one month. Flex the inputs — outputs update live. Defaults match DATA_TOUCHPOINTS_AND_COST.md.</p>
+
+    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:1.5rem; align-items:start;">
+      <div>
+        ${sliderHtml}
+        <div style="display:flex; align-items:center; gap:10px; font-size:13px; color:var(--color-text-secondary); margin-top:0.5rem;">
+          <span>Apollo plan</span>
+          <button class="toggle ${!state.apolloPaid?'on':''}" data-apollo="free">Free ($0)</button>
+          <button class="toggle ${state.apolloPaid?'on':''}" data-apollo="paid">Paid (~$0.02/cr)</button>
+        </div>
+      </div>
+
+      <div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:1rem;">
+          ${card('Total touchpoints / mo', fmt(r.tp.total), 'external API calls', null)}
+          ${card('Apollo credits / mo', fmt(r.apolloCredits), overCap?`over free cap (${APOLLO_FREE_CAP})`:`of ${APOLLO_FREE_CAP} free`, overCap?'#A32D2D':'#534AB7')}
+          ${card('Marginal data cost / mo', usd(r.totalCost), state.apolloPaid?'paid Apollo':'free Apollo', null)}
+          ${card('Apify spend / mo', usd(r.apifyCost), `${fmt(r.apifyScrapes)} scrapes + jobs`, '#1D9E75')}
+        </div>
+        ${overCap?`<div style="background:var(--color-background-warning); color:var(--color-text-warning); font-size:13px; padding:8px 12px; border-radius:var(--border-radius-md); margin-bottom:1rem;"><i class="ti ti-alert-triangle" style="vertical-align:-2px;"></i> Apollo over the 250-credit free cap — needs a paid plan tier.</div>`:''}
+
+        <div style="font-size:13px; font-weight:500; margin:0 0 8px;">Touchpoints by provider</div>
+        ${bar('Apollo', r.tp.apollo, r.tp.total, C.apollo, 'search + enrich')}
+        ${bar('Apify', r.tp.apify, r.tp.total, C.apify, 'profile/company/job scrapes')}
+        ${bar('ZeroBounce', r.tp.zb, r.tp.total, C.zb, 'email validate')}
+        ${bar('Public + CRM', r.tp.public, r.tp.total, C.public, 'signal monitoring · $0')}
+      </div>
+    </div>
+
+    <div style="margin-top:1.5rem; background:var(--color-background-primary); border:0.5px solid var(--color-border-tertiary); border-radius:var(--border-radius-lg); padding:1rem 1.25rem;">
+      <div style="font-size:13px; font-weight:500; margin-bottom:8px;">Where it comes from</div>
+      <table style="width:100%; border-collapse:collapse; font-size:13px;">
+        <tr style="color:var(--color-text-secondary);"><td style="padding:4px 0;">Surface</td><td style="text-align:right;">Touchpoints</td><td style="text-align:right;">Apollo cr</td><td style="text-align:right;">Cost</td></tr>
+        <tr style="border-top:0.5px solid var(--color-border-tertiary);"><td style="padding:6px 0;">Buy ${fmt(state.leadsBought)} leads (/data)</td><td style="text-align:right;">${fmt(r.buy.personEnrich + r.buy.companyEnrich + r.buy.companySearch + r.buy.peopleSearch + r.buy.zb + r.buy.apifyProfile + r.buy.apifyCompany)}</td><td style="text-align:right;">${fmt(r.buy.apolloCredits)}</td><td style="text-align:right;">${usd((state.apolloPaid?r.buy.apolloCredits*RATES.apolloPaidPerCredit:0) + (r.buy.apifyProfile+r.buy.apifyCompany)*RATES.apifyProfile + r.buy.zb*RATES.zb)}</td></tr>
+        <tr style="border-top:0.5px solid var(--color-border-tertiary);"><td style="padding:6px 0;">Job-change sweep (Apify, daily)</td><td style="text-align:right;">${fmt(r.jobChangeScrapes)}</td><td style="text-align:right;">0</td><td style="text-align:right;">${usd(r.jobChangeScrapes*RATES.apifyProfile)}</td></tr>
+        <tr style="border-top:0.5px solid var(--color-border-tertiary);"><td style="padding:6px 0;">Hiring monitor (${r.hiringRuns} runs, ${fmt(r.jobRecords)} jobs)</td><td style="text-align:right;">${r.hiringRuns}</td><td style="text-align:right;">0</td><td style="text-align:right;">${usd(r.jobRecords*RATES.apifyJob)}</td></tr>
+        <tr style="border-top:0.5px solid var(--color-border-tertiary);"><td style="padding:6px 0;">Re-enrich queue (${fmt(r.reEnrich)} contacts)</td><td style="text-align:right;">${fmt(r.re.apolloCalls + r.re.apifyProfile + r.re.zb)}</td><td style="text-align:right;">${fmt(r.re.apolloCredits)}</td><td style="text-align:right;">${usd((state.apolloPaid?r.re.apolloCredits*RATES.apolloPaidPerCredit:0) + r.re.apifyProfile*RATES.apifyProfile + r.re.zb*RATES.zb)}</td></tr>
+        <tr style="border-top:0.5px solid var(--color-border-tertiary); color:var(--color-text-secondary);"><td style="padding:6px 0;">Public data + CRM sync</td><td style="text-align:right;">${PUBLIC_TOUCHPOINTS}</td><td style="text-align:right;">0</td><td style="text-align:right;">$0</td></tr>
+      </table>
+    </div>`;
+
+  app.querySelectorAll('input[type=range]').forEach(el => {
+    el.addEventListener('input', e => {
+      const k = e.target.dataset.key;
+      state[k] = parseFloat(e.target.value);
+      const s = sliders.find(x => x.key === k);
+      document.getElementById('out-' + k).textContent = state[k].toLocaleString() + (s.suffix || '');
+      render();
+    });
+  });
+  app.querySelectorAll('button[data-apollo]').forEach(el => {
+    el.addEventListener('click', e => { state.apolloPaid = e.target.dataset.apollo === 'paid'; render(); });
+  });
+}
+render();
+</script>
+</body>
+</html>

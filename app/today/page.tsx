@@ -4,6 +4,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AppSidebar from '@/components/AppSidebar';
+import MemberWelcome from '@/components/MemberWelcome';
 import { AgentPanel } from '@/components/AgentPanel';
 import { supabase } from '@/lib/supabase';
 import { ArrowRight, Check, ChevronRight, ExternalLink, Loader2 } from 'lucide-react';
@@ -620,11 +621,17 @@ export default function BriefingPage() {
       openTask(item);
       return;
     }
+    if (!window.confirm(`Refresh ${contactIds.length} contacts for up to ${contactIds.length * 4} credits?`)) {
+      return;
+    }
 
     setBusyTaskIds((current) => new Set(current).add(item.id));
     try {
       const results = await Promise.allSettled(
-        contactIds.map((id) => fetch(`/api/enrich/${encodeURIComponent(id)}`, { method: 'POST' })),
+        contactIds.map((id) => fetch(`/api/enrich/${encodeURIComponent(id)}`, {
+          method: 'POST',
+          headers: { 'x-operation-id': crypto.randomUUID() },
+        })),
       );
       const okCount = results.filter((result) => result.status === 'fulfilled' && result.value.ok).length;
       if (okCount > 0) {
@@ -663,6 +670,7 @@ export default function BriefingPage() {
       try {
         const [
           { data: profileData, error: profileError },
+          { data: personaData },
           icpsBootstrap,
           contactsBootstrap,
           { data: importData, error: importError },
@@ -674,7 +682,14 @@ export default function BriefingPage() {
           repliedRes,
           liveSignalsRes,
         ] = await Promise.all([
-          supabase.from('user_company').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
+          // Org-scoped on purpose (RLS lets members read the org's row): the company
+          // profile is set up once per workspace, so an invited member must NOT be
+          // told to "finish the company profile" their owner already completed.
+          supabase.from('user_company').select('id').limit(1).maybeSingle(),
+          // Same org-scoped logic for buying teams: "Finish buying teams" must not
+          // show when the workspace already has personas (previously inferred from
+          // the member's own contact count, which was wrong on both axes).
+          supabase.from('personas').select('id').limit(1).maybeSingle(),
           fetch(ROUTES.api.icps),
           fetch('/api/contacts'),
           supabase.from('raw_uploads').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
@@ -814,7 +829,7 @@ export default function BriefingPage() {
         setSteps([
           { id: 'profile', label: 'company profile', completed: profileComplete, actionPath: profileComplete ? ROUTES.setup.company : '/arcova-setup' },
           { id: 'companies', label: 'ICPs', completed: companiesComplete, actionPath: ROUTES.setup.icps },
-          { id: 'personas', label: 'buying teams', completed: contactsComplete, actionPath: ROUTES.setup.icps },
+          { id: 'personas', label: 'buying teams', completed: Boolean(personaData), actionPath: ROUTES.setup.icps },
           { id: 'import', label: 'contact import', completed: importComplete, actionPath: ROUTES.import },
           { id: 'signals', label: 'signals setup', completed: signalsComplete, actionPath: ROUTES.setup.icps },
         ]);
@@ -1225,6 +1240,7 @@ export default function BriefingPage() {
 
       <main className="briefing-today relative min-h-0 flex-1 overflow-y-auto bg-transparent">
         <div className="relative z-10 bt-page pb-24">
+          <MemberWelcome />
           <header className="bt-hero">
             <p className="bt-hero-eyebrow">Daily briefing · {formatBriefingHeroDate(clock)}</p>
             <h1 className="bt-hero-title font-manrope">

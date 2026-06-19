@@ -10,6 +10,7 @@ type RawUploadRow = {
   company_name: string | null;
   raw_data: Record<string, unknown> | null;
   failure_reason: string | null;
+  triage_group: string | null;
 };
 
 const stringValue = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
@@ -37,6 +38,7 @@ const buildDisplayRow = (row: RawUploadRow) => {
     company_domain: stringValue(raw.company_domain),
     job_title: stringValue(raw.job_title),
     failure_reason: stringValue(row.failure_reason),
+    triage_group: row.triage_group,
   };
 };
 
@@ -77,7 +79,7 @@ export async function GET(
 
     const { data: rows, error: rowsError } = await supabase
       .from('raw_uploads')
-      .select('id, status, full_name, email, linkedin_url, company_name, raw_data, failure_reason')
+      .select('id, status, full_name, email, linkedin_url, company_name, raw_data, failure_reason, triage_group')
       .eq('user_id', user.id)
       .eq('batch_id', batchId)
       .order('full_name', { ascending: true });

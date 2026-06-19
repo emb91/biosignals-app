@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import Anthropic from '@anthropic-ai/sdk';
+import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
-
-const MODEL = 'claude-sonnet-4-6';
-const anthropic = new Anthropic();
 
 export interface IcpSuggestion {
   name: string;
@@ -57,21 +54,21 @@ Rules:
 - segmentLabel describes the buyer category in 2–4 words (e.g. "Large Oncology Pharma", "Precision Biotech", "Global CRO")
 - Aim for diversity: if the seller could have pharma, biotech, and CRO buyers, suggest one of each`;
 
-    const message = await anthropic.messages.create({
-      model: MODEL,
-      max_tokens: 512,
-      messages: [{ role: 'user', content: prompt }],
+    const completion = await completeLlm({
+      feature: 'suggest_icp_companies',
+      prompt,
+      maxTokens: 512,
     });
 
     await recordLlmUsageEvent({
-      provider: 'anthropic',
+      provider: completion.provider,
       feature: 'suggest_icp_companies',
       route: 'app/api/suggest-icp-companies',
-      model: MODEL,
-      usage: message.usage,
+      model: completion.model,
+      usage: completion.usage,
     });
 
-    const raw = message.content[0].type === 'text' ? message.content[0].text.trim() : '';
+    const raw = completion.text.trim();
     const jsonText = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
     const parsed = JSON.parse(jsonText) as { suggestions: IcpSuggestion[] };
 

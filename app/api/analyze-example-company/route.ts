@@ -1,6 +1,12 @@
 import { NextResponse } from 'next/server';
 import { enrichTargetCompany } from '@/lib/target-company-enrichment';
 
+function publicEnrichmentPayload(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([key]) => !/apollo|apify|zerobounce|provider/i.test(key)),
+  );
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -11,7 +17,7 @@ export async function POST(request: Request) {
     }
 
     const result = await enrichTargetCompany(url);
-    return NextResponse.json(result);
+    return NextResponse.json(publicEnrichmentPayload(result as unknown as Record<string, unknown>));
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     console.error('[analyze-example-company] Error:', message);

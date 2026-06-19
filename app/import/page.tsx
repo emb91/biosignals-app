@@ -82,6 +82,7 @@ type ImportBatchRow = {
   company_domain: string;
   job_title: string;
   failure_reason?: string;
+  triage_group?: string | null;
 };
 
 type ImportBatchDetails = {
@@ -239,6 +240,7 @@ export default function ImportPage() {
   const [importHistory, setImportHistory] = useState<ImportBatch[]>([]);
   const [importHistoryLoaded, setImportHistoryLoaded] = useState(false);
   const [batchDetails, setBatchDetails] = useState<ImportBatchDetails | null>(null);
+  const [billingActionBusy, setBillingActionBusy] = useState(false);
   const [batchDetailsError, setBatchDetailsError] = useState<string | null>(null);
   const [isLoadingBatchDetails, setIsLoadingBatchDetails] = useState(false);
   const [expandedBatchSection, setExpandedBatchSection] = useState<'failed' | 'duplicate' | 'enriched' | 'uploaded' | null>(null);
@@ -698,6 +700,40 @@ export default function ImportPage() {
     }
   };
 
+  const runImportBillingAction = async (
+    path: '/api/import-contacts/triage' | '/api/import-contacts/enrich',
+    ids: string[],
+    label: string,
+  ) => {
+    if (!ids.length || billingActionBusy) return;
+    setBillingActionBusy(true);
+    setErrorMessage('');
+    try {
+      const operationId = crypto.randomUUID();
+      const preflightResponse = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rawUploadIds: ids, operationId }),
+      });
+      const preflight = await preflightResponse.json();
+      if (!preflightResponse.ok) throw new Error(preflight.error || 'Could not price this action.');
+      const credits = Number(preflight.preflight?.estimatedCredits ?? 0);
+      if (!window.confirm(`${label} for up to ${credits.toLocaleString()} credits?`)) return;
+      const response = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rawUploadIds: ids, operationId, confirm: true }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || result.error || 'Action could not be started.');
+      await fetchBatchDetails();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Action failed.');
+    } finally {
+      setBillingActionBusy(false);
+    }
+  };
+
 
   if (loading) {
     return (
@@ -721,6 +757,10 @@ export default function ImportPage() {
     : expandedBatchSection === 'enriched' ? batchDetails?.enrichedRows || []
     : expandedBatchSection === 'uploaded' ? batchDetails?.allRows || []
     : [];
+  const awaitingTriageRows = batchDetails?.allRows.filter((row) => row.status === 'awaiting_triage') ?? [];
+  const awaitingEnrichmentRows = batchDetails?.allRows.filter(
+    (row) => row.status === 'awaiting_enrichment' && row.triage_group !== 'low',
+  ) ?? [];
   const expandedBatchTitle =
     expandedBatchSection === 'failed' ? 'Not enriched'
     : expandedBatchSection === 'duplicate' ? 'Duplicates'
@@ -961,16 +1001,49 @@ export default function ImportPage() {
                   <PageHeader
                     eyebrow="Import"
                     eyebrowIcon={<Upload className="h-3 w-3" />}
-                    title={importCancelled ? 'Import stopped' : 'Import complete'}
+                    title={importCancelled ? 'Import stopped' : 'Import analyzed'}
                     subtitle={importCancelled
                       ? 'Enriched, scored contacts were added to Leads before stopping.'
-                      : 'All enriched, scored contacts have been added to your Leads view.'}
+                      : 'Your records are stored and ranked. Choose when to spend credits enriching the strongest matches.'}
                     action={
                       <button type="button" onClick={resetBatchView} className="text-xs text-arcova-navy/40 hover:text-arcova-navy/70 mt-1">
                         ← Back
                       </button>
                     }
                   />
+
+                  {(awaitingTriageRows.length > 0 || awaitingEnrichmentRows.length > 0) && (
+                    <div className="mb-4 flex flex-wrap gap-2 rounded-xl border border-arcova-teal/20 bg-arcova-teal/5 p-4">
+                      {awaitingTriageRows.length > 0 && (
+                        <button
+                          type="button"
+                          disabled={billingActionBusy}
+                          onClick={() => void runImportBillingAction(
+                            '/api/import-contacts/triage',
+                            awaitingTriageRows.map((row) => row.id),
+                            `Triage ${awaitingTriageRows.length} additional records`,
+                          )}
+                          className="rounded-lg border border-arcova-teal/25 bg-white px-3 py-2 text-xs font-semibold text-arcova-navy disabled:opacity-50"
+                        >
+                          Triage {awaitingTriageRows.length.toLocaleString()} more · 0.1 credit each
+                        </button>
+                      )}
+                      {awaitingEnrichmentRows.length > 0 && (
+                        <button
+                          type="button"
+                          disabled={billingActionBusy}
+                          onClick={() => void runImportBillingAction(
+                            '/api/import-contacts/enrich',
+                            awaitingEnrichmentRows.map((row) => row.id),
+                            `Enrich ${awaitingEnrichmentRows.length} high- and medium-fit records`,
+                          )}
+                          className="rounded-lg bg-arcova-navy px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                        >
+                          Enrich {awaitingEnrichmentRows.length.toLocaleString()} best matches · 4 credits each
+                        </button>
+                      )}
+                    </div>
+                  )}
 
                   {/* Summary pills */}
                   <div className="flex flex-wrap items-center gap-2 mb-4">

@@ -2,8 +2,8 @@
 -- Applied to the linked project via Supabase MCP; tracked here for reproducibility.
 
 -- Per-user quarterly GTM targets (one row per period). Target is OVERALL (not
--- per-ICP — allocation across ICPs is computed). Keyed by user_id (forward-
--- compatible with per-seat targets when the org/seats layer lands).
+-- per-ICP — allocation across ICPs is computed). Keyed by user_id and ready
+-- for a later workspace-level ownership migration.
 create table if not exists public.gtm_targets (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,

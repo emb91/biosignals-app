@@ -319,7 +319,7 @@ export default function MyProfilePage() {
         if (event === 'step_claude') {
           setReenrichMsg('Website analysed ✓  Checking company database…');
           setReenrichPct(30);
-        } else if (event === 'step_apollo') {
+        } else if (event === 'step_firmographics') {
           setReenrichMsg('Company and web data in ✓ Resolving LinkedIn…');
           setReenrichPct(55);
         } else if (event === 'step_linkedin') {
@@ -329,7 +329,7 @@ export default function MyProfilePage() {
           } else {
             setReenrichMsg('No public LinkedIn company URL found ✓ Enriching from site and registry only…');
           }
-        } else if (event === 'step_apify') {
+        } else if (event === 'step_company_profile') {
           setReenrichMsg('Sources merged ✓ Organizing profile…');
           setReenrichPct(75);
         } else if (event === 'step_synthesis') {

@@ -16,6 +16,26 @@ export async function POST(req: Request) {
     { onConflict: 'user_id,integration_id' },
   );
 
+  // For HubSpot, capture the portal id so inbound webhooks (no session) can map
+  // back to this connection. Best-effort — never block the connect on it.
+  if (integrationId === 'hubspot') {
+    try {
+      const { nango, HUBSPOT_INTEGRATION_ID } = await import('@/lib/nango');
+      const { fetchHubSpotPortalId } = await import('@/lib/hubspot');
+      const token = (await nango.getToken(HUBSPOT_INTEGRATION_ID, connectionId)) as string;
+      const portalId = token ? await fetchHubSpotPortalId(token) : null;
+      if (portalId != null) {
+        await ctx.supabase
+          .from('nango_connections')
+          .update({ hubspot_portal_id: portalId })
+          .eq('integration_id', integrationId)
+          .eq(ctx.orgId ? 'org_id' : 'user_id', ctx.orgId ?? ctx.user.id);
+      }
+    } catch (error) {
+      console.error('[nango/connection] portal id capture failed (non-fatal):', error);
+    }
+  }
+
   return NextResponse.json({ ok: true });
 }
 

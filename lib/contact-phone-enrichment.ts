@@ -30,7 +30,7 @@ type SupabaseFrom = { from: (table: string) => any };
  * 0–1 (normalised) because that's the canonical scale in user_companies +
  * contacts. Tune by changing this constant.
  */
-export const PHONE_ENRICHMENT_FIT_THRESHOLD = 0.5;
+export const PHONE_ENRICHMENT_FIT_THRESHOLD = 0.7;
 
 export type PhoneEnrichmentGateInput = {
   contactFitScore?: number | null;

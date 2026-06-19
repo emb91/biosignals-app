@@ -31,14 +31,21 @@ import {
   recomputeAccountReadiness,
   recomputeContactReadiness,
 } from '@/lib/signals/readiness-service';
-import { fetchWithRetry } from '@/lib/signals/fetch-with-retry';
 import { persistRunHistory } from '@/lib/signals/run-history';
+import { SWEEP_FIT_THRESHOLD } from '@/lib/signals/sweep-fit-gate';
+import { resolveCadenceDaysForUser } from '@/lib/signals/job-change-cadence';
+import { runApifyActor } from '@/lib/apify';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const HARVESTAPI_ACTOR = 'harvestapi~linkedin-profile-scraper';
-const DEFAULT_BATCH = 20;
-const MAX_BATCH = 50;
+// Per-run scrape ceiling. NOT the cadence — see runJobChangeMonitor: the rolling
+// sweep sizes its batch from the user's plan cadence (weekly/monthly) and clamps
+// to this ceiling so one invocation stays inside the route's 300s function budget.
+// Profile scrapes run sequentially (~5–15s each), so a single run realistically
+// fits a few dozen. To cover a large list faster than the ceiling allows, raise
+// the cron frequency (throughput lever) rather than this number.
+const DEFAULT_BATCH = 40;
+const MAX_BATCH = 100;
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -68,46 +75,89 @@ export type JobChangeMonitorResult = {
   failures: { contact_id: string; error: string }[];
 };
 
+function emptyJobChangeResult(): JobChangeMonitorResult {
+  return {
+    processed: 0,
+    no_linkedin: 0,
+    no_change: 0,
+    signals_emitted: 0,
+    failed: 0,
+    emitted_signal_types: [],
+    recomputed_contacts: [],
+    failures: [],
+  };
+}
+
 // ── Apify scraper ──────────────────────────────────────────────────────────
 
 async function scrapeLinkedInProfile(
-  linkedinUrl: string
+  linkedinUrl: string,
+  context: { orgId: string | null; userId: string },
 ): Promise<Record<string, unknown> | null> {
-  const apiKey = process.env.APIFY_API_KEY;
-  if (!apiKey) return null;
-
-  let response: Response;
   try {
-    response = await fetchWithRetry(
-      `https://api.apify.com/v2/acts/${HARVESTAPI_ACTOR}/run-sync-get-dataset-items`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          queries: [linkedinUrl],
-          profileScraperMode: 'Profile details no email ($4 per 1k)',
-        }),
-        timeoutMs: 90_000,
-        maxRetries: 1,
-        label: 'job-change-monitor/linkedin-profile',
-      }
-    );
+    const items = await runApifyActor<Record<string, unknown>>({
+      actor: 'profile',
+      input: {
+        queries: [linkedinUrl],
+        profileScraperMode: 'Profile details no email ($4 per 1k)',
+      },
+      orgId: context.orgId,
+      userId: context.userId,
+      actionType: 'contact_job_change_monitoring',
+      inputCount: 1,
+      includedMonitoring: true,
+      timeoutMs: 90_000,
+    });
+    return items[0] ?? null;
   } catch {
     return null;
   }
+}
 
-  if (!response.ok) return null;
-
+async function scrapeLinkedInProfiles(
+  contacts: ContactRecord[],
+  context: { orgId: string | null; userId: string },
+): Promise<Map<string, Record<string, unknown> | null>> {
+  const urls = contacts.map((row) => row.linkedin_url).filter((url): url is string => Boolean(url));
+  const result = new Map<string, Record<string, unknown> | null>();
+  if (!urls.length) return result;
   try {
-    const payload = (await response.json()) as unknown;
-    const item = Array.isArray(payload) ? payload[0] : payload;
-    return item && typeof item === 'object' ? (item as Record<string, unknown>) : null;
+    const items = await runApifyActor<Record<string, unknown>>({
+      actor: 'profile',
+      input: {
+        queries: urls,
+        profileScraperMode: 'Profile details no email ($4 per 1k)',
+      },
+      orgId: context.orgId,
+      userId: context.userId,
+      actionType: 'contact_job_change_monitoring',
+      inputCount: urls.length,
+      attemptedCount: urls.length,
+      includedMonitoring: true,
+      timeoutMs: 180_000,
+    });
+    const normalizedToUrl = new Map(urls.map((url) => [url.toLowerCase().replace(/\/+$/, ''), url]));
+    for (const item of items) {
+      const returnedUrl = [
+        item.linkedinUrl,
+        item.linkedin_url,
+        item.profileUrl,
+        item.profile_url,
+        item.url,
+      ].find((value): value is string => typeof value === 'string' && value.length > 0);
+      if (!returnedUrl) continue;
+      const inputUrl = normalizedToUrl.get(returnedUrl.toLowerCase().replace(/\/+$/, ''));
+      if (inputUrl) result.set(inputUrl, item);
+    }
+    urls.forEach((url, index) => {
+      if (!result.has(url)) result.set(url, items[index] ?? null);
+    });
   } catch {
-    return null;
+    // A failed batch is retried record-by-record so one malformed profile does
+    // not strand the rest of the monitoring universe.
+    for (const url of urls) result.set(url, await scrapeLinkedInProfile(url, context));
   }
+  return result;
 }
 
 // ── Profile parsing ────────────────────────────────────────────────────────
@@ -693,7 +743,11 @@ export async function runJobChangeMonitor(
   input: JobChangeMonitorInput
 ): Promise<JobChangeMonitorResult> {
   const admin = createAdminClient();
-  const limit = Math.min(Math.max(input.limit ?? DEFAULT_BATCH, 1), MAX_BATCH);
+  const { data: member } = await admin.from('org_members').select('org_id')
+    .eq('user_id', input.userId).maybeSingle<{ org_id: string }>();
+  // input.limit is the per-run ceiling (cron-tunable via JOB_CHANGE_BATCH); the
+  // sweep narrows this down to the plan-cadence target below.
+  const perRunCeiling = Math.min(Math.max(input.limit ?? DEFAULT_BATCH, 1), MAX_BATCH);
 
   const contactIds = Array.isArray(input.contactIds)
     ? input.contactIds.filter((id): id is string => typeof id === 'string' && Boolean(id))
@@ -709,10 +763,60 @@ export async function runJobChangeMonitor(
     .eq('user_id', input.userId)
     .is('archived_at', null)
     .not('linkedin_url', 'is', null)
-    .order('job_change_checked_at', { ascending: true, nullsFirst: true })
-    .limit(limit);
+    .order('job_change_checked_at', { ascending: true, nullsFirst: true });
 
-  if (contactIds.length > 0) query.in('id', contactIds);
+  // Oldest-checked-first ordering means each run picks the most-stale contacts,
+  // so successive runs roll through the whole good-fit list. `limit` decides how
+  // many of them this run scrapes.
+  let limit = perRunCeiling;
+
+  if (contactIds.length > 0) {
+    // Explicit/targeted request — the caller picked these contacts, so run
+    // them as asked (bypasses the routine-sweep fit gate and cadence sizing).
+    query.in('id', contactIds);
+    limit = Math.min(perRunCeiling, contactIds.length);
+  } else {
+    // Rolling sweep — good-fit contacts at good-fit companies only
+    // (guardrail #2). The Apify profile scrape should only ever recur on a
+    // qualified person at an account worth watching, so we gate on BOTH the
+    // contact's own fit and its company's fit. Resolve the good-fit company
+    // set first, then intersect. Unscored (null fit) records are excluded.
+    const { data: fitCompanies, error: fitErr } = await admin
+      .from('user_companies')
+      .select('company_id')
+      .eq('user_id', input.userId)
+      .is('archived_at', null)
+      .gte('company_fit_score', SWEEP_FIT_THRESHOLD);
+    if (fitErr) throw new Error(`[job-change-monitor] fetch good-fit companies: ${fitErr.message}`);
+
+    const goodFitCompanyIds = (fitCompanies ?? [])
+      .map((r) => (r as { company_id?: unknown }).company_id)
+      .filter((v): v is string => typeof v === 'string' && Boolean(v));
+
+    // No good-fit companies → nothing to sweep. Skip the scrape entirely.
+    if (goodFitCompanyIds.length === 0) return emptyJobChangeResult();
+
+    query.gte('contact_fit_score', SWEEP_FIT_THRESHOLD).in('company_id', goodFitCompanyIds);
+
+    // Size today's batch to the user's plan cadence: re-check the whole good-fit
+    // list once per cadence window, so per-day work = ceil(goodFit / cycleDays).
+    // Small lists scrape far fewer than the ceiling (cost saving); large lists
+    // saturate the ceiling and lean on cron frequency to keep up.
+    const { count: goodFitContacts } = await admin
+      .from('contacts')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', input.userId)
+      .is('archived_at', null)
+      .not('linkedin_url', 'is', null)
+      .gte('contact_fit_score', SWEEP_FIT_THRESHOLD)
+      .in('company_id', goodFitCompanyIds);
+
+    const { cycleDays } = await resolveCadenceDaysForUser(input.userId);
+    const desiredDaily = Math.ceil((goodFitContacts ?? 0) / Math.max(cycleDays, 1));
+    limit = Math.min(perRunCeiling, Math.max(desiredDaily, 1));
+  }
+
+  query.limit(limit);
 
   const { data: contacts, error: fetchError } = await query;
   if (fetchError) throw new Error(`[job-change-monitor] fetch contacts: ${fetchError.message}`);
@@ -725,8 +829,13 @@ export async function runJobChangeMonitor(
   const emittedSignalTypes = new Set<string>();
   const recomputedContacts: string[] = [];
   const failures: { contact_id: string; error: string }[] = [];
+  const contactRows = (contacts ?? []) as unknown as ContactRecord[];
+  const profiles = await scrapeLinkedInProfiles(contactRows, {
+    orgId: member?.org_id ?? null,
+    userId: input.userId,
+  });
 
-  for (const row of (contacts ?? []) as unknown as ContactRecord[]) {
+  for (const row of contactRows) {
     if (!row.linkedin_url) {
       noLinkedin++;
       continue;
@@ -734,7 +843,7 @@ export async function runJobChangeMonitor(
 
     try {
       // 1. Scrape current LinkedIn profile
-      const profile = await scrapeLinkedInProfile(row.linkedin_url);
+      const profile = profiles.get(row.linkedin_url) ?? null;
       const scraped = extractCurrentEmployment(profile);
 
       // 2. Resolve (or create) company_id for the scraped company. If the

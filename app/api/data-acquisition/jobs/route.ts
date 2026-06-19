@@ -9,7 +9,6 @@ type JobRow = {
   icp_id: string | null;
   upload_batch_id: string | null;
   request_type: string;
-  source_strategy: string | null;
   status: string;
   target_company_count: number | null;
   target_contact_count: number | null;
@@ -23,9 +22,6 @@ type JobRow = {
   skipped_duplicate_count: number | null;
   skipped_existing_count: number | null;
   rejected_low_fit_count: number | null;
-  estimated_min_credit_units: number | string | null;
-  estimated_max_credit_units: number | string | null;
-  actual_credit_units: number | string | null;
   completion_note: string | null;
   metadata: Record<string, unknown> | null;
   error: string | null;
@@ -41,6 +37,23 @@ function companyNameFromMetadata(metadata: Record<string, unknown> | null): stri
   return typeof name === 'string' && name.trim() ? name.trim() : null;
 }
 
+/** Post-job coverage snapshot the runner writes on completion: how many
+ *  companies/contacts the job's ICP holds now. Counts only — never costs. */
+function coverageAfterFromMetadata(
+  metadata: Record<string, unknown> | null,
+): { company_count: number; contact_count: number } | null {
+  const receipt = metadata?.coverage_writeback;
+  if (!receipt || typeof receipt !== 'object') return null;
+  const { current_company_count, current_contact_count } = receipt as {
+    current_company_count?: unknown;
+    current_contact_count?: unknown;
+  };
+  if (typeof current_company_count !== 'number' || typeof current_contact_count !== 'number') {
+    return null;
+  }
+  return { company_count: current_company_count, contact_count: current_contact_count };
+}
+
 export async function GET() {
   try {
     const supabase = await createClient();
@@ -53,6 +66,9 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    // NOTE: credit-unit columns are intentionally NOT selected. Costs are
+    // internal-only (see app/api/admin/data-costs); the user-facing surface
+    // shows counts and plain-language notes instead.
     const { data, error } = await supabase
       .from('data_acquisition_jobs')
       .select(
@@ -61,7 +77,6 @@ export async function GET() {
         icp_id,
         upload_batch_id,
         request_type,
-        source_strategy,
         status,
         target_company_count,
         target_contact_count,
@@ -75,9 +90,6 @@ export async function GET() {
         skipped_duplicate_count,
         skipped_existing_count,
         rejected_low_fit_count,
-        estimated_min_credit_units,
-        estimated_max_credit_units,
-        actual_credit_units,
         completion_note,
         metadata,
         error,
@@ -96,32 +108,6 @@ export async function GET() {
     }
 
     const rows = (data || []) as JobRow[];
-    const jobIds = rows.map((row) => row.id);
-    const usageByJob = new Map<string, number>();
-    if (jobIds.length > 0) {
-      const { data: usageRows, error: usageError } = await supabase
-        .from('data_acquisition_usage_events')
-        .select('job_id, internal_credit_units')
-        .in('job_id', jobIds);
-
-      if (usageError) {
-        console.error('[data-acquisition/jobs] usage', usageError);
-      } else {
-        for (const usage of usageRows ?? []) {
-          const jobId = (usage as { job_id?: unknown }).job_id;
-          const rawUnits = (usage as { internal_credit_units?: unknown }).internal_credit_units;
-          const units =
-            typeof rawUnits === 'number'
-              ? rawUnits
-              : typeof rawUnits === 'string'
-                ? Number.parseFloat(rawUnits)
-                : 0;
-          if (typeof jobId === 'string' && Number.isFinite(units)) {
-            usageByJob.set(jobId, Math.round(((usageByJob.get(jobId) ?? 0) + units) * 100) / 100);
-          }
-        }
-      }
-    }
 
     // Queue safety net: jobs run strictly sequentially per user, advanced at
     // the end of each run. If a previous process died mid-run nothing would
@@ -147,14 +133,11 @@ export async function GET() {
       }
     }
 
-    const jobs = rows.map(({ metadata, ...row }) => {
-      const eventActual = usageByJob.get(row.id);
-      return {
-        ...row,
-        actual_credit_units: eventActual ?? row.actual_credit_units ?? null,
-        company_name: companyNameFromMetadata(metadata),
-      };
-    });
+    const jobs = rows.map(({ metadata, ...row }) => ({
+      ...row,
+      company_name: companyNameFromMetadata(metadata),
+      coverage_after: coverageAfterFromMetadata(metadata),
+    }));
 
     return NextResponse.json({ jobs });
   } catch (error) {

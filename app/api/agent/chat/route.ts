@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@/lib/supabase-server';
 import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
+import { checkAgentFairUse } from '@/lib/agent-fair-use';
 import {
   type AccountQueryColumn,
   type AccountQueryFilters,
@@ -667,13 +668,8 @@ If the user asks to find contacts, buyer personas, or more coverage for this sel
 \`\`\`json
 ${JSON.stringify(context!.acquisitionRecentJobs, null, 2)}
 \`\`\`
-Use these to answer questions about job progress, results, and sourcing cost. If a job has a completion_note, relay it in plain language (it explains things like coverage you already own or a plan usage limit). When credit fields are present, call them "credits" and keep it matter-of-fact: actual spend, duplicates/skips, and cost per imported contact when useful.`
+Use these to answer questions about job progress and results. If a job has a completion_note, relay it in plain language (it explains things like coverage you already own or a plan usage limit). If icp_coverage_after is present, you can tell the user where that ICP's coverage landed after the job (companies and contacts). Never mention credits, credit units, or any cost figures; pricing is not part of this product surface.`
             : '';
-        const costEstimateRule = `
-Before calling start_acquisition_job, include a rough credit estimate in the confirmation sentence:
-- contacts_at_company / contacts_at_companies / more_contacts_at_accounts: about 1.15-1.3 credits per requested contact.
-- expand_companies: about 3.9-5.7 credits per requested company for a normal company-led run.
-Example: "That should be roughly 6-7 credits, and I'll exclude contacts you already own before Apollo search."`;
 
         const modeBlock = (() => {
           if (mode === 'contacts_at_companies' && context?.acquisitionBatchCompanies?.length) {
@@ -710,7 +706,7 @@ ${scoped} When they confirm, call start_acquisition_job with requestType "expand
           return '';
         })();
 
-        const lines = [modeBlock, costEstimateRule, sourceLine, queueLine, recentJobsBlock].filter(Boolean);
+        const lines = [modeBlock, sourceLine, queueLine, recentJobsBlock].filter(Boolean);
         if (lines.length === 0) return '';
         return `
 ## Data page job context
@@ -1932,6 +1928,22 @@ async function runAgentLoop(
     ? TOOLS.filter((t) => t.name !== 'get_icp_definitions')
     : TOOLS;
 
+  // Prompt caching: the system prompt + tool definitions are a large, stable
+  // prefix re-sent on every tool-loop iteration (up to MAX_ITERATIONS) and on
+  // every conversation turn — all within seconds, well inside Anthropic's ~5-min
+  // cache window. An ephemeral breakpoint on the last tool caches the whole
+  // tools→system prefix; a second on the system block keeps it cached on the
+  // final (tool-less) call too. Cache metrics flow through response.usage into
+  // recordLlmUsageEvent (cache_read priced ~0.1× input). See memory/llm_cost_concerns.md.
+  const cachedTools: Anthropic.Tool[] = availableTools.map((tool, idx) =>
+    idx === availableTools.length - 1
+      ? { ...tool, cache_control: { type: 'ephemeral' as const } }
+      : tool,
+  );
+  const cachedSystem = [
+    { type: 'text' as const, text: systemPrompt, cache_control: { type: 'ephemeral' as const } },
+  ];
+
   // Carry text written in the same turn as tool calls — it won't appear in the
   // next turn so we preserve it and prepend to the eventual final message.
   let spilloverText = '';
@@ -1953,8 +1965,8 @@ async function runAgentLoop(
     const response = await anthropic.messages.create({
       model: turnModel,
       max_tokens: 1024,
-      system: systemPrompt,
-      tools: availableTools,
+      system: cachedSystem,
+      tools: cachedTools,
       messages: anthropicMessages,
     });
     await recordLlmUsageEvent({
@@ -2266,7 +2278,7 @@ async function runAgentLoop(
   const finalResponse = await anthropic.messages.create({
     model: HAIKU_MODEL,
     max_tokens: 512,
-    system: systemPrompt,
+    system: cachedSystem,
     messages: anthropicMessages,
   });
   await recordLlmUsageEvent({
@@ -2322,6 +2334,17 @@ export async function POST(request: Request) {
 
     if (messages.length === 0) {
       return NextResponse.json({ error: 'messages array is required' }, { status: 400 });
+    }
+
+    // Fair-use backstop: stop a botted/runaway account from quietly running up
+    // a large model bill. Genuine usage is far below the cap, so this only
+    // bites pathological volume. Returns a normal assistant message (200) so
+    // it renders as a friendly bubble rather than an error state.
+    const fairUse = await checkAgentFairUse(user.id);
+    if (!fairUse.allowed) {
+      return NextResponse.json(
+        { message: fairUse.message ?? '', toolsUsed: [] } satisfies ChatResponse,
+      );
     }
 
     const result = await runAgentLoop(supabase, user.id, user.email, page, messages, pageContext);

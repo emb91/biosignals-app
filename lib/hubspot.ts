@@ -17,6 +17,25 @@ export async function resolveOrgNangoConnectionId(
   return (data as { nango_connection_id?: string } | null)?.nango_connection_id ?? null;
 }
 
+/**
+ * HubSpot portal (account) id for a token. Stored on the connection at connect
+ * time so an inbound webhook (which carries portalId but no session) can resolve
+ * which org/connection it belongs to. Best-effort — returns null on any failure.
+ */
+export async function fetchHubSpotPortalId(accessToken: string): Promise<number | null> {
+  try {
+    const res = await fetch('https://api.hubapi.com/account-info/v3/details', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { portalId?: number };
+    return typeof data.portalId === 'number' ? data.portalId : null;
+  } catch {
+    return null;
+  }
+}
+
 export type ArcovaContactProperties = {
   arcova_contact_id: string;
   arcova_company_id: string;

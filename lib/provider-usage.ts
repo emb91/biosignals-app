@@ -19,6 +19,7 @@ export type ProviderUsageProvider = 'apify' | 'apollo' | 'zerobounce';
 export type ProviderUsageEventType =
   | 'apify_profile_scrape'
   | 'apify_company_scrape'
+  | 'apify_jobs_result'
   | 'apollo_person_enrichment'
   | 'apollo_company_enrichment'
   | 'apollo_phone_reveal'
@@ -29,20 +30,23 @@ export type ProviderUsageEventType =
 // Apify HarvestAPI actors bill per result. The profile scraper's input mode
 // is literally labelled "Profile details no email ($4 per 1k)" in
 // lib/enrichment-pipeline.ts → $0.004 per profile. The company actor
-// (harvestapi~linkedin-company) rate is an ESTIMATE — confirm on the Apify
-// console (Actors → runs → cost) and update.
+// harvestapi/linkedin-company is $4/1k on Free and $3/1k on Gold. The runtime
+// default is the conservative Free rate; set APIFY_COMPANY_UNIT_PRICE_USD=.003
+// when the workspace is on Gold. Jobs are billed per returned job, not input.
 export const APIFY_PROFILE_SCRAPE_USD = 0.004;
-export const APIFY_COMPANY_SCRAPE_USD = 0.004; // estimate — confirm
+export const APIFY_COMPANY_SCRAPE_USD = Number(process.env.APIFY_COMPANY_UNIT_PRICE_USD || 0.004);
+export const APIFY_JOBS_RESULT_USD = 0.001;
 
 // Apollo bills in credits bundled into the plan rather than per-$, so we track
 // consumption, not dollars. people/match (person enrichment) and
-// organizations/enrich each cost ~1 credit; a phone reveal costs ~1 export
-// credit. ICP sourcing search results are also counted in the admin API via
+// organizations/enrich each cost ~1 credit; a mobile phone reveal costs 8
+// credits (Apollo charges mobile reveals far above email/enrichment). ICP
+// sourcing search results are also counted in the admin API via
 // data_acquisition_usage_events.
 export const APOLLO_CREDITS = {
   person_enrichment: 1,
   company_enrichment: 1,
-  phone_reveal: 1,
+  phone_reveal: 8,
 } as const;
 
 // Your Apollo plan — shown as context on the dashboard. Edit to match reality.
@@ -76,6 +80,7 @@ export const ZEROBOUNCE_PLAN = {
 export function apifyEventCostUsd(eventType: ProviderUsageEventType, quantity = 1): number | null {
   if (eventType === 'apify_profile_scrape') return APIFY_PROFILE_SCRAPE_USD * quantity;
   if (eventType === 'apify_company_scrape') return APIFY_COMPANY_SCRAPE_USD * quantity;
+  if (eventType === 'apify_jobs_result') return APIFY_JOBS_RESULT_USD * quantity;
   return null;
 }
 

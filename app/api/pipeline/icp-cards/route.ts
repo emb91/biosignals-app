@@ -106,13 +106,19 @@ export async function GET() {
     const period = quarterOf();
     const rollup = await computeCoverageRollup(supabase, user.id, period);
     const performanceByIcp = rollup.byIcp;
+    // Recent sourcing impact per ICP, plus whether sourcing is still in
+    // flight so the page knows to keep refreshing until the book settles.
+    const ACTIVE_JOB_STATUSES = ['queued', 'discovering', 'processing', 'importing', 'enriching'];
     const recentCutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
     const { data: recentJobs } = await supabase
       .from('data_acquisition_jobs')
-      .select('icp_id, imported_company_count, imported_contact_count, skipped_existing_count, skipped_duplicate_count, completed_at')
+      .select('icp_id, status, imported_company_count, imported_contact_count, skipped_existing_count, skipped_duplicate_count, completed_at')
       .eq('user_id', user.id)
-      .eq('status', 'complete')
-      .gte('completed_at', recentCutoff);
+      .or(`status.in.(${ACTIVE_JOB_STATUSES.join(',')}),and(status.eq.complete,completed_at.gte.${recentCutoff})`);
+
+    const sourcingActive = (recentJobs ?? []).some((job) =>
+      ACTIVE_JOB_STATUSES.includes((job as { status?: string }).status ?? ''),
+    );
 
     const recentAcquisitionByIcp = new Map<
       string,
@@ -120,13 +126,14 @@ export async function GET() {
     >();
     for (const job of (recentJobs ?? []) as Array<{
       icp_id: string | null;
+      status: string;
       imported_company_count: number | null;
       imported_contact_count: number | null;
       skipped_existing_count: number | null;
       skipped_duplicate_count: number | null;
       completed_at: string | null;
     }>) {
-      if (!job.icp_id) continue;
+      if (!job.icp_id || job.status !== 'complete') continue;
       const current = recentAcquisitionByIcp.get(job.icp_id) ?? {
         imported_company_count: 0,
         imported_contact_count: 0,
@@ -204,6 +211,7 @@ export async function GET() {
       // deals themselves (unattributed) + period actuals for attainment pacing.
       meta: {
         period,
+        sourcingActive,
         hasCrm: rollup.totalDeals > 0,
         totalDeals: rollup.totalDeals,
         attributedDeals: rollup.attributedDeals,

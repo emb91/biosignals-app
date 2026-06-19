@@ -8,7 +8,7 @@
 --
 -- Tables in scope: icps, personas, icp_signal_selections, persona_signal_selections.
 -- NOT in scope (stay per-rep): company_icp_scores, contact_persona_scores — scores are
--- per-seat.
+-- per-user.
 
 -- ── 1. Columns ────────────────────────────────────────────────────────────
 ALTER TABLE public.icps                     ADD COLUMN IF NOT EXISTS org_id uuid REFERENCES public.organizations(id) ON DELETE CASCADE;

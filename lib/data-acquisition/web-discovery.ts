@@ -1,4 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { completeWithWebSearch } from '@/lib/llm-client';
 import type { DiscoveredCompany } from '@/lib/data-acquisition/apollo-discovery';
 import type { AcquisitionIcp } from '@/lib/data-acquisition/search-spec';
 
@@ -32,27 +32,12 @@ function parseJsonArray(text: string): WebCompanyCandidate[] {
   }
 }
 
-function extractTextBlocks(message: unknown): string {
-  const content = (message as { content?: unknown })?.content;
-  if (!Array.isArray(content)) return '';
-  return content
-    .map((item) => {
-      if (!item || typeof item !== 'object') return '';
-      const block = item as { type?: unknown; text?: unknown };
-      return block.type === 'text' && typeof block.text === 'string' ? block.text : '';
-    })
-    .filter(Boolean)
-    .join('\n');
-}
-
 export async function discoverCompaniesWithWebSearch(params: {
   icp: AcquisitionIcp;
   targetCompanyCount: number;
 }): Promise<DiscoveredCompany[]> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return [];
+  if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENROUTER_API_KEY) return [];
 
-  const client = new Anthropic({ apiKey });
   const icp = params.icp;
   const prompt = `Find up to ${Math.min(25, Math.max(5, params.targetCompanyCount))} real companies that match this ICP.
 
@@ -79,20 +64,14 @@ ICP:
 - Customer/buyer hints: ${cleanList([...(icp.target_customers || []), ...(icp.buyer_types || [])]).join(', ') || 'Any'}
 `;
 
-  const message = await client.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 1600,
-    messages: [{ role: 'user', content: prompt }],
-    tools: [
-      {
-        type: 'web_search_20250305',
-        name: 'web_search',
-        max_uses: 5,
-      },
-    ],
+  const completion = await completeWithWebSearch({
+    feature: 'web_company_discovery',
+    prompt,
+    maxTokens: 1600,
+    maxSearches: 5,
   });
 
-  const candidates = parseJsonArray(extractTextBlocks(message));
+  const candidates = parseJsonArray(completion.text);
   const seen = new Set<string>();
   const companies: DiscoveredCompany[] = [];
   for (const candidate of candidates) {

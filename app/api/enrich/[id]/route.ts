@@ -5,6 +5,8 @@ import {
 } from '@/lib/enrichment-pipeline';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { createClient } from '@/lib/supabase-server';
+import { refundCredits, reserveCredits, settleCredits } from '@/lib/billing/credits';
+import { refreshMonitoringUniverse } from '@/lib/billing/monitoring';
 
 type ContactJobRow = {
   id: string;
@@ -262,6 +264,21 @@ export async function POST(
     }
 
     const admin = createAdminClient();
+    const { data: member } = await admin.from('org_members').select('org_id')
+      .eq('user_id', user.id).maybeSingle<{ org_id: string }>();
+    const operationId = _request.headers.get('x-operation-id') || crypto.randomUUID();
+    const reservation = member?.org_id
+      ? await reserveCredits({
+          orgId: member.org_id,
+          userId: user.id,
+          action: 'manual_contact_refresh',
+          idempotencyKey: `contact-refresh:${operationId}`,
+          entityType: 'contact',
+          entityId: id,
+        })
+      : { ok: true as const, transactionId: null, reserved: 0, idempotent: false };
+    if (!reservation.ok) return NextResponse.json(reservation, { status: 402 });
+
     const now = new Date().toISOString();
     const claimState = await claimLeadRefreshJob(admin, {
       userId: user.id,
@@ -274,6 +291,12 @@ export async function POST(
         runContactResolutionPipelineForContact(admin, {
           contactId: id,
           userId: user.id,
+        }).then(async () => {
+          if (member?.org_id) await refreshMonitoringUniverse(member.org_id);
+          await settleCredits(reservation.transactionId);
+        }).catch(async (error) => {
+          await refundCredits(reservation.transactionId).catch(() => {});
+          throw error;
         });
 
       if (process.env.NODE_ENV === 'development') {
@@ -294,9 +317,11 @@ export async function POST(
     }
 
     if (claimState === 'not_found') {
+      await refundCredits(reservation.transactionId);
       return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
     }
 
+    await refundCredits(reservation.transactionId);
     return NextResponse.json(
       {
         ok: true,

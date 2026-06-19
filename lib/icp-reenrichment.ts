@@ -1,4 +1,3 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { completeLlm } from '@/lib/llm-client';
 import {
@@ -78,16 +77,6 @@ type ClaimResult =
   | {
       state: 'not_found';
     };
-
-function requireAnthropicClient(): Anthropic {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    throw new Error('Anthropic API key not configured');
-  }
-
-  return new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY,
-  });
-}
 
 function parseJsonArrayResponse(responseText: string): string[] {
   try {
@@ -245,8 +234,6 @@ async function recommendCompanySignals(input: {
   developmentStages: string[];
   fundingStages: string[];
 }): Promise<string[]> {
-  const anthropic = requireAnthropicClient();
-
   const signalList = COMPANY_SIGNALS.map(
     (signal) => `- ${signal.id}: ${signal.displayName} (${signal.category})`,
   ).join('\n');
@@ -277,17 +264,17 @@ Return ONLY the JSON array, nothing else.`;
 
   // Structured JSON output (signal-id selection) — Haiku handles this fine.
   // See memory/llm_cost_concerns.md.
-  const message = await anthropic.messages.create({
-    model: 'claude-haiku-4-5',
-    max_tokens: 1024,
-    messages: [{ role: 'user', content: prompt }],
+  const completion = await completeLlm({
+    feature: 'icp_signal_recommendation',
+    prompt,
+    maxTokens: 1024,
   });
   await recordLlmUsageEvent({
-    provider: 'anthropic',
+    provider: completion.provider,
     feature: 'icp_signal_recommendation',
     route: 'lib/icp-reenrichment#recommendCompanySignals',
-    model: 'claude-haiku-4-5',
-    usage: message.usage,
+    model: completion.model,
+    usage: completion.usage,
     metadata: {
       company_type: input.companyType,
       platform_category: input.platformCategory || null,
@@ -298,7 +285,7 @@ Return ONLY the JSON array, nothing else.`;
     },
   });
 
-  const responseText = (message.content[0] as { type: string; text: string }).text.trim();
+  const responseText = completion.text.trim();
   const recommendedIds = normalizeUniqueIds(parseJsonArrayResponse(responseText));
 
   return recommendedIds.filter((id) => COMPANY_SIGNALS.some((signal) => signal.id === id));
@@ -318,8 +305,6 @@ async function generateIcpSummary(input: {
   exampleCompanyName: string | null;
   exampleCompanyDescription: string[] | null;
 }): Promise<string | null> {
-  const anthropic = requireAnthropicClient();
-
   const normalizeList = (values?: string[]) =>
     (values || []).map((value) => value.trim()).filter(Boolean);
 
@@ -367,20 +352,20 @@ Rules:
 - If you are about to mention the underlying company in any way, rewrite the sentence to stay generic
 - Output only the sentence`;
 
-  const message = await anthropic.messages.create({
-    model: 'claude-haiku-4-5',
-    max_tokens: 80,
-    temperature: 0.3,
+  const completion = await completeLlm({
+    feature: 'generate_icp_summary',
+    prompt,
     system:
       'Output only the requested sentence. Never mention the underlying company. Start exactly with "This ICP defines". Avoid promotional phrasing like "powered by".',
-    messages: [{ role: 'user', content: prompt }],
+    maxTokens: 80,
+    temperature: 0.3,
   });
   await recordLlmUsageEvent({
-    provider: 'anthropic',
+    provider: completion.provider,
     feature: 'icp_summary_generation',
     route: 'lib/icp-reenrichment#generateIcpSummary',
-    model: 'claude-haiku-4-5',
-    usage: message.usage,
+    model: completion.model,
+    usage: completion.usage,
     metadata: {
       company_type: input.companyType,
       platform_category: input.platformCategory || null,
@@ -388,7 +373,7 @@ Rules:
     },
   });
 
-  const rawSummary = (message.content[0] as { type: string; text: string }).text.trim();
+  const rawSummary = completion.text.trim();
   const summary = rawSummary.replace(/\s+/g, ' ').trim();
 
   return summary || null;
