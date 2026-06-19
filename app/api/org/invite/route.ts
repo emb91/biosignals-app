@@ -163,9 +163,10 @@ export async function POST(request: Request) {
       .eq('status', 'pending')
       .ilike('email', email);
 
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
     const { data: inviteRow, error: inviteRowError } = await admin
       .from('org_invites')
-      .insert({ org_id: ctx.orgId, email, role, invited_by: ctx.user.id })
+      .insert({ org_id: ctx.orgId, email, role, invited_by: ctx.user.id, expires_at: expiresAt })
       .select('token')
       .single();
 

@@ -22,6 +22,7 @@ import { createAdminClient } from '@/lib/supabase-admin';
 import { getStripe, isBillingConfigured } from '@/lib/billing/stripe';
 import { orgIdForStripeCustomer } from '@/lib/billing/customer';
 import {
+  CREDIT_PACK_SIZE,
   PAYMENT_GRACE_DAYS,
   PLANS,
   isPlanKey,
@@ -53,14 +54,29 @@ export async function POST(request: Request) {
 
   const admin = createAdminClient();
 
-  // Idempotency: first insert wins; a duplicate delivery is acked and dropped.
+  // Idempotency: claim the event by inserting a 'processing' row. On a duplicate
+  // delivery we inspect the existing row — a 'done' row is a true duplicate we
+  // ack and drop; a 'processing' row means a prior attempt died mid-flight, so we
+  // reprocess. Reprocessing is safe because every handler is idempotent (credit
+  // grants key on external_reference; subscription state is upserted by org).
   const { error: dedupeError } = await admin
     .from('stripe_webhook_events')
-    .insert({ id: event.id, type: event.type });
+    .insert({ id: event.id, type: event.type, status: 'processing' });
   if (dedupeError) {
-    if (dedupeError.code === '23505') return NextResponse.json({ received: true, duplicate: true });
-    console.error('[stripe-webhook] dedupe insert failed:', dedupeError);
-    return NextResponse.json({ error: 'Storage error' }, { status: 500 });
+    if (dedupeError.code === '23505') {
+      const { data: existing } = await admin
+        .from('stripe_webhook_events')
+        .select('status')
+        .eq('id', event.id)
+        .maybeSingle();
+      if (existing?.status === 'done') {
+        return NextResponse.json({ received: true, duplicate: true });
+      }
+      // status 'processing' (or row vanished): fall through and reprocess.
+    } else {
+      console.error('[stripe-webhook] dedupe insert failed:', dedupeError);
+      return NextResponse.json({ error: 'Storage error' }, { status: 500 });
+    }
   }
 
   try {
@@ -84,10 +100,17 @@ export async function POST(request: Request) {
     }
   } catch (error) {
     console.error(`[stripe-webhook] handler failed for ${event.type} (${event.id}):`, error);
-    // Free the event id so Stripe's retry can reprocess it.
-    await admin.from('stripe_webhook_events').delete().eq('id', event.id);
+    // Leave the row as 'processing' (do NOT delete) so Stripe's retry re-enters
+    // and reprocesses via the idempotent handlers above. Deleting here risked a
+    // partially-applied handler being re-run from scratch and double-applying.
     return NextResponse.json({ error: 'Handler failed' }, { status: 500 });
   }
+
+  // Mark done so future duplicate deliveries short-circuit.
+  await admin
+    .from('stripe_webhook_events')
+    .update({ status: 'done', processed_at: new Date().toISOString() })
+    .eq('id', event.id);
 
   return NextResponse.json({ received: true });
 }
@@ -101,6 +124,19 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     typeof session.payment_intent === 'string' ? session.payment_intent : session.payment_intent?.id;
   if (!orgId || !Number.isFinite(credits) || credits <= 0 || !paymentIntentId) {
     console.error('[stripe-webhook] credit_pack session missing org/credits/payment_intent:', session.id);
+    return;
+  }
+
+  // Only grant against money actually received. `credits` comes from checkout
+  // metadata, so guard it: require a paid session with a positive total, and a
+  // sane pack count (1–20 packs, matching the checkout cap). Promo codes are
+  // allowed, so we bound the count rather than match an exact amount.
+  if (session.payment_status !== 'paid' || (session.amount_total ?? 0) <= 0) {
+    console.error('[stripe-webhook] credit_pack session not paid; skipping grant:', session.id, session.payment_status);
+    return;
+  }
+  if (credits % CREDIT_PACK_SIZE !== 0 || credits > CREDIT_PACK_SIZE * 20) {
+    console.error('[stripe-webhook] credit_pack credits out of expected range; skipping grant:', session.id, credits);
     return;
   }
 

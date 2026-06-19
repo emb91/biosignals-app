@@ -19,7 +19,7 @@ one people get wrong under pressure.
 > Fill in the `‹…›` placeholders once for your setup, then this is copy-paste.
 
 ## Stack assumptions
-- **App:** Next.js on **Vercel** (project `biosignals-app`, prod domain `‹production-domain›`).
+- **App:** Next.js on **Vercel** (team `emma-arcova`, project `biosignals-app`, prod domain `app.arcova.bio` — TODO(emma): confirm).
 - **DB:** Supabase Postgres (project ref `sbubqrsycbledkxjumjg`). Schema changes are
   forward-only migrations in `supabase/migrations/`.
 - **Integrations that can be affected by a rollback:** Stripe (webhook + price IDs),
@@ -96,9 +96,9 @@ Last resort; **loses data written after the restore point**, so weigh it.
 - [ ] No spike in errors (see Sentry once wired) for ~10 min.
 
 ## Who runs it
-- **Decider / on-call:** `‹name›` — calls the rollback and which path.
+- **Decider / on-call:** `TODO(emma): on-call name` — calls the rollback and which path.
 - **Executor:** anyone with Vercel prod-promote + Supabase admin.
-- **Comms:** post in `‹#incidents channel›` at start and after verify.
+- **Comms:** post in `TODO(emma): #incidents channel` at start and after verify.
 
 ## Gotchas
 - **Env vars don't roll back with the deploy.** If the incident was an env change
