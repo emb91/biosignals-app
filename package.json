@@ -16,7 +16,8 @@
     "gen-sitemap": "node generate-sitemap.js",
     "test:email-pattern": "rm -rf /private/tmp/arcova-email-pattern-tests && tsc -p tsconfig.test.email-pattern.json && node --test /private/tmp/arcova-email-pattern-tests/email-pattern.test.js",
     "test:sweep-fit-gate": "rm -rf /private/tmp/arcova-sweep-fit-gate-tests && tsc -p tsconfig.test.sweep-fit-gate.json && node --test /private/tmp/arcova-sweep-fit-gate-tests/sweep-fit-gate.test.js",
-    "test:email-deliverability-policy": "rm -rf /tmp/arcova-email-deliverability-policy-tests && tsc -p tsconfig.test.email-deliverability-policy.json && node --test /tmp/arcova-email-deliverability-policy-tests/email-deliverability-policy.test.js"
+    "test:email-deliverability-policy": "rm -rf /tmp/arcova-email-deliverability-policy-tests && tsc -p tsconfig.test.email-deliverability-policy.json && node --test /tmp/arcova-email-deliverability-policy-tests/email-deliverability-policy.test.js",
+    "test:billing-stripe-invoice": "rm -rf /private/tmp/arcova-billing-stripe-invoice-tests && tsc -p tsconfig.test.billing-stripe-invoice.json && node --test /private/tmp/arcova-billing-stripe-invoice-tests/stripe-invoice.test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.79.0",
