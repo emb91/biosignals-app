@@ -53,33 +53,26 @@ export async function POST(request: Request) {
     );
   }
 
-  // Already in the target org? Just mark the invite accepted.
-  const previousOrgId = ctx.orgId;
-  if (previousOrgId === invite.org_id) {
-    await admin.from('org_invites').update({ status: 'accepted', accepted_at: new Date().toISOString() }).eq('id', invite.id);
-    return NextResponse.json({ ok: true, orgId: invite.org_id });
-  }
-
-  // Repoint the user's single membership to the inviting org.
-  const { error: moveError } = await admin
-    .from('org_members')
-    .update({ org_id: invite.org_id, role: invite.role, joined_at: new Date().toISOString() })
-    .eq('user_id', ctx.user.id);
-  if (moveError) {
-    console.error('[org/invites/accept] membership move failed:', moveError);
+  const { data: orgId, error: acceptError } = await admin.rpc('accept_org_invite', {
+    p_invite_id: invite.id,
+    p_user_id: ctx.user.id,
+  });
+  if (acceptError) {
+    console.error('[org/invites/accept] failed:', acceptError);
+    if (
+      acceptError.message.includes('existing_team_workspace') ||
+      acceptError.message.includes('existing_workspace_has_data')
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            'This account already has a workspace with data. Contact support before joining another workspace.',
+        },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ error: 'Could not join the organisation' }, { status: 500 });
   }
 
-  // Abandon the old solo org if it now has no members.
-  const { count } = await admin
-    .from('org_members')
-    .select('user_id', { count: 'exact', head: true })
-    .eq('org_id', previousOrgId);
-  if ((count ?? 0) === 0) {
-    await admin.from('organizations').update({ archived_at: new Date().toISOString() }).eq('id', previousOrgId);
-  }
-
-  await admin.from('org_invites').update({ status: 'accepted', accepted_at: new Date().toISOString() }).eq('id', invite.id);
-
-  return NextResponse.json({ ok: true, orgId: invite.org_id });
+  return NextResponse.json({ ok: true, orgId: orgId ?? invite.org_id });
 }

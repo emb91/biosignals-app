@@ -21,35 +21,12 @@ export async function POST() {
     );
   }
 
-  const admin = createAdminClient();
-  const { data: owner } = await admin
-    .from('org_members')
-    .select('user_id')
-    .eq('org_id', ctx.orgId)
-    .eq('role', 'owner')
-    .maybeSingle<{ user_id: string }>();
-  if (!owner?.user_id) {
-    return NextResponse.json({ error: 'Your team has no owner; contact support.' }, { status: 409 });
-  }
-
-  // Hand the leaver's contacts/accounts (+ children) to the owner so they stay with the org.
-  const { error: reassignErr } = await admin.rpc('reassign_member_data_to', {
-    p_from: ctx.user.id,
-    p_to: owner.user_id,
+  const { error } = await createAdminClient().rpc('leave_org_member', {
+    p_org_id: ctx.orgId,
+    p_user_id: ctx.user.id,
   });
-  if (reassignErr) {
-    console.error('[org/leave] data reassignment failed:', reassignErr);
-    return NextResponse.json({ error: 'Could not leave the team. Try again.' }, { status: 500 });
-  }
-
-  // Remove the membership. getOrgContext will lazily create a fresh solo org next request.
-  const { error: delErr } = await admin
-    .from('org_members')
-    .delete()
-    .eq('org_id', ctx.orgId)
-    .eq('user_id', ctx.user.id);
-  if (delErr) {
-    console.error('[org/leave] membership delete failed:', delErr);
+  if (error) {
+    console.error('[org/leave] failed:', error);
     return NextResponse.json({ error: 'Could not leave the team. Try again.' }, { status: 500 });
   }
 

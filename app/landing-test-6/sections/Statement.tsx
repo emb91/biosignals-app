@@ -14,7 +14,7 @@ export function Statement() {
   return (
     <section className="section statement" aria-label="Why Arcova is different">
       <div className="wrap">
-        <div className="stmt-eyebrow reveal"><span className="eyebrow on-dark">Prioritisation, scored</span></div>
+        <div className="stmt-eyebrow reveal"><span className="eyebrow on-dark">Prioritization, scored</span></div>
         <p className="big reveal">Other tools list the signals.<br /><span className="hl">Arcova scores who&rsquo;s ready to buy.</span></p>
         <p className="stmt-sub reveal">Every signal below feeds a live readiness score, so your market arrives ranked, with the highest-intent accounts already at the top of your day.</p>
 

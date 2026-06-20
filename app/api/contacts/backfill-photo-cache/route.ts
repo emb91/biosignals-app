@@ -1,12 +1,22 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { cacheProfilePhoto } from '@/lib/photo-cache';
+import { guardAuthenticatedAction } from '@/lib/api-security';
 
 // POST /api/contacts/backfill-photo-cache
 // Fetches and caches profile photos for all people rows that have a
 // profile_photo_url but no profile_photo_cached yet.
 // Processes in batches to avoid timeouts — call repeatedly until done=true.
 export async function POST(req: Request) {
+  const guard = await guardAuthenticatedAction(req, {
+    action: 'backfill-photo-cache',
+    limit: 2,
+    windowSeconds: 60,
+    maxBodyBytes: 2_000,
+    adminOnly: true,
+  });
+  if (!guard.ok) return guard.response;
+
   const supabase = createAdminClient();
   const body = await req.json().catch(() => ({}));
   const batchSize: number = Math.min(Number(body.batchSize) || 20, 50);

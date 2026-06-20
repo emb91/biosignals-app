@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { enrichTargetCompany } from '@/lib/target-company-enrichment';
+import { guardAuthenticatedAction } from '@/lib/api-security';
 
 function publicEnrichmentPayload(value: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
@@ -8,6 +9,14 @@ function publicEnrichmentPayload(value: Record<string, unknown>): Record<string,
 }
 
 export async function POST(request: Request) {
+  const guard = await guardAuthenticatedAction(request, {
+    action: 'analyze-example-company',
+    limit: 6,
+    windowSeconds: 60,
+    maxBodyBytes: 8_000,
+  });
+  if (!guard.ok) return guard.response;
+
   try {
     const body = await request.json();
     const { url } = body as { url?: string };

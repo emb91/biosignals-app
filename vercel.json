@@ -5,6 +5,10 @@
       "schedule": "0 6 * * *"
     },
     {
+      "path": "/api/cron/hubspot-backup",
+      "schedule": "0 5 * * *"
+    },
+    {
       "path": "/api/cron/lemlist-sync",
       "schedule": "0 11 * * *"
     },
@@ -37,12 +41,12 @@
       "schedule": "*/10 * * * *"
     },
     {
-      "path": "/api/cron/grants-delta",
-      "schedule": "0 11 * * *"
+      "path": "/api/cron/launch-readiness",
+      "schedule": "5 * * * *"
     },
     {
-      "path": "/api/cron/conferences-delta",
-      "schedule": "0 12 * * 2"
+      "path": "/api/cron/grants-delta",
+      "schedule": "0 11 * * *"
     },
     {
       "path": "/api/cron/press-releases-delta",

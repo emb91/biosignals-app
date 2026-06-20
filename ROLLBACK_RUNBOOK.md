@@ -2,8 +2,8 @@
 
 > **DO NOT run this during ordinary launch setup.**
 >
-> **One-time action before launch:** fill the remaining `‹…›` placeholders,
-> confirm the named people have Vercel production and Supabase admin access, and
+> **One-time action before launch:** confirm the named people have Vercel
+> production and Supabase admin access, and
 > perform one app-only rollback drill in staging.
 >
 > **Use this file only when:** a production deployment breaks core flows or
@@ -16,11 +16,11 @@ BACKLOG.md ("Document how to roll back a deployment"). **Read this before you
 need it** — the dangerous case (a deploy that includes a DB migration) is the
 one people get wrong under pressure.
 
-> Fill in the `‹…›` placeholders once for your setup, then this is copy-paste.
-
 ## Stack assumptions
-- **App:** Next.js on **Vercel** (team `emma-arcova`, project `biosignals-app`, prod domain `app.arcova.bio` — TODO(emma): confirm).
-- **DB:** Supabase Postgres (project ref `sbubqrsycbledkxjumjg`). Schema changes are
+- **App:** Next.js on **Vercel** (team `emma-arcova`, project `biosignals-app`,
+  intended prod domain `app.arcova.bio`; confirm during the first deployment).
+- **DB:** Supabase Postgres. Development project ref is `sbubqrsycbledkxjumjg`;
+  replace this line with the production project ref when production is created. Schema changes are
   forward-only migrations in `supabase/migrations/`.
 - **Integrations that can be affected by a rollback:** Stripe (webhook + price IDs),
   Resend (`RESEND_AUTH_FROM`), Supabase auth (templates/SMTP), env vars in Vercel.
@@ -31,7 +31,7 @@ one people get wrong under pressure.
 3. **Data corruption** — a migration or a bug wrote bad data.
 
 Check fast: compare the deployed commit to the previous prod commit —
-`git log --oneline ‹prev-prod-sha›..‹bad-prod-sha› -- supabase/migrations` →
+`git log --oneline PREVIOUS_PROD_SHA..BAD_PROD_SHA -- supabase/migrations` →
 any output = **migration involved** (path 2/3). Empty = **app-only** (path 1).
 
 ---
@@ -40,8 +40,9 @@ any output = **migration involved** (path 2/3). Empty = **app-only** (path 1).
 Vercel keeps every prior deployment. Roll the app back without touching the DB.
 
 1. Vercel → project → **Deployments** → find the last-known-good deployment →
-   **⋯ → Promote to Production** (a.k.a. Instant Rollback). *(CLI: `vercel rollback ‹good-deployment-url›`.)*
-2. Confirm the prod domain now serves the old build (hard-refresh; check a changed element or `/api/health` if present).
+   **⋯ → Promote to Production** (a.k.a. Instant Rollback). *(CLI:
+   `vercel rollback GOOD_DEPLOYMENT_URL`.)*
+2. Confirm the prod domain now serves the old build and `/api/health` returns 200.
 3. **Verify** (smoke test, see checklist below).
 4. Fix forward on a branch; redeploy when green.
 
@@ -93,12 +94,15 @@ Last resort; **loses data written after the restore point**, so weigh it.
 - [ ] A core read path: open `/accounts` or `/leads/contacts`.
 - [ ] Auth email path intact: trigger a password reset to a test inbox → link works (`/auth/confirm`).
 - [ ] Stripe webhook still 200s (Stripe dashboard → webhook → recent deliveries) — only if billing was in the change.
-- [ ] No spike in errors (see Sentry once wired) for ~10 min.
+- [ ] No spike in Sentry errors for ~10 min.
+- [ ] `/admin/launch-readiness` shows no new operational anomalies.
 
 ## Who runs it
-- **Decider / on-call:** `TODO(emma): on-call name` — calls the rollback and which path.
+- **Decider / on-call:** Emma Bardsley until another primary is explicitly assigned.
 - **Executor:** anyone with Vercel prod-promote + Supabase admin.
-- **Comms:** post in `TODO(emma): #incidents channel` at start and after verify.
+- **Comms:** record the incident start, decision, deploy SHA, and verification result
+  in the team incident channel. Until a shared channel exists, create a private
+  GitHub issue labelled `incident` and link the relevant Sentry issue.
 
 ## Gotchas
 - **Env vars don't roll back with the deploy.** If the incident was an env change
@@ -110,6 +114,6 @@ Last resort; **loses data written after the restore point**, so weigh it.
   was additive precisely so app rollback stays safe).
 - **Webhooks:** a rollback that changes webhook routes/secrets can desync Stripe.
   Re-check the endpoint + signing secret after.
-- **Prerequisite gaps (BACKLOG):** automated/tested backups, PITR, and a separate
-  staging env aren't set up yet — until they are, Path 3 is fragile. Set those up
+- **Prerequisite gaps:** Supabase backups/PITR and a separate staging environment
+  still require external setup. Until they are verified, Path 3 is fragile. Set those up
   before relying on this runbook for a data incident.

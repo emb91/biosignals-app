@@ -113,7 +113,7 @@ export default function CreditsDocsPage() {
   return (
     <div className="credits-doc">
       <header className="docs-topbar">
-        <Link className="docs-brand" href="/landing-test-3">
+        <Link className="docs-brand" href="/">
           <img src="/arcova-logo.png" alt="Arcova" />
           <span>Docs</span>
         </Link>

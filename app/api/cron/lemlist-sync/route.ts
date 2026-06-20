@@ -12,9 +12,10 @@
  */
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
+import { observeCron } from '@/lib/cron-observability';
 import { syncUserOutreachStatus } from '@/lib/lemlist';
 import { pushOutreachStatusByEmail, resolveOrgNangoConnectionId } from '@/lib/hubspot';
-import { nango, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
+import { getNangoAccessToken, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
 
 function authorize(req: Request): boolean {
   const expected = process.env.CRON_SECRET;
@@ -22,7 +23,7 @@ function authorize(req: Request): boolean {
   return req.headers.get('authorization') === `Bearer ${expected}`;
 }
 
-export async function GET(req: Request) {
+async function runCron(req: Request) {
   if (!authorize(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -49,7 +50,7 @@ export async function GET(req: Request) {
         // Org-scoped: use the org's HubSpot connection (one per org).
         const connectionId = await resolveOrgNangoConnectionId(admin, cred.user_id, HUBSPOT_INTEGRATION_ID);
         if (connectionId) {
-          const token = (await nango.getToken(HUBSPOT_INTEGRATION_ID, connectionId)) as string;
+          const token = await getNangoAccessToken(HUBSPOT_INTEGRATION_ID, connectionId);
           hubspotPush = async (email, status, anchor) => {
             await pushOutreachStatusByEmail(token, { email, status, anchor, channel: 'lemlist' });
           };
@@ -83,3 +84,5 @@ export async function GET(req: Request) {
     results,
   });
 }
+
+export const GET = observeCron('lemlist-sync', runCron);

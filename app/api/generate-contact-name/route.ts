@@ -1,8 +1,15 @@
 import { NextResponse } from 'next/server';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { completeLlm } from '@/lib/llm-client';
+import { guardAuthenticatedAction } from '@/lib/api-security';
 
 export async function POST(request: Request) {
+  const guard = await guardAuthenticatedAction(request, {
+    action: 'generate-contact-name',
+    maxBodyBytes: 32_000,
+  });
+  if (!guard.ok) return guard.response;
+
   try {
     const body = await request.json();
     const { targetCompanyProfile, selectedFunctions, selectedSeniority } = body;

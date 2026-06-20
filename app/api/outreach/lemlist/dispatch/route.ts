@@ -28,6 +28,10 @@ import { getHubSpotTokenForUser, pushOutreachStatusByEmail } from '@/lib/hubspot
 import { fetchOrgOutreachActivityByPerson, releaseExpiredAndFindBlocker } from '@/lib/org-outreach';
 import { orgIdForUser } from '@/lib/org-context';
 import { createAdminClient } from '@/lib/supabase-admin';
+import {
+  hasCompleteBestPracticeCadence,
+  sanitizeOutreachMessages,
+} from '@/lib/outreach-sequence';
 
 function messageFromUnknown(error: unknown): string {
   return error instanceof Error ? error.message : 'Internal server error';
@@ -154,10 +158,14 @@ export async function POST(req: Request) {
         continue;
       }
 
-      const messages = Array.isArray(row.messages) ? row.messages : [];
-      if (messages.length === 0) {
-        await markFailed(supabase, row.id, user.id, 'Sequence has no messages');
-        results.push({ id: row.id, ok: false, error: 'Sequence has no messages' });
+      const messages = sanitizeOutreachMessages(row.messages);
+      if (!hasCompleteBestPracticeCadence(messages)) {
+        results.push({
+          id: row.id,
+          ok: false,
+          error:
+            'This draft was created with an older incomplete cadence. Generate a new sequence before sending.',
+        });
         continue;
       }
 

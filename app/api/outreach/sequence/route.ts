@@ -32,6 +32,11 @@ import {
   settleUsage,
   settleCredits,
 } from '@/lib/billing/credits';
+import {
+  OUTREACH_COPY_DAY_OFFSETS,
+  withLinkedInInvite,
+  type OutreachSequenceMessage,
+} from '@/lib/outreach-sequence';
 
 // Matches lemlist's default multichannel template — but the generator only
 // writes COPY for the 6 message steps; the Day 7 LinkedIn invite is a pure
@@ -45,21 +50,12 @@ import {
 // Day 11 Email     — re-engage (LLM, lemlist's slot is voice; we use email)
 // Day 14 LinkedIn  — message (LLM, final LI touch)
 // Day 21 Email     — breakup (LLM)
-const DAY_OFFSETS = [1, 4, 8, 11, 14, 21] as const;
-
 function messageFromUnknown(error: unknown): string {
   if (error instanceof Error) return error.message;
   return 'Internal server error';
 }
 
-type Message = {
-  day_offset: number;
-  subject: string;
-  body: string;
-  /** Display channel so the pre-stage preview is correct. Days 8 + 14 are
-   *  LinkedIn messages; the stage endpoint also assigns this per day. */
-  channel: 'email' | 'linkedin';
-};
+type Message = OutreachSequenceMessage;
 
 function tolerantJsonParse(text: string): unknown {
   let candidate = text.trim();
@@ -108,7 +104,9 @@ function parseSequence(text: string): Message[] {
       // its canonical day_offset by position so a stray model value can't push a
       // step off-cadence and make the stage endpoint's channel map (keyed on the
       // exact day) misfire to email. The model's day_offset is ignored.
-      const dayOffset = DAY_OFFSETS[i] ?? DAY_OFFSETS[DAY_OFFSETS.length - 1];
+      const dayOffset =
+        OUTREACH_COPY_DAY_OFFSETS[i] ??
+        OUTREACH_COPY_DAY_OFFSETS[OUTREACH_COPY_DAY_OFFSETS.length - 1];
       const subject = typeof o.subject === 'string' ? scrubAiTropes(o.subject.trim()) : '';
       const body = typeof o.body === 'string' ? scrubAiTropes(o.body.trim()) : '';
       // Only the BODY is required. Day 8 + Day 14 are LinkedIn messages with an
@@ -341,10 +339,10 @@ export async function POST(request: Request) {
       },
     });
 
-    const messages = parseSequence(completion.text);
-    if (messages.length < 4) {
-      // Sanity check — if Sonnet returned fewer than 5 messages something
-      // went wrong with the parse or the prompt. 5+ is acceptable, 7 ideal.
+    const generatedMessages = parseSequence(completion.text);
+    if (generatedMessages.length !== OUTREACH_COPY_DAY_OFFSETS.length) {
+      // Do not silently ship a degraded cadence. In particular, losing either
+      // subject-less LinkedIn message turns the sequence back into email-only.
       await refundCredits(creditTransactionId);
       if (usageContext) await settleUsage({
         orgId: usageContext.orgId,
@@ -353,8 +351,20 @@ export async function POST(request: Request) {
         quantity: 0,
       });
       creditTransactionId = null;
-      return NextResponse.json({ error: 'Generated sequence too short', count: messages.length }, { status: 502 });
+      return NextResponse.json(
+        {
+          error: 'Generated sequence did not include every best-practice step',
+          count: generatedMessages.length,
+        },
+        { status: 502 },
+      );
     }
+
+    // Return the complete seven-step cadence to the contact side panel,
+    // including the action-only LinkedIn connection request. Previously this
+    // was hidden until staging, which made the generated sequence look like a
+    // six-email follow-up list even though Lemlist had a multichannel template.
+    const messages = withLinkedInInvite(generatedMessages);
 
     await settleCredits(creditTransactionId);
     if (usageContext) await settleUsage({

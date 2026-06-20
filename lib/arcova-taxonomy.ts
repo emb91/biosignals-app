@@ -23,10 +23,6 @@ export const COMPANY_TYPE_OPTIONS = [
     description: 'Patient, clinical, care-delivery, or healthcare informatics software including digital therapeutics',
   },
   {
-    value: 'Academic Spinout',
-    description: 'Companies originated from a university or research institution',
-  },
-  {
     value: 'Academic / Research Institute',
     description: 'Universities, research hospitals, and publicly-funded research organisations',
   },
@@ -328,8 +324,8 @@ export function canonicalizeCompanyType(value: unknown): CompanyType | null {
     'biotech biopharma': 'Biotech / Biopharma',
     pharmaceutical: 'Pharma',
     pharma: 'Pharma',
-    spinout: 'Academic Spinout',
-    'university spinout': 'Academic Spinout',
+    spinout: 'Biotech / Biopharma',
+    'university spinout': 'Biotech / Biopharma',
     'contract development manufacturing organisation': 'CDMO',
     'contract development manufacturing organization': 'CDMO',
     'contract research organisation': 'CRO',

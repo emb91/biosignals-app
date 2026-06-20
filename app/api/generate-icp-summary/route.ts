@@ -1,8 +1,15 @@
 import { NextResponse } from 'next/server';
 import { completeLlm } from '@/lib/llm-client';
+import { guardAuthenticatedAction } from '@/lib/api-security';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 
 export async function POST(request: Request) {
+  const guard = await guardAuthenticatedAction(request, {
+    action: 'generate-icp-summary',
+    maxBodyBytes: 48_000,
+  });
+  if (!guard.ok) return guard.response;
+
   try {
     if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENROUTER_API_KEY) {
       console.error('No LLM provider API key is set');

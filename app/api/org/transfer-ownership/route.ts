@@ -22,20 +22,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'You are already the owner' }, { status: 400 });
   }
 
-  const admin = createAdminClient();
-  const { data: target } = await admin
-    .from('org_members')
-    .select('user_id')
-    .eq('org_id', ctx.orgId)
-    .eq('user_id', targetId)
-    .maybeSingle<{ user_id: string }>();
-  if (!target) return NextResponse.json({ error: 'That teammate could not be found' }, { status: 404 });
-
-  // Promote the new owner, demote the previous owner to admin.
-  const { error: e1 } = await admin.from('org_members').update({ role: 'owner' }).eq('org_id', ctx.orgId).eq('user_id', targetId);
-  const { error: e2 } = await admin.from('org_members').update({ role: 'admin' }).eq('org_id', ctx.orgId).eq('user_id', ctx.user.id);
-  if (e1 || e2) {
-    console.error('[org/transfer-ownership] failed:', e1 || e2);
+  const { error } = await createAdminClient().rpc('transfer_org_ownership', {
+    p_org_id: ctx.orgId,
+    p_current_owner: ctx.user.id,
+    p_new_owner: targetId,
+  });
+  if (error) {
+    console.error('[org/transfer-ownership] failed:', error);
+    if (error.message.includes('target_not_found')) {
+      return NextResponse.json({ error: 'That teammate could not be found' }, { status: 404 });
+    }
     return NextResponse.json({ error: 'Could not transfer ownership' }, { status: 500 });
   }
   return NextResponse.json({ ok: true });

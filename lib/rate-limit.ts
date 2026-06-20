@@ -12,7 +12,9 @@ export async function checkRateLimit(
   key: string,
   limit: number,
   windowSeconds: number,
+  options: { failOpen?: boolean } = {},
 ): Promise<{ allowed: boolean; hits: number }> {
+  const failOpen = options.failOpen ?? true;
   try {
     const windowId = Math.floor(Date.now() / 1000 / windowSeconds);
     const bucket = `${key}:${windowId}`;
@@ -21,14 +23,14 @@ export async function checkRateLimit(
     const admin = createAdminClient();
     const { data, error } = await admin.rpc('api_rate_limit_hit', { p_bucket: bucket, p_expires: expires });
     if (error) {
-      console.error('[rate-limit] hit failed (allowing):', error);
-      return { allowed: true, hits: 0 };
+      console.error(`[rate-limit] hit failed (${failOpen ? 'allowing' : 'blocking'}):`, error);
+      return { allowed: failOpen, hits: 0 };
     }
     const hits = typeof data === 'number' ? data : 0;
     return { allowed: hits <= limit, hits };
   } catch (error) {
-    console.error('[rate-limit] failed (allowing):', error);
-    return { allowed: true, hits: 0 };
+    console.error(`[rate-limit] failed (${failOpen ? 'allowing' : 'blocking'}):`, error);
+    return { allowed: failOpen, hits: 0 };
   }
 }
 

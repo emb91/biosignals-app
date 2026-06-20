@@ -21,6 +21,7 @@
  */
 
 import { NextResponse } from 'next/server';
+import { observeCron } from '@/lib/cron-observability';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { runContactResolutionPipelineForContact } from '@/lib/enrichment-pipeline';
 
@@ -32,7 +33,7 @@ function messageFromUnknown(err: unknown): string {
   return String(err);
 }
 
-export async function GET(request: Request) {
+async function runCron(request: Request) {
   const cronSecret = process.env.CRON_SECRET;
   const auth = request.headers.get('authorization');
   if (!cronSecret || auth !== `Bearer ${cronSecret}`) {
@@ -126,3 +127,5 @@ export async function GET(request: Request) {
     failures,
   });
 }
+
+export const GET = observeCron('contact-enrichment-queue', runCron);

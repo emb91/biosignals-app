@@ -26,6 +26,10 @@ type Summary = {
   };
   seats: { used: number; included: number };
   credits: { available: number; granted: number };
+  triage: { used: number; limit: number };
+  importedEnrichments: { used: number; included: number; hardCap: number };
+  activeLeads: { used: number; cap: number; waitlisted: number; cadenceDays: number };
+  netNewLeads: { used: number; limit: number };
   catalog: {
     plans: Array<{
       key: string;
@@ -119,6 +123,15 @@ export default function BillingSettings() {
     credits.granted > 0
       ? Math.min(100, Math.round(((credits.granted - credits.available) / credits.granted) * 100))
       : 0;
+  const capUsagePct = Math.max(
+    usagePct,
+    percentage(summary.activeLeads.used, summary.activeLeads.cap),
+    percentage(summary.triage.used, summary.triage.limit),
+    percentage(summary.importedEnrichments.used, summary.importedEnrichments.hardCap),
+    percentage(summary.netNewLeads.used, summary.netNewLeads.limit),
+  );
+  const showPlanNudge = capUsagePct >= 75 && (plan.key === 'free' || plan.key === 'starter');
+  const showCreditNudge = usagePct >= 80 && plan.key !== 'free' && catalog.pack?.available;
   const renewsAt = plan.renewsAt
     ? new Date(plan.renewsAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
     : null;
@@ -179,6 +192,63 @@ export default function BillingSettings() {
           </div>
         </div>
 
+        {showPlanNudge && (
+          <div className={`mt-4 rounded-xl border px-4 py-3 ${
+            capUsagePct >= 90
+              ? 'border-amber-200 bg-amber-50'
+              : 'border-[#dbe8ed] bg-[#f4f8fa]'
+          }`}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-[#0d3547]">
+                  {plan.key === 'free' ? 'Starter is a better fit now' : 'You’re approaching Starter’s limits'}
+                </p>
+                <p className="mt-0.5 text-xs leading-relaxed text-[#4a6470]">
+                  Your highest plan allowance is {capUsagePct}% used.{' '}
+                  {plan.key === 'free'
+                    ? 'Starter adds 2,000 monthly credits and monitoring for up to 5,000 active leads.'
+                    : 'Growth adds 8,000 monthly credits, 10,000 active leads, and weekly monitoring.'}
+                </p>
+              </div>
+              {canManage && summary.available && (
+                <button
+                  onClick={() =>
+                    void redirectTo(
+                      plan.key === 'free' ? '/api/billing/checkout' : '/api/billing/portal',
+                      plan.key === 'free'
+                        ? { kind: 'plan', planKey: 'starter', billing: 'monthly' }
+                        : undefined,
+                    )
+                  }
+                  disabled={busy !== null}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#0d3547] px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-[#0d3547]/90 disabled:opacity-50"
+                >
+                  <ArrowUpRight className="h-3.5 w-3.5" />
+                  {plan.key === 'free' ? 'Upgrade to Starter' : 'Review Growth'}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {showCreditNudge && (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+            <p className="text-xs leading-relaxed text-amber-900">
+              You’ve used {usagePct}% of this period’s plan credits. Add a credit pack now to avoid interrupting paid actions.
+            </p>
+            {canManage && (
+              <button
+                onClick={() => void redirectTo('/api/billing/checkout', { kind: 'pack' })}
+                disabled={busy !== null}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 transition hover:bg-amber-100 disabled:opacity-50"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Add credits
+              </button>
+            )}
+          </div>
+        )}
+
         {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
 
         {/* Actions */}
@@ -228,4 +298,9 @@ export default function BillingSettings() {
       </div>
     </section>
   );
+}
+
+function percentage(used: number, limit: number): number {
+  if (limit <= 0) return 0;
+  return Math.min(100, Math.round((used / limit) * 100));
 }

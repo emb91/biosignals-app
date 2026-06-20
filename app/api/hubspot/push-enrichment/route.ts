@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 import { createAdminClient } from '@/lib/supabase-admin';
-import { nango, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
+import { getNangoAccessToken, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
 import { looksLikeEmail } from '@/lib/contact-emails';
 import {
   ensureArcovaHubSpotProperties,
@@ -11,6 +11,7 @@ import {
   batchReadContactsByEmail,
   resolveOrgNangoConnectionId,
 } from '@/lib/hubspot';
+import { ensureBaselineSnapshot } from '@/lib/backup/hubspot-snapshot';
 import { getActionFromScores, effectiveReadiness, formatLeadActionLabel } from '@/lib/lead-action';
 import { formatDataSourceLabel, resolveContactDataProvenance } from '@/lib/data-provenance';
 
@@ -39,7 +40,7 @@ export async function POST() {
 
     let accessToken: string;
     try {
-      accessToken = await nango.getToken(HUBSPOT_INTEGRATION_ID, connectionId) as string;
+      accessToken = await getNangoAccessToken(HUBSPOT_INTEGRATION_ID, connectionId);
     } catch (e) {
       const nangoMsg: string =
         (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? '';
@@ -48,6 +49,17 @@ export async function POST() {
     }
 
     const admin = createAdminClient();
+
+    // SAFETY GATE: never write into a customer's HubSpot until an immutable baseline backup of
+    // their account exists. If the vault can't be written, refuse the push.
+    const baseline = await ensureBaselineSnapshot(admin, { userId: user.id, accessToken });
+    if (!baseline.ok) {
+      return NextResponse.json(
+        { error: `Backup not ready, push blocked to protect your CRM: ${baseline.reason}`, code: 'backup_required' },
+        { status: 503 },
+      );
+    }
+
     const { data: leads, error: leadsError } = await admin
       .from('contacts')
       .select(`

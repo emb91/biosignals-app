@@ -1,4 +1,16 @@
 User-agent: *
 Allow: /
+Disallow: /admin/
+Disallow: /api/
+Disallow: /landing-test-
+Disallow: /login
+Disallow: /settings
+Disallow: /arcova-setup
+Disallow: /gtm-base
+Disallow: /leads/
+Disallow: /outreach
+Disallow: /import
+Disallow: /today
+Disallow: /coverage
 
-Sitemap: https://arcova.bio/sitemap.xml 
+Sitemap: https://arcova.bio/sitemap.xml

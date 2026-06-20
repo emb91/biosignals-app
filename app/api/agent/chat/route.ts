@@ -1565,7 +1565,7 @@ async function toolUpdateIcp(
 
 /**
  * Delete an ICP. Returns a JSON tool-result string for the agent and a mutation record.
- * FK cascades in the DB (personas, icp_signal_selections, etc.) clean up automatically.
+ * FK cascades in the DB (personas and related setup records) clean up automatically.
  */
 async function toolDeleteIcp(
   supabase: Awaited<ReturnType<typeof createClient>>,

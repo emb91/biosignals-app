@@ -114,6 +114,7 @@
 #lt6 .hero-in { position: relative; z-index: 1; }
 #lt6 .hero .eyebrow { margin-bottom: 22px; }
 #lt6 .hero .display { max-width: 17ch; margin: 0 auto; }
+#lt6 .hero .display .hl { background: linear-gradient(135deg, var(--teal), var(--mint)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; color: transparent; }
 #lt6 .hero .lead { margin: 24px auto 0; max-width: 40ch; }
 #lt6 .hero-cta { margin-top: 32px; display: flex; gap: 13px; justify-content: center; flex-wrap: wrap; }
 #lt6 .hero-note { margin-top: 16px; font-size: 12.5px; color: var(--ink-mute); }
@@ -355,6 +356,7 @@
 #lt6 .plan .pprice { display: flex; align-items: baseline; gap: 5px; margin: 16px 0 2px; }
 #lt6 .plan .pprice .amt { font-family: var(--font-head); font-size: 40px; font-weight: 700; letter-spacing: -.035em; font-variant-numeric: tabular-nums; }
 #lt6 .plan .pprice .per { font-size: 13px; color: var(--ink-mute); }
+#lt6 .plan .pprice .amt-was { font-family: var(--font-head); font-size: 22px; font-weight: 600; color: var(--ink-faint); text-decoration: line-through; letter-spacing: -.02em; }
 #lt6 .plan .pbilled { font-size: 11.5px; color: var(--ink-faint); min-height: 17px; }
 #lt6 .plan .pbtn { margin: 22px 0; }
 #lt6 .plan .pbtn .btn { width: 100%; justify-content: center; }
@@ -374,6 +376,28 @@
 #lt6 .ent .ebtn .btn { background: var(--teal); color: #fff; box-shadow: 0 0 0 1px color-mix(in oklab, var(--mint) 38%, transparent), 0 12px 28px -10px color-mix(in oklab, var(--teal) 70%, transparent); }
 #lt6 .ent .ebtn .btn:hover { background: color-mix(in oklab, var(--teal) 88%, #fff); }
 #lt6 .price-note { margin-top: 24px; text-align: center; font-size: 12.5px; color: var(--ink-mute); }
+
+/* full tier-by-tier comparison (ported from landing-test-3) */
+#lt6 .comparison { margin-top: 40px; padding: 34px; border: 1px solid var(--line); border-radius: 24px; background: rgba(255,255,255,.72); box-shadow: var(--soft-shadow); }
+#lt6 .comparison-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; margin-bottom: 24px; }
+#lt6 .comparison-head .eyebrow { margin-bottom: 8px; }
+#lt6 .comparison-head h3 { font-size: clamp(1.45rem, 1.1rem + 1vw, 2rem); }
+#lt6 .credit-link { color: var(--teal-deep); font-size: 13px; font-weight: 700; white-space: nowrap; }
+#lt6 .credit-link span { display: inline-block; transition: transform .2s; }
+#lt6 .credit-link:hover span { transform: translateX(3px); }
+#lt6 .comparison-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 16px; background: #fff; }
+#lt6 .comparison table { width: 100%; border-collapse: collapse; min-width: 760px; }
+#lt6 .comparison th, #lt6 .comparison td { padding: 14px 18px; border-bottom: 1px solid var(--line); text-align: left; font-size: 13px; }
+#lt6 .comparison th { background: rgba(13,53,71,.025); color: var(--ink); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; font-weight: 700; }
+#lt6 .comparison th:first-child, #lt6 .comparison td:first-child { width: 34%; color: var(--ink-soft); }
+#lt6 .comparison td:not(:first-child) { font-weight: 600; color: var(--ink); }
+#lt6 .comparison .cmp-was { font-weight: 500; color: var(--ink-faint); text-decoration: line-through; margin-right: 6px; }
+#lt6 .comparison tr:last-child td { border-bottom: none; }
+#lt6 .comparison-note { margin: 18px 2px 0; color: var(--ink-mute); font-size: 12.5px; line-height: 1.6; }
+@media (max-width: 560px) {
+  #lt6 .comparison { padding: 24px 18px; }
+  #lt6 .comparison-head { align-items: flex-start; flex-direction: column; }
+}
 
 /* ============================================================
    (7) Final CTA — punchy dark card + teal spotlight

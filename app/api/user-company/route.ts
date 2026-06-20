@@ -12,21 +12,18 @@ import {
 
 export async function GET(request: NextRequest) {
   try {
-    const supabase = await createClient()
-
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-    if (authError || !user) {
+    const ctx = await getOrgContext()
+    if (!ctx) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
       )
     }
 
-    const { data: analyses, error } = await supabase
+    const { data: analyses, error } = await ctx.supabase
       .from('user_company')
       .select('*')
-      .eq('user_id', user.id)
+      .eq('org_id', ctx.orgId)
       .order('analyzed_at', { ascending: false })
 
     if (error) {
@@ -54,11 +51,8 @@ export async function GET(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
-    const supabase = await createClient()
-
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-    if (authError || !user) {
+    const ctx = await getOrgContext()
+    if (!ctx) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
@@ -66,8 +60,7 @@ export async function PUT(request: NextRequest) {
     }
 
     // "My company" is org-level setup — owner/admin only. Members are read-only.
-    const ctx = await getOrgContext()
-    if (ctx && !canEditOrgSetup(ctx.role)) {
+    if (!canEditOrgSetup(ctx.role)) {
       return NextResponse.json(
         { error: 'Only an owner or admin can edit the company profile' },
         { status: 403 }
@@ -112,20 +105,20 @@ export async function PUT(request: NextRequest) {
       updated_at: new Date().toISOString(),
     }
 
-    let result = await supabase
+    let result = await ctx.supabase
       .from('user_company')
       .update(updatePayload)
       .eq('id', id)
-      .eq('user_id', user.id)
+      .eq('org_id', ctx.orgId)
       .select()
       .single()
 
     if (result.error && isMissingColumnError(result.error, 'platform_category')) {
-      result = await supabase
+      result = await ctx.supabase
         .from('user_company')
         .update(withoutPlatformCategory(updatePayload))
         .eq('id', id)
-        .eq('user_id', user.id)
+        .eq('org_id', ctx.orgId)
         .select()
         .single()
     }
@@ -155,19 +148,15 @@ export async function PUT(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
-    const supabase = await createClient()
-
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-    if (authError || !user) {
+    const ctx = await getOrgContext()
+    if (!ctx) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
       )
     }
 
-    const ctx = await getOrgContext()
-    if (ctx && !canEditOrgSetup(ctx.role)) {
+    if (!canEditOrgSetup(ctx.role)) {
       return NextResponse.json(
         { error: 'Only an owner or admin can delete the company profile' },
         { status: 403 }
@@ -184,11 +173,11 @@ export async function DELETE(request: NextRequest) {
       )
     }
 
-    const { error } = await supabase
+    const { error } = await ctx.supabase
       .from('user_company')
       .delete()
       .eq('id', id)
-      .eq('user_id', user.id)
+      .eq('org_id', ctx.orgId)
 
     if (error) {
       console.error('Error deleting user company:', error)

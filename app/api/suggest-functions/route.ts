@@ -3,8 +3,15 @@ import { BUSINESS_AREA_OPTIONS } from '@/lib/arcova-taxonomy';
 import { resolveCustomerSegments } from '@/lib/split-customer-segments';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { completeLlm } from '@/lib/llm-client';
+import { guardAuthenticatedAction } from '@/lib/api-security';
 
 export async function POST(request: Request) {
+  const guard = await guardAuthenticatedAction(request, {
+    action: 'suggest-functions',
+    maxBodyBytes: 48_000,
+  });
+  if (!guard.ok) return guard.response;
+
   try {
     const body = await request.json();
     const { sellerProfile, targetCompanyProfile } = body;

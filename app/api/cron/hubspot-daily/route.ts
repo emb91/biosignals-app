@@ -12,8 +12,9 @@
  * `Authorization: Bearer <CRON_SECRET>` when invoking cron routes.
  */
 import { after, NextResponse } from 'next/server';
+import { observeCron } from '@/lib/cron-observability';
 import { createAdminClient } from '@/lib/supabase-admin';
-import { nango, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
+import { getNangoAccessToken, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
 import { looksLikeEmail } from '@/lib/contact-emails';
 import {
   ensureArcovaHubSpotProperties,
@@ -28,6 +29,7 @@ import { getLeadActionFromFits, formatLeadActionLabel } from '@/lib/lead-action'
 import { syncHubSpotContactsIntoReadiness } from '@/lib/signals/readiness-hubspot-contacts';
 import { syncHubSpotDealsIntoReadiness } from '@/lib/signals/readiness-hubspot-deals';
 import { denormalizeCrmSuppressionState } from '@/lib/crm-suppression-denormalize';
+import { ensureBaselineSnapshot } from '@/lib/backup/hubspot-snapshot';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -406,7 +408,7 @@ async function pullNewFromHubSpot(
 
 // ── Cron handler ──────────────────────────────────────────────────────────────
 
-export async function GET(request: Request) {
+async function runCron(request: Request) {
   if (!isAuthorized(request)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -449,13 +451,19 @@ export async function GET(request: Request) {
 
   for (const conn of connections) {
     try {
-      const accessToken = await nango.getToken(
+      const accessToken = await getNangoAccessToken(
         HUBSPOT_INTEGRATION_ID,
         conn.nango_connection_id
-      ) as string;
+      );
 
-      // 1. Push enriched contacts back to HubSpot
-      const pushResult = await pushUserToHubSpot(conn.user_id, accessToken, admin);
+      // 0. SAFETY GATE: ensure an immutable baseline backup exists before any write to HubSpot.
+      // Reads (pull / readiness below) are safe regardless; only the push is gated.
+      const baseline = await ensureBaselineSnapshot(admin, { userId: conn.user_id, accessToken });
+
+      // 1. Push enriched contacts back to HubSpot (skipped if the baseline couldn't be secured)
+      const pushResult = baseline.ok
+        ? await pushUserToHubSpot(conn.user_id, accessToken, admin)
+        : { contacts: { upserted: 0, errors: 0, errorDetails: [`push skipped — ${baseline.reason}`] }, companies: { updated: 0, errors: 0, errorDetails: [] }, skippedContacts: [] };
 
       // 2. Pull new contacts from HubSpot
       const pullResult = await pullNewFromHubSpot(conn.user_id, accessToken, admin);
@@ -550,3 +558,5 @@ export async function GET(request: Request) {
 
   return NextResponse.json({ ok: true, processed: results.length, results });
 }
+
+export const GET = observeCron('hubspot-daily', runCron);

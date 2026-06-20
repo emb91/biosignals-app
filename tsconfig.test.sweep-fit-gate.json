@@ -4,7 +4,7 @@
     "module": "commonjs",
     "moduleResolution": "node",
     "noEmit": false,
-    "outDir": "/private/tmp/arcova-sweep-fit-gate-tests",
+    "outDir": "/tmp/arcova-sweep-fit-gate-tests",
     "incremental": false,
     "isolatedModules": false
   },

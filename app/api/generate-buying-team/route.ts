@@ -7,6 +7,7 @@ import {
   totalFundingToBracket,
 } from '@/lib/arcova-taxonomy';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
+import { guardAuthenticatedAction } from '@/lib/api-security';
 
 const SENIORITY_LEVEL_OPTIONS = [
   'C-Level',
@@ -111,6 +112,12 @@ function orgScaleInstructions(band: OrgScaleBand): string {
 }
 
 export async function POST(request: NextRequest) {
+  const guard = await guardAuthenticatedAction(request, {
+    action: 'generate-buying-team',
+    maxBodyBytes: 64_000,
+  });
+  if (!guard.ok) return guard.response;
+
   try {
     if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENROUTER_API_KEY) {
       return NextResponse.json({ error: 'Missing LLM provider API key' }, { status: 500 });

@@ -4,6 +4,15 @@ import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { useEffect, useState } from "react"
 import { Check, X } from "lucide-react"
+import Script from "next/script"
+
+declare global {
+  interface Window {
+    arcovaTurnstileSuccess?: (token: string) => void
+    arcovaTurnstileExpired?: () => void
+    turnstile?: { reset: () => void }
+  }
+}
 
 // Confetti component
 const Confetti = ({ isActive }: { isActive: boolean }) => {
@@ -56,6 +65,9 @@ export default function ContactPage() {
 
   const [showNotification, setShowNotification] = useState(false)
   const [showConfetti, setShowConfetti] = useState(false)
+  const [website, setWebsite] = useState("")
+  const [turnstileToken, setTurnstileToken] = useState("")
+  const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -67,17 +79,24 @@ export default function ContactPage() {
       setFormState({ ...formState, loading: false })
       return
     }
+    if (turnstileSiteKey && !turnstileToken) {
+      alert("Please complete the security check.")
+      setFormState({ ...formState, loading: false })
+      return
+    }
 
     // Submit to Contact API route
     const response = await fetch('/api/contact', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(formState),
+      body: JSON.stringify({ ...formState, website, turnstileToken }),
     })
 
     if (!response.ok) {
       setFormState({ ...formState, loading: false })
       alert('There was an error submitting your message. Please try again or email us directly.');
+      window.turnstile?.reset()
+      setTurnstileToken("")
       return
     }
 
@@ -94,6 +113,9 @@ export default function ContactPage() {
     // Trigger confetti and notification
     setShowConfetti(true)
     setShowNotification(true)
+    setWebsite("")
+    setTurnstileToken("")
+    window.turnstile?.reset()
 
     // Hide notification after 5 seconds
     setTimeout(() => {
@@ -119,8 +141,23 @@ export default function ContactPage() {
     };
   }, []);
 
+  useEffect(() => {
+    window.arcovaTurnstileSuccess = setTurnstileToken
+    window.arcovaTurnstileExpired = () => setTurnstileToken("")
+    return () => {
+      delete window.arcovaTurnstileSuccess
+      delete window.arcovaTurnstileExpired
+    }
+  }, [])
+
   return (
     <div className="min-h-dvh min-h-screen bg-transparent">
+      {turnstileSiteKey && (
+        <Script
+          src="https://challenges.cloudflare.com/turnstile/v0/api.js"
+          strategy="afterInteractive"
+        />
+      )}
       {/* Confetti effect */}
       <Confetti isActive={showConfetti} />
 
@@ -224,6 +261,17 @@ export default function ContactPage() {
             ) : (
               <div className="bg-white rounded-2xl shadow-md overflow-hidden">
                 <form onSubmit={handleSubmit} className="p-6 md:p-12">
+                  <div className="hidden" aria-hidden="true">
+                    <label htmlFor="website">Website</label>
+                    <input
+                      id="website"
+                      name="website"
+                      tabIndex={-1}
+                      autoComplete="off"
+                      value={website}
+                      onChange={(event) => setWebsite(event.target.value)}
+                    />
+                  </div>
                   <div className="space-y-6">
                     {/* Name and Email row */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -292,6 +340,15 @@ export default function ContactPage() {
                       ></textarea>
                     </div>
 
+                    {turnstileSiteKey && (
+                      <div
+                        className="cf-turnstile"
+                        data-sitekey={turnstileSiteKey}
+                        data-callback="arcovaTurnstileSuccess"
+                        data-expired-callback="arcovaTurnstileExpired"
+                      />
+                    )}
+
                     {/* Submit button */}
                     <div className="flex flex-col items-center gap-6 pt-4">
                       <Button
@@ -328,4 +385,4 @@ export default function ContactPage() {
       </section>
     </div>
   )
-} 
+}

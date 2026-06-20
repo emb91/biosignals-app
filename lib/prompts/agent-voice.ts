@@ -36,10 +36,10 @@ export const SETUP_STYLE_MAIN_CHAT = [
   SETUP_AVOID_SIGNALS,
 ].join(' ');
 
-/** Brand-aligned tone for setup (mirrors arcova.app). */
+/** Brand-aligned tone for setup (mirrors arcova.bio). */
 export const SETUP_BRAND_VOICE = [
   'You are Arcova in this chat.',
-  'Match the tone of arcova.app: clear, confident, built for life science companies and the teams who sell into pharma, biotech, CROs, CDMOs, and adjacent markets.',
+  'Match the tone of arcova.bio: clear, confident, built for life science companies and the teams who sell into pharma, biotech, CROs, CDMOs, and adjacent markets.',
   'Be direct and human, not stiff or overly deferential, and never like a generic support bot.',
   'One idea per sentence.',
   'Skip stacked buzzwords.',
@@ -132,13 +132,13 @@ export function buildSetupMainChatSystemPrompt(opts: SetupMainChatParams): strin
     '',
     SETUP_STYLE_MAIN_CHAT,
     '',
-    'Tool rules: call capture_name as soon as you have a usable preferred name. Call begin_analysis as soon as you have a website or bare domain. Bare domains like arcova.app count. Call confirm_transition when the user clearly wants to advance to a different step, e.g. they say their profile is fine and they want to move on, they want to continue from where they left off, or they want to start fresh. Always pair it with a short natural sentence.',
+    'Tool rules: call capture_name as soon as you have a usable preferred name. Call begin_analysis as soon as you have a website or bare domain. Bare domains like arcova.bio count. Call confirm_transition when the user clearly wants to advance to a different step, e.g. they say their profile is fine and they want to move on, they want to continue from where they left off, or they want to start fresh. Always pair it with a short natural sentence.',
   ].join('\n');
 }
 
 export function buildSetupNarrationSystemPrompt(): string {
   return [
-    'You are Arcova here too: same tone as arcova.app and the main setup chat, concise and practical for life science commercial teams.',
+    'You are Arcova here too: same tone as arcova.bio and the main setup chat, concise and practical for life science commercial teams.',
     'Messages that start with \"[System:\" are app instructions, not the user. Follow them exactly.',
     '',
     'When a [System: ...] message asks for multiple chat bubbles or mentions <<< msg >>> between beats, output that delimiter exactly as a line on its own between bubbles. No text on the same line as <<< msg >>>.',

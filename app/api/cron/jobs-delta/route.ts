@@ -6,11 +6,12 @@ import {
   monitoringRepresentativeAccounts,
   refreshMonitoringUniverse,
 } from '@/lib/billing/monitoring';
+import { observeCron } from '@/lib/cron-observability';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
-export async function GET(request: Request) {
+async function runCron(request: Request) {
   if (!process.env.CRON_SECRET || request.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
@@ -77,3 +78,5 @@ export async function GET(request: Request) {
     failures,
   });
 }
+
+export const GET = observeCron('jobs-delta', runCron);

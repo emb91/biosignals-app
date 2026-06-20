@@ -1,54 +1,86 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+import { checkRateLimit, clientIp } from '@/lib/rate-limit';
+
+const contactSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  email: z.string().trim().email().max(254),
+  company: z.string().trim().max(200).optional().default(''),
+  message: z.string().trim().min(1).max(5_000),
+  website: z.string().max(0).optional(),
+  turnstileToken: z.string().max(2_048).optional(),
+});
 
 export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json();
-    console.log('Received form data:', body);  // Log received data
-    
-    const { name, email, company, message } = body;
+  const rate = await checkRateLimit(`contact-form:${clientIp(req)}`, 5, 60 * 60, {
+    failOpen: false,
+  });
+  if (!rate.allowed) {
+    return NextResponse.json(
+      { error: 'Too many submissions. Please try again later.' },
+      { status: 429, headers: { 'Retry-After': '3600' } },
+    );
+  }
 
-    // Validate required fields
-    if (!name || !email || !message) {
-      console.log('Missing required fields:', { name, email, message });
-      return NextResponse.json({ error: 'Missing required fields.' }, { status: 400 });
+  try {
+    const contentLength = Number(req.headers.get('content-length') ?? 0);
+    if (Number.isFinite(contentLength) && contentLength > 16_000) {
+      return NextResponse.json({ error: 'Request body is too large.' }, { status: 413 });
     }
 
-    // Prepare Airtable API call
+    const parsed = contactSchema.safeParse(await req.json());
+    if (!parsed.success) {
+      return NextResponse.json({ error: 'Please check the form and try again.' }, { status: 400 });
+    }
+    const { name, email, company, message, website, turnstileToken } = parsed.data;
+    // Hidden honeypot field: bots commonly populate it; humans never see it.
+    if (website) return NextResponse.json({ success: true });
+
+    const turnstileSecret = process.env.TURNSTILE_SECRET_KEY;
+    if (process.env.NODE_ENV === 'production' && !turnstileSecret) {
+      console.error('[contact] TURNSTILE_SECRET_KEY is not configured');
+      return NextResponse.json({ error: 'Contact form is temporarily unavailable.' }, { status: 503 });
+    }
+    if (turnstileSecret) {
+      if (!turnstileToken) {
+        return NextResponse.json({ error: 'Please complete the security check.' }, { status: 400 });
+      }
+      const verification = await fetch(
+        'https://challenges.cloudflare.com/turnstile/v0/siteverify',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            secret: turnstileSecret,
+            response: turnstileToken,
+            remoteip: clientIp(req),
+            idempotency_key: crypto.randomUUID(),
+          }),
+          signal: AbortSignal.timeout(8_000),
+        },
+      ).then((response) => response.json() as Promise<{ success?: boolean }>);
+      if (!verification.success) {
+        return NextResponse.json({ error: 'Security check failed. Please try again.' }, { status: 400 });
+      }
+    }
+
     const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
     const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
     const AIRTABLE_CONTACT_TABLE_ID = process.env.AIRTABLE_CONTACT_TABLE_ID;
 
-    // Log environment variables (without revealing full API key)
-    console.log('Environment variables check:', {
-      hasApiKey: !!AIRTABLE_API_KEY,
-      hasBaseId: !!AIRTABLE_BASE_ID,
-      hasTableId: !!AIRTABLE_CONTACT_TABLE_ID,
-      tableId: AIRTABLE_CONTACT_TABLE_ID
-    });
-
     if (!AIRTABLE_API_KEY || !AIRTABLE_BASE_ID || !AIRTABLE_CONTACT_TABLE_ID) {
-      console.error('Missing environment variables');
-      return NextResponse.json({ error: 'Airtable environment variables not set.' }, { status: 500 });
+      console.error('[contact] destination is not configured');
+      return NextResponse.json({ error: 'Contact form is temporarily unavailable.' }, { status: 503 });
     }
 
     const airtableUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_CONTACT_TABLE_ID}`;
-    console.log('Airtable URL:', airtableUrl);
-
-    // Format date as YYYY-MM-DD
-    const now = new Date();
-    const formattedDate = now.toISOString().split('T')[0];
-
-    // Map form fields to Airtable fields - exactly matching column names from Airtable
-    const fields: Record<string, any> = {
+    const fields: Record<string, string> = {
       'Name': name,
       'Email': email,
       'Company name (optional)': company || '',
       'What\'s on your mind?': message,
     };
 
-    console.log('Sending to Airtable:', fields);
-
-    // Send to Airtable
     const airtableRes = await fetch(airtableUrl, {
       method: 'POST',
       headers: {
@@ -58,34 +90,17 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({ fields }),
     });
 
-    const responseText = await airtableRes.text();
-    console.log('Airtable response:', {
-      status: airtableRes.status,
-      statusText: airtableRes.statusText,
-      response: responseText
-    });
-
     if (!airtableRes.ok) {
-      console.error('Airtable Error:', responseText);
-      return NextResponse.json({ 
-        error: 'Failed to submit to Airtable: ' + responseText,
-        details: {
-          status: airtableRes.status,
-          statusText: airtableRes.statusText
-        }
-      }, { status: 500 });
+      console.error('[contact] destination rejected submission', { status: airtableRes.status });
+      return NextResponse.json({ error: 'Could not submit the form. Please try again.' }, { status: 502 });
     }
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Server Error:', error);
-    // Return more detailed error information
-    return NextResponse.json({ 
-      error: 'Server error.',
-      details: error instanceof Error ? error.message : String(error)
-    }, { status: 500 });
+    console.error('[contact] submission failed', error instanceof Error ? error.message : 'Unknown error');
+    return NextResponse.json({ error: 'Could not submit the form. Please try again.' }, { status: 500 });
   }
 }
 
 // Only allow POST
-export const dynamic = 'force-dynamic'; 
+export const dynamic = 'force-dynamic';

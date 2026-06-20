@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getOrgContext, canEditOrgSetup } from '@/lib/org-context';
 import { resolveOrgNangoConnectionId } from '@/lib/hubspot';
-import { nango, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
+import { getNangoClient, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
 
 export async function DELETE() {
   // Disconnecting the org's CRM is owner/admin only (one connection per org).
@@ -14,7 +14,7 @@ export async function DELETE() {
   const connectionId = await resolveOrgNangoConnectionId(ctx.supabase, ctx.user.id, HUBSPOT_INTEGRATION_ID);
   if (connectionId) {
     try {
-      await nango.deleteConnection(HUBSPOT_INTEGRATION_ID, connectionId);
+      await getNangoClient().deleteConnection(HUBSPOT_INTEGRATION_ID, connectionId);
     } catch {
       // best-effort — remove from our DB regardless
     }

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createClient } from '@/lib/supabase-server';
 import { fetchHubSpotContacts, resolveOrgNangoConnectionId } from '@/lib/hubspot';
-import { nango, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
+import { getNangoAccessToken, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
 
 export async function POST() {
   const supabase = await createClient();
@@ -18,7 +18,7 @@ export async function POST() {
 
   let accessToken: string;
   try {
-    accessToken = await nango.getToken(HUBSPOT_INTEGRATION_ID, connectionId) as string;
+    accessToken = await getNangoAccessToken(HUBSPOT_INTEGRATION_ID, connectionId);
   } catch {
     return NextResponse.json({ error: 'Failed to get HubSpot token' }, { status: 400 });
   }

@@ -12,6 +12,7 @@
  */
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
+import { observeCron } from '@/lib/cron-observability';
 import { persistRunHistory } from '@/lib/signals/run-history';
 import { runGrantsMonitor } from '@/lib/signals/run-grants-monitor';
 import { syncNihGrantsDelta } from '@/lib/signals/sync-nih-grants-delta';
@@ -37,7 +38,7 @@ async function loadActiveUserIds(admin: ReturnType<typeof createAdminClient>): P
   return [...ids];
 }
 
-export async function GET(request: Request) {
+async function runCron(request: Request) {
   const cronSecret = process.env.CRON_SECRET;
   const auth = request.headers.get('authorization');
   if (!cronSecret || auth !== `Bearer ${cronSecret}`) {
@@ -106,3 +107,5 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: messageFromUnknown(error) }, { status: 500 });
   }
 }
+
+export const GET = observeCron('grants-delta', runCron);

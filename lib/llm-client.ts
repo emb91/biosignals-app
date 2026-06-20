@@ -39,8 +39,6 @@ export type LlmFeature =
   | 'suggest_roles'
   | 'suggest_seniority'
   | 'generate_contact_name'
-  | 'recommend_signals'
-  | 'recommend_persona_signals'
   | 'generate_icp_name'
   | 'cik_disambiguation'
   | 'press_release_classifier'
@@ -80,7 +78,6 @@ export type LlmFeature =
   | 'accounts_query'
   | 'generate_icp_summary'
   | 'company_fit_summary'
-  | 'icp_signal_recommendation'
   // Web-search-backed company discovery for data acquisition.
   | 'web_company_discovery';
 
@@ -130,14 +127,6 @@ const FEATURE_MODELS: Record<LlmFeature, { openrouter: string; anthropic: string
     anthropic: 'claude-haiku-4-5',
   },
   generate_contact_name: {
-    openrouter: 'google/gemini-2.5-flash',
-    anthropic: 'claude-haiku-4-5',
-  },
-  recommend_signals: {
-    openrouter: 'google/gemini-2.5-flash',
-    anthropic: 'claude-haiku-4-5',
-  },
-  recommend_persona_signals: {
     openrouter: 'google/gemini-2.5-flash',
     anthropic: 'claude-haiku-4-5',
   },
@@ -248,11 +237,6 @@ const FEATURE_MODELS: Record<LlmFeature, { openrouter: string; anthropic: string
   },
   // One-sentence company-vs-ICP fit explanation — Haiku is plenty.
   company_fit_summary: {
-    openrouter: 'anthropic/claude-haiku-4-5',
-    anthropic: 'claude-haiku-4-5',
-  },
-  // Signal-id selection for an ICP (structured JSON output) — Haiku.
-  icp_signal_recommendation: {
     openrouter: 'anthropic/claude-haiku-4-5',
     anthropic: 'claude-haiku-4-5',
   },

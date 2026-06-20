@@ -20,9 +20,9 @@ export async function POST(req: Request) {
   // back to this connection. Best-effort — never block the connect on it.
   if (integrationId === 'hubspot') {
     try {
-      const { nango, HUBSPOT_INTEGRATION_ID } = await import('@/lib/nango');
+      const { getNangoAccessToken, HUBSPOT_INTEGRATION_ID } = await import('@/lib/nango');
       const { fetchHubSpotPortalId } = await import('@/lib/hubspot');
-      const token = (await nango.getToken(HUBSPOT_INTEGRATION_ID, connectionId)) as string;
+      const token = await getNangoAccessToken(HUBSPOT_INTEGRATION_ID, connectionId);
       const portalId = token ? await fetchHubSpotPortalId(token) : null;
       if (portalId != null) {
         await ctx.supabase

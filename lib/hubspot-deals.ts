@@ -1,4 +1,4 @@
-import { HUBSPOT_INTEGRATION_ID, nango } from '@/lib/nango';
+import { HUBSPOT_INTEGRATION_ID, getNangoAccessToken } from '@/lib/nango';
 
 export const HUBSPOT_CRM_PROVIDER = 'hubspot';
 export const HUBSPOT_DEAL_OBJECT_TYPE = 'deals';
@@ -88,7 +88,7 @@ export function toNullableNumber(value?: string | null): number | null {
 }
 
 export async function getHubSpotAccessTokenForConnection(connectionId: string): Promise<string> {
-  return nango.getToken(HUBSPOT_INTEGRATION_ID, connectionId) as Promise<string>;
+  return getNangoAccessToken(HUBSPOT_INTEGRATION_ID, connectionId);
 }
 
 export async function fetchModifiedHubSpotDeals(accessToken: string, since?: string | null): Promise<HubSpotDeal[]> {

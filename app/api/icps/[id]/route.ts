@@ -1,12 +1,8 @@
 import { createClient } from '@/lib/supabase-server';
 import { NextResponse } from 'next/server';
 import { orgIdForUser } from '@/lib/org-context';
-import { assignSignalWeights, extractSignalIds } from '@/lib/signal-weights';
 import { rescoreAllContactsForUser } from '@/lib/rescore';
-import {
-  hydrateIcpsWithSignals,
-  replaceIcpSignalSelections,
-} from '@/lib/signals/selections';
+import { normalizePlatformTaxonomyFields } from '@/lib/platform-category';
 import { parsePlatformCategoryInput } from '@/lib/platform-category';
 import {
   isMissingColumnError,
@@ -41,8 +37,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: 'ICP not found' }, { status: 404 });
     }
 
-    const [hydrated] = await hydrateIcpsWithSignals(supabase, user.id, [data]);
-    return NextResponse.json({ data: hydrated });
+    const normalized = normalizePlatformTaxonomyFields(data as Record<string, unknown>);
+    return NextResponse.json({ data: normalized });
   } catch (error) {
     console.error('Error in GET /api/icps/[id]:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
@@ -72,9 +68,6 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
       return NextResponse.json({ error: platformCategoryError }, { status: 400 });
     }
 
-    const signalIds = extractSignalIds((body.signals || []) as Parameters<typeof extractSignalIds>[0]);
-    const weightedSignals = assignSignalWeights(signalIds);
-
     // Org-scoped update so an admin can edit a shared ICP. RLS also gates to owner/admin.
     const orgId = await orgIdForUser(supabase, user.id);
     const scopeCol = orgId ? 'org_id' : 'user_id';
@@ -93,7 +86,8 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
       company_sizes: body.companySizes || [],
       li_follower_sizes: body.liFollowerSizes || [],
       funding_stages: body.fundingStages || [],
-      signals: weightedSignals.map((s) => JSON.stringify(s)),
+      // Signals are now universal; per-ICP selection is no longer collected. Omit the column on
+      // update so any existing legacy data is left untouched (back-compat until cleanup migration).
       example_companies: body.exampleCompanies || [],
       example_company_enrichment: body.exampleCompanyEnrichment ?? null,
       updated_at: new Date().toISOString(),
@@ -146,14 +140,13 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
       return NextResponse.json({ error: 'Failed to update ICP' }, { status: 500 });
     }
 
-    await replaceIcpSignalSelections(supabase, user.id, data.id, signalIds);
-    const [hydrated] = await hydrateIcpsWithSignals(supabase, user.id, [data]);
+    const normalized = normalizePlatformTaxonomyFields(data as Record<string, unknown>);
 
     rescoreAllContactsForUser(user.id).catch((err) =>
       console.error('[icps PUT] Background lead-fit rescore failed:', err),
     );
 
-    return NextResponse.json({ data: hydrated });
+    return NextResponse.json({ data: normalized });
   } catch (error) {
     console.error('Error in PUT /api/icps/[id]:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

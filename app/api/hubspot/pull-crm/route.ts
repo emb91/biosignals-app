@@ -3,7 +3,7 @@ import { createAdminClient } from '@/lib/supabase-admin';
 import { recomputeContactAttributionSnapshots } from '@/lib/contact-attribution';
 import { createClient } from '@/lib/supabase-server';
 import { resolveOrgNangoConnectionId } from '@/lib/hubspot';
-import { nango, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
+import { getNangoAccessToken, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
 import { syncHubSpotContactsIntoReadiness } from '@/lib/signals/readiness-hubspot-contacts';
 import { syncHubSpotDealsIntoReadiness } from '@/lib/signals/readiness-hubspot-deals';
 import { denormalizeCrmSuppressionState } from '@/lib/crm-suppression-denormalize';
@@ -27,7 +27,7 @@ export async function POST() {
 
   let accessToken: string;
   try {
-    accessToken = (await nango.getToken(HUBSPOT_INTEGRATION_ID, connectionId)) as string;
+    accessToken = await getNangoAccessToken(HUBSPOT_INTEGRATION_ID, connectionId);
   } catch (e) {
     const nangoMsg: string =
       (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? '';

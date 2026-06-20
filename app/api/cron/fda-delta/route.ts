@@ -10,6 +10,7 @@ import { createAdminClient } from '@/lib/supabase-admin';
 import { persistRunHistory } from '@/lib/signals/run-history';
 import { runFdaRegulatoryMonitor } from '@/lib/signals/run-fda-regulatory-monitor';
 import { syncFdaDelta } from '@/lib/signals/sync-fda-delta';
+import { observeCron } from '@/lib/cron-observability';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -32,7 +33,7 @@ async function loadActiveUserIds(admin: ReturnType<typeof createAdminClient>): P
   return [...ids];
 }
 
-export async function GET(request: Request) {
+async function runCron(request: Request) {
   const cronSecret = process.env.CRON_SECRET;
   const auth = request.headers.get('authorization');
   if (!cronSecret || auth !== `Bearer ${cronSecret}`) {
@@ -97,3 +98,5 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: messageFromUnknown(error) }, { status: 500 });
   }
 }
+
+export const GET = observeCron('fda-delta', runCron);
