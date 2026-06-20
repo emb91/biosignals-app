@@ -184,6 +184,14 @@ const ARCOVA_COMPANY_PROPERTIES: HubSpotPropertyDefinition[] = [
   { name: 'arcova_total_funding_usd', label: 'Arcova: Total Funding (USD)', type: 'number', fieldType: 'number', groupName: 'arcova_intelligence' },
 ];
 
+// The exact set of properties Arcova ever WRITES into a customer's HubSpot. Used by the
+// backup/restore tooling to do a surgical "undo Arcova's changes" without touching anything
+// the customer owns. Keep in sync with the push paths (daily cron + push-enrichment + outreach).
+export const ARCOVA_CONTACT_PROPERTY_NAMES: string[] = ARCOVA_CONTACT_PROPERTIES.map((p) => p.name);
+export const ARCOVA_COMPANY_PROPERTY_NAMES: string[] = ARCOVA_COMPANY_PROPERTIES.map((p) => p.name);
+/** Native HubSpot fields the app overwrites (beyond its own arcova_* custom props). */
+export const ARCOVA_WRITTEN_NATIVE_CONTACT_FIELDS: string[] = ['jobtitle', 'hs_linkedin_url', 'lifecyclestage'];
+
 async function ensurePropertyGroup(accessToken: string, objectType: 'contacts' | 'companies'): Promise<void> {
   const res = await fetch(`https://api.hubapi.com/crm/v3/properties/${objectType}/groups`, {
     method: 'POST',
@@ -570,7 +578,7 @@ export async function getHubSpotTokenForUser(
   userId: string,
 ): Promise<string | null> {
   try {
-    const { nango: nangoLib, HUBSPOT_INTEGRATION_ID: integrationId } = await import('./nango');
+    const { getNangoAccessToken, HUBSPOT_INTEGRATION_ID: integrationId } = await import('./nango');
     const { createClient } = await import('./supabase-server');
     const supabase = await createClient();
     // One CRM per org: resolve the org's Nango connection (fallback to the caller's own).
@@ -582,7 +590,7 @@ export async function getHubSpotTokenForUser(
     const { data: conn } = await (orgId ? base.eq('org_id', orgId) : base.eq('user_id', userId)).maybeSingle();
     const connRow = conn as { nango_connection_id?: string } | null;
     if (!connRow?.nango_connection_id) return null;
-    return (await nangoLib.getToken(integrationId, connRow.nango_connection_id)) as string;
+    return await getNangoAccessToken(integrationId, connRow.nango_connection_id);
   } catch {
     return null;
   }

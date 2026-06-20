@@ -90,7 +90,7 @@ export async function POST(req: Request) {
 
   if (portals.size > 0) {
     after(async () => {
-      const { nango, HUBSPOT_INTEGRATION_ID } = await import('@/lib/nango');
+      const { getNangoAccessToken, HUBSPOT_INTEGRATION_ID } = await import('@/lib/nango');
       for (const portalId of portals) {
         try {
           const { data: conn } = await admin
@@ -106,7 +106,10 @@ export async function POST(req: Request) {
           const { allowed } = await checkRateLimit(`hubspot-webhook-sync:${portalId}`, 1, 120);
           if (!allowed) continue;
 
-          const token = (await nango.getToken(HUBSPOT_INTEGRATION_ID, conn.nango_connection_id)) as string;
+          const token = await getNangoAccessToken(
+            HUBSPOT_INTEGRATION_ID,
+            conn.nango_connection_id,
+          );
           if (!token) continue;
           await Promise.allSettled([
             syncHubSpotContactsIntoReadiness(admin, { userId: conn.user_id, accessToken: token }),
