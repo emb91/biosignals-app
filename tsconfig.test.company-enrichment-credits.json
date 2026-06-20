@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/private/tmp/arcova-company-enrichment-credits-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/company-enrichment-credits.ts",
+    "lib/company-enrichment-credits.test.ts"
+  ]
+}

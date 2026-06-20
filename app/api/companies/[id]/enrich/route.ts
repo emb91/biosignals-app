@@ -5,6 +5,7 @@ import {
   markCompanyEnrichmentRunning,
   runCompanyEnrichmentById,
 } from '@/lib/company-enrichment';
+import { companyEnrichmentCreditDisposition } from '@/lib/company-enrichment-credits';
 import { syncCompanyFitForCompany } from '@/lib/company-fit';
 import { refundCredits, reserveCredits, settleCredits } from '@/lib/billing/credits';
 import { refreshMonitoringUniverse } from '@/lib/billing/monitoring';
@@ -74,14 +75,22 @@ export async function POST(
     // returns immediately. Next will keep the connection open for `after()`
     // work after the response is sent.
     after(async () => {
+      let disposition: ReturnType<typeof companyEnrichmentCreditDisposition>;
       try {
-        await runCompanyEnrichmentById(supabase, id);
+        const result = await runCompanyEnrichmentById(supabase, id);
+        disposition = companyEnrichmentCreditDisposition(result);
       } catch (err) {
         // runCompanyEnrichmentById already records the failure on the row;
         // this catch is just a belt-and-braces so the after() callback
         // never throws uncaught.
         console.error('[api/companies/enrich] background run threw:', err);
         await refundCredits(reservation.transactionId).catch(() => {});
+        return;
+      }
+      if (disposition === 'refund') {
+        await refundCredits(reservation.transactionId).catch((error) => {
+          console.error('[api/companies/enrich] credit refund failed:', error);
+        });
         return;
       }
       // Resync the user's fit score after enrichment finishes. Non-fatal.
