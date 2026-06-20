@@ -1,12 +1,8 @@
 import { createClient } from '@/lib/supabase-server';
 import { NextResponse } from 'next/server';
 import { orgIdForUser, getOrgContext, canEditOrgSetup } from '@/lib/org-context';
-import { assignSignalWeights, extractSignalIds } from '@/lib/signal-weights';
 import { rescoreAllContactsForUser } from '@/lib/rescore';
-import {
-  hydrateIcpsWithSignals,
-  replaceIcpSignalSelections,
-} from '@/lib/signals/selections';
+import { hydrateIcpsWithSignals } from '@/lib/signals/selections';
 import { parsePlatformCategoryInput } from '@/lib/platform-category';
 import {
   isMissingColumnError,
@@ -114,7 +110,6 @@ export async function POST(request: Request) {
       );
     }
 
-    const signalIds = extractSignalIds((body.signals || []) as Parameters<typeof extractSignalIds>[0]);
     const {
       value: platformCategory,
       error: platformCategoryError,
@@ -122,8 +117,6 @@ export async function POST(request: Request) {
     if (platformCategoryError) {
       return NextResponse.json({ error: platformCategoryError }, { status: 400 });
     }
-
-    const weightedSignals = assignSignalWeights(signalIds);
 
     // Stamp org_id + scope. Owner/admin create company-wide ('org') ICPs the whole org
     // sees; members create 'personal' ICPs visible only to them. RLS enforces the same.
@@ -149,7 +142,9 @@ export async function POST(request: Request) {
       company_sizes: body.companySizes || [],
       li_follower_sizes: body.liFollowerSizes || [],
       funding_stages: body.fundingStages || [],
-      signals: weightedSignals.map((s) => JSON.stringify(s)),
+      // Signals are now applied universally to all contacts/companies; per-ICP selection is
+      // no longer collected. Column kept (empty) for back-compat until a later cleanup migration.
+      signals: [],
       example_companies: body.exampleCompanies || [],
       example_company_url: exampleCompanyUrl,
       example_company_enrichment: body.exampleCompanyEnrichment ?? null,
@@ -177,7 +172,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Failed to save ICP' }, { status: 500 });
     }
 
-    await replaceIcpSignalSelections(supabase, user.id, data.id, signalIds);
     const [hydrated] = await hydrateIcpsWithSignals(supabase, user.id, [data]);
 
     rescoreAllContactsForUser(user.id).catch((err) =>

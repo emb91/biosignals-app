@@ -1,112 +1,153 @@
-import Link from "next/link"
-import { Button } from "@/components/ui/button"
-
-// Arcova color palette
-const arcovaColors = {
-  deepNavy: "#16253B",
-  tealDark: "#00a4b4",
+export const metadata = {
+  title: "Privacy Policy | Arcova",
+  description: "How Arcova collects, uses, stores, and protects personal information.",
 }
+
+const contact = (
+  <a className="text-teal-600 hover:text-teal-700" href="mailto:privacy@arcova.bio">
+    privacy@arcova.bio
+  </a>
+)
 
 export default function PrivacyPage() {
   return (
-    <div className="min-h-dvh min-h-screen bg-transparent">
-      <div className="container py-8 md:py-12">
-        <div className="max-w-3xl mx-auto">
-          <h1 className="text-4xl font-bold mb-8">Privacy Policy</h1>
-          
-          <div className="prose prose-slate max-w-none">
-            <p className="text-sm text-gray-500 mb-8">Last updated: May 2025</p>
+    <div className="min-h-screen bg-white">
+      <article className="container mx-auto max-w-3xl px-6 py-12 text-slate-700">
+        <h1 className="mb-3 text-4xl font-bold text-slate-950">Privacy Policy</h1>
+        <p className="mb-10 text-sm text-slate-500">Last updated: June 20, 2026</p>
 
-            <section className="mb-8">
-              <h2 className="text-xl font-semibold mb-4">1. Introduction</h2>
-              <p>
-                Arcova Consulting Limited ("Arcova," "we," "us," or "our") is committed to protecting your privacy. This Privacy Policy explains how we collect, use, and safeguard your information when you visit our website (arcova.bio) or use our services.
-              </p>
-            </section>
+        <Section title="1. Who we are">
+          <p>
+            Arcova Consulting Limited (“Arcova,” “we,” “us,” or “our”) operates an AI-native
+            revenue intelligence platform for life science companies and the businesses that
+            sell to them. We are based in New Zealand. This policy applies to arcova.bio,
+            app.arcova.bio, and the Arcova services.
+          </p>
+        </Section>
 
-            <section className="mb-8">
-              <h2 className="text-xl font-semibold mb-4">2. Information We Collect</h2>
-              <p>
-                We collect information that you provide to us directly and information collected automatically when you use our website:
-              </p>
-              <ul className="list-disc pl-6 mt-4">
-                <li>Contact Information: When you book a call, fill out a form, or contact us, you may provide your name, email address, company name, and other relevant details.</li>
-                <li>Correspondence: If you contact us directly, we may receive additional information about you such as the contents of your message or attachments.</li>
-                <li>Usage Data: We collect non-personal information about how you use our website, such as your browser type, pages visited, time spent on pages, and referring website.</li>
-                <li>Cookies: We use basic cookies and similar tracking technologies to improve your website experience and understand site traffic. You can control cookie settings through your browser.</li>
-              </ul>
-            </section>
+        <Section title="2. Information we process">
+          <ul>
+            <li>Account, workspace, billing, support, and communication information.</li>
+            <li>
+              Customer-provided CRM, contact, company, ICP, integration, and outreach data.
+            </li>
+            <li>
+              Business contact and company information from public websites, professional
+              profiles, regulatory sources, licensed data providers, and customer integrations.
+            </li>
+            <li>
+              Product usage, device, log, security, cookie, and diagnostic information.
+            </li>
+            <li>
+              Generated scores, classifications, summaries, recommendations, and outreach drafts.
+            </li>
+          </ul>
+        </Section>
 
-            <section className="mb-8">
-              <h2 className="text-xl font-semibold mb-4">3. How We Use Your Information</h2>
-              <p>
-                We may use your information to:
-              </p>
-              <ul className="list-disc pl-6 mt-4">
-                <li>Respond to your enquiries or requests</li>
-                <li>Schedule and manage calls or demos</li>
-                <li>Improve and optimize our website and services</li>
-                <li>Communicate with you about Arcova updates or offerings (you can opt out any time)</li>
-                <li>Meet legal obligations</li>
-              </ul>
-            </section>
+        <Section title="3. How we use information">
+          <p>We use information to:</p>
+          <ul>
+            <li>Provide, secure, support, and improve Arcova.</li>
+            <li>Import, deduplicate, enrich, score, monitor, and synchronize business records.</li>
+            <li>Generate recommendations and customer-requested outreach content.</li>
+            <li>Process subscriptions, credits, usage limits, and payments.</li>
+            <li>Detect abuse, investigate incidents, and meet legal obligations.</li>
+            <li>Send service communications and marketing where permitted.</li>
+          </ul>
+        </Section>
 
-            <section className="mb-8">
-              <h2 className="text-xl font-semibold mb-4">4. How We Share Your Information</h2>
-              <p>
-                We do not sell your personal information. We may share information with trusted service providers who help us operate our site and business, and only as needed for those purposes. We may also share information if required by law or to protect our rights, property, or safety.
-              </p>
-            </section>
+        <Section title="4. Customer data and roles">
+          <p>
+            For personal information a customer places in Arcova, the customer generally acts as
+            controller and Arcova acts as processor or service provider. Customers are responsible
+            for having a lawful basis to upload, use, and contact people in their records. For
+            account administration, security, product analytics, and Arcova’s own business
+            operations, Arcova may act as controller.
+          </p>
+        </Section>
 
-            <section className="mb-8">
-              <h2 className="text-xl font-semibold mb-4">5. Data Storage and Security</h2>
-              <p>
-                We take reasonable steps to protect your information from unauthorized access or disclosure. However, no method of transmission over the Internet is 100% secure.
-              </p>
-            </section>
+        <Section title="5. AI and automated processing">
+          <p>
+            Arcova uses automated systems and AI models to classify records, assess fit and
+            readiness, summarize business information, and draft content. These outputs may be
+            incomplete or inaccurate and should be reviewed before use. Arcova does not make
+            legally binding decisions about individuals.
+          </p>
+        </Section>
 
-            <section className="mb-8">
-              <h2 className="text-xl font-semibold mb-4">6. Your Rights</h2>
-              <p>
-                You have the right to request access to or correction of your personal information, ask us to delete your data (subject to legal requirements), and withdraw consent for marketing at any time. To make a request, please contact us at{" "}
-                <a 
-                  href="mailto:emma@arcova.bio"
-                  className="text-teal-600 hover:text-teal-700 transition-colors"
-                >
-                  emma@arcova.bio
-                </a>.
-              </p>
-            </section>
+        <Section title="6. Service providers and subprocessors">
+          <p>
+            We use providers for cloud hosting, databases, authentication, payments, email,
+            analytics, CRM connectivity, data enrichment, web data collection, AI processing,
+            validation, outreach, monitoring, and backups. This currently includes providers such
+            as Supabase, Vercel, Cloudflare, Stripe, Resend, Nango, HubSpot, Anthropic, OpenRouter,
+            Apollo, Apify, ZeroBounce, and Lemlist where the relevant feature is used. We do not
+            sell personal information for money.
+          </p>
+        </Section>
 
-            <section className="mb-8">
-              <h2 className="text-xl font-semibold mb-4">7. International Visitors</h2>
-              <p>
-                Arcova Consulting Limited is based in New Zealand. By using our website, you acknowledge that your information may be processed and stored in New Zealand or other countries.
-              </p>
-            </section>
+        <Section title="7. International transfers">
+          <p>
+            Information may be processed in New Zealand, the United States, Europe, and other
+            countries where we or our providers operate. Where required, we use appropriate
+            contractual or legal safeguards for international transfers.
+          </p>
+        </Section>
 
-            <section className="mb-8">
-              <h2 className="text-xl font-semibold mb-4">8. Changes to This Policy</h2>
-              <p>
-                We may update this Privacy Policy from time to time. The most current version will always be posted on our website.
-              </p>
-            </section>
+        <Section title="8. Retention and deletion">
+          <p>
+            We retain information for as long as needed to provide the service, meet contractual
+            and legal obligations, resolve disputes, and protect the service. Retention periods
+            vary by data type. Backups may persist for a limited period after live data is deleted.
+            Customers may request workspace export or deletion by contacting us.
+          </p>
+        </Section>
 
-            <section className="mb-8">
-              <h2 className="text-xl font-semibold mb-4">9. Contact Us</h2>
-              <p>
-                If you have any questions about this Privacy Policy or our practices, please contact us at{" "}
-                <a 
-                  href="mailto:emma@arcova.bio"
-                  className="text-teal-600 hover:text-teal-700 transition-colors"
-                >
-                  emma@arcova.bio
-                </a>.
-              </p>
-            </section>
-          </div>
-        </div>
-      </div>
+        <Section title="9. Security">
+          <p>
+            We use access controls, encryption in transit, restricted service credentials,
+            monitoring, backups, and other safeguards appropriate to the nature of the service.
+            No system is completely secure. Please report suspected security issues to{" "}
+            <a className="text-teal-600 hover:text-teal-700" href="mailto:security@arcova.bio">
+              security@arcova.bio
+            </a>.
+          </p>
+        </Section>
+
+        <Section title="10. Cookies and analytics">
+          <p>
+            We may use necessary cookies for authentication and security and, where enabled,
+            analytics technologies to understand website and product usage. You can control
+            cookies through your browser and any consent controls we provide.
+          </p>
+        </Section>
+
+        <Section title="11. Your rights">
+          <p>
+            Depending on your location, you may have rights to access, correct, delete, restrict,
+            object to, or receive a copy of your personal information, and to withdraw consent.
+            Contact {contact}. We may need to verify your identity and may direct requests about
+            customer-controlled data to the relevant customer.
+          </p>
+        </Section>
+
+        <Section title="12. Changes and contact">
+          <p>
+            We may update this policy as Arcova changes. Material changes will be posted here or
+            communicated through the service. Questions and privacy requests can be sent to{" "}
+            {contact}.
+          </p>
+        </Section>
+      </article>
     </div>
   )
-} 
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="mb-8 space-y-3 [&_li]:mb-2 [&_ul]:list-disc [&_ul]:pl-6">
+      <h2 className="text-xl font-semibold text-slate-950">{title}</h2>
+      {children}
+    </section>
+  )
+}

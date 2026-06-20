@@ -27,7 +27,7 @@
  */
 import { NextResponse } from 'next/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
-import { nango, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
+import { getNangoAccessToken, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
 import { pushOutreachStatusByEmail, applyReplyEffectsToHubSpot, resolveOrgNangoConnectionId } from '@/lib/hubspot';
 
 interface LemlistWebhookPayload {
@@ -52,16 +52,13 @@ function statusFromEvent(type: string | undefined): 'replied' | 'failed' | null 
 export async function POST(req: Request) {
   // ── Token check ──────────────────────────────────────────────────────
   const expectedToken = process.env.LEMLIST_WEBHOOK_TOKEN;
-  if (expectedToken) {
-    const provided = new URL(req.url).searchParams.get('token');
-    if (provided !== expectedToken) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-  } else {
-    // Dev-mode fallthrough — log so we don't ship to prod without a token.
-    console.warn(
-      '[lemlist webhook] LEMLIST_WEBHOOK_TOKEN not set; accepting unauthenticated calls. Set the env var before going live.',
-    );
+  if (!expectedToken) {
+    console.error('[lemlist webhook] LEMLIST_WEBHOOK_TOKEN is not configured');
+    return NextResponse.json({ error: 'Webhook is not configured' }, { status: 503 });
+  }
+  const provided = new URL(req.url).searchParams.get('token');
+  if (provided !== expectedToken) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   // ── Parse payload ────────────────────────────────────────────────────
@@ -161,7 +158,7 @@ export async function POST(req: Request) {
         // Org-scoped: use the org's HubSpot connection (one per org).
         const connectionId = await resolveOrgNangoConnectionId(supabase, row.user_id, HUBSPOT_INTEGRATION_ID);
         if (!connectionId) return;
-        const token = (await nango.getToken(HUBSPOT_INTEGRATION_ID, connectionId)) as string;
+        const token = await getNangoAccessToken(HUBSPOT_INTEGRATION_ID, connectionId);
         await pushOutreachStatusByEmail(token, {
           email,
           status,

@@ -89,7 +89,6 @@ export async function replaceIcpSignalSelections(
   const { error: deleteError } = await supabase
     .from('icp_signal_selections')
     .delete()
-    .eq('user_id', userId)
     .eq('icp_id', icpId);
 
   if (deleteError) throw deleteError;
@@ -118,7 +117,6 @@ export async function loadIcpSignalSelections(
   const { data, error } = await supabase
     .from('icp_signal_selections')
     .select('icp_id, signal_id, rank')
-    .eq('user_id', userId)
     .in('icp_id', icpIds)
     .order('rank', { ascending: true });
 
@@ -143,7 +141,6 @@ export async function replacePersonaSignalSelections(
   const { error: deleteError } = await supabase
     .from('persona_signal_selections')
     .delete()
-    .eq('user_id', userId)
     .eq('persona_id', personaId);
 
   if (deleteError && isMissingPersonaSignalSelectionsTable(deleteError)) {
@@ -177,7 +174,6 @@ export async function loadPersonaSignalSelections(
   const { data, error } = await supabase
     .from('persona_signal_selections')
     .select('persona_id, signal_id, rank')
-    .eq('user_id', userId)
     .in('persona_id', personaIds)
     .order('rank', { ascending: true });
 
@@ -208,7 +204,6 @@ export async function loadIcpSignalSelectionsDetailed(
   const { data, error } = await supabase
     .from('icp_signal_selections')
     .select('icp_id, signal_id, rank, weight')
-    .eq('user_id', userId)
     .in('icp_id', icpIds)
     .order('rank', { ascending: true });
 
@@ -259,4 +254,3 @@ export async function hydratePersonasWithSignals<T extends PersonaEntity>(
     };
   });
 }
-

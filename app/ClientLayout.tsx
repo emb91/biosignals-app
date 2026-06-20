@@ -122,7 +122,8 @@ export default function ClientLayout({
   // gate) and full-bleed (no global Navigation/SiteFooter). Scoped narrowly so
   // existing pages are unaffected.
   const isFullBleedRoute = pathname
-    ? ['/landing-test-3', '/landing-test-4', '/landing-test-5', '/landing-test-6', '/docs'].some((r) => matchesRoutePrefix(pathname, r))
+    ? pathname === '/' ||
+      ['/landing-test-3', '/landing-test-4', '/landing-test-5', '/landing-test-6', '/docs'].some((r) => matchesRoutePrefix(pathname, r))
     : false
   if (isFullBleedRoute) {
     return <>{children}</>

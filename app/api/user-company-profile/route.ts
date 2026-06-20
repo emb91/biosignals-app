@@ -1,33 +1,30 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase-server';
+import { getOrgContext } from '@/lib/org-context';
 import { normalizePlatformTaxonomyFields } from '@/lib/platform-category';
 import { isMissingColumnError } from '@/lib/supabase-column-compat';
 
 export async function GET() {
   try {
-    const supabase = await createClient();
-    
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    
-    if (authError || !user) {
+    const ctx = await getOrgContext();
+    if (!ctx) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
       );
     }
 
-    let result = await supabase
+    let result = await ctx.supabase
       .from('user_company')
       .select('company_name, description, customers_we_serve, good_fit, bad_fit, value_propositions, products_services, services, technologies, company_type, platform_category, therapeutic_areas, modalities, development_stages, employee_count, funding_stage, hq_country')
-      .eq('user_id', user.id)
+      .eq('org_id', ctx.orgId)
       .limit(1)
       .maybeSingle();
 
     if (result.error && isMissingColumnError(result.error, 'platform_category')) {
-      result = await supabase
+      result = await ctx.supabase
         .from('user_company')
         .select('company_name, description, customers_we_serve, good_fit, bad_fit, value_propositions, products_services, services, technologies, company_type, therapeutic_areas, modalities, development_stages, employee_count, funding_stage, hq_country')
-        .eq('user_id', user.id)
+        .eq('org_id', ctx.orgId)
         .limit(1)
         .maybeSingle();
     }

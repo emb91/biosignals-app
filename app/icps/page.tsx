@@ -21,7 +21,6 @@ import {
   Save,
   RefreshCw,
   AlertTriangle,
-  Activity,
 } from 'lucide-react';
 import { getSignalDisplayName } from '@/lib/signal-display-names';
 import {
@@ -30,15 +29,6 @@ import {
 } from '@/lib/funding-display';
 import { resolveCustomerSegments } from '@/lib/split-customer-segments';
 import { ROUTES } from '@/lib/routes';
-import {
-  COMPANY_SIGNALS,
-  CONTACT_SIGNALS,
-  isCompanySignalManaged,
-  isContactSignalComingSoon,
-  type SignalCategory,
-  type SignalDefinition,
-} from '@/lib/signals/catalog';
-import { normalizeOrderedSignalIds } from '@/lib/signals/normalize-client';
 import type { CompetitorItem } from '@/components/SetupProfilePanel';
 import {
   BUSINESS_AREA_OPTIONS,
@@ -360,116 +350,6 @@ function simplifyFundingStatusForIcp(value?: string | null): string | null {
   return null;
 }
 
-const COMPANY_SIGNAL_CATEGORY_ORDER: SignalCategory[] = [
-  'Funding & Financial',
-  'Pipeline & Clinical',
-  'Hiring & Team',
-  'Corporate & Strategic',
-  'First-Party Engagement',
-  'CRM & Relationship',
-];
-
-const CONTACT_SIGNAL_CATEGORY_ORDER: SignalCategory[] = [
-  'Career & Role Changes',
-  'Activity & Network',
-  'Publications & Recognition',
-  'Hiring & Team',
-  'First-Party Engagement',
-  'CRM & Relationship',
-];
-
-function SignalCatalogByCategory({
-  definitions,
-  categoryOrder,
-  selectedIds,
-  readOnly,
-  onToggle,
-  variant = 'all',
-  isManagedServiceSignal,
-  onManagedServiceSignalClick,
-}: {
-  definitions: SignalDefinition[];
-  categoryOrder: SignalCategory[];
-  selectedIds: readonly string[];
-  readOnly: boolean;
-  onToggle?: (id: string) => void;
-  /** `all`: every catalog signal (edit). `selectedOnly`: only chosen signals (read-only summary). Falls back to showing all muted if nothing is selected. */
-  variant?: 'all' | 'selectedOnly';
-  /** When set, these signals never show as selected; clicks call `onManagedServiceSignalClick` instead of `onToggle`. */
-  isManagedServiceSignal?: (signalId: string) => boolean;
-  onManagedServiceSignalClick?: (signalId: string) => void;
-}) {
-  const selected = new Set(selectedIds);
-  // If nothing is selected at all, show every signal muted so the section isn't blank
-  const hasAnySelected = definitions.some((s) => selected.has(s.id));
-  return (
-    <div className="space-y-3">
-      {categoryOrder.map((category) => {
-        let inCat = definitions.filter((s) => s.category === category);
-        if (variant === 'selectedOnly' && hasAnySelected) {
-          inCat = inCat.filter((s) => selected.has(s.id));
-        }
-        if (!inCat.length) return null;
-        return (
-          <div key={category}>
-            <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-[#7d909a]">
-              {category}
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              {inCat.map((signal) => {
-                const managed = Boolean(isManagedServiceSignal?.(signal.id));
-                const isOn = !managed && selected.has(signal.id);
-                const label = getSignalDisplayName(signal.id, signal.displayName);
-                const pillBase =
-                  'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors';
-                const pillState = isOn
-                  ? 'bg-arcova-teal/15 text-arcova-teal'
-                  : 'bg-[rgba(13,53,71,0.06)] text-[#7d909a]';
-                if (!readOnly && managed && onManagedServiceSignalClick) {
-                  return (
-                    <button
-                      key={signal.id}
-                      type="button"
-                      onClick={() => onManagedServiceSignalClick(signal.id)}
-                      className={`${pillBase} ${pillState} hover:bg-[rgba(13,53,71,0.1)] hover:text-[#4a6470]`}
-                    >
-                      {label}
-                    </button>
-                  );
-                }
-                if (!readOnly && onToggle) {
-                  return (
-                    <button
-                      key={signal.id}
-                      type="button"
-                      onClick={() => onToggle(signal.id)}
-                      className={`${pillBase} ${pillState} ${
-                        isOn
-                          ? 'hover:bg-arcova-teal/28'
-                          : 'hover:bg-[rgba(13,53,71,0.1)] hover:text-[#4a6470]'
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  );
-                }
-                return (
-                  <span
-                    key={signal.id}
-                    className={`${pillBase} ${pillState}`}
-                  >
-                    {label}
-                  </span>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 // ── Inline edit: removable tags + add dropdown ────────────────────────────
 
 function EditTagField({
@@ -640,8 +520,6 @@ function ICPCard({
     simplifyFundingStatusForIcp(e?.funding_status_label) ??
     simplifyFundingStatusForIcp(e?.company_status) ??
     null;
-  const icpSignalIds = normalizeOrderedSignalIds(icp.signals);
-  const personaSignalIds = normalizeOrderedSignalIds(persona?.signals ?? []);
 
   const hasModelledOnNarrative = Boolean(
     e?.description?.[0] ||
@@ -694,11 +572,9 @@ function ICPCard({
     company_sizes: [...icp.company_sizes],
     li_follower_sizes: [...(icp.li_follower_sizes ?? [])],
     funding_stages: [...icp.funding_stages],
-    signals: normalizeOrderedSignalIds(icp.signals ?? []),
   });
   const [editFunctions, setEditFunctions] = useState<string[]>([]);
   const [editSeniority, setEditSeniority] = useState<string[]>([]);
-  const [editPersonaSignals, setEditPersonaSignals] = useState<string[]>([]);
   const [editCompetitors, setEditCompetitors] = useState<CompetitorItem[]>([]);
   const [editTargetCustomers, setEditTargetCustomers] = useState<string[]>([]);
   const [editBuyerTypes, setEditBuyerTypes] = useState<string[]>([]);
@@ -739,13 +615,9 @@ function ICPCard({
       company_sizes: [...icp.company_sizes],
       li_follower_sizes: [...(icp.li_follower_sizes ?? [])],
       funding_stages: [...icp.funding_stages],
-      signals: normalizeOrderedSignalIds(icp.signals ?? []),
     });
     setEditFunctions([...functions]);
     setEditSeniority([...seniority]);
-    setEditPersonaSignals(
-      normalizeOrderedSignalIds(persona?.signals ?? []).filter((id) => !isContactSignalComingSoon(id)),
-    );
     setEditCompetitors([...resolvedCompetitors()]);
     setEditTargetCustomers([...segs.customerOrganizations]);
     setEditBuyerTypes([...segs.buyerTypes]);
@@ -759,9 +631,6 @@ function ICPCard({
     const segs = resolvedSegments();
     setEditFunctions([...functions]);
     setEditSeniority([...seniority]);
-    setEditPersonaSignals(
-      normalizeOrderedSignalIds(persona?.signals ?? []).filter((id) => !isContactSignalComingSoon(id)),
-    );
     setEditCompetitors([...resolvedCompetitors()]);
     setEditTargetCustomers([...segs.customerOrganizations]);
     setEditBuyerTypes([...segs.buyerTypes]);
@@ -771,7 +640,7 @@ function ICPCard({
 
   const beginAddBuyingTeam = () => {
     startEdit();
-    setOpen((prev) => ({ ...prev, buyingTeam: true, contactSignals: true }));
+    setOpen((prev) => ({ ...prev, buyingTeam: true }));
   };
 
   const saveEdit = async () => {
@@ -816,7 +685,6 @@ function ICPCard({
           companySizes: editData.company_sizes,
           liFollowerSizes: editData.li_follower_sizes,
           fundingStages: editData.funding_stages,
-          signals: editData.signals,
           exampleCompanies: [],
           exampleCompanyUrl: icp.example_company_url,
           exampleCompanyEnrichment: icp.example_company_enrichment ?? null,
@@ -845,14 +713,13 @@ function ICPCard({
             functions: editFunctions,
             seniorityLevels: editSeniority,
             jobTitles: persona.job_titles ?? [],
-            signals: editPersonaSignals,
           }),
         });
         if (teamRes.ok) {
           const { data } = await teamRes.json();
           onPersonaUpdate(data);
         }
-      } else if (editFunctions.length > 0 || editSeniority.length > 0 || editPersonaSignals.length > 0) {
+      } else if (editFunctions.length > 0 || editSeniority.length > 0) {
         const personaName =
           editFunctions.length > 0 ? `Buying group: ${editFunctions[0]}` : 'Buying group';
         const teamRes = await fetch('/api/contacts', {
@@ -864,7 +731,6 @@ function ICPCard({
             functions: editFunctions,
             seniorityLevels: editSeniority,
             jobTitles: [],
-            signals: editPersonaSignals,
           }),
         });
         if (!teamRes.ok) {
@@ -1407,31 +1273,9 @@ function ICPCard({
               );
             })()}
 
-            {/* Company signals — below Company criteria */}
-            <button type="button" onClick={() => toggle('companySignals')}
-              className="flex items-center gap-2 pb-1 border-b border-dashed border-[rgba(13,53,71,0.08)] pt-1 w-full text-left group">
-              <span className="w-[22px] h-[22px] grid place-items-center rounded-[6px] bg-arcova-teal/10 text-arcova-teal flex-shrink-0">
-                <Activity className="h-3 w-3" />
-              </span>
-              <span className="font-manrope text-[13px] font-semibold text-[#0d3547] tracking-[-0.01em] flex-1">Company signals</span>
-              <span className={`w-5 h-5 shrink-0 grid place-items-center rounded-[6px] border transition-all ${open.companySignals ? 'bg-[rgba(13,53,71,0.07)] border-[rgba(13,53,71,0.1)] text-[#7d909a]' : 'bg-[rgba(13,53,71,0.07)] border-[rgba(13,53,71,0.1)] text-[#7d909a]'}`}>
-                <ChevronDown className={`h-3 w-3 transition-transform duration-150 ${open.companySignals ? '' : '-rotate-90'}`} />
-              </span>
-            </button>
-            {open.companySignals && (
-              <div>
-                {editMode ? (
-                  <SignalCatalogByCategory variant="all" definitions={COMPANY_SIGNALS} categoryOrder={COMPANY_SIGNAL_CATEGORY_ORDER}
-                    selectedIds={editData.signals} readOnly={false} onToggle={(id) => toggleMulti('signals', id)} />
-                ) : (
-                  <SignalCatalogByCategory variant="selectedOnly" definitions={COMPANY_SIGNALS.filter(s => !isCompanySignalManaged(s.id))} categoryOrder={COMPANY_SIGNAL_CATEGORY_ORDER}
-                    selectedIds={icpSignalIds} readOnly />
-                )}
-              </div>
-            )}
           </div>
 
-          {/* ── Right column — Buying team + Contact signals ── */}
+          {/* ── Right column — Buying team ── */}
           <div className="px-5 py-4 space-y-3.5 min-w-0">
 
             {/* Buying team col head */}
@@ -1471,42 +1315,6 @@ function ICPCard({
               </div>
             ))}
 
-            {/* Contact signals — below Buying team */}
-            <button type="button" onClick={() => toggle('contactSignals')}
-              className="flex items-center gap-2 pb-1 border-b border-dashed border-[rgba(13,53,71,0.08)] pt-1 w-full text-left group">
-              <span className="w-[22px] h-[22px] grid place-items-center rounded-[6px] bg-arcova-teal/10 text-arcova-teal flex-shrink-0">
-                <Activity className="h-3 w-3" />
-              </span>
-              <span className="font-manrope text-[13px] font-semibold text-[#0d3547] tracking-[-0.01em] flex-1">Contact signals</span>
-              <span className={`w-5 h-5 shrink-0 grid place-items-center rounded-[6px] border transition-all ${open.contactSignals ? 'bg-[rgba(13,53,71,0.07)] border-[rgba(13,53,71,0.1)] text-[#7d909a]' : 'bg-[rgba(13,53,71,0.07)] border-[rgba(13,53,71,0.1)] text-[#7d909a]'}`}>
-                <ChevronDown className={`h-3 w-3 transition-transform duration-150 ${open.contactSignals ? '' : '-rotate-90'}`} />
-              </span>
-            </button>
-            {open.contactSignals && (
-              <div>
-                {editMode ? (
-                  <SignalCatalogByCategory variant="all" definitions={CONTACT_SIGNALS} categoryOrder={CONTACT_SIGNAL_CATEGORY_ORDER}
-                    selectedIds={editPersonaSignals} readOnly={false}
-                    isManagedServiceSignal={isContactSignalComingSoon}
-                    onManagedServiceSignalClick={(signalId) => {
-                      toast.info('This signal is available with our managed data service. Get in touch and we can enable it for you.');
-                      if (persona?.id) {
-                        void fetch('/api/contact-premium-signal-interest', {
-                          method: 'POST', headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ signalId, personaId: persona.id }),
-                        }).catch(() => {});
-                      }
-                    }}
-                    onToggle={(id) => setEditPersonaSignals((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])}
-                  />
-                ) : persona ? (
-                  <SignalCatalogByCategory variant="selectedOnly" definitions={CONTACT_SIGNALS.filter(s => !isContactSignalComingSoon(s.id))} categoryOrder={CONTACT_SIGNAL_CATEGORY_ORDER}
-                    selectedIds={personaSignalIds} readOnly />
-                ) : (
-                  <p className="text-xs text-[#7d909a] italic">No buying team on this ICP. Add a buying team to set contact signals.</p>
-                )}
-              </div>
-            )}
           </div>
         </div>
         </>
@@ -1720,7 +1528,6 @@ export default function ICPManagerPage() {
               companySizes: icp.company_sizes,
               liFollowerSizes: icp.li_follower_sizes,
               fundingStages: icp.funding_stages,
-              signals: icp.signals,
               exampleCompanies: [],
               exampleCompanyUrl: icp.example_company_url,
               exampleCompanyEnrichment: icp.example_company_enrichment ?? null,

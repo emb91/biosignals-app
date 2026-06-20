@@ -4,24 +4,22 @@ import { assignFunctionWeights, assignSignalWeights, extractSignalIds } from '@/
 import { getDefaultContactSignalSelectionIds, isContactSignalComingSoon } from '@/lib/signals/catalog';
 import { rescoreAllContactsForUser } from '@/lib/rescore';
 import { hydratePersonasWithSignals, replacePersonaSignalSelections } from '@/lib/signals/selections';
+import { getOrgContext } from '@/lib/org-context';
 
 export async function GET() {
   try {
-    const supabase = await createClient();
-    
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    
-    if (authError || !user) {
+    const ctx = await getOrgContext();
+    if (!ctx) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
       );
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await ctx.supabase
       .from('personas')
       .select('*')
-      .eq('user_id', user.id)
+      .eq('org_id', ctx.orgId)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -32,7 +30,7 @@ export async function GET() {
       );
     }
 
-    const hydrated = await hydratePersonasWithSignals(supabase, user.id, data || []);
+    const hydrated = await hydratePersonasWithSignals(ctx.supabase, ctx.user.id, data || []);
     return NextResponse.json({ data: hydrated });
   } catch (error) {
     console.error('Error in contacts GET:', error);
@@ -45,11 +43,8 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const supabase = await createClient();
-    
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    
-    if (authError || !user) {
+    const ctx = await getOrgContext();
+    if (!ctx) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
@@ -60,10 +55,10 @@ export async function POST(request: Request) {
 
     // Check if a contact profile already exists for this company
     if (body.icpId) {
-      const { data: existingContact } = await supabase
+      const { data: existingContact } = await ctx.supabase
         .from('personas')
         .select('id')
-        .eq('user_id', user.id)
+        .eq('org_id', ctx.orgId)
         .eq('icp_id', body.icpId)
         .single();
 
@@ -87,7 +82,8 @@ export async function POST(request: Request) {
     const weightedSignals = assignSignalWeights(signalIds);
 
     const contactData = {
-      user_id: user.id,
+      user_id: ctx.user.id,
+      org_id: ctx.orgId,
       name: body.name,
       functions: weightedFunctions.map(f => JSON.stringify(f)),
       seniority_levels: body.seniorityLevels || [],
@@ -98,7 +94,7 @@ export async function POST(request: Request) {
       updated_at: new Date().toISOString(),
     };
 
-    const { data, error } = await supabase
+    const { data, error } = await ctx.supabase
       .from('personas')
       .insert(contactData)
       .select()
@@ -112,11 +108,11 @@ export async function POST(request: Request) {
       );
     }
 
-    await replacePersonaSignalSelections(supabase, user.id, data.id, signalIds);
-    const [hydrated] = await hydratePersonasWithSignals(supabase, user.id, [data]);
+    await replacePersonaSignalSelections(ctx.supabase, ctx.user.id, data.id, signalIds);
+    const [hydrated] = await hydratePersonasWithSignals(ctx.supabase, ctx.user.id, [data]);
 
     // Fire-and-forget rescore: new persona means existing contacts need re-evaluation.
-    rescoreAllContactsForUser(user.id).catch((err) =>
+    rescoreAllContactsForUser(ctx.user.id).catch((err) =>
       console.error('[contacts POST] Background rescore failed:', err)
     );
 
@@ -132,19 +128,18 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
-    const supabase = await createClient();
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const ctx = await getOrgContext();
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
     if (!id) return NextResponse.json({ error: 'ID is required' }, { status: 400 });
 
-    const { error } = await supabase
+    const { error } = await ctx.supabase
       .from('personas')
       .delete()
       .eq('id', id)
-      .eq('user_id', user.id);
+      .eq('org_id', ctx.orgId);
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ success: true });

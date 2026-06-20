@@ -41,6 +41,23 @@ the critical path; B and D can run in parallel with A.
   provider-cost telemetry are implemented. Growth is **$799/month**. **Shadow mode** remains on.
 - HubSpot: real-time **webhook receiver** built + verified; sync-status UI in Settings. (Foundation was already ~80% built.)
 - Ops: deployment rollback runbook.
+- Launch hardening: paid-provider setup routes require authentication and fail-closed
+  rate limiting; privileged photo backfill is admin-only; Lemlist webhook fails closed.
+- Organization ownership transfer is atomic in Postgres
+  (`20260620020000_atomic_org_ownership_transfer.sql`, applied to development).
+- Next.js, Nango, Anthropic, Sentry, and transitive packages are patched; production
+  dependency audit reports zero vulnerabilities.
+- Production build, TypeScript, 88 unit tests, and four Playwright launch smokes pass.
+- `/api/health`, security headers, production environment preflight, CI, and Sentry
+  instrumentation are implemented.
+- Every configured cron now records durable status/duration/output metadata, failed
+  jobs report to Sentry, and an hourly launch-health cron checks operational invariants.
+- `/admin/launch-readiness` separates operational health from paid-launch evidence.
+- `npm run test:billing-ledger` verifies reservation idempotency, partial settlement,
+  refunds, and credit conservation against a temporary development workspace.
+- `landing-test-6` is promoted to `/`; the design route remains available and is no-index.
+- Current SaaS Terms and Privacy Policy are published in code. Obtain legal review before
+  relying on them as final customer contracts.
 
 ---
 
@@ -99,16 +116,26 @@ failed actions refund correctly; provider names remain internal.
 **🟩 Emma — infra:**
 1. **Backups:** enable Supabase automated backups + **PITR**; test a restore.
 2. **Staging/prod split:** separate Supabase project + Vercel env (also fixes cron-only-on-prod gaps).
-3. **Sentry:** create a project, grab the DSN.
+3. **Sentry:** create a project and set `NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_ORG`,
+   `SENTRY_PROJECT`, and `SENTRY_AUTH_TOKEN` in Vercel. The code integration is complete.
 4. **CAPTCHA:** enable hCaptcha/Turnstile on Supabase auth (signup).
 5. **Senior architecture review** (5–10 hrs): data model, RLS/multi-tenancy, enrichment cost paths, sync reliability.
 6. Delete the stale **Firebase** records off `arcova.app`.
 
 **🟦 Codex:**
-- **Wire Sentry** once you give me the DSN (`@sentry/wizard`, ~15 min) — app + API routes + crons, alerting on new/spiking errors.
+- Verify a deliberate staging error appears in Sentry, source maps resolve, and alerts fire.
 - Fill the **rollback runbook** placeholders (Vercel project, on-call name, incidents channel) — give me those.
 
 **Gate:** errors are visible, data is recoverable, changes are validated in staging first.
+
+### Release commands
+
+- Code-only rehearsal: `npm run release:verify:code`
+- Staging rehearsal including temporary database tests: `npm run release:verify:staging`
+- Production environment + code rehearsal: `npm run release:verify:prod`
+- Development credit-ledger proof: `npm run test:billing-ledger`
+- Development RLS/tenancy proof: `npm run test:org-tenancy`
+- Live operational view after sign-in: `/admin/launch-readiness`
 
 ---
 
@@ -117,7 +144,27 @@ failed actions refund correctly; provider names remain internal.
 - **Before any public/charging launch:** Phase D ops gates (backups, Sentry, staging) — these are the "can't launch without" items.
 - **When ready to monetize:** Phase C (after the shadow week).
 
+## Billing and monitoring test run before paid customers
+
+Use one internal Starter workspace and one internal Growth workspace.
+
+1. Keep `ARCOVA_CREDIT_ENFORCEMENT=false`.
+2. Import representative duplicate, cached, invalid, and fresh records.
+3. Exercise every billable action, including provider failure and partial-success cases.
+4. Confirm transactions reserve, settle, and refund the correct credit buckets.
+5. Activate monitored contacts and accounts close to each tier cap.
+6. Run contact and company dispatchers repeatedly until a complete monthly/weekly cycle
+   is represented. Confirm due, processed, failed, overdue, and provider-cost telemetry.
+7. Reconcile customer actions against `org_credit_transactions`, `org_usage_events`,
+   `apify_run_usage`, and monitoring records daily for seven days.
+8. In Stripe test mode, exercise monthly and annual signup, webhook replay, renewal,
+   credit-pack purchase, failed payment/grace, recovery, cancellation, and annual expiry.
+9. Enable enforcement for one internal workspace/action at a time before enabling it globally.
+
+Paid launch gate: no double charges, no lost refunds, monitoring meets cadence, actual COGS
+matches telemetry, and every Stripe lifecycle event is idempotent.
+
 ## What I need from you to keep moving (no waiting on the rest)
-- A **Sentry DSN** → I wire error monitoring now.
+- A **Sentry project/DSN** → I verify the completed integration and configure alert tests.
 - The **runbook specifics** (Vercel project name, on-call, incidents channel) → I finalize it.
 - Otherwise: do the Phase A + B dashboard steps whenever, then ping me and I'll run the end-to-end verifications.

@@ -4,6 +4,7 @@ import { assignFunctionWeights, assignSignalWeights, extractSignalIds } from '@/
 import { isContactSignalComingSoon } from '@/lib/signals/catalog';
 import { rescoreAllContactsForUser } from '@/lib/rescore';
 import { hydratePersonasWithSignals, replacePersonaSignalSelections } from '@/lib/signals/selections';
+import { getOrgContext } from '@/lib/org-context';
 
 export async function GET(
   request: Request,
@@ -11,22 +12,19 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const supabase = await createClient();
-    
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    
-    if (authError || !user) {
+    const ctx = await getOrgContext();
+    if (!ctx) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
       );
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await ctx.supabase
       .from('personas')
       .select('*')
       .eq('id', id)
-      .eq('user_id', user.id)
+      .eq('org_id', ctx.orgId)
       .single();
 
     if (error) {
@@ -44,7 +42,7 @@ export async function GET(
       );
     }
 
-    const [hydrated] = await hydratePersonasWithSignals(supabase, user.id, [data]);
+    const [hydrated] = await hydratePersonasWithSignals(ctx.supabase, ctx.user.id, [data]);
     return NextResponse.json({ data: hydrated });
   } catch (error) {
     console.error('Error in contact GET:', error);
@@ -61,11 +59,8 @@ export async function PUT(
 ) {
   try {
     const { id } = await params;
-    const supabase = await createClient();
-    
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    
-    if (authError || !user) {
+    const ctx = await getOrgContext();
+    if (!ctx) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
@@ -89,11 +84,11 @@ export async function PUT(
       updated_at: new Date().toISOString(),
     };
 
-    const { data, error } = await supabase
+    const { data, error } = await ctx.supabase
       .from('personas')
       .update(contactData)
       .eq('id', id)
-      .eq('user_id', user.id)
+      .eq('org_id', ctx.orgId)
       .select()
       .single();
 
@@ -105,12 +100,12 @@ export async function PUT(
       );
     }
 
-    await replacePersonaSignalSelections(supabase, user.id, id, signalIds);
-    const [hydrated] = await hydratePersonasWithSignals(supabase, user.id, [data]);
+    await replacePersonaSignalSelections(ctx.supabase, ctx.user.id, id, signalIds);
+    const [hydrated] = await hydratePersonasWithSignals(ctx.supabase, ctx.user.id, [data]);
 
     // Fire-and-forget rescore: persona changed, so all contacts need re-evaluation.
     // We don't await this — the UI can show stale scores briefly while rescoring runs.
-    rescoreAllContactsForUser(user.id).catch((err) =>
+    rescoreAllContactsForUser(ctx.user.id).catch((err) =>
       console.error('[contacts PUT] Background rescore failed:', err)
     );
 
@@ -130,22 +125,19 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const supabase = await createClient();
-    
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    
-    if (authError || !user) {
+    const ctx = await getOrgContext();
+    if (!ctx) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
       );
     }
 
-    const { error } = await supabase
+    const { error } = await ctx.supabase
       .from('personas')
       .delete()
       .eq('id', id)
-      .eq('user_id', user.id);
+      .eq('org_id', ctx.orgId);
 
     if (error) {
       console.error('Error deleting contact:', error);

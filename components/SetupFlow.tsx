@@ -4347,57 +4347,11 @@ export default function SetupFlow({
     if (displayParts.length) await sayBeats(displayParts);
   }, [askClaude, advanceTo, editingFindingsData, reviewedCompanyName, enrichedTargetCompany]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const loadSignalsCatalog = useCallback(async (
-    endpoint: string,
-    body: Record<string, unknown>,
-    existingSelection: string[],
-  ): Promise<{ all: SignalOption[]; selected: string[] }> => {
-    const fallbackResponse = await fetch(endpoint);
-    const fallbackPayload = fallbackResponse.ok ? await fallbackResponse.json() as { all?: SignalOption[] } : {};
-    const all = fallbackPayload.all ?? [];
-
-    if (existingSelection.length > 0) {
-      return { all, selected: existingSelection };
-    }
-
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }).catch(() => null);
-
-    if (!response?.ok) {
-      return { all, selected: [] };
-    }
-
-    const payload = await response.json() as { all?: SignalOption[]; recommended?: SignalOption[] };
-    return {
-      all: payload.all ?? all,
-      selected: (payload.recommended ?? []).map((signal) => signal.id),
-    };
-  }, []);
-
-  /** Fetches recommended IDs and merges into refs + panel only (no phase change / no narration). */
-  const applyRecommendedSignalsSilently = useCallback(async () => {
-    const companyCatalog = await loadSignalsCatalog('/api/recommend-signals', {
-      companyType: companyRef.current.companyType,
-      platformCategory: visiblePlatformCategory(companyRef.current.companyType, companyRef.current.platformCategory),
-      companySizes: companyRef.current.companySizes,
-      therapeuticAreas: companyRef.current.therapeuticAreas,
-      modalities: companyRef.current.modalities,
-      developmentStages: companyRef.current.developmentStages,
-      fundingStages: companyRef.current.fundingStages,
-    }, companyRef.current.signals);
-    companyRef.current.signals = companyCatalog.selected;
-    setPanelCompany((prev) => ({ ...prev, signals: companyCatalog.selected }));
-  }, [loadSignalsCatalog]);
-
   // ── Save persona (and persist ICP + contact rows) ─────────────────────────
 
   const savePersona = useCallback(async () => {
     setPhase('persona_saving');
     setBuyingTeamEditMode(false);
-    await applyRecommendedSignalsSilently();
     const p = personaRef.current;
 
     const personaName =
@@ -4421,7 +4375,6 @@ export default function SetupFlow({
           companySizes: companyRef.current.companySizes,
           liFollowerSizes: companyRef.current.liFollowerSizes,
           fundingStages: companyRef.current.fundingStages,
-          signals: companyRef.current.signals,
           exampleCompanyUrl: enrichedTargetCompany?.website ?? lastTargetUrlRef.current ?? '',
           exampleCompanyEnrichment: enrichedTargetCompany ?? undefined,
           targetCustomers: companyRef.current.targetCustomers,
@@ -4466,7 +4419,7 @@ export default function SetupFlow({
 
     setPhase('done');
     setTimeout(() => router.push(resolvedCompletePath), 2500);
-  }, [applyRecommendedSignalsSilently, askClaude, enrichedTargetCompany, lastTargetUrlRef, resolvedCompletePath, router, savedIcpName]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [askClaude, enrichedTargetCompany, lastTargetUrlRef, resolvedCompletePath, router, savedIcpName]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startBuyingGroupForCompany = useCallback(async (co: TargetCompanyProfile) => {
     selectedCompanyRef.current = co;
@@ -5981,23 +5934,9 @@ export default function SetupFlow({
           return;
         }
 
-        // Leg 4: persona exists — backfill recommended company signal selections via save (no extra review step).
-        if (companyRef.current.signals.length === 0) {
-          await savePersona();
-          return;
-        }
-
-        // Leg 5: everything done — brief confirmation then redirect
-        const { displayParts } = await askClaude({
-          mode: 'narration',
-          extra: {
-            role: 'user',
-            content: '[System: setup is fully complete — company profile, target company profile, and buying team are all saved. One sentence: let the user know they\'re all set and you\'re taking them to their workspace.]',
-          },
-        });
-        if (displayParts.length) await sayBeats(displayParts);
-        setPhase('done');
-        setTimeout(() => router.push(resolvedCompletePath), 2200);
+        // Persona exists — finalize by saving the ICP + buying team, then redirect.
+        // (savePersona handles the wrap-up narration and the redirect to the workspace.)
+        await savePersona();
         return;
       }
 
