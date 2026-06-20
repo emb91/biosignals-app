@@ -4,7 +4,7 @@
     "module": "commonjs",
     "moduleResolution": "node",
     "noEmit": false,
-    "outDir": "/private/tmp/arcova-resolver-tests",
+    "outDir": "/tmp/arcova-resolver-tests",
     "incremental": false,
     "isolatedModules": false
   },

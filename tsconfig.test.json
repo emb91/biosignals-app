@@ -4,7 +4,7 @@
     "module": "commonjs",
     "moduleResolution": "node",
     "noEmit": false,
-    "outDir": "/private/tmp/arcova-journey-tests",
+    "outDir": "/tmp/arcova-journey-tests",
     "incremental": false,
     "isolatedModules": false
   },

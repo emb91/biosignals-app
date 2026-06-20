@@ -4,7 +4,7 @@
     "module": "commonjs",
     "moduleResolution": "node",
     "noEmit": false,
-    "outDir": "/private/tmp/arcova-company-merge-tests",
+    "outDir": "/tmp/arcova-company-merge-tests",
     "incremental": false,
     "isolatedModules": false
   },

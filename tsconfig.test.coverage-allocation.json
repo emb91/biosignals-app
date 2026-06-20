@@ -4,7 +4,7 @@
     "module": "commonjs",
     "moduleResolution": "node",
     "noEmit": false,
-    "outDir": "/private/tmp/arcova-coverage-allocation-tests",
+    "outDir": "/tmp/arcova-coverage-allocation-tests",
     "incremental": false,
     "isolatedModules": false
   },

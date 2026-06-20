@@ -4,7 +4,7 @@
     "module": "commonjs",
     "moduleResolution": "node",
     "noEmit": false,
-    "outDir": "/private/tmp/arcova-patent-surge-tests",
+    "outDir": "/tmp/arcova-patent-surge-tests",
     "incremental": false,
     "isolatedModules": false
   },
