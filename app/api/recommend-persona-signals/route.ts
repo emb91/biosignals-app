@@ -6,11 +6,18 @@ import {
 } from '@/lib/signals/catalog';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { completeLlm } from '@/lib/llm-client';
+import { guardAuthenticatedAction } from '@/lib/api-security';
 
 const SELECTABLE_CONTACT_SIGNALS = CONTACT_SIGNALS.filter((s) => !isContactSignalComingSoon(s.id));
 const SELECTABLE_CONTACT_ID_SET = new Set(SELECTABLE_CONTACT_SIGNALS.map((s) => s.id));
 
 export async function POST(request: Request) {
+  const guard = await guardAuthenticatedAction(request, {
+    action: 'recommend-persona-signals',
+    maxBodyBytes: 32_000,
+  });
+  if (!guard.ok) return guard.response;
+
   try {
     const body = await request.json();
     const { name, functions, seniorityLevels, jobTitles } = body;

@@ -25,6 +25,7 @@ import { resolveFundingStage } from '@/lib/company-monitor/funding';
 import { resolveCompanyTaxonomy } from '@/lib/company-monitor/taxonomy';
 import { encodeSSEEvent, SSE_HEADERS } from '@/lib/sse';
 import type { TargetCompanyEnrichmentResult } from '@/lib/target-company-enrichment';
+import { guardAuthenticatedAction } from '@/lib/api-security';
 
 function publicEnrichmentPayload(value: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
@@ -42,6 +43,14 @@ function normalizeDomain(value?: string | null): string | null {
 }
 
 export async function POST(request: Request) {
+  const guard = await guardAuthenticatedAction(request, {
+    action: 'analyze-example-company-stream',
+    limit: 6,
+    windowSeconds: 60,
+    maxBodyBytes: 8_000,
+  });
+  if (!guard.ok) return guard.response;
+
   const body = await request.json().catch(() => ({})) as { url?: string };
   const { url } = body;
 

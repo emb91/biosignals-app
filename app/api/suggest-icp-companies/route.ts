@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
+import { guardAuthenticatedAction } from '@/lib/api-security';
 
 export interface IcpSuggestion {
   name: string;
@@ -15,6 +16,12 @@ function arr(v: unknown): string {
 }
 
 export async function POST(req: NextRequest) {
+  const guard = await guardAuthenticatedAction(req, {
+    action: 'suggest-icp-companies',
+    maxBodyBytes: 48_000,
+  });
+  if (!guard.ok) return guard.response;
+
   try {
     const body = await req.json() as Record<string, unknown>;
     const {

@@ -2,8 +2,15 @@ import { NextResponse } from 'next/server';
 import { COMPANY_SIGNALS } from '@/lib/signals/catalog';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
 import { completeLlm } from '@/lib/llm-client';
+import { guardAuthenticatedAction } from '@/lib/api-security';
 
 export async function POST(request: Request) {
+  const guard = await guardAuthenticatedAction(request, {
+    action: 'recommend-signals',
+    maxBodyBytes: 32_000,
+  });
+  if (!guard.ok) return guard.response;
+
   try {
     const body = await request.json();
     const { companyType, platformCategory, companySizes, therapeuticAreas, modalities, developmentStages, fundingStages } = body;
