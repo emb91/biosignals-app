@@ -12,6 +12,7 @@
  * the others.
  */
 import { NextResponse } from 'next/server';
+import { observeCron } from '@/lib/cron-observability';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { ensureTrackedCompanyCiks } from '@/lib/signals/company-cik';
 import { persistRunHistory } from '@/lib/signals/run-history';
@@ -39,7 +40,7 @@ async function loadActiveUserIds(admin: ReturnType<typeof createAdminClient>): P
   return [...ids];
 }
 
-export async function GET(request: Request) {
+async function runCron(request: Request) {
   const cronSecret = process.env.CRON_SECRET;
   const auth = request.headers.get('authorization');
   if (!cronSecret || auth !== `Bearer ${cronSecret}`) {
@@ -110,3 +111,5 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: messageFromUnknown(error) }, { status: 500 });
   }
 }
+
+export const GET = observeCron('funding-delta', runCron);

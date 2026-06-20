@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase-admin';
 import { processActiveSecBackfillJob } from '@/lib/signals/sec-backfill';
 import { runPendingCikCatchups } from '@/lib/signals/sec-per-cik-backfill';
 import { runPendingSecClassifications } from '@/lib/signals/classify-pending-sec-filings';
+import { observeCron } from '@/lib/cron-observability';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -12,7 +13,7 @@ function messageFromUnknown(error: unknown): string {
   return String(error);
 }
 
-export async function GET(request: Request) {
+async function runCron(request: Request) {
   const cronSecret = process.env.CRON_SECRET;
   const auth = request.headers.get('authorization');
   if (!cronSecret || auth !== `Bearer ${cronSecret}`) {
@@ -56,3 +57,5 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: messageFromUnknown(error) }, { status: 500 });
   }
 }
+
+export const GET = observeCron('funding-backfill', runCron);

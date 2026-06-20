@@ -6,13 +6,14 @@ import {
   monitoringRepresentativeContacts,
   refreshMonitoringUniverse,
 } from '@/lib/billing/monitoring';
+import { observeCron } from '@/lib/cron-observability';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 const CHUNK_SIZE = 100;
 
-export async function GET(request: Request) {
+async function runCron(request: Request) {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || request.headers.get('authorization') !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
@@ -82,3 +83,5 @@ export async function GET(request: Request) {
     failures,
   });
 }
+
+export const GET = observeCron('contact-job-change', runCron);

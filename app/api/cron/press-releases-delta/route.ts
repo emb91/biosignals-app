@@ -16,6 +16,7 @@
  * reasonable freshness vs. cost trade-off for the Haiku classification budget).
  */
 import { NextResponse } from 'next/server';
+import { observeCron } from '@/lib/cron-observability';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { syncPressReleaseDelta } from '@/lib/signals/sync-press-release-delta';
 import { runPressReleaseMonitor } from '@/lib/signals/run-press-release-monitor';
@@ -42,7 +43,7 @@ async function loadActiveUserIds(admin: ReturnType<typeof createAdminClient>): P
   return [...ids];
 }
 
-export async function GET(request: Request) {
+async function runCron(request: Request) {
   const cronSecret = process.env.CRON_SECRET;
   const auth = request.headers.get('authorization');
   if (!cronSecret || auth !== `Bearer ${cronSecret}`) {
@@ -132,3 +133,5 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: messageFromUnknown(error) }, { status: 500 });
   }
 }
+
+export const GET = observeCron('press-releases-delta', runCron);
