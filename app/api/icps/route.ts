@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase-server';
 import { NextResponse } from 'next/server';
 import { orgIdForUser, getOrgContext, canEditOrgSetup } from '@/lib/org-context';
 import { rescoreAllContactsForUser } from '@/lib/rescore';
-import { hydrateIcpsWithSignals } from '@/lib/signals/selections';
+import { normalizePlatformTaxonomyFields } from '@/lib/platform-category';
 import { parsePlatformCategoryInput } from '@/lib/platform-category';
 import {
   isMissingColumnError,
@@ -37,8 +37,8 @@ export async function GET() {
       return NextResponse.json({ error: 'Failed to fetch ICPs' }, { status: 500 });
     }
 
-    const hydrated = await hydrateIcpsWithSignals(supabase, user.id, data || []);
-    return NextResponse.json({ data: hydrated });
+    const normalized = (data || []).map((row) => normalizePlatformTaxonomyFields(row as Record<string, unknown>));
+    return NextResponse.json({ data: normalized });
   } catch (error) {
     console.error('Error in GET /api/icps:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
@@ -142,9 +142,6 @@ export async function POST(request: Request) {
       company_sizes: body.companySizes || [],
       li_follower_sizes: body.liFollowerSizes || [],
       funding_stages: body.fundingStages || [],
-      // Signals are now applied universally to all contacts/companies; per-ICP selection is
-      // no longer collected. Column kept (empty) for back-compat until a later cleanup migration.
-      signals: [],
       example_companies: body.exampleCompanies || [],
       example_company_url: exampleCompanyUrl,
       example_company_enrichment: body.exampleCompanyEnrichment ?? null,
@@ -172,13 +169,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Failed to save ICP' }, { status: 500 });
     }
 
-    const [hydrated] = await hydrateIcpsWithSignals(supabase, user.id, [data]);
+    const normalized = normalizePlatformTaxonomyFields(data as Record<string, unknown>);
 
     rescoreAllContactsForUser(user.id).catch((err) =>
       console.error('[icps POST] Background lead-fit rescore failed:', err),
     );
 
-    return NextResponse.json({ data: hydrated });
+    return NextResponse.json({ data: normalized });
   } catch (error) {
     console.error('Error in POST /api/icps:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

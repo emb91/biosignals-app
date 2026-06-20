@@ -9,12 +9,8 @@ import {
   totalFundingToBracket,
 } from '@/lib/arcova-taxonomy';
 import { rescoreAllContactsForUser } from '@/lib/rescore';
-import { COMPANY_SIGNALS, getDefaultContactSignalSelectionIds } from '@/lib/signals/catalog';
-import {
-  hydrateIcpsWithSignals,
-  replaceIcpSignalSelections,
-} from '@/lib/signals/selections';
-import { assignFunctionWeights, assignSignalWeights } from '@/lib/signal-weights';
+import { normalizePlatformTaxonomyFields } from '@/lib/platform-category';
+import { assignFunctionWeights } from '@/lib/signal-weights';
 import { personaFunctionNames } from '@/lib/persona-functions';
 import { resolveCustomerSegments } from '@/lib/split-customer-segments';
 import { createAdminClient } from '@/lib/supabase-admin';
@@ -68,41 +64,15 @@ type BuyingTeamResult = {
 type ClaimResult =
   | {
       state: 'claimed';
-      icp: Record<string, unknown> & { id: string; signals: string[] };
+      icp: Record<string, unknown>;
     }
   | {
       state: 'already_running';
-      icp: Record<string, unknown> & { id: string; signals: string[] };
+      icp: Record<string, unknown>;
     }
   | {
       state: 'not_found';
     };
-
-function parseJsonArrayResponse(responseText: string): string[] {
-  try {
-    return JSON.parse(responseText);
-  } catch {
-    const jsonMatch = responseText.match(/\[[\s\S]*\]/);
-    if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]);
-    }
-    throw new Error('Could not parse JSON array response');
-  }
-}
-
-function normalizeUniqueIds(values: string[]): string[] {
-  const seen = new Set<string>();
-  const normalized: string[] = [];
-
-  for (const raw of values) {
-    const value = typeof raw === 'string' ? raw.trim() : '';
-    if (!value || seen.has(value)) continue;
-    seen.add(value);
-    normalized.push(value);
-  }
-
-  return normalized;
-}
 
 function isSaasCompanyType(value?: string | null): boolean {
   return (value ?? '').trim() === 'SaaS';
@@ -223,72 +193,6 @@ function orgScaleInstructions(band: OrgScaleBand): string {
   return `- Target account headcount bucket is UNKNOWN or not yet classified. Default to FEWER, broader buyer functions — assume lean structure until evidence suggests a huge enterprise procurement machine.
 
 - Avoid inventing parallel large-department buyer groups. Prefer Executive Leadership plus the one or two functions most aligned with what the seller actually sells into.`;
-}
-
-async function recommendCompanySignals(input: {
-  companyType: string;
-  platformCategory: string;
-  companySizes: string[];
-  therapeuticAreas: string[];
-  modalities: string[];
-  developmentStages: string[];
-  fundingStages: string[];
-}): Promise<string[]> {
-  const signalList = COMPANY_SIGNALS.map(
-    (signal) => `- ${signal.id}: ${signal.displayName} (${signal.category})`,
-  ).join('\n');
-
-  const prompt = `You are helping a B2B sales team in the life sciences industry select the most relevant buying signals to track for their ideal customer profile.
-
-Their ICP criteria:
-- Company Type: ${input.companyType || 'Not specified'}
-- Platform Category: ${input.platformCategory || 'Not specified'}
-- Company Sizes: ${input.companySizes.join(', ') || 'Any'}
-- Therapeutic Areas: ${input.therapeuticAreas.join(', ') || 'Any'}
-- Modalities: ${input.modalities.join(', ') || 'Any'}
-- Development Stages: ${input.developmentStages.join(', ') || 'Any'}
-- Funding Stages: ${input.fundingStages.join(', ') || 'Any'}
-
-Available signals to choose from:
-${signalList}
-
-Based on this ICP, select every signal from the list above that is at least moderately relevant to tracking buying intent for this profile—be inclusive; do not cap the count. Omit only signals that are clearly a poor fit. Order by importance (strongest buying-window indicators first). Consider:
-- What events typically precede purchasing decisions for this type of customer?
-- What signals indicate growth, expansion, or new initiatives?
-- What hiring patterns suggest they're building capabilities your seller might support?
-
-Return ONLY a JSON array of signal IDs (the part before the colon), ordered by relevance—include as many ids as belong in the list, from one up to the full catalogue if appropriate.
-
-Do not include em dashes in your response.
-Return ONLY the JSON array, nothing else.`;
-
-  // Structured JSON output (signal-id selection) — Haiku handles this fine.
-  // See memory/llm_cost_concerns.md.
-  const completion = await completeLlm({
-    feature: 'icp_signal_recommendation',
-    prompt,
-    maxTokens: 1024,
-  });
-  await recordLlmUsageEvent({
-    provider: completion.provider,
-    feature: 'icp_signal_recommendation',
-    route: 'lib/icp-reenrichment#recommendCompanySignals',
-    model: completion.model,
-    usage: completion.usage,
-    metadata: {
-      company_type: input.companyType,
-      platform_category: input.platformCategory || null,
-      company_size_count: input.companySizes.length,
-      therapeutic_area_count: input.therapeuticAreas.length,
-      modality_count: input.modalities.length,
-      development_stage_count: input.developmentStages.length,
-    },
-  });
-
-  const responseText = completion.text.trim();
-  const recommendedIds = normalizeUniqueIds(parseJsonArrayResponse(responseText));
-
-  return recommendedIds.filter((id) => COMPANY_SIGNALS.some((signal) => signal.id === id));
 }
 
 async function generateIcpSummary(input: {
@@ -676,14 +580,12 @@ async function persistRefreshedIcp(params: {
   companySizes: string[];
   liFollowerSizes: string[];
   fundingStages: string[];
-  companySignals: string[];
   icpSummary: string | null;
   targetCustomers: string[];
   buyerTypes: string[];
   competitors: { name: string; url?: string }[];
 }) {
   const now = new Date().toISOString();
-  const weightedSignals = assignSignalWeights(params.companySignals);
   const companyType = params.enrichment.company_type ?? '';
   const platformCategory = storedPlatformCategory(
     companyType,
@@ -704,7 +606,6 @@ async function persistRefreshedIcp(params: {
     company_sizes: params.companySizes,
     li_follower_sizes: params.liFollowerSizes,
     funding_stages: params.fundingStages,
-    signals: weightedSignals.map((signal) => JSON.stringify(signal)),
     example_companies: [],
     example_company_url: params.exampleCompanyUrl,
     example_company_enrichment: params.enrichment,
@@ -743,13 +644,6 @@ async function persistRefreshedIcp(params: {
   }
 
   if (result.error) throw result.error;
-
-  await replaceIcpSignalSelections(
-    params.supabase,
-    params.userId,
-    params.icpId,
-    params.companySignals,
-  );
 }
 
 async function persistBuyingTeams(params: {
@@ -760,18 +654,14 @@ async function persistBuyingTeams(params: {
   buyingTeams: BuyingTeamResult[];
 }) {
   const now = new Date().toISOString();
-  const defaultSignals = getDefaultContactSignalSelectionIds().map((id) =>
-    JSON.stringify({ id, weight: 1 }),
-  );
 
   // Reconcile the freshly-inferred teams against the personas already linked to
   // this ICP. We key by PRIMARY FUNCTION (the first function, drawn from the
   // controlled vocabulary) so identity is stable across re-runs: a team whose
-  // primary function already exists is UPDATED in place (preserving the user's
-  // saved signal selections via SET NULL / CASCADE FKs untouched), a genuinely
-  // new team is INSERTED, and an existing persona whose function is no longer in
-  // the buying group is DELETED (contacts.scored_against_persona_id → SET NULL,
-  // contact_persona_scores / persona_signal_selections → CASCADE).
+  // primary function already exists is UPDATED in place, a genuinely new team is
+  // INSERTED, and an existing persona whose function is no longer in the buying
+  // group is DELETED (contacts.scored_against_persona_id → SET NULL,
+  // contact_persona_scores → CASCADE).
   const existingByPrimary = new Map<string, PersonaRow>();
   for (const persona of params.existingPersonas) {
     const primary = personaFunctionNames(persona.functions)[0];
@@ -796,11 +686,9 @@ async function persistBuyingTeams(params: {
     const existing = existingByPrimary.get(primary);
     if (existing) {
       keptPersonaIds.add(existing.id);
-      const signals =
-        existing.signals && existing.signals.length > 0 ? existing.signals : defaultSignals;
       const { error } = await params.supabase
         .from('personas')
-        .update({ ...personaData, signals })
+        .update(personaData)
         .eq('id', existing.id)
         .eq('user_id', params.userId);
       if (error) throw error;
@@ -810,7 +698,6 @@ async function persistBuyingTeams(params: {
         icp_id: params.icpId,
         created_at: now,
         ...personaData,
-        signals: defaultSignals,
       });
       if (error) throw error;
     }
@@ -913,11 +800,7 @@ export async function claimIcpReenrichment(
   if (error) throw error;
 
   if ((data || []).length > 0) {
-    const [hydrated] = await hydrateIcpsWithSignals(
-      supabase,
-      userId,
-      [data[0] as Record<string, unknown> & { id: string }],
-    );
+    const hydrated = normalizePlatformTaxonomyFields(data[0] as Record<string, unknown>);
     return { state: 'claimed', icp: hydrated };
   }
 
@@ -931,11 +814,7 @@ export async function claimIcpReenrichment(
   if (currentError) throw currentError;
   if (!current) return { state: 'not_found' };
 
-  const [hydrated] = await hydrateIcpsWithSignals(
-    supabase,
-    userId,
-    [current as Record<string, unknown> & { id: string }],
-  );
+  const hydrated = normalizePlatformTaxonomyFields(current as Record<string, unknown>);
 
   if ((current as { reenrichment_status?: string | null }).reenrichment_status === 'running') {
     return { state: 'already_running', icp: hydrated };
@@ -993,16 +872,7 @@ export async function runIcpReenrichmentJob(input: {
     });
     const refreshedCompetitors = enrichment.competitors_enriched ?? [];
 
-    const [companySignals, icpSummary, buyingTeams] = await Promise.all([
-      recommendCompanySignals({
-        companyType,
-        platformCategory,
-        companySizes,
-        therapeuticAreas,
-        modalities,
-        developmentStages,
-        fundingStages,
-      }),
+    const [icpSummary, buyingTeams] = await Promise.all([
       generateIcpSummary({
         companyType,
         platformCategory,
@@ -1048,7 +918,6 @@ export async function runIcpReenrichmentJob(input: {
       companySizes,
       liFollowerSizes,
       fundingStages,
-      companySignals,
       icpSummary,
       targetCustomers: refreshedSegments.customerOrganizations,
       buyerTypes: refreshedSegments.buyerTypes,

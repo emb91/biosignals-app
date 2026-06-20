@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase-server';
 import { NextResponse } from 'next/server';
 import { orgIdForUser } from '@/lib/org-context';
 import { rescoreAllContactsForUser } from '@/lib/rescore';
-import { hydrateIcpsWithSignals } from '@/lib/signals/selections';
+import { normalizePlatformTaxonomyFields } from '@/lib/platform-category';
 import { parsePlatformCategoryInput } from '@/lib/platform-category';
 import {
   isMissingColumnError,
@@ -37,8 +37,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: 'ICP not found' }, { status: 404 });
     }
 
-    const [hydrated] = await hydrateIcpsWithSignals(supabase, user.id, [data]);
-    return NextResponse.json({ data: hydrated });
+    const normalized = normalizePlatformTaxonomyFields(data as Record<string, unknown>);
+    return NextResponse.json({ data: normalized });
   } catch (error) {
     console.error('Error in GET /api/icps/[id]:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
@@ -140,13 +140,13 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
       return NextResponse.json({ error: 'Failed to update ICP' }, { status: 500 });
     }
 
-    const [hydrated] = await hydrateIcpsWithSignals(supabase, user.id, [data]);
+    const normalized = normalizePlatformTaxonomyFields(data as Record<string, unknown>);
 
     rescoreAllContactsForUser(user.id).catch((err) =>
       console.error('[icps PUT] Background lead-fit rescore failed:', err),
     );
 
-    return NextResponse.json({ data: hydrated });
+    return NextResponse.json({ data: normalized });
   } catch (error) {
     console.error('Error in PUT /api/icps/[id]:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

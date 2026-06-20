@@ -1,9 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
-import { assignFunctionWeights, assignSignalWeights, extractSignalIds } from '@/lib/signal-weights';
-import { getDefaultContactSignalSelectionIds, isContactSignalComingSoon } from '@/lib/signals/catalog';
+import { assignFunctionWeights } from '@/lib/signal-weights';
 import { rescoreAllContactsForUser } from '@/lib/rescore';
-import { hydratePersonasWithSignals, replacePersonaSignalSelections } from '@/lib/signals/selections';
 import { getOrgContext } from '@/lib/org-context';
 
 export async function GET() {
@@ -30,8 +28,7 @@ export async function GET() {
       );
     }
 
-    const hydrated = await hydratePersonasWithSignals(ctx.supabase, ctx.user.id, data || []);
-    return NextResponse.json({ data: hydrated });
+    return NextResponse.json({ data: data || [] });
   } catch (error) {
     console.error('Error in contacts GET:', error);
     return NextResponse.json(
@@ -71,15 +68,6 @@ export async function POST(request: Request) {
     }
 
     const weightedFunctions = assignFunctionWeights(body.functions || []);
-    const rawExtracted = extractSignalIds(
-      (body.signals || []) as Parameters<typeof extractSignalIds>[0],
-    );
-    const stripped = rawExtracted.filter((id) => !isContactSignalComingSoon(id));
-    const signalIds =
-      rawExtracted.length === 0 || stripped.length === 0
-        ? getDefaultContactSignalSelectionIds()
-        : stripped;
-    const weightedSignals = assignSignalWeights(signalIds);
 
     const contactData = {
       user_id: ctx.user.id,
@@ -88,7 +76,6 @@ export async function POST(request: Request) {
       functions: weightedFunctions.map(f => JSON.stringify(f)),
       seniority_levels: body.seniorityLevels || [],
       job_titles: body.jobTitles || [],
-      signals: weightedSignals.map((s) => JSON.stringify(s)),
       icp_id: body.icpId || null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -108,15 +95,12 @@ export async function POST(request: Request) {
       );
     }
 
-    await replacePersonaSignalSelections(ctx.supabase, ctx.user.id, data.id, signalIds);
-    const [hydrated] = await hydratePersonasWithSignals(ctx.supabase, ctx.user.id, [data]);
-
     // Fire-and-forget rescore: new persona means existing contacts need re-evaluation.
     rescoreAllContactsForUser(ctx.user.id).catch((err) =>
       console.error('[contacts POST] Background rescore failed:', err)
     );
 
-    return NextResponse.json({ data: hydrated });
+    return NextResponse.json({ data });
   } catch (error) {
     console.error('Error in contacts POST:', error);
     return NextResponse.json(
