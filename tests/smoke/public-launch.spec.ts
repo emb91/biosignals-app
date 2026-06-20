@@ -3,7 +3,9 @@ import { expect, test } from '@playwright/test';
 test('canonical landing page renders the promoted Arcova experience', async ({ page }) => {
   await page.goto('/');
   await expect(page).toHaveTitle(/Arcova/);
-  await expect(page.getByRole('heading', { level: 1 })).toContainText(/whole market|who to call/i);
+  await expect(page.getByRole('heading', { level: 1 })).toContainText(
+    /revenue engine built for life sciences|whole market|who to call/i,
+  );
   await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
     'href',
     /^https:\/\/arcova\.bio\/?$/,
