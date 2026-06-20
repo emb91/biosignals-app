@@ -316,7 +316,7 @@ PLANE A — THIS COMPANY (what THEY are / what THEY build):
   - If the product is a GTM, prospecting, sales, or intelligence tool for life sciences, prefer specific categories like Sales Intelligence Platform, Commercial Intelligence Platform, Scientific Content Platform, or Analytics Platform over a generic AI label.
   - Reserve "Digital Health & Informatics" for companies whose core product is used in patient care, clinical decision support, provider workflow, healthcare operations, or digital therapeutics.
 - Biotech / Biopharma / Pharma: development_stages from their OWN assets/trials (use web search for current clinical phase).
-- Academic / Research Institute / Academic Spinout: development_stages from their own asset/trial maturity (typically Preclinical or Discovery).
+- Academic / Research Institute: development_stages from their own asset/trial maturity (typically Preclinical or Discovery).
 - For ALL non-software types, populate ALL therapeutic_areas and modalities that are genuinely evidenced — there is no cap. A broad CRO or tools company may have many modalities; list every one that appears in the allowed vocabulary.
 
 PLANE B — CUSTOMERS SERVED (beachhead / who buys from them):
