@@ -142,11 +142,11 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "The owner can't be removed" }, { status: 400 });
   }
 
-  const { error } = await admin
-    .from('org_members')
-    .delete()
-    .eq('org_id', ctx.orgId)
-    .eq('user_id', targetId);
+  const { error } = await admin.rpc('remove_org_member', {
+    p_org_id: ctx.orgId,
+    p_actor_id: ctx.user.id,
+    p_target_id: targetId,
+  });
   if (error) {
     console.error('[org/members DELETE] remove failed:', error);
     return NextResponse.json({ error: 'Could not remove member' }, { status: 500 });
