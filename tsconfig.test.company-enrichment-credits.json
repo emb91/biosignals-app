@@ -4,7 +4,7 @@
     "module": "commonjs",
     "moduleResolution": "node",
     "noEmit": false,
-    "outDir": "/private/tmp/arcova-company-enrichment-credits-tests",
+    "outDir": "/tmp/arcova-company-enrichment-credits-tests",
     "incremental": false,
     "isolatedModules": false
   },
