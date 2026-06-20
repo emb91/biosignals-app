@@ -23,7 +23,6 @@ export function Hero() {
       <div className="hero-grid" />
       <div className="hero-glow" />
       <div className="wrap hero-in">
-        <span className="eyebrow">{HERO.eyebrow}</span>
         <h1 className="display">
           {HERO.headlineLead} <span className="hl">{HERO.headlineAccent}</span>
         </h1>
@@ -68,10 +67,10 @@ export function Hero() {
                   </div>
                   <div className="ag-orbwrap"><div className="ag-orb" /></div>
                   <div className="ag-foot">
-                    <div className="ag-bubble">Good evening, Maya. <b>25 accounts moved overnight.</b> Do you already know what you&rsquo;d like to work on, or shall I suggest a good place to start?</div>
+                    <div className="ag-bubble">Good evening, Maya. <b>25 accounts moved overnight.</b> Want me to suggest where to start, or do you already know what to work on?</div>
                     <div className="ag-chips">
                       <span className="ag-chip">+ Suggest where to start</span>
-                      <span className="ag-chip">+ Summarise overnight</span>
+                      <span className="ag-chip">+ Summarize overnight</span>
                       <span className="ag-chip">+ Just the top lead</span>
                     </div>
                     <div className="ag-input"><span className="ag-ph">Ask anything…</span><span className="ag-send">Send</span></div>

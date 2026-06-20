@@ -9,6 +9,7 @@ import { Bento } from "./sections/Bento"
 import { Flow } from "./sections/Flow"
 import { Statement } from "./sections/Statement"
 import { Pricing } from "./sections/Pricing"
+import { Comparison } from "./sections/Comparison"
 import { FinalCta } from "./sections/FinalCta"
 import { Footer } from "./sections/Footer"
 
@@ -56,6 +57,7 @@ export default function LandingPage() {
         <Flow />
         <Statement />
         <Pricing />
+        <Comparison />
         <FinalCta />
       </main>
       <Footer />

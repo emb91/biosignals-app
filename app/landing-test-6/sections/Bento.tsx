@@ -48,7 +48,7 @@ export function Bento() {
           <div className="cell half reveal">
             <span className="ck">2 · Surface</span>
             <h3>Reach out at the right moment.</h3>
-            <p>Funding, hires and clinical milestones, flagged the second they happen and scored for readiness.</p>
+            <p>Funding rounds, new hires and clinical milestones, scored for readiness the day they surface.</p>
             <div className="media">
               {SIGNALS.map((s) => (
                 <div className="signalcard" key={s.co}>
@@ -66,7 +66,7 @@ export function Bento() {
           {/* Act */}
           <div className="cell half reveal">
             <span className="ck">3 · Act</span>
-            <h3>Signal to sent in two clicks.</h3>
+            <h3>From signal to sent in two clicks.</h3>
             <p>Arcova drafts a full multi-touch sequence in your voice, ready to export to a campaign. You just review and send.</p>
             <div className="media">
               <ActSequence />

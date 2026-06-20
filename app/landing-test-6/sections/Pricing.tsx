@@ -39,6 +39,7 @@ export function Pricing() {
               <div className="pname">{p.name}</div>
               <div className="pdesc">{p.desc}</div>
               <div className="pprice">
+                {annual && p.annualList && <span className="amt-was">{p.annualList}</span>}
                 <span className="amt">{annual ? p.priceAnnual : p.priceMonthly}</span>
                 {p.per && <span className="per">{annual ? "/workspace/yr" : p.per}</span>}
               </div>
@@ -48,7 +49,7 @@ export function Pricing() {
               </div>
               <div className="pfeat-h">{p.featuresHeading}</div>
               <ul>
-                {p.features.map((f) => (
+                {(annual ? p.featuresAnnual : p.featuresMonthly).map((f) => (
                   <li key={f}><CheckIcon size={15} /><Feature text={f} /></li>
                 ))}
               </ul>
@@ -56,7 +57,20 @@ export function Pricing() {
           ))}
         </div>
 
-        <p className="price-note reveal">All plans include the full engine — signals, scoring, drafted outreach and CRM sync.</p>
+        <div className="ent reveal">
+          <div className="et">
+            <h4>Enterprise</h4>
+            <p>For larger teams that need custom volumes, security and hands-on onboarding.</p>
+          </div>
+          <div className="efeat">
+            <span><CheckIcon size={14} />Negotiated volumes</span>
+            <span><CheckIcon size={14} />Unlimited active leads</span>
+            <span><CheckIcon size={14} />SSO &amp; onboarding</span>
+          </div>
+          <div className="ebtn"><a className="btn btn-primary" href="/contact-us">Contact sales</a></div>
+        </div>
+
+        <p className="price-note reveal">All plans include the full engine: signals, scoring, drafted outreach and CRM sync.</p>
       </div>
     </section>
   )

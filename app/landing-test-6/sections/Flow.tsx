@@ -6,7 +6,7 @@ export function Flow() {
       <div className="wrap">
         <div className="section-head center reveal">
           <span className="eyebrow">Agentic by design</span>
-          <h2 className="h2" style={{ marginTop: 18 }}>Set up once. The agents run it.</h2>
+          <h2 className="h2" style={{ marginTop: 18 }}>Point us at your market. We take it from there.</h2>
         </div>
         <div className="steps reveal">
           <div className="steps-rail" />
