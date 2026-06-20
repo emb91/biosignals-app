@@ -19,7 +19,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Loader2, Copy, Check, ChevronLeft, Send } from 'lucide-react';
+import { Loader2, Copy, Check, ChevronLeft, Send, Linkedin, Mail, UserPlus } from 'lucide-react';
 import { cachedJson, invalidateCache } from '@/lib/page-fetch-cache';
 
 // Hooks are deterministic for a given contact + day (signal events flow in
@@ -100,6 +100,7 @@ type Message = {
   day_offset: number;
   subject: string;
   body: string;
+  channel: 'email' | 'linkedin';
 };
 
 type ExistingSequence = {
@@ -279,9 +280,8 @@ export function OutreachPanel({ contactId, contactName }: Props) {
           // No hook to anchor on anymore; label the staged row by the rep's angle
           // if they gave one, else a neutral label.
           anchorHookText: userAngle.trim() || 'Outreach sequence',
-          // No channel field — server applies best-practice defaults per
-          // day_offset (email-first, then alternating). Reps override
-          // per-step in the /outreach editor's cell side-panel.
+          // Preserve the generated best-practice channel mix. Reps can still
+          // override individual message steps in the /outreach editor.
           messages,
         }),
       });
@@ -411,7 +411,7 @@ export function OutreachPanel({ contactId, contactName }: Props) {
         className="inline-flex items-center gap-1 text-xs text-gray-500 hover:text-arcova-teal"
       >
         <ChevronLeft className="w-3.5 h-3.5" />
-        Pick a different signal
+        Back
       </button>
 
       {(() => {
@@ -431,7 +431,7 @@ export function OutreachPanel({ contactId, contactName }: Props) {
       {sequenceLoading && (
         <div className="flex items-center gap-2 text-sm text-gray-500">
           <Loader2 className="w-4 h-4 animate-spin" />
-          Drafting 7-message sequence…
+          Drafting 7-step sequence…
         </div>
       )}
 
@@ -487,47 +487,66 @@ export function OutreachPanel({ contactId, contactName }: Props) {
             {messages.map((m, i) => {
               const subjectId = `m${i}-subject`;
               const bodyId = `m${i}-body`;
+              const isInvite = m.channel === 'linkedin' && m.day_offset === 7;
+              const ChannelIcon = isInvite ? UserPlus : m.channel === 'linkedin' ? Linkedin : Mail;
+              const channelLabel = isInvite
+                ? 'LinkedIn connection request'
+                : m.channel === 'linkedin'
+                  ? 'LinkedIn message'
+                  : 'Email';
               return (
                 <li key={i} className="rounded-xl border border-gray-150 bg-white p-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">
-                    {m.day_offset === 0 ? 'Day 0 · Initial' : `Day ${m.day_offset} · Follow-up`}
-                  </p>
-                  <div className="flex items-start gap-2">
-                    <p className="flex-1 text-[13px] font-medium text-gray-900 leading-snug">
-                      {m.subject}
+                  <div className="mb-1.5 flex items-center justify-between gap-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                      Day {m.day_offset}
                     </p>
-                    <button
-                      type="button"
-                      onClick={() => void copyField(subjectId, m.subject)}
-                      title="Copy subject"
-                      aria-label="Copy subject"
-                      className="shrink-0 inline-flex items-center justify-center rounded-md p-1 text-gray-400 hover:bg-arcova-teal/10 hover:text-arcova-teal transition-colors"
-                    >
-                      {copiedField === subjectId ? (
-                        <Check className="w-3.5 h-3.5" />
-                      ) : (
-                        <Copy className="w-3.5 h-3.5" />
-                      )}
-                    </button>
+                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                      m.channel === 'linkedin'
+                        ? 'bg-[#0a66c2]/8 text-[#0a66c2]'
+                        : 'bg-arcova-teal/8 text-arcova-teal'
+                    }`}>
+                      <ChannelIcon className="h-3 w-3" />
+                      {channelLabel}
+                    </span>
                   </div>
-                  <div className="mt-1.5 flex items-start gap-2">
-                    <p className="flex-1 whitespace-pre-wrap text-[12.5px] text-gray-700 leading-snug">
-                      {m.body}
+                  {isInvite ? (
+                    <p className="text-[12.5px] leading-snug text-gray-700">
+                      Send a connection request. No note is added.
                     </p>
-                    <button
-                      type="button"
-                      onClick={() => void copyField(bodyId, m.body)}
-                      title="Copy body"
-                      aria-label="Copy body"
-                      className="shrink-0 inline-flex items-center justify-center rounded-md p-1 text-gray-400 hover:bg-arcova-teal/10 hover:text-arcova-teal transition-colors"
-                    >
-                      {copiedField === bodyId ? (
-                        <Check className="w-3.5 h-3.5" />
-                      ) : (
-                        <Copy className="w-3.5 h-3.5" />
+                  ) : (
+                    <>
+                      {m.channel === 'email' && (
+                        <div className="flex items-start gap-2">
+                          <p className="flex-1 text-[13px] font-medium text-gray-900 leading-snug">
+                            {m.subject}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => void copyField(subjectId, m.subject)}
+                            title="Copy subject"
+                            aria-label="Copy subject"
+                            className="shrink-0 inline-flex items-center justify-center rounded-md p-1 text-gray-400 hover:bg-arcova-teal/10 hover:text-arcova-teal transition-colors"
+                          >
+                            {copiedField === subjectId ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
                       )}
-                    </button>
-                  </div>
+                      <div className={`${m.channel === 'email' ? 'mt-1.5' : ''} flex items-start gap-2`}>
+                        <p className="flex-1 whitespace-pre-wrap text-[12.5px] text-gray-700 leading-snug">
+                          {m.body}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => void copyField(bodyId, m.body)}
+                          title="Copy body"
+                          aria-label="Copy body"
+                          className="shrink-0 inline-flex items-center justify-center rounded-md p-1 text-gray-400 hover:bg-arcova-teal/10 hover:text-arcova-teal transition-colors"
+                        >
+                          {copiedField === bodyId ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </li>
               );
             })}

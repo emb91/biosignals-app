@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/private/tmp/arcova-outreach-sequence-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/outreach-sequence.ts",
+    "lib/outreach-sequence.test.ts"
+  ]
+}

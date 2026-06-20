@@ -55,6 +55,9 @@ the critical path; B and D can run in parallel with A.
 - `/admin/launch-readiness` separates operational health from paid-launch evidence.
 - `npm run test:billing-ledger` verifies reservation idempotency, partial settlement,
   refunds, and credit conservation against a temporary development workspace.
+- `npm run test:stripe-lifecycle` verifies the test-mode Stripe catalog, subscription
+  activation, initial and renewal grants, webhook replay idempotency, credit-pack
+  fulfillment, payment failure/grace, recovery, and cancellation.
 - `landing-test-6` is promoted to `/`; the design route remains available and is no-index.
 - Current SaaS Terms and Privacy Policy are published in code. Obtain legal review before
   relying on them as final customer contracts.
@@ -134,6 +137,7 @@ failed actions refund correctly; provider names remain internal.
 - Staging rehearsal including temporary database tests: `npm run release:verify:staging`
 - Production environment + code rehearsal: `npm run release:verify:prod`
 - Development credit-ledger proof: `npm run test:billing-ledger`
+- Stripe test-clock lifecycle proof: `npm run test:stripe-lifecycle`
 - Development RLS/tenancy proof: `npm run test:org-tenancy`
 - Live operational view after sign-in: `/admin/launch-readiness`
 

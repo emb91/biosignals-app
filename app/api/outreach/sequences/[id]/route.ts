@@ -15,35 +15,10 @@
  */
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
-
-type EditableMessage = {
-  day_offset: number;
-  subject: string;
-  body: string;
-  channel: 'email' | 'linkedin';
-};
-
-function sanitizeMessages(input: unknown): EditableMessage[] {
-  if (!Array.isArray(input)) return [];
-  return input
-    .map((m): EditableMessage | null => {
-      if (!m || typeof m !== 'object') return null;
-      const o = m as Record<string, unknown>;
-      const dayOffset =
-        typeof o.day_offset === 'number' && Number.isFinite(o.day_offset)
-          ? Math.floor(o.day_offset)
-          : null;
-      const subject = typeof o.subject === 'string' ? o.subject.trim() : '';
-      const body = typeof o.body === 'string' ? o.body.trim() : '';
-      const channel = o.channel === 'linkedin' ? 'linkedin' : 'email';
-      if (dayOffset === null) return null;
-      // Day 7 LinkedIn invite is a pure action — empty subject/body is allowed.
-      const isInvite = dayOffset === 7 && channel === 'linkedin';
-      if (!isInvite && (!subject || !body)) return null;
-      return { day_offset: dayOffset, subject, body, channel };
-    })
-    .filter((v): v is EditableMessage => v !== null);
-}
+import {
+  hasCompleteBestPracticeCadence,
+  sanitizeOutreachMessages,
+} from '@/lib/outreach-sequence';
 
 export async function PATCH(
   req: Request,
@@ -55,9 +30,15 @@ export async function PATCH(
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = (await req.json().catch(() => ({}))) as { messages?: unknown };
-  const messages = sanitizeMessages(body.messages);
+  const messages = sanitizeOutreachMessages(body.messages);
   if (messages.length === 0) {
     return NextResponse.json({ error: 'messages required (sanitized empty)' }, { status: 400 });
+  }
+  if (!hasCompleteBestPracticeCadence(messages)) {
+    return NextResponse.json(
+      { error: 'Sequence must retain all seven email and LinkedIn steps.' },
+      { status: 400 },
+    );
   }
 
   const { error } = await supabase

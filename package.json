@@ -8,11 +8,12 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "npm run test:journey && npm run test:resolver && npm run test:company-merge && npm run test:contact-location && npm run test:coverage-allocation && npm run test:patent-surge && npm run test:email-pattern && npm run test:sweep-fit-gate && npm run test:email-deliverability-policy",
+    "test": "npm run test:journey && npm run test:resolver && npm run test:company-merge && npm run test:contact-location && npm run test:coverage-allocation && npm run test:patent-surge && npm run test:email-pattern && npm run test:sweep-fit-gate && npm run test:email-deliverability-policy && npm run test:outreach-sequence",
     "preflight:prod": "node scripts/production-preflight.mjs",
     "security:audit": "npm audit --omit=dev --audit-level=high",
     "test:smoke": "playwright test",
     "test:billing-ledger": "node --env-file=.env.local scripts/verify-credit-ledger.mjs",
+    "test:stripe-lifecycle": "node --env-file=.env.local scripts/verify-stripe-lifecycle.mjs",
     "test:org-tenancy": "node --env-file=.env.local scripts/verify-org-tenancy.mjs",
     "verify:cron-config": "node scripts/verify-cron-config.mjs",
     "release:verify:code": "npm run verify:cron-config && npm run typecheck && npm test && npm run build && npm run test:smoke && npm run security:audit",
@@ -27,7 +28,8 @@
     "gen-sitemap": "node generate-sitemap.js",
     "test:email-pattern": "rm -rf /private/tmp/arcova-email-pattern-tests && tsc -p tsconfig.test.email-pattern.json && node --test /private/tmp/arcova-email-pattern-tests/email-pattern.test.js",
     "test:sweep-fit-gate": "rm -rf /private/tmp/arcova-sweep-fit-gate-tests && tsc -p tsconfig.test.sweep-fit-gate.json && node --test /private/tmp/arcova-sweep-fit-gate-tests/sweep-fit-gate.test.js",
-    "test:email-deliverability-policy": "rm -rf /tmp/arcova-email-deliverability-policy-tests && tsc -p tsconfig.test.email-deliverability-policy.json && node --test /tmp/arcova-email-deliverability-policy-tests/email-deliverability-policy.test.js"
+    "test:email-deliverability-policy": "rm -rf /tmp/arcova-email-deliverability-policy-tests && tsc -p tsconfig.test.email-deliverability-policy.json && node --test /tmp/arcova-email-deliverability-policy-tests/email-deliverability-policy.test.js",
+    "test:outreach-sequence": "rm -rf /private/tmp/arcova-outreach-sequence-tests && tsc -p tsconfig.test.outreach-sequence.json && node --test /private/tmp/arcova-outreach-sequence-tests/outreach-sequence.test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.105.0",

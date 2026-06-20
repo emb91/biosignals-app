@@ -22,13 +22,22 @@ subscription allowance columns.
 
 ## Rules for new migrations
 
-- Use a unique 14-digit UTC timestamp:
+- Create migrations with `supabase migration new <descriptive_name>` so the
+  filename receives a unique 14-digit UTC timestamp:
   `YYYYMMDDHHMMSS_descriptive_name.sql`.
 - Never reuse a date-only prefix for multiple new files.
 - Do not delete or rewrite an applied migration to change production state.
   Add a new forward migration instead.
-- Use `apply_migration` for production DDL and verify the resulting migration
-  entry, schema objects, RLS, and security advisors.
+- Prefer `supabase db push` for file-backed migrations. It records the local
+  file's version in remote migration history.
+- Supabase MCP `apply_migration` generates its own remote version; it does not
+  preserve a local filename's timestamp. If MCP is used, immediately rename
+  the matching local file to the exact version returned by MCP.
+- Before migration work is complete, compare local versions with remote
+  migration history and resolve every mismatch. Do not execute migration SQL
+  again merely to reconcile versions.
+- Verify the resulting migration entry, schema objects, RLS, and security
+  advisors after applying production DDL.
 
 Older files with date-only prefixes predate this convention and remain as
 historical artifacts. Do not rename them casually; their remote versions must

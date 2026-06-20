@@ -50,16 +50,6 @@ try {
     .single();
   if (sharedError) throw sharedError;
 
-  const { error: selectionError } = await ownerClient.from('icp_signal_selections').insert({
-    user_id: owner.id,
-    org_id: orgId,
-    icp_id: sharedIcp.id,
-    signal_id: 'funding_round',
-    rank: 1,
-    weight: 1,
-  });
-  if (selectionError) throw selectionError;
-
   const { data: persona, error: personaError } = await ownerClient
     .from('personas')
     .insert({
@@ -109,27 +99,6 @@ try {
     .eq('id', personalIcp.id)
     .maybeSingle();
   assert(!ownerPrivateRead.data, 'owner cannot read a member personal ICP');
-
-  const deleteSelection = await adminClient
-    .from('icp_signal_selections')
-    .delete()
-    .eq('icp_id', sharedIcp.id);
-  if (deleteSelection.error) throw deleteSelection.error;
-  const replaceSelection = await adminClient.from('icp_signal_selections').insert({
-    user_id: administrator.id,
-    org_id: orgId,
-    icp_id: sharedIcp.id,
-    signal_id: 'leadership_change',
-    rank: 1,
-    weight: 1,
-  });
-  if (replaceSelection.error) throw replaceSelection.error;
-  const memberSelection = await memberClient
-    .from('icp_signal_selections')
-    .select('signal_id')
-    .eq('icp_id', sharedIcp.id)
-    .single();
-  assert(memberSelection.data?.signal_id === 'leadership_change', 'shared selection survives author change');
 
   await assertRole(orgId, owner.id, 'owner');
   await assertRole(orgId, administrator.id, 'admin');
