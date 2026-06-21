@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { cancelCompanyEnrichmentForUser } from './company-enrichment-cancel';
 
-type DbResult = { data?: unknown; error: { message?: string } | null };
+type DbResult = { data: unknown; error: { message?: string } | null };
 type Operation = {
   table: string;
   type: 'select' | 'update';
@@ -78,7 +78,7 @@ class FakeQuery {
       const row = this.db.companies.find((company) => company.id === this.filters.id);
       if (row) Object.assign(row, this.values);
     }
-    return { error: null };
+    return { data: null, error: null };
   }
 
   private record() {
