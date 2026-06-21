@@ -8,6 +8,7 @@ import {
 import { syncCompanyFitForCompany } from '@/lib/company-fit';
 import { refundCredits, reserveCredits, settleCredits } from '@/lib/billing/credits';
 import { refreshMonitoringUniverse } from '@/lib/billing/monitoring';
+import { cancelCompanyEnrichmentForUser } from '@/lib/company-enrichment-cancel';
 
 // The enrichment runs in an after() job (Apollo + Apify + the parallelized
 // funding/taxonomy/narrative web-search modules). Give it a generous ceiling so
@@ -127,28 +128,13 @@ export async function DELETE(
       return NextResponse.json({ error: 'company id required' }, { status: 400 });
     }
 
-    const supabase = createAdminClient();
-    // Only cancel a row that's actually running — don't clobber a succeeded /
-    // failed terminal state if the job already finished (409-style no-op).
-    const { data: row } = await supabase
-      .from('companies')
-      .select('enrichment_refresh_status')
-      .eq('id', id)
-      .maybeSingle();
-    const status = (row as { enrichment_refresh_status?: string | null } | null)?.enrichment_refresh_status ?? null;
-    if (status !== 'running') {
-      return NextResponse.json({ success: true, company_id: id, status, alreadyFinished: true });
+    const result = await cancelCompanyEnrichmentForUser(createAdminClient(), user.id, id);
+    if (!result.found) {
+      return NextResponse.json({ error: 'Company not found' }, { status: 404 });
     }
-
-    const finishedAt = new Date().toISOString();
-    await supabase
-      .from('companies')
-      .update({
-        enrichment_refresh_status: 'cancelled',
-        enrichment_refresh_finished_at: finishedAt,
-        updated_at: finishedAt,
-      })
-      .eq('id', id);
+    if (result.alreadyFinished) {
+      return NextResponse.json({ success: true, company_id: id, status: result.status, alreadyFinished: true });
+    }
 
     return NextResponse.json({ success: true, company_id: id, status: 'cancelled' });
   } catch (error) {
