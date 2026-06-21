@@ -19,7 +19,7 @@ import { getNangoAccessToken, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
 
 function authorize(req: Request): boolean {
   const expected = process.env.CRON_SECRET;
-  if (!expected) return true; // dev convenience
+  if (!expected) return false;
   return req.headers.get('authorization') === `Bearer ${expected}`;
 }
 
