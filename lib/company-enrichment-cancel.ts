@@ -1,13 +1,5 @@
 type SupabaseLike = {
-  from: (table: string) => QueryBuilderLike;
-};
-
-type QueryBuilderLike = {
-  select: (columns: string) => QueryBuilderLike;
-  update: (values: Record<string, unknown>) => QueryBuilderLike;
-  eq: (column: string, value: unknown) => QueryBuilderLike;
-  maybeSingle: () => Promise<{ data: unknown; error: { message?: string } | null }>;
-  then: PromiseLike<{ error: { message?: string } | null }>['then'];
+  from: (table: string) => any;
 };
 
 export type CompanyEnrichmentCancelResult =
