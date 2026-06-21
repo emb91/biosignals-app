@@ -7,9 +7,8 @@
  * Lazy solo-org creation (audit #5): if an authenticated user has no membership yet
  * (a brand-new password signup, or any future entry point that skips the invite path),
  * we create a solo org on the spot via the admin client calling `ensure_user_org`.
- * Invited users already have a membership (written by the invite flow), so the lazy
- * path no-ops for them — but if they arrived via Supabase's invite token and carry
- * `user_metadata.org_id`, we finalise that membership's `joined_at` here.
+ * Invited users already have a pending membership (written by the invite flow), so
+ * the lazy path no-ops for them and finalises that membership's `joined_at` here.
  *
  * One org per user is enforced at the DB level (UNIQUE(user_id) on org_members), so
  * `user_org_id()` and this helper are deterministic.
@@ -80,35 +79,9 @@ export async function getOrgContext(): Promise<OrgContext | null> {
     return { supabase, user, orgId: existing.org_id, role: existing.role };
   }
 
-  // No membership. If the invite token carried an org_id, attach to it; otherwise
-  // create a solo org. Both go through the admin client (service role).
+  // No membership. Create a solo org. Do not trust auth user_metadata for org
+  // attachment: Supabase user metadata is client-writable.
   const admin = createAdminClient();
-  const invitedOrgId =
-    typeof user.user_metadata?.org_id === 'string' ? (user.user_metadata.org_id as string) : null;
-  const invitedRole =
-    typeof user.user_metadata?.org_role === 'string'
-      ? (user.user_metadata.org_role as OrgRole)
-      : 'member';
-
-  if (invitedOrgId) {
-    await admin
-      .from('org_members')
-      .upsert(
-        {
-          org_id: invitedOrgId,
-          user_id: user.id,
-          role: invitedRole,
-          joined_at: new Date().toISOString(),
-        },
-        { onConflict: 'user_id' },
-      );
-    await ensureArcovaOwnerWorkspaceExempt({
-      orgId: invitedOrgId,
-      email: user.email,
-      role: invitedRole,
-    });
-    return { supabase, user, orgId: invitedOrgId, role: invitedRole };
-  }
 
   const orgName = deriveOrgName(user);
   const { data: orgId, error: ensureError } = await admin.rpc('ensure_user_org', {
