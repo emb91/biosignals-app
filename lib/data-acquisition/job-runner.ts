@@ -360,19 +360,39 @@ function normalizeKey(value: string | null | undefined): string {
     .trim();
 }
 
+/**
+ * LinkedIn identity key. CRITICAL: do NOT use `normalizeKey` on LinkedIn URLs —
+ * it strips the path (`/company/<slug>` or `/in/<slug>`), collapsing EVERY
+ * LinkedIn URL to a bare `linkedin.com`. That made every company/contact with a
+ * LinkedIn falsely dedup against every other (expand_companies skipped all
+ * candidates as "already owned"). Keep the slug; the host+path is the identity.
+ * Returns '' for a path-less `linkedin.com` (no slug = no identity to dedup on).
+ */
+function normalizeLinkedinKey(value: string | null | undefined): string {
+  const v = (value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .replace(/\/+$/, '');
+  return v.includes('/') ? v : '';
+}
+
 function companyKeys(company: Pick<DiscoveredCompany, 'domain' | 'linkedin_url' | 'name'>): string[] {
+  const li = normalizeLinkedinKey(company.linkedin_url);
   return [
     company.domain ? `domain:${normalizeKey(company.domain)}` : '',
-    company.linkedin_url ? `linkedin:${normalizeKey(company.linkedin_url)}` : '',
+    li ? `linkedin:${li}` : '',
     company.name ? `name:${normalizeKey(company.name)}` : '',
   ].filter(Boolean);
 }
 
 function existingCompanyKeys(company: ExistingCompany): string[] {
+  const li = normalizeLinkedinKey(company.linkedin_url);
   return [
     company.domain ? `domain:${normalizeKey(company.domain)}` : '',
     company.website ? `domain:${normalizeKey(company.website)}` : '',
-    company.linkedin_url ? `linkedin:${normalizeKey(company.linkedin_url)}` : '',
+    li ? `linkedin:${li}` : '',
     company.company_name ? `name:${normalizeKey(company.company_name)}` : '',
   ].filter(Boolean);
 }
@@ -384,7 +404,7 @@ function contactKey(person: DiscoveredPerson): string {
   // contacts carry it on apollo_person_raw.
   return (
     (person.source_id && `apollo:${normalizeKey(person.source_id)}`) ||
-    (person.linkedin_url && `linkedin:${normalizeKey(person.linkedin_url)}`) ||
+    (normalizeLinkedinKey(person.linkedin_url) && `linkedin:${normalizeLinkedinKey(person.linkedin_url)}`) ||
     (person.email && `email:${normalizeKey(person.email)}`) ||
     `name_company:${normalizeKey(person.full_name)}:${normalizeKey(person.company_name)}`
   );
@@ -396,9 +416,10 @@ function existingContactKeys(contact: ExistingContact): string[] {
     [contact.first_name, contact.last_name].filter(Boolean).join(' ') ||
     null;
   const apolloId = apolloPersonIdOf(contact.apollo_person_raw);
+  const li = normalizeLinkedinKey(contact.linkedin_url);
   return [
     apolloId ? `apollo:${normalizeKey(apolloId)}` : '',
-    contact.linkedin_url ? `linkedin:${normalizeKey(contact.linkedin_url)}` : '',
+    li ? `linkedin:${li}` : '',
     contact.email ? `email:${normalizeKey(contact.email)}` : '',
     fullName && contact.company_name
       ? `name_company:${normalizeKey(fullName)}:${normalizeKey(contact.company_name)}`
