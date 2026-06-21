@@ -1019,8 +1019,14 @@ async function runContactsAtCompanyJob(
     throw new Error('contacts_at_company job is missing company context');
   }
 
-  // The requested quantity comes from the job (set upstream by the user via
-  // the agent / coverage plan); the check below is purely defensive.
+  // `target_contact_count` is NET-NEW for this path: the agent asks "how many
+  // MORE contacts to add" and the confirm dialog shows the number as net-new
+  // leads, so source exactly this many NEW people. Owned contacts are loaded
+  // only to exclude them from the Apollo search below — never subtracted from
+  // the target. (Subtracting silently under-sourced once an account already had
+  // contacts: "1 more" at a company with 1 owned produced gap=0 and delivered
+  // nothing.) An exhausted company that returns no new people is handled
+  // gracefully downstream (empty result -> full refund).
   const requested = Math.max(1, job.target_contact_count || DEFAULT_CONTACTS_PER_COMPANY);
   const company = discoveredCompanyFromContext(companyContext);
 
@@ -1031,23 +1037,7 @@ async function runContactsAtCompanyJob(
     company.domain ? [company.domain] : [],
   );
   const ownedHere = ownedContactsAt(owned, companyContext.id, company.domain);
-  const gap = requested - ownedHere.length;
-
-  if (gap <= 0) {
-    await meter('skipped_existing', 1, {
-      company: company.name,
-      domain: company.domain,
-      companyId: companyContext.id,
-      existingContacts: ownedHere.length,
-      requestedContacts: requested,
-    });
-    await completeJobWithoutPurchase(
-      admin,
-      job,
-      `You already have ${ownedHere.length} contact${ownedHere.length === 1 ? '' : 's'} at ${company.name}, which covers this request. Nothing new was sourced.`,
-    );
-    return;
-  }
+  const gap = requested;
 
   const peopleRecipe = buildApolloPeopleSearchRecipe(personas);
   const target: PeopleSearchTarget = {
