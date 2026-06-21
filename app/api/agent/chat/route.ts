@@ -668,7 +668,7 @@ If the user asks to find contacts, buyer personas, or more coverage for this sel
 \`\`\`json
 ${JSON.stringify(context!.acquisitionRecentJobs, null, 2)}
 \`\`\`
-Use these to answer questions about job progress and results. If a job has a completion_note, relay it in plain language (it explains things like coverage you already own or a plan usage limit). If icp_coverage_after is present, you can tell the user where that ICP's coverage landed after the job (companies and contacts). Never mention credits, credit units, or any cost figures; pricing is not part of this product surface.`
+Use these to answer questions about job progress and results. If a job has a completion_note, relay it in plain language (it explains things like coverage you already own or a plan usage limit). If icp_coverage_after is present, you can tell the user where that ICP's coverage landed after the job (companies and contacts). Never mention provider costs or internal credit units. The app shows the customer-facing Arcova credit cost and asks for confirmation before a purchase starts.`
             : '';
 
         const modeBlock = (() => {

@@ -280,8 +280,15 @@ export async function processQueuedRowsInBackground(params: {
         continue;
       }
 
+      // People discovered via Apollo search (api_search) arrive obfuscated — no
+      // plaintext last name/email/linkedin — so name/linkedin matching can't
+      // identify them. The Apollo person id (captured at discovery) is the only
+      // reliable people/match key, so thread it through when present.
+      const apolloPersonId =
+        ((rawData.apollo_person_raw as { id?: unknown } | null | undefined)?.id as string | undefined) || undefined;
+
       try {
-        const enrichmentResult = await enrichContact({ ...fallbackRow });
+        const enrichmentResult = await enrichContact({ ...fallbackRow, apollo_person_id: apolloPersonId });
 
         if (await isBatchCancelled(admin, batchId)) break;
 

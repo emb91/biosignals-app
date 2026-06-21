@@ -11,6 +11,8 @@ export type EnrichmentLookupInput = {
   linkedin_url?: string;
   company_linkedin_url?: string;
   location?: string;
+  /** Apollo person id from search — strongest people/match key (see ApolloLookupInput). */
+  apollo_person_id?: string;
 };
 
 export type EnrichmentResult = ApolloEnrichmentResult & {

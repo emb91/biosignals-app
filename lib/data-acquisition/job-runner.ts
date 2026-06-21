@@ -47,7 +47,7 @@ type DataAcquisitionJob = {
 type ExistingCompany = {
   company_name: string | null;
   domain?: string | null;
-  company_website?: string | null;
+  website?: string | null;
   linkedin_url: string | null;
 };
 
@@ -73,7 +73,7 @@ type CompanyContext = {
   id: string;
   company_name: string | null;
   domain: string | null;
-  company_website: string | null;
+  website: string | null;
   linkedin_url: string | null;
   matched_icp_id: string | null;
 };
@@ -82,7 +82,7 @@ type DbCompanyRow = {
   id: string;
   company_name: string | null;
   domain: string | null;
-  company_website: string | null;
+  website: string | null;
   linkedin_url: string | null;
   apollo_organization_raw: unknown;
   employee_count: number | null;
@@ -106,7 +106,7 @@ function apolloOrgIdFromRaw(raw: unknown): string | null {
 
 function discoveredCompanyFromDbRow(row: DbCompanyRow): DiscoveredCompany | null {
   const domain =
-    (row.domain || row.company_website || '')
+    (row.domain || row.website || '')
       .trim()
       .toLowerCase()
       .replace(/^https?:\/\//, '')
@@ -125,7 +125,7 @@ function discoveredCompanyFromDbRow(row: DbCompanyRow): DiscoveredCompany | null
     raw: {
       name,
       primary_domain: domain,
-      website_url: row.company_website || row.domain || null,
+      website_url: row.website || row.domain || null,
       linkedin_url: row.linkedin_url || null,
       id: sourceId || undefined,
     },
@@ -152,7 +152,7 @@ async function loadPrioritizedCompaniesForIcpAccounts(
 
   const { data: companies, error } = await admin
     .from('companies')
-    .select('id, company_name, domain, company_website, linkedin_url, apollo_organization_raw, employee_count')
+    .select('id, company_name, domain, website, linkedin_url, apollo_organization_raw, employee_count')
     .in('id', ownedIds);
 
   if (error) throw new Error(error.message);
@@ -361,7 +361,7 @@ function companyKeys(company: Pick<DiscoveredCompany, 'domain' | 'linkedin_url' 
 function existingCompanyKeys(company: ExistingCompany): string[] {
   return [
     company.domain ? `domain:${normalizeKey(company.domain)}` : '',
-    company.company_website ? `domain:${normalizeKey(company.company_website)}` : '',
+    company.website ? `domain:${normalizeKey(company.website)}` : '',
     company.linkedin_url ? `linkedin:${normalizeKey(company.linkedin_url)}` : '',
     company.company_name ? `name:${normalizeKey(company.company_name)}` : '',
   ].filter(Boolean);
@@ -710,14 +710,14 @@ function getCompanyContext(job: DataAcquisitionJob): CompanyContext | null {
     id,
     company_name: typeof record.company_name === 'string' ? record.company_name : null,
     domain: typeof record.domain === 'string' ? record.domain : null,
-    company_website: typeof record.company_website === 'string' ? record.company_website : null,
+    website: typeof record.website === 'string' ? record.website : null,
     linkedin_url: typeof record.linkedin_url === 'string' ? record.linkedin_url : null,
     matched_icp_id: typeof record.matched_icp_id === 'string' ? record.matched_icp_id : null,
   };
 }
 
 function discoveredCompanyFromContext(company: CompanyContext): DiscoveredCompany {
-  const domain = normalizeKey(company.domain || company.company_website);
+  const domain = normalizeKey(company.domain || company.website);
   const name = company.company_name || domain || 'Selected company';
 
   return {
@@ -730,7 +730,7 @@ function discoveredCompanyFromContext(company: CompanyContext): DiscoveredCompan
     raw: {
       name,
       primary_domain: domain || null,
-      website_url: company.company_website || company.domain || null,
+      website_url: company.website || company.domain || null,
       linkedin_url: company.linkedin_url || null,
     },
   };
@@ -1118,7 +1118,7 @@ async function runContactsAtAccountsJob(
     admin,
     job.user_id,
     prioritizedRows.map((r) => r.id),
-    prioritizedRows.map((r) => r.domain || r.company_website || '').filter(Boolean),
+    prioritizedRows.map((r) => r.domain || r.website || '').filter(Boolean),
   );
 
   // Pre-flight gap check per account: skip fully-covered accounts before any
@@ -1221,7 +1221,7 @@ async function runExpandCompaniesJob(
   const { data: existingCompanies } = existingOwnedIds.length > 0
     ? await admin
         .from('companies')
-        .select('company_name, domain, company_website, linkedin_url')
+        .select('company_name, domain, website, linkedin_url')
         .in('id', existingOwnedIds)
     : { data: [] as ExistingCompany[] };
   const existingCompanyKeySet = new Set(
