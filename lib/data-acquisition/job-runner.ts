@@ -59,7 +59,14 @@ type ExistingContact = {
   linkedin_url: string | null;
   company_name: string | null;
   company_domain: string | null;
+  apollo_person_raw?: unknown;
 };
+
+/** Apollo person id from a stored contact's revealed record, if present. */
+function apolloPersonIdOf(raw: unknown): string | null {
+  const id = (raw as { id?: unknown } | null | undefined)?.id;
+  return typeof id === 'string' && id.trim() ? id.trim() : null;
+}
 
 type OwnedContactRef = {
   id: string;
@@ -368,7 +375,12 @@ function existingCompanyKeys(company: ExistingCompany): string[] {
 }
 
 function contactKey(person: DiscoveredPerson): string {
+  // Apollo person id first: people-search (api_search) returns obfuscated rows
+  // (no email/linkedin, first-name-only), so name/email keys can't dedup them —
+  // but the id is stable and always present, and existing Apollo-sourced
+  // contacts carry it on apollo_person_raw.
   return (
+    (person.source_id && `apollo:${normalizeKey(person.source_id)}`) ||
     (person.linkedin_url && `linkedin:${normalizeKey(person.linkedin_url)}`) ||
     (person.email && `email:${normalizeKey(person.email)}`) ||
     `name_company:${normalizeKey(person.full_name)}:${normalizeKey(person.company_name)}`
@@ -380,7 +392,9 @@ function existingContactKeys(contact: ExistingContact): string[] {
     contact.full_name ||
     [contact.first_name, contact.last_name].filter(Boolean).join(' ') ||
     null;
+  const apolloId = apolloPersonIdOf(contact.apollo_person_raw);
   return [
+    apolloId ? `apollo:${normalizeKey(apolloId)}` : '',
     contact.linkedin_url ? `linkedin:${normalizeKey(contact.linkedin_url)}` : '',
     contact.email ? `email:${normalizeKey(contact.email)}` : '',
     fullName && contact.company_name
@@ -1400,7 +1414,7 @@ async function dedupAgainstWholeBook(
 ): Promise<DiscoveredPerson[]> {
   const { data: existingContacts } = await admin
     .from('contacts')
-    .select('full_name, first_name, last_name, email, linkedin_url, company_name, company_domain')
+    .select('full_name, first_name, last_name, email, linkedin_url, company_name, company_domain, apollo_person_raw')
     .eq('user_id', job.user_id);
   const existingContactKeySet = new Set(
     ((existingContacts || []) as ExistingContact[]).flatMap(existingContactKeys),
