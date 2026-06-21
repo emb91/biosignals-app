@@ -517,7 +517,7 @@ export async function enrichOrganizationWithApollo(input: {
 export async function searchOrganizationsWithApollo(
   input: ApolloOrganizationSearchParams,
 ): Promise<ApolloOrganizationSearchResult> {
-  const payload = compactPayload({
+  const basePayload = {
     page: input.page ?? 1,
     per_page: input.perPage ?? 25,
     q_organization_keyword_tags: input.keywords,
@@ -525,20 +525,36 @@ export async function searchOrganizationsWithApollo(
     organization_num_employees_ranges: input.employeeRanges
       ?.map(employeeRangeToApollo)
       .filter((value): value is string => Boolean(value)),
-    organization_latest_funding_stage_cd: input.fundingStages?.map(fundingStageToApollo),
     organization_ids: input.organizationIds,
-  });
+  };
+  const fundingStageFilter = input.fundingStages?.length
+    ? { organization_latest_funding_stage_cd: input.fundingStages.map(fundingStageToApollo) }
+    : {};
 
-  const response = await fetch('https://api.apollo.io/api/v1/mixed_companies/search', {
-    method: 'POST',
-    headers: {
-      accept: 'application/json',
-      'content-type': 'application/json',
-      'x-api-key': getApolloApiKey(),
-      'cache-control': 'no-cache',
-    },
-    body: JSON.stringify(payload),
-  });
+  const postSearch = (payload: Record<string, unknown>) =>
+    fetch('https://api.apollo.io/api/v1/mixed_companies/search', {
+      method: 'POST',
+      headers: {
+        accept: 'application/json',
+        'content-type': 'application/json',
+        'x-api-key': getApolloApiKey(),
+        'cache-control': 'no-cache',
+      },
+      body: JSON.stringify(compactPayload(payload)),
+    });
+
+  let response = await postSearch({ ...basePayload, ...fundingStageFilter });
+
+  // `organization_latest_funding_stage_cd` is an Apollo "advanced filter" gated
+  // to paid plans; on plans without it Apollo 422s the whole search. Funding
+  // stage is only a refinement (downstream fit scoring still filters on it), so
+  // retry once without it rather than hard-failing all company discovery.
+  if (!response.ok && response.status === 422 && Object.keys(fundingStageFilter).length > 0) {
+    const errorText = await response.text().catch(() => '');
+    if (/advanced filter|funding_stage|upgrade|free plan/i.test(errorText)) {
+      response = await postSearch(basePayload);
+    }
+  }
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => '');
