@@ -278,8 +278,14 @@ export async function processQueuedRowsInBackground(params: {
         return true;
       };
 
-      // 'low'-triaged contacts: store identity data only, skip Apollo/Apify.
-      if (triageResult.group === 'low') {
+      // 'low'-triaged rows from unsolicited bulk imports are stored with minimal
+      // identity only (skip paid Apollo/Apify enrichment). But contacts the user
+      // EXPLICITLY sourced (autoEnrich — paid per contact, confirmed the
+      // purchase) must be fully enriched and delivered regardless of fit triage:
+      // skipping them strands the row at 'enriching' and silently loses a paid
+      // lead. Apollo people-search rows are obfuscated, so they almost always
+      // lack a LinkedIn here and would otherwise be dropped by this branch.
+      if (triageResult.group === 'low' && !autoEnrich) {
         if (fallbackRow.linkedin_url) {
           await keepForLinkedinFallback(triageResult);
         }

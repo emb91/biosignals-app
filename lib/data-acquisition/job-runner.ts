@@ -91,7 +91,10 @@ type DbCompanyRow = {
   domain: string | null;
   website: string | null;
   linkedin_url: string | null;
-  apollo_organization_raw: unknown;
+  // The `companies` table does not store an Apollo org record — people search
+  // falls back to the company domain (q_organization_domains_list), so this is
+  // always absent here. Kept optional for the DiscoveredCompany mapping shape.
+  apollo_organization_raw?: unknown;
   employee_count: number | null;
 };
 
@@ -159,7 +162,7 @@ async function loadPrioritizedCompaniesForIcpAccounts(
 
   const { data: companies, error } = await admin
     .from('companies')
-    .select('id, company_name, domain, website, linkedin_url, apollo_organization_raw, employee_count')
+    .select('id, company_name, domain, website, linkedin_url, employee_count')
     .in('id', ownedIds);
 
   if (error) throw new Error(error.message);
