@@ -7,7 +7,7 @@ import { recordProviderUsage } from '@/lib/provider-usage';
 import { ingestEnrichedRecords, type EnrichedImportRecord, type ImportProgressCallback } from '@/lib/import-ingestion';
 import { runContactResolutionPipelineForContact } from '@/lib/contact-resolution-pipeline';
 import { createAdminClient } from '@/lib/supabase-admin';
-import { resolveLinkedinUrl } from '@/lib/linkedin-url-resolver';
+import { resolveLinkedinUrl, type LinkedinResolutionInput } from '@/lib/linkedin-url-resolver';
 import { triageContacts, TRIAGE_VERSION, type TriageGroup } from '@/lib/triage';
 import { getOrgEntitlements } from '@/lib/billing/entitlements';
 import { checkAndIncrementUsage } from '@/lib/billing/credits';
@@ -120,19 +120,26 @@ export async function isBatchCancelled(
  * being silently dropped (important for HubSpot contacts + small biotechs Apollo
  * can't surface). Best-effort: returns '' only if it genuinely can't be resolved.
  */
-async function linkedinForStorage(direct: string, fallbackRow: NormalisedRow): Promise<string> {
+async function linkedinForStorage(
+  direct: string,
+  identityRow: NormalisedRow,
+  apolloPerson?: unknown,
+): Promise<string> {
   const known = (direct || '').trim();
   if (known) return known;
   try {
     const resolved = await resolveLinkedinUrl({
-      full_name: fallbackRow.full_name || null,
-      first_name: fallbackRow.first_name || null,
-      last_name: fallbackRow.last_name || null,
-      email: fallbackRow.email || null,
+      full_name: identityRow.full_name || null,
+      first_name: identityRow.first_name || null,
+      last_name: identityRow.last_name || null,
+      email: identityRow.email || null,
       linkedin_url: null,
-      company_name: fallbackRow.company_name || null,
-      company_domain: fallbackRow.company_domain || null,
-      location: fallbackRow.location || null,
+      company_name: identityRow.company_name || null,
+      company_domain: identityRow.company_domain || null,
+      location: identityRow.location || null,
+      // Apollo's revealed record (employment history, city/country) materially
+      // improves match precision — pass it through when enrichment produced one.
+      apollo_person: (apolloPerson as LinkedinResolutionInput['apollo_person']) ?? null,
     });
     return (resolved?.linkedin_url || '').trim();
   } catch (e) {
@@ -271,8 +278,14 @@ export async function processQueuedRowsInBackground(params: {
         return true;
       };
 
-      // 'low'-triaged contacts: store identity data only, skip Apollo/Apify.
-      if (triageResult.group === 'low') {
+      // 'low'-triaged rows from unsolicited bulk imports are stored with minimal
+      // identity only (skip paid Apollo/Apify enrichment). But contacts the user
+      // EXPLICITLY sourced (autoEnrich — paid per contact, confirmed the
+      // purchase) must be fully enriched and delivered regardless of fit triage:
+      // skipping them strands the row at 'enriching' and silently loses a paid
+      // lead. Apollo people-search rows are obfuscated, so they almost always
+      // lack a LinkedIn here and would otherwise be dropped by this branch.
+      if (triageResult.group === 'low' && !autoEnrich) {
         if (fallbackRow.linkedin_url) {
           await keepForLinkedinFallback(triageResult);
         }
@@ -280,8 +293,15 @@ export async function processQueuedRowsInBackground(params: {
         continue;
       }
 
+      // People discovered via Apollo search (api_search) arrive obfuscated — no
+      // plaintext last name/email/linkedin — so name/linkedin matching can't
+      // identify them. The Apollo person id (captured at discovery) is the only
+      // reliable people/match key, so thread it through when present.
+      const apolloPersonId =
+        ((rawData.apollo_person_raw as { id?: unknown } | null | undefined)?.id as string | undefined) || undefined;
+
       try {
-        const enrichmentResult = await enrichContact({ ...fallbackRow });
+        const enrichmentResult = await enrichContact({ ...fallbackRow, apollo_person_id: apolloPersonId });
 
         if (await isBatchCancelled(admin, batchId)) break;
 
@@ -301,10 +321,24 @@ export async function processQueuedRowsInBackground(params: {
         const parsedLocation = parseLocation(finalLocation);
 
         // Resolve the canonical key before storage: Apollo's LinkedIn, else the
-        // CSV's, else a web-search resolution. Without one the row can't be stored.
+        // CSV's, else a web-search resolution. Feed the resolver the ENRICHED
+        // identity (real email + revealed name from people/match), not the raw
+        // search row — Apollo people-search (api_search) rows arrive obfuscated
+        // (no email, first-name-only), and most Apollo people have no LinkedIn,
+        // so a starved resolver would drop contacts we can actually resolve from
+        // the revealed email/name.
+        const identityForResolution: NormalisedRow = {
+          ...fallbackRow,
+          full_name: enrichmentResult.full_name || fallbackRow.full_name,
+          first_name: enrichmentResult.first_name || fallbackRow.first_name,
+          last_name: enrichmentResult.last_name || fallbackRow.last_name,
+          email: enrichmentResult.email || fallbackRow.email,
+          location: enrichmentResult.location || fallbackRow.location,
+        };
         const resolvedLinkedinForStorage = await linkedinForStorage(
           enrichmentResult.linkedin_url || fallbackRow.linkedin_url || '',
-          fallbackRow,
+          identityForResolution,
+          enrichmentResult.apollo_person_raw,
         );
         if (!resolvedLinkedinForStorage) {
           markFailed(row.id, 'No LinkedIn URL found (Apollo, CSV, or web search) — cannot store');

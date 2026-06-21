@@ -29,6 +29,16 @@ import { cn } from '@/lib/utils';
 import { BATCH_CONTACTS_KEY, type BatchCompany } from '@/lib/batch-contacts';
 import { ROUTES, withQuery } from '@/lib/routes';
 import { getDisplayName } from '@/lib/auth-helpers';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import '@/app/today/briefing-today.css';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -67,6 +77,24 @@ interface AcquisitionJob {
 }
 
 type AcquisitionMode = 'companies' | 'contacts_at_company' | 'contacts_at_companies' | 'contacts_for_icp';
+
+type AcquisitionRequest = {
+  requestType: string;
+  icpId?: string;
+  companyId?: string;
+  batchCompanies?: BatchCompany[];
+  quantity: number;
+};
+
+type PendingPurchase = {
+  job: AcquisitionRequest;
+  operationId: string;
+  leadCount: number;
+  requiredCredits: number;
+  availableCredits: number;
+  monthlyUsed: number;
+  monthlyLimit: number;
+};
 
 /** sessionStorage handoff for the Coverage "Fix blind spots" batch CTA: a
  *  pre-built agent prompt that stages sourcing across all gap ICPs at once. */
@@ -799,6 +827,8 @@ function DataPageContent() {
   const openerFired = useRef(false);
   const [agentBusy, setAgentBusy] = useState(false);
   const [clock, setClock] = useState(() => new Date());
+  const [pendingPurchase, setPendingPurchase] = useState<PendingPurchase | null>(null);
+  const [purchaseSubmitting, setPurchaseSubmitting] = useState(false);
 
   // ── Load ICP cards + jobs ──────────────────────────────────────────────────
 
@@ -913,13 +943,10 @@ function DataPageContent() {
 
   // ── Handle job start from agent ────────────────────────────────────────────
 
-  const handleJobStarted = useCallback(async (job: {
-    requestType: string;
-    icpId?: string;
-    companyId?: string;
-    batchCompanies?: BatchCompany[];
-    quantity: number;
-  }) => {
+  const submitAcquisitionJob = useCallback(async (
+    job: AcquisitionRequest,
+    operationId: string,
+  ) => {
     const companies = job.batchCompanies ?? (batchCompanies.length > 0 ? batchCompanies : []);
 
     if (job.requestType === 'contacts_at_companies' && companies.length > 0) {
@@ -935,6 +962,7 @@ function DataPageContent() {
               icpId: company.icpId || job.icpId || undefined,
               requestType: 'contacts_at_company',
               targetContactCount: job.quantity,
+              operationId: `${operationId}:${company.id}`,
             }),
           });
           if (res.ok) succeeded++;
@@ -946,10 +974,10 @@ function DataPageContent() {
     } else {
       const body =
         job.requestType === 'contacts_at_company'
-          ? { companyId: job.companyId, icpId: job.icpId, requestType: 'contacts_at_company', targetContactCount: job.quantity }
+          ? { companyId: job.companyId, icpId: job.icpId, requestType: 'contacts_at_company', targetContactCount: job.quantity, operationId }
           : job.requestType === 'more_contacts_at_accounts'
-            ? { icpId: job.icpId, requestType: 'more_contacts_at_accounts', targetContactCount: job.quantity }
-            : { icpId: job.icpId, requestType: 'expand_companies', targetCompanyCount: job.quantity };
+            ? { icpId: job.icpId, requestType: 'more_contacts_at_accounts', targetContactCount: job.quantity, operationId }
+            : { icpId: job.icpId, requestType: 'expand_companies', targetCompanyCount: job.quantity, operationId };
 
       try {
         const res = await fetch('/api/pipeline/data-request', {
@@ -964,12 +992,58 @@ function DataPageContent() {
           } else {
             toast.success('Job started. Watch its progress on the right.');
           }
-        } else toast.error('Failed to start job.');
+        } else {
+          const payload = await res.json().catch(() => ({}));
+          toast.error(payload.message || payload.error || 'Failed to start job.');
+        }
       } catch { toast.error('Failed to start job.'); }
     }
 
     void loadData();
   }, [batchCompanies, loadData]);
+
+  const handleJobStarted = useCallback(async (job: AcquisitionRequest) => {
+    const companies = job.batchCompanies ?? (batchCompanies.length > 0 ? batchCompanies : []);
+    if (job.requestType === 'contacts_at_companies' && companies.length === 0) {
+      toast.error('Select at least one account before sourcing contacts.');
+      return;
+    }
+    const leadCount =
+      job.requestType === 'contacts_at_companies'
+        ? job.quantity * companies.length
+        : job.requestType === 'expand_companies'
+          ? job.quantity * 2
+          : job.quantity;
+
+    try {
+      const response = await fetch('/api/billing/summary');
+      const summary = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(summary.error || 'Could not load your credit balance.');
+
+      setPendingPurchase({
+        job,
+        operationId: crypto.randomUUID(),
+        leadCount,
+        requiredCredits: leadCount * 4,
+        availableCredits: Number(summary.credits?.available ?? 0),
+        monthlyUsed: Number(summary.netNewLeads?.used ?? 0),
+        monthlyLimit: Number(summary.netNewLeads?.limit ?? 0),
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not load your credit balance.');
+    }
+  }, [batchCompanies]);
+
+  const confirmPurchase = useCallback(async () => {
+    if (!pendingPurchase || purchaseSubmitting) return;
+    setPurchaseSubmitting(true);
+    try {
+      await submitAcquisitionJob(pendingPurchase.job, pendingPurchase.operationId);
+      setPendingPurchase(null);
+    } finally {
+      setPurchaseSubmitting(false);
+    }
+  }, [pendingPurchase, purchaseSubmitting, submitAcquisitionJob]);
 
   // ── Build page context for agent ──────────────────────────────────────────
 
@@ -1060,71 +1134,139 @@ function DataPageContent() {
   ];
 
   const BT_ACCENT = '#00a4b4';
+  const purchaseWithinCredits = pendingPurchase
+    ? pendingPurchase.availableCredits >= pendingPurchase.requiredCredits
+    : false;
+  const purchaseWithinMonthlyCap = pendingPurchase
+    ? pendingPurchase.monthlyUsed + pendingPurchase.leadCount <= pendingPurchase.monthlyLimit
+    : false;
+  const purchaseAllowed = purchaseWithinCredits && purchaseWithinMonthlyCap;
 
   return (
-    <div className="flex h-screen bg-transparent">
-      <AppSidebar />
+    <>
+      <div className="flex h-screen bg-transparent">
+        <AppSidebar />
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-8 lg:px-10">
-        <div className="mx-auto w-full max-w-[1320px]">
-          <PageHeader
-            eyebrow="Data"
-            eyebrowIcon={<Database className="h-3 w-3" />}
-            title={
-              <>
-                Source <GradientWord>companies and contacts</GradientWord>
-              </>
-            }
-            subtitle="Tell Arcova what gap to fill. Jobs run one at a time and only ever add people and companies you don't already have."
-          />
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-8 lg:px-10">
+          <div className="mx-auto w-full max-w-[1320px]">
+            <PageHeader
+              eyebrow="Data"
+              eyebrowIcon={<Database className="h-3 w-3" />}
+              title={
+                <>
+                  Source <GradientWord>companies and contacts</GradientWord>
+                </>
+              }
+              subtitle="Tell Arcova what gap to fill. Jobs run one at a time and only ever add people and companies you don't already have."
+            />
 
-          <div className="grid grid-cols-1 items-stretch gap-6 xl:grid-cols-[minmax(0,1fr)_388px]">
-            {/* Agent tile — same briefing bento embed as /today (orb top, welcome bottom). */}
-            <div
-              className="briefing-today flex h-[min(72vh,760px)] min-h-[540px] flex-col [--bt-agent-tile-h:100%]"
-            >
-              <section className="bt-bento bt-agent-tile min-h-0 flex-1">
-                <div className="bt-agent-meta">
-                  <span className="bt-agent-status">
-                    <span className="bt-agent-status-dot" style={{ background: BT_ACCENT }} />
-                    <span>Agent · {agentBusy ? 'thinking' : 'ready'}</span>
-                  </span>
-                  <span className="bt-agent-time">
-                    {clock.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} local
-                  </span>
-                </div>
-                <div className="bt-agent-panel-host bt-agent-panel-host--fill">
-                  <AgentPanel
-                    page="data"
-                    pageContext={pageContext}
-                    variant="central"
-                    wide
-                    hideHeader
-                    suppressPrompts
-                    embedInBriefingBento
-                    briefingWelcome={agentWelcome}
-                    briefingIdleChips={agentIdleChips}
-                    onBusyChange={setAgentBusy}
-                    className="min-h-0 flex-1 overflow-hidden"
-                    pendingMessage={
-                      agentOpener
-                        ? { text: agentOpener.text, nonce: agentOpener.nonce, threadPreview: agentOpener.threadPreview }
-                        : undefined
-                    }
-                    onJobStarted={handleJobStarted}
-                  />
-                </div>
-              </section>
-            </div>
+            <div className="grid grid-cols-1 items-stretch gap-6 xl:grid-cols-[minmax(0,1fr)_388px]">
+              {/* Agent tile — same briefing bento embed as /today (orb top, welcome bottom). */}
+              <div
+                className="briefing-today flex h-[min(72vh,760px)] min-h-[540px] flex-col [--bt-agent-tile-h:100%]"
+              >
+                <section className="bt-bento bt-agent-tile min-h-0 flex-1">
+                  <div className="bt-agent-meta">
+                    <span className="bt-agent-status">
+                      <span className="bt-agent-status-dot" style={{ background: BT_ACCENT }} />
+                      <span>Agent · {agentBusy ? 'thinking' : 'ready'}</span>
+                    </span>
+                    <span className="bt-agent-time">
+                      {clock.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} local
+                    </span>
+                  </div>
+                  <div className="bt-agent-panel-host bt-agent-panel-host--fill">
+                    <AgentPanel
+                      page="data"
+                      pageContext={pageContext}
+                      variant="central"
+                      wide
+                      hideHeader
+                      suppressPrompts
+                      embedInBriefingBento
+                      briefingWelcome={agentWelcome}
+                      briefingIdleChips={agentIdleChips}
+                      onBusyChange={setAgentBusy}
+                      className="min-h-0 flex-1 overflow-hidden"
+                      pendingMessage={
+                        agentOpener
+                          ? { text: agentOpener.text, nonce: agentOpener.nonce, threadPreview: agentOpener.threadPreview }
+                          : undefined
+                      }
+                      onJobStarted={handleJobStarted}
+                    />
+                  </div>
+                </section>
+              </div>
 
-            {/* Side column: live pipeline */}
-            <div className="hidden h-[min(72vh,760px)] min-h-[540px] xl:block">
-              <PipelineRail jobs={visibleJobs} icpFor={icpFor} onRefresh={() => void loadData()} onSimulate={addSimJob} onClearSim={clearSim} />
+              {/* Side column: live pipeline */}
+              <div className="hidden h-[min(72vh,760px)] min-h-[540px] xl:block">
+                <PipelineRail jobs={visibleJobs} icpFor={icpFor} onRefresh={() => void loadData()} onSimulate={addSimJob} onClearSim={clearSim} />
+              </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
+
+      <AlertDialog
+        open={Boolean(pendingPurchase)}
+        onOpenChange={(open) => {
+          if (!open && !purchaseSubmitting) setPendingPurchase(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm data purchase</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <p>
+                  Arcova will source up to {fmt(pendingPurchase?.leadCount ?? 0)} net-new enriched
+                  lead{pendingPurchase?.leadCount === 1 ? '' : 's'}.
+                </p>
+                <div className="rounded-lg border border-arcova-navy/10 bg-arcova-sage/35 p-3 text-arcova-navy">
+                  <div className="flex items-center justify-between">
+                    <span>Maximum charge</span>
+                    <strong>{fmt(pendingPurchase?.requiredCredits ?? 0)} credits</strong>
+                  </div>
+                  <div className="mt-1 flex items-center justify-between text-xs text-arcova-navy/60">
+                    <span>Your current balance</span>
+                    <span>{fmt(pendingPurchase?.availableCredits ?? 0)} credits</span>
+                  </div>
+                </div>
+                {!purchaseWithinCredits && (
+                  <p className="text-red-600">You need more credits before starting this purchase.</p>
+                )}
+                {purchaseWithinCredits && !purchaseWithinMonthlyCap && (
+                  <p className="text-red-600">
+                    This purchase would exceed your monthly net-new lead limit.
+                  </p>
+                )}
+                <p className="text-xs">
+                  You are charged only for genuinely new enriched leads delivered. Duplicates,
+                  cache hits, and undelivered records are refunded automatically.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={purchaseSubmitting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={!purchaseAllowed || purchaseSubmitting}
+              onClick={(event) => {
+                event.preventDefault();
+                void confirmPurchase();
+              }}
+            >
+              {purchaseSubmitting
+                ? 'Starting…'
+                : purchaseAllowed
+                  ? `Use up to ${fmt(pendingPurchase?.requiredCredits ?? 0)} credits`
+                  : 'Purchase unavailable'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 

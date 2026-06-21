@@ -47,7 +47,7 @@ type DataAcquisitionJob = {
 type ExistingCompany = {
   company_name: string | null;
   domain?: string | null;
-  company_website?: string | null;
+  website?: string | null;
   linkedin_url: string | null;
 };
 
@@ -59,7 +59,14 @@ type ExistingContact = {
   linkedin_url: string | null;
   company_name: string | null;
   company_domain: string | null;
+  apollo_person_raw?: unknown;
 };
+
+/** Apollo person id from a stored contact's revealed record, if present. */
+function apolloPersonIdOf(raw: unknown): string | null {
+  const id = (raw as { id?: unknown } | null | undefined)?.id;
+  return typeof id === 'string' && id.trim() ? id.trim() : null;
+}
 
 type OwnedContactRef = {
   id: string;
@@ -73,7 +80,7 @@ type CompanyContext = {
   id: string;
   company_name: string | null;
   domain: string | null;
-  company_website: string | null;
+  website: string | null;
   linkedin_url: string | null;
   matched_icp_id: string | null;
 };
@@ -82,9 +89,12 @@ type DbCompanyRow = {
   id: string;
   company_name: string | null;
   domain: string | null;
-  company_website: string | null;
+  website: string | null;
   linkedin_url: string | null;
-  apollo_organization_raw: unknown;
+  // The `companies` table does not store an Apollo org record — people search
+  // falls back to the company domain (q_organization_domains_list), so this is
+  // always absent here. Kept optional for the DiscoveredCompany mapping shape.
+  apollo_organization_raw?: unknown;
   employee_count: number | null;
 };
 
@@ -106,7 +116,7 @@ function apolloOrgIdFromRaw(raw: unknown): string | null {
 
 function discoveredCompanyFromDbRow(row: DbCompanyRow): DiscoveredCompany | null {
   const domain =
-    (row.domain || row.company_website || '')
+    (row.domain || row.website || '')
       .trim()
       .toLowerCase()
       .replace(/^https?:\/\//, '')
@@ -125,7 +135,7 @@ function discoveredCompanyFromDbRow(row: DbCompanyRow): DiscoveredCompany | null
     raw: {
       name,
       primary_domain: domain,
-      website_url: row.company_website || row.domain || null,
+      website_url: row.website || row.domain || null,
       linkedin_url: row.linkedin_url || null,
       id: sourceId || undefined,
     },
@@ -152,7 +162,7 @@ async function loadPrioritizedCompaniesForIcpAccounts(
 
   const { data: companies, error } = await admin
     .from('companies')
-    .select('id, company_name, domain, company_website, linkedin_url, apollo_organization_raw, employee_count')
+    .select('id, company_name, domain, website, linkedin_url, employee_count')
     .in('id', ownedIds);
 
   if (error) throw new Error(error.message);
@@ -350,26 +360,51 @@ function normalizeKey(value: string | null | undefined): string {
     .trim();
 }
 
+/**
+ * LinkedIn identity key. CRITICAL: do NOT use `normalizeKey` on LinkedIn URLs —
+ * it strips the path (`/company/<slug>` or `/in/<slug>`), collapsing EVERY
+ * LinkedIn URL to a bare `linkedin.com`. That made every company/contact with a
+ * LinkedIn falsely dedup against every other (expand_companies skipped all
+ * candidates as "already owned"). Keep the slug; the host+path is the identity.
+ * Returns '' for a path-less `linkedin.com` (no slug = no identity to dedup on).
+ */
+function normalizeLinkedinKey(value: string | null | undefined): string {
+  const v = (value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .replace(/\/+$/, '');
+  return v.includes('/') ? v : '';
+}
+
 function companyKeys(company: Pick<DiscoveredCompany, 'domain' | 'linkedin_url' | 'name'>): string[] {
+  const li = normalizeLinkedinKey(company.linkedin_url);
   return [
     company.domain ? `domain:${normalizeKey(company.domain)}` : '',
-    company.linkedin_url ? `linkedin:${normalizeKey(company.linkedin_url)}` : '',
+    li ? `linkedin:${li}` : '',
     company.name ? `name:${normalizeKey(company.name)}` : '',
   ].filter(Boolean);
 }
 
 function existingCompanyKeys(company: ExistingCompany): string[] {
+  const li = normalizeLinkedinKey(company.linkedin_url);
   return [
     company.domain ? `domain:${normalizeKey(company.domain)}` : '',
-    company.company_website ? `domain:${normalizeKey(company.company_website)}` : '',
-    company.linkedin_url ? `linkedin:${normalizeKey(company.linkedin_url)}` : '',
+    company.website ? `domain:${normalizeKey(company.website)}` : '',
+    li ? `linkedin:${li}` : '',
     company.company_name ? `name:${normalizeKey(company.company_name)}` : '',
   ].filter(Boolean);
 }
 
 function contactKey(person: DiscoveredPerson): string {
+  // Apollo person id first: people-search (api_search) returns obfuscated rows
+  // (no email/linkedin, first-name-only), so name/email keys can't dedup them —
+  // but the id is stable and always present, and existing Apollo-sourced
+  // contacts carry it on apollo_person_raw.
   return (
-    (person.linkedin_url && `linkedin:${normalizeKey(person.linkedin_url)}`) ||
+    (person.source_id && `apollo:${normalizeKey(person.source_id)}`) ||
+    (normalizeLinkedinKey(person.linkedin_url) && `linkedin:${normalizeLinkedinKey(person.linkedin_url)}`) ||
     (person.email && `email:${normalizeKey(person.email)}`) ||
     `name_company:${normalizeKey(person.full_name)}:${normalizeKey(person.company_name)}`
   );
@@ -380,8 +415,11 @@ function existingContactKeys(contact: ExistingContact): string[] {
     contact.full_name ||
     [contact.first_name, contact.last_name].filter(Boolean).join(' ') ||
     null;
+  const apolloId = apolloPersonIdOf(contact.apollo_person_raw);
+  const li = normalizeLinkedinKey(contact.linkedin_url);
   return [
-    contact.linkedin_url ? `linkedin:${normalizeKey(contact.linkedin_url)}` : '',
+    apolloId ? `apollo:${normalizeKey(apolloId)}` : '',
+    li ? `linkedin:${li}` : '',
     contact.email ? `email:${normalizeKey(contact.email)}` : '',
     fullName && contact.company_name
       ? `name_company:${normalizeKey(fullName)}:${normalizeKey(contact.company_name)}`
@@ -710,14 +748,14 @@ function getCompanyContext(job: DataAcquisitionJob): CompanyContext | null {
     id,
     company_name: typeof record.company_name === 'string' ? record.company_name : null,
     domain: typeof record.domain === 'string' ? record.domain : null,
-    company_website: typeof record.company_website === 'string' ? record.company_website : null,
+    website: typeof record.website === 'string' ? record.website : null,
     linkedin_url: typeof record.linkedin_url === 'string' ? record.linkedin_url : null,
     matched_icp_id: typeof record.matched_icp_id === 'string' ? record.matched_icp_id : null,
   };
 }
 
 function discoveredCompanyFromContext(company: CompanyContext): DiscoveredCompany {
-  const domain = normalizeKey(company.domain || company.company_website);
+  const domain = normalizeKey(company.domain || company.website);
   const name = company.company_name || domain || 'Selected company';
 
   return {
@@ -730,7 +768,7 @@ function discoveredCompanyFromContext(company: CompanyContext): DiscoveredCompan
     raw: {
       name,
       primary_domain: domain || null,
-      website_url: company.company_website || company.domain || null,
+      website_url: company.website || company.domain || null,
       linkedin_url: company.linkedin_url || null,
     },
   };
@@ -1019,8 +1057,14 @@ async function runContactsAtCompanyJob(
     throw new Error('contacts_at_company job is missing company context');
   }
 
-  // The requested quantity comes from the job (set upstream by the user via
-  // the agent / coverage plan); the check below is purely defensive.
+  // `target_contact_count` is NET-NEW for this path: the agent asks "how many
+  // MORE contacts to add" and the confirm dialog shows the number as net-new
+  // leads, so source exactly this many NEW people. Owned contacts are loaded
+  // only to exclude them from the Apollo search below — never subtracted from
+  // the target. (Subtracting silently under-sourced once an account already had
+  // contacts: "1 more" at a company with 1 owned produced gap=0 and delivered
+  // nothing.) An exhausted company that returns no new people is handled
+  // gracefully downstream (empty result -> full refund).
   const requested = Math.max(1, job.target_contact_count || DEFAULT_CONTACTS_PER_COMPANY);
   const company = discoveredCompanyFromContext(companyContext);
 
@@ -1031,23 +1075,7 @@ async function runContactsAtCompanyJob(
     company.domain ? [company.domain] : [],
   );
   const ownedHere = ownedContactsAt(owned, companyContext.id, company.domain);
-  const gap = requested - ownedHere.length;
-
-  if (gap <= 0) {
-    await meter('skipped_existing', 1, {
-      company: company.name,
-      domain: company.domain,
-      companyId: companyContext.id,
-      existingContacts: ownedHere.length,
-      requestedContacts: requested,
-    });
-    await completeJobWithoutPurchase(
-      admin,
-      job,
-      `You already have ${ownedHere.length} contact${ownedHere.length === 1 ? '' : 's'} at ${company.name}, which covers this request. Nothing new was sourced.`,
-    );
-    return;
-  }
+  const gap = requested;
 
   const peopleRecipe = buildApolloPeopleSearchRecipe(personas);
   const target: PeopleSearchTarget = {
@@ -1118,7 +1146,7 @@ async function runContactsAtAccountsJob(
     admin,
     job.user_id,
     prioritizedRows.map((r) => r.id),
-    prioritizedRows.map((r) => r.domain || r.company_website || '').filter(Boolean),
+    prioritizedRows.map((r) => r.domain || r.website || '').filter(Boolean),
   );
 
   // Pre-flight gap check per account: skip fully-covered accounts before any
@@ -1221,7 +1249,7 @@ async function runExpandCompaniesJob(
   const { data: existingCompanies } = existingOwnedIds.length > 0
     ? await admin
         .from('companies')
-        .select('company_name, domain, company_website, linkedin_url')
+        .select('company_name, domain, website, linkedin_url')
         .in('id', existingOwnedIds)
     : { data: [] as ExistingCompany[] };
   const existingCompanyKeySet = new Set(
@@ -1410,7 +1438,7 @@ async function dedupAgainstWholeBook(
 ): Promise<DiscoveredPerson[]> {
   const { data: existingContacts } = await admin
     .from('contacts')
-    .select('full_name, first_name, last_name, email, linkedin_url, company_name, company_domain')
+    .select('full_name, first_name, last_name, email, linkedin_url, company_name, company_domain, apollo_person_raw')
     .eq('user_id', job.user_id);
   const existingContactKeySet = new Set(
     ((existingContacts || []) as ExistingContact[]).flatMap(existingContactKeys),

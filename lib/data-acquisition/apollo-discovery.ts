@@ -250,7 +250,14 @@ export async function discoverApolloPeopleForCompanies(params: {
     for (const raw of fresh) {
       const person = normalizePerson(raw, company);
       if (!person) continue;
-      const key = person.linkedin_url || person.email || `${person.full_name}:${person.company_domain}`.toLowerCase();
+      // Apollo person id first: api_search rows are obfuscated (no email/linkedin,
+      // first-name-only), so without the id two different same-first-name people
+      // at one company collide on `${full_name}:${domain}` and one is dropped.
+      const key =
+        (person.source_id && `apollo:${person.source_id}`) ||
+        person.linkedin_url ||
+        person.email ||
+        `${person.full_name}:${person.company_domain}`.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
       people.push(person);
