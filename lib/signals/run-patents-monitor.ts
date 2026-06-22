@@ -6,6 +6,7 @@ import {
   recomputeAccountReadiness,
 } from '@/lib/signals/readiness-service';
 import type { SignalKey } from '@/lib/signals/readiness-types';
+import { hasVerifiedCanonicalCompanyMatch } from '@/lib/companies/mention-provenance';
 
 type CompanyRow = {
   id: string;
@@ -119,7 +120,7 @@ async function fetchPatentsForCompaniesFromLocal(
     // canonical_company_id was populated at ingest by the resolver.
     const { data: assigneeRows, error: assigneeErr } = await admin
       .from('patent_event_assignees')
-      .select('publication_number')
+      .select('publication_number, canonical_company_match')
       .eq('canonical_company_id', company.id)
       .limit(Math.max(limitPerCompany * 3, 200));
 
@@ -130,6 +131,10 @@ async function fetchPatentsForCompaniesFromLocal(
     const publicationNumbers = [
       ...new Set(
         (assigneeRows ?? [])
+          .filter((r) => hasVerifiedCanonicalCompanyMatch(
+            (r as { canonical_company_match?: unknown }).canonical_company_match,
+            company.id,
+          ))
           .map((r) => (typeof (r as { publication_number?: unknown }).publication_number === 'string'
             ? (r as { publication_number: string }).publication_number
             : null))

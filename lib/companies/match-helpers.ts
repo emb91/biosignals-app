@@ -17,6 +17,10 @@
  * is discarded rather than asked about.
  */
 export const GENERIC_BIOTECH_TOKENS: ReadonlySet<string> = new Set([
+  'the',
+  'and',
+  'of',
+  'for',
   'biosciences',
   'bioscience',
   'biotech',
@@ -80,7 +84,7 @@ export function sharesDistinctiveToken(inputNorm: string, candidateNorm: string)
 
 /**
  * Returns coverage (0..1) of `inputTokens` against the canonical's name and
- * any aliases, or `null` if no candidate has any overlap.
+ * any aliases, or `null` if no candidate has any distinctive overlap.
  *
  * Matching rule: pick the SHORTER token set as the "must-be-covered" side and
  * check that every one of its tokens appears in the LONGER side. This handles
@@ -88,8 +92,9 @@ export function sharesDistinctiveToken(inputNorm: string, candidateNorm: string)
  * vice versa) without the raw-substring false positive where "bayer" matches
  * inside "forbayer holdings".
  *
- * Tokens shorter than 3 chars are ignored at the caller; this function trusts
- * the inputTokens set is already filtered.
+ * Tokens shorter than 3 chars and generic corporate/articles/prepositions are
+ * ignored on the candidate side too. This prevents canonical names like
+ * "The MT Group" from matching every extracted organization containing "the".
  */
 export function uniqueTokenCoverage(
   inputTokens: Set<string>,
@@ -100,7 +105,7 @@ export function uniqueTokenCoverage(
   const candidates = [canonicalName, ...canonicalAliases];
   let bestCoverage = 0;
   for (const c of candidates) {
-    const cTokens = new Set(c.split(' ').filter((t) => t.length >= 3));
+    const cTokens = distinctiveTokens(c);
     if (cTokens.size === 0) continue;
     const shorter = inputTokens.size <= cTokens.size ? inputTokens : cTokens;
     const longer = inputTokens.size <= cTokens.size ? cTokens : inputTokens;
@@ -110,4 +115,34 @@ export function uniqueTokenCoverage(
     if (coverage > bestCoverage) bestCoverage = coverage;
   }
   return bestCoverage === 0 ? null : bestCoverage;
+}
+
+export function verifyNormalizedCompanyEvidence(
+  sourceNorm: string,
+  canonicalNorm: string,
+  aliasNorms: string[] = [],
+): { verified: boolean; reason: string } {
+  const acceptedNames = [canonicalNorm, ...aliasNorms].filter(Boolean);
+
+  if (acceptedNames.includes(sourceNorm)) {
+    return { verified: true, reason: 'source phrase exactly matches company name or alias' };
+  }
+
+  const sourceDistinctive = distinctiveTokens(sourceNorm);
+  const coverage = uniqueTokenCoverage(sourceDistinctive, canonicalNorm, aliasNorms);
+  if (coverage !== null && coverage >= 1) {
+    return {
+      verified: true,
+      reason: 'source phrase has full distinctive-token coverage with company name or alias',
+    };
+  }
+
+  if (sourceDistinctive.size === 0) {
+    return { verified: false, reason: 'source phrase has no distinctive company tokens' };
+  }
+
+  return {
+    verified: false,
+    reason: 'source phrase does not match the full company name or a known alias',
+  };
 }

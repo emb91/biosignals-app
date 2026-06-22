@@ -25,6 +25,7 @@ import {
   recomputeAccountReadiness,
 } from '@/lib/signals/readiness-service';
 import type { SignalKey } from '@/lib/signals/readiness-types';
+import { hasVerifiedCompanyMention } from '@/lib/companies/mention-provenance';
 
 type CompanyRow = {
   id: string;
@@ -123,14 +124,15 @@ async function fetchGrantsForCompany(
   const { data, error } = await admin
     .from('nih_grants_local')
     .select(
-      'appl_id, project_num, core_project_num, activity_code, award_amount, award_notice_date, project_start_date, project_end_date, fiscal_year, org_name, org_name_normalized, org_type_code, org_type_name, org_city, org_state, org_uei, agency_ic_code, agency_ic_abbr, agency_ic_name, project_title, contact_pi_name, mechanism_code_dc',
+      'appl_id, project_num, core_project_num, activity_code, award_amount, award_notice_date, project_start_date, project_end_date, fiscal_year, org_name, org_name_normalized, org_type_code, org_type_name, org_city, org_state, org_uei, agency_ic_code, agency_ic_abbr, agency_ic_name, project_title, contact_pi_name, mechanism_code_dc, mentioned_company_matches',
     )
     .contains('mentioned_company_ids', [companyId])
     .gte('award_notice_date', cutoffIso)
     .order('award_notice_date', { ascending: false })
     .limit(limit);
   if (error) throw new Error(`nih_grants_local query: ${error.message}`);
-  return (data ?? []) as GrantRow[];
+  return ((data ?? []) as Array<GrantRow & { mentioned_company_matches?: unknown }>)
+    .filter((row) => hasVerifiedCompanyMention(row.mentioned_company_matches, companyId));
 }
 
 async function fetchExistingSourceEventIds(

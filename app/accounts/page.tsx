@@ -113,6 +113,8 @@ type AccountRow = {
   readiness_score?: number | null;
   raw_readiness_score?: number | null;
   priority_score?: number | null;
+  intrinsic_priority_score?: number | null;
+  crm_is_suppressed?: boolean;
   crm_status?: 'customer' | 'active' | 'dormant' | 'context_only' | 'none' | null;
   crm_deal_stage_label?: string | null;
   crm_closed_at?: string | null;

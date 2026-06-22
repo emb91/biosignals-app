@@ -18,7 +18,7 @@
 import type { createAdminClient } from '@/lib/supabase-admin';
 import { normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
 import { loadAllTrackedCiks } from '@/lib/signals/company-cik';
-import { resolveCompanyMentions } from '@/lib/companies/resolve-mentions';
+import { buildCompanyMentionMatches, hasVerifiedCanonicalCompanyMatch } from '@/lib/companies/mention-provenance';
 import { classifySecFiling, type SecFilingClassification } from '@/lib/signals/classify-sec-filing';
 import {
   isRateLimitError,
@@ -318,6 +318,7 @@ type FilingUpsertRow = {
   extras: Record<string, unknown> | null;
   last_seen_at: string;
   canonical_company_id?: string | null;
+  canonical_company_match?: Awaited<ReturnType<typeof buildCompanyMentionMatches>>[number] | null;
 };
 
 function buildBaseUpsertRow(row: DailyIndexRow, primaryDocUrl: string | null, startedAtIso: string): FilingUpsertRow {
@@ -452,21 +453,27 @@ export async function syncSecDelta(input: SyncSecDeltaInput): Promise<SyncSecDel
     upsertBuffer.length = 0;
     const chunk = [...byAccession.values()];
 
-    // Resolve entity_name → canonical company id for this chunk.
-    const uniqueNames = [
-      ...new Set(chunk.map((r) => r.entity_name).filter((n): n is string => Boolean(n))),
-    ];
-    if (uniqueNames.length > 0) {
+    // Resolve entity_name with provenance. Only verified matches populate the
+    // scalar canonical_company_id used by funding monitors.
+    if (chunk.some((r) => Boolean(r.entity_name))) {
       try {
-        const resolved = await resolveCompanyMentions(admin, uniqueNames);
         for (const row of chunk) {
-          row.canonical_company_id = row.entity_name
-            ? (resolved.get(row.entity_name)?.canonicalId ?? null)
-            : null;
+          const matches = await buildCompanyMentionMatches(admin, [
+            { sourceText: row.entity_name, sourceField: 'entity_name' },
+          ]);
+          const match = matches[0] ?? null;
+          row.canonical_company_match = match;
+          row.canonical_company_id =
+            match?.company_id && hasVerifiedCanonicalCompanyMatch(match, match.company_id)
+              ? match.company_id
+              : null;
         }
       } catch (e) {
         console.error('[sync-sec] resolver failed for chunk:', e);
-        for (const row of chunk) row.canonical_company_id = null;
+        for (const row of chunk) {
+          row.canonical_company_match = null;
+          row.canonical_company_id = null;
+        }
       }
     }
 

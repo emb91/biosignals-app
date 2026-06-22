@@ -21,6 +21,7 @@ import {
 } from '@/lib/data-provenance';
 import { HUBSPOT_CLOSED_DEAL_STAGES } from '@/lib/hubspot-deals';
 import { effectiveReadiness } from '@/lib/lead-action';
+import { resolveEffectivePriority } from '@/lib/effective-priority';
 
 /** Normalise a 0-1 or 0-100 score to a 0-1 fraction (null if unusable). */
 function norm01Score(value: unknown): number | null {
@@ -52,7 +53,24 @@ function recomputeContactPriorityLive(
       row.contact_readiness_score as number | null,
     ) ?? 0;
     const live = Math.max(0, Math.min(1, companyFit * contactFit * (0.5 + 0.5 * eff)));
-    return { ...row, priority_score: live };
+    const priorityPolicy = resolveEffectivePriority({
+      intrinsicPriority: live,
+      companyFit,
+      contactFit,
+      intrinsicReadiness: eff,
+      crmState: row.hubspot_lead_state as HubSpotLeadState | null | undefined,
+      crmClosedAt:
+        typeof row.hubspot_latest_deal_updated_at === 'string'
+          ? row.hubspot_latest_deal_updated_at
+          : null,
+    });
+    return {
+      ...row,
+      intrinsic_priority_score: priorityPolicy.intrinsicPriority,
+      priority_score: priorityPolicy.effectivePriority,
+      effective_readiness_score: priorityPolicy.effectiveReadiness,
+      crm_is_suppressed: priorityPolicy.isSuppressed,
+    };
   });
 }
 

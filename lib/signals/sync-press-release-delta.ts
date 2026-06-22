@@ -26,7 +26,7 @@ import { createAdminClient } from '@/lib/supabase-admin';
 import { fetchWithRetry } from '@/lib/signals/fetch-with-retry';
 import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
-import { resolveCompanyMentions } from '@/lib/companies/resolve-mentions';
+import { buildCompanyMentionMatches, verifiedMentionCompanyIds } from '@/lib/companies/mention-provenance';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -634,19 +634,21 @@ export async function syncPressReleaseDelta(opts?: {
             ...new Set(candidateCompanies.map(normalizeCompanyName).filter((n) => n.length >= 3)),
           ];
 
-          // Resolve to canonical company ids. Misses are cached as null so
-          // we don't re-LLM the same unknown names on every sync.
+          // Resolve to canonical company ids with provenance. Misses/rejected
+          // matches are retained for audit, but only verified ids can emit
+          // user-facing signals.
           let mentionedCompanyIds: string[] = [];
+          let mentionedCompanyMatches: Awaited<ReturnType<typeof buildCompanyMentionMatches>> = [];
           if (candidateCompanies.length > 0) {
             try {
-              const resolved = await resolveCompanyMentions(admin, candidateCompanies);
-              mentionedCompanyIds = [
-                ...new Set(
-                  [...resolved.values()]
-                    .map((r) => r.canonicalId)
-                    .filter((id): id is string => typeof id === 'string'),
-                ),
-              ];
+              mentionedCompanyMatches = await buildCompanyMentionMatches(
+                admin,
+                candidateCompanies.map((company) => ({
+                  sourceText: company,
+                  sourceField: 'candidate_companies',
+                })),
+              );
+              mentionedCompanyIds = verifiedMentionCompanyIds(mentionedCompanyMatches);
             } catch (e) {
               // Resolver failure shouldn't break classification persistence.
               console.error(`[sync-press-releases] Resolver failed for article ${article.id}:`, e);
@@ -661,6 +663,7 @@ export async function syncPressReleaseDelta(opts?: {
               candidate_companies: candidateCompanies,
               candidate_companies_normalized: candidateCompaniesNormalized,
               mentioned_company_ids: mentionedCompanyIds,
+              mentioned_company_matches: mentionedCompanyMatches,
               classification_error: null,
             })
             .eq('id', article.id);

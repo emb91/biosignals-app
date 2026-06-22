@@ -7,6 +7,7 @@ import {
   refreshBatchProgress,
   processQueuedRowsInBackground,
 } from '@/lib/import-queue';
+import { getPostHogClient } from '@/lib/posthog-server';
 
 type ImportField =
   | 'first_name'
@@ -319,6 +320,18 @@ export async function POST(request: Request) {
         after(backgroundTask);
       }
     }
+
+    getPostHogClient().capture({
+      distinctId: user.id,
+      event: 'contacts_imported',
+      properties: {
+        batch_id: batchId,
+        total_uploaded: rows.length,
+        duplicates_removed: duplicateIds.length,
+        being_enriched: pendingIds.length,
+      },
+    });
+    after(() => getPostHogClient().flush());
 
     return NextResponse.json({
       batchId,

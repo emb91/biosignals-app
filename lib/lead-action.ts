@@ -4,6 +4,19 @@
  * Keeps Leads UI, CSV export, HubSpot push, and import summary aligned.
  */
 
+import {
+  CRM_SUPPRESSION_DAYS,
+  effectiveReadiness,
+  isCrmSuppressed,
+  normalizeScore01,
+} from '@/lib/effective-priority';
+
+export {
+  CRM_SUPPRESSION_DAYS,
+  effectiveReadiness,
+  isCrmSuppressed,
+} from '@/lib/effective-priority';
+
 export type LeadAction =
   | 'source_contact'
   | 'reach_out'
@@ -50,33 +63,6 @@ export const REACH_OUT_READINESS_MIN = HIGH_SCORE;
  * around on a trigger event sooner than a fresh customer needs a renewal motion.
  * MVP values — tune as you learn. See the CRM suppression policy memory.
  */
-export const CRM_SUPPRESSION_DAYS = { won: 365, lost: 180 } as const;
-
-/**
- * Is a CRM-resolved (won/lost) contact still inside its suppression cooldown?
- *
- * `leadState` — HubSpot lead state (only 'customer' / 'dormant' suppress).
- * `closedAtIso` — when the deal closed; we use the deal's last-modified date as
- *   a proxy (hubspot_latest_deal_updated_at). Unknown date on a won/lost contact
- *   → treated as suppressed (safe default: don't reach out to a known closed deal
- *   just because we lost the timestamp).
- * `asOfMs` — current time in ms (injectable for tests; defaults to now).
- *
- * Returns false for any non-closed state, so normal fit/readiness logic applies.
- */
-export function isCrmSuppressed(
-  leadState: 'active' | 'customer' | 'dormant' | 'context_only' | 'none' | null | undefined,
-  closedAtIso: string | null | undefined,
-  asOfMs: number = Date.now(),
-): boolean {
-  if (leadState !== 'customer' && leadState !== 'dormant') return false;
-  const windowDays = leadState === 'customer' ? CRM_SUPPRESSION_DAYS.won : CRM_SUPPRESSION_DAYS.lost;
-  const closedMs = closedAtIso ? new Date(closedAtIso).getTime() : null;
-  if (closedMs == null || !Number.isFinite(closedMs)) return true;
-  const ageDays = (asOfMs - closedMs) / 86_400_000;
-  return ageDays < windowDays;
-}
-
 export type LeadLikeForAction = {
   company_fit_score?: number | null;
   fit_score?: number | null;
@@ -147,19 +133,6 @@ export function isLeadReadyAwaitingContactSignal(lead: LeadLikeForAction): boole
  * Use this anywhere a contact's action/gate needs readiness — a great contact
  * at a hot company should read as ready even with no personal signal.
  */
-export function effectiveReadiness(
-  companyReadiness: number | null | undefined,
-  contactReadiness: number | null | undefined,
-): number | null {
-  const c = score01ForAction(companyReadiness);
-  const k = score01ForAction(contactReadiness);
-  if (c == null && k == null) return null;
-  const base = Math.max(c ?? 0, k ?? 0);
-  const bothPresent = (c ?? 0) > 0 && (k ?? 0) > 0;
-  const bumped = bothPresent ? base + 0.1 * Math.min(c ?? 0, k ?? 0) : base;
-  return Math.max(0, Math.min(1, bumped));
-}
-
 /**
  * Canonical action core. Delegates to getActionFromScores (the single source of
  * truth for the three-gate tree). `readiness` here is the contact's effective
@@ -349,10 +322,7 @@ export const LEAD_ACTION_SORT_ORDER: Record<LeadAction, number> = {
 };
 
 function score01ForAction(value: number | null | undefined): number | null {
-  if (value == null || !Number.isFinite(value)) return null;
-  if (value > 1 && value <= 100) return value / 100;
-  if (value >= 0 && value <= 1) return value;
-  return null;
+  return normalizeScore01(value);
 }
 
 /**

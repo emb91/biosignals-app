@@ -14,10 +14,11 @@
  * Closed-won deals are fetched ONCE and bucketed by quarter in JS, using the
  * same closed-won predicate as the rollup so numbers agree across the page.
  */
-import { NextResponse } from 'next/server';
+import { after, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 import { quarterOf, isValidPeriod } from '@/lib/coverage/period';
 import { isWon } from '@/lib/coverage/icp-performance';
+import { getPostHogClient } from '@/lib/posthog-server';
 
 type TargetType = 'revenue' | 'deals';
 const MAX_VALUE = 1_000_000_000; // $1B / 1B deals — generous sanity ceiling
@@ -135,6 +136,17 @@ export async function PUT(req: Request) {
   if (error) {
     return NextResponse.json({ error: 'Failed to save target', detail: error.message }, { status: 500 });
   }
+
+  getPostHogClient().capture({
+    distinctId: user.id,
+    event: 'coverage_target_set',
+    properties: {
+      period,
+      target_type: type,
+      target_value: value,
+    },
+  });
+  after(() => getPostHogClient().flush());
 
   return NextResponse.json({ ok: true, period, target: { type, value } });
 }

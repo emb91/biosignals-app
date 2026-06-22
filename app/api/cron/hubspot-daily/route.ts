@@ -25,7 +25,8 @@ import {
   fetchUnenrichedHubSpotContacts,
 } from '@/lib/hubspot';
 import { processQueuedRowsInBackground, type QueuedRow } from '@/lib/import-queue';
-import { getLeadActionFromFits, formatLeadActionLabel } from '@/lib/lead-action';
+import { getActionFromScores, effectiveReadiness, formatLeadActionLabel } from '@/lib/lead-action';
+import { resolveEffectivePriority } from '@/lib/effective-priority';
 import { syncHubSpotContactsIntoReadiness } from '@/lib/signals/readiness-hubspot-contacts';
 import { syncHubSpotDealsIntoReadiness } from '@/lib/signals/readiness-hubspot-deals';
 import { denormalizeCrmSuppressionState } from '@/lib/crm-suppression-denormalize';
@@ -36,9 +37,17 @@ import { ensureBaselineSnapshot } from '@/lib/backup/hubspot-snapshot';
 function computeAction(
   companyFit: number | null,
   contactFit: number | null,
-  intentScore: number | null,
+  readiness: number | null,
+  isSuppressed: boolean,
 ): string {
-  return formatLeadActionLabel(getLeadActionFromFits(companyFit, contactFit, intentScore));
+  return formatLeadActionLabel(
+    getActionFromScores(
+      companyFit,
+      contactFit,
+      readiness,
+      isSuppressed ? 'dormant' : null,
+    ),
+  );
 }
 
 function fmt(n: number | null | undefined): string {
@@ -88,7 +97,8 @@ async function pushUserToHubSpot(
     .from('contacts')
     .select(`
       id, email, first_name, last_name, job_title, seniority_level, business_area,
-      contact_fit_score, readiness_score, priority_score, overall_fit_score, contact_bio, linkedin_url,
+      contact_fit_score, readiness_score, priority_score, crm_is_suppressed,
+      overall_fit_score, contact_bio, linkedin_url,
       company_id,
       companies(
         id, domain,
@@ -121,12 +131,12 @@ async function pushUserToHubSpot(
   ];
   const companyScoreById = new Map<
     string,
-    { fit: number | null; readiness: number | null; priority: number | null }
+    { fit: number | null; readiness: number | null; priority: number | null; crmIsSuppressed: boolean }
   >();
   if (leadCompanyIds.length > 0) {
     const { data: ucRows } = await admin
       .from('user_companies')
-      .select('company_id, company_fit_score, readiness_score, priority_score')
+      .select('company_id, company_fit_score, readiness_score, priority_score, crm_is_suppressed')
       .eq('user_id', userId)
       .in('company_id', leadCompanyIds);
     for (const r of (ucRows ?? []) as Array<{
@@ -134,11 +144,13 @@ async function pushUserToHubSpot(
       company_fit_score: number | null;
       readiness_score: number | null;
       priority_score: number | null;
+      crm_is_suppressed: boolean | null;
     }>) {
       companyScoreById.set(r.company_id, {
         fit: r.company_fit_score,
         readiness: r.readiness_score,
         priority: r.priority_score,
+        crmIsSuppressed: r.crm_is_suppressed === true,
       });
     }
   }
@@ -172,9 +184,21 @@ async function pushUserToHubSpot(
     const companyFit = coScores?.fit ?? null;
     const contactFit = typeof lead.contact_fit_score === 'number' ? lead.contact_fit_score : null;
     const contactReadiness = typeof lead.readiness_score === 'number' ? lead.readiness_score : null;
-    const contactPriority = typeof lead.priority_score === 'number' ? lead.priority_score : null;
     const overallFit = lead.overall_fit_score ?? null;
-    const action = computeAction(companyFit, contactFit, contactReadiness);
+    const intrinsicReadiness = effectiveReadiness(coScores?.readiness ?? null, contactReadiness);
+    const contactPriority = resolveEffectivePriority({
+      intrinsicPriority: typeof lead.priority_score === 'number' ? lead.priority_score : null,
+      companyFit,
+      contactFit,
+      intrinsicReadiness,
+      crmIsSuppressed: lead.crm_is_suppressed === true,
+    });
+    const action = computeAction(
+      companyFit,
+      contactFit,
+      contactPriority.effectiveReadiness,
+      contactPriority.isSuppressed,
+    );
 
     const props: Record<string, string> = {
       arcova_action: action,
@@ -185,7 +209,9 @@ async function pushUserToHubSpot(
     if (overallFit !== null) props.arcova_overall_fit_score = fmt(overallFit);
     if (contactFit !== null) props.arcova_contact_fit_score = fmt(contactFit);
     if (contactReadiness !== null) props.arcova_contact_readiness_score = fmt(contactReadiness);
-    if (contactPriority !== null) props.arcova_contact_priority_score = fmt(contactPriority);
+    if (contactPriority.effectivePriority !== null) {
+      props.arcova_contact_priority_score = fmt(contactPriority.effectivePriority);
+    }
     if (lead.seniority_level) props.arcova_seniority = lead.seniority_level;
     if (lead.business_area) props.arcova_function = lead.business_area;
     props.arcova_enriched_email = lead.email!;
@@ -245,9 +271,17 @@ async function pushUserToHubSpot(
 
     const props: Record<string, string> = {};
     const coScores = co?.id ? companyScoreById.get(co.id) : undefined;
+    const companyPriority = resolveEffectivePriority({
+      intrinsicPriority: coScores?.priority ?? null,
+      companyFit: coScores?.fit ?? null,
+      intrinsicReadiness: coScores?.readiness ?? 0,
+      crmIsSuppressed: coScores?.crmIsSuppressed ?? false,
+    });
     if (coScores?.fit != null) props.arcova_company_fit_score = fmt(coScores.fit);
     if (coScores?.readiness != null) props.arcova_company_readiness_score = fmt(coScores.readiness);
-    if (coScores?.priority != null) props.arcova_company_priority_score = fmt(coScores.priority);
+    if (companyPriority.effectivePriority != null) {
+      props.arcova_company_priority_score = fmt(companyPriority.effectivePriority);
+    }
     if (co.modalities?.length) props.arcova_modalities = fmtList(co.modalities);
     if (co.therapeutic_areas?.length) props.arcova_therapeutic_areas = fmtList(co.therapeutic_areas);
     if (co.development_stages?.length) props.arcova_development_stages = fmtList(co.development_stages);

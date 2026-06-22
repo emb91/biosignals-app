@@ -8,8 +8,8 @@ interface AuthContextType {
   user: User | null;
   session: Session | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  signup: (email: string, password: string, fullName?: string) => Promise<boolean>;
+  login: (email: string, password: string, captchaToken?: string) => Promise<void>;
+  signup: (email: string, password: string, fullName?: string, captchaToken?: string) => Promise<boolean>;
   loginWithGoogle: () => Promise<void>;
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
@@ -47,10 +47,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => subscription.unsubscribe();
   }, []);
 
-  const login = async (email: string, password: string) => {
+  const login = async (email: string, password: string, captchaToken?: string) => {
     const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
+      options: captchaToken ? { captchaToken } : undefined,
     });
     if (error) throw error;
   };
@@ -58,21 +59,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Returns true when the account needs email confirmation before sign-in
   // (no session yet) — the caller must show "check your email" instead of
   // navigating into the app.
-  const signup = async (email: string, password: string, fullName?: string): Promise<boolean> => {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: fullName?.trim() ? { data: { full_name: fullName.trim() } } : undefined,
+  const signup = async (
+    email: string,
+    password: string,
+    fullName?: string,
+    captchaToken?: string,
+  ): Promise<boolean> => {
+    // Routed server-side (/api/auth/signup) so the confirmation email goes
+    // through Resend with a /auth/confirm link, like invites and reset — no
+    // Supabase rate limit and our own copy. Returns true when the account needs
+    // email confirmation before sign-in.
+    const res = await fetch('/api/auth/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, fullName, captchaToken }),
     });
-    if (error) throw error;
-
-    // Supabase returns a user with fake id when email already exists (security feature)
-    // Check if user.identities is empty, which indicates the email is taken
-    if (data?.user?.identities?.length === 0) {
-      throw new Error('An account with this email already exists. Try signing in instead, or use Google if you signed up that way.');
+    const data = (await res.json().catch(() => ({}))) as { needsConfirm?: boolean; error?: string };
+    if (!res.ok) {
+      throw new Error(data.error || 'Could not create your account. Please try again.');
     }
-
-    return !data.session;
+    return Boolean(data.needsConfirm);
   };
 
   const loginWithGoogle = async () => {

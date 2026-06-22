@@ -15,7 +15,7 @@
  */
 import { fetchWithRetry, TokenBucket } from '@/lib/signals/fetch-with-retry';
 import { normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
-import { resolveCompanyMentions } from '@/lib/companies/resolve-mentions';
+import { buildCompanyMentionMatches, verifiedMentionCompanyIds } from '@/lib/companies/mention-provenance';
 import type { createAdminClient } from '@/lib/supabase-admin';
 
 const DEFAULT_OVERLAP_DAYS = 60;
@@ -164,7 +164,7 @@ async function chunkedUpsert(
 /**
  * Attach `mentioned_company_ids` to each row by resolving its `nameField`
  * (e.g. 'sponsor_name' or 'applicant') against the canonical directory.
- * Calls the resolver ONCE per dedup-set; result map is reused per row.
+ * Stores match provenance and only keeps verified ids for signal monitors.
  */
 async function attachMentionedIds(
   admin: ReturnType<typeof createAdminClient>,
@@ -175,19 +175,25 @@ async function attachMentionedIds(
     ...new Set(rows.map((r) => r[nameField]).filter((n): n is string => typeof n === 'string' && Boolean(n))),
   ];
   if (uniqueNames.length === 0) {
-    for (const r of rows) r.mentioned_company_ids = [];
+    for (const r of rows) {
+      r.mentioned_company_matches = [];
+      r.mentioned_company_ids = [];
+    }
     return;
   }
-  try {
-    const resolved = await resolveCompanyMentions(admin, uniqueNames);
-    for (const r of rows) {
+  for (const r of rows) {
+    try {
       const name = r[nameField] as string | null;
-      const id = name ? resolved.get(name)?.canonicalId : null;
-      r.mentioned_company_ids = id ? [id] : [];
+      const matches = await buildCompanyMentionMatches(admin, [
+        { sourceText: name, sourceField: nameField },
+      ]);
+      r.mentioned_company_matches = matches;
+      r.mentioned_company_ids = verifiedMentionCompanyIds(matches);
+    } catch (e) {
+      console.error(`[sync-fda] resolver failed for ${nameField}:`, e);
+      r.mentioned_company_matches = [];
+      r.mentioned_company_ids = [];
     }
-  } catch (e) {
-    console.error(`[sync-fda] resolver failed for ${nameField}:`, e);
-    for (const r of rows) r.mentioned_company_ids = [];
   }
 }
 

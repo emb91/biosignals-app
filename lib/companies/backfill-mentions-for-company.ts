@@ -20,7 +20,11 @@
  * inserted. Fire-and-forget — best-effort; the next sync cycle would still
  * pick up new events even if this fails.
  */
-import { resolveCompanyMentions } from './resolve-mentions';
+import {
+  buildCompanyMentionMatches,
+  verifiedMentionCompanyIds,
+  type CompanyMentionMatch,
+} from './mention-provenance';
 import { normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
 import type { createAdminClient } from '@/lib/supabase-admin';
 
@@ -245,26 +249,24 @@ async function backfillTable(
   const candidates = ((data ?? []) as unknown[]) as CandidateRow[];
   if (candidates.length === 0) return 0;
 
-  // Collect all unique extracted names for one resolver pass.
-  const allNames = new Set<string>();
-  for (const c of candidates) for (const n of c.names) if (n) allNames.add(n);
-  if (allNames.size === 0) return 0;
-
-  const resolved = await resolveCompanyMentions(admin, [...allNames]);
-
   // For each row, decide if any of its names resolved to OUR companyId.
   let updated = 0;
   for (const cand of candidates) {
-    const hit = cand.names.some((n) => {
-      const r = resolved.get(n);
-      return r && r.canonicalId === companyId;
-    });
-    if (!hit) continue;
+    const matches = await buildCompanyMentionMatches(
+      admin,
+      cand.names.map((name) => ({
+        sourceText: name,
+        sourceField: spec.namesArrayCol ?? spec.nameCol,
+      })),
+    );
+    const verifiedIds = verifiedMentionCompanyIds(matches);
+    if (!verifiedIds.includes(companyId)) continue;
+    const verifiedMatch = matches.find((match) => match.verified && match.company_id === companyId) ?? null;
 
     // Build the update PK filter
     let q = admin.from(spec.table).update(
       spec.destKind === 'scalar'
-        ? { [spec.destCol]: companyId }
+        ? { [spec.destCol]: companyId, canonical_company_match: verifiedMatch }
         : // For array dest: append companyId, avoiding duplicates.
           // We use the simplest safe approach: read current, append if missing.
           {} as Record<string, unknown>,
@@ -274,16 +276,24 @@ async function backfillTable(
       // Two-step for array: read existing, write new array if needed.
       // Postgres array_append + on-conflict is cleaner but Postgrest doesn't
       // expose array_append, so do it client-side. Cheap for one row at a time.
-      const selQ = admin.from(spec.table).select(spec.destCol);
+      const selQ = admin.from(spec.table).select(`${spec.destCol}, mentioned_company_matches`);
       const filtered = applyPkFilter(selQ, spec.pkCols, cand.pk);
       const { data: existing } = await filtered.maybeSingle();
       const existingArr = (existing && (existing as Record<string, unknown>)[spec.destCol]) as
         | string[]
         | null;
+      const existingMatches = (existing && (existing as Record<string, unknown>).mentioned_company_matches) as
+        | CompanyMentionMatch[]
+        | null;
       const next = Array.isArray(existingArr) ? existingArr : [];
-      if (next.includes(companyId)) continue; // already set, skip
-      next.push(companyId);
-      q = admin.from(spec.table).update({ [spec.destCol]: next });
+      if (!next.includes(companyId)) next.push(companyId);
+      const nextMatches = Array.isArray(existingMatches) ? existingMatches : [];
+      const existingKey = new Set(nextMatches.map((match) => `${match.company_id}:${match.source_field}:${match.source_text}`));
+      for (const match of matches) {
+        const key = `${match.company_id}:${match.source_field}:${match.source_text}`;
+        if (!existingKey.has(key)) nextMatches.push(match);
+      }
+      q = admin.from(spec.table).update({ [spec.destCol]: next, mentioned_company_matches: nextMatches });
     }
 
     q = applyPkFilter(q, spec.pkCols, cand.pk);

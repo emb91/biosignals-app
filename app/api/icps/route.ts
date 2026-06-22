@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase-server';
-import { NextResponse } from 'next/server';
+import { after, NextResponse } from 'next/server';
 import { orgIdForUser, getOrgContext, canEditOrgSetup } from '@/lib/org-context';
+import { getPostHogClient } from '@/lib/posthog-server';
 import { rescoreAllContactsForUser } from '@/lib/rescore';
 import { normalizePlatformTaxonomyFields } from '@/lib/platform-category';
 import { parsePlatformCategoryInput } from '@/lib/platform-category';
@@ -174,6 +175,18 @@ export async function POST(request: Request) {
     rescoreAllContactsForUser(user.id).catch((err) =>
       console.error('[icps POST] Background lead-fit rescore failed:', err),
     );
+
+    getPostHogClient().capture({
+      distinctId: user.id,
+      event: 'icp_created',
+      properties: {
+        icp_id: (data as { id?: string }).id,
+        icp_name: icpData.name,
+        scope,
+        company_type: icpData.company_type,
+      },
+    });
+    after(() => getPostHogClient().flush());
 
     return NextResponse.json({ data: normalized });
   } catch (error) {

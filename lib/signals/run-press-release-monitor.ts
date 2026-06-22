@@ -41,6 +41,7 @@ import {
 } from '@/lib/signals/readiness-service';
 import type { SignalKey } from '@/lib/signals/readiness-types';
 import type { PressReleaseCategory, PressReleaseClassification } from '@/lib/signals/sync-press-release-delta';
+import { hasVerifiedCompanyMention } from '@/lib/companies/mention-provenance';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -59,6 +60,7 @@ type ArticleRow = {
   classification: PressReleaseClassification | null;
   candidate_companies: string[] | null;
   mentioned_company_ids: string[] | null;
+  mentioned_company_matches: unknown;
 };
 
 export type PressReleaseMonitorInput = {
@@ -137,7 +139,7 @@ async function fetchArticlesMentioning(
   // Postgrest array-overlap syntax: ov.{uuid1,uuid2,...}
   const { data, error } = await admin
     .from('press_release_articles')
-    .select('id, source, source_url, title, summary, published_at, classification, candidate_companies, mentioned_company_ids')
+    .select('id, source, source_url, title, summary, published_at, classification, candidate_companies, mentioned_company_ids, mentioned_company_matches')
     .not('classification', 'is', null)
     .gte('published_at', cutoffIso)
     .overlaps('mentioned_company_ids', ownedIds)
@@ -152,7 +154,7 @@ async function fetchArticlesMentioning(
  * Articles the resolver tagged with this company id.
  */
 function articlesForCompany(articles: ArticleRow[], companyId: string): ArticleRow[] {
-  return articles.filter((a) => (a.mentioned_company_ids ?? []).includes(companyId));
+  return articles.filter((a) => hasVerifiedCompanyMention(a.mentioned_company_matches, companyId));
 }
 
 async function fetchExistingSourceEventIds(

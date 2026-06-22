@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
-import { isCrmSuppressed, type SequenceDispatchStatus } from '@/lib/lead-action';
+import { type SequenceDispatchStatus } from '@/lib/lead-action';
+import { resolveEffectivePriority } from '@/lib/effective-priority';
 import {
   type DataProvenanceChannel,
   formatDataProvenanceTypeOnly,
@@ -348,20 +349,14 @@ export async function GET(request: Request) {
       // (driven by real signals) resurfaces the account. The stored DB value
       // stays intrinsic; suppression is applied here at read time so it can't
       // go stale when CRM state changes.
-      const suppressed = isCrmSuppressed(crmEntry?.state ?? null, crmEntry?.closedAt ?? null);
       const fitNorm = normalizeScore01(row.company_fit_score);
-      const storedPriority = row.priority_score ?? null;
-
-      const displayedReadiness = suppressed ? 0.01 : row.readiness_score ?? null;
-      const basePriority = suppressed
-        ? fitNorm != null
-          ? fitNorm * (0.5 + 0.5 * 0.01)
-          : null
-        : storedPriority != null
-          ? storedPriority
-          : fitNorm != null
-            ? fitNorm * 0.5
-            : null;
+      const priorityPolicy = resolveEffectivePriority({
+        intrinsicPriority: row.priority_score ?? null,
+        companyFit: fitNorm,
+        intrinsicReadiness: row.readiness_score ?? 0,
+        crmState: crmEntry?.state ?? null,
+        crmClosedAt: crmEntry?.closedAt ?? null,
+      });
 
       // LEAN LIST projection — only the fields the table view + agent
       // list-mode actually need. Side panel + agent detail-mode use the
@@ -411,9 +406,11 @@ export async function GET(request: Request) {
         data_provenance_type: formatDataProvenanceTypeOnly(channelFromSource(row.uc_source)),
         data_provenance_imported_at: row.uc_added_at,
         readiness_label: row.readiness_label,
-        readiness_score: displayedReadiness,
+        readiness_score: priorityPolicy.effectiveReadiness,
         raw_readiness_score: row.readiness_score ?? null,
-        priority_score: basePriority,
+        priority_score: priorityPolicy.effectivePriority,
+        intrinsic_priority_score: priorityPolicy.intrinsicPriority,
+        crm_is_suppressed: priorityPolicy.isSuppressed,
         crm_status: crmEntry?.state ?? null,
         crm_deal_stage_label: crmEntry?.dealStageLabel ?? null,
         crm_closed_at: crmEntry?.closedAt ?? null,

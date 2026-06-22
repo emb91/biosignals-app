@@ -8,7 +8,7 @@
  *   npx tsx --env-file=.env.local scripts/backfill-sec-filings-mentions.ts --force
  */
 import { createClient } from '@supabase/supabase-js';
-import { resolveCompanyMentions } from '@/lib/companies/resolve-mentions';
+import { buildCompanyMentionMatches, type CompanyMentionMatch } from '@/lib/companies/mention-provenance';
 
 const BATCH_SIZE = 500;
 
@@ -24,7 +24,7 @@ async function main() {
     console.log('Clearing canonical_company_id on all rows…');
     const { error: clearErr } = await admin
       .from('sec_filings_local')
-      .update({ canonical_company_id: null })
+      .update({ canonical_company_id: null, canonical_company_match: null })
       .not('canonical_company_id', 'is', null);
     if (clearErr) throw new Error(`force-clear: ${clearErr.message}`);
   }
@@ -51,24 +51,22 @@ async function main() {
     if (!page || page.length === 0) break;
 
     const rows = page as Array<{ accession_number: string; entity_name: string | null }>;
-    const uniqueNames = [
-      ...new Set(rows.map((r) => r.entity_name).filter((n): n is string => Boolean(n))),
-    ];
-
-    let resolved: Map<string, { canonicalId: string | null }>;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      resolved = await resolveCompanyMentions(admin as any, uniqueNames);
-    } catch (e) {
-      console.error('  resolver failed for page:', e instanceof Error ? e.message : e);
-      resolved = new Map();
-    }
 
     for (const row of rows) {
-      const id = row.entity_name ? resolved.get(row.entity_name)?.canonicalId ?? null : null;
+      let match: CompanyMentionMatch | null = null;
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const matches = await buildCompanyMentionMatches(admin as any, [
+          { sourceText: row.entity_name, sourceField: 'entity_name' },
+        ]);
+        match = matches[0] ?? null;
+      } catch (e) {
+        console.error('  resolver failed:', e instanceof Error ? e.message : e);
+      }
+      const id = match?.verified ? match.company_id : null;
       const { error: updateErr } = await admin
         .from('sec_filings_local')
-        .update({ canonical_company_id: id })
+        .update({ canonical_company_id: id, canonical_company_match: match })
         .eq('accession_number', row.accession_number);
       if (updateErr) console.error(`  update failed:`, updateErr.message);
       if (id) totalResolved += 1;

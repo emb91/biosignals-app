@@ -20,6 +20,7 @@
  * selected". Both open a campaign picker, then POST /api/outreach/lemlist/dispatch.
  */
 
+import posthog from '@/lib/posthog-client';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -388,6 +389,11 @@ export default function OutreachPage() {
         setSequences((prev) =>
           prev.map((s) => (s.id === editingSequenceId ? { ...s, messages: nextMessages } : s)),
         );
+        posthog.capture('outreach_step_edited', {
+          sequence_id: editingSequenceId,
+          step_index: editingStepIdx,
+          channel: editDraft.channel ?? 'email',
+        });
         closeEditor();
       }
     } finally {
@@ -406,6 +412,7 @@ export default function OutreachPage() {
         next.delete(id);
         return next;
       });
+      posthog.capture('outreach_sequence_deleted', { sequence_id: id });
       // The contact's OutreachPanel shows a "you already drafted outreach"
       // notice driven by the (client-cached) /api/outreach/hooks response. Drop
       // that cache entry so the panel re-fetches and the stale "Open draft" —
@@ -451,6 +458,10 @@ export default function OutreachPage() {
       }
       await refresh();
       if (failed.length === 0) {
+        posthog.capture('outreach_dispatched', {
+          sequence_count: dispatchRowIds.length,
+          channel: 'lemlist',
+        });
         setDispatchOpen(false);
         setSelectedIds(new Set());
       }

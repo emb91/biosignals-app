@@ -18,13 +18,13 @@ import {
   type PeopleSearchTarget,
 } from '@/lib/data-acquisition/apollo-discovery';
 import {
-  apolloOrganizationMatchesIcpKeywords,
+  apolloOrganizationMatchesIcp,
   buildApolloCompanySearchRecipes,
   buildApolloPeopleSearchRecipe,
-  icpKeywordCorpus,
   type AcquisitionIcp,
   type AcquisitionPersona,
 } from '@/lib/data-acquisition/search-spec';
+import { enrichOrganizationWithApollo } from '@/lib/apollo';
 import { discoverCompaniesWithWebSearch } from '@/lib/data-acquisition/web-discovery';
 
 type DataAcquisitionJob = {
@@ -782,6 +782,8 @@ type ScreenCache = {
   store: (company: DiscoveredCompany, verdict: string) => Promise<void>;
 };
 
+const COMPANY_SCREEN_VERSION = 'icp_evidence_v2';
+
 /**
  * Loads the (user, ICP) screening history so every Apollo org is screened at
  * most once per ICP across all jobs: previously rejected orgs are skipped for
@@ -822,6 +824,15 @@ async function loadScreenCache(
       if (company.source_id) byOrgId.set(company.source_id, verdict);
       const domainKey = normalizeKey(company.domain);
       if (domainKey) byDomain.set(domainKey, verdict);
+      const matchColumn = company.source_id ? 'apollo_org_id' : 'domain';
+      const matchValue = company.source_id || domainKey;
+      if (matchValue) {
+        await admin.from('screened_organizations')
+          .delete()
+          .eq('user_id', userId)
+          .eq('icp_id', icpId)
+          .eq(matchColumn, matchValue);
+      }
       const { error: insertError } = await admin.from('screened_organizations').insert({
         user_id: userId,
         icp_id: icpId,
@@ -829,9 +840,8 @@ async function loadScreenCache(
         domain: domainKey || null,
         verdict,
       });
-      // Unique-violation (already cached by a concurrent job) and a missing
-      // table are both fine to ignore; the in-memory maps stay authoritative
-      // for this run.
+      // A concurrent job can still win the delete/insert race. The in-memory
+      // maps stay authoritative for this run.
       if (insertError && insertError.code !== '23505') {
         console.warn('[data-acquisition] screened_organizations insert failed:', insertError.message);
       }
@@ -892,6 +902,73 @@ async function advanceQueueForUser(userId: string): Promise<void> {
   if (!nextId) return;
 
   await runDataAcquisitionJob(nextId);
+}
+
+/**
+ * Serverless recovery for the narrow failure window where the import pipeline
+ * completed its upload batch but the invocation ended before the acquisition
+ * job and credit transaction were finalized. Safe to call repeatedly.
+ */
+export async function finalizeCompletedDataAcquisitionJob(jobId: string): Promise<boolean> {
+  const admin = createAdminClient();
+  const { data: jobData, error: jobError } = await admin
+    .from('data_acquisition_jobs')
+    .select('*')
+    .eq('id', jobId)
+    .maybeSingle();
+  if (jobError || !jobData) return false;
+
+  const job = jobData as DataAcquisitionJob;
+  if (!ACTIVE_JOB_STATUSES.includes(job.status as (typeof ACTIVE_JOB_STATUSES)[number])) {
+    return false;
+  }
+  if (!job.upload_batch_id) return false;
+
+  const { data: batch } = await admin
+    .from('upload_batches')
+    .select('status')
+    .eq('id', job.upload_batch_id)
+    .maybeSingle<{ status: string | null }>();
+  if (batch?.status !== 'complete') return false;
+
+  const metadata = await buildCoverageWritebackMetadata(admin, job);
+  const completedAt = new Date().toISOString();
+  const { data: finalized, error: finalizeError } = await admin
+    .from('data_acquisition_jobs')
+    .update({
+      status: 'complete',
+      completed_at: completedAt,
+      metadata,
+      updated_at: completedAt,
+    })
+    .eq('id', job.id)
+    .in('status', [...ACTIVE_JOB_STATUSES])
+    .select('imported_contact_count');
+  if (finalizeError || (finalized ?? []).length === 0) return false;
+
+  const delivered = Math.max(
+    0,
+    Number((finalized?.[0] as { imported_contact_count?: number | null })?.imported_contact_count ?? 0),
+  );
+  const transactionId = typeof job.metadata?.customer_credit_transaction_id === 'string'
+    ? job.metadata.customer_credit_transaction_id
+    : null;
+  await settleCredits(transactionId, delivered * 4);
+
+  const usageOperationId = typeof job.metadata?.customer_usage_operation_id === 'string'
+    ? job.metadata.customer_usage_operation_id
+    : null;
+  if (job.org_id && usageOperationId) {
+    await settleUsage({
+      orgId: job.org_id,
+      action: 'net_new_enriched_lead',
+      operationKey: usageOperationId,
+      quantity: delivered,
+    });
+  }
+
+  await advanceQueueForUser(job.user_id);
+  return true;
 }
 
 // ─── Job execution ────────────────────────────────────────────────────────────
@@ -1235,6 +1312,13 @@ async function runExpandCompaniesJob(
     targetCompanyCount,
     job.max_screened_companies || targetCompanyCount * 6,
   );
+  // Company search is cheap; matching-person discovery is the scarce step.
+  // Keep a small bench of qualified companies so a valid but contact-poor
+  // account does not turn the entire purchase into an empty/refunded result.
+  const discoveryCompanyTarget = Math.min(
+    maxScreenedCompanies,
+    Math.max(targetCompanyCount, targetCompanyCount * 3),
+  );
 
   // Owned-company keys, loaded once. 10k+ entries are fine in memory; checking
   // this set is the FIRST step for every Apollo result so duplicates cost
@@ -1257,7 +1341,6 @@ async function runExpandCompaniesJob(
   );
 
   const screenCache = await loadScreenCache(admin, job.user_id, job.icp_id);
-  const icpKeywords = icpKeywordCorpus(icp);
   let screenedCount = 0;
   const acceptedCompanyKeys = new Set<string>();
 
@@ -1278,7 +1361,7 @@ async function runExpandCompaniesJob(
     }
 
     const cachedVerdict = screenCache.lookup(company);
-    if (cachedVerdict === 'qualified') {
+    if (cachedVerdict === `qualified:${COMPANY_SCREEN_VERSION}`) {
       keys.forEach((key) => acceptedCompanyKeys.add(key));
       await meter('qualified_company', 1, {
         company: company.name,
@@ -1288,16 +1371,13 @@ async function runExpandCompaniesJob(
       });
       return 'qualified' as const;
     }
-    if (cachedVerdict) return 'skip' as const; // previously rejected for this ICP, free
-
-    const passes = apolloOrganizationMatchesIcpKeywords(company.raw, icpKeywords);
-    await screenCache.store(company, passes ? 'qualified' : 'rejected:keyword_mismatch');
-    if (!passes) {
+    if (cachedVerdict?.startsWith(`rejected:${COMPANY_SCREEN_VERSION}:`)) {
       return 'skip' as const;
     }
 
-    if (screenedCount >= maxScreenedCompanies) return 'skip' as const;
+    if (provider === 'apollo' && screenedCount >= maxScreenedCompanies) return 'skip' as const;
     screenedCount += 1;
+
     if (provider === 'apollo') {
       await meter('apollo_company_search_result', 1, {
         company: company.name,
@@ -1315,6 +1395,46 @@ async function runExpandCompaniesJob(
       }, 'anthropic_search');
     }
 
+    let evidence = company.raw;
+    let passes = apolloOrganizationMatchesIcp(evidence, icp);
+    if (!passes && provider === 'apollo' && company.domain) {
+      try {
+        const enriched = await enrichOrganizationWithApollo({
+          company_domain: company.domain,
+          company_name: company.name,
+          company_linkedin_url: company.linkedin_url,
+        });
+        await meter('apollo_company_enrichment', 1, {
+          company: company.name,
+          domain: company.domain,
+          reason: 'icp_screen_evidence',
+        });
+        evidence = {
+          ...evidence,
+          ...(enriched.raw_company || {}),
+          name: enriched.company_name || evidence.name,
+          short_description: enriched.company_description || evidence.short_description,
+          industry: enriched.company_industry || evidence.industry,
+        };
+        passes = apolloOrganizationMatchesIcp(evidence, icp);
+      } catch (error) {
+        console.warn(
+          '[data-acquisition] Apollo company screen enrichment failed:',
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
+
+    await screenCache.store(
+      company,
+      passes
+        ? `qualified:${COMPANY_SCREEN_VERSION}`
+        : `rejected:${COMPANY_SCREEN_VERSION}:evidence_mismatch`,
+    );
+    if (!passes) {
+      return 'skip' as const;
+    }
+
     keys.forEach((key) => acceptedCompanyKeys.add(key));
     await meter('qualified_company', 1, { company: company.name, domain: company.domain, provider });
     return 'qualified' as const;
@@ -1322,29 +1442,30 @@ async function runExpandCompaniesJob(
 
   const discovery = await discoverApolloCompanies({
     recipes: companyRecipes,
-    targetCompanyCount,
+    targetCompanyCount: discoveryCompanyTarget,
     maxPagesPerRecipe: 20,
     shouldContinue: async () => guard.capReached() === null && screenedCount < maxScreenedCompanies,
-    // Evaluation order per org: (1) owned/selected dedup, free; (2) screened
-    // cache, free; (3) cheap keyword screen, free; (4) metered qualified screen.
+    // Evaluation order per org: (1) owned/selected dedup, free; (2) versioned
+    // screen cache, free; (3) metered evidence screen with Apollo enrichment
+    // when the search row is too sparse to make a defensible decision.
     evaluate: async (company, recipe) => evaluateCompany(company, recipe, 'apollo'),
   });
 
   const qualifiedCompanies = [...discovery.companies];
   if (
-    qualifiedCompanies.length < targetCompanyCount &&
+    qualifiedCompanies.length < discoveryCompanyTarget &&
     guard.capReached() === null &&
     process.env.ANTHROPIC_API_KEY
   ) {
-    const fallbackTarget = targetCompanyCount - qualifiedCompanies.length;
+    const fallbackTarget = discoveryCompanyTarget - qualifiedCompanies.length;
     try {
       const fallbackCompanies = await discoverCompaniesWithWebSearch({
         icp,
         targetCompanyCount: fallbackTarget,
       });
       for (const company of fallbackCompanies) {
-        if (qualifiedCompanies.length >= targetCompanyCount) break;
-        if (guard.capReached() !== null || screenedCount >= maxScreenedCompanies) break;
+        if (qualifiedCompanies.length >= discoveryCompanyTarget) break;
+        if (guard.capReached() !== null) break;
         const verdict = await evaluateCompany(company, { name: 'web_search_fallback' }, 'web_search');
         if (verdict === 'qualified') qualifiedCompanies.push(company);
       }
@@ -1378,7 +1499,7 @@ async function runExpandCompaniesJob(
       return;
     }
     throw new Error(
-      'No new companies passed deduplication and ICP keyword screening. Widen the ICP or try again later.',
+      'No new companies passed deduplication and ICP evidence screening. Widen the ICP or try again later.',
     );
   }
 
@@ -1389,7 +1510,7 @@ async function runExpandCompaniesJob(
     job.target_contact_count || qualifiedCompanies.length * DEFAULT_CONTACTS_PER_COMPANY;
   const contactsPerCompany = Math.max(
     1,
-    Math.ceil(targetContactCount / Math.max(1, qualifiedCompanies.length)),
+    Math.ceil(targetContactCount / targetCompanyCount),
   );
 
   // These companies are new by construction (owned dupes were skipped above),

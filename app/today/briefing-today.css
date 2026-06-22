@@ -117,6 +117,7 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+  gap: 1.125rem;
   padding: 0.25rem 0.5rem 0.5rem;
   box-sizing: border-box;
   position: relative;
@@ -745,13 +746,6 @@
   border-bottom: none;
 }
 
-.briefing-today .bt-sig-glyph {
-  font-size: 0.875rem;
-  line-height: 1;
-  width: 1.125rem;
-  text-align: center;
-}
-
 .briefing-today .bt-sig-body {
   display: flex;
   flex-direction: column;
@@ -808,8 +802,8 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.375rem;
-  padding: 0.375rem 0 0.5rem 2.125rem;
-  margin-left: 0.5625rem;
+  padding: 0.375rem 0 0.5rem 0.25rem;
+  margin-left: 0;
 }
 
 /* Count badge on grouped rows (e.g. ×4) */
@@ -833,8 +827,7 @@
   background: none;
   border: none;
   cursor: pointer;
-  /* 4-column: glyph | body | ago | chevron */
-  grid-template-columns: auto 1fr auto auto;
+  grid-template-columns: 1fr auto auto;
 }
 
 .briefing-today .bt-sig-row--group:not(.bt-sig-row--static):hover {
@@ -876,13 +869,13 @@
 /* Expanded sub-item list */
 .briefing-today .bt-sig-sub-list {
   list-style: none;
-  padding: 0.25rem 0 0.5rem 2.125rem;
+  padding: 0.25rem 0 0.5rem 0.875rem;
   margin: 0;
   display: flex;
   flex-direction: column;
   gap: 0;
   border-left: 0.125rem solid rgba(0, 164, 180, 0.18);
-  margin-left: 0.5625rem;
+  margin-left: 0.25rem;
   margin-bottom: 0.375rem;
 }
 

@@ -12,7 +12,9 @@
 
 import type { TodayPriority } from '@/lib/priorities/types';
 
-const CACHE_KEY = 'arcova:today-priorities';
+// Version the cache when priority eligibility rules change so an old fallback
+// cannot resurrect items the server now deliberately excludes.
+const CACHE_KEY = 'arcova:today-priorities:v2';
 // Just a stale-bound for the offline fallback copy; the server read is the real freshness.
 const TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -47,7 +49,7 @@ function writeCache(priorities: TodayPriority[]): void {
 export async function fetchTodayPriorities(): Promise<TodayPriority[]> {
   const cached = readCache();
   try {
-    const res = await fetch('/api/today/priorities', { method: 'GET' });
+    const res = await fetch('/api/today/priorities', { method: 'GET', cache: 'no-store' });
     if (!res.ok) return cached?.priorities ?? [];
     const data = (await res.json()) as { priorities?: TodayPriority[] };
     const priorities = Array.isArray(data.priorities) ? data.priorities : [];

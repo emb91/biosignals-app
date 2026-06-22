@@ -57,6 +57,7 @@ type DealChangeEvent = {
   signalKeys: SignalKey[];
   title: string;
   summary: string;
+  isContextOnly?: boolean;
 };
 
 type ResolutionStatus =
@@ -160,9 +161,10 @@ function buildDealChangeEvents(previous: CrmDealMirrorRecord | null, current: Hu
     return [{
       changeType: 'deal_created',
       sourceEventType: 'open_opportunity_in_crm',
-      signalKeys: ['open_opportunity_in_crm'],
+      signalKeys: [],
       title: 'HubSpot deal created',
       summary: 'A new HubSpot deal was created for this account.',
+      isContextOnly: true,
     }];
   }
 
@@ -174,9 +176,10 @@ function buildDealChangeEvents(previous: CrmDealMirrorRecord | null, current: Hu
     events.push({
       changeType: 'deal_reopened',
       sourceEventType: 'open_opportunity_in_crm',
-      signalKeys: ['open_opportunity_in_crm'],
+      signalKeys: [],
       title: 'HubSpot deal reopened',
       summary: 'A previously closed HubSpot deal moved back into an active stage.',
+      isContextOnly: true,
     });
   }
 
@@ -184,9 +187,10 @@ function buildDealChangeEvents(previous: CrmDealMirrorRecord | null, current: Hu
     events.push({
       changeType: 'deal_stage_advanced',
       sourceEventType: 'open_opportunity_in_crm',
-      signalKeys: ['open_opportunity_in_crm'],
+      signalKeys: [],
       title: 'HubSpot deal entered active stage',
       summary: 'A HubSpot deal advanced into an active buying stage.',
+      isContextOnly: true,
     });
   }
 
@@ -194,9 +198,10 @@ function buildDealChangeEvents(previous: CrmDealMirrorRecord | null, current: Hu
     events.push({
       changeType: 'deal_amount_added',
       sourceEventType: 'open_opportunity_in_crm',
-      signalKeys: ['open_opportunity_in_crm'],
+      signalKeys: [],
       title: 'HubSpot deal amount added',
       summary: 'A HubSpot deal amount was added where no amount previously existed.',
+      isContextOnly: true,
     });
   }
 
@@ -204,9 +209,10 @@ function buildDealChangeEvents(previous: CrmDealMirrorRecord | null, current: Hu
     events.push({
       changeType: 'deal_closed_lost',
       sourceEventType: 'closed_lost_in_crm',
-      signalKeys: ['closed_lost_in_crm'],
+      signalKeys: [],
       title: 'HubSpot deal closed lost',
       summary: 'A HubSpot deal moved to closed lost, so this account should stay dormant until something changes.',
+      isContextOnly: true,
     });
   }
 
@@ -700,16 +706,18 @@ export async function syncHubSpotDealsIntoReadiness(
             },
           } as const;
 
-          await normalizeSignalSourceEvent(supabase, {
-            userId: input.userId,
-            rawEvent,
-            signalKeys: change.signalKeys,
-            companyId,
-          });
+          if (change.signalKeys.length > 0 && !change.isContextOnly) {
+            await normalizeSignalSourceEvent(supabase, {
+              userId: input.userId,
+              rawEvent,
+              signalKeys: change.signalKeys,
+              companyId,
+            });
 
-          affectedCompanyIds.add(companyId);
-          emittedEvents += 1;
-          emittedSignalTypes.add(change.sourceEventType);
+            affectedCompanyIds.add(companyId);
+            emittedEvents += 1;
+            emittedSignalTypes.add(change.sourceEventType);
+          }
         }
       }
     }

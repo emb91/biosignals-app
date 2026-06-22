@@ -1,6 +1,9 @@
 import { after, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
-import { runDataAcquisitionJob } from '@/lib/data-acquisition/job-runner';
+import {
+  finalizeCompletedDataAcquisitionJob,
+  runDataAcquisitionJob,
+} from '@/lib/data-acquisition/job-runner';
 
 const ACTIVE_JOB_STATUSES = ['discovering', 'processing', 'importing', 'enriching'];
 
@@ -108,6 +111,36 @@ export async function GET() {
     }
 
     const rows = (data || []) as JobRow[];
+
+    // A serverless invocation can finish the upload batch and be terminated in
+    // the brief gap before it marks the acquisition job complete and settles
+    // credits. Polling repairs that state idempotently instead of leaving the
+    // customer staring at "Importing" with a permanent pending reservation.
+    const activeWithBatch = rows.filter(
+      (row) => ACTIVE_JOB_STATUSES.includes(row.status) && Boolean(row.upload_batch_id),
+    );
+    if (activeWithBatch.length > 0) {
+      const { data: completedBatches } = await supabase
+        .from('upload_batches')
+        .select('id')
+        .in('id', activeWithBatch.map((row) => row.upload_batch_id!))
+        .eq('status', 'complete');
+      const completedIds = new Set((completedBatches ?? []).map((batch) => batch.id as string));
+      for (const row of activeWithBatch) {
+        if (!row.upload_batch_id || !completedIds.has(row.upload_batch_id)) continue;
+        const recover = () =>
+          finalizeCompletedDataAcquisitionJob(row.id).catch((err) => {
+            console.error('[data-acquisition/jobs] completion recovery failed', err);
+          });
+        if (process.env.NODE_ENV === 'development') {
+          setTimeout(() => {
+            void recover();
+          }, 0);
+        } else {
+          after(recover);
+        }
+      }
+    }
 
     // Queue safety net: jobs run strictly sequentially per user, advanced at
     // the end of each run. If a previous process died mid-run nothing would

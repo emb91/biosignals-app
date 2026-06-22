@@ -52,12 +52,14 @@ export default function ArcovaSetupPage() {
     );
   }
 
+  // Only a real, user-provided name counts here. We deliberately do NOT fall back
+  // to the email prefix: when no name is set, the onboarding agent opens by asking
+  // what to call you and persists it via capture_name. Seeding an email-prefix
+  // "name" would make the agent think it already knows you and skip that step.
   const firstName = (() => {
     const meta = user.user_metadata as Record<string, unknown> | undefined;
     const fullName = String(meta?.full_name || meta?.name || '').trim();
-    if (fullName) return fullName.split(' ')[0];
-    const emailPrefix = (user.email || '').split('@')[0];
-    return emailPrefix ? emailPrefix.charAt(0).toUpperCase() + emailPrefix.slice(1) : '';
+    return fullName ? fullName.split(' ')[0] : '';
   })();
 
   return (

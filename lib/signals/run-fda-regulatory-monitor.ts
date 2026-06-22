@@ -6,6 +6,7 @@ import {
   recomputeAccountReadiness,
 } from '@/lib/signals/readiness-service';
 import type { SignalKey } from '@/lib/signals/readiness-types';
+import { hasVerifiedCompanyMention } from '@/lib/companies/mention-provenance';
 
 type CompanyRow = {
   id: string;
@@ -200,6 +201,7 @@ async function fetchFdaDrugRecordsForCompany(
   // so the downstream emission loop works unchanged.
   const byApp = new Map<string, DrugsFdaResult>();
   for (const r of (data ?? []) as Array<Record<string, unknown>>) {
+    if (!hasVerifiedCompanyMention(r.mentioned_company_matches, companyId)) continue;
     const appNo = typeof r.application_number === 'string' ? r.application_number : '';
     if (!appNo) continue;
     if (!byApp.has(appNo)) {
@@ -238,13 +240,14 @@ async function fetchFda510kRecordsForCompany(
 ): Promise<Device510kResult[]> {
   const { data, error } = await admin
     .from('fda_device_510k')
-    .select('k_number, applicant, device_name, product_code, decision_code, decision_description, decision_date')
+    .select('k_number, applicant, device_name, product_code, decision_code, decision_description, decision_date, mentioned_company_matches')
     .contains('mentioned_company_ids', [companyId])
     .gte('decision_date', cutoffIso)
     .order('decision_date', { ascending: false })
     .limit(Math.min(Math.max(limit, 1), 500));
   if (error) throw new Error(`fda_device_510k query failed: ${error.message}`);
-  return (data ?? []) as Device510kResult[];
+  return ((data ?? []) as Array<Device510kResult & { mentioned_company_matches?: unknown }>)
+    .filter((row) => hasVerifiedCompanyMention(row.mentioned_company_matches, companyId));
 }
 
 async function fetchFdaPmaRecordsForCompany(
@@ -255,13 +258,14 @@ async function fetchFdaPmaRecordsForCompany(
 ): Promise<DevicePmaResult[]> {
   const { data, error } = await admin
     .from('fda_device_pma')
-    .select('pma_number, supplement_number, applicant, trade_name, generic_name, supplement_type, supplement_reason, decision_code, decision_date, advisory_committee_description')
+    .select('pma_number, supplement_number, applicant, trade_name, generic_name, supplement_type, supplement_reason, decision_code, decision_date, advisory_committee_description, mentioned_company_matches')
     .contains('mentioned_company_ids', [companyId])
     .gte('decision_date', cutoffIso)
     .order('decision_date', { ascending: false })
     .limit(Math.min(Math.max(limit, 1), 500));
   if (error) throw new Error(`fda_device_pma query failed: ${error.message}`);
-  return (data ?? []) as DevicePmaResult[];
+  return ((data ?? []) as Array<DevicePmaResult & { mentioned_company_matches?: unknown }>)
+    .filter((row) => hasVerifiedCompanyMention(row.mentioned_company_matches, companyId));
 }
 
 async function sourceEventExists(

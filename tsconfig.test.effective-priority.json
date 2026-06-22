@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/tmp/arcova-effective-priority-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/effective-priority.ts",
+    "lib/effective-priority.test.ts"
+  ]
+}

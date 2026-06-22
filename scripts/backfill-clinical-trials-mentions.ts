@@ -13,7 +13,7 @@
  *   npx tsx --env-file=.env.local scripts/backfill-clinical-trials-mentions.ts --force
  */
 import { createClient } from '@supabase/supabase-js';
-import { resolveCompanyMentions } from '@/lib/companies/resolve-mentions';
+import { buildCompanyMentionMatches, verifiedMentionCompanyIds } from '@/lib/companies/mention-provenance';
 
 const BATCH_SIZE = 200;
 
@@ -31,7 +31,7 @@ async function main() {
     console.log('Clearing mentioned_company_ids on all rows…');
     const { error: clearErr } = await admin
       .from('clinical_trials')
-      .update({ mentioned_company_ids: null })
+      .update({ mentioned_company_ids: null, mentioned_company_matches: [] })
       .not('mentioned_company_ids', 'is', null);
     if (clearErr) throw new Error(`force-clear: ${clearErr.message}`);
   }
@@ -58,42 +58,28 @@ async function main() {
     if (pageErr) throw new Error(`page error: ${pageErr.message}`);
     if (!page || page.length === 0) break;
 
-    // Collect unique sponsor names across the whole page.
-    const allNames = new Set<string>();
-    for (const r of page as Array<{ lead_sponsor: string | null; collaborators: string[] | null }>) {
-      if (r.lead_sponsor) allNames.add(r.lead_sponsor);
-      for (const c of r.collaborators ?? []) if (c) allNames.add(c);
-    }
-
-    let resolved: Map<string, { canonicalId: string | null }>;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      resolved = await resolveCompanyMentions(admin as any, [...allNames]);
-    } catch (e) {
-      console.error('  resolver failed for page, retrying row-by-row:', e instanceof Error ? e.message : e);
-      resolved = new Map();
-    }
-
     for (const row of page as Array<{ nct_id: string; lead_sponsor: string | null; collaborators: string[] | null }>) {
-      const names: string[] = [];
-      if (row.lead_sponsor) names.push(row.lead_sponsor);
-      for (const c of row.collaborators ?? []) if (c) names.push(c);
-
-      const ids = new Set<string>();
-      for (const n of names) {
-        const id = resolved.get(n)?.canonicalId;
-        if (id) ids.add(id);
+      const mentions = [];
+      if (row.lead_sponsor) mentions.push({ sourceText: row.lead_sponsor, sourceField: 'lead_sponsor' });
+      for (const c of row.collaborators ?? []) {
+        if (c) mentions.push({ sourceText: c, sourceField: 'collaborators' });
       }
-
-      const idArr = [...ids];
+      let matches: Awaited<ReturnType<typeof buildCompanyMentionMatches>> = [];
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        matches = await buildCompanyMentionMatches(admin as any, mentions);
+      } catch (e) {
+        console.error(`  [${row.nct_id}] resolver failed:`, e instanceof Error ? e.message : e);
+      }
+      const idArr = verifiedMentionCompanyIds(matches);
       const { error: updateErr } = await admin
         .from('clinical_trials')
-        .update({ mentioned_company_ids: idArr })
+        .update({ mentioned_company_ids: idArr, mentioned_company_matches: matches })
         .eq('nct_id', row.nct_id);
       if (updateErr) console.error(`  [${row.nct_id}] update failed:`, updateErr.message);
 
       totalResolved += idArr.length;
-      totalUnresolved += names.length - idArr.length;
+      totalUnresolved += mentions.length - idArr.length;
       processed += 1;
     }
 

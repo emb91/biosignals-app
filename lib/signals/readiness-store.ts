@@ -11,38 +11,9 @@ import type {
   SignalScope,
 } from '@/lib/signals/readiness-types';
 import type { AccountReadinessScoreResult } from '@/lib/signals/readiness-score';
+import { computeIntrinsicPriority } from '@/lib/effective-priority';
 
 type DatabaseClient = SupabaseClient<any, 'public', any>;
-
-/**
- * Priority = fit × (0.5 + 0.5 × readiness). Hybrid model: fit acts as the
- * floor, readiness boosts on top. Returns null when either fit input is missing
- * so readers can fall back cleanly. Clamped to [0, 1].
- *
- * For contact snapshots, callers pass `secondFitScore` (the company fit) so
- * priority folds in both fits: `company_fit × contact_fit × (0.5 + 0.5 × r)`.
- * That way a great contact at a poor-fit company doesn't read as high priority
- * — and matches what /api/leads / the Priority column should mean ("who should
- * I reach out to," not "who's a good contact in isolation"). Account snapshots
- * only have one fit, so they omit `secondFitScore`.
- *
- * Keep this identical to the formula in lib/signals/readiness-service.ts and
- * app/leads/contacts/page.tsx — it's the single source of truth for the
- * Priority score stored on readiness snapshots.
- */
-function computePriorityScore(
-  fitScore: number | null | undefined,
-  readinessScore: number | null | undefined,
-  secondFitScore?: number | null | undefined,
-): number | null {
-  if (typeof fitScore !== 'number' || !Number.isFinite(fitScore)) return null;
-  if (typeof readinessScore !== 'number' || !Number.isFinite(readinessScore)) return null;
-  const second =
-    typeof secondFitScore === 'number' && Number.isFinite(secondFitScore) ? secondFitScore : 1;
-  const raw = fitScore * second * (0.5 + 0.5 * readinessScore);
-  if (!Number.isFinite(raw)) return null;
-  return Math.max(0, Math.min(1, raw));
-}
 
 export type ReadinessSnapshotRecord = {
   id: string;
@@ -77,6 +48,23 @@ function scalarNumber(value: unknown): number | null {
 function stringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === 'string');
+}
+
+const HIDDEN_CRM_SIGNAL_SOURCES = new Set(['hubspot_crm_contacts', 'hubspot_crm_deals']);
+const HIDDEN_CRM_SIGNAL_KEYS = new Set([
+  'recently_changed_company',
+  'recently_promoted',
+  'new_internal_role',
+  'title_change',
+  'new_contact_added_in_crm',
+  'open_opportunity_in_crm',
+  'closed_lost_in_crm',
+]);
+
+function isHiddenCrmSignalRow(row: any): boolean {
+  const source = typeof row.source_event?.source === 'string' ? row.source_event.source : null;
+  const signalKey = typeof row.signal_key === 'string' ? row.signal_key : null;
+  return Boolean(source && signalKey && HIDDEN_CRM_SIGNAL_SOURCES.has(source) && HIDDEN_CRM_SIGNAL_KEYS.has(signalKey));
 }
 
 export async function insertSignalSourceEvent(
@@ -187,14 +175,14 @@ export async function listNormalizedSignalsForCompany(
 ): Promise<NormalizedSignal[]> {
   const { data, error } = await supabase
     .from('normalized_signals')
-    .select('*')
+    .select('*, source_event:signal_source_events(source)')
     .eq('user_id', userId)
     .eq('company_id', companyId)
     .order('observed_at', { ascending: false });
 
   if (error) throw error;
 
-  return (data ?? []).map((row) => ({
+  return (data ?? []).filter((row) => !isHiddenCrmSignalRow(row)).map((row) => ({
     id: row.id,
     rawSignalEventId: row.source_event_id,
     signalKey: row.signal_key,
@@ -217,7 +205,7 @@ export async function listNormalizedSignalsForContact(
 ): Promise<NormalizedSignal[]> {
   const { data, error } = await supabase
     .from('normalized_signals')
-    .select('*')
+    .select('*, source_event:signal_source_events(source)')
     .eq('user_id', userId)
     .eq('contact_id', contactId)
     .eq('signal_scope', 'contact')
@@ -225,7 +213,7 @@ export async function listNormalizedSignalsForContact(
 
   if (error) throw error;
 
-  return (data ?? []).map((row) => ({
+  return (data ?? []).filter((row) => !isHiddenCrmSignalRow(row)).map((row) => ({
     id: row.id,
     rawSignalEventId: row.source_event_id,
     signalKey: row.signal_key,
@@ -260,11 +248,11 @@ export async function upsertContactReadinessSnapshot(
     user_id: input.userId,
     contact_id: input.contactId,
     fit_score: input.fitScore ?? null,
-    priority_score: computePriorityScore(
-      input.fitScore ?? null,
-      input.priorityReadiness ?? input.score.overallScore,
-      input.companyFitScore ?? null,
-    ),
+    priority_score: computeIntrinsicPriority({
+      companyFit: input.companyFitScore ?? 1,
+      contactFit: input.fitScore ?? null,
+      readiness: input.priorityReadiness ?? input.score.overallScore,
+    }),
     overall_score: input.score.overallScore,
     overall_label: input.score.overallLabel,
     new_budget_score: input.score.dimensions.new_budget.score,
@@ -306,7 +294,10 @@ export async function upsertAccountReadinessSnapshot(
     company_id: input.companyId,
     fit_score: input.fitScore ?? null,
     fit_label: input.fitLabel ?? null,
-    priority_score: computePriorityScore(input.fitScore ?? null, input.score.overallScore),
+    priority_score: computeIntrinsicPriority({
+      companyFit: input.fitScore ?? null,
+      readiness: input.score.overallScore,
+    }),
     overall_score: input.score.overallScore,
     overall_label: input.score.overallLabel,
     new_budget_score: input.score.dimensions.new_budget.score,

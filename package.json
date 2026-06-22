@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "npm run test:journey && npm run test:resolver && npm run test:company-merge && npm run test:contact-location && npm run test:coverage-allocation && npm run test:patent-surge && npm run test:email-pattern && npm run test:sweep-fit-gate && npm run test:email-deliverability-policy && npm run test:outreach-sequence",
+    "test": "npm run test:journey && npm run test:resolver && npm run test:company-merge && npm run test:contact-location && npm run test:coverage-allocation && npm run test:patent-surge && npm run test:email-pattern && npm run test:sweep-fit-gate && npm run test:email-deliverability-policy && npm run test:effective-priority && npm run test:outreach-sequence && npm run test:data-screen",
     "preflight:prod": "node scripts/production-preflight.mjs",
     "security:audit": "npm audit --omit=dev --audit-level=high",
     "test:smoke": "playwright test",
@@ -29,7 +29,9 @@
     "test:email-pattern": "rm -rf /tmp/arcova-email-pattern-tests && tsc -p tsconfig.test.email-pattern.json && node --test /tmp/arcova-email-pattern-tests/email-pattern.test.js",
     "test:sweep-fit-gate": "rm -rf /tmp/arcova-sweep-fit-gate-tests && tsc -p tsconfig.test.sweep-fit-gate.json && node --test /tmp/arcova-sweep-fit-gate-tests/sweep-fit-gate.test.js",
     "test:email-deliverability-policy": "rm -rf /tmp/arcova-email-deliverability-policy-tests && tsc -p tsconfig.test.email-deliverability-policy.json && node --test /tmp/arcova-email-deliverability-policy-tests/email-deliverability-policy.test.js",
-    "test:outreach-sequence": "rm -rf /tmp/arcova-outreach-sequence-tests && tsc -p tsconfig.test.outreach-sequence.json && node --test /tmp/arcova-outreach-sequence-tests/outreach-sequence.test.js"
+    "test:effective-priority": "rm -rf /tmp/arcova-effective-priority-tests && tsc -p tsconfig.test.effective-priority.json && node --test /tmp/arcova-effective-priority-tests/effective-priority.test.js",
+    "test:outreach-sequence": "rm -rf /tmp/arcova-outreach-sequence-tests && tsc -p tsconfig.test.outreach-sequence.json && node --test /tmp/arcova-outreach-sequence-tests/outreach-sequence.test.js",
+    "test:data-screen": "rm -rf /tmp/arcova-data-screen-tests && tsc -p tsconfig.test.data-screen.json && node --test /tmp/arcova-data-screen-tests/tests/data-acquisition/search-spec.test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.105.0",
@@ -88,6 +90,7 @@
     "next-themes": "^0.4.4",
     "ogl": "^1.0.11",
     "posthog-js": "^1.391.2",
+    "posthog-node": "^5.21.2",
     "react": "^18.3.1",
     "react-aria-components": "^1.17.0",
     "react-day-picker": "8.10.1",

@@ -17,6 +17,16 @@ import { formatSignalSentence } from '@/lib/signal-activity';
 
 const DEFAULT_DAYS = 30;
 const MAX_ROWS = 400;
+const HIDDEN_CRM_SIGNAL_SOURCES = new Set(['hubspot_crm_contacts', 'hubspot_crm_deals']);
+const HIDDEN_CRM_SIGNAL_KEYS = new Set([
+  'recently_changed_company',
+  'recently_promoted',
+  'new_internal_role',
+  'title_change',
+  'new_contact_added_in_crm',
+  'open_opportunity_in_crm',
+  'closed_lost_in_crm',
+]);
 
 interface SignalRow {
   id: string;
@@ -288,6 +298,10 @@ export async function GET(req: Request) {
   const sourceById = new Map(
     ((sourceRes.data ?? []) as Array<SourceEventRow>).map((s) => [s.id, s]),
   );
+  const visibleRows = rows.filter((row) => {
+    const source = row.source_event_id ? sourceById.get(row.source_event_id)?.source : null;
+    return !(source && HIDDEN_CRM_SIGNAL_SOURCES.has(source) && HIDDEN_CRM_SIGNAL_KEYS.has(row.signal_key));
+  });
 
   const companyName = new Map<string, string>(
     ((companiesRes.data ?? []) as Array<{ id: string; company_name: string | null }>).map((c) => [
@@ -383,7 +397,7 @@ export async function GET(req: Request) {
     }];
   };
 
-  for (const r of rows) {
+  for (const r of visibleRows) {
     // Drop signals on archived companies or archived contacts.
     if (r.company_id && archivedCompanyIds.has(r.company_id)) continue;
     const contact = r.contact_id ? contactById.get(r.contact_id) : null;

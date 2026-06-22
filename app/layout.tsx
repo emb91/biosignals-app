@@ -4,6 +4,7 @@ import ClientLayout from "./ClientLayout"
 import { AuthProvider } from "@/context/AuthContext"
 import { EnrichmentGuardProvider } from "@/context/EnrichmentGuardContext"
 import { SetupStateProvider } from "@/lib/use-setup-state"
+import { PostHogProvider, PostHogIdentify } from "./posthog-provider"
 import './globals.css'
 // import { Analytics } from "@vercel/analytics/next"
 
@@ -116,13 +117,16 @@ export default function RootLayout({
         />
       </head>
       <body className="font-jakarta antialiased">
-        <AuthProvider>
-          <SetupStateProvider>
-            <EnrichmentGuardProvider>
-              <ClientLayout>{children}</ClientLayout>
-            </EnrichmentGuardProvider>
-          </SetupStateProvider>
-        </AuthProvider>
+        <PostHogProvider>
+          <AuthProvider>
+            <PostHogIdentify />
+            <SetupStateProvider>
+              <EnrichmentGuardProvider>
+                <ClientLayout>{children}</ClientLayout>
+              </EnrichmentGuardProvider>
+            </SetupStateProvider>
+          </AuthProvider>
+        </PostHogProvider>
         {/* <Analytics /> */}
       </body>
     </html>

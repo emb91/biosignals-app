@@ -50,6 +50,20 @@ type LiveSignal = {
   recentPatents?: { key: string; title: string; url: string | null; date: string | null }[];
 };
 
+type CrmActivityItem = {
+  id: string;
+  eventType: string;
+  title: string | null;
+  summary: string | null;
+  companyName: string | null;
+  companyDomain: string | null;
+  contactName: string | null;
+  contactEmail: string | null;
+  crmLabel: string;
+  observedAt: string;
+  eventAt: string | null;
+};
+
 type TopLead = {
   id: string;
   name: string;
@@ -149,10 +163,17 @@ type SignalSubItem = {
   ago: string;
 };
 
+const PERSON_SUBJECT_SIGNAL_KEYS = new Set([
+  'recently_changed_company',
+  'recently_promoted',
+  'new_to_role',
+  'new_internal_role',
+  'title_change',
+]);
+
 /** One collapsed row = one (company, signal type) combination. */
 type SignalGroupRow = {
   key: string;
-  glyph: string;
   company: string;
   label: string;
   count: number;
@@ -170,16 +191,6 @@ type SignalGroupRow = {
   moreCount?: number;
   moreUrl?: string | null;
 };
-
-function signalGlyph(key: string): string {
-  if (key.includes('patent') || key === 'assignee_portfolio_acceleration') return '◎';
-  if (key.includes('publication') || key === 'new_paper_published') return '◈';
-  if (key.includes('clinical') || key.includes('trial') || key.includes('indication') || key.includes('fda') || key.includes('program_discontinuation')) return '⬡';
-  if (key.includes('hiring') || key === 'hiring_expansion' || key === 'job_surge') return '✦';
-  if (key.includes('grant') || key === 'funding_round' || key === 'series_announcement' || key === 'acquisition' || key === 'partnership_announcement') return '◆';
-  if (key.includes('crm') || key.includes('opportunity') || key === 'new_to_role' || key === 'title_change' || key === 'new_internal_role') return '◇';
-  return '·';
-}
 
 const SIGNAL_LABELS: Record<string, string> = {
   // Hiring
@@ -227,12 +238,40 @@ const SIGNAL_LABELS: Record<string, string> = {
   new_to_role:                 'New to role',
   title_change:                'Title change',
   new_internal_role:           'Internal promotion',
+  recently_changed_company:    'Changed company',
+  recently_promoted:           'Promoted',
   new_contact_added_in_crm:    'Contact added',
   open_opportunity_in_crm:     'Deal in pipeline',
 };
 
 function signalLabel(key: string): string {
   return SIGNAL_LABELS[key] ?? key.replace(/_/g, ' ');
+}
+
+const CRM_ACTIVITY_LABELS: Record<string, string> = {
+  new_contact_added_in_crm: 'Contact added',
+  crm_contact_company_context_changed: 'Contact account changed',
+  crm_contact_removed_from_account: 'Contact removed from account',
+  crm_owner_reassigned: 'Owner reassigned',
+  crm_contact_promoted: 'Contact promoted',
+  crm_contact_internal_role_changed: 'Contact role changed',
+  crm_contact_title_changed: 'Contact title changed',
+  open_opportunity_in_crm: 'Deal updated',
+  closed_lost_in_crm: 'Deal closed lost',
+};
+
+function crmActivityLabel(eventType: string): string {
+  return CRM_ACTIVITY_LABELS[eventType] ?? eventType.replace(/_/g, ' ');
+}
+
+function crmActivitySubject(item: CrmActivityItem): string {
+  return item.contactName ?? item.companyName ?? item.companyDomain ?? item.contactEmail ?? item.crmLabel;
+}
+
+function crmActivityDetail(item: CrmActivityItem): string | null {
+  const company = item.companyName ?? item.companyDomain;
+  if (item.contactName && company) return company;
+  return item.summary;
 }
 
 /** Maps hiring sub-category keys to short display labels for pills */
@@ -265,6 +304,8 @@ const SIGNAL_FAMILIES: SignalFamilyDef[] = [
   { key: 'funding',  eyebrow: 'Market',   title: 'Funding'  },
   { key: 'people',   eyebrow: 'Moves',    title: 'People'   },
 ];
+
+const RIGHT_STACK_SIGNAL_FAMILIES = new Set(['pipeline', 'people']);
 
 /** Age gate per family. Signals older than this are excluded from the today view. */
 const FAMILY_MAX_AGE_MS: Record<string, number> = {
@@ -321,6 +362,8 @@ const SIGNAL_KEY_TO_FAMILY: Record<string, string> = {
   new_to_role:                     'people',
   title_change:                    'people',
   new_internal_role:               'people',
+  recently_changed_company:        'people',
+  recently_promoted:               'people',
   new_contact_added_in_crm:        'people',
   open_opportunity_in_crm:         'people',
 };
@@ -476,7 +519,7 @@ const PATENT_FAMILY_KEYS = new Set([
 const TRIAL_MERGE_KEYS = new Set([
   'clinical_trial_recruiting', 'clinical_trial_registered', 'clinical_trial_phase_start',
   'clinical_trial_completion', 'clinical_trial_completed', 'clinical_trial_enrollment',
-  'trial_site_expansion', 'indication_expansion',
+  'trial_site_expansion', 'indication_expansion', 'trial_failure_or_halt', 'program_discontinuation',
 ]);
 
 /** Singular noun per merged group → consistent grey count labels ("9 patents", "4 trials"). */
@@ -549,6 +592,7 @@ export default function BriefingPage() {
   // TodayPriority row. /today is a dumb consumer — never knows what's in the list.
   const [aggregatedPriorities, setAggregatedPriorities] = useState<TodayPriority[]>([]);
   const [liveSignals, setLiveSignals] = useState<LiveSignal[]>([]);
+  const [crmActivity, setCrmActivity] = useState<CrmActivityItem[]>([]);
 
   const taskStateStorageKey = user
     ? `${TASK_STATE_STORAGE_PREFIX}:${user.id}:${todayStorageDate()}`
@@ -681,6 +725,7 @@ export default function BriefingPage() {
           importReadyRes,
           repliedRes,
           liveSignalsRes,
+          crmActivityRes,
         ] = await Promise.all([
           // Org-scoped on purpose (RLS lets members read the org's row): the company
           // profile is set up once per workspace, so an invited member must NOT be
@@ -701,6 +746,7 @@ export default function BriefingPage() {
           fetch('/api/import-ready'),
           fetch('/api/outreach/replied'),
           fetch('/api/signals/feed?pageSize=100&page=1&skipPatentCollapse=1'),
+          fetch('/api/today/crm-activity'),
         ]);
 
         if (profileError) throw profileError;
@@ -816,6 +862,25 @@ export default function BriefingPage() {
                   }))
                 : undefined,
             }))
+          );
+        }
+
+        if (crmActivityRes.ok) {
+          const crmJson = (await crmActivityRes.json()) as { data?: Array<Record<string, unknown>> };
+          setCrmActivity(
+            (crmJson.data ?? []).map((item) => ({
+              id: String(item.id ?? ''),
+              eventType: String(item.eventType ?? 'crm_update'),
+              title: typeof item.title === 'string' ? item.title : null,
+              summary: typeof item.summary === 'string' ? item.summary : null,
+              companyName: typeof item.companyName === 'string' ? item.companyName : null,
+              companyDomain: typeof item.companyDomain === 'string' ? item.companyDomain : null,
+              contactName: typeof item.contactName === 'string' ? item.contactName : null,
+              contactEmail: typeof item.contactEmail === 'string' ? item.contactEmail : null,
+              crmLabel: typeof item.crmLabel === 'string' ? item.crmLabel : 'CRM',
+              observedAt: String(item.observedAt ?? ''),
+              eventAt: typeof item.eventAt === 'string' ? item.eventAt : null,
+            })),
           );
         }
 
@@ -943,8 +1008,19 @@ export default function BriefingPage() {
         if (!agg) { agg = { company, latestMs: 0, items: new Map() }; trialAgg.set(company, agg); }
         agg.latestMs = Math.max(agg.latestMs, sigDate);
         const id = metaStr(meta.nct_id)!;
-        if (!agg.items.has(id)) {
-          agg.items.set(id, { id, title: metaTitle(s.signalKey, meta) ?? id, url: cleanSubItemUrl(s.sourceUrl), what: null, ago: '' });
+        const title = metaTitle(s.signalKey, meta) ?? id;
+        const item: SignalSubItem = {
+          id,
+          title:
+            s.signalKey === 'trial_failure_or_halt' || s.signalKey === 'program_discontinuation'
+              ? `${signalLabel(s.signalKey)}: ${title}`
+              : title,
+          url: cleanSubItemUrl(s.sourceUrl),
+          what: null,
+          ago: '',
+        };
+        if (!agg.items.has(id) || s.signalKey === 'trial_failure_or_halt' || s.signalKey === 'program_discontinuation') {
+          agg.items.set(id, item);
         }
         continue;
       }
@@ -952,7 +1028,10 @@ export default function BriefingPage() {
       // ── Everything else → per-(company, signalKey) grouping ──
       const family = ensureFamily(familyKey);
       const groupKey = SIGNAL_KEY_NORMALIZE[s.signalKey] ?? s.signalKey;
-      const rowKey = `${company}||${groupKey}`;
+      const subject = PERSON_SUBJECT_SIGNAL_KEYS.has(s.signalKey) && s.contactName
+        ? s.contactName
+        : company;
+      const rowKey = `${subject}||${groupKey}`;
 
       // Aggregate hiring signals: pills tell the story; a single job-posting URL
       // out of 40+ roles would be misleading — suppress it.
@@ -973,7 +1052,15 @@ export default function BriefingPage() {
         // Hiring: inline count + category pills (pills shown in expanded area only).
         let countLabel: string | undefined;
         let pills: string[] | undefined;
-        if (s.signalKey === 'hiring_expansion') {
+        if (s.signalKey === 'recently_changed_company') {
+          const currentCompany = metaStr(meta.current_company_name) ?? company;
+          const previousCompany = metaStr(meta.previous_company_name);
+          countLabel = previousCompany && currentCompany
+            ? `${previousCompany} -> ${currentCompany}`
+            : currentCompany;
+        } else if (PERSON_SUBJECT_SIGNAL_KEYS.has(s.signalKey) && subject !== company) {
+          countLabel = company;
+        } else if (s.signalKey === 'hiring_expansion') {
           const total = typeof meta.total_postings === 'number' ? meta.total_postings : null;
           const categories = meta.categories && typeof meta.categories === 'object'
             ? (meta.categories as Record<string, number>) : null;
@@ -1002,8 +1089,7 @@ export default function BriefingPage() {
 
         family.set(rowKey, {
           key: rowKey,
-          glyph: signalGlyph(groupKey),
-          company,
+          company: subject,
           label: signalLabel(groupKey),
           count: 1,
           ago: relativeTime(s.eventAt ?? s.observedAt),
@@ -1028,7 +1114,6 @@ export default function BriefingPage() {
       const fallbackItem: SignalSubItem = { id: `${agg.company}-portfolio`, title: 'View patents on Google Patents', url: portfolioUrl, what: null, ago: '' };
       ensureFamily('research').set(`${agg.company}||patents`, {
         key: `${agg.company}||patents`,
-        glyph: '◎',
         company: agg.company,
         label: 'Patents',
         count: total,
@@ -1047,7 +1132,6 @@ export default function BriefingPage() {
       const shown = items.slice(0, PATENT_DISPLAY_CAP);
       ensureFamily('pipeline').set(`${agg.company}||clinical_activity`, {
         key: `${agg.company}||clinical_activity`,
-        glyph: '⬡',
         company: agg.company,
         label: 'Clinical trials',
         count: items.length,
@@ -1087,6 +1171,118 @@ export default function BriefingPage() {
       return next;
     });
   };
+  const BT_ACCENT = '#00a4b4';
+  const rightSignalGroups = signalGroups.filter((group) => RIGHT_STACK_SIGNAL_FAMILIES.has(group.family.key));
+  const mainSignalGroups = signalGroups.filter((group) => !RIGHT_STACK_SIGNAL_FAMILIES.has(group.family.key));
+  const renderSignalTile = (group: (typeof signalGroups)[number]) => (
+    <section key={group.family.key} className="bt-bento bt-signals-tile">
+      <header className="bt-tile-head">
+        <div>
+          <p className="bt-tile-eyebrow">{group.family.eyebrow}</p>
+          <h2 className="bt-tile-title">{group.family.title}</h2>
+        </div>
+        {group.rows.length > 0 && (
+          <span className="bt-tile-live">
+            <span className="bt-live-dot" style={{ background: BT_ACCENT }} />
+            {group.rows.length === 1 ? '1 account' : `${group.rows.length} accounts`}
+          </span>
+        )}
+      </header>
+      {group.rows.length === 0 ? (
+        <p className="bt-sig-quiet">
+          No {group.family.title.toLowerCase()} signals in the last {(group.family.key === 'hiring' || group.family.key === 'people') ? '14' : '30'} days
+        </p>
+      ) : (
+        <ul className="bt-sig-list">
+          {group.rows.map((row, i) => {
+            const isOpen = expandedSignalRows.has(row.key);
+            const expandableItems = row.items.filter(item => item.title || item.url);
+            // Expandable if has linked sub-items OR category pills to reveal
+            const isExpandable = expandableItems.length > 0 || (row.pills != null && row.pills.length > 0);
+            const RowEl = isExpandable ? 'button' : 'div';
+            return (
+              <li key={row.key} className="bt-sig-group-item" style={{ animationDelay: `${i * 40}ms` }}>
+                {/* Collapsed row — always visible */}
+                <RowEl
+                  {...(isExpandable ? { type: 'button' as const, onClick: () => toggleSignalRow(row.key), 'aria-expanded': isOpen } : {})}
+                  className={cn('bt-sig-row bt-sig-row--group', isOpen && 'is-open', !isExpandable && 'bt-sig-row--static')}
+                >
+                  <span className="bt-sig-body">
+                    <span className="bt-sig-line">
+                      <strong>{row.company}</strong>
+                      {` · ${row.label}`}
+                      {row.countLabel && (
+                        <span className="bt-sig-line-count">{` · ${row.countLabel}`}</span>
+                      )}
+                    </span>
+                  </span>
+                  <span className="bt-sig-ago">{row.ago}</span>
+                  {isExpandable && (
+                    <ChevronRight className="bt-sig-chevron h-3 w-3" strokeWidth={2.2} />
+                  )}
+                </RowEl>
+
+                {/* Expanded area: category pills + linked sub-items */}
+                {isOpen && isExpandable && (
+                  <>
+                    {row.pills && row.pills.length > 0 && (
+                      <div className="bt-sig-expanded-pills">
+                        {row.pills.map((pill, j) => (
+                          <span key={j} className="bt-sig-pill">{pill}</span>
+                        ))}
+                      </div>
+                    )}
+                    {row.listCaption && (
+                      <p className="bt-sig-list-caption">{row.listCaption}</p>
+                    )}
+                    {expandableItems.length > 0 && (
+                      <ul className="bt-sig-sub-list">
+                        {expandableItems.map((item) => {
+                          const label = item.title ?? item.what;
+                          if (!label && !item.url) return null;
+                          return (
+                            <li key={item.id} className="bt-sig-sub-item">
+                              {item.url ? (
+                                <a
+                                  href={item.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="bt-sig-sub-link"
+                                >
+                                  {label ?? item.url}
+                                  <ExternalLink className="bt-sig-sub-ext h-2.5 w-2.5" strokeWidth={2} />
+                                </a>
+                              ) : (
+                                <span className="bt-sig-sub-text">{label}</span>
+                              )}
+                              {item.ago && item.ago !== row.ago && <span className="bt-sig-sub-ago">{item.ago}</span>}
+                            </li>
+                          );
+                        })}
+                        {row.moreCount != null && row.moreCount > 0 && row.moreUrl && (
+                          <li className="bt-sig-sub-item">
+                            <a
+                              href={row.moreUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="bt-sig-sub-link bt-sig-sub-more"
+                            >
+                              {`+${row.moreCount} more on Google Patents`}
+                              <ExternalLink className="bt-sig-sub-ext h-2.5 w-2.5" strokeWidth={2} />
+                            </a>
+                          </li>
+                        )}
+                      </ul>
+                    )}
+                  </>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
 
   const agenda: AgendaItem[] = [
     // Replies are the highest-leverage thing on the page when present —
@@ -1208,7 +1404,6 @@ export default function BriefingPage() {
   if (!user) return null;
 
   const displayName = getDisplayName(user);
-  const BT_ACCENT = '#00a4b4';
   const pipeReady = topLeads.length;
 
   const briefingAgentWelcome = {
@@ -1360,118 +1555,49 @@ export default function BriefingPage() {
                 )}
               </section>
 
-            </div>
+              {rightSignalGroups.map(renderSignalTile)}
 
-            {signalGroups.map((group) => (
-              <section key={group.family.key} className="bt-bento bt-signals-tile">
+              <section className="bt-bento bt-crm-tile">
                 <header className="bt-tile-head">
                   <div>
-                    <p className="bt-tile-eyebrow">{group.family.eyebrow}</p>
-                    <h2 className="bt-tile-title">{group.family.title}</h2>
+                    <p className="bt-tile-eyebrow">Workspace</p>
+                    <h2 className="bt-tile-title">CRM Activity</h2>
                   </div>
-                  {group.rows.length > 0 && (
+                  {crmActivity.length > 0 && (
                     <span className="bt-tile-live">
                       <span className="bt-live-dot" style={{ background: BT_ACCENT }} />
-                      {group.rows.length === 1 ? '1 account' : `${group.rows.length} accounts`}
+                      {crmActivity.length === 1 ? '1 update' : `${crmActivity.length} updates`}
                     </span>
                   )}
                 </header>
-                {group.rows.length === 0 ? (
-                  <p className="bt-sig-quiet">
-                    No {group.family.title.toLowerCase()} signals in the last {(group.family.key === 'hiring' || group.family.key === 'people') ? '14' : '30'} days
-                  </p>
+                {crmActivity.length === 0 ? (
+                  <p className="bt-sig-quiet">No recent CRM changes</p>
                 ) : (
                   <ul className="bt-sig-list">
-                    {group.rows.map((row, i) => {
-                      const isOpen = expandedSignalRows.has(row.key);
-                      const expandableItems = row.items.filter(item => item.title || item.url);
-                      // Expandable if has linked sub-items OR category pills to reveal
-                      const isExpandable = expandableItems.length > 0 || (row.pills != null && row.pills.length > 0);
-                      const RowEl = isExpandable ? 'button' : 'div';
+                    {crmActivity.slice(0, 6).map((item, i) => {
+                      const detail = crmActivityDetail(item);
                       return (
-                        <li key={row.key} className="bt-sig-group-item" style={{ animationDelay: `${i * 40}ms` }}>
-                          {/* Collapsed row — always visible */}
-                          <RowEl
-                            {...(isExpandable ? { type: 'button' as const, onClick: () => toggleSignalRow(row.key), 'aria-expanded': isOpen } : {})}
-                            className={cn('bt-sig-row bt-sig-row--group', isOpen && 'is-open', !isExpandable && 'bt-sig-row--static')}
-                          >
-                            <span className="bt-sig-glyph" style={{ color: BT_ACCENT }}>{row.glyph}</span>
+                        <li key={item.id} className="bt-sig-group-item" style={{ animationDelay: `${i * 40}ms` }}>
+                          <div className="bt-sig-row bt-sig-row--group bt-sig-row--static">
                             <span className="bt-sig-body">
                               <span className="bt-sig-line">
-                                <strong>{row.company}</strong>
-                                {` · ${row.label}`}
-                                {row.countLabel && (
-                                  <span className="bt-sig-line-count">{` · ${row.countLabel}`}</span>
-                                )}
+                                <strong>{crmActivitySubject(item)}</strong>
+                                {` · ${crmActivityLabel(item.eventType)}`}
                               </span>
+                              {detail && <span className="bt-sig-what">{detail}</span>}
                             </span>
-                            <span className="bt-sig-ago">{row.ago}</span>
-                            {isExpandable && (
-                              <ChevronRight className="bt-sig-chevron h-3 w-3" strokeWidth={2.2} />
-                            )}
-                          </RowEl>
-
-                          {/* Expanded area: category pills + linked sub-items */}
-                          {isOpen && isExpandable && (
-                            <>
-                              {row.pills && row.pills.length > 0 && (
-                                <div className="bt-sig-expanded-pills">
-                                  {row.pills.map((pill, j) => (
-                                    <span key={j} className="bt-sig-pill">{pill}</span>
-                                  ))}
-                                </div>
-                              )}
-                              {row.listCaption && (
-                                <p className="bt-sig-list-caption">{row.listCaption}</p>
-                              )}
-                              {expandableItems.length > 0 && (
-                                <ul className="bt-sig-sub-list">
-                                  {expandableItems.map((item) => {
-                                    const label = item.title ?? item.what;
-                                    if (!label && !item.url) return null;
-                                    return (
-                                      <li key={item.id} className="bt-sig-sub-item">
-                                        {item.url ? (
-                                          <a
-                                            href={item.url}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="bt-sig-sub-link"
-                                          >
-                                            {label ?? item.url}
-                                            <ExternalLink className="bt-sig-sub-ext h-2.5 w-2.5" strokeWidth={2} />
-                                          </a>
-                                        ) : (
-                                          <span className="bt-sig-sub-text">{label}</span>
-                                        )}
-                                        {item.ago && item.ago !== row.ago && <span className="bt-sig-sub-ago">{item.ago}</span>}
-                                      </li>
-                                    );
-                                  })}
-                                  {row.moreCount != null && row.moreCount > 0 && row.moreUrl && (
-                                    <li className="bt-sig-sub-item">
-                                      <a
-                                        href={row.moreUrl}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="bt-sig-sub-link bt-sig-sub-more"
-                                      >
-                                        {`+${row.moreCount} more on Google Patents`}
-                                        <ExternalLink className="bt-sig-sub-ext h-2.5 w-2.5" strokeWidth={2} />
-                                      </a>
-                                    </li>
-                                  )}
-                                </ul>
-                              )}
-                            </>
-                          )}
+                            <span className="bt-sig-ago">{relativeTime(item.eventAt ?? item.observedAt)}</span>
+                          </div>
                         </li>
                       );
                     })}
                   </ul>
                 )}
               </section>
-            ))}
+
+            </div>
+
+            {mainSignalGroups.map(renderSignalTile)}
 
           </div>
         </div>
