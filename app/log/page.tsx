@@ -15,7 +15,7 @@ import {
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-type EventType = 'push' | 'pull' | 'full' | 'csv_import';
+type EventType = 'push' | 'pull' | 'full' | 'eligible_for_reengagement' | 'csv_import';
 
 interface SyncEvent {
   id: string;
@@ -210,25 +210,28 @@ const STATUS_LABEL: Record<StatusLevel, string> = {
 
 // Direction pill — what kind of operation
 const DIRECTION_STYLE: Record<EventType, string> = {
-  push:       'bg-arcova-teal/10 text-arcova-teal border border-arcova-teal/20',
-  pull:       'bg-[#0d3547]/8 text-[#0d3547] border border-[#0d3547]/12',
-  full:       'bg-violet-50 text-violet-600 border border-violet-200',
-  csv_import: 'bg-[#0d3547]/8 text-[#0d3547] border border-[#0d3547]/12',
+  push:                       'bg-arcova-teal/10 text-arcova-teal border border-arcova-teal/20',
+  pull:                       'bg-[#0d3547]/8 text-[#0d3547] border border-[#0d3547]/12',
+  full:                       'bg-violet-50 text-violet-600 border border-violet-200',
+  eligible_for_reengagement:  'bg-violet-50 text-violet-600 border border-violet-200',
+  csv_import:                 'bg-[#0d3547]/8 text-[#0d3547] border border-[#0d3547]/12',
 };
 
 const DIRECTION_LABEL: Record<EventType, string> = {
-  push:       'Export',
-  pull:       'Import',
-  full:       'Sync',
-  csv_import: 'Import',
+  push:                       'Export',
+  pull:                       'Import',
+  full:                       'Sync',
+  eligible_for_reengagement:  'Eligible',
+  csv_import:                 'Import',
 };
 
 // Method pill — how it happened
 const METHOD_LABEL: Record<EventType, string> = {
-  push:       'HubSpot',
-  pull:       'HubSpot',
-  full:       'HubSpot',
-  csv_import: 'CSV',
+  push:                       'HubSpot',
+  pull:                       'HubSpot',
+  full:                       'HubSpot',
+  eligible_for_reengagement:  'HubSpot',
+  csv_import:                 'CSV',
 };
 
 const METHOD_STYLE = 'bg-white/60 text-[#7d909a] border border-[rgba(13,53,71,0.1)]';
