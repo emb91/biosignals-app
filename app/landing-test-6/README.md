@@ -48,7 +48,7 @@ app/landing-test-6/
 
 ## Placeholders to supply before launch
 
-- **Hero headline** — `"Your whole market, watched and ranked."` is a placeholder
+- **Hero headline** — use concise product positioning, not old slogan copy
   (final tagline TBD); one-line swap in `data.ts` → `HERO`.
 - **Pricing** — Free / Starter $149 workspace / Growth $799 workspace. Annual
   prices are $1,490 and $7,990. Edit once in `data.ts` → `PLANS`; commercial

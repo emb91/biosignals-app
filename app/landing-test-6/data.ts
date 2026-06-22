@@ -5,7 +5,7 @@
  */
 
 export const HERO = {
-  eyebrow: "AI-native revenue engine for life science",
+  eyebrow: "Revenue engine for life science",
   headlineLead: "The revenue engine built for",
   headlineAccent: "life sciences.",
   sub: "Arcova watches your market, ranks who's ready to buy, and drafts the outreach. Your team just hits send.",

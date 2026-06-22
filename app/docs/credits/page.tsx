@@ -4,7 +4,7 @@ import { ACTION_CREDITS, FREE_TIER, PLANS } from "@/lib/billing/config"
 import "./credits.css"
 
 export const metadata: Metadata = {
-  title: "Credits and plan allowances | Arcova Docs",
+  title: "Arcova | Credits and plan allowances",
   description: "Understand Arcova credits, plan allowances, action costs, monitoring, and annual billing.",
 }
 

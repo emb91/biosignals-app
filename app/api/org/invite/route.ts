@@ -52,18 +52,136 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'A valid email is required' }, { status: 400 });
   }
 
+  const inviteEmail = email;
+  const orgId = ctx.orgId;
+  const actorUser = ctx.user;
   const admin = createAdminClient();
   const origin = new URL(request.url).origin;
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || origin;
+
+  async function createOrRefreshInviteLink() {
+    await admin
+      .from('org_invites')
+      .update({ status: 'revoked' })
+      .eq('org_id', orgId)
+      .eq('status', 'pending')
+      .ilike('email', inviteEmail);
+
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: inviteRow, error: inviteRowError } = await admin
+      .from('org_invites')
+      .insert({ org_id: orgId, email: inviteEmail, role, invited_by: actorUser.id, expires_at: expiresAt })
+      .select('token')
+      .single();
+
+    if (inviteRowError || !inviteRow) {
+      console.error('[org/invite] org_invites insert failed:', inviteRowError);
+      return null;
+    }
+
+    return `${appUrl}/org/accept?token=${inviteRow.token}`;
+  }
+
+  async function sendGeneratedInviteLink() {
+    const { data: gen, error: genErr } = await admin.auth.admin.generateLink({
+      type: 'invite',
+      email: inviteEmail,
+      options: { data: { org_id: orgId, org_role: role } },
+    });
+
+    if (genErr || !gen?.user || !gen.properties?.hashed_token) {
+      return { ok: false as const, error: genErr };
+    }
+
+    const code = await createAuthLinkCode({
+      tokenHash: gen.properties.hashed_token,
+      otpType: 'invite',
+      next: '/today',
+      email: inviteEmail,
+    });
+    const acceptUrl = `${appUrl}/auth/confirm?code=${code}`;
+    const { data: org } = await admin
+      .from('organizations')
+      .select('name')
+      .eq('id', orgId)
+      .maybeSingle<{ name: string | null }>();
+    const inviterName =
+      ((actorUser.user_metadata as Record<string, unknown> | undefined)?.full_name as string | undefined) ||
+      actorUser.email ||
+      null;
+
+    const mail = buildOrgInviteEmail({ acceptUrl, orgName: org?.name ?? null, inviterName });
+    const sent = await sendAuthEmail({ to: inviteEmail, subject: mail.subject, html: mail.html });
+    if (sent.ok) return { ok: true as const, acceptUrl, userId: gen.user.id, emailed: true };
+
+    console.error('[org/invite] resend send failed:', sent.error);
+    return { ok: true as const, acceptUrl, userId: gen.user.id, emailed: false };
+  }
+
+  const { data: existingMembers } = await admin
+    .from('org_members')
+    .select('user_id, role, joined_at')
+    .eq('org_id', orgId);
+
+  for (const member of existingMembers ?? []) {
+    const row = member as { user_id: string; role: string; joined_at: string | null };
+    const { data } = await admin.auth.admin.getUserById(row.user_id).catch(() => ({ data: { user: null } } as any));
+    const memberEmail = data.user?.email?.trim().toLowerCase();
+    if (memberEmail !== inviteEmail) continue;
+
+    if (row.joined_at) {
+      return NextResponse.json(
+        { error: 'This person is already on your team.' },
+        { status: 409 },
+      );
+    }
+
+    await admin
+      .from('org_members')
+      .update({ role, invited_at: new Date().toISOString() })
+      .eq('org_id', orgId)
+      .eq('user_id', row.user_id);
+
+    if (isResendConfigured()) {
+      const resent = await sendGeneratedInviteLink();
+      if (resent.ok) {
+        return NextResponse.json({
+          delivered: resent.emailed ? 'email' : 'link',
+          email: inviteEmail,
+          acceptUrl: resent.emailed ? undefined : resent.acceptUrl,
+          resent: true,
+        });
+      }
+    }
+
+    const acceptUrl = await createOrRefreshInviteLink();
+    if (!acceptUrl) return NextResponse.json({ error: 'Could not refresh invite link' }, { status: 500 });
+    return NextResponse.json({ delivered: 'link', email: inviteEmail, acceptUrl, resent: true });
+  }
+
+  const { data: pendingInvite } = await admin
+    .from('org_invites')
+    .select('id')
+    .eq('org_id', orgId)
+    .eq('status', 'pending')
+    .ilike('email', inviteEmail)
+    .limit(1);
+
+  if ((pendingInvite ?? []).length > 0) {
+    const acceptUrl = await createOrRefreshInviteLink();
+    if (!acceptUrl) return NextResponse.json({ error: 'Could not refresh invite link' }, { status: 500 });
+    return NextResponse.json({ delivered: 'link', email: inviteEmail, acceptUrl, resent: true });
+  }
 
   // Seat gate: members + pending invites must fit the plan's seat count.
   // Shadow mode (ARCOVA_CREDIT_ENFORCEMENT unset) logs instead of blocking.
-  const entitlements = await getOrgEntitlements(ctx.orgId);
+  const entitlements = await getOrgEntitlements(orgId);
   const [{ count: memberCount }, { count: pendingCount }] = await Promise.all([
-    admin.from('org_members').select('user_id', { count: 'exact', head: true }).eq('org_id', ctx.orgId),
+    admin.from('org_members').select('user_id', { count: 'exact', head: true }).eq('org_id', orgId),
     admin
       .from('org_invites')
       .select('id', { count: 'exact', head: true })
-      .eq('org_id', ctx.orgId)
+      .eq('org_id', orgId)
       .eq('status', 'pending'),
   ]);
   const seatsTaken = (memberCount ?? 0) + (pendingCount ?? 0);
@@ -76,15 +194,13 @@ export async function POST(request: Request) {
       );
     }
     console.log(
-      `[billing] seat limit exceeded in shadow mode: org ${ctx.orgId} has ${seatsTaken}/${entitlements.seatLimit} seats used`,
+      `[billing] seat limit exceeded in shadow mode: org ${orgId} has ${seatsTaken}/${entitlements.seatLimit} seats used`,
     );
   }
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || origin;
-
   const attachMembership = async (userId: string) => {
     const { error: memberError } = await admin.from('org_members').upsert(
-      { org_id: ctx.orgId, user_id: userId, role, invited_at: new Date().toISOString() },
+      { org_id: orgId, user_id: userId, role, invited_at: new Date().toISOString() },
       { onConflict: 'user_id' },
     );
     if (memberError) console.error('[org/invite] member upsert failed:', memberError);
@@ -99,86 +215,42 @@ export async function POST(request: Request) {
   let inviteError: { message?: string; status?: number; code?: string } | null = null;
 
   if (isResendConfigured()) {
-    const { data: gen, error: genErr } = await admin.auth.admin.generateLink({
-      type: 'invite',
-      email,
-      options: { data: { org_id: ctx.orgId, org_role: role } },
-    });
-
-    if (!genErr && gen?.user && gen.properties?.hashed_token) {
-      if (!(await attachMembership(gen.user.id))) {
+    const generated = await sendGeneratedInviteLink();
+    if (generated.ok) {
+      if (!(await attachMembership(generated.userId))) {
         return NextResponse.json({ error: 'Invite created but membership failed; retry.' }, { status: 500 });
       }
 
-      // Email a short ?code (resolves to the token server-side) — a raw
-      // token_hash URL is long enough to get corrupted by email line-wrapping.
-      const code = await createAuthLinkCode({
-        tokenHash: gen.properties.hashed_token,
-        otpType: 'invite',
-        next: '/today',
-        email,
+      return NextResponse.json({
+        delivered: generated.emailed ? 'email' : 'link',
+        email: inviteEmail,
+        acceptUrl: generated.emailed ? undefined : generated.acceptUrl,
       });
-      const acceptUrl = `${appUrl}/auth/confirm?code=${code}`;
-      const { data: org } = await admin
-        .from('organizations')
-        .select('name')
-        .eq('id', ctx.orgId)
-        .maybeSingle<{ name: string | null }>();
-      const inviterName =
-        ((ctx.user.user_metadata as Record<string, unknown> | undefined)?.full_name as string | undefined) ||
-        ctx.user.email ||
-        null;
-
-      const mail = buildOrgInviteEmail({ acceptUrl, orgName: org?.name ?? null, inviterName });
-      const sent = await sendAuthEmail({ to: email, subject: mail.subject, html: mail.html });
-      if (sent.ok) return NextResponse.json({ delivered: 'email', email });
-
-      // Created the user but couldn't email them — hand the owner a copy-link so
-      // the invite isn't lost.
-      console.error('[org/invite] resend send failed:', sent.error);
-      return NextResponse.json({ delivered: 'link', email, acceptUrl });
     }
-    inviteError = genErr;
+    inviteError = generated.error;
   } else {
-    const { data: invited, error } = await admin.auth.admin.inviteUserByEmail(email, {
-      data: { org_id: ctx.orgId, org_role: role },
+    const { data: invited, error } = await admin.auth.admin.inviteUserByEmail(inviteEmail, {
+      data: { org_id: orgId, org_role: role },
       redirectTo: `${appUrl}/auth/confirm?next=/today`,
     });
     if (!error && invited?.user) {
       if (!(await attachMembership(invited.user.id))) {
         return NextResponse.json({ error: 'Invite sent but membership failed; retry.' }, { status: 500 });
       }
-      return NextResponse.json({ delivered: 'email', email });
+      return NextResponse.json({ delivered: 'email', email: inviteEmail });
     }
     inviteError = error;
   }
 
   // ── Path 2: already-registered email — copy-link accept flow ──────────────
   if (isAlreadyRegistered(inviteError)) {
-    // Refresh any prior pending invite for this (org, email) to a new token.
-    await admin
-      .from('org_invites')
-      .update({ status: 'revoked' })
-      .eq('org_id', ctx.orgId)
-      .eq('status', 'pending')
-      .ilike('email', email);
-
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-    const { data: inviteRow, error: inviteRowError } = await admin
-      .from('org_invites')
-      .insert({ org_id: ctx.orgId, email, role, invited_by: ctx.user.id, expires_at: expiresAt })
-      .select('token')
-      .single();
-
-    if (inviteRowError || !inviteRow) {
-      console.error('[org/invite] org_invites insert failed:', inviteRowError);
-      return NextResponse.json({ error: 'Could not create invite link' }, { status: 500 });
-    }
+    const acceptUrl = await createOrRefreshInviteLink();
+    if (!acceptUrl) return NextResponse.json({ error: 'Could not create invite link' }, { status: 500 });
 
     return NextResponse.json({
       delivered: 'link',
-      email,
-      acceptUrl: `${origin}/org/accept?token=${inviteRow.token}`,
+      email: inviteEmail,
+      acceptUrl,
     });
   }
 

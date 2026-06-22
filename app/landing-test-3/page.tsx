@@ -35,7 +35,7 @@ const LANDING_HTML = `
   <div class="hero-grid"></div>
   <div class="hero-glow"></div>
   <div class="wrap">
-    <h1>Know who to call, and exactly <span class="hl grad" id="hlword">when</span>.</h1>
+    <h1>Revenue intelligence for <span class="hl grad" id="hlword">life science</span>.</h1>
     <p class="hero-sub">Arcova watches your life science market for buying signals, ranks who to reach out to, and drafts the outreach. You just hit send.</p>
     <div class="hero-cta" id="heroCta">
       <a class="btn btn-primary btn-lg" href="/signup" data-cta>Start for free <svg class="arr" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
@@ -654,7 +654,7 @@ export default function LandingTest3() {
           const h1 = root.querySelector<HTMLElement>(".hero h1")
           if (h1) h1.innerHTML = b.dataset.w === "ranked"
             ? 'Your life science market, <span class="' + cls + '" id="hlword">ranked</span> every morning.'
-            : 'Know who to call, and exactly <span class="' + cls + '" id="hlword">when</span>.'
+            : 'Revenue intelligence for <span class="' + cls + '" id="hlword">life science</span>.'
         })
         seg("twCta", (b) => {
           const dual = b.dataset.ctaMode === "dual"

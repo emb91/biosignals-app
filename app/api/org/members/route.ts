@@ -53,6 +53,19 @@ export async function GET() {
     .eq('org_id', ctx.orgId)
     .eq('status', 'pending')
     .order('created_at', { ascending: false });
+  const memberEmails = new Set(
+    members
+      .map((member) => member.email?.trim().toLowerCase())
+      .filter((email): email is string => Boolean(email)),
+  );
+  const seenInviteEmails = new Set<string>();
+  const pendingInvites = [];
+  for (const invite of invites ?? []) {
+    const email = invite.email?.trim().toLowerCase();
+    if (!email || memberEmails.has(email) || seenInviteEmails.has(email)) continue;
+    seenInviteEmails.add(email);
+    pendingInvites.push(invite);
+  }
 
   return NextResponse.json({
     orgId: ctx.orgId,
@@ -60,7 +73,7 @@ export async function GET() {
     role: ctx.role,
     selfUserId: ctx.user.id,
     members,
-    pendingInvites: invites ?? [],
+    pendingInvites,
   });
 }
 

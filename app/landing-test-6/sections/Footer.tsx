@@ -17,7 +17,7 @@ export function Footer() {
         <div className="foot-top">
           <div className="foot-brand">
             <Image src="/arcova-wordmark.png" alt="Arcova" width={120} height={30} style={{ height: 30, width: "auto" }} />
-            <p>The AI-native revenue engine for life science. Your whole market, watched and ranked.</p>
+            <p>Revenue intelligence for life science teams.</p>
           </div>
           {FOOTER_COLS.map((col) => (
             <div className="foot-col" key={col.h}>
@@ -30,7 +30,7 @@ export function Footer() {
         </div>
         <div className="foot-bottom">
           <span className="cr">© 2026 Arcova. All rights reserved.</span>
-          <span className="tag">Your market, watched and ranked.</span>
+          <span className="tag">Revenue engine for life science.</span>
         </div>
       </div>
     </footer>

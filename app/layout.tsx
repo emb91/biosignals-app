@@ -41,8 +41,8 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const metadata = {
   metadataBase: new URL('https://arcova.bio'),
-  title: "Know who to call, and exactly when | Arcova",
-  description: "AI-native revenue intelligence for life science commercial teams.",
+  title: "Arcova",
+  description: "Revenue intelligence for life science teams.",
   icons: {
     icon: [
       { url: "/arcova-favicon.png", sizes: "200x200", type: "image/png" }
@@ -60,8 +60,8 @@ export const metadata = {
   openGraph: {
     type: 'website',
     url: 'https://arcova.bio',
-    title: "Know who to call, and exactly when | Arcova",
-    description: "AI-native revenue intelligence for life science commercial teams.",
+    title: "Arcova",
+    description: "Revenue intelligence for life science teams.",
     siteName: 'Arcova',
     images: [
       {
@@ -75,13 +75,6 @@ export const metadata = {
   alternates: {
     canonical: '/',
   },
-  // twitter: {
-  //   card: "summary_large_image",
-  //   title: "Arcova | Scientific Evidence for Business Decisions",
-  //   description: "Oxford-trained PhD team turning raw biomedical literature into decision-ready insight.",
-  //   images: ["/images/og-image.png"],
-  //   creator: "@arcova",
-  // },
 }
 
 export default function RootLayout({
@@ -111,7 +104,7 @@ export default function RootLayout({
               name: "Arcova",
               url: "https://arcova.bio",
               logo: "https://arcova.bio/arcova-logo.png",
-              description: "AI-native revenue intelligence for life science commercial teams.",
+              description: "Revenue intelligence for life science teams.",
             }),
           }}
         />

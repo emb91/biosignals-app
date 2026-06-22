@@ -8,7 +8,7 @@ export function Hero() {
       <div className="hero-glow" />
       <div className="wrap hero-in">
         <div className="hero-copy">
-          <Eyebrow>AI-native revenue engine</Eyebrow>
+          <Eyebrow>Revenue engine for life science</Eyebrow>
           <h1 className="display">{HERO.headline}</h1>
           <p className="lead">{HERO.sub}</p>
           <div className="hero-cta">
