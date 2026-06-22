@@ -10,7 +10,6 @@ import AppSidebar from '@/components/AppSidebar';
 import TeamSettings from '@/components/TeamSettings';
 import BillingSettings from '@/components/BillingSettings';
 import UsageSettings from '@/components/UsageSettings';
-import HubSpotSyncStatus from '@/components/HubSpotSyncStatus';
 
 interface LemlistStatus {
   connected: boolean;
@@ -66,6 +65,15 @@ export default function SettingsPage() {
   useEffect(() => {
     if (!loading && !user) router.push('/login');
   }, [loading, router, user]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const hash = window.location.hash.replace('#', '');
+    if (!hash) return;
+    window.requestAnimationFrame(() => {
+      document.getElementById(hash)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }, []);
 
   const refreshLemlistStatus = useCallback(async () => {
     try {
@@ -239,7 +247,7 @@ export default function SettingsPage() {
           <h1 className="text-2xl font-semibold text-slate-950">Settings</h1>
 
           {/* ── Outreach connections ─────────────────────────────────────── */}
-          <section className="mt-8">
+          <section id="outreach-connections" className="mt-8 scroll-mt-6">
             <h2 className="text-sm font-semibold uppercase tracking-[0.08em] text-[#7d909a]">Outreach connections</h2>
             <p className="mt-1 text-sm text-[#7d909a]">
               Connect the tools that run your sequences. You bring your own accounts; we never touch your LinkedIn login.
@@ -331,11 +339,22 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            <HubSpotSyncStatus />
+            {hubspotStatus?.connected && (
+              <Link
+                href="/log"
+                className="mt-3 flex items-center justify-between rounded-2xl border border-white/80 bg-white/70 px-5 py-4 shadow-[0_8px_24px_-12px_rgba(13,53,71,0.15)] backdrop-blur-xl transition hover:bg-white"
+              >
+                <div>
+                  <h3 className="text-base font-semibold text-[#0d3547]">Sync activity</h3>
+                  <p className="mt-1 text-sm text-[#7d909a]">See every HubSpot sync, import, and signal in the log.</p>
+                </div>
+                <ChevronRight className="h-5 w-5 text-[#b6c2c8]" />
+              </Link>
+            )}
           </section>
 
           {/* ── Outreach voice ───────────────────────────────────────────── */}
-          <section className="mt-8">
+          <section id="outreach-voice" className="mt-8 scroll-mt-6">
             <h2 className="text-sm font-semibold uppercase tracking-[0.08em] text-[#7d909a]">Outreach voice</h2>
             <p className="mt-1 text-sm text-[#7d909a]">
               Tell Arcova how your outreach should sound. Guidance and examples are woven into every generated hook and sequence.
@@ -413,25 +432,20 @@ export default function SettingsPage() {
             </div>
           </section>
 
-          <TeamSettings />
+          <div id="team-settings" className="scroll-mt-6">
+            <TeamSettings />
+          </div>
 
-          <BillingSettings />
+          <div id="billing-settings" className="scroll-mt-6">
+            <BillingSettings />
+          </div>
 
-          <UsageSettings />
+          <div id="usage-settings" className="scroll-mt-6">
+            <UsageSettings href="/settings/usage" />
+          </div>
 
           {/* ── Other settings ────────────────────────────────────────────── */}
           <div className="mt-8 space-y-4">
-            <Link
-              href="/my-profile"
-              className="flex items-center justify-between rounded-2xl border border-white/80 bg-white/70 px-5 py-4 shadow-[0_8px_24px_-12px_rgba(13,53,71,0.15)] backdrop-blur-xl transition hover:bg-white"
-            >
-              <div>
-                <h2 className="text-base font-semibold text-[#0d3547]">My profile</h2>
-                <p className="mt-1 text-sm text-[#7d909a]">Your name, role, contact details and background.</p>
-              </div>
-              <ChevronRight className="h-5 w-5 text-[#b6c2c8]" />
-            </Link>
-
             <Link
               href="/settings/archived"
               className="flex items-center justify-between rounded-2xl border border-white/80 bg-white/70 px-5 py-4 shadow-[0_8px_24px_-12px_rgba(13,53,71,0.15)] backdrop-blur-xl transition hover:bg-white"

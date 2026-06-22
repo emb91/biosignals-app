@@ -17,17 +17,10 @@ const CREDITS = {
 
 const STATIC_ROWS: [string, string, string, string][] = [
   ["Workspace users", "1", "Unlimited", "Unlimited"],
-  ["Active leads monitored", "100", "5,000", "10,000"],
+  ["Workspace lead capacity", "100", "5,000", "10,000"],
   ["Monitoring cadence", "Monthly", "Monthly", "Weekly"],
-  ["Imported records triaged", "500 / month", "10,000 / month", "50,000 / month"],
-  ["Included imported enrichments", "25 / month", "300 / month", "1,400 / month"],
-  ["Maximum imported enrichments", "25 / month", "500 / month", "5,000 / month"],
-  ["Maximum net-new enriched leads", "10 / month", "2,500 / month", "10,000 / month"],
-  ["Sequences generated", "1 / 24 hours", "3 / 24 hours", "10 / 24 hours"],
-  ["Phone reveals", "2 / day", "50 / day", "200 / day"],
-  ["Email-finder requests", "2 / day", "50 / day", "200 / day"],
   ["Exports", "Unlimited", "Unlimited", "Unlimited"],
-  ["Additional 1,000 credits", "Not available", "$100", "$70"],
+  ["Purchased rollover credits", "Not available", "$100 / 1,000", "$70 / 1,000"],
 ]
 
 export function Comparison() {
@@ -75,7 +68,7 @@ export function Comparison() {
             </table>
           </div>
           <p className="comparison-note">
-            Credits are used for deliberate actions such as enrichment, verified contact discovery, phone reveals, and sequence generation. Scheduled monitoring does not use credits.{" "}
+            Included credits reset with the plan. Purchased credits roll over and can be used for any paid action. Lead capacity and monitoring cadence are plan-based.{" "}
             <a className="credit-link" href="/docs/credits">How Arcova credits work <span>→</span></a>
           </p>
         </div>

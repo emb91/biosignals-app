@@ -46,7 +46,7 @@ const CATALOG = [
     env: 'STRIPE_PRICE_STARTER_WORKSPACE',
     lookupKey: 'arcova_starter_workspace_monthly',
     product: 'Arcova Starter',
-    description: 'Workspace, monthly — 2,000 credits and 5,000 active leads monitored',
+    description: 'Workspace, monthly — 2,000 included credits and 5,000 lead capacity',
     unitAmount: 14900,
     recurring: { interval: 'month' },
   },
@@ -54,7 +54,7 @@ const CATALOG = [
     env: 'STRIPE_PRICE_STARTER_WORKSPACE_ANNUAL',
     lookupKey: 'arcova_starter_workspace_annual',
     product: 'Arcova Starter — Annual',
-    description: 'Workspace, annual — 24,000 credits granted upfront',
+    description: 'Workspace, annual — 24,000 included credits upfront and 5,000 lead capacity',
     unitAmount: 149000,
     recurring: { interval: 'year' },
   },
@@ -62,7 +62,7 @@ const CATALOG = [
     env: 'STRIPE_PRICE_GROWTH_WORKSPACE',
     lookupKey: 'arcova_growth_workspace_monthly',
     product: 'Arcova Growth',
-    description: 'Workspace, monthly — 8,000 credits and 10,000 active leads monitored weekly',
+    description: 'Workspace, monthly — 8,000 included credits, 10,000 lead capacity and weekly monitoring',
     unitAmount: 79900,
     recurring: { interval: 'month' },
   },
@@ -70,7 +70,7 @@ const CATALOG = [
     env: 'STRIPE_PRICE_GROWTH_WORKSPACE_ANNUAL',
     lookupKey: 'arcova_growth_workspace_annual',
     product: 'Arcova Growth — Annual',
-    description: 'Workspace, annual — 96,000 credits granted upfront',
+    description: 'Workspace, annual — 96,000 included credits upfront, 10,000 lead capacity and weekly monitoring',
     unitAmount: 799000,
     recurring: { interval: 'year' },
   },
@@ -78,7 +78,7 @@ const CATALOG = [
     env: 'STRIPE_PRICE_STARTER_CREDITS_1000',
     lookupKey: 'arcova_starter_credits_1000',
     product: 'Arcova Starter Credit Pack',
-    description: '1,000 additional credits, valid for 12 months',
+    description: '1,000 purchased rollover credits for any paid action, valid for 12 months',
     unitAmount: 10000,
     recurring: null,
   },
@@ -86,7 +86,7 @@ const CATALOG = [
     env: 'STRIPE_PRICE_GROWTH_CREDITS_1000',
     lookupKey: 'arcova_growth_credits_1000',
     product: 'Arcova Growth Credit Pack',
-    description: '1,000 additional credits, valid for 12 months',
+    description: '1,000 purchased rollover credits for any paid action, valid for 12 months',
     unitAmount: 7000,
     recurring: null,
   },
@@ -94,14 +94,31 @@ const CATALOG = [
 
 async function ensurePrice(entry) {
   const existing = await stripe.prices.list({ lookup_keys: [entry.lookupKey], limit: 1 });
-  if (existing.data[0]) return { price: existing.data[0], created: false };
+  if (existing.data[0]) {
+    const price = existing.data[0];
+    await stripe.prices.update(price.id, {
+      metadata: { description: entry.description },
+    });
+    if (typeof price.product === 'string') {
+      await stripe.products.update(price.product, {
+        name: entry.product,
+        description: entry.description,
+        metadata: { description: entry.description },
+      });
+    }
+    return { price, created: false };
+  }
 
   const price = await stripe.prices.create({
     lookup_key: entry.lookupKey,
     currency: 'usd',
     unit_amount: entry.unitAmount,
     ...(entry.recurring ? { recurring: entry.recurring } : {}),
-    product_data: { name: entry.product },
+    product_data: {
+      name: entry.product,
+      description: entry.description,
+      metadata: { description: entry.description },
+    },
     metadata: { description: entry.description },
   });
   return { price, created: true };

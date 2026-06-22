@@ -92,8 +92,6 @@ type PendingPurchase = {
   leadCount: number;
   requiredCredits: number;
   availableCredits: number;
-  monthlyUsed: number;
-  monthlyLimit: number;
   planKey: string;
   canManageBilling: boolean;
   billingAvailable: boolean;
@@ -108,7 +106,6 @@ type BillingSummarySnapshot = {
   role?: 'owner' | 'admin' | 'member';
   plan?: { key?: string };
   credits?: { available?: number };
-  netNewLeads?: { used?: number; limit?: number };
   catalog?: {
     pack?: { available?: boolean; credits?: number; usd?: number } | null;
     plans?: Array<{ key?: string; available?: boolean }>;
@@ -208,8 +205,11 @@ function userFacingJobError(job: AcquisitionJob): string | null {
 
   // Raw provider/API errors are useful in logs, but they are not product copy.
   // Keep this surface calm and action-oriented.
-  if (error.includes('insufficient credits') || error.includes('upgrade your plan')) {
-    return 'A credit or plan limit was reached when this sourcing run executed. If credits have renewed, start a new sourcing request.';
+  if (error.includes('workspace lead capacity') || error.includes('workspace capacity')) {
+    return 'This sourcing run would exceed your workspace lead capacity. Upgrade your plan or reduce the request size.';
+  }
+  if (error.includes('insufficient credits')) {
+    return 'This sourcing run needs more credits. Add credits, then start a new sourcing request.';
   }
   return 'This sourcing run could not complete. Start a new sourcing request to try again.';
 }
@@ -1051,8 +1051,6 @@ function DataPageContent() {
         leadCount,
         requiredCredits: leadCount * 4,
         availableCredits: Number(summary.credits?.available ?? 0),
-        monthlyUsed: Number(summary.netNewLeads?.used ?? 0),
-        monthlyLimit: Number(summary.netNewLeads?.limit ?? 0),
         planKey,
         canManageBilling,
         billingAvailable: Boolean(summary.available),
@@ -1215,10 +1213,7 @@ function DataPageContent() {
   const purchaseWithinCredits = pendingPurchase
     ? pendingPurchase.availableCredits >= pendingPurchase.requiredCredits
     : false;
-  const purchaseWithinMonthlyCap = pendingPurchase
-    ? pendingPurchase.monthlyUsed + pendingPurchase.leadCount <= pendingPurchase.monthlyLimit
-    : false;
-  const purchaseAllowed = purchaseWithinCredits && purchaseWithinMonthlyCap;
+  const purchaseAllowed = purchaseWithinCredits;
   const blockedPurchaseCtaLabel = !pendingPurchase
     ? 'Open billing settings'
     : !purchaseWithinCredits
@@ -1328,11 +1323,6 @@ function DataPageContent() {
                 {!purchaseWithinCredits && (
                   <p className="text-red-600">
                     You need more credits before starting this purchase. Add credits or upgrade, then come back to start the run.
-                  </p>
-                )}
-                {purchaseWithinCredits && !purchaseWithinMonthlyCap && (
-                  <p className="text-red-600">
-                    This purchase would exceed your monthly net-new lead limit. Review your plan options to raise the cap.
                   </p>
                 )}
                 {billingError && <p className="text-red-600">{billingError}</p>}

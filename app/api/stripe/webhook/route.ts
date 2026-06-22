@@ -214,6 +214,15 @@ async function syncSubscription(sub: Stripe.Subscription) {
     { onConflict: 'org_id' },
   );
   if (error) throw new Error(`subscription sync failed: ${error.message}`);
+
+  if (plan && (sub.status === 'active' || sub.status === 'trialing')) {
+    const { error: orgError } = await admin
+      .from('organizations')
+      .update({ billing_exempt: false })
+      .eq('id', orgId)
+      .eq('billing_exempt', true);
+    if (orgError) throw new Error(`billing exemption update failed: ${orgError.message}`);
+  }
 }
 
 async function handleInvoice(invoice: Stripe.Invoice, outcome: 'paid' | 'failed') {

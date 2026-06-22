@@ -18,13 +18,7 @@ const plans = [
     users: "1",
     activeLeads: FREE_TIER.caps.activeMonitoredContacts.toLocaleString(),
     monitoring: "Monthly",
-    triage: `${FREE_TIER.caps.importedRecordsTriagedMonthly.toLocaleString()} / month`,
-    includedEnrichment: `${FREE_TIER.caps.importedEnrichmentsIncludedMonthly.toLocaleString()} / month`,
-    enrichmentCap: `${FREE_TIER.caps.importedEnrichmentsHardCapMonthly.toLocaleString()} / month`,
-    netNew: `${FREE_TIER.caps.netNewEnrichedLeadsMonthly.toLocaleString()} / month`,
-    sequences: `${FREE_TIER.caps.sequencesRolling24Hours} / 24 hours`,
-    phone: `${FREE_TIER.caps.phoneRevealsDaily} / day`,
-    finder: `${FREE_TIER.caps.emailFinderRequestsDaily} / day`,
+    purchasedCredits: "Not available",
     pack: "Not available",
   },
   {
@@ -36,13 +30,7 @@ const plans = [
     users: "Unlimited",
     activeLeads: PLANS.starter.caps.activeMonitoredContacts.toLocaleString(),
     monitoring: "Monthly",
-    triage: `${PLANS.starter.caps.importedRecordsTriagedMonthly.toLocaleString()} / month`,
-    includedEnrichment: `${PLANS.starter.caps.importedEnrichmentsIncludedMonthly.toLocaleString()} / month`,
-    enrichmentCap: `${PLANS.starter.caps.importedEnrichmentsHardCapMonthly.toLocaleString()} / month`,
-    netNew: `${PLANS.starter.caps.netNewEnrichedLeadsMonthly.toLocaleString()} / month`,
-    sequences: `${PLANS.starter.caps.sequencesRolling24Hours} / 24 hours`,
-    phone: `${PLANS.starter.caps.phoneRevealsDaily} / day`,
-    finder: `${PLANS.starter.caps.emailFinderRequestsDaily} / day`,
+    purchasedCredits: "Available; rollover",
     pack: `$${PLANS.starter.creditPackUsdPer1k} / 1,000`,
   },
   {
@@ -54,13 +42,7 @@ const plans = [
     users: "Unlimited",
     activeLeads: PLANS.growth.caps.activeMonitoredContacts.toLocaleString(),
     monitoring: "Weekly",
-    triage: `${PLANS.growth.caps.importedRecordsTriagedMonthly.toLocaleString()} / month`,
-    includedEnrichment: `${PLANS.growth.caps.importedEnrichmentsIncludedMonthly.toLocaleString()} / month`,
-    enrichmentCap: `${PLANS.growth.caps.importedEnrichmentsHardCapMonthly.toLocaleString()} / month`,
-    netNew: `${PLANS.growth.caps.netNewEnrichedLeadsMonthly.toLocaleString()} / month`,
-    sequences: `${PLANS.growth.caps.sequencesRolling24Hours} / 24 hours`,
-    phone: `${PLANS.growth.caps.phoneRevealsDaily} / day`,
-    finder: `${PLANS.growth.caps.emailFinderRequestsDaily} / day`,
+    purchasedCredits: "Available; rollover",
     pack: `$${PLANS.growth.creditPackUsdPer1k} / 1,000`,
   },
 ]
@@ -95,18 +77,12 @@ const planRows: Array<[string, keyof (typeof plans)[number]]> = [
   ["Workspace price", "price"],
   ["Annual price", "annualPrice"],
   ["Workspace users", "users"],
-  ["Subscription credits", "monthlyCredits"],
+  ["Included monthly credits", "monthlyCredits"],
   ["Annual credits", "annualCredits"],
-  ["Active leads monitored", "activeLeads"],
+  ["Workspace lead capacity", "activeLeads"],
   ["Monitoring cadence", "monitoring"],
-  ["Imported records triaged", "triage"],
-  ["Included imported enrichments", "includedEnrichment"],
-  ["Maximum imported enrichments", "enrichmentCap"],
-  ["Maximum net-new enriched leads", "netNew"],
-  ["Sequences generated", "sequences"],
-  ["Phone reveals", "phone"],
-  ["Email-finder requests", "finder"],
-  ["Additional credits", "pack"],
+  ["Purchased credits", "purchasedCredits"],
+  ["Credit pack price", "pack"],
 ]
 
 export default function CreditsDocsPage() {
@@ -144,7 +120,7 @@ export default function CreditsDocsPage() {
             <div className="docs-kicker">Arcova credits</div>
             <h1>Use credits when Arcova does new work for you.</h1>
             <p className="docs-lead">
-              Your plan includes a credit balance for deliberate, on-demand actions—such as enriching a lead,
+              Your plan includes monthly credits for deliberate, on-demand actions—such as enriching a lead,
               finding a verified email, revealing a phone number, or generating outreach. Your scheduled market
               monitoring is included separately and does not spend credits.
             </p>
@@ -162,7 +138,7 @@ export default function CreditsDocsPage() {
               <article>
                 <span>03</span>
                 <h2>Caps keep usage predictable</h2>
-                <p>Credits and plan allowances work together. Buying credits does not remove action caps.</p>
+                <p>Credits buy paid actions. Plans control workspace capacity and monitoring cadence.</p>
               </article>
             </div>
           </section>
@@ -200,9 +176,9 @@ export default function CreditsDocsPage() {
               </table>
             </div>
             <div className="docs-callout">
-              <strong>Included enrichment allocation:</strong> Starter includes up to 300 imported enrichments
-              each month and Growth includes up to 1,400. After that allocation, additional imported enrichment
-              uses purchased credits, up to the plan&apos;s monthly maximum.
+              <strong>Credits and capacity:</strong> Included monthly credits expire at renewal. Purchased
+              credits roll over and can be used for any paid action. Buying credits does not increase workspace
+              lead capacity or monitoring cadence.
             </div>
           </section>
 
@@ -245,8 +221,8 @@ export default function CreditsDocsPage() {
               <div className="docs-kicker">Credit math</div>
               <h2>What your included credits can buy</h2>
               <p>
-                These are simple “if used only for this action” illustrations. Daily, monthly, and rolling
-                action caps still apply.
+                These are simple “if used only for this action” illustrations. Credit balance and workspace
+                capacity still apply.
               </p>
             </div>
             <div className="docs-table-wrap">
@@ -295,9 +271,8 @@ export default function CreditsDocsPage() {
                 <b>{PLANS.growth.annualCredits.toLocaleString()} credits upfront</b>.
               </p>
               <p>
-                Annual credits remain available until renewal, while monthly and daily action caps still reset
-                on their normal schedule. Monthly subscription credits expire at rollover. Purchased credits
-                expire 12 months after purchase.
+                Annual credits remain available until renewal. Monthly subscription credits expire at rollover.
+                Purchased credits roll over and expire 12 months after purchase.
               </p>
             </div>
           </section>
@@ -309,12 +284,12 @@ export default function CreditsDocsPage() {
             </div>
             <div>
               <p>
-                An active lead is an eligible, enriched lead Arcova keeps under scheduled watch. Free and Starter
-                are monitored monthly. Growth is monitored weekly.
+                Lead capacity is the number of leads your workspace can hold and monitor. Free and Starter are
+                monitored monthly. Growth is monitored weekly.
               </p>
               <p>
-                When your active-lead allowance is full, additional eligible leads can be waitlisted. As space
-                becomes available, Arcova prioritizes the strongest-fit records. Monitoring and confirmed
+                When capacity is full, you can still spend credits on actions for existing leads, but you need
+                a higher plan or custom capacity to hold and monitor more leads. Monitoring and confirmed
                 job-change maintenance use zero customer credits.
               </p>
             </div>
@@ -332,7 +307,7 @@ export default function CreditsDocsPage() {
               </details>
               <details>
                 <summary>Can purchased credits take me beyond a plan cap?</summary>
-                <p>No. Credit packs add spendable credits, but your plan&apos;s daily, monthly, and rolling usage caps still apply.</p>
+                <p>Purchased credits can be used for any paid action, but they do not increase workspace lead capacity or monitoring cadence.</p>
               </details>
               <details>
                 <summary>What happens if an action fails?</summary>

@@ -26,7 +26,7 @@ import { fetchContactSignals, renderSignalContext, type ContactSignal } from '@/
 import { createAdminClient } from '@/lib/supabase-admin';
 import { getOrgEntitlements } from '@/lib/billing/entitlements';
 import {
-  checkAndIncrementUsage,
+  recordMeteredUsage,
   refundCredits,
   reserveCredits,
   settleUsage,
@@ -297,12 +297,11 @@ export async function POST(request: Request) {
           action: 'Update billing in Settings.',
         }, { status: 402 });
       }
-      const usage = await checkAndIncrementUsage({
+      const usage = await recordMeteredUsage({
         orgId: member.org_id,
         userId: user.id,
         action: 'outreach_sequence',
         operationKey: operationId,
-        limit: entitlements.caps.sequencesRolling24Hours,
         window: 'rolling_24h',
       });
       if (!usage.ok) return NextResponse.json(usage, { status: 429 });

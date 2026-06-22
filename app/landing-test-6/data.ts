@@ -71,8 +71,8 @@ export const PLANS: Plan[] = [
     priceAnnual: "$0",
     cta: "Start for free",
     featuresHeading: "Includes",
-    featuresMonthly: ["**100** credits / month", "**1** workspace user", "**100** active leads monitored", "**Monthly** monitoring"],
-    featuresAnnual: ["**100** credits / month", "**1** workspace user", "**100** active leads monitored", "**Monthly** monitoring"],
+    featuresMonthly: ["**100** credits / month", "**1** workspace user", "**100** lead capacity", "**Monthly** monitoring"],
+    featuresAnnual: ["**100** credits / month", "**1** workspace user", "**100** lead capacity", "**Monthly** monitoring"],
   },
   {
     name: "Starter",
@@ -86,8 +86,8 @@ export const PLANS: Plan[] = [
     pop: "Most teams start here",
     cta: "Start for free",
     featuresHeading: "Everything in Free, plus",
-    featuresMonthly: ["**2,000** credits / month", "**Unlimited** users", "**5,000** active leads monitored", "**Monthly** monitoring"],
-    featuresAnnual: ["**24,000** credits upfront", "**Unlimited** users", "**5,000** active leads monitored", "**Monthly** monitoring"],
+    featuresMonthly: ["**2,000** credits / month", "**Unlimited** users", "**5,000** lead capacity", "**Monthly** monitoring"],
+    featuresAnnual: ["**24,000** credits upfront", "**Unlimited** users", "**5,000** lead capacity", "**Monthly** monitoring"],
   },
   {
     name: "Growth",
@@ -99,8 +99,8 @@ export const PLANS: Plan[] = [
     paid: true,
     cta: "Start for free",
     featuresHeading: "Everything in Starter, plus",
-    featuresMonthly: ["**8,000** credits / month", "**Unlimited** users", "**10,000** active leads monitored", "**Weekly** monitoring"],
-    featuresAnnual: ["**96,000** credits upfront", "**Unlimited** users", "**10,000** active leads monitored", "**Weekly** monitoring"],
+    featuresMonthly: ["**8,000** credits / month", "**Unlimited** users", "**10,000** lead capacity", "**Weekly** monitoring"],
+    featuresAnnual: ["**96,000** credits upfront", "**Unlimited** users", "**10,000** lead capacity", "**Weekly** monitoring"],
   },
 ]
 

@@ -2,9 +2,8 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { attemptApolloPhoneRevealForContact } from '@/lib/contact-phone-enrichment';
-import { getOrgEntitlements } from '@/lib/billing/entitlements';
 import {
-  checkAndIncrementUsage,
+  recordMeteredUsage,
   refundCredits,
   reserveCredits,
   settleUsage,
@@ -32,14 +31,12 @@ export async function POST(
     .eq('user_id', user.id).maybeSingle<{ org_id: string }>();
   if (!member?.org_id) return NextResponse.json({ error: 'Workspace not found' }, { status: 409 });
 
-  const entitlements = await getOrgEntitlements(member.org_id);
   const operationId = request.headers.get('x-operation-id') || crypto.randomUUID();
-  const usage = await checkAndIncrementUsage({
+  const usage = await recordMeteredUsage({
     orgId: member.org_id,
     userId: user.id,
     action: 'phone_reveal',
     operationKey: operationId,
-    limit: entitlements.caps.phoneRevealsDaily,
     window: 'utc_day',
   });
   if (!usage.ok) return NextResponse.json(usage, { status: 429 });
