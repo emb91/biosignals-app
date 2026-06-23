@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/tmp/arcova-data-acquisition-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/data-acquisition/domain-utils.ts",
+    "lib/data-acquisition/domain-utils.test.ts"
+  ]
+}
