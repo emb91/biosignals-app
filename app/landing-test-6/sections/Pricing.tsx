@@ -158,6 +158,7 @@ export function Pricing() {
           <div className="ent">
             <div className="et">
               <h4>Enterprise</h4>
+              <p>For larger teams that need custom volumes, integrations and security.</p>
             </div>
             <div className="efeat">
               <span>

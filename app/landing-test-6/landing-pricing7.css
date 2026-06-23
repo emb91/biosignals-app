@@ -95,15 +95,15 @@
 #pt7 .compare tbody td.mutedcol .ck { color: var(--ink-faint); }
 
 /* ---------- enterprise band (kept from prior pricing) ---------- */
-#pt7 .ent { margin-top: 22px; display: flex; align-items: center; gap: 28px; flex-wrap: wrap; border-radius: 22px; background: var(--ink); color: #fff; padding: 28px 32px; }
-#pt7 .ent .et { flex: 0 0 auto; }
+#pt7 .ent { margin-top: 22px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 24px 44px; border-radius: 22px; background: var(--ink); color: #fff; padding: 32px 36px; }
+#pt7 .ent .et { align-self: center; max-width: 230px; }
 #pt7 .ent .et h4 { color: #fff; font-family: var(--font-head); font-size: 19px; letter-spacing: -.02em; margin: 0; }
 #pt7 .ent .et p { margin: 6px 0 0; font-size: 13px; color: rgba(255,255,255,.6); line-height: 1.5; max-width: 48ch; }
-#pt7 .ent .efeat { display: flex; gap: 10px 22px; flex-wrap: wrap; }
-#pt7 .ent .efeat span { display: inline-flex; align-items: center; gap: 8px; font-size: 12.8px; color: rgba(255,255,255,.78); }
-#pt7 .ent .efeat svg { width: 14px; height: 14px; color: var(--mint); flex: none; }
+#pt7 .ent .efeat { display: grid; grid-template-columns: repeat(2, auto); gap: 12px 28px; justify-content: start; }
+#pt7 .ent .efeat span { display: inline-flex; align-items: center; gap: 9px; font-size: 13.5px; color: rgba(255,255,255,.82); }
+#pt7 .ent .efeat svg { width: 15px; height: 15px; color: var(--mint); flex: none; }
+#pt7 .ent .ebtn { align-self: center; }
 #pt7 .ent .ebtn .btn { background: var(--teal); color: #fff; }
-#pt7 .ent .ebtn { margin-left: auto; }
 #pt7 .ent .ebtn .btn:hover { background: color-mix(in oklab, var(--teal) 88%, #fff); }
 
 /* ---------- responsive ---------- */

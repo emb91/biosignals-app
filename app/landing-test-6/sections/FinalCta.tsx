@@ -4,11 +4,10 @@ export function FinalCta() {
       <div className="wrap">
         <div className="cta-card reveal">
           <div className="inner">
-            <span className="cta-eyebrow">Verify on your own data</span>
             <h2>
               See your accounts, <span className="hl">scored.</span>
             </h2>
-            <p className="cta-sub">Try it free on 100 accounts. Get them enriched, scored and prioritised today.</p>
+            <p className="cta-sub">Try it free on 100 accounts.</p>
             <div className="acts">
               <form className="hero-form cta-form" action="/signup" method="get">
                 <span className="hero-form-ic" aria-hidden="true"><span className="hero-form-live" /></span>
