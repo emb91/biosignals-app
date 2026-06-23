@@ -18,7 +18,7 @@ import { PATENT_SURGE_WINDOW_DAYS } from '@/lib/signals/patent-surge';
 import { cn } from '@/lib/utils';
 
 type SetupStep = {
-  id: 'profile' | 'companies' | 'personas' | 'import' | 'signals';
+  id: 'profile' | 'companies';
   label: string;
   completed: boolean;
   actionPath: string;
@@ -26,12 +26,6 @@ type SetupStep = {
 
 type IcpRecord = {
   id: string;
-  signals?: string[] | null;
-};
-
-type ContactRecord = {
-  id: string;
-  signals?: string[] | null;
 };
 
 type LiveSignal = {
@@ -108,7 +102,6 @@ type AgendaItem = {
   action?: TodayPriority['action'];
 };
 
-const hasSignals = (signals?: string[] | null) => Array.isArray(signals) && signals.length > 0;
 const TASK_STATE_STORAGE_PREFIX = 'arcova_briefing_tasks';
 
 function pct(value: unknown): number {
@@ -569,6 +562,8 @@ export default function BriefingPage() {
   const [loadingDashboard, setLoadingDashboard] = useState(true);
   const [steps, setSteps] = useState<SetupStep[]>([]);
   const [topLeads, setTopLeads] = useState<TopLead[]>([]);
+  const [hasAnyLeads, setHasAnyLeads] = useState(false);
+  const [hasBuyingTeams, setHasBuyingTeams] = useState(false);
   const [repliedCount, setRepliedCount] = useState<number>(0);
   const [firstRepliedName, setFirstRepliedName] = useState<string | null>(null);
   const [showImportReady, setShowImportReady] = useState(false);
@@ -716,8 +711,6 @@ export default function BriefingPage() {
           { data: profileData, error: profileError },
           { data: personaData },
           icpsBootstrap,
-          contactsBootstrap,
-          { data: importData, error: importError },
           topLeadsRes,
           syncLogRes,
           icpCoverageRes,
@@ -731,13 +724,10 @@ export default function BriefingPage() {
           // profile is set up once per workspace, so an invited member must NOT be
           // told to "finish the company profile" their owner already completed.
           supabase.from('user_company').select('id').limit(1).maybeSingle(),
-          // Same org-scoped logic for buying teams: "Finish buying teams" must not
-          // show when the workspace already has personas (previously inferred from
-          // the member's own contact count, which was wrong on both axes).
+          // Org-scoped: buying teams are useful for contact fit and sourcing, but
+          // they are no longer a setup-completion gate.
           supabase.from('personas').select('id').limit(1).maybeSingle(),
           fetch(ROUTES.api.icps),
-          fetch('/api/contacts'),
-          supabase.from('raw_uploads').select('id').eq('user_id', user.id).limit(1).maybeSingle(),
           // Over-fetch so teammate-worked leads can be excluded and still leave a top 5.
           fetch('/api/leads?pageSize=15&page=1'),
           fetch('/api/hubspot/sync-log'),
@@ -750,16 +740,14 @@ export default function BriefingPage() {
         ]);
 
         if (profileError) throw profileError;
-        if (importError) throw importError;
 
         const icpsJson = icpsBootstrap.ok ? await icpsBootstrap.json() : {};
-        const contactsJson = contactsBootstrap.ok ? await contactsBootstrap.json() : {};
         const icps = ((icpsJson as { data?: IcpRecord[] }).data ?? []) as IcpRecord[];
-        const contacts = ((contactsJson as { data?: ContactRecord[] }).data ?? []) as ContactRecord[];
 
         if (topLeadsRes.ok) {
           const leadJson = (await topLeadsRes.json()) as { data?: Array<Record<string, unknown>> };
           let leadRows = (leadJson.data ?? []).filter((lead) => typeof lead.id === 'string');
+          setHasAnyLeads(leadRows.length > 0);
 
           // Never recommend a lead a teammate is already working — two reps must not be
           // pointed at the same person. Best-effort: if the lookup fails, show unfiltered.
@@ -796,6 +784,8 @@ export default function BriefingPage() {
               };
             }),
           );
+        } else {
+          setHasAnyLeads(false);
         }
 
         if (syncLogRes.ok) {
@@ -886,17 +876,11 @@ export default function BriefingPage() {
 
         const profileComplete = Boolean(profileData);
         const companiesComplete = icps.length > 0;
-        const contactsComplete = contacts.length > 0;
-        const importComplete = Boolean(importData);
-        const signalsComplete =
-          icps.some((icp) => hasSignals(icp.signals)) || contacts.some((contact) => hasSignals(contact.signals));
+        setHasBuyingTeams(Boolean(personaData));
 
         setSteps([
           { id: 'profile', label: 'company profile', completed: profileComplete, actionPath: profileComplete ? ROUTES.setup.company : '/arcova-setup' },
           { id: 'companies', label: 'ICPs', completed: companiesComplete, actionPath: ROUTES.setup.icps },
-          { id: 'personas', label: 'buying teams', completed: Boolean(personaData), actionPath: ROUTES.setup.icps },
-          { id: 'import', label: 'contact import', completed: importComplete, actionPath: ROUTES.import },
-          { id: 'signals', label: 'signals setup', completed: signalsComplete, actionPath: ROUTES.setup.icps },
         ]);
       } catch (error) {
         console.error('Error loading dashboard data:', error);
@@ -1322,6 +1306,26 @@ export default function BriefingPage() {
       cta: p.cta,
       action: p.action,
     })),
+    ...(!nextStep && !hasAnyLeads
+      ? [{
+          id: 'import-contacts',
+          label: '',
+          title: 'Import contacts',
+          detail: 'Bring in contacts before working Leads.',
+          href: ROUTES.import,
+          cta: 'Import',
+        }]
+      : []),
+    ...(!nextStep && !hasBuyingTeams
+      ? [{
+          id: 'define-buying-teams',
+          label: '',
+          title: 'Define buying teams',
+          detail: 'Contact fit and sourcing work better once each ICP has a buyer profile.',
+          href: ROUTES.setup.icps,
+          cta: 'Open ICPs',
+        }]
+      : []),
     ...(showImportReady
       ? [{
           id: 'import-ready',
@@ -1380,6 +1384,8 @@ export default function BriefingPage() {
 
   const briefing = [
     nextStep ? `setup incomplete: ${nextStep.label}` : 'setup complete',
+    hasAnyLeads ? 'leads available' : 'no leads available yet',
+    hasBuyingTeams ? 'buying teams available' : 'no buying teams defined yet',
     showImportReady ? 'new import ready for lead review' : 'no new import-ready event',
     failedJobs.length > 0 ? `${failedJobs.length} enrichment failed` : 'no enrichment failures',
     runningJobs.length > 0 ? `${runningJobs.length} enrichment running` : 'no enrichment running',

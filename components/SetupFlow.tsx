@@ -14,6 +14,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
 import { parseSSEStream } from '@/lib/sse';
 import Image from 'next/image';
+import { Logo } from '@/components/logo';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { ArcovaLoader } from '@/components/ArcovaLoader';
@@ -2488,7 +2489,7 @@ function SetupTargetCompanyCard({
 
 function AgentAvatar() {
   return (
-    <Image src="/images/network-og.png" alt="Arcova" width={36} height={36} className="h-9 w-9 shrink-0 rounded-full ring-2 ring-white/15 object-cover" />
+    <Logo variant="icon" size={36} className="shrink-0" />
   );
 }
 
@@ -4277,7 +4278,6 @@ export default function SetupFlow({
         companySizes: d.companySizes,
         liFollowerSizes: d.liFollowerSizes,
         fundingStages: d.fundingStages,
-        signals: d.signals,
         exampleCompanies: [],
         exampleCompanyUrl: enrichedTargetCompany?.website ?? lastTargetUrlRef.current ?? '',
         exampleCompanyEnrichment: enrichedTargetCompany ?? undefined,
@@ -4287,11 +4287,18 @@ export default function SetupFlow({
       }),
     });
 
-    if (saveRes.ok) {
-      const saved = await saveRes.json();
-      const row = saved?.data ?? saved;
-      icpIdRef.current = typeof row?.id === 'string' ? row.id : null;
+    if (!saveRes.ok) {
+      const payload = (await saveRes.json().catch(() => ({}))) as { error?: string; message?: string };
+      const message = payload.error ?? payload.message ?? 'I could not save this ICP. Please try again.';
+      setPhase('customer_url_review');
+      setInput(true);
+      await say(message);
+      return;
     }
+
+    const saved = await saveRes.json();
+    const row = saved?.data ?? saved;
+    icpIdRef.current = typeof row?.id === 'string' ? row.id : null;
 
     // Generate buying team suggestions from seller + ICP profiles
     setPhase('buying_team_loading');
@@ -7615,15 +7622,15 @@ export default function SetupFlow({
       : <StepEyebrow step={2} />;
     // Two distinct waiting-card "blocks":
     //   - Block A (after target review): we're saving the ICP and mapping the buying team.
-    //   - Block B (after buying-team review): we're saving the persona, crafting signals, wrapping up.
+    //   - Block B (after buying-team review): we're saving the persona and wrapping up.
     // Each block has its own eyebrow + checklist steps so the user sees relevant progress.
     const isAfterBuyingTeam = phase === 'persona_saving' || phase === 'done';
     const orbEyebrow = isAfterBuyingTeam ? 'Wrapping up your setup' : 'Define your buying teams';
     const progressSteps = isAfterBuyingTeam
       ? [
           'Saving your buying team',
-          'Crafting company signals',
-          'Crafting contact signals',
+          'Preparing account monitoring',
+          'Preparing contact context',
           'Finalising your setup',
         ]
       : [

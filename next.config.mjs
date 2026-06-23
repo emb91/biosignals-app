@@ -81,6 +81,11 @@ const nextConfig = {
         permanent: false,
       },
       {
+        source: '/contacts',
+        destination: '/leads/contacts',
+        permanent: false,
+      },
+      {
         source: '/accounts',
         destination: '/leads/accounts',
         permanent: false,

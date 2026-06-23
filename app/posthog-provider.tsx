@@ -20,6 +20,9 @@ if (typeof window !== 'undefined' && POSTHOG_KEY && !posthog.__loaded) {
     // Only create person profiles for identified users — anonymous events still
     // captured (so the marketing funnel works) but billable profiles stay lean.
     person_profiles: 'identified_only',
+    // This app does not use PostHog feature flags. Leaving evaluation enabled
+    // causes local /flags requests to time out and emit noisy SDK warnings.
+    advanced_disable_feature_flags: true,
     // We send $pageview manually below so client-side App Router navigations are tracked.
     capture_pageview: false,
     capture_pageleave: true,

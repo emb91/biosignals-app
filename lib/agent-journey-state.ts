@@ -150,7 +150,7 @@ export function buildWorkspaceJourneyState(input: WorkspaceJourneyStateInput): W
       label: next.label,
       href: !setup.company_profile_complete ? ROUTES.setup.company : ROUTES.setup.icps,
     };
-  } else if (!importState.has_imported_contacts) {
+  } else if (!importState.has_imported_contacts && leads.total === 0 && accounts.total === 0) {
     journeyStage = 'import';
     recommendedNextAction = {
       reason: workspaceJourneyImportNoContacts.reason,

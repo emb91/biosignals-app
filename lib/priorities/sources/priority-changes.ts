@@ -39,6 +39,15 @@ function preview(labels: string[], max = 2): string {
   return shown.join(', ') + (overflow > 0 ? ` +${overflow}` : '');
 }
 
+function compactChangeDetail(kind: 'contact' | 'account', labels: string[], count: number): string {
+  const noun = kind === 'contact' ? 'contact' : 'account';
+  const names = labels.map((label) => label.replace(/\s+\([^)]*\)$/, ''));
+  const namesPreview = preview(names);
+  return namesPreview
+    ? `${namesPreview} changed priority.`
+    : `${count} ${noun}${count === 1 ? '' : 's'} changed priority.`;
+}
+
 type ChangedSnap = {
   entityId: string;
   priority_score: number;
@@ -135,13 +144,12 @@ export async function computeContactPriorityChanges(
     source: 'contact-priority-changes',
     groupKey: 'default',
     severity: 'medium',
-    title: count === 1 ? "A contact's priority changed" : `${count} contacts changed priority`,
-    detail: preview(labels)
-      ? `${preview(labels)} — their priority score moved, so re-check them.`
-      : `${count} contacts had their priority score move recently.`,
+    title: count === 1 ? 'Review priority change' : `Review ${count} priority changes`,
+    detail: compactChangeDetail('contact', labels, count),
     href: topId ? `${ROUTES.leads.contacts}?lead=${encodeURIComponent(topId)}` : ROUTES.leads.contacts,
     cta: 'Review',
     count,
+    meta: { contactIds: visible.map((c) => c.entityId) },
   };
 }
 
@@ -204,16 +212,27 @@ export async function computeAccountPriorityChanges(
 
   const count = visible.length;
   const topId = visible[0]?.entityId ?? null;
+  const accountIds = visible.map((c) => c.entityId);
+  const href = (() => {
+    if (accountIds.length > 1) {
+      const params = new URLSearchParams({
+        accountIds: accountIds.join(','),
+        focus: 'priority_changes',
+      });
+      return `${ROUTES.accounts}?${params.toString()}`;
+    }
+    return topId ? `${ROUTES.accounts}?companyId=${encodeURIComponent(topId)}` : ROUTES.accounts;
+  })();
+
   return {
     source: 'account-priority-changes',
     groupKey: 'default',
     severity: 'medium',
-    title: count === 1 ? "An account's priority changed" : `${count} accounts changed priority`,
-    detail: preview(labels)
-      ? `${preview(labels)} — their priority score moved, so re-check them.`
-      : `${count} accounts had their priority score move recently.`,
-    href: topId ? `${ROUTES.accounts}?companyId=${encodeURIComponent(topId)}` : ROUTES.accounts,
+    title: count === 1 ? 'Review priority change' : `Review ${count} priority changes`,
+    detail: compactChangeDetail('account', labels, count),
+    href,
     cta: 'Review',
     count,
+    meta: { accountIds },
   };
 }

@@ -86,8 +86,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
       company_sizes: body.companySizes || [],
       li_follower_sizes: body.liFollowerSizes || [],
       funding_stages: body.fundingStages || [],
-      // Signals are now universal; per-ICP selection is no longer collected. Omit the column on
-      // update so any existing legacy data is left untouched (back-compat until cleanup migration).
+      // Signals are universal now, so ICP updates no longer write per-ICP selections.
       example_companies: body.exampleCompanies || [],
       example_company_enrichment: body.exampleCompanyEnrichment ?? null,
       updated_at: new Date().toISOString(),

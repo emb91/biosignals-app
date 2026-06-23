@@ -2,6 +2,7 @@
 
 import { useEffect, useState, Suspense, useMemo } from 'react';
 import Image from 'next/image';
+import { Logo } from '@/components/logo';
 import { usePathname } from 'next/navigation';
 import {
   ChevronLeft,
@@ -207,8 +208,8 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
     setupItems.some((item) => isActive(item.href)) ||
     pathname === ROUTES.setup.arcova;
 
-  const contactsActive = pathname === ROUTES.contacts;
-  const accountsActive = pathname === ROUTES.accounts;
+  const contactsActive = isActive(ROUTES.contacts) || isActive(ROUTES.leads.contacts);
+  const accountsActive = isActive(ROUTES.accounts) || isActive(ROUTES.leads.accounts);
 
   const closeAccountMenu = () => {
     setAccountMenuOpen(false);
@@ -365,8 +366,8 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
           const importReady = Boolean(result.ready);
           const importSignature = importReady ? `import-ready:${result.completeCount ?? 'ready'}` : null;
           importNeedsAttention = dismissibleDotVisible('import', importSignature, pathname === ROUTES.import);
-          contactsNeedAttention = dismissibleDotVisible('contacts', importSignature, pathname === ROUTES.contacts);
-          accountsNeedAttention = dismissibleDotVisible('accounts', importSignature, pathname === ROUTES.accounts);
+          contactsNeedAttention = dismissibleDotVisible('contacts', importSignature, contactsActive);
+          accountsNeedAttention = dismissibleDotVisible('accounts', importSignature, accountsActive);
           setShowImportDot(importNeedsAttention);
           setShowContactsDot(contactsNeedAttention);
           setShowAccountsDot(accountsNeedAttention);
@@ -405,7 +406,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
           signalsNeedAttention = dismissibleDotVisible(
             'signals',
             signalSignature,
-            pathname === ROUTES.contacts || pathname === ROUTES.accounts,
+            contactsActive || accountsActive,
           );
           setShowSignalsDot(signalsNeedAttention);
         }
@@ -805,38 +806,17 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
                 aria-label="Expand sidebar"
                 title="Expand sidebar"
               >
-                <Image
-                  src="/images/network-og.png"
-                  alt=""
-                  width={40}
-                  height={40}
-                  className="rounded-xl shadow-sm ring-1 ring-black/5"
-                />
+                <Logo variant="icon" badge="none" size={42} />
               </button>
             ) : (
-              <Image
-                src="/images/network-og.png"
-                alt=""
-                width={40}
-                height={40}
-                className="rounded-xl shadow-sm ring-1 ring-black/5"
-              />
+              <Logo variant="icon" badge="none" size={42} />
             )}
           </div>
         ) : (
           <div className="flex items-center gap-2 border-b border-[rgba(13,53,71,0.08)] px-4 py-[1.125rem]">
             <div className="flex min-w-0 flex-1 items-center gap-2 py-1">
-              <Image
-                src="/images/network-og.png"
-                alt=""
-                width={32}
-                height={32}
-                className="shrink-0 rounded-lg shadow-sm ring-1 ring-black/5"
-              />
-              <span className="min-w-0 leading-tight">
-                <span className="block truncate font-manrope text-[15px] font-extrabold tracking-tight text-arcova-navy">arcova</span>
-                <span className="block truncate text-[10px] font-medium text-arcova-navy/40">GTM intelligence</span>
-              </span>
+              <Logo variant="icon" badge="none" size={34} className="shrink-0" />
+              <span className="min-w-0 truncate text-[18px] font-medium tracking-tight text-arcova-navy" style={{ fontFamily: "var(--font-quicksand), system-ui, sans-serif" }}>arcova</span>
             </div>
           {fullWidthSidebar && !isHoverExpanded && (
             <button
