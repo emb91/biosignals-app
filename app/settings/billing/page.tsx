@@ -15,6 +15,7 @@ type Plan = {
   monthlyCredits: number;
   annualCredits: number;
   activeLeadsCap: number;
+  activeIcpCap: number;
   monitoringCadenceDays: number;
   available: boolean;
   annualAvailable: boolean;
@@ -59,6 +60,7 @@ type PlanView = {
   featured?: boolean;
   paid?: boolean;
   featuresHeading: string;
+  activeIcpCap: number;
   featuresMonthly: string[];
   featuresAnnual: string[];
   available?: boolean;
@@ -72,8 +74,9 @@ const FREE_PLAN: PlanView = {
   priceMonthly: '$0',
   priceAnnual: '$0',
   featuresHeading: 'Includes',
-  featuresMonthly: ['**100** credits / month', '**1** workspace user', '**100** lead capacity', '**Monthly** monitoring'],
-  featuresAnnual: ['**100** credits / month', '**1** workspace user', '**100** lead capacity', '**Monthly** monitoring'],
+  activeIcpCap: 1,
+  featuresMonthly: ['**100** credits / month', '**1** workspace user', '**1** active ICP', '**100** lead capacity', '**Monthly** monitoring'],
+  featuresAnnual: ['**100** credits / month', '**1** workspace user', '**1** active ICP', '**100** lead capacity', '**Monthly** monitoring'],
 };
 
 function featureParts(text: string) {
@@ -154,15 +157,19 @@ export default function BillingPage() {
       featured: plan.key === 'starter',
       pop: plan.key === 'starter' ? 'Most teams start here' : undefined,
       featuresHeading: plan.key === 'starter' ? 'Everything in Free, plus' : 'Everything in Starter, plus',
+      activeIcpCap: plan.activeIcpCap,
       featuresMonthly: [
         `**${plan.monthlyCredits.toLocaleString()}** credits / month`,
         '**Unlimited** users',
+        `**${plan.activeIcpCap.toLocaleString()}** active ICP${plan.activeIcpCap === 1 ? '' : 's'}`,
         `**${plan.activeLeadsCap.toLocaleString()}** lead capacity`,
         `**${plan.monitoringCadenceDays === 7 ? 'Weekly' : 'Monthly'}** monitoring`,
       ],
       featuresAnnual: [
         `**${plan.annualCredits.toLocaleString()}** credits upfront`,
+        '**Spend at your pace** with usage warnings',
         '**Unlimited** users',
+        `**${plan.activeIcpCap.toLocaleString()}** active ICP${plan.activeIcpCap === 1 ? '' : 's'}`,
         `**${plan.activeLeadsCap.toLocaleString()}** lead capacity`,
         `**${plan.monitoringCadenceDays === 7 ? 'Weekly' : 'Monthly'}** monitoring`,
       ],
@@ -349,7 +356,7 @@ export default function BillingPage() {
               <div>
                 <h2 className="text-base font-semibold text-[#0d3547]">Additional credits</h2>
                 <p className="mt-1 text-sm text-[#7d909a]">
-                  Buy rollover credits for paid workspaces. Purchased credits can be used for any paid action; they do not increase workspace lead capacity or monitoring cadence.
+                  Buy rollover credits for paid workspaces. Purchased credits can be used for any paid action; they do not increase active ICP capacity, workspace lead capacity or monitoring cadence.
                 </p>
               </div>
               <div className="text-right text-sm">

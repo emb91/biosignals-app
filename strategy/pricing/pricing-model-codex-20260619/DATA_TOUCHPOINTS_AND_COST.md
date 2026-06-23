@@ -33,16 +33,16 @@ Three distinct cost surfaces:
 
 ## A. Onboarding — one-time (not monthly)
 
-At setup you enrich your own company + 1–3 ICP example companies. Each company fires:
+At setup you enrich your own company plus each active ICP's reference company. Plan caps bound this to 1 ICP on Free, 3 on Starter, and 10 on Growth. Each company fires:
 
 | Act | Endpoint | Provider | Calls | Cost |
 |---|---|---|---|---|
 | Your company enrich | `organizations/enrich` | Apollo | 1 | 1 cr |
 | Your company scrape | `harvestapi~linkedin-company` | Apify | 1 | $0.004 |
-| ICP example enrich | `organizations/enrich` | Apollo | 1–3 | 1–3 cr |
-| ICP example scrape | `harvestapi~linkedin-company` | Apify | 1–3 | $0.004 ea |
+| ICP example enrich | `organizations/enrich` | Apollo | 1–10, plan-capped | 1 cr ea |
+| ICP example scrape | `harvestapi~linkedin-company` | Apify | 1–10, plan-capped | $0.004 ea |
 
-≈ **2–4 Apollo org enrichments + 2–4 Apify company scrapes**, plus Claude web-search (LLM, unmetered).
+≈ **2–11 Apollo org enrichments + 2–11 Apify company scrapes**, plus Claude web-search (LLM, unmetered).
 Happens once. ✅ `app/api/analyze-and-store/route.ts`, `lib/my-company-enrichment.ts`,
 `lib/target-company-enrichment.ts`.
 
@@ -162,7 +162,7 @@ and cost ~$0 in provider data. ✅ `app/api/cron/*-delta/route.ts`, `hubspot-dai
 | `APIFY_COMPANY_SCRAPE_USD` | $0.004 (🔶 estimate) | `lib/provider-usage.ts` |
 | `APOLLO_CREDITS.person_enrichment` | 1 | `lib/provider-usage.ts` |
 | `APOLLO_CREDITS.company_enrichment` | 1 | `lib/provider-usage.ts` |
-| `APOLLO_CREDITS.phone_reveal` | 1 | `lib/provider-usage.ts` |
+| `APOLLO_CREDITS.phone_reveal` | 8 | `lib/provider-usage.ts` |
 | `APOLLO_PLAN` (Free) | 250 credits/mo, $0 | `lib/provider-usage.ts:53` |
 | `ZEROBOUNCE_CREDITS.email_validate` | 1 (~$0.005) | `lib/provider-usage.ts` |
 | `ZEROBOUNCE_CREDITS.email_finder` | 20 | `lib/provider-usage.ts` |

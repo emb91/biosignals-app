@@ -4,11 +4,20 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2, ArrowUpRight, ChevronRight } from 'lucide-react';
 
+type CreditBucket = {
+  id: string;
+  source: 'free_monthly' | 'paid_monthly' | 'annual' | 'purchased' | 'adjustment' | string;
+  credits_granted: number;
+  credits_remaining: number;
+  valid_from: string;
+  expires_at: string;
+};
+
 type UsageSummary = {
   unlimited: boolean;
   complimentary?: boolean;
   available: boolean;
-  plan: { key: string; name: string };
+  plan: { key: string; name: string; billingInterval?: 'monthly' | 'annual' };
   credits: {
     available: number;
     granted: number;
@@ -16,7 +25,18 @@ type UsageSummary = {
     includedGranted?: number;
     purchasedAvailable?: number;
     purchasedGranted?: number;
+    adjustmentAvailable?: number;
+    adjustmentGranted?: number;
+    buckets?: CreditBucket[];
   };
+  annualPace?: {
+    monthlyCredits: number;
+    annualCredits: number;
+    usedCredits: number;
+    monthsEquivalent: number;
+    level: 'normal' | 'heads_up' | 'strong';
+    message: string;
+  } | null;
   capacity?: {
     storedContacts: number;
     storedContactsCap: number;
@@ -24,11 +44,12 @@ type UsageSummary = {
     activeMonitoredContactsCap: number;
     monitoringCadenceDays: number;
   };
+  activeIcps?: { used: number; limit: number };
   triage: { used: number; limit: number };
   importedEnrichments: { used: number; included: number; hardCap: number };
   activeLeads: { used: number; cap: number; waitlisted: number; cadenceDays: number };
   netNewLeads: { used: number; limit: number };
-  sequences: { used: number; limit: number };
+  sequences: { used: number; limit: number; emailSteps?: number; linkedinAdds?: number; linkedinMessages?: number };
   phoneReveals: { used: number; limit: number };
   emailFinder: { used: number; limit: number };
 };
@@ -75,12 +96,20 @@ function UsageBar({ used, total, label, sublabel, unlimited }: {
   );
 }
 
-function MetricRow({ label, value, sublabel }: { label: string; value: string; sublabel?: string }) {
+function CreditBucketRow({ label, amount, expiresAt, sublabel }: {
+  label: string;
+  amount: number;
+  expiresAt?: string | null;
+  sublabel?: string;
+}) {
   return (
     <div className="mt-4 first:mt-0">
       <div className="flex items-baseline justify-between gap-3 text-sm">
         <span className="font-medium text-slate-700">{label}</span>
-        <span className="text-xs font-semibold text-[#0d3547]">{value}</span>
+        <span className="text-right text-xs font-semibold text-[#0d3547]">
+          {amount.toLocaleString()} credits
+          {expiresAt ? <span className="font-normal text-[#7d909a]"> · expire {formatDate(expiresAt)}</span> : null}
+        </span>
       </div>
       {sublabel && <p className="mt-0.5 text-xs text-[#7d909a]">{sublabel}</p>}
     </div>
@@ -124,42 +153,112 @@ export default function UsageSettings({ href, className = '', showHeading = true
   const activeMonitored = data.capacity?.activeMonitoredContacts ?? data.activeLeads.used;
   const activeMonitoredCap = data.capacity?.activeMonitoredContactsCap ?? data.activeLeads.cap;
   const cadenceDays = data.capacity?.monitoringCadenceDays ?? data.activeLeads.cadenceDays;
+  const compact = Boolean(href);
+  const creditBuckets = groupCreditBuckets(data.credits.buckets ?? []);
+  const periodLabel = data.plan.billingInterval === 'annual' ? 'this annual term' : 'this month';
   const cardContent = (
     <>
       {!unlimited && (
         <>
-          <UsageBar
-            used={includedUsed}
-            total={includedGranted}
-            label="Included monthly credits"
-            sublabel="Included credits reset each billing period and do not roll over."
-          />
-          <UsageBar
-            used={Math.max(0, purchasedGranted - purchasedAvailable)}
-            total={purchasedGranted}
-            label="Purchased rollover credits"
-            sublabel="Purchased credits can be used for any paid action and remain available until expiry."
-          />
+          {creditBuckets.length > 0 ? (
+            <>
+              <div className="text-xs font-bold uppercase tracking-[0.08em] text-[#7d909a]">Credit balances</div>
+              {creditBuckets.map((bucket) => (
+                <CreditBucketRow
+                  key={`${bucket.source}:${bucket.expiresAt ?? 'none'}`}
+                  label={bucketLabel(bucket.source, data.plan.billingInterval)}
+                  amount={bucket.available}
+                  expiresAt={bucket.expiresAt}
+                  sublabel={bucketSublabel(bucket.source)}
+                />
+              ))}
+            </>
+          ) : (
+            <UsageBar
+              used={includedUsed}
+              total={includedGranted}
+              label={data.plan.billingInterval === 'annual' ? 'Annual included credits' : 'Included monthly credits'}
+              sublabel={
+                data.plan.billingInterval === 'annual'
+                  ? 'Annual credits are granted upfront and remain available until renewal.'
+                  : 'Included credits reset each billing period and do not roll over.'
+              }
+            />
+          )}
+          {data.annualPace && data.annualPace.level !== 'normal' && (
+            <div className={`mt-4 rounded-xl border px-4 py-3 text-xs leading-5 ${
+              data.annualPace.level === 'strong'
+                ? 'border-amber-200 bg-amber-50 text-amber-800'
+                : 'border-[#dbe8ed] bg-[#f4f8fa] text-[#4a6470]'
+            }`}
+            >
+              {data.annualPace.message}
+            </div>
+          )}
+          {!compact && creditBuckets.length === 0 && purchasedGranted > 0 && (
+            <UsageBar
+              used={Math.max(0, purchasedGranted - purchasedAvailable)}
+              total={purchasedGranted}
+              label="Purchased rollover credits"
+              sublabel="Purchased credits can be used for any paid action and remain available until expiry."
+            />
+          )}
+        </>
+      )}
+      {!compact && (
+        <>
+          <div className="mt-6 text-xs font-bold uppercase tracking-[0.08em] text-[#7d909a]">Capacity and counters</div>
           <UsageBar
             used={storedContacts}
             total={storedContactsCap}
             label="Workspace lead capacity"
             sublabel="Buying credits does not increase how many leads your plan can hold or monitor."
           />
+          {data.activeIcps && (
+            <UsageBar
+              unlimited={unlimited}
+              used={data.activeIcps.used}
+              total={data.activeIcps.limit}
+              label="Active ICPs"
+              sublabel="Editing an existing ICP does not use another slot."
+            />
+          )}
           <UsageBar
             used={activeMonitored}
             total={activeMonitoredCap}
             label="Active leads monitored"
             sublabel={`Checked every ${cadenceDays === 7 ? 'week' : 'month'}${data.activeLeads.waitlisted ? ` · ${data.activeLeads.waitlisted} waitlisted` : ''}.`}
           />
+          <UsageBar unlimited={unlimited} used={data.triage.used} total={data.triage.limit} label="Imported records triaged this month" />
+          <UsageBar
+            unlimited={unlimited}
+            used={data.importedEnrichments.used}
+            total={data.importedEnrichments.included}
+            label={`Included imported enrichments ${periodLabel}`}
+            sublabel={
+              data.plan.billingInterval === 'annual'
+                ? 'Annual allowance is available upfront. Purchased credits cover extra actions.'
+                : 'Included package allowance. Purchased credits cover extra actions.'
+            }
+          />
+          <UsageBar
+            unlimited={unlimited}
+            used={data.netNewLeads.used}
+            total={data.netNewLeads.limit}
+            label={`Net-new enriched leads ${periodLabel}`}
+            sublabel="Purchased credits do not increase active ICP or lead capacity."
+          />
+          <UsageBar
+            unlimited={unlimited}
+            used={data.sequences.used}
+            total={data.sequences.limit}
+            label={`Sequences generated ${periodLabel}`}
+            sublabel={`${(data.sequences.emailSteps ?? data.sequences.used * 4).toLocaleString()} email steps · ${(data.sequences.linkedinAdds ?? data.sequences.used).toLocaleString()} LinkedIn adds · ${(data.sequences.linkedinMessages ?? data.sequences.used * 2).toLocaleString()} LinkedIn messages. Extra sequences use credits.`}
+          />
+          <UsageBar unlimited={unlimited} used={data.phoneReveals.used} total={data.phoneReveals.limit} label={`Phone reveals ${periodLabel}`} />
+          <UsageBar unlimited={unlimited} used={data.emailFinder.used} total={data.emailFinder.limit} label={`Email-finder requests ${periodLabel}`} />
         </>
       )}
-      <UsageBar unlimited={unlimited} used={data.triage.used} total={data.triage.limit} label="Imported records triaged this month" />
-      <MetricRow label="Imported enrichments this month" value={data.importedEnrichments.used.toLocaleString()} />
-      <MetricRow label="Net-new enriched leads this month" value={data.netNewLeads.used.toLocaleString()} />
-      <MetricRow label="Sequences generated in 24 hours" value={data.sequences.used.toLocaleString()} />
-      <MetricRow label="Phone reveals today" value={data.phoneReveals.used.toLocaleString()} />
-      <MetricRow label="Email-finder requests today" value={data.emailFinder.used.toLocaleString()} />
     </>
   );
 
@@ -176,7 +275,9 @@ export default function UsageSettings({ href, className = '', showHeading = true
           ? 'Your workspace is complimentary with no limits — here is your current activity.'
           : data.complimentary
             ? 'Arcova workspaces use a pretend credit track so the product experience matches customer workspaces.'
-            : 'Included credits reset with your plan. Purchased credits roll over and can be used for any paid action.'}
+            : data.plan.billingInterval === 'annual'
+              ? 'Annual credits are available upfront. We show pace warnings when usage is ahead of the usual monthly rhythm.'
+              : 'Included credits reset with your plan. Purchased credits roll over and can be used for any paid action.'}
       </p>
       {href ? (
         <Link
@@ -202,4 +303,46 @@ export default function UsageSettings({ href, className = '', showHeading = true
       )}
     </section>
   );
+}
+
+function formatDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(date);
+}
+
+function bucketLabel(source: string, interval?: 'monthly' | 'annual'): string {
+  if (source === 'annual') return 'Annual included credits';
+  if (source === 'purchased') return 'Purchased rollover credits';
+  if (source === 'adjustment') return 'Adjustment credits';
+  if (source === 'free_monthly' || source === 'paid_monthly') {
+    return interval === 'annual' ? 'Included credits' : 'Included monthly credits';
+  }
+  return 'Credits';
+}
+
+function bucketSublabel(source: string): string | undefined {
+  if (source === 'annual') return 'Granted upfront and available until annual renewal.';
+  if (source === 'purchased') return 'Can be used for paid actions; does not increase active ICP capacity, lead capacity or monitoring cadence.';
+  if (source === 'adjustment') return 'Manual workspace credit adjustment.';
+  if (source === 'free_monthly' || source === 'paid_monthly') return 'Included credits expire at billing rollover.';
+  return undefined;
+}
+
+function groupCreditBuckets(buckets: CreditBucket[]) {
+  const grouped = new Map<string, { source: string; expiresAt: string; available: number }>();
+  for (const bucket of buckets) {
+    const available = Number(bucket.credits_remaining ?? 0);
+    if (available <= 0) continue;
+    const expiresAt = bucket.expires_at;
+    const key = `${bucket.source}:${expiresAt}`;
+    const existing = grouped.get(key);
+    if (existing) existing.available += available;
+    else grouped.set(key, { source: bucket.source, expiresAt, available });
+  }
+  return [...grouped.values()].sort((a, b) => new Date(a.expiresAt).getTime() - new Date(b.expiresAt).getTime());
 }

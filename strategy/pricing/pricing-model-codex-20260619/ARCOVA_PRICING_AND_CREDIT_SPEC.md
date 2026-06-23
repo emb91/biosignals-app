@@ -1,18 +1,20 @@
 # Arcova Pricing and Credit Specification
 
 **Status:** Working pricing decision
-**Last updated:** 19 June 2026
+**Last updated:** 23 June 2026
 **Scope:** Free, Starter and Growth only
 
 ## Executive decision
 
-Arcova uses one shared workspace credit balance.
+Arcova uses action-specific included allowances backed by Arcova credits.
 
 - Provider COGS is recorded in fractional dollars and is separate from customer credits.
 - **$0.01 remains an internal cost-credit reference only.** Customer action prices are set independently from that reference.
 - Credits are consumed by deliberate, cost-incurring actions such as enrichment, email finding, phone reveal, net-new data acquisition and sequence generation.
 - Routine monitoring is included as a plan entitlement and does not invisibly deduct credits.
-- Action-specific counters sit alongside the shared credit balance. These are limits, not separate credit currencies.
+- Included plan allowances are shown as actions, with credit values underneath. Customers think in actions; the system accounts in credits.
+- Monthly customers receive their monthly included allowances upfront for the billing period. Annual customers receive the annualized included allowances upfront for the annual term.
+- Purchased credits are flexible rollover credits. They are spent only after the relevant included action allowance is exhausted.
 - Workspace limits are shared by the whole team. Adding users does not multiply credits or caps.
 
 ## Plans
@@ -25,18 +27,31 @@ Arcova uses one shared workspace credit balance.
 | Included monthly credits | 100 | 2,000 | 8,000 |
 | Annual credits provided upfront | — | 24,000 | 96,000 |
 | Purchased credits | Initially unavailable | $100 per 1,000 | $70 per 1,000 |
+| Active ICP cap | 1 | 3 | 10 |
 | Active lead cap | 100 | 5,000 | 10,000 |
 | Internal monitored-account ceiling (not customer-facing) | 100 | 1,250 | 2,500 |
 | Monitoring cadence | Monthly | Monthly | Weekly |
 | New imported records triaged/month | 500 | 10,000 | 50,000 |
-| Imported enrichments from included allowance/month | 25 | 300 | 1,400 |
-| Imported enrichment hard cap/month | 25 | 500 | 5,000 |
-| Net-new delivered-lead cap/month | 10 | 2,500 | 10,000 |
-| Sequence generation cap | 1/rolling 24h | 3/rolling 24h | 10/rolling 24h |
+| Imported enrichments included/month | 10 | 250 | 1,200 |
+| Net-new delivered-leads included/month | 5 | 50 | 200 |
+| Sequence generation package/month | 2 | 95 | 300 |
+| Email finder package/month | 1 | 25 | 60 |
+| Phone reveal package/month | 1 | 3 | 12 |
 | Export | Full unlocked data | Full unlocked data | Full unlocked data |
 
-The net-new lead caps are initial operational/provider-throughput guardrails. They should be reviewed using real usage data.
-Annual pricing is ten months of subscription price (two months free), billed upfront, with the full annual credit grant available immediately. Monthly credits expire at rollover; annual credits expire at annual renewal; purchased credits expire after 12 months.
+Net-new lead and extra enrichment spend are constrained commercially by credit balance and active-lead capacity. Internal provider rate limits may still protect the system, but they are not sold as monthly commercial caps.
+Annual pricing is ten months of subscription price (two months free), billed upfront, with the full annual credit grant available immediately. Monthly credits expire at rollover; annual credits expire at annual renewal; purchased credits expire after 12 months. Annual customers may spend their annual included credits at their chosen pace; Arcova warns when usage is ahead of the normal monthly rhythm rather than blocking purely because of pace.
+
+## What an active ICP means
+
+An active ICP is a saved ideal-customer profile available for scoring, coverage planning and lead ranking. The cap applies to saved active ICP profiles, not edits or refinements to an existing ICP.
+
+- Free includes 1 active ICP.
+- Starter includes 3 active ICPs.
+- Growth includes 10 active ICPs.
+- Deleting an ICP frees its slot.
+- Purchased credits do not increase the active ICP cap.
+- Larger companies with many materially different markets, products or buying motions should be on Growth or Custom.
 
 ## What an active lead means
 
@@ -64,6 +79,7 @@ The Growth active-lead cap is 10,000. Weekly contact sweeps, company hiring moni
 - Starter and Growth workspaces can invite the whole team.
 - Arcova enriches the user's profile, company and ICP examples for free.
 - Buying-team and persona setup is free.
+- New ICP creation is limited by the workspace's active ICP cap; editing an existing ICP is free and does not consume another slot.
 - The in-app agent is included subject to fair-use protection.
 - Setup does not consume Arcova credits.
 
@@ -84,7 +100,7 @@ Every newly imported contact and account is triaged before Arcova spends money e
 - Free includes 500 newly imported records/month.
 - Starter includes 10,000/month.
 - Growth includes 50,000/month.
-- Triage above the allowance costs **0.1 credit per record**.
+- Triage above the allowance can be priced later if needed; it is not a launch customer-facing overage.
 
 When an ICP is added or changed:
 
@@ -95,46 +111,52 @@ When an ICP is added or changed:
 
 ### 4. Enrich imported leads
 
-An imported lead enrichment costs **4 credits** and represents the contact-plus-company enrichment bundle.
+An imported lead enrichment costs **4 credits** and represents the contact-plus-company enrichment bundle. When the enrichment returns an email address, ZeroBounce validation is included in this bundle. Finding a missing or replacement email later remains the separate email-finder action.
+
+The COGS model must include that validation. Imported enrichment is not just Apollo plus Apify; it is Apollo plus Apify plus expected ZeroBounce validation when an email is returned. Customers still see one imported-enrichment action, not a separate validation charge.
 
 #### Free
 
-- Up to 25 imported enrichments/month.
-- The hard monthly cap is also 25.
+- Up to 10 imported enrichments/month.
+- Up to 5 net-new enriched leads/month.
 - Active-lead cap: 100.
 
 #### Starter
 
-- Up to 300 imported enrichments/month may be funded from the included monthly credit allowance.
-- At 4 credits each, this uses 1,200 of the 2,000 included credits.
-- This preserves at least 800 included credits for other Arcova actions.
-- Purchased credits can fund additional imported enrichment.
-- The absolute hard cap is 500 imported enrichments/month.
+- Up to 250 imported enrichments/month may be funded from the included monthly credit allowance.
+- At 4 credits each, this uses 1,000 of the 2,000 included credits.
+- Starter also includes 50 net-new enriched leads/month, using 200 credits.
+- This preserves the package room for generated sequences, email finds and phone reveals.
+- Purchased credits can fund additional imported enrichment until the workspace reaches active-lead capacity.
+- Monthly billing shows the 250/month imported-enrichment package pace, but does not impose an artificial monthly enrichment ceiling.
+- Annual billing can spend annual credits upfront, with pace warnings instead of an artificial monthly commercial cap.
 - Active-lead cap: 5,000.
 
 #### Growth
 
-- Up to 1,400 imported enrichments/month may be funded from the included credit allowance.
-- At 4 credits each, this uses 5,600 of the 8,000 included credits.
-- This preserves at least 2,400 included credits for other actions.
-- Purchased credits can fund additional imported enrichment.
-- The absolute hard cap is 5,000 imported enrichments/month.
+- Up to 1,200 imported enrichments/month may be funded from the included credit allowance.
+- At 4 credits each, this uses 4,800 of the 8,000 included credits.
+- Growth also includes 200 net-new enriched leads/month, using 800 credits.
+- This preserves the package room for generated sequences, email finds and phone reveals.
+- Purchased credits can fund additional imported enrichment until the workspace reaches active-lead capacity.
+- Monthly billing shows the 1,200/month imported-enrichment package pace, but does not impose an artificial monthly enrichment ceiling.
+- Annual billing can spend annual credits upfront, with pace warnings instead of an artificial monthly commercial cap.
 - Active-lead cap: 10,000.
 
-Purchased credits add spending power but do not override the plan's hard enrichment cap.
+Purchased credits add spending power but do not increase active ICP capacity, active-lead capacity or monitoring cadence.
 
 ### 5. Work with enriched leads
 
 | Action | Arcova credits | Limit behavior |
 |---|---:|---|
-| Imported lead enrichment | 4 | Included allocation plus tier hard cap |
-| Company-only enrichment | 3 | Shared balance |
-| Email validation | 0.5 | Shared balance |
-| Find a new email | 11 | Shared balance plus daily provider guardrail |
-| Phone reveal | 20 | Shared balance plus daily provider guardrail |
-| Net-new enriched lead | 4 | Shared balance plus monthly delivered-lead cap |
+| Imported lead enrichment | 4 | Included imported-enrichment allowance first; purchased credits after that; active-lead capacity still applies |
+| Company-only enrichment | 3 | Credits |
+| Email validation | 0.5 | Included in enrichment when an email is returned; standalone validation only when explicitly exposed |
+| Find a new email | 11 | Included email-finder allowance first; purchased credits after that |
+| Phone reveal | 20 | Included phone-reveal allowance first; purchased credits after that |
+| Net-new enriched lead | 4 | Shared balance plus active-lead capacity |
 | Manual lead refresh | 4 | Shared balance |
-| Seven-touch outreach sequence | 5 | Shared balance plus rolling 24-hour cap |
+| Seven-touch outreach sequence | 5 | Included sequence allowance first; purchased credits after that |
 | Scheduled monitoring | 0 | Included within active-lead cap |
 | Confirmed job-change refresh | 0 | Included maintenance of an active lead |
 
@@ -150,10 +172,12 @@ Credits should be reserved before the provider call and settled only on a billab
 - Apollo currently charges eight provider credits per reveal.
 - At Apollo rates of $0.016–$0.025 per credit, Arcova's provider replacement cost is approximately $0.128–$0.20.
 - Twenty Arcova credits represent the conservative $0.20 replacement cost.
-- Initial safety caps:
-  - Free: 2 requests/day.
-  - Starter: 50 requests/day.
-  - Growth: 200 requests/day.
+- Included package allowances:
+  - Free: 1 phone reveal/month.
+  - Starter: 3 phone reveals/month.
+  - Growth: 12 phone reveals/month.
+- Annual customers receive the annualized allowance upfront.
+- Extra phone reveals use purchased credits.
 
 ### 7. Buy net-new data
 
@@ -162,10 +186,12 @@ Credits should be reserved before the provider call and settled only on a billab
 - The UI shows how many genuinely new leads will be delivered and the maximum credit reservation.
 - Each successfully delivered enriched lead costs **4 credits**.
 - Failed, duplicate or fresh-cache records do not consume credits.
-- Initial monthly delivered-lead caps:
-  - Free: 10.
-  - Starter: 2,500.
-  - Growth: 10,000.
+- Included monthly package allowances:
+  - Free: 5.
+  - Starter: 50.
+  - Growth: 200.
+- Additional net-new leads use purchased credits until active-lead capacity is reached.
+- Annual billing can spend annual credits upfront, but active-lead capacity still applies.
 
 Net-new data remains inside the Arcova credit system. There is no separate $1-per-lead currency.
 
@@ -183,23 +209,23 @@ This deliberately gives Starter a lower freshness tier rather than allowing back
 
 ### 9. Outreach sequence generation
 
-Arcova generates a complete seven-touch sequence and stages/sends it to Lemlist.
+Arcova generates a complete seven-touch sequence and stages it for Lemlist.
 
 - Arcova does not generate or send one-off emails.
 - Lemlist controls sending inboxes, daily send limits, campaign timing, deliverability and reply stops.
 - One generated sequence costs **5 credits**.
-- Free: maximum 1 sequence per rolling 24 hours.
-- Starter: maximum 3 sequences per rolling 24 hours.
-- Growth: maximum 10 sequences per rolling 24 hours.
-- There is no separate monthly sequence cap. The shared credit balance constrains total use.
-- Buying additional credits does not bypass the rolling 24-hour generation cap.
+- Each generated sequence contains seven steps before editing: four email steps, one LinkedIn connection request, and two LinkedIn message steps.
+- Free includes a 2-sequence monthly package allowance, equivalent to 14 total steps: 8 email, 2 LinkedIn connection requests, and 4 LinkedIn message steps.
+- Starter includes a 95-sequence monthly package allowance, equivalent to 665 total steps: 380 email, 95 LinkedIn connection requests, and 190 LinkedIn message steps.
+- Growth includes a 300-sequence monthly package allowance, equivalent to 2,100 total steps: 1,200 email, 300 LinkedIn connection requests, and 600 LinkedIn message steps.
+- Customers can generate additional sequences by spending credits. Arcova does not own or enforce the customer's final Lemlist cadence.
 - Editing generated copy manually is free.
 - A failed Arcova generation should be retried for free.
 
-Steady-state sending context:
+Outreach volume context:
 
-- 3 new seven-touch sequences/day eventually imply roughly 21 scheduled emails/day before reply stops.
-- 10 new sequences/day imply roughly 70 scheduled emails/day.
+- 95 generated sequences/month produce 665 total steps: 380 email, 95 LinkedIn connection requests, and 190 LinkedIn message steps before editing.
+- 300 generated sequences/month produce 2,100 total steps: 1,200 email, 300 LinkedIn connection requests, and 600 LinkedIn message steps before editing.
 - Actual delivery remains governed by the user's Lemlist configuration.
 
 ### 10. Exports
@@ -212,19 +238,26 @@ Steady-state sending context:
 
 ## Credit accounting
 
-### One balance, multiple entitlement counters
+### Included action allowances plus purchased credits
 
-The user sees one shared Arcova credit balance.
+The user sees action allowances first and credit balances second.
 
-The app also shows action-specific counters such as:
+Each included action allowance has a credit value underneath:
 
-- imported enrichment: `184 / 300 included this month`;
-- imported enrichment hard cap: `184 / 500`;
+- Free: 10 imported enrichments, 5 net-new leads, 2 sequences, 1 email find, 1 phone reveal, shown as 100 included monthly credits.
+- Starter: 250 imported enrichments, 50 net-new leads, 95 sequences, 25 email finds, 3 phone reveals, shown as 2,000 included monthly credits.
+- Growth: 1,200 imported enrichments, 200 net-new leads, 300 sequences, 60 email finds, 12 phone reveals, shown as 8,000 included monthly credits.
+
+The app shows action-specific counters such as:
+
+- imported enrichment: `184 / 250 included this month`;
+- active ICPs: `2 / 3`;
+- active lead capacity: `3,810 / 5,000`;
 - triage: `6,200 / 10,000 records this month`;
 - active leads: `3,810 / 5,000`;
-- sequence generation: `2 / 3 in the current rolling 24-hour window`.
+- sequence generation: `18 / 95 generated this month`.
 
-These counters do not create separate currencies. They prevent one action from consuming the entire plan or causing uncontrolled provider exposure.
+These counters are customer-facing action allowances. Once the relevant included allowance is exhausted, extra actions use purchased credits. Purchased credits are flexible and can be applied to any paid action, but they do not increase active ICP capacity, active-lead capacity or monitoring cadence.
 
 ### Monthly subscriptions
 
@@ -240,13 +273,14 @@ These counters do not create separate currencies. They prevent one action from c
   - Growth: 96,000.
 - Annual included credits remain usable throughout the annual term.
 - Unused annual included credits expire at renewal or the end of the annual term.
-- Monthly and daily action-throughput limits still apply.
-- Active-lead caps and monitoring cadence remain unchanged.
+- Arcova does not apply artificial monthly commercial spend caps to annual included credits.
+- The UI warns when annual usage is ahead of the normal monthly pace, for example: `You've used 7,200 of 24,000 annual credits. That's about 3.6 months of Starter usage. Your credits are available until renewal, but active ICP capacity and active lead capacity still apply.`
+- Active ICP capacity, active-lead capacity and monitoring cadence remain unchanged.
 - Purchased credits expire 12 months after their individual purchase date.
 
 ### Spending order and UI
 
-Arcova should consume the credit bucket that expires soonest.
+Arcova should consume the relevant included action allowance first. When that allowance is exhausted, Arcova should consume purchased credits from the bucket that expires soonest.
 
 The UI must distinguish balances, for example:
 
@@ -261,18 +295,17 @@ Annual customers should see:
 ## Why the guardrails exist
 
 - **Triage allowance:** allows full-database ranking without making a 30,000-record import equivalent to a 100-record import.
-- **Imported-enrichment allocation:** preserves included credits for the rest of the product.
-- **Imported-enrichment hard cap:** protects provider throughput and creates a clear Starter-to-Growth boundary.
+- **Included action allowances:** keep the package understandable in action terms rather than asking customers to reason from raw credits.
+- **Active ICP capacity:** keeps broad multi-market GTM motions on higher tiers while letting most companies run one focused ICP.
 - **Active-lead cap:** bounds recurring monitoring COGS accumulated over many months.
-- **Sequence rolling cap:** prevents burst LLM usage and keeps generated campaign volume aligned with plausible Lemlist capacity.
-- **Phone and finder daily caps:** protect expensive provider endpoints.
-- **Annual throughput limits:** prevent an annual customer from spending the entire annual grant in one provider spike.
+- **Sequence allowance:** shows included generation volume. Extra sequences use purchased credits; delivery cadence belongs to the customer's Lemlist configuration.
+- **Annual pace warnings:** annual customers can spend credits upfront, but Arcova must make the burn rate obvious before large actions.
 
 ## Required implementation changes
 
 1. Separate raw import from paid enrichment. The current import route enriches every non-duplicate row.
 2. Add the pre-enrichment triage stage.
-3. Implement the included imported-enrichment allocation and monthly hard cap.
+3. Implement the included imported-enrichment allocation and active-lead capacity boundary.
 4. Stop automatic Apollo phone reveal in the enrichment pipeline.
 5. Add a unified credit ledger with pending, settled and refunded states.
 6. Add separately expiring monthly, annual and purchased credit buckets.

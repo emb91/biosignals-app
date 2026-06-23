@@ -10,20 +10,23 @@
 
 Arcova uses fixed workspace pricing. It is not priced per seat.
 
-| Tier | Monthly | Annual | Users | Credits |
-|---|---:|---:|---:|---:|
-| Free | $0 | — | 1 | 100/month |
-| Starter | $149/workspace | $1,490/workspace | Unlimited | 2,000/month or 24,000 upfront annually |
-| Growth | $799/workspace | $7,990/workspace | Unlimited | 8,000/month or 96,000 upfront annually |
+| Tier | Monthly | Annual | Users | Active ICPs | Credits |
+|---|---:|---:|---:|---:|---:|
+| Free | $0 | — | 1 | 1 | 100/month |
+| Starter | $149/workspace | $1,490/workspace | Unlimited | 3 | 2,000/month or 24,000 upfront annually |
+| Growth | $799/workspace | $7,990/workspace | Unlimited | 10 | 8,000/month or 96,000 upfront annually |
 
 Credit packs:
 
 - Starter: $100 per 1,000 credits.
 - Growth: $70 per 1,000 credits.
 - Purchased credits expire after 12 months.
-- Purchased credits increase spending power but do not bypass plan usage caps.
+- Purchased credits increase spending power but do not increase active ICP capacity,
+  active-lead capacity, or monitoring cadence.
 
-Annual plans provide two months free. The full annual credit grant is provided upfront.
+Annual plans provide two months free. The full annual credit grant is provided upfront and
+can be spent at the customer's chosen pace. The UI should warn when annual usage is ahead
+of the normal monthly rhythm, but should not block solely because of pace.
 
 ## Billing architecture now implemented
 
@@ -88,7 +91,10 @@ Vercel. Stripe subscription quantity must remain `1` because the subscription re
 - Concurrent requests cannot overspend the workspace.
 - Failed and partial actions return credits to their original buckets.
 - Imported enrichment switches to purchased credits after its included allocation.
-- Purchased credits do not override hard action caps.
+- Purchased credits do not override active ICP capacity, active-lead capacity, or monitoring cadence.
+- Imported enrichment and net-new data can continue with purchased credits until active-lead capacity is reached.
+- New ICP creation is blocked at the active ICP cap; editing an existing ICP remains allowed.
+- Annual customers see pace warnings before unusually large burns of their annual included credits.
 - Payment failure enters grace, then pauses paid actions without hiding customer data.
 - Webhook replay does not duplicate subscription or credit grants.
 - Customer interfaces never expose provider names or backend enrichment sequencing.

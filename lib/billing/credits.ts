@@ -234,9 +234,13 @@ export async function checkAndIncrementUsage(params: {
   operationKey: string;
   limit: number;
   window: 'utc_day' | 'utc_month' | 'rolling_24h';
+  windowStart?: string | null;
+  windowEnd?: string | null;
   metadata?: Record<string, unknown>;
 }): Promise<UsageResult> {
-  const period = usageWindow(params.window);
+  const period = params.windowStart && params.windowEnd
+    ? { start: params.windowStart, end: params.windowEnd }
+    : usageWindow(params.window);
   const admin = createAdminClient();
   const { data, error } = await admin.rpc('check_and_increment_usage', {
     p_org_id: params.orgId,
@@ -291,12 +295,77 @@ export async function recordMeteredUsage(params: {
   quantity?: number;
   operationKey: string;
   window: 'utc_day' | 'utc_month' | 'rolling_24h';
+  windowStart?: string | null;
+  windowEnd?: string | null;
   metadata?: Record<string, unknown>;
 }): Promise<UsageResult> {
   return checkAndIncrementUsage({
     ...params,
     limit: Number.MAX_SAFE_INTEGER,
   });
+}
+
+export async function reserveCreditsWithIncludedAllowance(params: {
+  orgId: string;
+  userId?: string | null;
+  action: CreditAction | string;
+  operationKey: string;
+  allowanceLimit: number;
+  window: 'utc_day' | 'utc_month' | 'rolling_24h';
+  windowStart?: string | null;
+  windowEnd?: string | null;
+  idempotencyKey: string;
+  entityType?: string | null;
+  entityId?: string | null;
+}): Promise<CreditReservation> {
+  const usage = await checkAndIncrementUsage({
+    orgId: params.orgId,
+    userId: params.userId,
+    action: params.action,
+    operationKey: params.operationKey,
+    window: params.window,
+    windowStart: params.windowStart,
+    windowEnd: params.windowEnd,
+    limit: params.allowanceLimit,
+  });
+  const includedAllowanceAvailable = usage.ok;
+  const reservation = await reserveCredits({
+    orgId: params.orgId,
+    userId: params.userId,
+    action: params.action,
+    idempotencyKey: params.idempotencyKey,
+    entityType: params.entityType,
+    entityId: params.entityId,
+    purchasedOnly: !includedAllowanceAvailable,
+  });
+  if (!reservation.ok) {
+    if (includedAllowanceAvailable) {
+      await settleUsage({
+        orgId: params.orgId,
+        action: params.action,
+        operationKey: params.operationKey,
+        quantity: 0,
+      }).catch(() => {});
+    }
+    return reservation;
+  }
+  if (!includedAllowanceAvailable) {
+    try {
+      await recordMeteredUsage({
+        orgId: params.orgId,
+        userId: params.userId,
+        action: params.action,
+        operationKey: params.operationKey,
+        window: params.window,
+        windowStart: params.windowStart,
+        windowEnd: params.windowEnd,
+      });
+    } catch (error) {
+      await refundCredits(reservation.transactionId ?? null).catch(() => {});
+      throw error;
+    }
+  }
+  return reservation;
 }
 
 /** Finalize a provisional usage-cap event after provider work completes. */

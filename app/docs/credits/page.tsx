@@ -1,6 +1,7 @@
 import type { Metadata } from "next"
 import Link from "next/link"
 import { ACTION_CREDITS, FREE_TIER, PLANS } from "@/lib/billing/config"
+import { Logo } from "@/components/logo"
 import "./credits.css"
 
 export const metadata: Metadata = {
@@ -16,10 +17,16 @@ const plans = [
     monthlyCredits: FREE_TIER.monthlyCredits,
     annualCredits: "—",
     users: "1",
+    activeIcps: FREE_TIER.caps.activeIcps.toLocaleString(),
     activeLeads: FREE_TIER.caps.activeMonitoredContacts.toLocaleString(),
     monitoring: "Monthly",
     purchasedCredits: "Not available",
     pack: "Not available",
+    importedEnrichment: `${FREE_TIER.caps.importedEnrichmentsHardCapMonthly} / month`,
+    netNewLeads: `${FREE_TIER.caps.netNewEnrichedLeadsMonthly} / month`,
+    sequences: `${FREE_TIER.caps.outreachSequencesIncludedMonthly} / month`,
+    phone: `${FREE_TIER.caps.phoneRevealsIncludedMonthly} / month`,
+    emailFinder: `${FREE_TIER.caps.emailFinderRequestsIncludedMonthly} / month`,
   },
   {
     name: PLANS.starter.name,
@@ -28,10 +35,16 @@ const plans = [
     monthlyCredits: PLANS.starter.monthlyCredits,
     annualCredits: `${PLANS.starter.annualCredits.toLocaleString()} upfront`,
     users: "Unlimited",
+    activeIcps: PLANS.starter.caps.activeIcps.toLocaleString(),
     activeLeads: PLANS.starter.caps.activeMonitoredContacts.toLocaleString(),
     monitoring: "Monthly",
     purchasedCredits: "Available; rollover",
     pack: `$${PLANS.starter.creditPackUsdPer1k} / 1,000`,
+    importedEnrichment: `${PLANS.starter.caps.importedEnrichmentsIncludedMonthly} normal pace; buy more until lead capacity`,
+    netNewLeads: `${PLANS.starter.caps.netNewEnrichedLeadsMonthly} normal pace; buy more until lead capacity`,
+    sequences: `${PLANS.starter.caps.outreachSequencesIncludedMonthly} / month`,
+    phone: `${PLANS.starter.caps.phoneRevealsIncludedMonthly} / month`,
+    emailFinder: `${PLANS.starter.caps.emailFinderRequestsIncludedMonthly} / month`,
   },
   {
     name: PLANS.growth.name,
@@ -40,22 +53,27 @@ const plans = [
     monthlyCredits: PLANS.growth.monthlyCredits,
     annualCredits: `${PLANS.growth.annualCredits.toLocaleString()} upfront`,
     users: "Unlimited",
+    activeIcps: PLANS.growth.caps.activeIcps.toLocaleString(),
     activeLeads: PLANS.growth.caps.activeMonitoredContacts.toLocaleString(),
     monitoring: "Weekly",
     purchasedCredits: "Available; rollover",
     pack: `$${PLANS.growth.creditPackUsdPer1k} / 1,000`,
+    importedEnrichment: `${PLANS.growth.caps.importedEnrichmentsIncludedMonthly.toLocaleString()} normal pace; buy more until lead capacity`,
+    netNewLeads: `${PLANS.growth.caps.netNewEnrichedLeadsMonthly.toLocaleString()} normal pace; buy more until lead capacity`,
+    sequences: `${PLANS.growth.caps.outreachSequencesIncludedMonthly} / month`,
+    phone: `${PLANS.growth.caps.phoneRevealsIncludedMonthly} / month`,
+    emailFinder: `${PLANS.growth.caps.emailFinderRequestsIncludedMonthly} / month`,
   },
 ]
 
 const actionRows = [
-  ["Enrich an imported contact and company", ACTION_CREDITS.imported_contact_company_enrichment, "Only when fresh enrichment is needed"],
+  ["Enrich an imported contact and company", ACTION_CREDITS.imported_contact_company_enrichment, "Includes ZeroBounce validation when an email is returned"],
   ["Enrich or refresh a company", ACTION_CREDITS.company_enrichment, "Setup-time company mapping is free"],
-  ["Validate an email", ACTION_CREDITS.email_validation, "Only when a billable validation runs"],
   ["Find and validate a new email", ACTION_CREDITS.email_finder, "Charged only when a usable email is found"],
   ["Reveal a phone number", ACTION_CREDITS.phone_reveal, "Always confirmed before the request"],
   ["Deliver a net-new enriched lead", ACTION_CREDITS.net_new_enriched_lead, "Duplicates and undelivered leads are not charged"],
   ["Refresh a contact manually", ACTION_CREDITS.manual_contact_refresh, "Scheduled maintenance remains included"],
-  ["Generate a seven-touch sequence", ACTION_CREDITS.outreach_sequence, "Editing and sending the sequence are free"],
+  ["Generate a seven-touch sequence", ACTION_CREDITS.outreach_sequence, "7 steps before edits: 4 email, 1 LinkedIn add, 2 LinkedIn messages"],
 ] as const
 
 const freeActions = [
@@ -66,21 +84,28 @@ const freeActions = [
   "Searching, previews, editing, sending, and exports",
 ]
 
-const buyingPower = [
-  ["4-credit actions", "25", "500", "2,000"],
-  ["Successful email finds", "9", "181", "727"],
-  ["Phone reveals", "5", "100", "400"],
-  ["Seven-touch sequences", "20", "400", "1,600"],
+const packageMix = [
+  ["Imported enrichments", "10", "250", "1,200"],
+  ["Net-new leads", "5", "50", "200"],
+  ["Generated sequences", "2", "95", "300"],
+  ["Email finds", "1", "25", "60"],
+  ["Phone reveals", "1", "3", "12"],
 ]
 
 const planRows: Array<[string, keyof (typeof plans)[number]]> = [
   ["Workspace price", "price"],
   ["Annual price", "annualPrice"],
   ["Workspace users", "users"],
+  ["Active ICPs", "activeIcps"],
   ["Included monthly credits", "monthlyCredits"],
   ["Annual credits", "annualCredits"],
   ["Workspace lead capacity", "activeLeads"],
   ["Monitoring cadence", "monitoring"],
+  ["Imported enrichment guide", "importedEnrichment"],
+  ["Net-new lead guide", "netNewLeads"],
+  ["Sequence generation", "sequences"],
+  ["Phone reveals", "phone"],
+  ["Email finder", "emailFinder"],
   ["Purchased credits", "purchasedCredits"],
   ["Credit pack price", "pack"],
 ]
@@ -90,7 +115,7 @@ export default function CreditsDocsPage() {
     <div className="credits-doc">
       <header className="docs-topbar">
         <Link className="docs-brand" href="/">
-          <img src="/arcova-logo.png" alt="Arcova" />
+          <Logo variant="icon" size={26} />
           <span>Docs</span>
         </Link>
         <nav aria-label="Documentation">
@@ -120,7 +145,7 @@ export default function CreditsDocsPage() {
             <div className="docs-kicker">Arcova credits</div>
             <h1>Use credits when Arcova does new work for you.</h1>
             <p className="docs-lead">
-              Your plan includes monthly credits for deliberate, on-demand actions—such as enriching a lead,
+              Your plan includes credits for deliberate, on-demand actions—such as enriching a lead,
               finding a verified email, revealing a phone number, or generating outreach. Your scheduled market
               monitoring is included separately and does not spend credits.
             </p>
@@ -178,7 +203,7 @@ export default function CreditsDocsPage() {
             <div className="docs-callout">
               <strong>Credits and capacity:</strong> Included monthly credits expire at renewal. Purchased
               credits roll over and can be used for any paid action. Buying credits does not increase workspace
-              lead capacity or monitoring cadence.
+              active ICP capacity, lead capacity or monitoring cadence.
             </div>
           </section>
 
@@ -219,17 +244,17 @@ export default function CreditsDocsPage() {
           <section className="docs-section" id="examples">
             <div className="section-heading">
               <div className="docs-kicker">Credit math</div>
-              <h2>What your included credits can buy</h2>
+              <h2>What your included package covers</h2>
               <p>
-                These are simple “if used only for this action” illustrations. Credit balance and workspace
-                capacity still apply.
+                Plans are action-first. Credits explain the underlying package value; extra actions use
+                purchased credits after the relevant included allowance is used.
               </p>
             </div>
             <div className="docs-table-wrap">
               <table className="docs-table">
-                <thead><tr><th>If used only for…</th><th>Free · 100</th><th>Starter · 2,000</th><th>Growth · 8,000</th></tr></thead>
+                <thead><tr><th>Included action</th><th>Free · 100</th><th>Starter · 2,000</th><th>Growth · 8,000</th></tr></thead>
                 <tbody>
-                  {buyingPower.map((row) => (
+                  {packageMix.map((row) => (
                     <tr key={row[0]}>{row.map((cell) => <td key={cell}>{cell}</td>)}</tr>
                   ))}
                 </tbody>
@@ -240,20 +265,20 @@ export default function CreditsDocsPage() {
               <article>
                 <div className="example-plan">Free example</div>
                 <h3>Explore the core workflow</h3>
-                <p>15 enrichments <b>60</b> + 2 sequences <b>10</b> + 1 successful email find <b>11</b></p>
-                <div className="example-total"><span>Used</span><b>81 / 100 credits</b></div>
+                <p>10 enrichments <b>40</b> + 5 net-new leads <b>20</b> + 2 sequences <b>10</b> + 1 email find <b>11</b> + 1 phone reveal <b>20</b></p>
+                <div className="example-total"><span>Package</span><b>100 included credits</b></div>
               </article>
               <article>
                 <div className="example-plan">Starter example</div>
                 <h3>Run a focused outbound month</h3>
-                <p>300 imported enrichments <b>1,200</b> + 20 sequences <b>100</b> + 10 email finds <b>110</b> + 10 phone reveals <b>200</b></p>
-                <div className="example-total"><span>Used</span><b>1,610 / 2,000 credits</b></div>
+                <p>250 imported enrichments <b>1,000</b> + 50 net-new leads <b>200</b> + 95 sequences <b>475</b> + 25 email finds <b>275</b> + 3 phone reveals <b>60</b></p>
+                <div className="example-total"><span>Package</span><b>2,000 included credits</b></div>
               </article>
               <article>
                 <div className="example-plan">Growth example</div>
                 <h3>Cover a larger active market</h3>
-                <p>1,400 imported enrichments <b>5,600</b> + 100 sequences <b>500</b> + 50 email finds <b>550</b> + 50 phone reveals <b>1,000</b></p>
-                <div className="example-total"><span>Used</span><b>7,650 / 8,000 credits</b></div>
+                <p>1,200 imported enrichments <b>4,800</b> + 200 net-new leads <b>800</b> + 300 sequences <b>1,500</b> + 60 email finds <b>660</b> + 12 phone reveals <b>240</b></p>
+                <div className="example-total"><span>Package</span><b>8,000 included credits</b></div>
               </article>
             </div>
           </section>
@@ -271,8 +296,18 @@ export default function CreditsDocsPage() {
                 <b>{PLANS.growth.annualCredits.toLocaleString()} credits upfront</b>.
               </p>
               <p>
-                Annual credits remain available until renewal. Monthly subscription credits expire at rollover.
-                Purchased credits roll over and expire 12 months after purchase.
+                Annual credits are granted upfront and can be spent at the customer's pace. Arcova shows pace
+                warnings when annual usage is ahead of the usual monthly rhythm, but those warnings do not block
+                usage on their own.
+              </p>
+              <p>
+                Monthly subscription credits expire at rollover. Annual credits remain available until annual
+                renewal. Purchased credits roll over and expire 12 months after purchase. Active ICP capacity,
+                active lead capacity, and monitoring cadence still apply.
+              </p>
+              <p>
+                Example warning: <b>You've used 7,200 of 24,000 annual credits. That's about 3.6 months of
+                Starter usage. Your credits are available until renewal, but active ICP capacity and active lead capacity still apply.</b>
               </p>
             </div>
           </section>
@@ -307,7 +342,11 @@ export default function CreditsDocsPage() {
               </details>
               <details>
                 <summary>Can purchased credits take me beyond a plan cap?</summary>
-                <p>Purchased credits can be used for any paid action, but they do not increase workspace lead capacity or monitoring cadence.</p>
+                <p>Purchased credits can be used for any paid action, but they do not increase active ICP capacity, workspace lead capacity, or monitoring cadence.</p>
+              </details>
+              <details>
+                <summary>Does enrichment include email validation?</summary>
+                <p>Yes. When enrichment returns an email address, Arcova validates it as part of the enrichment bundle. Finding a replacement or missing email later is a separate paid action.</p>
               </details>
               <details>
                 <summary>What happens if an action fails?</summary>

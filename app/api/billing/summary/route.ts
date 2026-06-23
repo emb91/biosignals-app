@@ -25,12 +25,8 @@ export async function GET() {
     new Date().getUTCMonth(),
     1,
   )).toISOString();
-  const dayStart = new Date(Date.UTC(
-    new Date().getUTCFullYear(),
-    new Date().getUTCMonth(),
-    new Date().getUTCDate(),
-  )).toISOString();
-  const rollingStart = new Date(Date.now() - 86_400_000).toISOString();
+  const usageStart = entitlements.currentPeriodStart ?? monthStart;
+  const allowanceMultiplier = entitlements.billingInterval === 'annual' ? 12 : 1;
 
   const [
     membersResult,
@@ -38,9 +34,8 @@ export async function GET() {
     bucketsResult,
     monitoredContactsResult,
     waitlistedContactsResult,
-    monthlyUsageResult,
-    dailyUsageResult,
-    rollingUsageResult,
+    activeIcpsResult,
+    periodUsageResult,
   ] = await Promise.all([
     admin.from('org_members').select('user_id').eq('org_id', ctx.orgId),
     creditBalanceBySource(ctx.orgId).catch(() => null),
@@ -51,17 +46,13 @@ export async function GET() {
       .eq('org_id', ctx.orgId).eq('status', 'active'),
     admin.from('org_monitored_contacts').select('id', { count: 'exact', head: true })
       .eq('org_id', ctx.orgId).eq('status', 'waitlisted'),
+    admin.from('icps').select('id', { count: 'exact', head: true })
+      .eq('org_id', ctx.orgId),
     admin.from('org_usage_events').select('action_type, quantity')
-      .eq('org_id', ctx.orgId).gte('occurred_at', monthStart),
-    admin.from('org_usage_events').select('action_type, quantity')
-      .eq('org_id', ctx.orgId).gte('occurred_at', dayStart),
-    admin.from('org_usage_events').select('action_type, quantity')
-      .eq('org_id', ctx.orgId).gte('occurred_at', rollingStart),
+      .eq('org_id', ctx.orgId).gte('occurred_at', usageStart),
   ]);
 
-  const monthly = usageMap(monthlyUsageResult.data);
-  const daily = usageMap(dailyUsageResult.data);
-  const rolling = usageMap(rollingUsageResult.data);
+  const monthly = usageMap(periodUsageResult.data);
   const userIds = (membersResult.data ?? []).map((row) => row.user_id as string);
   const storedContactsResult = userIds.length
     ? await admin.from('user_contacts').select('id', { count: 'exact', head: true })
@@ -73,13 +64,19 @@ export async function GET() {
     isBillingConfigured() &&
     Object.values(PLANS).every((plan) => Boolean(planPriceId(plan)));
   const creditBalance = entitlements.complimentary
-    ? complimentaryCreditBalance(entitlements.creditsGranted, monthly, daily, rolling)
+    ? complimentaryCreditBalance(entitlements.creditsGranted, monthly)
     : creditBalanceResult ?? {
       included: { granted: entitlements.creditsGranted, available: entitlements.creditsAvailable },
       purchased: { granted: 0, available: 0 },
       adjustment: { granted: 0, available: 0 },
       total: { granted: entitlements.creditsGranted, available: entitlements.creditsAvailable },
     };
+  const annualPace = annualPaceSummary({
+    planKey: entitlements.planKey,
+    billingInterval: entitlements.billingInterval,
+    includedGranted: creditBalance.included.granted,
+    includedAvailable: creditBalance.included.available,
+  });
 
   return NextResponse.json({
     available,
@@ -110,6 +107,7 @@ export async function GET() {
       adjustmentGranted: creditBalance.adjustment.granted,
       buckets: bucketsResult.data ?? [],
     },
+    annualPace,
     capacity: {
       storedContacts: storedContactsResult.count ?? 0,
       storedContactsCap: entitlements.caps.activeMonitoredContacts,
@@ -117,14 +115,18 @@ export async function GET() {
       activeMonitoredContactsCap: entitlements.caps.activeMonitoredContacts,
       monitoringCadenceDays: entitlements.caps.monitoringCadenceDays,
     },
+    activeIcps: {
+      used: activeIcpsResult.count ?? 0,
+      limit: entitlements.caps.activeIcps,
+    },
     triage: {
       used: monthly.import_triage ?? 0,
       limit: entitlements.caps.importedRecordsTriagedMonthly,
     },
     importedEnrichments: {
       used: monthly.imported_enrichment ?? 0,
-      included: entitlements.caps.importedEnrichmentsIncludedMonthly,
-      hardCap: entitlements.caps.importedEnrichmentsHardCapMonthly,
+      included: entitlements.caps.importedEnrichmentsIncludedMonthly * allowanceMultiplier,
+      hardCap: entitlements.caps.importedEnrichmentsHardCapMonthly * allowanceMultiplier,
     },
     activeLeads: {
       used: monitoredContactsResult.count ?? 0,
@@ -134,19 +136,22 @@ export async function GET() {
     },
     netNewLeads: {
       used: monthly.net_new_enriched_lead ?? 0,
-      limit: entitlements.caps.netNewEnrichedLeadsMonthly,
+      limit: entitlements.caps.netNewEnrichedLeadsMonthly * allowanceMultiplier,
     },
     sequences: {
-      used: rolling.outreach_sequence ?? 0,
-      limit: entitlements.caps.sequencesRolling24Hours,
+      used: monthly.outreach_sequence ?? 0,
+      limit: entitlements.caps.outreachSequencesIncludedMonthly * allowanceMultiplier,
+      emailSteps: (monthly.outreach_sequence ?? 0) * 4,
+      linkedinAdds: monthly.outreach_sequence ?? 0,
+      linkedinMessages: (monthly.outreach_sequence ?? 0) * 2,
     },
     phoneReveals: {
-      used: daily.phone_reveal ?? 0,
-      limit: entitlements.caps.phoneRevealsDaily,
+      used: monthly.phone_reveal ?? 0,
+      limit: entitlements.caps.phoneRevealsIncludedMonthly * allowanceMultiplier,
     },
     emailFinder: {
-      used: daily.email_finder ?? 0,
-      limit: entitlements.caps.emailFinderRequestsDaily,
+      used: monthly.email_finder ?? 0,
+      limit: entitlements.caps.emailFinderRequestsIncludedMonthly * allowanceMultiplier,
     },
     catalog: {
       plans: Object.values(PLANS).map((plan) => ({
@@ -157,6 +162,7 @@ export async function GET() {
         monthlyCredits: plan.monthlyCredits,
         annualCredits: plan.annualCredits,
         activeLeadsCap: plan.caps.activeMonitoredContacts,
+        activeIcpCap: plan.caps.activeIcps,
         monitoringCadenceDays: plan.caps.monitoringCadenceDays,
         available: Boolean(planPriceId(plan)),
         annualAvailable: Boolean(planAnnualPriceId(plan)),
@@ -170,6 +176,34 @@ export async function GET() {
   });
 }
 
+function annualPaceSummary(params: {
+  planKey: string;
+  billingInterval: string;
+  includedGranted: number;
+  includedAvailable: number;
+}) {
+  if (params.billingInterval !== 'annual' || !(params.planKey === 'starter' || params.planKey === 'growth')) {
+    return null;
+  }
+  const plan = PLANS[params.planKey];
+  const usedCredits = Math.max(0, params.includedGranted - params.includedAvailable);
+  const monthsEquivalent = plan.monthlyCredits > 0
+    ? Math.round((usedCredits / plan.monthlyCredits) * 10) / 10
+    : 0;
+  const level =
+    monthsEquivalent >= 3 ? 'strong'
+      : monthsEquivalent >= 1 ? 'heads_up'
+        : 'normal';
+  return {
+    monthlyCredits: plan.monthlyCredits,
+    annualCredits: plan.annualCredits,
+    usedCredits,
+    monthsEquivalent,
+    level,
+    message: `You've used ${usedCredits.toLocaleString()} of ${plan.annualCredits.toLocaleString()} annual credits. That's about ${monthsEquivalent.toLocaleString()} months of ${plan.name} usage. Your credits are available until renewal, but active ICP capacity and active lead capacity still apply.`,
+  };
+}
+
 function usageMap(rows: Array<{ action_type: string; quantity: number }> | null): Record<string, number> {
   const result: Record<string, number> = {};
   for (const row of rows ?? []) {
@@ -181,15 +215,13 @@ function usageMap(rows: Array<{ action_type: string; quantity: number }> | null)
 function complimentaryCreditBalance(
   granted: number,
   monthly: Record<string, number>,
-  daily: Record<string, number>,
-  rolling: Record<string, number>,
 ) {
   const used =
     (monthly.imported_enrichment ?? 0) * ACTION_CREDITS.imported_contact_company_enrichment +
     (monthly.net_new_enriched_lead ?? 0) * ACTION_CREDITS.net_new_enriched_lead +
-    (daily.email_finder ?? 0) * ACTION_CREDITS.email_finder +
-    (daily.phone_reveal ?? 0) * ACTION_CREDITS.phone_reveal +
-    (rolling.outreach_sequence ?? 0) * ACTION_CREDITS.outreach_sequence;
+    (monthly.email_finder ?? 0) * ACTION_CREDITS.email_finder +
+    (monthly.phone_reveal ?? 0) * ACTION_CREDITS.phone_reveal +
+    (monthly.outreach_sequence ?? 0) * ACTION_CREDITS.outreach_sequence;
   const available = Math.max(0, granted - used);
   return {
     included: { granted, available },

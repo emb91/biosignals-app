@@ -36,6 +36,7 @@ type Summary = {
     purchasedGranted?: number;
   };
   triage: { used: number; limit: number };
+  activeIcps?: { used: number; limit: number };
   importedEnrichments: { used: number; included: number; hardCap: number };
   activeLeads: { used: number; cap: number; waitlisted: number; cadenceDays: number };
   netNewLeads: { used: number; limit: number };
@@ -123,6 +124,7 @@ export default function BillingSettings() {
       : 0;
   const capUsagePct = Math.max(
     usagePct,
+    summary.activeIcps ? percentage(summary.activeIcps.used, summary.activeIcps.limit) : 0,
     percentage(summary.activeLeads.used, summary.activeLeads.cap),
     percentage(summary.triage.used, summary.triage.limit),
   );
@@ -203,8 +205,8 @@ export default function BillingSettings() {
                 <p className="mt-0.5 text-xs leading-relaxed text-[#4a6470]">
                   Your highest plan allowance is {capUsagePct}% used.{' '}
                   {plan.key === 'free'
-                    ? 'Starter adds 2,000 monthly credits and 5,000 lead capacity.'
-                    : 'Growth adds 8,000 monthly credits, 10,000 lead capacity, and weekly monitoring.'}
+                    ? 'Starter adds 2,000 monthly credits, 3 active ICPs, and 5,000 lead capacity.'
+                    : 'Growth adds 8,000 monthly credits, 10 active ICPs, 10,000 lead capacity, and weekly monitoring.'}
                 </p>
               </div>
               {canManage && summary.available && (
