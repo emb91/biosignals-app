@@ -205,10 +205,10 @@ const FEEDBACK: Record<string, Feedback> = {
     ],
   },
   Curtain: {
-    verdict: "The bar to beat: strongest small-size + already-shipped. A new mark should be clearly more distinctive to justify switching.",
+    verdict: "Judged purely on the mark: strong small-size legibility and an on-concept silhouette. One fresh option among these, not an incumbent — the live app still shows the old triangle, so there's no switching cost either way.",
     pros: [
-      "Already live and consistent across every asset, including proven 16px favicons.",
       "Bars read as signal strength / data — on-concept, and an ownable silhouette.",
+      "Simple bar shapes stay legible down to favicon size.",
       "Carries the full gradient across the five bars.",
     ],
     cons: [
