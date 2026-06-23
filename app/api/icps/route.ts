@@ -1,6 +1,8 @@
 import { createClient } from '@/lib/supabase-server';
 import { after, NextResponse } from 'next/server';
 import { orgIdForUser, getOrgContext, canEditOrgSetup } from '@/lib/org-context';
+import { createAdminClient } from '@/lib/supabase-admin';
+import { getOrgEntitlements } from '@/lib/billing/entitlements';
 import { getPostHogClient } from '@/lib/posthog-server';
 import { rescoreAllContactsForUser } from '@/lib/rescore';
 import { normalizePlatformTaxonomyFields } from '@/lib/platform-category';
@@ -124,6 +126,34 @@ export async function POST(request: Request) {
     const ctx = await getOrgContext();
     const orgId = ctx?.orgId ?? (await orgIdForUser(supabase, user.id));
     const scope = ctx && canEditOrgSetup(ctx.role) ? 'org' : 'personal';
+
+    if (orgId) {
+      const [entitlements, { count, error: countError }] = await Promise.all([
+        getOrgEntitlements(orgId),
+        createAdminClient()
+          .from('icps')
+          .select('id', { count: 'exact', head: true })
+          .eq('org_id', orgId),
+      ]);
+      if (countError) {
+        console.error('Error counting ICPs for cap:', countError);
+        return NextResponse.json({ error: 'Failed to check ICP allowance' }, { status: 500 });
+      }
+      const used = count ?? 0;
+      const limit = entitlements.caps.activeIcps;
+      if (used >= limit) {
+        return NextResponse.json(
+          {
+            code: 'icp_limit_reached',
+            error: `Your ${entitlements.planName} plan includes ${limit} active ICP${limit === 1 ? '' : 's'}. Delete an existing ICP or upgrade to add another.`,
+            used,
+            limit,
+            plan: entitlements.planKey,
+          },
+          { status: 402 },
+        );
+      }
+    }
 
     const icpData = {
       user_id: user.id,
