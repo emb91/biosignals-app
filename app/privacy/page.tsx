@@ -120,6 +120,14 @@ export default function PrivacyPage() {
             analytics technologies to understand website and product usage. You can control
             cookies through your browser and any consent controls we provide.
           </p>
+          <p>
+            On our public marketing pages we also use a third-party visitor identification
+            service (Apollo) that estimates the organization a visitor may be associated with,
+            and in some cases publicly available professional contact details, to help us
+            understand interest in Arcova and follow up with relevant businesses. This is not
+            used inside the signed-in product. You can opt out of Apollo&rsquo;s processing via
+            the controls described in their privacy notice.
+          </p>
         </Section>
 
         <Section title="11. Your rights">
