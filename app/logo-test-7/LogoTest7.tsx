@@ -205,7 +205,7 @@ const FEEDBACK: Record<string, Feedback> = {
     ],
   },
   Curtain: {
-    verdict: "Judged purely on the mark: strong small-size legibility and an on-concept silhouette. One fresh option among these, not an incumbent — the live app still shows the old triangle, so there's no switching cost either way.",
+    verdict: "Strongest small-size legibility of the set and the most on-concept silhouette — bars read as signal/data. Its risk is the opposite of the orbs': not too generic, but a touch expected for an analytics product.",
     pros: [
       "Bars read as signal strength / data — on-concept, and an ownable silhouette.",
       "Simple bar shapes stay legible down to favicon size.",
