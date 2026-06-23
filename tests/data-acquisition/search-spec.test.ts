@@ -66,7 +66,7 @@ test('quoted Apollo compound tags are not meaningfully evaluated by the local su
 }, onlyCompound), false);
 });
 
-test('evidence-aware screen keeps oncology therapeutics and rejects media, nonprofits and CROs', () => {
+test('hard company screen keeps plausible therapeutics and rejects categorical non-targets', () => {
   assert.equal(apolloOrganizationMatchesIcp({
     name: 'Summit Therapeutics',
     industry: 'Research',
@@ -93,13 +93,23 @@ test('evidence-aware screen keeps oncology therapeutics and rejects media, nonpr
     short_description: 'A contract research organization providing oncology clinical trial services.',
   }, oncologyIcp), false);
   assert.equal(apolloOrganizationMatchesIcp({
+    name: 'MVP Health Care',
+    industry: 'Insurance',
+    short_description: 'A not-for-profit health insurer offering Medicare, Medicaid, and employer health plans.',
+  }, oncologyIcp), false);
+  assert.equal(apolloOrganizationMatchesIcp({
+    name: 'Peak Performance Pets',
+    industry: 'Veterinary Services',
+    short_description: 'Veterinary care, animal wellness, and pet health services.',
+  }, oncologyIcp), false);
+  assert.equal(apolloOrganizationMatchesIcp({
     name: 'Example Rare Disease Therapeutics',
     industry: 'Biotechnology',
     short_description: 'A clinical-stage biotechnology company with a Phase II rare-disease medicine.',
-  }, oncologyIcp), false);
+  }, oncologyIcp), true);
 });
 
-test('evidence-aware tools screen keeps instrument vendors and rejects unrelated enterprises', () => {
+test('hard tools screen keeps research buyers and rejects academic admin', () => {
   const toolsIcp: AcquisitionIcp = {
     ...oncologyIcp,
     id: 'tools',
@@ -117,8 +127,48 @@ test('evidence-aware tools screen keeps instrument vendors and rejects unrelated
     short_description: 'Manufacturer of high-performance scientific instruments for life sciences.',
   }, toolsIcp), true);
   assert.equal(apolloOrganizationMatchesIcp({
-    name: 'Halliburton',
-    industry: 'Oil and Gas',
-    short_description: 'Provides products and services to the energy industry.',
+    name: 'Example University Research Institute',
+    industry: 'Higher Education',
+    short_description: 'A university biomedical research institute with life sciences research laboratories.',
+  }, toolsIcp), true);
+  assert.equal(apolloOrganizationMatchesIcp({
+    name: 'Example University Administration',
+    industry: 'Higher Education',
+    short_description: 'University administration, student services, admissions, and campus operations.',
   }, toolsIcp), false);
+});
+
+test('evidence-aware screen treats hospitals and CROs as valid only for matching ICP company types', () => {
+  const hospitalIcp: AcquisitionIcp = {
+    ...oncologyIcp,
+    id: 'hospital',
+    name: 'Hospital Systems',
+    company_type: 'Hospital / Health System',
+    therapeutic_areas: [],
+    modalities: [],
+  };
+  const croIcp: AcquisitionIcp = {
+    ...oncologyIcp,
+    id: 'cro',
+    name: 'Oncology CRO',
+    company_type: 'CRO',
+    therapeutic_areas: [],
+    modalities: [],
+  };
+
+  const hospital = {
+    name: 'Memorial Cancer Center',
+    industry: 'Hospital & Health Care',
+    short_description: 'A hospital and academic medical center serving oncology patients.',
+  };
+  const cro = {
+    name: 'Example Clinical Research',
+    industry: 'Research Services',
+    short_description: 'A contract research organization providing oncology clinical trial services.',
+  };
+
+  assert.equal(apolloOrganizationMatchesIcp(hospital, hospitalIcp), true);
+  assert.equal(apolloOrganizationMatchesIcp(hospital, oncologyIcp), false);
+  assert.equal(apolloOrganizationMatchesIcp(cro, croIcp), true);
+  assert.equal(apolloOrganizationMatchesIcp(cro, oncologyIcp), false);
 });

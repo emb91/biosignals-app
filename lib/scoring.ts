@@ -62,6 +62,7 @@ const parseFunctionNames = (functions: string[] | null | undefined): string[] =>
 const formatPersonaForPrompt = (persona: PersonaRow): string => {
   const functions = parseFunctionNames(persona.functions);
   return [
+    `Persona id: ${persona.id || 'unknown'}`,
     `Persona name: ${persona.name || 'Unnamed'}`,
     `Target business areas / teams: ${functions.length ? functions.join(', ') : 'Not specified'}`,
     `Target seniority levels: ${persona.seniority_levels?.length ? persona.seniority_levels.join(', ') : 'Not specified'}`,
@@ -102,9 +103,11 @@ Your job is to thoughtfully assess how well each contact matches the buyer perso
 
 Life sciences titles vary widely. Reason through equivalences:
 - "Chief Scientific Officer", "Head of Scientific Affairs", "VP of R&D" are all C-suite science leadership
-- "VP External Partnerships", "Head of Alliance Management", "Director of Business Development" all indicate BD authority
+- "VP External Partnerships", "Head of Alliance Management", "Director of Business Development", and "Director of Public Private Partnerships" all indicate partnerships / BD authority
 - "Translational Sciences Lead" may be the right contact at a clinical-stage biotech even without a BD title
+- "Commercial Supply Chain" should not automatically be treated as CMC/manufacturing. It can match Manufacturing & CMC only when the role implies product supply, technical operations, manufacturing operations, process development, or CMC ownership.
 - Seniority signals budget influence — a Director at a 20-person biotech may carry VP-equivalent authority
+- Use the job title and headline as primary evidence. The normalized business_area is helpful but may be wrong; override it when the title clearly maps to a different life-sciences function.
 
 BUYER PERSONA(S):
 ${personaBlock}
@@ -122,6 +125,7 @@ Return ONLY a valid JSON array with exactly ${contacts.length} objects, one per 
     "reasoning": "<2-3 sentences explaining the score thoughtfully>",
     "matched_on": [<array of strings: which of "seniority", "function", "title" matched>],
     "gaps": "<what is missing, uncertain, or mismatched — empty string if strong match>",
+    "best_persona_id": "<persona id from the prompt>",
     "best_persona_name": "<name of the persona this contact best matches>"
   }
 ]`;
@@ -155,11 +159,15 @@ Return ONLY a valid JSON array with exactly ${contacts.length} objects, one per 
     reasoning: string;
     matched_on: string[];
     gaps: string;
+    best_persona_id?: string | null;
     best_persona_name: string;
   }>;
 
   return parsed.map((item) => {
-    const matchedPersona = personas.find((p) => p.name === item.best_persona_name) ?? personas[0];
+    const matchedPersona =
+      personas.find((p) => p.id && p.id === item.best_persona_id) ??
+      personas.find((p) => p.name === item.best_persona_name) ??
+      personas[0];
     const score = Math.max(0, Math.min(100, Math.round(item.score)));
     return {
       score,

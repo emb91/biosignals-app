@@ -37,6 +37,11 @@ For each contact:
   - use previous roles as seniority context but exercise judgement: a career VP who is now a "Sr. Specialist" could have taken a step down (e.g. after a layoff) or could be in a senior individual contributor role at a large company — consider both possibilities and pick the most likely level given the trajectory
   - do not blindly inherit the prior title's level, but do not ignore it either — a step from VP/Senior Director to a "Sr." specialist role most likely lands at Director or Head of / Senior Manager, not Manager or Individual Contributor
 - choose business_area as the best matching option from: ${BUSINESS_AREA_OPTIONS.join(', ')} — if the team/function does not clearly map to any of these, use null rather than forcing a poor fit
+- classify the role's actual operating responsibility, not just the org label. A title can contain multiple signals; pick the category the person most directly owns.
+- Business Development covers licensing, dealmaking, partnering strategy, external growth, and customer-facing strategic opportunities.
+- Partnerships covers alliance management, external partnerships, public-private partnerships, ecosystem partnerships, global health partnerships, and collaboration ownership.
+- Strategy & Corporate Development covers corporate strategy, portfolio strategy, M&A, corporate development, market expansion strategy, and strategic planning when partnerships/dealmaking are not the primary role.
+- Manufacturing & CMC covers CMC, technical operations, process development, manufacturing, quality manufacturing, supply operations, and product supply. Supply chain maps here only when tied to manufacturing/technical operations/product supply; commercial supply chain is usually Commercial or Procurement.
 - use headline as extra context when title is ambiguous
 
 Contacts:

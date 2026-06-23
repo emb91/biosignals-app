@@ -228,38 +228,43 @@ function offeringTerms(icp: AcquisitionIcp): string[] {
 }
 
 /**
- * Evidence-aware pre-purchase ICP screen.
+ * Hard negative screen for pre-purchase company acquisition.
  *
- * Apollo organization search often returns only a name/domain. Callers should
- * retry this against organization-enrichment evidence before treating `false`
- * as a durable rejection. Unlike the legacy any-keyword check, this requires
- * company-type evidence and, for therapeutics ICPs, relevant science evidence.
+ * This deliberately does NOT decide ICP fit. It only catches categories we
+ * should not spend money on unless the ICP explicitly targets that account
+ * type. Nuanced fit now belongs to the LLM screen in the job runner.
  */
-export function apolloOrganizationMatchesIcp(
+export function apolloOrganizationHardRejectReason(
   org: { name?: string | null; short_description?: string | null; industry?: string | null },
   icp: AcquisitionIcp,
-): boolean {
+): string | null {
   const text = evidenceText(org);
-  if (!text) return false;
+  if (!text) return 'missing_company_evidence';
 
   const type = (icp.company_type || '').toLowerCase();
   const isCroTarget = type.includes('cro') || type.includes('contract research');
   const isCdmoTarget = type.includes('cdmo') || type.includes('contract development');
+  const isHospitalTarget = type.includes('hospital') || type.includes('health system');
+  const isAcademicTarget = type.includes('academic') || type.includes('research institute');
 
   const universalNonOperatingOrBuyer = [
-    /\bnon-?profit\b/,
     /\bprofessional (association|society)\b/,
+    /\bnon-?profit (association|society|advocacy|foundation)\b/,
     /\bnews\b/,
     /\bmedia\b/,
     /\bpublishing\b/,
     /\bjournal\b/,
-    /\bhospital\b/,
-    /\bhealth system\b/,
-    /\bclinic\b/,
-    /\buniversity\b/,
-    /\bacademic (institute|institution|center|centre|organization)\b/,
+    /\bhealth (insurance|insurer|plan|plans|benefits?)\b/,
+    /\binsurance (company|carrier|provider|plan|plans|services?)\b/,
+    /\bmanaged care\b/,
+    /\bmedicare\b/,
+    /\bmedicaid\b/,
+    /\bpayer(s)?\b/,
+    /\bveterinary\b/,
+    /\banimal (hospital|clinic|care|health|healthcare|medicine)\b/,
+    /\bpet (care|health|healthcare|medicine|wellness|insurance|services?)\b/,
   ];
-  if (containsAny(text, universalNonOperatingOrBuyer)) return false;
+  if (containsAny(text, universalNonOperatingOrBuyer)) return 'explicit_non_target_category';
 
   const croEvidence = containsAny(text, [
     /\bcontract research organi[sz]ation\b/,
@@ -272,61 +277,55 @@ export function apolloOrganizationMatchesIcp(
     /\bcontract development\b/,
     /\bcontract manufacturing\b/,
   ]);
+  const hospitalEvidence = containsAny(text, [
+    /\bhospital\b/,
+    /\bhealth system\b/,
+    /\bhealthcare system\b/,
+    /\bmedical center\b/,
+    /\bmedical centre\b/,
+    /\bclinic\b/,
+  ]);
+  const academicEvidence = containsAny(text, [
+    /\buniversity\b/,
+    /\bacademic (institute|institution|center|centre|organization|medical center|medical centre)\b/,
+    /\bresearch (institute|institution|center|centre)\b/,
+  ]);
 
-  if (!isCroTarget && croEvidence) return false;
-  if (!isCdmoTarget && cdmoEvidence) return false;
+  if (isCroTarget) return croEvidence ? null : 'not_a_cro';
+  if (isCdmoTarget) return cdmoEvidence ? null : 'not_a_cdmo';
+  if (isHospitalTarget) return hospitalEvidence ? null : 'not_a_hospital_or_health_system';
+  if (isAcademicTarget) return academicEvidence ? null : 'not_an_academic_or_research_org';
 
-  if (isCroTarget) return croEvidence;
-  if (isCdmoTarget) return cdmoEvidence;
+  if (croEvidence) return 'cro_not_targeted_by_icp';
+  if (cdmoEvidence) return 'cdmo_not_targeted_by_icp';
+  if (hospitalEvidence) return 'hospital_not_targeted_by_icp';
 
   if (type.includes('biotech') || type.includes('biopharma') || type.includes('pharma')) {
-    const companyTypeEvidence = containsAny(text, [
-      /\bbiotech(nology)?\b/,
-      /\bbiopharma(ceutical)?\b/,
-      /\bpharmaceutical(s)?\b/,
-      /\btherapeutics?\b/,
-      /\bdrug (discovery|development)\b/,
-      /\bclinical-stage\b/,
-      /\bdevelop(s|ing|ed)? (new )?(therap|drug|medicine)/,
-    ]);
-    const terms = offeringTerms(icp);
-    const offeringEvidence = terms.length === 0 || terms.some((term) => text.includes(term));
-    return companyTypeEvidence && offeringEvidence;
+    if (academicEvidence) return 'academic_org_not_targeted_by_biopharma_icp';
+    return null;
   }
 
   if (type.includes('tools') || type.includes('instrument')) {
-    return containsAny(text, [
-      /\blife science tools?\b/,
-      /\bscientific instruments?\b/,
-      /\banalytical (instruments?|solutions?|technologies)\b/,
-      /\blaboratory (instruments?|equipment|technologies|solutions|products)\b/,
-      /\bdiagnostic(s| technologies| instruments)?\b/,
-      /\bsequencing\b/,
-      /\bspectrometr(y|ies)\b/,
-      /\bspectroscop(y|ies)\b/,
-      /\bchromatograph(y|ies)\b/,
-      /\breagents?\b/,
-      /\blab consumables?\b/,
-      /\bresearch tools?\b/,
+    const researchBuyerEvidence = containsAny(text, [
+      /\blife sciences? research\b/,
+      /\bbiomedical research\b/,
+      /\bresearch (lab|labs|laboratory|laboratories|institute|institution|center|centre)\b/,
+      /\bacademic (research|medical center|medical centre)\b/,
     ]);
+    if (academicEvidence && !researchBuyerEvidence) return 'academic_admin_not_research_buyer';
+    return null;
   }
 
-  if (type.includes('diagnostic')) {
-    return /\bdiagnostic(s| technologies| instruments| laboratory| testing)?\b/.test(text);
-  }
+  return null;
+}
 
-  if (type.includes('saas') || type.includes('software')) {
-    return containsAny(text, [
-      /\blife sciences? software\b/,
-      /\blaboratory software\b/,
-      /\bbioinformatics\b/,
-      /\bclinical software\b/,
-      /\bsoftware platform\b/,
-    ]);
-  }
-
-  const keywords = icpKeywordCorpus(icp)
-    .flatMap((keyword) => keyword.replaceAll('"', '').split(/\s+/))
-    .filter((keyword) => keyword.length >= 3);
-  return keywords.some((keyword) => text.includes(keyword));
+/**
+ * Back-compat helper for tests and callers that still need a synchronous local
+ * screen. `true` now means "not hard-rejected", not "confirmed ICP fit".
+ */
+export function apolloOrganizationMatchesIcp(
+  org: { name?: string | null; short_description?: string | null; industry?: string | null },
+  icp: AcquisitionIcp,
+): boolean {
+  return apolloOrganizationHardRejectReason(org, icp) == null;
 }

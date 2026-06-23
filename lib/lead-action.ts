@@ -34,7 +34,7 @@ export type LeadAction =
  * Used by applyOutreachOverride to bump the score-driven action up the
  * outreach funnel once the user has actually staged or sent something.
  */
-export type SequenceDispatchStatus = 'draft' | 'sent' | 'replied' | 'failed' | null;
+export type SequenceDispatchStatus = 'generating' | 'draft' | 'sent' | 'replied' | 'failed' | null;
 
 /**
  * The single "high" threshold (0–1) for fit and readiness. The action model is
@@ -199,7 +199,7 @@ export function applyFixOverride(baseAction: LeadAction, hasSyncIssue: boolean):
  * Outreach-state overlay on the score-driven action. Once the user has staged
  * or sent a sequence, the action tracks the outreach funnel instead of the
  * scoring gates:
- *   - draft  → send_outreach (sequence ready, waiting for the user to dispatch)
+ *   - generating / draft → send_outreach (sequence committed or ready)
  *   - sent   → await_reply   (dispatched, waiting on the prospect)
  *   - replied / failed → fall through to the score-driven action so the user
  *     can decide whether to engage further or retry.
@@ -216,7 +216,7 @@ export function applyOutreachOverride(
 ): LeadAction {
   if (crmState === 'customer' || crmState === 'dormant') return 'deprioritize';
   if (sequenceStatus === 'sent') return 'await_reply';
-  if (sequenceStatus === 'draft') return 'send_outreach';
+  if (sequenceStatus === 'generating' || sequenceStatus === 'draft') return 'send_outreach';
   return baseAction;
 }
 

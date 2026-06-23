@@ -78,6 +78,7 @@ export type LlmFeature =
   | 'accounts_query'
   | 'generate_icp_summary'
   | 'company_fit_summary'
+  | 'company_fit_scoring'
   // Web-search-backed company discovery for data acquisition.
   | 'web_company_discovery';
 
@@ -239,6 +240,12 @@ const FEATURE_MODELS: Record<LlmFeature, { openrouter: string; anthropic: string
   company_fit_summary: {
     openrouter: 'anthropic/claude-haiku-4-5',
     anthropic: 'claude-haiku-4-5',
+  },
+  // Company-vs-ICP fit scoring. This is a buying/priority decision, so use
+  // Sonnet rather than a brittle rules engine or a small summarizer model.
+  company_fit_scoring: {
+    openrouter: 'anthropic/claude-sonnet-4-6',
+    anthropic: 'claude-sonnet-4-6',
   },
   // Web-search company discovery — Sonnet for reasoning over live results.
   web_company_discovery: {
