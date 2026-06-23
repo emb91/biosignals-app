@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase-server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { syncCompanyFitForCompany } from '@/lib/company-fit';
 import { runCompanyMonitor } from '@/lib/company-monitor';
+import { getOrgContext } from '@/lib/org-context';
 
 /**
  * POST /api/monitor-company
@@ -15,9 +15,8 @@ import { runCompanyMonitor } from '@/lib/company-monitor';
  */
 export async function POST(request: Request) {
   try {
-    const authClient = await createClient();
-    const { data: { user }, error: authError } = await authClient.auth.getUser();
-    if (authError || !user) {
+    const ctx = await getOrgContext();
+    if (!ctx) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -29,6 +28,23 @@ export async function POST(request: Request) {
 
     if (!company_id) {
       return NextResponse.json({ error: 'company_id required' }, { status: 400 });
+    }
+
+    const { data: userCompany, error: userCompanyError } = await supabase
+      .from('user_companies')
+      .select('company_id')
+      .eq('user_id', ctx.user.id)
+      .eq('company_id', company_id)
+      .is('archived_at', null)
+      .maybeSingle();
+
+    if (userCompanyError) {
+      console.error('[monitor-company] ownership check failed:', userCompanyError);
+      return NextResponse.json({ error: 'Could not verify company access' }, { status: 500 });
+    }
+
+    if (!userCompany) {
+      return NextResponse.json({ error: 'Company not found' }, { status: 404 });
     }
 
     // Fetch the company row
@@ -46,6 +62,7 @@ export async function POST(request: Request) {
     const { data: linkedContact } = await supabase
       .from('contacts')
       .select('apollo_company_firmographics, apify_company_firmographics, apollo_organization_raw')
+      .eq('user_id', ctx.user.id)
       .eq('company_id', company_id)
       .limit(1)
       .maybeSingle();
@@ -66,7 +83,7 @@ export async function POST(request: Request) {
         (linkedContact?.apollo_organization_raw as Record<string, unknown> | null) ?? null,
     });
 
-    await syncCompanyFitForCompany(supabase, user.id, company.id);
+    await syncCompanyFitForCompany(supabase, ctx.user.id, company.id);
 
     return NextResponse.json({ success: true, result });
   } catch (error) {
