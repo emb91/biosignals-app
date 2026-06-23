@@ -1067,6 +1067,14 @@ async function runContactsAtCompanyJob(
   // gracefully downstream (empty result -> full refund).
   const requested = Math.max(1, job.target_contact_count || DEFAULT_CONTACTS_PER_COMPANY);
   const company = discoveredCompanyFromContext(companyContext);
+  if (!company.source_id && !company.domain) {
+    await completeJobWithoutPurchase(
+      admin,
+      job,
+      'This account needs a company domain before we can source contacts.',
+    );
+    return;
+  }
 
   const owned = await loadOwnedContactsForCompanies(
     admin,
