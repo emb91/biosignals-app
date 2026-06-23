@@ -23,6 +23,7 @@ import {
   signalKeyForClassification,
   type SecFilingClassification,
 } from '@/lib/signals/classify-sec-filing';
+import { shouldSkipFormDFundingSignal } from '@/lib/signals/sec-form-d-filters';
 import {
   generateAccountReason,
   ingestSignalSourceEvent,
@@ -331,7 +332,7 @@ export async function runFundingMonitor(input: FundingMonitorInput): Promise<Fun
       if (!cik && filings.length > 0) {
         const cikSet = new Set(
           filings
-            .filter((f) => FORM_D_TYPES.has(f.form_type))
+            .filter((f) => FORM_D_TYPES.has(f.form_type) && !shouldSkipFormDFundingSignal(f))
             .map((f) => f.cik)
             .filter((c): c is string => typeof c === 'string' && Boolean(c)),
         );
@@ -360,7 +361,11 @@ export async function runFundingMonitor(input: FundingMonitorInput): Promise<Fun
         [SOURCE_424B]: [],
       };
       for (const filing of filings) {
-        if (FORM_D_TYPES.has(filing.form_type) && shouldEmit('funding_round')) {
+        if (
+          FORM_D_TYPES.has(filing.form_type) &&
+          !shouldSkipFormDFundingSignal(filing) &&
+          shouldEmit('funding_round')
+        ) {
           candidateBySource[SOURCE_FORM_D].push(
             `${SOURCE_FORM_D}:${row.id}:${filing.accession_number}:funding_round`,
           );
@@ -409,7 +414,11 @@ export async function runFundingMonitor(input: FundingMonitorInput): Promise<Fun
           primary_doc_url: filing.primary_doc_url,
         };
 
-        if (FORM_D_TYPES.has(filing.form_type) && shouldEmit('funding_round')) {
+        if (
+          FORM_D_TYPES.has(filing.form_type) &&
+          !shouldSkipFormDFundingSignal(filing) &&
+          shouldEmit('funding_round')
+        ) {
           candidateEventsMatched += 1;
           const amount = formatUsd(filing.total_offering_amount);
           const sold = formatUsd(filing.total_amount_sold);
