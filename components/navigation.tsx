@@ -1,6 +1,6 @@
 import Link from "next/link"
 import { useState } from "react"
-import { LogoLink } from "@/components/logo"
+import { Logo, LogoLink } from "@/components/logo"
 import { Menu, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { motion, AnimatePresence } from "framer-motion"
@@ -83,11 +83,7 @@ export const Navigation = () => {
               {/* Top row: Logo and Close button */}
               <div className="flex items-center justify-between mb-6">
                 <Link href="/" onClick={() => setMobileOpen(false)} className="flex items-center gap-2">
-                  <img
-                    src="/images/arcova-logo.png"
-                    alt="Arcova logo"
-                    className="h-8 w-auto"
-                  />
+                  <Logo size={32} />
                 </Link>
                 <button
                   onClick={() => setMobileOpen(false)}

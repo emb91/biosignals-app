@@ -22,7 +22,7 @@ export function MetaTags() {
       <meta name="twitter:image" content="/images/og-image.png" /> */}
 
       {/* Favicon */}
-      <link rel="icon" type="image/png" href="/arcova-favicon.png" sizes="any" />
+      <link rel="icon" type="image/svg+xml" href="/brand/favicon.svg" />
 
       {/* Basic image tag that some platforms might use */}
       <link rel="image_src" href="/images/og-image.png" />

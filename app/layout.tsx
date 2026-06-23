@@ -1,5 +1,5 @@
 import type React from "react"
-import { Inter, JetBrains_Mono, Manrope, Plus_Jakarta_Sans, Poppins } from "next/font/google"
+import { Inter, JetBrains_Mono, Manrope, Plus_Jakarta_Sans, Poppins, Quicksand } from "next/font/google"
 import ClientLayout from "./ClientLayout"
 import { AuthProvider } from "@/context/AuthContext"
 import { EnrichmentGuardProvider } from "@/context/EnrichmentGuardContext"
@@ -39,22 +39,29 @@ const jetbrainsMono = JetBrains_Mono({
   variable: "--font-jetbrains-mono",
 })
 
+// Quicksand carries the Arcova wordmark (see components/brand/ArcovaLogo)
+const quicksand = Quicksand({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  variable: "--font-quicksand",
+})
+
 export const metadata = {
   metadataBase: new URL('https://arcova.bio'),
   title: "Arcova",
   description: "Revenue intelligence for life science teams.",
   icons: {
     icon: [
-      { url: "/arcova-favicon.png", sizes: "200x200", type: "image/png" }
+      { url: "/brand/favicon.svg", type: "image/svg+xml" },
+      { url: "/brand/favicon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/brand/favicon-16.png", sizes: "16x16", type: "image/png" }
     ],
     shortcut: [
-      { url: "/arcova-favicon.png", sizes: "200x200", type: "image/png" }
+      { url: "/brand/favicon-32.png", sizes: "32x32", type: "image/png" }
     ],
+    // Apple home-screen icon keeps the navy squircle (iOS fills transparency with black)
     apple: [
-      { url: "/arcova-favicon.png", sizes: "200x200", type: "image/png" }
-    ],
-    other: [
-      { url: "/arcova-favicon.png", sizes: "200x200", type: "image/png" }
+      { url: "/brand/apple-touch-icon.png", sizes: "180x180", type: "image/png" }
     ]
   },
   openGraph: {
@@ -83,7 +90,7 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" className={`${poppins.variable} ${inter.variable} ${manrope.variable} ${plusJakarta.variable} ${jetbrainsMono.variable}`}>
+    <html lang="en" className={`${poppins.variable} ${inter.variable} ${manrope.variable} ${plusJakarta.variable} ${jetbrainsMono.variable} ${quicksand.variable}`}>
       <head>
         {/* Google tag (gtag.js) */}
         <script async src="https://www.googletagmanager.com/gtag/js?id=G-0WTVF1D48X"></script>
@@ -103,7 +110,7 @@ export default function RootLayout({
               "@type": "Organization",
               name: "Arcova",
               url: "https://arcova.bio",
-              logo: "https://arcova.bio/arcova-logo.png",
+              logo: "https://arcova.bio/brand/icon-512.png",
               description: "Revenue intelligence for life science teams.",
             }),
           }}

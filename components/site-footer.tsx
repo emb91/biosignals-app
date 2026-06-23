@@ -1,5 +1,5 @@
 import Link from "next/link"
-import Image from "next/image"
+import { Logo } from "@/components/logo"
 
 export function SiteFooter() {
   return (
@@ -7,7 +7,7 @@ export function SiteFooter() {
       <div className="container grid grid-cols-1 sm:grid-cols-3 items-center py-6 px-4 md:px-6">
         {/* Left column: Icon + Copyright */}
         <div className="flex items-center justify-center sm:justify-start gap-2">
-          <Image src="/arcova-logo.png" alt="Arcova" width={24} height={24} />
+          <Logo variant="icon" size={22} />
           <span className="text-sm text-gray-500">© {new Date().getFullYear()} Arcova</span>
         </div>
         
