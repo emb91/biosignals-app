@@ -13,6 +13,7 @@ import { Bento } from "./sections/Bento"
 import { Signals } from "./sections/Signals"
 import { HowItWorks } from "./sections/HowItWorks"
 import { Pricing } from "./sections/Pricing"
+import { Comparison } from "./sections/Comparison"
 import { FinalCta } from "./sections/FinalCta"
 import { Footer } from "./sections/Footer"
 
@@ -170,6 +171,7 @@ export default function LandingPage() {
         <Signals />
         <HowItWorks />
         <Pricing />
+        <Comparison />
         <FinalCta />
       </main>
       <Footer />

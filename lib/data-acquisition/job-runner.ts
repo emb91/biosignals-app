@@ -25,6 +25,7 @@ import {
   type AcquisitionPersona,
 } from '@/lib/data-acquisition/search-spec';
 import { enrichOrganizationWithApollo } from '@/lib/apollo';
+import { firstCompanyDomain, normalizeCompanyDomain } from '@/lib/data-acquisition/domain-utils';
 import { discoverCompaniesWithWebSearch } from '@/lib/data-acquisition/web-discovery';
 import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
@@ -52,6 +53,7 @@ type ExistingCompany = {
   company_name: string | null;
   domain?: string | null;
   website?: string | null;
+  company_website?: string | null;
   linkedin_url: string | null;
 };
 
@@ -85,6 +87,7 @@ type CompanyContext = {
   company_name: string | null;
   domain: string | null;
   website: string | null;
+  company_website?: string | null;
   linkedin_url: string | null;
   matched_icp_id: string | null;
 };
@@ -94,6 +97,7 @@ type DbCompanyRow = {
   company_name: string | null;
   domain: string | null;
   website: string | null;
+  company_website?: string | null;
   linkedin_url: string | null;
   // The `companies` table does not store an Apollo org record — people search
   // falls back to the company domain (q_organization_domains_list), so this is
@@ -124,13 +128,7 @@ function apolloOrgIdFromRaw(raw: unknown): string | null {
 }
 
 function discoveredCompanyFromDbRow(row: DbCompanyRow): DiscoveredCompany | null {
-  const domain =
-    (row.domain || row.website || '')
-      .trim()
-      .toLowerCase()
-      .replace(/^https?:\/\//, '')
-      .replace(/^www\./, '')
-      .replace(/\/.*$/, '') || null;
+  const domain = firstCompanyDomain(row.domain, row.website, row.company_website);
   const name = row.company_name?.trim() || domain;
   if (!name || !domain) return null;
   const sourceId = apolloOrgIdFromRaw(row.apollo_organization_raw);
@@ -144,7 +142,7 @@ function discoveredCompanyFromDbRow(row: DbCompanyRow): DiscoveredCompany | null
     raw: {
       name,
       primary_domain: domain,
-      website_url: row.website || row.domain || null,
+      website_url: row.website || row.company_website || row.domain || null,
       linkedin_url: row.linkedin_url || null,
       id: sourceId || undefined,
     },
@@ -207,7 +205,7 @@ async function loadPrioritizedCompaniesForIcpAccounts(
 
   const { data: companies, error } = await admin
     .from('companies')
-    .select('id, company_name, domain, website, linkedin_url, employee_count')
+    .select('id, company_name, domain, website, company_website, linkedin_url, employee_count')
     .in('id', ownedIds);
 
   if (error) throw new Error(error.message);
@@ -815,6 +813,7 @@ function existingCompanyKeys(company: ExistingCompany): string[] {
   return [
     company.domain ? `domain:${normalizeKey(company.domain)}` : '',
     company.website ? `domain:${normalizeKey(company.website)}` : '',
+    company.company_website ? `domain:${normalizeKey(company.company_website)}` : '',
     li ? `linkedin:${li}` : '',
     company.company_name ? `name:${normalizeKey(company.company_name)}` : '',
   ].filter(Boolean);
@@ -887,7 +886,7 @@ async function loadOwnedContactsForCompanies(
         if (!byCompanyId.has(row.company_id)) byCompanyId.set(row.company_id, []);
         byCompanyId.get(row.company_id)!.push(row);
       }
-      const domainKey = normalizeKey(row.company_domain);
+      const domainKey = normalizeCompanyDomain(row.company_domain);
       if (domainKey) {
         if (!byDomain.has(domainKey)) byDomain.set(domainKey, []);
         byDomain.get(domainKey)!.push(row);
@@ -905,7 +904,7 @@ async function loadOwnedContactsForCompanies(
     if (error) throw new Error(error.message);
     ingest((data ?? []) as OwnedContactRef[]);
   }
-  const cleanDomains = [...new Set(domains.map((d) => normalizeKey(d)).filter(Boolean))];
+  const cleanDomains = [...new Set(domains.map((d) => normalizeCompanyDomain(d)).filter(Boolean))];
   if (cleanDomains.length > 0) {
     const { data, error } = await admin
       .from('contacts')
@@ -926,7 +925,7 @@ function ownedContactsAt(
 ): OwnedContactRef[] {
   const merged = new Map<string, OwnedContactRef>();
   if (companyId) for (const c of owned.byCompanyId.get(companyId) ?? []) merged.set(c.id, c);
-  const domainKey = normalizeKey(domain);
+  const domainKey = normalizeCompanyDomain(domain);
   if (domainKey) for (const c of owned.byDomain.get(domainKey) ?? []) merged.set(c.id, c);
   return [...merged.values()];
 }
@@ -1172,13 +1171,14 @@ function getCompanyContext(job: DataAcquisitionJob): CompanyContext | null {
     company_name: typeof record.company_name === 'string' ? record.company_name : null,
     domain: typeof record.domain === 'string' ? record.domain : null,
     website: typeof record.website === 'string' ? record.website : null,
+    company_website: typeof record.company_website === 'string' ? record.company_website : null,
     linkedin_url: typeof record.linkedin_url === 'string' ? record.linkedin_url : null,
     matched_icp_id: typeof record.matched_icp_id === 'string' ? record.matched_icp_id : null,
   };
 }
 
 function discoveredCompanyFromContext(company: CompanyContext): DiscoveredCompany {
-  const domain = normalizeKey(company.domain || company.website);
+  const domain = firstCompanyDomain(company.domain, company.website, company.company_website);
   const name = company.company_name || domain || 'Selected company';
 
   return {
@@ -1191,7 +1191,7 @@ function discoveredCompanyFromContext(company: CompanyContext): DiscoveredCompan
     raw: {
       name,
       primary_domain: domain || null,
-      website_url: company.website || company.domain || null,
+      website_url: company.website || company.company_website || company.domain || null,
       linkedin_url: company.linkedin_url || null,
     },
   };
@@ -1577,6 +1577,14 @@ async function runContactsAtCompanyJob(
   // gracefully downstream (empty result -> full refund).
   const requested = Math.max(1, job.target_contact_count || DEFAULT_CONTACTS_PER_COMPANY);
   const company = discoveredCompanyFromContext(companyContext);
+  if (!company.source_id && !company.domain) {
+    await completeJobWithoutPurchase(
+      admin,
+      job,
+      'This account needs a company domain before we can source contacts.',
+    );
+    return;
+  }
 
   const owned = await loadOwnedContactsForCompanies(
     admin,
@@ -1669,7 +1677,7 @@ async function runContactsAtAccountsJob(
     admin,
     job.user_id,
     prioritizedRows.map((r) => r.id),
-    prioritizedRows.map((r) => r.domain || r.website || '').filter(Boolean),
+    prioritizedRows.map((r) => r.domain || r.website || r.company_website || '').filter(Boolean),
   );
 
   // Pre-flight gap check per account: skip fully-covered accounts before any
@@ -1789,7 +1797,7 @@ async function runExpandCompaniesJob(
   const { data: existingCompanies } = existingOwnedIds.length > 0
     ? await admin
         .from('companies')
-        .select('company_name, domain, website, linkedin_url')
+        .select('company_name, domain, website, company_website, linkedin_url')
         .in('id', existingOwnedIds)
     : { data: [] as ExistingCompany[] };
   const existingCompanyKeySet = new Set(

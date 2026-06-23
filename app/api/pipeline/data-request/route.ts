@@ -36,6 +36,10 @@ type CompanyContext = {
   matched_icp_id: string | null;
 };
 
+function hasCompanyDomainForApollo(company: CompanyContext): boolean {
+  return Boolean((company.domain || company.website || '').trim());
+}
+
 function requestFilename(
   userId: string,
   icpId: string,
@@ -99,6 +103,12 @@ export async function POST(request: Request) {
       }
 
       companyContext = company as unknown as CompanyContext;
+      if (!hasCompanyDomainForApollo(companyContext)) {
+        return NextResponse.json(
+          { error: 'This account needs a company domain before contacts can be sourced.' },
+          { status: 400 },
+        );
+      }
       icpId = icpId || companyContext.matched_icp_id || '';
     }
 

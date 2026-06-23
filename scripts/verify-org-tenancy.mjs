@@ -102,6 +102,34 @@ try {
 
   await assertRole(orgId, owner.id, 'owner');
   await assertRole(orgId, administrator.id, 'admin');
+
+  const adminSelfPromote = await adminClient
+    .from('org_members')
+    .update({ role: 'owner' })
+    .eq('org_id', orgId)
+    .eq('user_id', administrator.id)
+    .select('user_id');
+  assertNoRowsChanged(adminSelfPromote, 'admin cannot self-promote to owner through RLS');
+  await assertRole(orgId, administrator.id, 'admin');
+
+  const adminDeletesOwner = await adminClient
+    .from('org_members')
+    .delete()
+    .eq('org_id', orgId)
+    .eq('user_id', owner.id)
+    .select('user_id');
+  assertNoRowsChanged(adminDeletesOwner, 'admin cannot delete owner through RLS');
+  await assertRole(orgId, owner.id, 'owner');
+
+  const ownerDirectPromote = await ownerClient
+    .from('org_members')
+    .update({ role: 'owner' })
+    .eq('org_id', orgId)
+    .eq('user_id', member.id)
+    .select('user_id');
+  assertNoRowsChanged(ownerDirectPromote, 'owner cannot create another owner through direct RLS update');
+  await assertRole(orgId, member.id, 'member');
+
   await rpc('transfer_org_ownership', {
     p_org_id: orgId,
     p_current_owner: owner.id,
@@ -223,4 +251,8 @@ async function assertRowOwner(table, id, userId, message) {
 
 function assert(condition, message) {
   if (!condition) throw new Error(`Tenancy assertion failed: ${message}`);
+}
+
+function assertNoRowsChanged(result, message) {
+  assert(result.error || (result.data ?? []).length === 0, message);
 }
