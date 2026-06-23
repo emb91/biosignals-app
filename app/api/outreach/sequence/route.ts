@@ -6,16 +6,17 @@
  * no copy). Booking link comes from the user's Settings CTA URL; tone of voice
  * from Settings overlays the house voice. See outbound-sequence-prompt-v2.
  *
- * Does NOT persist — returns the messages so the rep can edit them in the
- * UI before deciding to stage. Persistence happens at /api/outreach/lemlist/stage.
+ * By default, returns the messages. With autoStage=true, creates a durable
+ * outreach_sequences row immediately, returns its id, then fills in the copy
+ * from an after() job so the rep can leave the side panel while generation runs.
  *
- * Input:  { contactId, userAngle?, manualOverride? }
- * Output: { messages: Array<{ day_offset, subject, body, channel }> }
+ * Input:  { contactId, userAngle?, manualOverride?, autoStage?, operationId? }
+ * Output: { messages } | { sequenceId, staged: true, status: 'generating' }
  *
  * Signals are fetched server-side (all of the contact's recent ones) and passed
  * as background for the model's silent relevance reasoning — never recited in copy.
  */
-import { NextResponse } from 'next/server';
+import { after, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 import { completeLlm } from '@/lib/llm-client';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
@@ -26,9 +27,8 @@ import { fetchContactSignals, renderSignalContext, type ContactSignal } from '@/
 import { createAdminClient } from '@/lib/supabase-admin';
 import { getOrgEntitlements } from '@/lib/billing/entitlements';
 import {
-  recordMeteredUsage,
   refundCredits,
-  reserveCredits,
+  reserveCreditsWithIncludedAllowance,
   settleUsage,
   settleCredits,
 } from '@/lib/billing/credits';
@@ -37,6 +37,8 @@ import {
   withLinkedInInvite,
   type OutreachSequenceMessage,
 } from '@/lib/outreach-sequence';
+
+export const maxDuration = 300;
 
 // Matches lemlist's default multichannel template — but the generator only
 // writes COPY for the 6 message steps; the Day 7 LinkedIn invite is a pure
@@ -56,6 +58,12 @@ function messageFromUnknown(error: unknown): string {
 }
 
 type Message = OutreachSequenceMessage;
+
+class IncompleteSequenceError extends Error {
+  constructor(readonly count: number) {
+    super('Generated sequence did not include every best-practice step');
+  }
+}
 
 function tolerantJsonParse(text: string): unknown {
   let candidate = text.trim();
@@ -140,6 +148,7 @@ export async function POST(request: Request) {
       userAngle?: unknown;
       manualOverride?: unknown;
       operationId?: unknown;
+      autoStage?: unknown;
     };
     const contactId = typeof body.contactId === 'string' ? body.contactId.trim() : '';
     // Optional deliberate rep steer (e.g. "I'm launching product X"). Unlike a
@@ -149,6 +158,7 @@ export async function POST(request: Request) {
     // the reach-out state (low readiness). The button is always clickable; the
     // override is the human deciding to reach out anyway.
     const manualOverride = body.manualOverride === true;
+    const autoStage = body.autoStage === true;
     if (!contactId) {
       return NextResponse.json({ error: 'contactId required' }, { status: 400 });
     }
@@ -297,74 +307,161 @@ export async function POST(request: Request) {
           action: 'Update billing in Settings.',
         }, { status: 402 });
       }
-      const usage = await recordMeteredUsage({
+      const reservation = await reserveCreditsWithIncludedAllowance({
         orgId: member.org_id,
         userId: user.id,
         action: 'outreach_sequence',
         operationKey: operationId,
-        window: 'rolling_24h',
-      });
-      if (!usage.ok) return NextResponse.json(usage, { status: 429 });
-      usageContext = { orgId: member.org_id, operationId };
-      const reservation = await reserveCredits({
-        orgId: member.org_id,
-        userId: user.id,
-        action: 'outreach_sequence',
+        window: 'utc_month',
+        windowStart: entitlements.currentPeriodStart,
+        windowEnd: entitlements.currentPeriodEnd,
+        allowanceLimit: entitlements.billingInterval === 'annual'
+          ? entitlements.caps.outreachSequencesIncludedMonthly * 12
+          : entitlements.caps.outreachSequencesIncludedMonthly,
         idempotencyKey: `sequence:${operationId}`,
         entityType: 'contact',
         entityId: contactId,
       });
       if (!reservation.ok) return NextResponse.json(reservation, { status: 402 });
+      usageContext = { orgId: member.org_id, operationId };
       creditTransactionId = reservation.transactionId;
     }
 
-    const completion = await completeLlm({
-      feature: 'outreach_sequence',
-      prompt,
-      maxTokens: 3500,
-      temperature: 0.4,
-    });
-    await recordLlmUsageEvent({
-      provider: completion.provider,
-      feature: 'outreach_sequence',
-      route: 'app/api/outreach/sequence',
-      model: completion.model,
-      usage: completion.usage,
-      metadata: {
-        contact_id: contactId,
-        signals: signals.length,
-        manual_override: manualOverride,
-        has_angle: userAngle.length > 0,
-      },
-    });
-
-    const generatedMessages = parseSequence(completion.text);
-    if (generatedMessages.length !== OUTREACH_COPY_DAY_OFFSETS.length) {
-      // Do not silently ship a degraded cadence. In particular, losing either
-      // subject-less LinkedIn message turns the sequence back into email-only.
-      await refundCredits(creditTransactionId);
-      if (usageContext) await settleUsage({
-        orgId: usageContext.orgId,
-        action: 'outreach_sequence',
-        operationKey: usageContext.operationId,
-        quantity: 0,
+    const generateMessages = async (): Promise<Message[]> => {
+      const completion = await completeLlm({
+        feature: 'outreach_sequence',
+        prompt,
+        maxTokens: 3500,
+        temperature: 0.4,
       });
-      creditTransactionId = null;
-      return NextResponse.json(
-        {
-          error: 'Generated sequence did not include every best-practice step',
-          count: generatedMessages.length,
+      await recordLlmUsageEvent({
+        provider: completion.provider,
+        feature: 'outreach_sequence',
+        route: 'app/api/outreach/sequence',
+        model: completion.model,
+        usage: completion.usage,
+        metadata: {
+          contact_id: contactId,
+          signals: signals.length,
+          manual_override: manualOverride,
+          has_angle: userAngle.length > 0,
         },
-        { status: 502 },
+      });
+
+      const generatedMessages = parseSequence(completion.text);
+      if (generatedMessages.length !== OUTREACH_COPY_DAY_OFFSETS.length) {
+        // Do not silently ship a degraded cadence. In particular, losing either
+        // subject-less LinkedIn message turns the sequence back into email-only.
+        throw new IncompleteSequenceError(generatedMessages.length);
+      }
+
+      // Return the complete seven-step cadence, including the action-only
+      // LinkedIn connection request. Previously this was hidden until staging,
+      // which made the generated sequence look like a six-email follow-up list
+      // even though Lemlist had a multichannel template.
+      return withLinkedInInvite(generatedMessages);
+    };
+
+    if (autoStage) {
+      const { data: inserted, error: insertError } = await supabase
+        .from('outreach_sequences')
+        .insert({
+          user_id: user.id,
+          contact_id: contactId,
+          company_id: contactCompanyId,
+          anchor_signal_event_id: null,
+          anchor_signal_type: null,
+          anchor_hook_text: userAngle || 'Outreach sequence',
+          messages: [],
+          exported_to: 'staged',
+          dispatch_channel: 'lemlist',
+          dispatch_status: 'generating',
+        })
+        .select('id')
+        .single<{ id: string }>();
+
+      if (insertError || !inserted?.id) {
+        await refundCredits(creditTransactionId);
+        if (usageContext) await settleUsage({
+          orgId: usageContext.orgId,
+          action: 'outreach_sequence',
+          operationKey: usageContext.operationId,
+          quantity: 0,
+        });
+        creditTransactionId = null;
+        console.error('outreach/sequence auto-stage insert failed:', insertError);
+        return NextResponse.json(
+          { error: insertError?.message ?? 'Generated sequence could not be staged' },
+          { status: 500 },
+        );
+      }
+
+      const sequenceId = inserted.id;
+      const reservedCreditTransactionId = creditTransactionId;
+      const reservedUsageContext = usageContext;
+      creditTransactionId = null;
+      usageContext = null;
+
+      after(async () => {
+        const adminAfter = createAdminClient();
+        try {
+          const messages = await generateMessages();
+          const now = new Date().toISOString();
+          const { error: updateError } = await adminAfter
+            .from('outreach_sequences')
+            .update({
+              messages,
+              dispatch_status: 'draft',
+              dispatch_error: null,
+              updated_at: now,
+            })
+            .eq('id', sequenceId)
+            .eq('user_id', user.id);
+          if (updateError) throw updateError;
+
+          await settleCredits(reservedCreditTransactionId);
+          if (reservedUsageContext) await settleUsage({
+            orgId: reservedUsageContext.orgId,
+            action: 'outreach_sequence',
+            operationKey: reservedUsageContext.operationId,
+            quantity: 1,
+          });
+        } catch (error) {
+          await refundCredits(reservedCreditTransactionId).catch(() => {});
+          if (reservedUsageContext) await settleUsage({
+            orgId: reservedUsageContext.orgId,
+            action: 'outreach_sequence',
+            operationKey: reservedUsageContext.operationId,
+            quantity: 0,
+          }).catch(() => {});
+          const message = messageFromUnknown(error);
+          console.error('outreach/sequence background generation failed:', error);
+          try {
+            await adminAfter
+              .from('outreach_sequences')
+              .update({
+                dispatch_status: 'failed',
+                dispatch_error:
+                  error instanceof IncompleteSequenceError
+                    ? `${message} (${error.count} generated)`
+                    : message,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', sequenceId)
+              .eq('user_id', user.id);
+          } catch {
+            // Best effort: the credit refund above is the important invariant.
+          }
+        }
+      });
+
+      return NextResponse.json(
+        { sequenceId, staged: true, status: 'generating' },
+        { status: 202 },
       );
     }
 
-    // Return the complete seven-step cadence to the contact side panel,
-    // including the action-only LinkedIn connection request. Previously this
-    // was hidden until staging, which made the generated sequence look like a
-    // six-email follow-up list even though Lemlist had a multichannel template.
-    const messages = withLinkedInInvite(generatedMessages);
-
+    const messages = await generateMessages();
     await settleCredits(creditTransactionId);
     if (usageContext) await settleUsage({
       orgId: usageContext.orgId,
@@ -383,6 +480,12 @@ export async function POST(request: Request) {
       quantity: 0,
     }).catch(() => {});
     console.error('Error in outreach/sequence POST:', error);
+    if (error instanceof IncompleteSequenceError) {
+      return NextResponse.json(
+        { error: error.message, count: error.count },
+        { status: 502 },
+      );
+    }
     return NextResponse.json({ error: messageFromUnknown(error) }, { status: 500 });
   }
 }

@@ -137,6 +137,24 @@ export async function POST(req: Request) {
     // Dispatch sequentially — lemlist API doesn't love bursty per-account
     // traffic, and per-lead errors should be surfaced row-by-row.
     for (const row of seqRows) {
+      const rowStatus = (row.dispatch_status ?? 'draft').toLowerCase();
+      if (rowStatus === 'generating') {
+        results.push({
+          id: row.id,
+          ok: false,
+          error: 'This sequence is still generating. Try again once the draft is ready.',
+        });
+        continue;
+      }
+      if (rowStatus !== 'draft' && rowStatus !== 'failed') {
+        results.push({
+          id: row.id,
+          ok: false,
+          error: `Cannot send a sequence in '${row.dispatch_status ?? 'draft'}' state.`,
+        });
+        continue;
+      }
+
       const contact = contactById.get(row.contact_id);
       if (!contact || !contact.email) {
         await markFailed(supabase, row.id, user.id, 'Contact has no email');

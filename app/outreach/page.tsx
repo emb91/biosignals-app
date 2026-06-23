@@ -86,11 +86,12 @@ interface Sequence {
   contact: Contact | null;
 }
 
-type StatusFilter = 'all' | 'draft' | 'sent' | 'replied' | 'failed';
+type StatusFilter = 'all' | 'generating' | 'draft' | 'sent' | 'replied' | 'failed';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 const STATUS_LABEL: Record<string, string> = {
+  generating: 'Generating',
   draft: 'Draft',
   sent: 'Sent',
   replied: 'Replied',
@@ -100,6 +101,7 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 const STATUS_PILL: Record<string, string> = {
+  generating: 'bg-arcova-teal/8 text-arcova-teal border-arcova-teal/20',
   draft: 'bg-[#0d3547]/8 text-[#0d3547] border-[#0d3547]/12',
   sent: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   replied: 'bg-violet-50 text-violet-700 border-violet-200',
@@ -109,6 +111,7 @@ const STATUS_PILL: Record<string, string> = {
 };
 
 const STATUS_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
+  generating: Loader2,
   draft: Clock,
   sent: CheckCircle2,
   replied: MessageSquareReply,
@@ -135,6 +138,11 @@ function displayName(c: Contact | null): string {
 
 function maxSteps(sequences: Sequence[]): number {
   return sequences.reduce((max, s) => Math.max(max, s.messages?.length ?? 0), 0);
+}
+
+function isSequenceSendable(seq: Sequence): boolean {
+  const status = (seq.dispatch_status ?? 'draft').toLowerCase();
+  return (status === 'draft' || status === 'failed') && (seq.messages?.length ?? 0) > 0;
 }
 
 function truncate(s: string, n: number): string {
@@ -207,7 +215,7 @@ export default function OutreachPage() {
   const highlightId = searchParams.get('highlight');
   const initialStatus = ((): StatusFilter => {
     const s = searchParams.get('status');
-    return s === 'draft' || s === 'sent' || s === 'replied' || s === 'failed' ? s : 'all';
+    return s === 'generating' || s === 'draft' || s === 'sent' || s === 'replied' || s === 'failed' ? s : 'all';
   })();
 
   const [sequences, setSequences] = useState<Sequence[]>([]);
@@ -311,6 +319,18 @@ export default function OutreachPage() {
     if (user) void syncStatusThenRefresh();
   }, [user, syncStatusThenRefresh]);
 
+  useEffect(() => {
+    if (!sequences.some((s) => (s.dispatch_status ?? '').toLowerCase() === 'generating')) return;
+    const interval = window.setInterval(() => {
+      void refresh();
+      invalidateCache('/api/outreach/hooks');
+      invalidateCache('/api/leads');
+      invalidateCache('/api/accounts');
+      invalidateCache('/api/today');
+    }, 3000);
+    return () => window.clearInterval(interval);
+  }, [refresh, sequences]);
+
   const filtered = useMemo(() => {
     if (statusFilter === 'all') return sequences;
     return sequences.filter((s) => (s.dispatch_status ?? 'draft') === statusFilter);
@@ -327,10 +347,10 @@ export default function OutreachPage() {
     });
   };
   const allFilteredSelected =
-    filtered.length > 0 && filtered.every((s) => selectedIds.has(s.id));
+    filtered.some(isSequenceSendable) && filtered.filter(isSequenceSendable).every((s) => selectedIds.has(s.id));
   const toggleAll = () => {
     if (allFilteredSelected) setSelectedIds(new Set());
-    else setSelectedIds(new Set(filtered.map((s) => s.id)));
+    else setSelectedIds(new Set(filtered.filter(isSequenceSendable).map((s) => s.id)));
   };
 
   const openCellEditor = (sequenceId: string, stepIdx: number) => {
@@ -403,9 +423,15 @@ export default function OutreachPage() {
 
   const deleteSequence = async (id: string) => {
     if (!confirm('Delete this sequence? This does not remove it from lemlist.')) return;
-    const contactId = sequences.find((s) => s.id === id)?.contact_id ?? null;
+    const sequence = sequences.find((s) => s.id === id);
     const res = await fetch(`/api/outreach/sequences/${id}`, { method: 'DELETE' });
     if (res.ok) {
+      const deleted = (await res.json().catch(() => ({}))) as {
+        contactId?: string | null;
+        companyId?: string | null;
+      };
+      const contactId = sequence?.contact_id ?? deleted.contactId ?? null;
+      const companyId = sequence?.company_id ?? deleted.companyId ?? null;
       setSequences((prev) => prev.filter((s) => s.id !== id));
       setSelectedIds((prev) => {
         const next = new Set(prev);
@@ -419,13 +445,25 @@ export default function OutreachPage() {
       // which would now point at a deleted sequence — disappears.
       if (contactId) {
         invalidateCache(`/api/outreach/hooks?contactId=${encodeURIComponent(contactId)}`);
+        invalidateCache(`/api/leads/${encodeURIComponent(contactId)}`);
       }
+      // Contacts/accounts/today all derive "Send outreach" from
+      // outreach_sequences. Clear their list caches so deleting the last draft
+      // lets the action fall back to the score-driven "Reach out" state.
+      invalidateCache('/api/leads');
+      invalidateCache('/api/accounts');
+      invalidateCache('/api/today');
+      if (companyId) invalidateCache(`/api/accounts/${encodeURIComponent(companyId)}`);
     }
   };
 
   const openDispatch = (ids: string[]) => {
-    if (ids.length === 0) return;
-    setDispatchRowIds(ids);
+    const sendableIds = ids.filter((id) => {
+      const seq = sequences.find((s) => s.id === id);
+      return seq ? isSequenceSendable(seq) : false;
+    });
+    if (sendableIds.length === 0) return;
+    setDispatchRowIds(sendableIds);
     setDispatchOpen(true);
     setDispatchError(null);
   };
@@ -481,6 +519,7 @@ export default function OutreachPage() {
 
   const FILTERS: { value: StatusFilter; label: string }[] = [
     { value: 'all', label: 'All' },
+    { value: 'generating', label: 'Generating' },
     { value: 'draft', label: 'Drafts' },
     { value: 'sent', label: 'Sent' },
     { value: 'replied', label: 'Replied' },
@@ -557,8 +596,7 @@ export default function OutreachPage() {
                   Nothing here yet
                 </h3>
                 <p className="text-[#7d909a] text-sm max-w-sm">
-                  Generate a sequence on a contact and click <span className="font-medium text-[#0d3547]">Stage for outreach</span>{' '}
-                  to land it on this page.
+                  Generate a sequence on a contact and it will land here for review.
                 </p>
               </div>
             ) : (
@@ -610,6 +648,7 @@ export default function OutreachPage() {
                         const status = seq.dispatch_status ?? 'draft';
                         const StatusIcon = STATUS_ICON[status] ?? Clock;
                         const highlight = highlightId && seq.id === highlightId;
+                        const sendable = isSequenceSendable(seq);
                         return (
                           <tr
                             key={seq.id}
@@ -621,8 +660,11 @@ export default function OutreachPage() {
                               <input
                                 type="checkbox"
                                 checked={selectedIds.has(seq.id)}
-                                onChange={() => toggleSelected(seq.id)}
-                                className="rounded border-[rgba(13,53,71,0.2)]"
+                                onChange={() => {
+                                  if (sendable) toggleSelected(seq.id);
+                                }}
+                                disabled={!sendable}
+                                className="rounded border-[rgba(13,53,71,0.2)] disabled:opacity-30"
                               />
                             </td>
                             <td className="sticky left-10 z-10 bg-white px-3 py-2.5 align-top">
@@ -657,7 +699,7 @@ export default function OutreachPage() {
                               <span
                                 className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10.5px] font-semibold ${STATUS_PILL[status] ?? STATUS_PILL.draft}`}
                               >
-                                <StatusIcon className="h-3 w-3" />
+                                <StatusIcon className={`h-3 w-3 ${status === 'generating' ? 'animate-spin' : ''}`} />
                                 {STATUS_LABEL[status] ?? status}
                               </span>
                               {seq.last_status_at && (
@@ -734,7 +776,7 @@ export default function OutreachPage() {
                             })}
                             <td className="px-3 py-2.5 align-top">
                               <div className="flex items-center gap-1">
-                                {status === 'draft' || status === 'failed' ? (
+                                {sendable ? (
                                   <button
                                     type="button"
                                     onClick={() => void openDispatch([seq.id])}

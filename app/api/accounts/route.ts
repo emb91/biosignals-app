@@ -171,10 +171,11 @@ async function fetchCompanyCrmStatuses(
  * Aggregate outreach funnel state per account so the account action mirrors the
  * contact action's outreach overlay (Send outreach / Await reply). Takes each
  * contact's LATEST sequence status (same normalisation as /api/leads), then per
- * company keeps the highest-actionability state: a staged 'draft' (the rep has
- * something ready to dispatch) outranks a 'sent' one, matching LEAD_ACTION_SORT_ORDER
- * (send_outreach > await_reply). 'replied' / 'failed' contribute nothing — they
- * fall through to the score-driven action, exactly like a single contact does.
+ * company keeps the highest-actionability state: a 'generating'/'draft' row
+ * (the rep has committed to outreach, or has something ready to dispatch)
+ * outranks a 'sent' one, matching LEAD_ACTION_SORT_ORDER (send_outreach >
+ * await_reply). 'replied' / 'failed' contribute nothing — they fall through to
+ * the score-driven action, exactly like a single contact does.
  */
 async function fetchCompanySequenceStatuses(
   supabase: SupabaseLike,
@@ -219,14 +220,16 @@ async function fetchCompanySequenceStatuses(
       latestByContact.set(r.contact_id, normalized);
     }
 
-    // Aggregate per company: draft > sent; everything else ignored.
+    // Aggregate per company: generating/draft > sent; everything else ignored.
     const companySeq = new Map<string, SequenceDispatchStatus>();
     for (const [contactId, status] of latestByContact) {
       const companyId = companyByContactId.get(contactId);
       if (!companyId) continue;
-      if (status === 'draft') {
+      if (status === 'generating') {
+        companySeq.set(companyId, 'generating');
+      } else if (status === 'draft') {
         companySeq.set(companyId, 'draft');
-      } else if (status === 'sent' && companySeq.get(companyId) !== 'draft') {
+      } else if (status === 'sent' && !['generating', 'draft'].includes(companySeq.get(companyId) ?? '')) {
         companySeq.set(companyId, 'sent');
       }
     }

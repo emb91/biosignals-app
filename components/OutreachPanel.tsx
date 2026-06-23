@@ -8,16 +8,15 @@
  *   PICKER  — shows recent signals (last 14d) for this contact + their
  *             company, ordered with contact-level signals first. No LLM —
  *             pure DB query. User picks one as the anchor.
- *   EDITOR  — Sonnet generates 7 editable messages anchored to the picked
- *             signal. User can edit each, then "Save & download CSV" or
- *             "Save & copy clipboard". Either persists to outreach_sequences.
+ *   EDITOR  — legacy fallback preview. The normal flow now auto-stages the
+ *             generated draft and sends the rep to /outreach to review/edit.
  *
  * Cost model:
  *   - Picker is free (DB query only)
- *   - Sequence is one Sonnet call (~$0.04). Re-clicking the same signal
- *     anchor returns the cached draft from outreach_sequences (no re-run).
+ *   - Sequence is one Sonnet call. The confirmed generation is persisted as a
+ *     draft outreach_sequences row before the rep lands on /outreach.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2, Copy, Check, ChevronLeft, Send, Linkedin, Mail, UserPlus } from 'lucide-react';
 import { cachedJson, invalidateCache } from '@/lib/page-fetch-cache';
@@ -129,6 +128,7 @@ type Props = {
 };
 
 export function OutreachPanel({ contactId, contactName }: Props) {
+  const mountedRef = useRef(true);
   const [view, setView] = useState<'picker' | 'editor'>('picker');
 
   // Readiness-gate state. gateLoaded is the "fetched once" sentinel (the panel
@@ -164,6 +164,13 @@ export function OutreachPanel({ contactId, contactName }: Props) {
   // multi-step channel selection + lemlist dispatch.
   const [staging, setStaging] = useState(false);
   const router = useRouter();
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // Reset when contact changes
   useEffect(() => {
@@ -235,7 +242,6 @@ export function OutreachPanel({ contactId, contactName }: Props) {
       setMessages([]);
       setSequenceError(null);
       setSequenceLoading(true);
-      setView('editor');
       setExportSuccess(null);
       try {
         const res = await fetch('/api/outreach/sequence', {
@@ -246,18 +252,33 @@ export function OutreachPanel({ contactId, contactName }: Props) {
             userAngle: userAngle.trim() || undefined,
             manualOverride: override,
             operationId: crypto.randomUUID(),
+            autoStage: true,
           }),
         });
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+        if (json.sequenceId) {
+          invalidateCache('/api/outreach');
+          invalidateCache('/api/leads');
+          invalidateCache('/api/accounts');
+          invalidateCache('/api/today');
+          invalidateCache(`/api/outreach/hooks?contactId=${encodeURIComponent(contactId)}`);
+          if (mountedRef.current) {
+            router.push(`/outreach?highlight=${encodeURIComponent(json.sequenceId)}`);
+          }
+          return;
+        }
+        if (!mountedRef.current) return;
         setMessages(json.messages ?? []);
+        setView('editor');
       } catch (e) {
+        if (!mountedRef.current) return;
         setSequenceError(e instanceof Error ? e.message : String(e));
       } finally {
-        setSequenceLoading(false);
+        if (mountedRef.current) setSequenceLoading(false);
       }
     },
-    [contactId, userAngle],
+    [contactId, userAngle, router],
   );
 
   const backToPicker = useCallback(() => {
@@ -343,7 +364,7 @@ export function OutreachPanel({ contactId, contactName }: Props) {
         <div className="space-y-0.5">
           <p className="text-xs text-gray-700">Generate a multichannel outreach sequence for this contact.</p>
           <p className="text-xs text-gray-500">
-            Arcova writes to their role and your offer. Recent signals are used only as background for timing, never quoted.
+            Arcova writes to their role and your offer, then stages the draft in Outreach for review.
           </p>
         </div>
 
@@ -396,7 +417,7 @@ export function OutreachPanel({ contactId, contactName }: Props) {
           className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-arcova-navy px-3 py-2.5 text-[13px] font-semibold text-white hover:bg-[#0d3547] disabled:opacity-60"
         >
           {sequenceLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-          {sequenceLoading ? 'Generating…' : 'Generate outreach sequence'}
+          {sequenceLoading ? 'Generating and staging…' : 'Generate and stage in Outreach'}
         </button>
       </div>
     );
@@ -562,7 +583,8 @@ export function OutreachPanel({ contactId, contactName }: Props) {
 // when an outreach_sequences row already exists for this contact, so reps
 // don't accidentally double-pitch.
 //
-// Five states, each with distinct copy + actions:
+// Sequence states, each with distinct copy + actions:
+//   generating — sequence row exists and the background job is writing copy.
 //   draft   — sequence staged but not sent. "Open draft" + "Draft another".
 //   sent    — leads enrolled in lemlist. "Open" + "Stage another angle".
 //   replied — they answered. "Open" only — human takes over here.
@@ -592,7 +614,20 @@ function ContactedNotice({
   let allowAnother = false;
   let openLabel = 'Open in /outreach';
 
-  if (status === 'draft') {
+  if (status === 'generating') {
+    headline = (
+      <>
+        Outreach is being drafted for: <span className="text-gray-900">{sequence.anchor_hook_text}</span>.
+      </>
+    );
+    body = (
+      <>
+        Arcova is generating the sequence in Outreach. You can leave this panel and open it there.
+      </>
+    );
+    allowAnother = false;
+    openLabel = 'Open in Outreach';
+  } else if (status === 'draft') {
     headline = (
       <>
         Outreach drafted for: <span className="text-gray-900">{sequence.anchor_hook_text}</span>.

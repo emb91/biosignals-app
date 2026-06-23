@@ -2,10 +2,10 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { attemptApolloPhoneRevealForContact } from '@/lib/contact-phone-enrichment';
+import { getOrgEntitlements } from '@/lib/billing/entitlements';
 import {
-  recordMeteredUsage,
   refundCredits,
-  reserveCredits,
+  reserveCreditsWithIncludedAllowance,
   settleUsage,
   settleCredits,
 } from '@/lib/billing/credits';
@@ -31,20 +31,19 @@ export async function POST(
     .eq('user_id', user.id).maybeSingle<{ org_id: string }>();
   if (!member?.org_id) return NextResponse.json({ error: 'Workspace not found' }, { status: 409 });
 
+  const entitlements = await getOrgEntitlements(member.org_id);
   const operationId = request.headers.get('x-operation-id') || crypto.randomUUID();
-  const usage = await recordMeteredUsage({
+  const reservation = await reserveCreditsWithIncludedAllowance({
     orgId: member.org_id,
     userId: user.id,
     action: 'phone_reveal',
     operationKey: operationId,
-    window: 'utc_day',
-  });
-  if (!usage.ok) return NextResponse.json(usage, { status: 429 });
-
-  const reservation = await reserveCredits({
-    orgId: member.org_id,
-    userId: user.id,
-    action: 'phone_reveal',
+    window: 'utc_month',
+    windowStart: entitlements.currentPeriodStart,
+    windowEnd: entitlements.currentPeriodEnd,
+    allowanceLimit: entitlements.billingInterval === 'annual'
+      ? entitlements.caps.phoneRevealsIncludedMonthly * 12
+      : entitlements.caps.phoneRevealsIncludedMonthly,
     idempotencyKey: `phone-reveal:${operationId}`,
     entityType: 'contact',
     entityId: id,
