@@ -123,7 +123,7 @@ export default function ClientLayout({
   // existing pages are unaffected.
   const isFullBleedRoute = pathname
     ? pathname === '/' ||
-      ['/landing-test-3', '/landing-test-4', '/landing-test-5', '/landing-test-6', '/docs'].some((r) => matchesRoutePrefix(pathname, r))
+      ['/landing-test-3', '/landing-test-4', '/landing-test-5', '/landing-test-6', '/pricing-test-7', '/logo-lab', '/docs'].some((r) => matchesRoutePrefix(pathname, r))
     : false
   if (isFullBleedRoute) {
     return <>{children}</>

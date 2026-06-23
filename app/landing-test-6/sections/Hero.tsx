@@ -113,7 +113,7 @@ export function Hero() {
                     <div className="pr-row"><span className="pr-num">1</span><div className="pr-body"><div className="pr-t">Send a staged outreach sequence</div><div className="pr-d">Drafted &amp; ready · Priya Raman</div></div><span className="pr-cta">Open ›</span></div>
                     <div className="pr-row"><span className="pr-num">2</span><div className="pr-body"><div className="pr-t">Review new contacts</div><div className="pr-d">Import finished · 142 ready</div></div><span className="pr-cta">Open ›</span></div>
                     <div className="pr-row"><span className="pr-num">3</span><div className="pr-body"><div className="pr-t">Work the best leads</div><div className="pr-d">5 high-fit contacts ready</div></div><span className="pr-cta">Review ›</span></div>
-                    <div className="pr-row"><span className="pr-num">4</span><div className="pr-body"><div className="pr-t">Review enrichment failures</div><div className="pr-d">Daniel Okafor</div></div><span className="pr-cta">Re-enrich ›</span></div>
+                    <div className="pr-row"><span className="pr-num">4</span><div className="pr-body"><div className="pr-t">Review 2 new accounts</div><div className="pr-d">Recently added: Vir Biotechnology, Inc., Guardant Health</div></div><span className="pr-cta">Review ›</span></div>
                     <div className="pr-row"><span className="pr-num">5</span><div className="pr-body"><div className="pr-t">Check CRM sync</div><div className="pr-d">2 need attention</div></div><span className="pr-cta">Open ›</span></div>
                   </div>
                   <div className="pr-foot">5 left for today</div>
