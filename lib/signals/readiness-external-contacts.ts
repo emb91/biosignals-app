@@ -7,6 +7,8 @@ import {
 } from '@/lib/signals/readiness-service';
 import type { BuyerFunction, SignalKey } from '@/lib/signals/readiness-types';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { assertUserOwnsSignalEntity } from '@/lib/signals/signal-ownership';
+import { buildAdmissionMetadata } from '@/lib/signals/signal-admission';
 
 type DatabaseClient = SupabaseClient<any, 'public', any>;
 
@@ -289,6 +291,28 @@ export async function emitExternalContactSignalsFromEnrichment(
   if (!decision || !input.current.companyId) {
     return { emittedSignalTypes: [], recomputedCompanies: [] };
   }
+  const ownership = await assertUserOwnsSignalEntity(supabase, {
+    userId: input.previous.userId,
+    companyId: input.current.companyId,
+    contactId: input.previous.contactId,
+  });
+  if (!ownership.ok) {
+    console.warn('[readiness-external-contacts] signal skipped:', ownership.reason);
+    return { emittedSignalTypes: [], recomputedCompanies: [] };
+  }
+  const admissionMetadata = buildAdmissionMetadata({
+    admitted: true,
+    reason: ownership.reason,
+    confidence: 'high',
+    entityScope: 'contact',
+    companyId: input.current.companyId,
+    contactId: input.previous.contactId,
+    matchType: 'owned_external_contact_monitor',
+    metadata: {
+      role_gate: 'passed',
+      role_gate_reason: 'external contact monitor ran for active user-owned contact and target company',
+    },
+  });
 
   const sourceEventId = `${EXTERNAL_CONTACT_SIGNAL_SOURCE}:${input.previous.contactId}:${decision.sourceEventType}:${input.current.eventAt}`;
   const ingestResult = await ingestSignalSourceEvent(supabase, {
@@ -318,6 +342,7 @@ export async function emitExternalContactSignalsFromEnrichment(
       previous_role_family: roleFamily(input.previous.jobTitle, input.previous.businessArea),
       current_role_family: roleFamily(input.current.jobTitle, input.current.businessArea),
       ...decision.metadata,
+      ...admissionMetadata,
     },
   });
 
@@ -349,6 +374,7 @@ export async function emitExternalContactSignalsFromEnrichment(
       previous_role_family: roleFamily(input.previous.jobTitle, input.previous.businessArea),
       current_role_family: roleFamily(input.current.jobTitle, input.current.businessArea),
       ...decision.metadata,
+      ...admissionMetadata,
     },
   };
 

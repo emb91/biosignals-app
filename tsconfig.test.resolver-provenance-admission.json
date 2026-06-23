@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/tmp/arcova-resolver-provenance-admission-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/companies/mention-provenance.ts",
+    "lib/signals/readiness-types.ts",
+    "lib/signals/signal-admission.ts",
+    "lib/signals/resolver-provenance-admission.ts",
+    "lib/signals/resolver-provenance-admission.test.ts"
+  ]
+}

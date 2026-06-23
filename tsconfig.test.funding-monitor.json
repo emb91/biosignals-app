@@ -10,6 +10,9 @@
   },
   "include": [
     "lib/signals/sec-form-d-filters.ts",
-    "lib/signals/sec-form-d-filters.test.ts"
+    "lib/signals/sec-form-d-filters.test.ts",
+    "lib/signals/sec-form-d-screen-result.ts",
+    "lib/signals/sec-form-d-screener.ts",
+    "lib/signals/sec-form-d-screener.test.ts"
   ]
 }

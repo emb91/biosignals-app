@@ -36,7 +36,8 @@ import {
 export const runtime = 'nodejs';
 
 export async function POST(request: Request) {
-  if (!isBillingConfigured() || !process.env.STRIPE_WEBHOOK_SECRET) {
+  const webhookSecrets = stripeWebhookSecrets();
+  if (!isBillingConfigured() || webhookSecrets.length === 0) {
     return NextResponse.json({ error: 'Billing is not configured' }, { status: 503 });
   }
 
@@ -47,7 +48,7 @@ export async function POST(request: Request) {
   const payload = await request.text();
   let event: Stripe.Event;
   try {
-    event = getStripe().webhooks.constructEvent(payload, signature, process.env.STRIPE_WEBHOOK_SECRET);
+    event = constructStripeEvent(payload, signature, webhookSecrets);
   } catch (error) {
     console.error('[stripe-webhook] signature verification failed:', error);
     return NextResponse.json({ error: 'Invalid signature' }, { status: 400 });
@@ -114,6 +115,25 @@ export async function POST(request: Request) {
     .eq('id', event.id);
 
   return NextResponse.json({ received: true });
+}
+
+function stripeWebhookSecrets(): string[] {
+  return [
+    process.env.STRIPE_WEBHOOK_SECRET,
+    process.env.STRIPE_WEBHOOK_SECRET_TEST,
+  ].filter((secret): secret is string => Boolean(secret?.trim()));
+}
+
+function constructStripeEvent(payload: string, signature: string, webhookSecrets: string[]): Stripe.Event {
+  let lastError: unknown;
+  for (const secret of webhookSecrets) {
+    try {
+      return getStripe().webhooks.constructEvent(payload, signature, secret);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError ?? new Error('No Stripe webhook signing secrets configured');
 }
 
 async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {

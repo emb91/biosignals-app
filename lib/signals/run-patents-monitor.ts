@@ -7,6 +7,8 @@ import {
 } from '@/lib/signals/readiness-service';
 import type { SignalKey } from '@/lib/signals/readiness-types';
 import { hasVerifiedCanonicalCompanyMatch } from '@/lib/companies/mention-provenance';
+import { canonicalCompanyAdmission } from '@/lib/signals/resolver-provenance-admission';
+import { buildAdmissionMetadata } from '@/lib/signals/signal-admission';
 
 type CompanyRow = {
   id: string;
@@ -54,6 +56,7 @@ type PatentRow = {
     app_number?: string;
     app_date?: string;
   }>;
+  canonicalCompanyMatch?: unknown;
 };
 
 const SOURCE = 'uspto_public_search';
@@ -128,19 +131,17 @@ async function fetchPatentsForCompaniesFromLocal(
       throw new Error(`patent_event_assignees query failed for "${company.name}": ${assigneeErr.message}`);
     }
 
-    const publicationNumbers = [
-      ...new Set(
-        (assigneeRows ?? [])
-          .filter((r) => hasVerifiedCanonicalCompanyMatch(
-            (r as { canonical_company_match?: unknown }).canonical_company_match,
-            company.id,
-          ))
-          .map((r) => (typeof (r as { publication_number?: unknown }).publication_number === 'string'
-            ? (r as { publication_number: string }).publication_number
-            : null))
-          .filter((v): v is string => Boolean(v)),
-      ),
-    ];
+    const verifiedAssigneeMatches = new Map<string, unknown>();
+    for (const r of assigneeRows ?? []) {
+      const row = r as { publication_number?: unknown; canonical_company_match?: unknown };
+      if (
+        typeof row.publication_number === 'string' &&
+        hasVerifiedCanonicalCompanyMatch(row.canonical_company_match, company.id)
+      ) {
+        verifiedAssigneeMatches.set(row.publication_number, row.canonical_company_match);
+      }
+    }
+    const publicationNumbers = [...verifiedAssigneeMatches.keys()];
     if (publicationNumbers.length === 0) {
       result.set(company.id, []);
       continue;
@@ -171,6 +172,9 @@ async function fetchPatentsForCompaniesFromLocal(
         patent_type: undefined,
         patent_num_claims: undefined,
         patent_processing_time: undefined,
+        canonicalCompanyMatch: verifiedAssigneeMatches.get(
+          typeof row.publication_number === 'string' ? row.publication_number : '',
+        ),
       };
     });
     result.set(company.id, patentRows);
@@ -362,6 +366,14 @@ export async function runPatentsMonitor(input: PatentsMonitorInput): Promise<Pat
 
       for (const patent of records) {
         const patentId = patent.patent_id || 'unknown_patent';
+        const admission = canonicalCompanyAdmission({
+          companyId: row.id,
+          match: patent.canonicalCompanyMatch,
+          matchType: 'verified_assignee',
+          admittedReason: 'Patent assignee is verified as the tracked company.',
+          rejectedReason: 'Patent assignee was not verified as the tracked company.',
+        });
+        if (!admission.admitted) continue;
         if (shouldEmit('patent_application_published') && isPublishedApplication(patent)) {
           candidateSourceEventIds.push(`${SOURCE}:${row.id}:${patentId}:patent_application_published`);
         }
@@ -387,6 +399,14 @@ export async function runPatentsMonitor(input: PatentsMonitorInput): Promise<Pat
         const patentId = patent.patent_id || 'unknown_patent';
         const eventAt = toIsoDate(patent.patent_date);
         const sourceUrl = `https://patents.google.com/patent/${patentId.replace(/-/g, '')}`;
+        const admission = canonicalCompanyAdmission({
+          companyId: row.id,
+          match: patent.canonicalCompanyMatch,
+          matchType: 'verified_assignee',
+          admittedReason: 'Patent assignee is verified as the tracked company.',
+          rejectedReason: 'Patent assignee was not verified as the tracked company.',
+        });
+        if (!admission.admitted) continue;
         const metadata = {
           patent_id: patentId,
           patent_title: patent.patent_title ?? null,
@@ -394,6 +414,7 @@ export async function runPatentsMonitor(input: PatentsMonitorInput): Promise<Pat
           patent_type: patent.patent_type ?? null,
           patent_date: patent.patent_date ?? null,
           patent_num_claims: patent.patent_num_claims ?? null,
+          ...buildAdmissionMetadata(admission),
         };
 
         if (eventAt) {
@@ -508,7 +529,21 @@ export async function runPatentsMonitor(input: PatentsMonitorInput): Promise<Pat
           sourceUrl: `https://patents.google.com/?assignee=${encodeURIComponent(companyName)}`,
           eventAt: new Date().toISOString(),
           summary: `${companyName} shows elevated recent patent velocity (${recentPatentCount} patents in the last 90 days).`,
-          metadata: { recent_patents_90d: recentPatentCount },
+          metadata: {
+            recent_patents_90d: recentPatentCount,
+            ...buildAdmissionMetadata({
+              admitted: true,
+              reason: 'Portfolio acceleration is derived only from verified-assignee patent events.',
+              confidence: 'high',
+              entityScope: 'company',
+              companyId: row.id,
+              matchType: 'verified_assignee_portfolio',
+              metadata: {
+                role_gate: 'passed',
+                role_gate_reason: 'all counted patents passed verified assignee admission',
+              },
+            }),
+          },
           existingSourceEventIds,
         });
         if (emitted === 'emitted') {

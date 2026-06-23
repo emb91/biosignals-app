@@ -41,6 +41,8 @@ import {
   recomputeAccountReadiness,
 } from '@/lib/signals/readiness-service';
 import type { SignalKey } from '@/lib/signals/readiness-types';
+import { assertUserOwnsSignalEntity } from '@/lib/signals/signal-ownership';
+import { buildAdmissionMetadata } from '@/lib/signals/signal-admission';
 
 const HUBSPOT_SIGNAL_SOURCE = 'hubspot_crm_deals';
 
@@ -633,6 +635,28 @@ export async function syncHubSpotDealsIntoReadiness(
 
       for (const target of resolution.targets) {
         const companyId = target.companyId;
+        const ownership = await assertUserOwnsSignalEntity(supabase, {
+          userId: input.userId,
+          companyId,
+        });
+        if (!ownership.ok) {
+          console.warn('[readiness-hubspot-deals] signal skipped:', ownership.reason);
+          skippedUnresolvedCompanies += changes.length;
+          continue;
+        }
+        const admissionMetadata = buildAdmissionMetadata({
+          admitted: true,
+          reason: ownership.reason,
+          confidence: 'high',
+          entityScope: 'company',
+          companyId,
+          matchType: 'owned_hubspot_deal_signal',
+          metadata: {
+            role_gate: 'passed',
+            role_gate_reason: 'HubSpot deal event resolved to active user-owned Arcova company',
+          },
+        });
+
         for (const change of changes) {
           const sourceEventId = `hubspot:deal:${deal.id}:company:${companyId}:${change.changeType}:${hsLastModifiedDate ?? 'unknown'}`;
           const alreadyExists = await sourceEventExists(supabase, input.userId, HUBSPOT_SIGNAL_SOURCE, sourceEventId);
@@ -673,6 +697,7 @@ export async function syncHubSpotDealsIntoReadiness(
               hubspot_company_domains: associatedCompanyRows.map((row) => row.hubspotCompanyDomain).filter(Boolean),
               remote_updated_at: hsLastModifiedDate,
               crm_label: 'HubSpot CRM',
+              ...admissionMetadata,
             },
           });
 
@@ -703,6 +728,7 @@ export async function syncHubSpotDealsIntoReadiness(
               hubspot_company_names: associatedCompanyRows.map((row) => row.hubspotCompanyName).filter(Boolean),
               hubspot_company_domains: associatedCompanyRows.map((row) => row.hubspotCompanyDomain).filter(Boolean),
               crm_label: 'HubSpot CRM',
+              ...admissionMetadata,
             },
           } as const;
 

@@ -28,6 +28,7 @@ import Anthropic from '@anthropic-ai/sdk';
 // stays on direct Anthropic.
 export type LlmFeature =
   | 'sec_filing_classifier'
+  | 'sec_form_d_screener'
   | 'company_aliases'
   | 'contact_classification'
   | 'intent_scoring'
@@ -94,6 +95,10 @@ export type LlmFeature =
  */
 const FEATURE_MODELS: Record<LlmFeature, { openrouter: string; anthropic: string }> = {
   sec_filing_classifier: {
+    openrouter: 'anthropic/claude-haiku-4-5',
+    anthropic: 'claude-haiku-4-5',
+  },
+  sec_form_d_screener: {
     openrouter: 'anthropic/claude-haiku-4-5',
     anthropic: 'claude-haiku-4-5',
   },

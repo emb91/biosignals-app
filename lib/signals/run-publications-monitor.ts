@@ -34,6 +34,7 @@ import {
   recomputeAccountReadiness,
   recomputeContactReadiness,
 } from '@/lib/signals/readiness-service';
+import { buildAdmissionMetadata } from '@/lib/signals/signal-admission';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -360,6 +361,14 @@ function companyInAffiliations(
   return false;
 }
 
+function firstMatchingAffiliation(
+  name: string,
+  aliases: string[],
+  affiliations: string[],
+): string | null {
+  return affiliations.find((affiliation) => companyInAffiliations(name, aliases, [affiliation])) ?? null;
+}
+
 /** Build a PubMed source URL. */
 function pubmedUrl(pmid: string): string {
   return `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`;
@@ -405,6 +414,11 @@ function authorQueryToken(fullName: string): string | null {
   const last = parts[parts.length - 1];
   const firstInitial = parts[0].charAt(0).toUpperCase();
   return `${last} ${firstInitial}`;
+}
+
+function articleHasAuthorToken(article: PubMedArticle, authorToken: string): boolean {
+  const normalized = authorToken.trim().toLowerCase();
+  return article.authors.some((author) => `${author.lastName} ${author.firstInitial}` === normalized);
 }
 
 // ── Deduplication ──────────────────────────────────────────────────────────────
@@ -482,6 +496,7 @@ export async function runPublicationsMonitor(
     .from('contacts')
     .select('id, full_name, company_id')
     .eq('user_id', input.userId)
+    .is('archived_at', null)
     .not('full_name', 'is', null);
 
   if (Array.isArray(input.contactIds) && input.contactIds.length > 0) {
@@ -490,6 +505,10 @@ export async function runPublicationsMonitor(
 
   const { data: contacts, error: contactsError } = await contactQuery;
   if (contactsError) throw new Error(`contacts query: ${contactsError.message}`);
+  const activeOwnedCompanyIds = new Set(ownedCompanyIds);
+  const contactRows = ((contacts ?? []) as ContactRow[]).filter(
+    (contact) => Boolean(contact.company_id && activeOwnedCompanyIds.has(contact.company_id)),
+  );
 
   // ── Build contact author-token lookup for the company-phase cross-match ────
   // We want: "for every paper we fetch in the company phase, if any author on
@@ -508,7 +527,7 @@ export async function runPublicationsMonitor(
   };
   const contactsByAuthorToken = new Map<string, ContactCrossMatchEntry[]>();
   {
-    const allContactRows = (contacts ?? []) as ContactRow[];
+    const allContactRows = contactRows;
     const contactCompanyIdsForXMatch = [
       ...new Set(
         allContactRows
@@ -602,7 +621,8 @@ export async function runPublicationsMonitor(
 
           // Confirm the company name (or an alias) appears in an affiliation string.
           // PubMed's [Affiliation] index is occasionally broad; this is the real gate.
-          if (!companyInAffiliations(name, aliases, article.affiliations)) continue;
+          const matchedAffiliation = firstMatchingAffiliation(name, aliases, article.affiliations);
+          if (!matchedAffiliation) continue;
 
           const sourceEventId = `pubmed:${pmid}:${row.id}:publication`;
           const title = trimTitle(article.title || `PubMed ${pmid}`);
@@ -616,6 +636,22 @@ export async function runPublicationsMonitor(
             pmid,
             journal: article.journal,
             affiliations: article.affiliations,
+            matched_affiliation: matchedAffiliation,
+            ...buildAdmissionMetadata({
+              admitted: true,
+              reason: 'PubMed affiliation is verified as the tracked company.',
+              confidence: 'high',
+              entityScope: 'company',
+              companyId: row.id,
+              matchType: 'verified_pubmed_affiliation',
+              metadata: {
+                role_gate: 'passed',
+                role_gate_reason: 'company name or accepted alias appears in an author affiliation',
+                matched_source_field: 'affiliation',
+                matched_source_text: matchedAffiliation,
+                matched_company_name: name,
+              },
+            }),
           };
           if (article.doi) baseMetadata.doi = article.doi;
 
@@ -719,6 +755,23 @@ export async function runPublicationsMonitor(
                   // Provenance: this signal came from the company-phase
                   // cross-match, not from a contact-phase PubMed query.
                   cross_matched_from_company_id: row.id,
+                  coauthor_derived: true,
+                  author_match_strength: 'author_token_plus_affiliation',
+                  ...buildAdmissionMetadata({
+                    admitted: true,
+                    reason: 'Contact author token matched a paper author and the paper affiliation matches the contact company.',
+                    confidence: 'medium',
+                    entityScope: 'contact',
+                    companyId: m.contact.company_id ?? undefined,
+                    contactId: m.contact.id,
+                    matchType: 'verified_pubmed_author_affiliation',
+                    metadata: {
+                      role_gate: 'passed',
+                      role_gate_reason: 'author token plus company affiliation cross-check',
+                      matched_source_field: 'author_and_affiliation',
+                      matched_source_text: `${m.contact.full_name ?? 'contact'} / ${matchedAffiliation}`,
+                    },
+                  }),
                 };
                 if (m.contact.company_id) contactMetadata.contact_company_id = m.contact.company_id;
 
@@ -792,27 +845,32 @@ export async function runPublicationsMonitor(
 
   // ── Phase 2: Contact author matching ───────────────────────────────────────
 
-  if ((contacts ?? []).length > 0) {
+  if (contactRows.length > 0) {
     // Build company name map for affiliation cross-checks
     const contactCompanyIds = [
       ...new Set(
-        (contacts ?? [])
-          .map((c) => (c as ContactRow).company_id)
+        contactRows
+          .map((c) => c.company_id)
           .filter((v): v is string => typeof v === 'string' && Boolean(v)),
       ),
     ];
-    const companyNameMap = new Map<string, string>();
+    const companyInfoMap = new Map<string, { name: string; aliases: string[] }>();
     if (contactCompanyIds.length > 0) {
       const { data: companyRows } = await admin
         .from('companies')
-        .select('id, company_name')
+        .select('id, company_name, aliases')
         .in('id', contactCompanyIds);
-      for (const r of (companyRows ?? []) as { id: string; company_name: string | null }[]) {
-        if (r.company_name) companyNameMap.set(r.id, r.company_name);
+      for (const r of (companyRows ?? []) as { id: string; company_name: string | null; aliases: string[] | null }[]) {
+        if (r.company_name) {
+          companyInfoMap.set(r.id, {
+            name: r.company_name,
+            aliases: (r.aliases ?? []).filter(Boolean) as string[],
+          });
+        }
       }
     }
 
-    for (const row of (contacts ?? []) as ContactRow[]) {
+    for (const row of contactRows) {
       const fullName = row.full_name?.trim();
       if (!fullName) continue;
 
@@ -822,7 +880,12 @@ export async function runPublicationsMonitor(
         continue;
       }
 
-      const companyName = row.company_id ? companyNameMap.get(row.company_id) : undefined;
+      const companyInfo = row.company_id ? companyInfoMap.get(row.company_id) : undefined;
+      const companyName = companyInfo?.name;
+      if (!companyName) {
+        contactsProcessed += 1;
+        continue;
+      }
       const query = companyName
         ? `"${authorToken}"[Author] AND "${companyName}"[Affiliation]`
         : `"${authorToken}"[Author]`;
@@ -847,10 +910,14 @@ export async function runPublicationsMonitor(
         for (const pmid of pmids) {
           const article = articles.get(pmid);
           if (!article) continue;
+          if (!articleHasAuthorToken(article, authorToken)) continue;
 
           // If we have a company name, confirm it appears in an affiliation —
           // catches cases where two people share the same "Last F" author token.
-          if (companyName && !companyInAffiliations(companyName, [], article.affiliations)) continue;
+          const matchedAffiliation = companyName
+            ? firstMatchingAffiliation(companyName, companyInfo?.aliases ?? [], article.affiliations)
+            : null;
+          if (companyName && !matchedAffiliation) continue;
 
           const sourceEventId = `pubmed:${pmid}:${row.id}:new_paper_published`;
           candidateEventsMatched += 1;
@@ -872,6 +939,24 @@ export async function runPublicationsMonitor(
             journal: article.journal,
             affiliations: article.affiliations,
             matched_contact_name: fullName,
+            matched_author_token: authorToken,
+            matched_affiliation: matchedAffiliation,
+            author_match_strength: 'author_token_plus_affiliation',
+            ...buildAdmissionMetadata({
+              admitted: true,
+              reason: 'Contact author token matched a paper author and the paper affiliation matches the contact company.',
+              confidence: 'medium',
+              entityScope: 'contact',
+              companyId: row.company_id ?? undefined,
+              contactId: row.id,
+              matchType: 'verified_pubmed_author_affiliation',
+              metadata: {
+                role_gate: 'passed',
+                role_gate_reason: 'author token plus company affiliation cross-check',
+                matched_source_field: 'author_and_affiliation',
+                matched_source_text: `${authorToken} / ${matchedAffiliation ?? ''}`,
+              },
+            }),
           };
           if (row.company_id) metadata.contact_company_id = row.company_id;
           if (article.doi) metadata.doi = article.doi;

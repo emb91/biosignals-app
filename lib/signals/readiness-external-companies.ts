@@ -7,6 +7,8 @@ import {
 import type { SignalKey } from '@/lib/signals/readiness-types';
 import type { CompanyMonitorResult } from '@/lib/company-monitor';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { assertUserOwnsSignalEntity } from '@/lib/signals/signal-ownership';
+import { buildAdmissionMetadata } from '@/lib/signals/signal-admission';
 
 type DatabaseClient = SupabaseClient<any, 'public', any>;
 
@@ -368,6 +370,14 @@ export async function emitExternalCompanySignalsFromMonitor(
   }
 
   const emittedSignalTypes = new Set<string>();
+  const ownership = await assertUserOwnsSignalEntity(supabase, {
+    userId: input.baseline.userId,
+    companyId: input.baseline.companyId,
+  });
+  if (!ownership.ok) {
+    console.warn('[readiness-external-companies] signal skipped:', ownership.reason);
+    return { emittedSignalTypes: [], recomputedCompanies: [] };
+  }
 
   for (const decision of decisions) {
     const sourceEventId = `${EXTERNAL_COMPANY_SIGNAL_SOURCE}:${input.baseline.companyId}:${decision.sourceEventType}:${decision.eventAt}`;
@@ -394,6 +404,18 @@ export async function emitExternalCompanySignalsFromMonitor(
       metadata: {
         company_name: input.baseline.companyName,
         domain: input.baseline.domain,
+        ...buildAdmissionMetadata({
+          admitted: true,
+          reason: ownership.reason,
+          confidence: 'high',
+          entityScope: 'company',
+          companyId: input.baseline.companyId,
+          matchType: 'owned_external_company_monitor',
+          metadata: {
+            role_gate: 'passed',
+            role_gate_reason: 'external company monitor ran from active user_companies row',
+          },
+        }),
         ...decision.metadata,
       },
     });
@@ -415,6 +437,18 @@ export async function emitExternalCompanySignalsFromMonitor(
       metadata: {
         company_name: input.baseline.companyName,
         domain: input.baseline.domain,
+        ...buildAdmissionMetadata({
+          admitted: true,
+          reason: ownership.reason,
+          confidence: 'high',
+          entityScope: 'company',
+          companyId: input.baseline.companyId,
+          matchType: 'owned_external_company_monitor',
+          metadata: {
+            role_gate: 'passed',
+            role_gate_reason: 'external company monitor ran from active user_companies row',
+          },
+        }),
         ...decision.metadata,
       },
     };

@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/tmp/arcova-signal-guards-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/companies/match-helpers.ts",
+    "lib/signals/company-name-variants.ts",
+    "lib/signals/signal-entity-guards.ts",
+    "lib/signals/signal-entity-guards.test.ts"
+  ]
+}

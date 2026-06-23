@@ -6,7 +6,8 @@ import {
   recomputeAccountReadiness,
 } from '@/lib/signals/readiness-service';
 import type { SignalKey } from '@/lib/signals/readiness-types';
-import { hasVerifiedCompanyMention } from '@/lib/companies/mention-provenance';
+import { companyMentionAdmission } from '@/lib/signals/resolver-provenance-admission';
+import { buildAdmissionMetadata } from '@/lib/signals/signal-admission';
 
 type CompanyRow = {
   id: string;
@@ -55,6 +56,7 @@ type DrugsFdaResult = {
   sponsor_name?: string;
   products?: Array<{ brand_name?: string; dosage_form?: string; product_number?: string }>;
   submissions?: DrugsFdaSubmission[];
+  mentionedCompanyMatches?: unknown;
 };
 
 type Device510kResult = {
@@ -65,6 +67,7 @@ type Device510kResult = {
   decision_date?: string;
   decision_description?: string;
   decision_code?: string;
+  mentionedCompanyMatches?: unknown;
 };
 
 type DevicePmaResult = {
@@ -78,6 +81,7 @@ type DevicePmaResult = {
   decision_date?: string;
   decision_code?: string;
   advisory_committee_description?: string;
+  mentionedCompanyMatches?: unknown;
 };
 
 const SOURCE = 'openfda_drugsfda';
@@ -201,7 +205,15 @@ async function fetchFdaDrugRecordsForCompany(
   // so the downstream emission loop works unchanged.
   const byApp = new Map<string, DrugsFdaResult>();
   for (const r of (data ?? []) as Array<Record<string, unknown>>) {
-    if (!hasVerifiedCompanyMention(r.mentioned_company_matches, companyId)) continue;
+    const admission = companyMentionAdmission({
+      companyId,
+      matches: r.mentioned_company_matches,
+      matchType: 'verified_fda_sponsor',
+      acceptedSourceFields: ['sponsor_name'],
+      admittedReason: 'FDA sponsor name is verified as the tracked company.',
+      rejectedReason: 'FDA sponsor name was not verified as the tracked company.',
+    });
+    if (!admission.admitted) continue;
     const appNo = typeof r.application_number === 'string' ? r.application_number : '';
     if (!appNo) continue;
     if (!byApp.has(appNo)) {
@@ -212,6 +224,7 @@ async function fetchFdaDrugRecordsForCompany(
           ? [{ brand_name: r.product_brand_name }]
           : [],
         submissions: [],
+        mentionedCompanyMatches: r.mentioned_company_matches,
       });
     }
     const app = byApp.get(appNo)!;
@@ -247,7 +260,15 @@ async function fetchFda510kRecordsForCompany(
     .limit(Math.min(Math.max(limit, 1), 500));
   if (error) throw new Error(`fda_device_510k query failed: ${error.message}`);
   return ((data ?? []) as Array<Device510kResult & { mentioned_company_matches?: unknown }>)
-    .filter((row) => hasVerifiedCompanyMention(row.mentioned_company_matches, companyId));
+    .filter((row) => companyMentionAdmission({
+      companyId,
+      matches: row.mentioned_company_matches,
+      matchType: 'verified_fda_applicant',
+      acceptedSourceFields: ['applicant'],
+      admittedReason: 'FDA device applicant is verified as the tracked company.',
+      rejectedReason: 'FDA device applicant was not verified as the tracked company.',
+    }).admitted)
+    .map((row) => ({ ...row, mentionedCompanyMatches: row.mentioned_company_matches }));
 }
 
 async function fetchFdaPmaRecordsForCompany(
@@ -265,7 +286,15 @@ async function fetchFdaPmaRecordsForCompany(
     .limit(Math.min(Math.max(limit, 1), 500));
   if (error) throw new Error(`fda_device_pma query failed: ${error.message}`);
   return ((data ?? []) as Array<DevicePmaResult & { mentioned_company_matches?: unknown }>)
-    .filter((row) => hasVerifiedCompanyMention(row.mentioned_company_matches, companyId));
+    .filter((row) => companyMentionAdmission({
+      companyId,
+      matches: row.mentioned_company_matches,
+      matchType: 'verified_fda_applicant',
+      acceptedSourceFields: ['applicant'],
+      admittedReason: 'FDA device applicant is verified as the tracked company.',
+      rejectedReason: 'FDA device applicant was not verified as the tracked company.',
+    }).admitted)
+    .map((row) => ({ ...row, mentionedCompanyMatches: row.mentioned_company_matches }));
 }
 
 async function sourceEventExists(
@@ -410,6 +439,15 @@ export async function runFdaRegulatoryMonitor(
       const shouldEmit = (signalKey: SignalKey) => !onlySignal || onlySignal === signalKey;
 
       for (const record of records) {
+        const admission = companyMentionAdmission({
+          companyId: row.id,
+          matches: record.mentionedCompanyMatches,
+          matchType: 'verified_fda_sponsor',
+          acceptedSourceFields: ['sponsor_name'],
+          admittedReason: 'FDA sponsor name is verified as the tracked company.',
+          rejectedReason: 'FDA sponsor name was not verified as the tracked company.',
+        });
+        if (!admission.admitted) continue;
         const appNo = record.application_number || 'unknown_application';
         const sponsor = record.sponsor_name || companyName;
         const productName = record.products?.[0]?.brand_name || 'unknown_product';
@@ -432,6 +470,7 @@ export async function runFdaRegulatoryMonitor(
             review_priority: submission.review_priority ?? null,
             sponsor_name: sponsor,
             product_name: productName,
+            ...buildAdmissionMetadata(admission),
           };
 
           if (shouldEmit('fda_approval') && isApprovalSubmission(submission)) {
@@ -578,6 +617,15 @@ export async function runFdaRegulatoryMonitor(
 
       // ── 510(k) device clearances ──────────────────────────────────────
       for (const device of device510k) {
+        const admission = companyMentionAdmission({
+          companyId: row.id,
+          matches: device.mentionedCompanyMatches,
+          matchType: 'verified_fda_applicant',
+          acceptedSourceFields: ['applicant'],
+          admittedReason: 'FDA device applicant is verified as the tracked company.',
+          rejectedReason: 'FDA device applicant was not verified as the tracked company.',
+        });
+        if (!admission.admitted) continue;
         const kNumber = device.k_number || 'unknown_k';
         const decision = normalizeText(device.decision_description);
         const isCleared = decision.includes('substantially equivalent') || /^se/.test(normalizeText(device.decision_code));
@@ -592,6 +640,7 @@ export async function runFdaRegulatoryMonitor(
           decision_code: device.decision_code ?? null,
           decision_description: device.decision_description ?? null,
           decision_date: device.decision_date ?? null,
+          ...buildAdmissionMetadata(admission),
         };
         if (shouldEmit('fda_approval') && isCleared) {
           const id = `${SOURCE_510K}:${row.id}:${kNumber}:fda_510k_cleared`;
@@ -617,6 +666,15 @@ export async function runFdaRegulatoryMonitor(
 
       // ── PMA device approvals + supplements ────────────────────────────
       for (const device of devicePma) {
+        const admission = companyMentionAdmission({
+          companyId: row.id,
+          matches: device.mentionedCompanyMatches,
+          matchType: 'verified_fda_applicant',
+          acceptedSourceFields: ['applicant'],
+          admittedReason: 'FDA device applicant is verified as the tracked company.',
+          rejectedReason: 'FDA device applicant was not verified as the tracked company.',
+        });
+        if (!admission.admitted) continue;
         const pmaNo = device.pma_number || 'unknown_pma';
         const supNo = device.supplement_number || '';
         const decision = normalizeText(device.decision_code);
@@ -635,6 +693,7 @@ export async function runFdaRegulatoryMonitor(
           generic_name: device.generic_name ?? null,
           decision_code: device.decision_code ?? null,
           decision_date: device.decision_date ?? null,
+          ...buildAdmissionMetadata(admission),
         };
         if (shouldEmit('fda_approval') && isApproved) {
           const id = `${SOURCE_PMA}:${row.id}:${idBase}:fda_pma_approved`;

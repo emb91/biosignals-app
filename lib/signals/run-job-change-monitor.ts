@@ -35,6 +35,8 @@ import { persistRunHistory } from '@/lib/signals/run-history';
 import { SWEEP_FIT_THRESHOLD } from '@/lib/signals/sweep-fit-gate';
 import { resolveCadenceDaysForUser } from '@/lib/signals/job-change-cadence';
 import { runApifyActor } from '@/lib/apify';
+import { assertUserOwnsSignalEntity } from '@/lib/signals/signal-ownership';
+import { buildAdmissionMetadata } from '@/lib/signals/signal-admission';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -576,6 +578,36 @@ async function emitPriorRelationshipSignal(
     };
 
     const { title, summary } = tierMeta[bestTier];
+    const ownership = await assertUserOwnsSignalEntity(
+      admin as unknown as Parameters<typeof assertUserOwnsSignalEntity>[0],
+      {
+        userId,
+        companyId: newCompanyId,
+        contactId,
+      },
+    );
+    if (!ownership.ok) {
+      console.warn('[job-change-monitor] prior relationship skipped:', ownership.reason);
+      return null;
+    }
+    const admissionMetadata = buildAdmissionMetadata({
+      admitted: true,
+      reason: ownership.reason,
+      confidence: 'high',
+      entityScope: 'contact',
+      companyId: newCompanyId,
+      contactId,
+      matchType: 'owned_job_change_prior_relationship',
+      metadata: {
+        role_gate: 'passed',
+        role_gate_reason: 'prior relationship derived from owned contact and active new company',
+      },
+    });
+    const metadata = {
+      new_company_id: newCompanyId,
+      prior_deal_tier: bestTier,
+      ...admissionMetadata,
+    };
 
     const ingestResult = await ingestSignalSourceEvent(
       admin as unknown as Parameters<typeof ingestSignalSourceEvent>[0],
@@ -592,7 +624,7 @@ async function emitPriorRelationshipSignal(
         summary,
         excerpt: summary,
         eventAt,
-        metadata: { new_company_id: newCompanyId, prior_deal_tier: bestTier },
+        metadata,
       },
     );
 
@@ -610,7 +642,7 @@ async function emitPriorRelationshipSignal(
       excerpt: summary,
       eventAt,
       observedAt: new Date().toISOString(),
-      metadata: { new_company_id: newCompanyId, prior_deal_tier: bestTier },
+      metadata,
     };
 
     await normalizeSignalSourceEvent(
@@ -661,6 +693,37 @@ async function emitKeyContactDepartedSignal(
     const sourceEventId = `job_change_monitor/key_contact_departed:${contactId}:${oldCompanyId}:${eventAt}`;
     const title = 'Key contact departed';
     const summary = `${contactName ?? 'A contact'} has moved on from this company${newCompanyName ? ` to ${newCompanyName}` : ''}. Find a replacement contact to maintain account coverage.`;
+    const ownership = await assertUserOwnsSignalEntity(
+      admin as unknown as Parameters<typeof assertUserOwnsSignalEntity>[0],
+      {
+        userId,
+        companyId: oldCompanyId,
+        contactId,
+      },
+    );
+    if (!ownership.ok) {
+      console.warn('[job-change-monitor] key_contact_departed skipped:', ownership.reason);
+      return false;
+    }
+    const admissionMetadata = buildAdmissionMetadata({
+      admitted: true,
+      reason: ownership.reason,
+      confidence: 'high',
+      entityScope: 'company',
+      companyId: oldCompanyId,
+      contactId,
+      matchType: 'owned_job_change_departure',
+      metadata: {
+        role_gate: 'passed',
+        role_gate_reason: 'departure signal derived from owned contact and active previous company',
+      },
+    });
+    const metadata = {
+      departed_contact_id: contactId,
+      departed_contact_name: contactName,
+      new_company_name: newCompanyName,
+      ...admissionMetadata,
+    };
 
     const ingestResult = await ingestSignalSourceEvent(
       admin as unknown as Parameters<typeof ingestSignalSourceEvent>[0],
@@ -677,11 +740,7 @@ async function emitKeyContactDepartedSignal(
         summary,
         excerpt: summary,
         eventAt,
-        metadata: {
-          departed_contact_id: contactId,
-          departed_contact_name: contactName,
-          new_company_name: newCompanyName,
-        },
+        metadata,
       },
     );
 
@@ -699,11 +758,7 @@ async function emitKeyContactDepartedSignal(
       excerpt: summary,
       eventAt,
       observedAt: new Date().toISOString(),
-      metadata: {
-        departed_contact_id: contactId,
-        departed_contact_name: contactName,
-        new_company_name: newCompanyName,
-      },
+      metadata,
     };
 
     await normalizeSignalSourceEvent(

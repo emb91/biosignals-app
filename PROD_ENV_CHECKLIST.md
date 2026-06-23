@@ -28,6 +28,7 @@ ANTHROPIC_API_KEY=                               # https://console.anthropic.com
 STRIPE_SECRET_KEY=                               # https://dashboard.stripe.com/apikeys (toggle Live)
 NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=              # ↑ same page (pk_live_…) — optional, no client refs yet
 STRIPE_WEBHOOK_SECRET=                           # https://dashboard.stripe.com/webhooks → create endpoint → reveal whsec_
+STRIPE_WEBHOOK_SECRET_TEST=                      # Optional: test-mode destination secret for validating test events on prod URL
 # Live price IDs (already created — pre-filled):
 STRIPE_PRICE_STARTER_WORKSPACE=price_1TkNrfRtS8JGduGexjNJpdWG
 STRIPE_PRICE_STARTER_WORKSPACE_ANNUAL=price_1TkNrnRtS8JGduGeRjvkGayp
@@ -36,7 +37,7 @@ STRIPE_PRICE_GROWTH_WORKSPACE_ANNUAL=price_1TkNrwRtS8JGduGeDzGg88vn
 STRIPE_PRICE_STARTER_CREDITS_1000=price_1TkNs2RtS8JGduGeYRwOx3hB
 STRIPE_PRICE_GROWTH_CREDITS_1000=price_1TkNs5RtS8JGduGeUIuSHITY
 ```
-- Live webhook URL to register: `https://arcova.bio/api/stripe/webhook`
+- Live webhook URL to register: `https://app.arcova.bio/api/stripe/webhook`
 - Events: `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_failed`, `invoice.paid`
 - [ ] B complete
 

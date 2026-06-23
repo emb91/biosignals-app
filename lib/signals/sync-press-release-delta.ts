@@ -231,6 +231,21 @@ export type PressReleaseClassification = {
   rationale: string;           // single sentence, shown to sales rep
   key_facts?: string[];         // 2-5 bullets
   candidate_companies: string[]; // company names extracted from the article
+  company_roles?: Array<{
+    company: string;
+    role:
+      | 'subject'
+      | 'buyer'
+      | 'seller'
+      | 'partner'
+      | 'licensee'
+      | 'licensor'
+      | 'recipient'
+      | 'sponsor'
+      | 'applicant'
+      | 'mentioned_only';
+    evidence?: string | null;
+  }>;
   // Deal/partnership extras
   counterparty?: string | null;
   upfront_usd?: number | null;
@@ -282,6 +297,17 @@ Classify into EXACTLY ONE category:
 
 For "candidate_companies": list ALL company names you see in the article text — the issuing company and any counterparties, partners, or mentioned companies. Use the full legal name when possible (e.g. "Pfizer Inc." not "Pfizer").
 
+For "company_roles": add one object per candidate company. Use:
+- "subject" when the company is the main company announcing or materially affected by the event
+- "buyer" / "seller" for M&A
+- "partner" for collaborations or general partnerships
+- "licensee" / "licensor" for licensing deals
+- "recipient" for funding, grants, or milestone payments
+- "sponsor" for clinical/regulatory trial sponsor roles
+- "applicant" for FDA/applicant/manufacturer roles
+- "mentioned_only" when the company is only in background, boilerplate, investor list, customer list, or unrelated context
+Include a short evidence phrase copied or paraphrased from the article.
+
 Return ONLY a JSON object (no prose, no markdown fences):
 {
   "category": "<one of the above>",
@@ -289,6 +315,9 @@ Return ONLY a JSON object (no prose, no markdown fences):
   "rationale": "<single sentence in plain English — this is shown to a salesperson to explain why this article matters>",
   "key_facts": ["<2-5 short bullet-point facts>"],
   "candidate_companies": ["<company name 1>", "<company name 2>"],
+  "company_roles": [
+    { "company": "<company name>", "role": "subject|buyer|seller|partner|licensee|licensor|recipient|sponsor|applicant|mentioned_only", "evidence": "<short evidence phrase>" }
+  ],
 
   // Include only when applicable:
   "counterparty": "<partner or acquiree name, or null>",
@@ -365,6 +394,36 @@ function normalizeClassification(raw: Record<string, unknown> | null): PressRele
         .map((c) => c.trim())
     : [];
 
+  const validRoles = new Set([
+    'subject',
+    'buyer',
+    'seller',
+    'partner',
+    'licensee',
+    'licensor',
+    'recipient',
+    'sponsor',
+    'applicant',
+    'mentioned_only',
+  ]);
+  const company_roles: NonNullable<PressReleaseClassification['company_roles']> = [];
+  if (Array.isArray(raw.company_roles)) {
+    for (const item of raw.company_roles as unknown[]) {
+      if (!item || typeof item !== 'object') continue;
+      const row = item as Record<string, unknown>;
+      const company = typeof row.company === 'string' ? row.company.trim() : '';
+      const role = typeof row.role === 'string' && validRoles.has(row.role)
+        ? (row.role as NonNullable<PressReleaseClassification['company_roles']>[number]['role'])
+        : null;
+      if (!company || !role) continue;
+      company_roles.push({
+        company,
+        role,
+        evidence: typeof row.evidence === 'string' && row.evidence.trim() ? row.evidence.trim() : null,
+      });
+    }
+  }
+
   const num = (v: unknown): number | null => {
     const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : null;
     return n !== null && Number.isFinite(n) ? n : null;
@@ -385,6 +444,7 @@ function normalizeClassification(raw: Record<string, unknown> | null): PressRele
     rationale,
     ...(key_facts && key_facts.length > 0 ? { key_facts } : {}),
     candidate_companies,
+    ...(company_roles.length > 0 ? { company_roles } : {}),
     counterparty: str(raw.counterparty),
     upfront_usd: num(raw.upfront_usd),
     milestone_max_usd: num(raw.milestone_max_usd),

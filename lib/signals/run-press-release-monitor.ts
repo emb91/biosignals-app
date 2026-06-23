@@ -41,7 +41,9 @@ import {
 } from '@/lib/signals/readiness-service';
 import type { SignalKey } from '@/lib/signals/readiness-types';
 import type { PressReleaseCategory, PressReleaseClassification } from '@/lib/signals/sync-press-release-delta';
-import { hasVerifiedCompanyMention } from '@/lib/companies/mention-provenance';
+import { companyMentionAdmission } from '@/lib/signals/resolver-provenance-admission';
+import { buildAdmissionMetadata, rejectedAdmission, type SignalAdmissionResult } from '@/lib/signals/signal-admission';
+import { normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -154,7 +156,67 @@ async function fetchArticlesMentioning(
  * Articles the resolver tagged with this company id.
  */
 function articlesForCompany(articles: ArticleRow[], companyId: string): ArticleRow[] {
-  return articles.filter((a) => hasVerifiedCompanyMention(a.mentioned_company_matches, companyId));
+  return articles.filter((article) => pressReleaseCompanyAdmission(article, companyId).admitted);
+}
+
+function roleForMatchedCompany(
+  classification: PressReleaseClassification,
+  matchedCompanyName: unknown,
+): NonNullable<PressReleaseClassification['company_roles']>[number] | null {
+  if (!Array.isArray(classification.company_roles)) return null;
+  const matched = typeof matchedCompanyName === 'string' ? normalizeCompanyForMatching(matchedCompanyName) : '';
+  if (!matched) return null;
+  return classification.company_roles.find((role) => normalizeCompanyForMatching(role.company) === matched) ?? null;
+}
+
+function pressReleaseCompanyAdmission(article: ArticleRow, companyId: string): SignalAdmissionResult {
+  const resolverAdmission = companyMentionAdmission({
+    companyId,
+    matches: article.mentioned_company_matches,
+    matchType: 'verified_press_release_company',
+    acceptedSourceFields: ['candidate_companies'],
+    admittedReason: 'Press release company mention is verified as the tracked company.',
+    rejectedReason: 'Press release company mention was not verified as the tracked company.',
+  });
+  if (!resolverAdmission.admitted) return resolverAdmission;
+
+  const classification = article.classification;
+  const role = classification
+    ? roleForMatchedCompany(classification, resolverAdmission.metadata.matched_source_text)
+    : null;
+
+  if (role?.role === 'mentioned_only') {
+    return rejectedAdmission({
+      entityScope: 'company',
+      companyId,
+      matchType: 'press_release_mentioned_only_rejected',
+      reason: 'Tracked company is only mentioned in the press release and is not a party or subject of the event.',
+      metadata: {
+        role_gate: 'rejected',
+        role_gate_reason: 'classifier marked tracked company as mentioned_only',
+        matched_source_text: resolverAdmission.metadata.matched_source_text,
+        press_release_company_role: role.role,
+        press_release_role_evidence: role.evidence ?? null,
+      },
+    });
+  }
+
+  return {
+    ...resolverAdmission,
+    matchType: role ? `press_release_role_${role.role}` : resolverAdmission.matchType,
+    reason: role
+      ? `Tracked company is a press release ${role.role}.`
+      : `${resolverAdmission.reason} Company-role data was unavailable for this older classification.`,
+    metadata: {
+      ...resolverAdmission.metadata,
+      press_release_company_role: role?.role ?? 'legacy_role_unavailable',
+      press_release_role_evidence: role?.evidence ?? null,
+      role_gate: 'passed',
+      role_gate_reason: role
+        ? `classifier role: ${role.role}`
+        : 'legacy classification without per-company role data; resolver verification required',
+    },
+  };
 }
 
 async function fetchExistingSourceEventIds(
@@ -317,6 +379,8 @@ export async function runPressReleaseMonitor(
       // Build all candidate source_event_ids for bulk dedupe check
       const candidateSourceEventIds: string[] = [];
       for (const article of articles) {
+        const admission = pressReleaseCompanyAdmission(article, row.id);
+        if (!admission.admitted) continue;
         const classification = article.classification;
         if (!classification) continue;
         const signalKey = signalKeyForCategory(classification.category);
@@ -334,6 +398,8 @@ export async function runPressReleaseMonitor(
 
       for (const article of articles) {
         recordsScanned += 1;
+        const admission = pressReleaseCompanyAdmission(article, row.id);
+        if (!admission.admitted) continue;
         const classification = article.classification;
         if (!classification) continue;
 
@@ -358,6 +424,7 @@ export async function runPressReleaseMonitor(
           press_release_category: classification.category,
           confidence: classification.confidence,
           candidate_companies: article.candidate_companies ?? [],
+          ...buildAdmissionMetadata(admission),
         };
         if (classification.counterparty) metadata.counterparty = classification.counterparty;
         if (classification.therapy_area) metadata.therapy_area = classification.therapy_area;

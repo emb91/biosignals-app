@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/tmp/arcova-clinical-trial-admission-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/companies/mention-provenance.ts",
+    "lib/signals/readiness-types.ts",
+    "lib/signals/signal-admission.ts",
+    "lib/signals/clinical-trial-admission.ts",
+    "lib/signals/clinical-trial-admission.test.ts"
+  ]
+}
