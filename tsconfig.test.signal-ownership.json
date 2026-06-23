@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/tmp/arcova-signal-ownership-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/signals/signal-ownership.ts",
+    "lib/signals/signal-ownership.test.ts"
+  ]
+}

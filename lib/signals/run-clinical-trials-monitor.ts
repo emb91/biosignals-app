@@ -5,8 +5,14 @@ import {
   normalizeSignalSourceEvent,
   recomputeAccountReadiness,
 } from '@/lib/signals/readiness-service';
-import { hasVerifiedCompanyMention } from '@/lib/companies/mention-provenance';
+import {
+  clinicalTrialCompanyAdmission,
+  hasAdmittedClinicalTrialCompanyRole,
+} from '@/lib/signals/clinical-trial-admission';
+import { buildAdmissionMetadata } from '@/lib/signals/signal-admission';
 import type { SignalKey } from '@/lib/signals/readiness-types';
+import { verifyNormalizedCompanyEvidence } from '@/lib/companies/match-helpers';
+import { normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
 
 type CompanyRow = {
   id: string;
@@ -125,6 +131,18 @@ function piNameMatchesContact(piName: string, contactFullName: string): boolean 
   return matched >= Math.min(2, piTokens.length);
 }
 
+function piAffiliationMatchesCompany(
+  affiliation: string | null | undefined,
+  companyName: string,
+): { verified: boolean; reason: string } {
+  const affiliationNorm = normalizeCompanyForMatching(affiliation ?? '');
+  const companyNorm = normalizeCompanyForMatching(companyName);
+  if (!affiliationNorm || !companyNorm) {
+    return { verified: false, reason: 'PI affiliation or company name is missing' };
+  }
+  return verifyNormalizedCompanyEvidence(affiliationNorm, companyNorm);
+}
+
 async function fetchStudiesForCompany(
   admin: ReturnType<typeof createAdminClient>,
   companyId: string,
@@ -166,7 +184,7 @@ async function fetchStudiesForCompany(
     };
   })
     .filter((s): s is CtStudy => Boolean(s.nctId))
-    .filter((s) => hasVerifiedCompanyMention(s.mentionedCompanyMatches, companyId));
+    .filter((s) => hasAdmittedClinicalTrialCompanyRole(s.mentionedCompanyMatches, companyId));
 }
 
 async function sourceEventExists(
@@ -233,6 +251,28 @@ async function emitCompanySignal(
     metadata: Record<string, unknown>;
   }
 ): Promise<boolean> {
+  const admission = clinicalTrialCompanyAdmission({
+    companyId: input.companyId,
+    signalKey: input.signalKey,
+    mentionedCompanyMatches: input.study.mentionedCompanyMatches,
+  });
+  if (!admission.admitted) return false;
+
+  const metadata = {
+    nct_id: input.study.nctId,
+    study_title: input.study.title,
+    study_status: input.study.overallStatus,
+    conditions: input.study.conditions,
+    phases: input.study.phases,
+    lead_sponsor: input.study.leadSponsor,
+    collaborators: input.study.collaborators,
+    locations_count: input.study.locationsCount,
+    overall_officials: input.study.overallOfficials,
+    official_affiliations: input.study.overallOfficials.map((official) => official.affiliation).filter(Boolean),
+    ...input.metadata,
+    ...buildAdmissionMetadata(admission),
+  };
+
   if (await sourceEventExists(admin, input.userId, input.sourceEventId)) {
     return false;
   }
@@ -249,19 +289,7 @@ async function emitCompanySignal(
     summary: input.summary,
     excerpt: input.summary,
     eventAt: input.study.lastUpdatePostDate ?? new Date().toISOString(),
-    metadata: {
-      nct_id: input.study.nctId,
-      study_title: input.study.title,
-      study_status: input.study.overallStatus,
-      conditions: input.study.conditions,
-      phases: input.study.phases,
-      lead_sponsor: input.study.leadSponsor,
-      collaborators: input.study.collaborators,
-      locations_count: input.study.locationsCount,
-      overall_officials: input.study.overallOfficials,
-      official_affiliations: input.study.overallOfficials.map((official) => official.affiliation).filter(Boolean),
-      ...input.metadata,
-    },
+    metadata,
   });
 
   await normalizeSignalSourceEvent(admin, {
@@ -280,19 +308,7 @@ async function emitCompanySignal(
       excerpt: input.summary,
       eventAt: input.study.lastUpdatePostDate ?? null,
       observedAt: new Date().toISOString(),
-      metadata: {
-        nct_id: input.study.nctId,
-        study_title: input.study.title,
-        study_status: input.study.overallStatus,
-        conditions: input.study.conditions,
-        phases: input.study.phases,
-        lead_sponsor: input.study.leadSponsor,
-        collaborators: input.study.collaborators,
-        locations_count: input.study.locationsCount,
-        overall_officials: input.study.overallOfficials,
-        official_affiliations: input.study.overallOfficials.map((official) => official.affiliation).filter(Boolean),
-        ...input.metadata,
-      },
+      metadata,
     },
     signalKeys: [input.signalKey],
     companyId: input.companyId,
@@ -306,6 +322,7 @@ async function emitPiSignalsForStudy(
   opts: {
     userId: string;
     companyId: string;
+    companyName: string;
     study: CtStudy;
     emittedSignalTypes: Set<string>;
   }
@@ -329,6 +346,9 @@ async function emitPiSignalsForStudy(
   let anyEmitted = false;
 
   for (const pi of principals) {
+    const affiliationMatch = piAffiliationMatchesCompany(pi.affiliation, opts.companyName);
+    if (!affiliationMatch.verified) continue;
+
     const contact = (contacts as Array<{ id: string; full_name: string | null }>).find(
       (c) => c.full_name && piNameMatchesContact(pi.name, c.full_name)
     );
@@ -338,6 +358,33 @@ async function emitPiSignalsForStudy(
     if (await sourceEventExists(admin, opts.userId, sourceEventId)) continue;
 
     const summary = `${contact.full_name} is listed as Principal Investigator on ${study.title ?? study.nctId} (${study.nctId}).`;
+    const metadata = {
+      nct_id: study.nctId,
+      study_title: study.title,
+      study_status: study.overallStatus,
+      conditions: study.conditions,
+      phases: study.phases,
+      pi_name: pi.name,
+      pi_role: pi.role,
+      pi_affiliation: pi.affiliation,
+      ...buildAdmissionMetadata({
+        admitted: true,
+        reason: 'Clinical trial PI name matched an owned contact and PI affiliation matched the tracked company.',
+        confidence: 'medium',
+        entityScope: 'contact',
+        companyId: opts.companyId,
+        contactId: contact.id,
+        matchType: 'verified_clinical_pi_affiliation',
+        metadata: {
+          role_gate: 'passed',
+          role_gate_reason: 'PI name match plus PI affiliation company verification',
+          matched_source_field: 'overall_officials',
+          matched_source_text: `${pi.name} / ${pi.affiliation}`,
+          matched_company_name: opts.companyName,
+          verification_reason: affiliationMatch.reason,
+        },
+      }),
+    };
 
     const ingest = await ingestSignalSourceEvent(admin, {
       userId: opts.userId,
@@ -352,16 +399,7 @@ async function emitPiSignalsForStudy(
       summary,
       excerpt: summary,
       eventAt: study.lastUpdatePostDate ?? new Date().toISOString(),
-      metadata: {
-        nct_id: study.nctId,
-        study_title: study.title,
-        study_status: study.overallStatus,
-        conditions: study.conditions,
-        phases: study.phases,
-        pi_name: pi.name,
-        pi_role: pi.role,
-        pi_affiliation: pi.affiliation,
-      },
+      metadata,
     });
 
     await normalizeSignalSourceEvent(admin, {
@@ -380,14 +418,7 @@ async function emitPiSignalsForStudy(
         excerpt: summary,
         eventAt: study.lastUpdatePostDate ?? null,
         observedAt: new Date().toISOString(),
-        metadata: {
-          nct_id: study.nctId,
-          study_title: study.title,
-          conditions: study.conditions,
-          phases: study.phases,
-          pi_name: pi.name,
-          pi_affiliation: pi.affiliation,
-        },
+        metadata,
       },
       signalKeys: ['principal_investigator_new_trial'],
       companyId: opts.companyId,
@@ -670,6 +701,7 @@ export async function runClinicalTrialsMonitor(
           const piEmitted = await emitPiSignalsForStudy(admin, {
             userId: input.userId,
             companyId: row.id,
+            companyName,
             study,
             emittedSignalTypes,
           });

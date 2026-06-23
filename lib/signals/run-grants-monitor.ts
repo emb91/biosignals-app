@@ -25,7 +25,8 @@ import {
   recomputeAccountReadiness,
 } from '@/lib/signals/readiness-service';
 import type { SignalKey } from '@/lib/signals/readiness-types';
-import { hasVerifiedCompanyMention } from '@/lib/companies/mention-provenance';
+import { companyMentionAdmission } from '@/lib/signals/resolver-provenance-admission';
+import { buildAdmissionMetadata } from '@/lib/signals/signal-admission';
 
 type CompanyRow = {
   id: string;
@@ -83,6 +84,7 @@ type GrantRow = {
   project_title: string | null;
   contact_pi_name: string | null;
   mechanism_code_dc: string | null;
+  mentioned_company_matches?: unknown;
 };
 
 const SOURCE = 'nih_reporter';
@@ -132,7 +134,14 @@ async function fetchGrantsForCompany(
     .limit(limit);
   if (error) throw new Error(`nih_grants_local query: ${error.message}`);
   return ((data ?? []) as Array<GrantRow & { mentioned_company_matches?: unknown }>)
-    .filter((row) => hasVerifiedCompanyMention(row.mentioned_company_matches, companyId));
+    .filter((row) => companyMentionAdmission({
+      companyId,
+      matches: row.mentioned_company_matches,
+      matchType: 'verified_awardee',
+      acceptedSourceFields: ['org_name'],
+      admittedReason: 'NIH award recipient organization is verified as the tracked company.',
+      rejectedReason: 'NIH award recipient organization was not verified as the tracked company.',
+    }).admitted);
 }
 
 async function fetchExistingSourceEventIds(
@@ -313,6 +322,15 @@ export async function runGrantsMonitor(input: GrantsMonitorInput): Promise<Grant
         const dateText = grant.award_notice_date ?? 'unknown date';
         const summary =
           `${mechanism} award to ${grant.org_name ?? companyName}: ${amount ?? 'undisclosed amount'} from ${ic} (${projectNum}, notice ${dateText}).`;
+        const admission = companyMentionAdmission({
+          companyId: row.id,
+          matches: grant.mentioned_company_matches,
+          matchType: 'verified_awardee',
+          acceptedSourceFields: ['org_name'],
+          admittedReason: 'NIH award recipient organization is verified as the tracked company.',
+          rejectedReason: 'NIH award recipient organization was not verified as the tracked company.',
+        });
+        if (!admission.admitted) continue;
 
         const emitted = await emitCompanySignal(admin, {
           userId: input.userId,
@@ -342,6 +360,7 @@ export async function runGrantsMonitor(input: GrantsMonitorInput): Promise<Grant
             project_title: grant.project_title,
             contact_pi_name: grant.contact_pi_name,
             mechanism_code_dc: grant.mechanism_code_dc,
+            ...buildAdmissionMetadata(admission),
           },
           existingSourceEventIds,
         });

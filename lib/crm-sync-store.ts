@@ -446,6 +446,7 @@ export async function findArcovaCompaniesByDomains(
     .from('user_companies')
     .select('company_id')
     .eq('user_id', userId)
+    .is('archived_at', null)
     .in('company_id', candidateIds);
   if (ownedError) throw ownedError;
   const ownedIds = new Set((owned ?? []).map((r) => (r as { company_id?: unknown }).company_id).filter((v): v is string => typeof v === 'string'));
@@ -463,6 +464,7 @@ export async function findArcovaContactsByEmails(
     .from('contacts')
     .select('id, email, job_title, seniority_level, business_area, company_id, company_name, company_domain, resolved_current_company_name, resolved_current_company_domain')
     .eq('user_id', userId)
+    .is('archived_at', null)
     .in('email', emails);
 
   if (error) throw error;
@@ -480,6 +482,7 @@ export async function findArcovaCompaniesByIds(
     .from('user_companies')
     .select('company_id')
     .eq('user_id', userId)
+    .is('archived_at', null)
     .in('company_id', ids);
   if (ownedError) throw ownedError;
   const ownedIds = (owned ?? []).map((r) => (r as { company_id?: unknown }).company_id).filter((v): v is string => typeof v === 'string');
@@ -503,6 +506,7 @@ export async function findArcovaContactsByIds(
     .from('contacts')
     .select('id, email, job_title, seniority_level, business_area, company_id, company_name, company_domain, resolved_current_company_name, resolved_current_company_domain')
     .eq('user_id', userId)
+    .is('archived_at', null)
     .in('id', ids);
 
   if (error) throw error;

@@ -23,6 +23,11 @@ import {
   signalKeyForClassification,
   type SecFilingClassification,
 } from '@/lib/signals/classify-sec-filing';
+import { shouldSkipFormDFundingSignal } from '@/lib/signals/sec-form-d-filters';
+import {
+  screenFormDFundingSignal,
+  type SecFormDScreenResult,
+} from '@/lib/signals/sec-form-d-screener';
 import {
   generateAccountReason,
   ingestSignalSourceEvent,
@@ -31,6 +36,8 @@ import {
 } from '@/lib/signals/readiness-service';
 import type { SignalKey } from '@/lib/signals/readiness-types';
 import { hasVerifiedCanonicalCompanyMatch } from '@/lib/companies/mention-provenance';
+import { canonicalCompanyAdmission } from '@/lib/signals/resolver-provenance-admission';
+import { buildAdmissionMetadata, type SignalAdmissionResult } from '@/lib/signals/signal-admission';
 
 type CompanyRow = {
   id: string;
@@ -94,6 +101,12 @@ const SOURCE_424B = 'sec_edgar_424b';
 const FORM_D_TYPES = new Set(['D', 'D/A']);
 const FORM_8K_TYPES = new Set(['8-K', '8-K/A']);
 const FORM_424B_TYPES = new Set(['424B1', '424B2', '424B3', '424B4', '424B5', '424B7']);
+const REJECTED_FORM_D_SCREEN: SecFormDScreenResult = {
+  decision: 'reject',
+  same_entity: 'uncertain',
+  operating_company_financing: 'uncertain',
+  reason: 'Form D screen failed closed.',
+};
 
 function messageFromUnknown(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -122,6 +135,71 @@ function formatUsd(amount: number | string | null): string | null {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}K`;
   return `$${n.toFixed(0)}`;
+}
+
+function secFilingCompanyAdmission(input: {
+  companyId: string;
+  companyCik: string | null;
+  filing: SecFilingRow;
+}): SignalAdmissionResult {
+  if (input.companyCik && input.filing.cik === input.companyCik) {
+    return {
+      admitted: true,
+      reason: 'SEC filing CIK matches the tracked company CIK.',
+      confidence: 'high',
+      entityScope: 'company',
+      companyId: input.companyId,
+      matchType: 'verified_sec_cik',
+      metadata: {
+        role_gate: 'passed',
+        role_gate_reason: 'filing CIK matches tracked company CIK',
+        matched_source_field: 'cik',
+        matched_source_text: input.filing.cik,
+      },
+    };
+  }
+
+  return canonicalCompanyAdmission({
+    companyId: input.companyId,
+    match: input.filing.canonical_company_match,
+    matchType: 'verified_sec_issuer',
+    admittedReason: 'SEC filing issuer is verified as the tracked company.',
+    rejectedReason: 'SEC filing issuer was not verified as the tracked company.',
+  });
+}
+
+async function screenFormDFilingForCompany(
+  companyName: string,
+  filing: SecFilingRow,
+): Promise<SecFormDScreenResult> {
+  if (shouldSkipFormDFundingSignal(filing)) {
+    return {
+      decision: 'reject',
+      same_entity: 'uncertain',
+      operating_company_financing: 'no',
+      reason: 'SEC issuer is in an ignored Form D industry group.',
+    };
+  }
+
+  try {
+    return await screenFormDFundingSignal({
+      trackedCompanyName: companyName,
+      filingEntityName: filing.entity_name,
+      formType: filing.form_type,
+      filingDate: filing.filing_date,
+      entityType: filing.entity_type,
+      industryGroupType: filing.industry_group_type,
+      totalOfferingAmount: filing.total_offering_amount,
+      totalAmountSold: filing.total_amount_sold,
+      dateOfFirstSale: filing.date_of_first_sale,
+    });
+  } catch (error) {
+    console.warn(
+      `[funding] Form D LLM screen failed for ${filing.accession_number}:`,
+      error instanceof Error ? error.message : String(error),
+    );
+    return REJECTED_FORM_D_SCREEN;
+  }
 }
 
 async function fetchFilingsForCompany(
@@ -323,15 +401,30 @@ export async function runFundingMonitor(input: FundingMonitorInput): Promise<Fun
         100,
       );
 
+      const formDScreens = new Map<string, SecFormDScreenResult>();
+      const getFormDScreen = async (filing: SecFilingRow): Promise<SecFormDScreenResult> => {
+        const cached = formDScreens.get(filing.accession_number);
+        if (cached) return cached;
+        const screen = await screenFormDFilingForCompany(companyName, filing);
+        formDScreens.set(filing.accession_number, screen);
+        return screen;
+      };
+
       // CIK pin-back: if we matched filings via canonical_company_id (no CIK
       // yet on the canonical company) and all matched Form D filings agree on
       // a single CIK, write it back to companies.cik so future runs benefit
-      // from the CIK path too. Only fires when cikSet.size === 1 — disagreement
-      // means ambiguous, skip rather than risk pinning the wrong CIK.
+      // from the CIK path too. Only LLM-accepted Form D matches are eligible
+      // for pin-back. Only fires when cikSet.size === 1 — disagreement means
+      // ambiguous, skip rather than risk pinning the wrong CIK.
       if (!cik && filings.length > 0) {
+        const acceptedFormDFilings: SecFilingRow[] = [];
+        for (const filing of filings) {
+          if (!FORM_D_TYPES.has(filing.form_type)) continue;
+          const screen = await getFormDScreen(filing);
+          if (screen.decision === 'accept') acceptedFormDFilings.push(filing);
+        }
         const cikSet = new Set(
-          filings
-            .filter((f) => FORM_D_TYPES.has(f.form_type))
+          acceptedFormDFilings
             .map((f) => f.cik)
             .filter((c): c is string => typeof c === 'string' && Boolean(c)),
         );
@@ -360,10 +453,22 @@ export async function runFundingMonitor(input: FundingMonitorInput): Promise<Fun
         [SOURCE_424B]: [],
       };
       for (const filing of filings) {
-        if (FORM_D_TYPES.has(filing.form_type) && shouldEmit('funding_round')) {
-          candidateBySource[SOURCE_FORM_D].push(
-            `${SOURCE_FORM_D}:${row.id}:${filing.accession_number}:funding_round`,
-          );
+        const secAdmission = secFilingCompanyAdmission({
+          companyId: row.id,
+          companyCik: cik,
+          filing,
+        });
+        if (!secAdmission.admitted) continue;
+        if (
+          FORM_D_TYPES.has(filing.form_type) &&
+          shouldEmit('funding_round')
+        ) {
+          const screen = await getFormDScreen(filing);
+          if (screen.decision === 'accept') {
+            candidateBySource[SOURCE_FORM_D].push(
+              `${SOURCE_FORM_D}:${row.id}:${filing.accession_number}:funding_round`,
+            );
+          }
         } else if (FORM_8K_TYPES.has(filing.form_type)) {
           const items = Array.isArray(filing.items) ? filing.items : [];
           // Path 1: item-only PIPE detection → funding_round.
@@ -408,8 +513,20 @@ export async function runFundingMonitor(input: FundingMonitorInput): Promise<Fun
           entity_name: filing.entity_name,
           primary_doc_url: filing.primary_doc_url,
         };
+        const secAdmission = secFilingCompanyAdmission({
+          companyId: row.id,
+          companyCik: cik,
+          filing,
+        });
+        if (!secAdmission.admitted) continue;
+        const admissionMetadata = buildAdmissionMetadata(secAdmission);
 
-        if (FORM_D_TYPES.has(filing.form_type) && shouldEmit('funding_round')) {
+        if (
+          FORM_D_TYPES.has(filing.form_type) &&
+          shouldEmit('funding_round')
+        ) {
+          const screen = await getFormDScreen(filing);
+          if (screen.decision !== 'accept') continue;
           candidateEventsMatched += 1;
           const amount = formatUsd(filing.total_offering_amount);
           const sold = formatUsd(filing.total_amount_sold);
@@ -435,6 +552,8 @@ export async function runFundingMonitor(input: FundingMonitorInput): Promise<Fun
               date_of_first_sale: filing.date_of_first_sale,
               entity_type: filing.entity_type,
               industry_group_type: filing.industry_group_type,
+              form_d_screen: screen,
+              ...admissionMetadata,
             },
             existingSourceEventIds: existingBySource[SOURCE_FORM_D],
           });
@@ -488,7 +607,7 @@ export async function runFundingMonitor(input: FundingMonitorInput): Promise<Fun
               sourceUrl: filing.filing_url,
               eventAt,
               summary,
-              metadata: { ...baseMetadata, items },
+              metadata: { ...baseMetadata, items, ...admissionMetadata },
               existingSourceEventIds: existingBySource[SOURCE_8K],
             });
             if (emitted === 'emitted') {
@@ -530,6 +649,7 @@ export async function runFundingMonitor(input: FundingMonitorInput): Promise<Fun
                 items,
                 classification,
                 classified_at: filing.classified_at,
+                ...admissionMetadata,
               },
               existingSourceEventIds: existingBySource[SOURCE_8K],
             });
@@ -561,8 +681,8 @@ export async function runFundingMonitor(input: FundingMonitorInput): Promise<Fun
             eventAt,
             summary,
             metadata: c
-              ? { ...baseMetadata, classification: c, classified_at: filing.classified_at }
-              : baseMetadata,
+              ? { ...baseMetadata, classification: c, classified_at: filing.classified_at, ...admissionMetadata }
+              : { ...baseMetadata, ...admissionMetadata },
             existingSourceEventIds: existingBySource[SOURCE_424B],
           });
           if (emitted === 'emitted') {

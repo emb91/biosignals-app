@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/tmp/arcova-funding-monitor-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/signals/sec-form-d-filters.ts",
+    "lib/signals/sec-form-d-filters.test.ts",
+    "lib/signals/sec-form-d-screen-result.ts",
+    "lib/signals/sec-form-d-screener.ts",
+    "lib/signals/sec-form-d-screener.test.ts"
+  ]
+}

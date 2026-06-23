@@ -32,6 +32,8 @@ import {
 } from '@/lib/signals/readiness-service';
 import { insertSignalSourceEvent } from '@/lib/signals/readiness-store';
 import type { BuyerFunction, SignalKey } from '@/lib/signals/readiness-types';
+import { verifySourceCompanyNameAgainstCandidates } from '@/lib/signals/signal-entity-guards';
+import { buildAdmissionMetadata } from '@/lib/signals/signal-admission';
 import { isCompanySweepEligible } from '@/lib/signals/sweep-fit-gate';
 import { runApifyActor } from '@/lib/apify';
 
@@ -425,6 +427,7 @@ type ScrapedJob = {
   title_normalized: string;
   job_url: string | null;
   company_name_raw: string;
+  company_match_metadata?: Record<string, unknown>;
 };
 
 function extractString(obj: RawAtsJob, ...keys: string[]): string {
@@ -691,18 +694,13 @@ export async function runHiringMonitor(input: HiringMonitorInput): Promise<Hirin
   // 2. Ensure aliases exist (lazy-populate)
   for (const c of companies) {
     if (!c.aliases?.length && c.company_name) {
-      try { await ensureCompanyAliases(admin, c.id); } catch { /* non-fatal */ }
+      try {
+        const result = await ensureCompanyAliases(admin, c.id);
+        c.aliases = result.aliases;
+      } catch { /* non-fatal */ }
     }
   }
 
-  // 3. Build name → company-id lookup (primary name + all aliases, lowercased)
-  const nameToId = new Map<string, string>();
-  for (const c of companies) {
-    if (c.company_name) nameToId.set(c.company_name.toLowerCase().trim(), c.id);
-    for (const alias of c.aliases ?? []) {
-      if (alias) nameToId.set(alias.toLowerCase().trim(), c.id);
-    }
-  }
   const idToCompany = new Map<string, CompanyRow>(companies.map((c) => [c.id, c]));
 
   // 4. One batch ATS call for all companies + all role keyword groups
@@ -730,22 +728,32 @@ export async function runHiringMonitor(input: HiringMonitorInput): Promise<Hirin
     };
   }
 
-  // 5. Group jobs by company ID (match returned company name → our ID)
+  // 5. Group jobs by company ID using the same verified-name evidence rules as
+  // the resolver. Raw substring matching is too risky for short names.
   const jobsByCompanyId = new Map<string, ScrapedJob[]>();
   for (const job of jobs) {
-    const rawNameLower = job.company_name_raw.toLowerCase().trim();
-    // Exact match first
-    let companyId = nameToId.get(rawNameLower);
-    // Fallback: check if any of our names is a substring of the returned name (handles "Moderna, Inc.")
-    if (!companyId) {
-      for (const [storedName, id] of nameToId) {
-        if (rawNameLower.includes(storedName) || storedName.includes(rawNameLower)) {
-          companyId = id;
-          break;
-        }
-      }
-    }
+    const match = verifySourceCompanyNameAgainstCandidates(
+      job.company_name_raw,
+      companies,
+    );
+    const companyId = match?.companyId;
     if (!companyId) continue; // not one of our tracked companies
+    const matchedCompany = idToCompany.get(companyId);
+    job.company_match_metadata = buildAdmissionMetadata({
+      admitted: true,
+      reason: match.reason,
+      confidence: 'high',
+      entityScope: 'company',
+      companyId,
+      matchType: 'verified_ats_company_name',
+      metadata: {
+        role_gate: 'passed',
+        role_gate_reason: match.reason,
+        matched_source_field: 'company_name_raw',
+        matched_source_text: job.company_name_raw,
+        matched_company_name: matchedCompany?.company_name ?? null,
+      },
+    });
 
     const list = jobsByCompanyId.get(companyId) ?? [];
     list.push(job);
@@ -863,6 +871,8 @@ export async function runHiringMonitor(input: HiringMonitorInput): Promise<Hirin
             week: currentWeekKey,
             titles: list.map((p) => p.title),
             example_urls: list.slice(0, 3).map((p) => p.job_url).filter(Boolean),
+            source_company_names: [...new Set(list.map((p) => p.company_name_raw).filter(Boolean))],
+            ...(list[0]?.company_match_metadata ?? {}),
           },
           existingIds,
         });
@@ -899,6 +909,8 @@ export async function runHiringMonitor(input: HiringMonitorInput): Promise<Hirin
             // row can list the full set of open roles, not just the matched
             // ones. Capped to keep the metadata blob bounded.
             all_roles: postings.slice(0, 100).map((p) => ({ title: p.title, url: p.job_url })),
+            source_company_names: [...new Set(postings.map((p) => p.company_name_raw).filter(Boolean))],
+            ...(postings[0]?.company_match_metadata ?? {}),
             buyer_functions_activated: buyerFunctionsFromMix,
             categories: Object.fromEntries(categoryMatches.map((c) => [c.key, c.count])),
             week: currentWeekKey,

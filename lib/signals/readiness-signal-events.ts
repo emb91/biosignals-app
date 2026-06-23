@@ -8,6 +8,8 @@ import {
 } from '@/lib/signals/readiness-service';
 import type { BuyerFunction, SignalKey } from '@/lib/signals/readiness-types';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { assertUserOwnsSignalEntity } from '@/lib/signals/signal-ownership';
+import { buildAdmissionMetadata } from '@/lib/signals/signal-admission';
 
 type DatabaseClient = SupabaseClient<any, 'public', any>;
 
@@ -66,6 +68,34 @@ export async function mirrorSignalEventToReadiness(
     return null;
   }
 
+  const ownership = await assertUserOwnsSignalEntity(supabase, {
+    userId,
+    companyId,
+    contactId,
+    requireContactCompanyMatch: true,
+  });
+  if (!ownership.ok) {
+    return {
+      skipped: true as const,
+      reason: 'ownership_guard_failed' as const,
+      detail: ownership.reason,
+      sourceEventId: null,
+    };
+  }
+  const admissionMetadata = buildAdmissionMetadata({
+    admitted: true,
+    reason: ownership.reason,
+    confidence: 'high',
+    entityScope,
+    companyId: companyId ?? undefined,
+    contactId: contactId ?? undefined,
+    matchType: 'owned_signal_event_mirror',
+    metadata: {
+      role_gate: 'passed',
+      role_gate_reason: 'legacy signal_events row resolved to active user-owned Arcova entity',
+    },
+  });
+
   const { data: existingMirror, error: existingMirrorError } = await supabase
     .from('signal_source_events')
     .select('id')
@@ -105,6 +135,7 @@ export async function mirrorSignalEventToReadiness(
       signal_event_type: signalRow.signal_type,
       signal_event_origin: 'signal_events_route',
       ...(signalRow.event_metadata ?? {}),
+      ...admissionMetadata,
     },
   });
 
@@ -127,6 +158,7 @@ export async function mirrorSignalEventToReadiness(
       signal_event_type: signalRow.signal_type,
       signal_event_origin: 'signal_events_route',
       ...(signalRow.event_metadata ?? {}),
+      ...admissionMetadata,
     },
   } as const;
 

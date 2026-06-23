@@ -8,6 +8,8 @@ import {
   normalizeSignalSourceEvent,
   recomputeAccountReadiness,
 } from '@/lib/signals/readiness-service';
+import { assertUserOwnsSignalEntity } from '@/lib/signals/signal-ownership';
+import { buildAdmissionMetadata } from '@/lib/signals/signal-admission';
 import type { BuyerFunction, SignalKey, SignalScope } from '@/lib/signals/readiness-types';
 
 type IngestBody = {
@@ -93,25 +95,13 @@ export async function POST(request: Request) {
 
     const supabase = createAdminClient();
 
-    if (companyId) {
-      const { data: company, error: companyError } = await supabase
-        .from('user_companies')
-        .select('company_id')
-        .eq('company_id', companyId)
-        .eq('user_id', user.id)
-        .maybeSingle();
-
-      if (companyError || !company) {
-        return NextResponse.json({ error: 'Company not found' }, { status: 404 });
-      }
-    }
-
     if (contactId) {
       const { data: contact, error: contactError } = await supabase
         .from('contacts')
         .select('id, company_id')
         .eq('id', contactId)
         .eq('user_id', user.id)
+        .is('archived_at', null)
         .maybeSingle();
 
       if (contactError || !contact) {
@@ -122,6 +112,29 @@ export async function POST(request: Request) {
         body.company_id = contact.company_id;
       }
     }
+
+    const ownership = await assertUserOwnsSignalEntity(supabase, {
+      userId: user.id,
+      companyId: body.company_id ?? companyId,
+      contactId,
+      requireContactCompanyMatch: true,
+    });
+    if (!ownership.ok) {
+      return NextResponse.json({ error: ownership.reason }, { status: 404 });
+    }
+    const admissionMetadata = buildAdmissionMetadata({
+      admitted: true,
+      reason: ownership.reason,
+      confidence: 'high',
+      entityScope,
+      companyId: body.company_id ?? companyId ?? undefined,
+      contactId: contactId ?? undefined,
+      matchType: 'owned_manual_readiness_ingest',
+      metadata: {
+        role_gate: 'passed',
+        role_gate_reason: 'manual readiness ingest targets active user-owned Arcova entity',
+      },
+    });
 
     const ingestResult = await ingestSignalSourceEvent(supabase, {
       userId: user.id,
@@ -136,7 +149,10 @@ export async function POST(request: Request) {
       summary: body.summary ?? null,
       excerpt: body.excerpt ?? null,
       eventAt: body.event_at ?? null,
-      metadata: body.metadata ?? {},
+      metadata: {
+        ...(body.metadata ?? {}),
+        ...admissionMetadata,
+      },
     });
 
     const rawEvent = {
@@ -156,7 +172,10 @@ export async function POST(request: Request) {
       excerpt: body.excerpt ?? null,
       eventAt: body.event_at ?? null,
       observedAt: new Date().toISOString(),
-      metadata: body.metadata ?? {},
+      metadata: {
+        ...(body.metadata ?? {}),
+        ...admissionMetadata,
+      },
     } as const;
 
     const normalizedResult = await normalizeSignalSourceEvent(supabase, {
@@ -207,4 +226,3 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
-
