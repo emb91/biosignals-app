@@ -1,7 +1,6 @@
-import { supabase } from '@/lib/supabase'
-
 // Get the current user's session token (client-side)
 export async function getCurrentUserToken() {
+  const { supabase } = await import('@/lib/supabase')
   const { data: { session }, error } = await supabase.auth.getSession()
   
   if (error || !session) {
