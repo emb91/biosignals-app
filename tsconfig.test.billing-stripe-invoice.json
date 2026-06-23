@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/tmp/arcova-billing-stripe-invoice-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/billing/stripe-invoice.ts",
+    "lib/billing/stripe-invoice.test.ts"
+  ]
+}
