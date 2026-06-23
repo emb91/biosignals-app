@@ -412,22 +412,45 @@ async function hasEmailOnContact(
   contactId: string,
   normalizedEmail: string,
 ): Promise<boolean> {
+  return (await findEmailOnContact(supabase, contactId, normalizedEmail)) !== null;
+}
+
+async function findEmailOnContact(
+  supabase: SupabaseFrom,
+  contactId: string,
+  normalizedEmail: string,
+): Promise<{
+  id: string;
+  email: string;
+  email_deliverability_provider: string | null;
+} | null> {
   const { data, error } = await supabase
     .from('contact_emails')
-    .select('email')
+    .select('id, email, email_deliverability_provider')
     .eq('contact_id', contactId);
 
   if (error) {
-    if (isMissingContactEmailsTableError(error)) return false;
+    if (isMissingContactEmailsTableError(error)) return null;
     throw error;
   }
 
   for (const row of data || []) {
-    const stored = trimEmail((row as { email?: string }).email);
-    if (stored && emailsEqual(stored, normalizedEmail)) return true;
+    const typed = row as {
+      id?: string;
+      email?: string;
+      email_deliverability_provider?: string | null;
+    };
+    const stored = trimEmail(typed.email);
+    if (stored && typed.id && emailsEqual(stored, normalizedEmail)) {
+      return {
+        id: typed.id,
+        email: stored,
+        email_deliverability_provider: typed.email_deliverability_provider ?? null,
+      };
+    }
   }
 
-  return false;
+  return null;
 }
 
 /** First-time import baseline; never overwritten by enrichment. */
@@ -472,15 +495,47 @@ export async function ensureEnrichedEmailEntry(
     email: string | null | undefined;
     companyDomain: string | null | undefined;
     apolloEmailStatus?: string | null;
+    emailDeliverability?: string | null;
+    emailDeliverabilityProvider?: string | null;
+    emailDeliverabilityCheckedAt?: string | null;
+    emailDeliverabilityMetadata?: Record<string, unknown> | null;
   },
 ): Promise<void> {
   const email = trimEmail(params.email);
   if (!email || !looksLikeEmail(email)) return;
 
   try {
-    if (await hasEmailOnContact(supabase, params.contactId, email)) return;
+    const existing = await findEmailOnContact(supabase, params.contactId, email);
+    const hasValidationUpdate =
+      params.emailDeliverability !== undefined ||
+      params.emailDeliverabilityProvider !== undefined ||
+      params.emailDeliverabilityCheckedAt !== undefined ||
+      params.emailDeliverabilityMetadata !== undefined;
+
+    if (existing) {
+      if (hasValidationUpdate && !isUserEmailDeliverabilityOverride(existing.email_deliverability_provider)) {
+        const { error } = await supabase
+          .from('contact_emails')
+          .update({
+            apollo_email_status: params.apolloEmailStatus ?? null,
+            email_deliverability: params.emailDeliverability ?? null,
+            email_deliverability_provider: params.emailDeliverabilityProvider ?? null,
+            email_deliverability_checked_at: params.emailDeliverabilityCheckedAt ?? null,
+            email_deliverability_metadata: params.emailDeliverabilityMetadata ?? null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existing.id);
+
+        if (error) throw error;
+      }
+      return;
+    }
 
     const category = classifyEnrichedEmail(email, params.companyDomain);
+    const deliverability = params.emailDeliverability ?? params.apolloEmailStatus ?? null;
+    const deliverabilityProvider =
+      params.emailDeliverabilityProvider ?? (params.apolloEmailStatus ? 'apollo' : null);
+
     const { error } = await supabase.from('contact_emails').insert({
       contact_id: params.contactId,
       user_id: params.userId,
@@ -489,10 +544,10 @@ export async function ensureEnrichedEmailEntry(
       label: null,
       source_provider: 'apollo',
       apollo_email_status: params.apolloEmailStatus ?? null,
-      email_deliverability: params.apolloEmailStatus ?? null,
-      email_deliverability_provider: params.apolloEmailStatus ? 'apollo' : null,
-      email_deliverability_checked_at: null,
-      email_deliverability_metadata: null,
+      email_deliverability: deliverability,
+      email_deliverability_provider: deliverabilityProvider,
+      email_deliverability_checked_at: params.emailDeliverabilityCheckedAt ?? null,
+      email_deliverability_metadata: params.emailDeliverabilityMetadata ?? null,
       updated_at: new Date().toISOString(),
     });
 

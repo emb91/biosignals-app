@@ -1,9 +1,10 @@
 import type React from "react"
-import { Inter, JetBrains_Mono, Manrope, Plus_Jakarta_Sans, Poppins } from "next/font/google"
+import { Inter, JetBrains_Mono, Manrope, Plus_Jakarta_Sans, Poppins, Quicksand } from "next/font/google"
 import ClientLayout from "./ClientLayout"
 import { AuthProvider } from "@/context/AuthContext"
 import { EnrichmentGuardProvider } from "@/context/EnrichmentGuardContext"
 import { SetupStateProvider } from "@/lib/use-setup-state"
+import { PostHogProvider, PostHogIdentify } from "./posthog-provider"
 import './globals.css'
 // import { Analytics } from "@vercel/analytics/next"
 
@@ -38,29 +39,36 @@ const jetbrainsMono = JetBrains_Mono({
   variable: "--font-jetbrains-mono",
 })
 
+// Quicksand carries the Arcova wordmark (see components/brand/ArcovaLogo)
+const quicksand = Quicksand({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  variable: "--font-quicksand",
+})
+
 export const metadata = {
   metadataBase: new URL('https://arcova.bio'),
-  title: "Know who to call, and exactly when | Arcova",
-  description: "AI-native revenue intelligence for life science commercial teams.",
+  title: "Arcova",
+  description: "Revenue intelligence for life science teams.",
   icons: {
     icon: [
-      { url: "/arcova-favicon.png", sizes: "200x200", type: "image/png" }
+      { url: "/brand/favicon.svg", type: "image/svg+xml" },
+      { url: "/brand/favicon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/brand/favicon-16.png", sizes: "16x16", type: "image/png" }
     ],
     shortcut: [
-      { url: "/arcova-favicon.png", sizes: "200x200", type: "image/png" }
+      { url: "/brand/favicon-32.png", sizes: "32x32", type: "image/png" }
     ],
+    // Apple home-screen icon keeps the navy squircle (iOS fills transparency with black)
     apple: [
-      { url: "/arcova-favicon.png", sizes: "200x200", type: "image/png" }
-    ],
-    other: [
-      { url: "/arcova-favicon.png", sizes: "200x200", type: "image/png" }
+      { url: "/brand/apple-touch-icon.png", sizes: "180x180", type: "image/png" }
     ]
   },
   openGraph: {
     type: 'website',
     url: 'https://arcova.bio',
-    title: "Know who to call, and exactly when | Arcova",
-    description: "AI-native revenue intelligence for life science commercial teams.",
+    title: "Arcova",
+    description: "Revenue intelligence for life science teams.",
     siteName: 'Arcova',
     images: [
       {
@@ -74,13 +82,6 @@ export const metadata = {
   alternates: {
     canonical: '/',
   },
-  // twitter: {
-  //   card: "summary_large_image",
-  //   title: "Arcova | Scientific Evidence for Business Decisions",
-  //   description: "Oxford-trained PhD team turning raw biomedical literature into decision-ready insight.",
-  //   images: ["/images/og-image.png"],
-  //   creator: "@arcova",
-  // },
 }
 
 export default function RootLayout({
@@ -89,7 +90,7 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" className={`${poppins.variable} ${inter.variable} ${manrope.variable} ${plusJakarta.variable} ${jetbrainsMono.variable}`}>
+    <html lang="en" className={`${poppins.variable} ${inter.variable} ${manrope.variable} ${plusJakarta.variable} ${jetbrainsMono.variable} ${quicksand.variable}`}>
       <head>
         {/* Google tag (gtag.js) */}
         <script async src="https://www.googletagmanager.com/gtag/js?id=G-0WTVF1D48X"></script>
@@ -98,6 +99,14 @@ export default function RootLayout({
           function gtag(){dataLayer.push(arguments);}
           gtag('js', new Date());
           gtag('config', 'G-0WTVF1D48X');
+        ` }} />
+
+        {/* Apollo website tracker (company + person-level visitor identification) */}
+        <script dangerouslySetInnerHTML={{ __html: `
+          function initApollo(){var n=Math.random().toString(36).substring(7),o=document.createElement("script");
+          o.src="https://assets.apollo.io/micro/website-tracker/tracker.iife.js?nocache="+n,o.async=!0,o.defer=!0,
+          o.onload=function(){window.trackingFunctions.onLoad({appId:"689866f9353c4d0015f32da8"})},
+          document.head.appendChild(o)}initApollo();
         ` }} />
 
         {/* Organization Schema Markup */}
@@ -109,20 +118,23 @@ export default function RootLayout({
               "@type": "Organization",
               name: "Arcova",
               url: "https://arcova.bio",
-              logo: "https://arcova.bio/arcova-logo.png",
-              description: "AI-native revenue intelligence for life science commercial teams.",
+              logo: "https://arcova.bio/brand/icon-512.png",
+              description: "Revenue intelligence for life science teams.",
             }),
           }}
         />
       </head>
       <body className="font-jakarta antialiased">
-        <AuthProvider>
-          <SetupStateProvider>
-            <EnrichmentGuardProvider>
-              <ClientLayout>{children}</ClientLayout>
-            </EnrichmentGuardProvider>
-          </SetupStateProvider>
-        </AuthProvider>
+        <PostHogProvider>
+          <AuthProvider>
+            <PostHogIdentify />
+            <SetupStateProvider>
+              <EnrichmentGuardProvider>
+                <ClientLayout>{children}</ClientLayout>
+              </EnrichmentGuardProvider>
+            </SetupStateProvider>
+          </AuthProvider>
+        </PostHogProvider>
         {/* <Analytics /> */}
       </body>
     </html>

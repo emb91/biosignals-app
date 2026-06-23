@@ -25,7 +25,7 @@ const nextConfig = {
           "img-src 'self' data: blob: https:",
           "font-src 'self' data: https:",
           "style-src 'self' 'unsafe-inline'",
-          "script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://www.google-analytics.com https://challenges.cloudflare.com",
+          "script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://www.google-analytics.com https://challenges.cloudflare.com https://us-assets.i.posthog.com",
           "connect-src 'self' https: wss:",
           "frame-src 'self' https://challenges.cloudflare.com https:",
           "form-action 'self'",
@@ -59,8 +59,15 @@ const nextConfig = {
     return [
       { source: '/api/company-criteria', destination: '/api/icps' },
       { source: '/api/company-criteria/:path*', destination: '/api/icps/:path*' },
+      // PostHog reverse proxy — avoids ad-blocker interference and keeps
+      // ingestion on the same origin as the app.
+      { source: '/ingest/static/:path*', destination: 'https://us-assets.i.posthog.com/static/:path*' },
+      { source: '/ingest/array/:path*', destination: 'https://us-assets.i.posthog.com/array/:path*' },
+      { source: '/ingest/:path*', destination: 'https://us.i.posthog.com/:path*' },
     ];
   },
+  // Required for PostHog trailing-slash API requests to route correctly.
+  skipTrailingSlashRedirect: true,
   async redirects() {
     return [
       {
@@ -70,6 +77,11 @@ const nextConfig = {
       },
       {
         source: '/results',
+        destination: '/leads/contacts',
+        permanent: false,
+      },
+      {
+        source: '/contacts',
         destination: '/leads/contacts',
         permanent: false,
       },

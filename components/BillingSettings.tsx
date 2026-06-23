@@ -10,12 +10,14 @@
  * (same pattern as TeamSettings). When billing isn't live yet (no Stripe
  * config) the card still shows usage but hides purchase buttons.
  */
+import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2, CreditCard, ArrowUpRight, Plus } from 'lucide-react';
 
 type Summary = {
   available: boolean;
   unlimited: boolean;
+  complimentary?: boolean;
   role: 'owner' | 'admin' | 'member';
   plan: {
     key: string;
@@ -25,8 +27,16 @@ type Summary = {
     cancelAtPeriodEnd: boolean;
   };
   seats: { used: number; included: number };
-  credits: { available: number; granted: number };
+  credits: {
+    available: number;
+    granted: number;
+    includedAvailable?: number;
+    includedGranted?: number;
+    purchasedAvailable?: number;
+    purchasedGranted?: number;
+  };
   triage: { used: number; limit: number };
+  activeIcps?: { used: number; limit: number };
   importedEnrichments: { used: number; included: number; hardCap: number };
   activeLeads: { used: number; cap: number; waitlisted: number; cadenceDays: number };
   netNewLeads: { used: number; limit: number };
@@ -51,8 +61,6 @@ const CARD =
 export default function BillingSettings() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -66,28 +74,6 @@ export default function BillingSettings() {
   useEffect(() => {
     void load();
   }, [load]);
-
-  const redirectTo = useCallback(async (path: string, body?: Record<string, unknown>) => {
-    setBusy(path + JSON.stringify(body ?? {}));
-    setError(null);
-    try {
-      const res = await fetch(path, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: body ? JSON.stringify(body) : undefined,
-      });
-      const data = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
-      if (res.ok && data.url) {
-        window.location.href = data.url;
-        return;
-      }
-      setError(data.error || 'Something went wrong — please try again.');
-    } catch {
-      setError('Something went wrong — please try again.');
-    } finally {
-      setBusy(null);
-    }
-  }, []);
 
   if (loading) {
     return (
@@ -108,10 +94,21 @@ export default function BillingSettings() {
       <section className="mt-8">
         <h2 className="text-sm font-semibold uppercase tracking-[0.08em] text-[#7d909a]">Plan &amp; billing</h2>
         <div className={CARD}>
-          <span className="text-sm font-semibold text-slate-950">{plan.name} plan</span>
-          <p className="mt-1 text-sm text-[#7d909a]">
-            This Arcova workspace is complimentary, with no usage limits or payment required.
-          </p>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <span className="text-sm font-semibold text-slate-950">{plan.name} plan</span>
+              <p className="mt-1 text-sm text-[#7d909a]">
+                This Arcova workspace is complimentary, with no usage limits or payment required.
+              </p>
+            </div>
+            <Link
+              href="/settings/billing"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+            >
+              Select another plan
+              <ArrowUpRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
         </div>
       </section>
     );
@@ -119,16 +116,17 @@ export default function BillingSettings() {
 
   const canManage = summary.role === 'owner' || summary.role === 'admin';
   const onFreePlan = plan.key === 'free';
+  const includedGranted = credits.includedGranted ?? credits.granted;
+  const includedAvailable = credits.includedAvailable ?? credits.available;
   const usagePct =
-    credits.granted > 0
-      ? Math.min(100, Math.round(((credits.granted - credits.available) / credits.granted) * 100))
+    includedGranted > 0
+      ? Math.min(100, Math.round(((includedGranted - includedAvailable) / includedGranted) * 100))
       : 0;
   const capUsagePct = Math.max(
     usagePct,
+    summary.activeIcps ? percentage(summary.activeIcps.used, summary.activeIcps.limit) : 0,
     percentage(summary.activeLeads.used, summary.activeLeads.cap),
     percentage(summary.triage.used, summary.triage.limit),
-    percentage(summary.importedEnrichments.used, summary.importedEnrichments.hardCap),
-    percentage(summary.netNewLeads.used, summary.netNewLeads.limit),
   );
   const showPlanNudge = capUsagePct >= 75 && (plan.key === 'free' || plan.key === 'starter');
   const showCreditNudge = usagePct >= 80 && plan.key !== 'free' && catalog.pack?.available;
@@ -140,7 +138,7 @@ export default function BillingSettings() {
     <section className="mt-8">
       <h2 className="text-sm font-semibold uppercase tracking-[0.08em] text-[#7d909a]">Plan &amp; billing</h2>
       <p className="mt-1 text-sm text-[#7d909a]">
-        Every feature is included on every plan — plans set credits, usage caps, and monitoring cadence.
+        Plans include monthly credits and workspace capacity. Purchased credits roll over and can be used for any paid action.
       </p>
 
       <div className={CARD}>
@@ -166,13 +164,12 @@ export default function BillingSettings() {
             </p>
           </div>
           {canManage && summary.available && !onFreePlan && (
-            <button
-              onClick={() => void redirectTo('/api/billing/portal')}
-              disabled={busy !== null}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+            <Link
+              href="/settings/billing"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
             >
               <CreditCard className="h-3.5 w-3.5" /> Manage billing
-            </button>
+            </Link>
           )}
         </div>
 
@@ -182,7 +179,9 @@ export default function BillingSettings() {
             <span className="text-slate-700">
               {credits.available.toLocaleString()} credits available
             </span>
-            <span className="text-[#7d909a]">{credits.granted.toLocaleString()} plan credits</span>
+            <span className="text-[#7d909a]">
+              {(credits.includedAvailable ?? credits.available).toLocaleString()} included · {(credits.purchasedAvailable ?? 0).toLocaleString()} purchased
+            </span>
           </div>
           <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-slate-100">
             <div
@@ -206,26 +205,18 @@ export default function BillingSettings() {
                 <p className="mt-0.5 text-xs leading-relaxed text-[#4a6470]">
                   Your highest plan allowance is {capUsagePct}% used.{' '}
                   {plan.key === 'free'
-                    ? 'Starter adds 2,000 monthly credits and monitoring for up to 5,000 active leads.'
-                    : 'Growth adds 8,000 monthly credits, 10,000 active leads, and weekly monitoring.'}
+                    ? 'Starter adds 2,000 monthly credits, 3 active ICPs, and 5,000 lead capacity.'
+                    : 'Growth adds 8,000 monthly credits, 10 active ICPs, 10,000 lead capacity, and weekly monitoring.'}
                 </p>
               </div>
               {canManage && summary.available && (
-                <button
-                  onClick={() =>
-                    void redirectTo(
-                      plan.key === 'free' ? '/api/billing/checkout' : '/api/billing/portal',
-                      plan.key === 'free'
-                        ? { kind: 'plan', planKey: 'starter', billing: 'monthly' }
-                        : undefined,
-                    )
-                  }
-                  disabled={busy !== null}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#0d3547] px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-[#0d3547]/90 disabled:opacity-50"
+                <Link
+                  href="/settings/billing"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#0d3547] px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-[#0d3547]/90"
                 >
                   <ArrowUpRight className="h-3.5 w-3.5" />
                   {plan.key === 'free' ? 'Upgrade to Starter' : 'Review Growth'}
-                </button>
+                </Link>
               )}
             </div>
           </div>
@@ -234,62 +225,37 @@ export default function BillingSettings() {
         {showCreditNudge && (
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
             <p className="text-xs leading-relaxed text-amber-900">
-              You’ve used {usagePct}% of this period’s plan credits. Add a credit pack now to avoid interrupting paid actions.
+              You’ve used {usagePct}% of this period’s included credits. Add rollover credits to keep using paid actions.
             </p>
             {canManage && (
-              <button
-                onClick={() => void redirectTo('/api/billing/checkout', { kind: 'pack' })}
-                disabled={busy !== null}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 transition hover:bg-amber-100 disabled:opacity-50"
+              <Link
+                href="/settings/billing"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 transition hover:bg-amber-100"
               >
                 <Plus className="h-3.5 w-3.5" />
                 Add credits
-              </button>
+              </Link>
             )}
           </div>
         )}
 
-        {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
-
         {/* Actions */}
         {canManage && summary.available && (
           <div className="mt-4 flex flex-wrap gap-2">
-            {onFreePlan &&
-              catalog.plans.filter((p) => p.available).flatMap((p) => [
-                <button
-                  key={`${p.key}-monthly`}
-                  onClick={() => void redirectTo('/api/billing/checkout', {
-                    kind: 'plan', planKey: p.key, billing: 'monthly',
-                  })}
-                  disabled={busy !== null}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#0d3547] px-3 py-1.5 text-sm font-medium text-white transition hover:bg-[#0d3547]/90 disabled:opacity-50"
-                >
-                  <ArrowUpRight className="h-3.5 w-3.5" />
-                  {p.name} — ${p.monthlyUsd}/workspace/mo · {p.monthlyCredits.toLocaleString()} credits
-                </button>,
-                ...(p.annualAvailable ? [
-                  <button
-                    key={`${p.key}-annual`}
-                    onClick={() => void redirectTo('/api/billing/checkout', {
-                      kind: 'plan', planKey: p.key, billing: 'annual',
-                    })}
-                    disabled={busy !== null}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-[#0d3547]/15 bg-white px-3 py-1.5 text-sm font-medium text-[#0d3547] transition hover:bg-slate-50 disabled:opacity-50"
-                  >
-                    {p.name} annual — ${p.annualUsd.toLocaleString()}/yr · {p.annualCredits.toLocaleString()} credits upfront
-                  </button>,
-                ] : []),
-              ])}
-            {catalog.pack?.available && (
-              <button
-                onClick={() => void redirectTo('/api/billing/checkout', { kind: 'pack' })}
-                disabled={busy !== null}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                Add {catalog.pack.credits.toLocaleString()} credits — ${catalog.pack.usd}
-              </button>
-            )}
+            <Link
+              href="/settings/billing"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[#0d3547] px-3 py-1.5 text-sm font-medium text-white transition hover:bg-[#0d3547]/90"
+            >
+              <ArrowUpRight className="h-3.5 w-3.5" />
+              Select another plan
+            </Link>
+            <Link
+              href="/settings/billing"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Buy credit add-ons
+            </Link>
           </div>
         )}
         {canManage && !summary.available && (

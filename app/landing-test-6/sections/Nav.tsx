@@ -1,12 +1,12 @@
-import Image from "next/image"
+import { Logo } from "@/components/logo"
 import { Button } from "../components/primitives"
 
 export function Nav() {
   return (
     <nav className="nav" id="lt6-nav">
       <div className="wrap nav-in">
-        <a href="#top" aria-label="Arcova home">
-          <Image className="nav-logo" src="/arcova-wordmark.png" alt="Arcova" width={120} height={30} priority style={{ height: 30, width: "auto" }} />
+        <a href="#top" aria-label="Arcova home" className="nav-logo">
+          <Logo size={28} badge="none" />
         </a>
         <div className="nav-mid">
           <a className="nav-link" href="#how">How it works</a>

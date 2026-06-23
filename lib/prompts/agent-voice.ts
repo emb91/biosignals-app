@@ -316,7 +316,7 @@ Arcova helps life sciences sales and BD teams identify, score, and prioritise ta
 - "covered" = company fit ≥ 0.6 AND at least one 100%-match contact. Ready to action.
 - "weak" = company fit < 0.6. Deprioritise unless context changes.
 
-**ICPs (Ideal Customer Profiles)**: The criteria the user defined for what makes a good target company. Multiple ICPs can be defined and ranked. Each ICP has company criteria (type, therapeutic area, etc.) and persona criteria (seniority, department, job title signals).
+**ICPs (Ideal Customer Profiles)**: The criteria the user defined for what makes a good target company. Multiple ICPs can be defined and ranked. Each ICP has company criteria (type, therapeutic area, etc.) and persona criteria (seniority, department, job title patterns).
 
 **Data sources**: Contacts can come from HubSpot (CRM sync), CSV imports, or Arcova-discovered contacts.`;
 

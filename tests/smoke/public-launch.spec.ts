@@ -3,8 +3,11 @@ import { expect, test } from '@playwright/test';
 test('canonical landing page renders the promoted Arcova experience', async ({ page }) => {
   await page.goto('/');
   await expect(page).toHaveTitle(/Arcova/);
-  await expect(page.getByRole('heading', { level: 1 })).toContainText(
-    /revenue engine built for life sciences|whole market|who to call/i,
+  await expect(
+    page.getByRole('heading', { name: /revenue engine built for life sciences/i }),
+  ).toBeVisible();
+  await expect(page.getByRole('heading', { name: /one workspace/i })).toContainText(
+    /whole revenue team/i,
   );
   await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
     'href',
@@ -19,7 +22,7 @@ test('public legal pages render current SaaS policies', async ({ page }) => {
 
   await page.goto('/terms');
   await expect(page.getByRole('heading', { name: 'Terms of Service' })).toBeVisible();
-  await expect(page.getByText(/AI-native revenue intelligence platform/)).toBeVisible();
+  await expect(page.getByText(/Arcova helps life science commercial teams/)).toBeVisible();
 });
 
 test('paid provider endpoint rejects anonymous requests', async ({ request }) => {

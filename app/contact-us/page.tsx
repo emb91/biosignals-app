@@ -10,7 +10,7 @@ declare global {
   interface Window {
     arcovaTurnstileSuccess?: (token: string) => void
     arcovaTurnstileExpired?: () => void
-    turnstile?: { reset: () => void }
+    // window.turnstile is declared globally in components/turnstile.tsx
   }
 }
 

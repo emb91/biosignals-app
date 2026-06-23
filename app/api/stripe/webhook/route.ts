@@ -21,6 +21,7 @@ import type Stripe from 'stripe';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { getStripe, isBillingConfigured } from '@/lib/billing/stripe';
 import { orgIdForStripeCustomer } from '@/lib/billing/customer';
+import { invoiceSubscriptionId } from '@/lib/billing/stripe-invoice';
 import {
   CREDIT_PACK_SIZE,
   PAYMENT_GRACE_DAYS,
@@ -214,9 +215,21 @@ async function syncSubscription(sub: Stripe.Subscription) {
     { onConflict: 'org_id' },
   );
   if (error) throw new Error(`subscription sync failed: ${error.message}`);
+
+  if (plan && (sub.status === 'active' || sub.status === 'trialing')) {
+    const { error: orgError } = await admin
+      .from('organizations')
+      .update({ billing_exempt: false })
+      .eq('id', orgId)
+      .eq('billing_exempt', true);
+    if (orgError) throw new Error(`billing exemption update failed: ${orgError.message}`);
+  }
 }
 
 async function handleInvoice(invoice: Stripe.Invoice, outcome: 'paid' | 'failed') {
+  const subscriptionId = invoiceSubscriptionId(invoice);
+  if (!subscriptionId) return;
+
   const customerId = typeof invoice.customer === 'string' ? invoice.customer : invoice.customer?.id;
   if (!customerId) return;
   const orgId = await orgIdForStripeCustomer(customerId);
@@ -229,6 +242,7 @@ async function handleInvoice(invoice: Stripe.Invoice, outcome: 'paid' | 'failed'
       .from('org_subscriptions')
       .update({ status: 'past_due', grace_until: graceUntil, updated_at: new Date().toISOString() })
       .eq('org_id', orgId)
+      .eq('stripe_subscription_id', subscriptionId)
       .is('grace_until', null); // don't extend an already-running grace window
     if (error) throw new Error(`past_due update failed: ${error.message}`);
     return;
@@ -240,6 +254,7 @@ async function handleInvoice(invoice: Stripe.Invoice, outcome: 'paid' | 'failed'
     .from('org_subscriptions')
     .update({ status: 'active', grace_until: null, updated_at: new Date().toISOString() })
     .eq('org_id', orgId)
+    .eq('stripe_subscription_id', subscriptionId)
     .eq('status', 'past_due');
   if (error) throw new Error(`recovery update failed: ${error.message}`);
 
@@ -247,6 +262,7 @@ async function handleInvoice(invoice: Stripe.Invoice, outcome: 'paid' | 'failed'
     .from('org_subscriptions')
     .select('plan_key, billing_interval, current_period_start, current_period_end, stripe_subscription_id')
     .eq('org_id', orgId)
+    .eq('stripe_subscription_id', subscriptionId)
     .maybeSingle<{
       plan_key: string;
       billing_interval: string;

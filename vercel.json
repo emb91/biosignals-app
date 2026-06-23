@@ -51,6 +51,10 @@
     {
       "path": "/api/cron/press-releases-delta",
       "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/cron/publications-delta",
+      "schedule": "0 12 * * *"
     }
   ]
 }

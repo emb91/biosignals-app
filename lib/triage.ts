@@ -1,4 +1,5 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { completeLlm } from '@/lib/llm-client';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 
 export type TriageGroup = 'high' | 'medium' | 'low';
 
@@ -9,7 +10,7 @@ export type TriageInput = {
   email?: string | null;
 };
 
-export const TRIAGE_VERSION = 'triage_v1';
+export const TRIAGE_VERSION = 'triage_v2';
 
 const SYSTEM_PROMPT = `You are classifying biotech/pharma contacts for a CRO sales tool.
 
@@ -21,16 +22,15 @@ Classify each contact as:
 When uncertain, prefer "medium" over "low". Only classify as "low" when clearly irrelevant.`;
 
 /**
- * Batch-triage contacts using Haiku before Apollo/Apify enrichment.
- * Returns a map of input id → triage result. Fails open (defaults to
- * 'medium') so enrichment still proceeds if the LLM call errors.
+ * Batch-triage contacts before Apollo/Apify enrichment.
+ * Returns a map of input id → triage result. Fails closed (defaults to "low")
+ * so an LLM outage never silently proceeds into enrichment.
  */
 export async function triageContacts(
   contacts: TriageInput[],
 ): Promise<Map<string, { group: TriageGroup; version: string }>> {
   if (contacts.length === 0) return new Map();
 
-  const client = new Anthropic();
   const results = new Map<string, { group: TriageGroup; version: string }>();
 
   const BATCH_SIZE = 50;
@@ -47,15 +47,25 @@ export async function triageContacts(
     const prompt = `Classify each contact as "high", "medium", or "low".\n\n${lines}\n\nRespond with ONLY a JSON array in the same order, e.g. ["high","medium","low"]. No explanation.`;
 
     try {
-      const response = await client.messages.create({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 256,
+      const completion = await completeLlm({
+        feature: 'contact_classification',
         system: SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: prompt }],
+        prompt,
+        maxTokens: 256,
       });
 
-      const text =
-        response.content[0]?.type === 'text' ? response.content[0].text.trim() : '[]';
+      await recordLlmUsageEvent({
+        provider: completion.provider,
+        feature: 'import_triage',
+        route: 'lib/triage#triageContacts',
+        model: completion.model,
+        usage: completion.usage,
+        metadata: {
+          batch_size: batch.length,
+        },
+      });
+
+      const text = completion.text.trim();
       const parsed = JSON.parse(text) as unknown[];
 
       batch.forEach((c, idx) => {
@@ -65,8 +75,8 @@ export async function triageContacts(
         results.set(c.id, { group, version: TRIAGE_VERSION });
       });
     } catch (err) {
-      console.error('[triage] batch failed, defaulting to medium:', err);
-      batch.forEach((c) => results.set(c.id, { group: 'medium', version: TRIAGE_VERSION }));
+      console.error('[triage] batch failed, defaulting to low:', err);
+      batch.forEach((c) => results.set(c.id, { group: 'low', version: TRIAGE_VERSION }));
     }
   }
 

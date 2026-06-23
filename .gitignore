@@ -51,3 +51,5 @@ brand & messaging/
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+.env.local
+supabase/.temp/

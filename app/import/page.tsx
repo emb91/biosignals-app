@@ -1025,7 +1025,7 @@ export default function ImportPage() {
                           )}
                           className="rounded-lg border border-arcova-teal/25 bg-white px-3 py-2 text-xs font-semibold text-arcova-navy disabled:opacity-50"
                         >
-                          Triage {awaitingTriageRows.length.toLocaleString()} more · 0.1 credit each
+                          Triage {awaitingTriageRows.length.toLocaleString()} more
                         </button>
                       )}
                       {awaitingEnrichmentRows.length > 0 && (

@@ -60,12 +60,18 @@ export async function DELETE(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { error } = await supabase
+  const { data: deleted, error } = await supabase
     .from('outreach_sequences')
     .delete()
     .eq('id', id)
-    .eq('user_id', user.id);
+    .eq('user_id', user.id)
+    .select('contact_id, company_id')
+    .maybeSingle<{ contact_id: string | null; company_id: string | null }>();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({
+    ok: true,
+    contactId: deleted?.contact_id ?? null,
+    companyId: deleted?.company_id ?? null,
+  });
 }

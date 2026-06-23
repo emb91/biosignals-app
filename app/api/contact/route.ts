@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { checkRateLimit, clientIp } from '@/lib/rate-limit';
+import { createAdminClient } from '@/lib/supabase-admin';
+import { sendAuthEmail, isResendConfigured, escapeHtml, buildContactAckEmail } from '@/lib/auth-email';
 
 const contactSchema = z.object({
   name: z.string().trim().min(1).max(120),
@@ -64,35 +66,55 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
-    const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
-    const AIRTABLE_CONTACT_TABLE_ID = process.env.AIRTABLE_CONTACT_TABLE_ID;
-
-    if (!AIRTABLE_API_KEY || !AIRTABLE_BASE_ID || !AIRTABLE_CONTACT_TABLE_ID) {
-      console.error('[contact] destination is not configured');
-      return NextResponse.json({ error: 'Contact form is temporarily unavailable.' }, { status: 503 });
-    }
-
-    const airtableUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_CONTACT_TABLE_ID}`;
-    const fields: Record<string, string> = {
-      'Name': name,
-      'Email': email,
-      'Company name (optional)': company || '',
-      'What\'s on your mind?': message,
-    };
-
-    const airtableRes = await fetch(airtableUrl, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${AIRTABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ fields }),
+    const admin = createAdminClient();
+    const { error: insertError } = await admin.from('contact_submissions').insert({
+      name,
+      email,
+      company: company || null,
+      message,
     });
 
-    if (!airtableRes.ok) {
-      console.error('[contact] destination rejected submission', { status: airtableRes.status });
+    if (insertError) {
+      console.error('[contact] could not store submission', { message: insertError.message });
       return NextResponse.json({ error: 'Could not submit the form. Please try again.' }, { status: 502 });
+    }
+
+    // Best-effort emails (replace the old Airtable -> Zapier flow). The submission
+    // is already saved, so an email failure must never fail the request.
+    if (isResendConfigured()) {
+      const notifyTo = process.env.CONTACT_NOTIFY_EMAIL || 'emma@arcova.bio';
+      const bookingUrl = process.env.CONTACT_BOOKING_URL || 'https://calendly.com/emma-arcova/30min';
+      const cell = 'font:14px -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#0f172a;';
+
+      // 1) Internal notification to the team (Reply-To the lead, so a reply goes straight to them).
+      try {
+        const internalHtml = `
+          <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${escapeHtml(name)} just submitted the contact form.</div>
+          <p style="font:600 16px -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#0d3547;">New contact form submission</p>
+          <p style="${cell}"><strong>Name:</strong> ${escapeHtml(name)}</p>
+          <p style="${cell}"><strong>Email:</strong> ${escapeHtml(email)}</p>
+          <p style="${cell}"><strong>Company:</strong> ${escapeHtml(company || 'Not provided')}</p>
+          <p style="${cell}"><strong>Message:</strong><br>${escapeHtml(message).replace(/\n/g, '<br>')}</p>
+          <p style="font:13px -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#94a3b8;">Reply to this email to respond to ${escapeHtml(name)} directly.</p>`;
+        const sent = await sendAuthEmail({
+          to: notifyTo,
+          replyTo: email,
+          subject: `New website enquiry: ${name}${company ? `, ${company}` : ''}`,
+          html: internalHtml,
+        });
+        if (!sent.ok) console.error('[contact] notification email failed', { error: sent.error });
+      } catch (mailError) {
+        console.error('[contact] notification email threw', mailError);
+      }
+
+      // 2) Acknowledgment to the person who submitted (Reply-To the team inbox).
+      try {
+        const ack = buildContactAckEmail({ name, bookingUrl });
+        const sent = await sendAuthEmail({ to: email, replyTo: notifyTo, subject: ack.subject, html: ack.html });
+        if (!sent.ok) console.error('[contact] acknowledgment email failed', { error: sent.error });
+      } catch (mailError) {
+        console.error('[contact] acknowledgment email threw', mailError);
+      }
     }
 
     return NextResponse.json({ success: true });

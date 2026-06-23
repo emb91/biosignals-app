@@ -13,7 +13,7 @@
  */
 import { BigQuery } from '@google-cloud/bigquery';
 import type { createAdminClient } from '@/lib/supabase-admin';
-import { resolveCompanyMentions } from '@/lib/companies/resolve-mentions';
+import { buildCompanyMentionMatches, hasVerifiedCanonicalCompanyMatch } from '@/lib/companies/mention-provenance';
 
 const BIGQUERY_LOCATION = 'US';
 const BIGQUERY_PUBLICATIONS_TABLE = 'patents-public-data.patents.publications';
@@ -176,20 +176,28 @@ export async function syncPatentsDelta(opts: {
       const chunk = assigneeBatch;
       assigneeBatch = [];
 
-      // Resolve assignee names → canonical company ids in one batched call.
-      const uniqueNames = [
-        ...new Set(chunk.map((r) => r.assignee_name).filter((n): n is string => typeof n === 'string' && Boolean(n))),
-      ];
-      if (uniqueNames.length > 0) {
+      // Resolve assignee names with provenance. Only verified matches populate
+      // canonical_company_id; rejected matches remain in canonical_company_match.
+      if (chunk.some((r) => typeof r.assignee_name === 'string' && Boolean(r.assignee_name))) {
         try {
-          const resolved = await resolveCompanyMentions(admin, uniqueNames);
           for (const row of chunk) {
             const name = row.assignee_name as string | null;
-            row.canonical_company_id = name ? (resolved.get(name)?.canonicalId ?? null) : null;
+            const matches = await buildCompanyMentionMatches(admin, [
+              { sourceText: name, sourceField: 'assignee_name' },
+            ]);
+            const match = matches[0] ?? null;
+            row.canonical_company_match = match;
+            row.canonical_company_id =
+              match?.company_id && hasVerifiedCanonicalCompanyMatch(match, match.company_id)
+                ? match.company_id
+                : null;
           }
         } catch (e) {
           console.error('[sync-patents] resolver failed for chunk:', e);
-          for (const row of chunk) row.canonical_company_id = null;
+          for (const row of chunk) {
+            row.canonical_company_match = null;
+            row.canonical_company_id = null;
+          }
         }
       }
 

@@ -523,27 +523,5 @@ export function isCompanySignalManaged(signalId: string): boolean {
   return COMPANY_SIGNAL_MANAGED_IDS.has(signalId);
 }
 
-/** First-party and CRM-linked contact signals — not backed by live ingestion yet; UI may collect interest. */
-const CONTACT_SIGNAL_COMING_SOON_IDS = new Set([
-  'attended_your_webinar_or_event_contact',
-  'downloaded_your_content_contact',
-  'clicked_your_linkedin_ad',
-  'responded_to_a_previous_outreach',
-  'previously_contacted_by_your_team',
-  'meeting_previously_booked',
-  'open_opportunity_in_your_pipeline',
-  'lapsed_customer_contact',
-  'renewal_coming_up_contact',
-]);
-
-export function isContactSignalComingSoon(signalId: string): boolean {
-  return CONTACT_SIGNAL_COMING_SOON_IDS.has(signalId);
-}
-
-/** Default contact signal set for new personas (managed-service signals excluded). */
-export function getDefaultContactSignalSelectionIds(): string[] {
-  return CONTACT_SIGNALS.filter((s) => !isContactSignalComingSoon(s.id)).map((s) => s.id);
-}
-
 export const getSignalById = (signalId: string) =>
   SIGNAL_CATALOG.find((signal) => signal.id === signalId) ?? null;

@@ -25,6 +25,9 @@ type Roster = {
 
 const ADMIN_ROLES = ['owner', 'admin'];
 
+const normalizeEmail = (value: string | null | undefined) => value?.trim().toLowerCase() ?? '';
+const inviteRole = (value: string): 'member' | 'admin' => (value === 'admin' ? 'admin' : 'member');
+
 export default function TeamSettings() {
   const [roster, setRoster] = useState<Roster | null>(null);
   const [loading, setLoading] = useState(true);
@@ -36,6 +39,7 @@ export default function TeamSettings() {
   const [linkResult, setLinkResult] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [resendingEmail, setResendingEmail] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -54,6 +58,40 @@ export default function TeamSettings() {
 
   const canManage = roster ? ADMIN_ROLES.includes(roster.role) : false;
   const isOwner = roster?.role === 'owner';
+  const joinedEmails = new Set(
+    (roster?.members ?? [])
+      .filter((member) => !member.pending)
+      .map((member) => normalizeEmail(member.email))
+      .filter(Boolean),
+  );
+  const memberEmails = new Set(
+    (roster?.members ?? [])
+      .map((member) => normalizeEmail(member.email))
+      .filter(Boolean),
+  );
+  const visiblePendingInvites: PendingInvite[] = [];
+  const visiblePendingEmails = new Set<string>();
+  for (const invite of roster?.pendingInvites ?? []) {
+    const normalized = normalizeEmail(invite.email);
+    if (!normalized || memberEmails.has(normalized) || visiblePendingEmails.has(normalized)) continue;
+    visiblePendingEmails.add(normalized);
+    visiblePendingInvites.push(invite);
+  }
+  const pendingEmails = new Set([
+    ...(roster?.members ?? [])
+      .filter((member) => member.pending)
+      .map((member) => normalizeEmail(member.email))
+      .filter(Boolean),
+    ...visiblePendingEmails,
+  ]);
+  const normalizedInviteEmail = normalizeEmail(email);
+  const inviteState = !normalizedInviteEmail
+    ? 'blank'
+    : joinedEmails.has(normalizedInviteEmail)
+      ? 'member'
+      : pendingEmails.has(normalizedInviteEmail)
+        ? 'pending'
+        : 'new';
 
   const changeRole = async (userId: string, role: 'admin' | 'member') => {
     setError(null);
@@ -125,42 +163,76 @@ export default function TeamSettings() {
     }
   };
 
+  const sendInviteRequest = async (inviteEmail: string, nextRole: 'member' | 'admin') => {
+    const trimmed = normalizeEmail(inviteEmail);
+    if (!trimmed) return false;
+    if (joinedEmails.has(trimmed)) {
+      setError('This person is already on your team.');
+      return false;
+    }
+
+    const res = await fetch('/api/org/invite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: trimmed, role: nextRole }),
+    });
+    const json = (await res.json().catch(() => ({}))) as {
+      delivered?: 'email' | 'link';
+      acceptUrl?: string;
+      error?: string;
+      resent?: boolean;
+    };
+    if (!res.ok) {
+      setError(json.error ?? 'Could not send invite.');
+      return false;
+    }
+    if (json.delivered === 'link' && json.acceptUrl) {
+      setLinkResult(json.acceptUrl);
+      setNotice(
+        json.resent
+          ? `Invite link refreshed for ${trimmed}.`
+          : `${trimmed} already has an account - send them this link to join.`,
+      );
+    } else {
+      setNotice(json.resent ? `Invite resent to ${trimmed}.` : `Invite emailed to ${trimmed}.`);
+    }
+    void refresh();
+    return true;
+  };
+
   const submitInvite = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setLinkResult(null);
     setNotice(null);
     setCopied(false);
-    const trimmed = email.trim().toLowerCase();
+    const trimmed = normalizeEmail(email);
     if (!trimmed) return;
     setSubmitting(true);
     try {
-      const res = await fetch('/api/org/invite', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: trimmed, role }),
-      });
-      const json = (await res.json().catch(() => ({}))) as {
-        delivered?: 'email' | 'link';
-        acceptUrl?: string;
-        error?: string;
-      };
-      if (!res.ok) {
-        setError(json.error ?? 'Could not send invite.');
-        return;
-      }
-      if (json.delivered === 'link' && json.acceptUrl) {
-        setLinkResult(json.acceptUrl);
-        setNotice(`${trimmed} already has an account — send them this link to join.`);
-      } else {
-        setNotice(`Invite emailed to ${trimmed}.`);
-      }
-      setEmail('');
-      void refresh();
+      const ok = await sendInviteRequest(trimmed, role);
+      if (ok) setEmail('');
     } catch {
       setError('Something went wrong. Try again.');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const resendInvite = async (inviteEmail: string, nextRole: 'member' | 'admin') => {
+    setError(null);
+    setLinkResult(null);
+    setNotice(null);
+    setCopied(false);
+    const trimmed = normalizeEmail(inviteEmail);
+    if (!trimmed) return;
+    setResendingEmail(trimmed);
+    try {
+      await sendInviteRequest(trimmed, nextRole);
+    } catch {
+      setError('Something went wrong. Try again.');
+    } finally {
+      setResendingEmail(null);
     }
   };
 
@@ -225,6 +297,19 @@ export default function TeamSettings() {
                           Make owner
                         </button>
                       )}
+                      {canManage && m.pending && m.email && (
+                        <button
+                          type="button"
+                          onClick={() => void resendInvite(m.email ?? '', inviteRole(m.role))}
+                          disabled={resendingEmail === normalizeEmail(m.email)}
+                          className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-50"
+                        >
+                          {resendingEmail === normalizeEmail(m.email) && (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          )}
+                          Resend
+                        </button>
+                      )}
                       {isOwner && m.role !== 'owner' && (
                         <button
                           type="button"
@@ -239,17 +324,33 @@ export default function TeamSettings() {
                   </li>
                 );
               })}
-              {(roster?.pendingInvites ?? []).map((inv) => (
-                <li key={`inv-${inv.email}`} className="flex items-center justify-between py-2.5">
-                  <div className="min-w-0">
-                    <span className="block truncate text-sm font-medium text-slate-800">{inv.email}</span>
-                    <span className="text-xs text-amber-600">Invite link pending acceptance</span>
-                  </div>
-                  <span className="ml-3 shrink-0 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium capitalize text-slate-600">
-                    {inv.role}
-                  </span>
-                </li>
-              ))}
+              {visiblePendingInvites.map((inv) => {
+                const normalized = normalizeEmail(inv.email);
+                return (
+                  <li key={`inv-${inv.email}`} className="flex items-center justify-between py-2.5">
+                    <div className="min-w-0">
+                      <span className="block truncate text-sm font-medium text-slate-800">{inv.email}</span>
+                      <span className="text-xs text-amber-600">Invite link pending acceptance</span>
+                    </div>
+                    <div className="ml-3 flex shrink-0 items-center gap-2">
+                      {canManage && (
+                        <button
+                          type="button"
+                          onClick={() => void resendInvite(inv.email, inviteRole(inv.role))}
+                          disabled={resendingEmail === normalized}
+                          className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-50"
+                        >
+                          {resendingEmail === normalized && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                          Resend
+                        </button>
+                      )}
+                      <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium capitalize text-slate-600">
+                        {inv.role}
+                      </span>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
 
             {canManage ? (
@@ -273,14 +374,17 @@ export default function TeamSettings() {
                   </select>
                   <button
                     type="submit"
-                    disabled={submitting || !email.trim()}
+                    disabled={submitting || !normalizedInviteEmail || inviteState === 'member'}
                     className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-arcova-teal px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                   >
                     {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
-                    Invite
+                    {inviteState === 'pending' ? 'Resend' : 'Invite'}
                   </button>
                 </div>
 
+                {inviteState === 'member' && (
+                  <p className="mt-2 text-sm text-slate-500">This person is already on your team.</p>
+                )}
                 {error && <p className="mt-2 text-sm text-rose-600">{error}</p>}
                 {notice && <p className="mt-2 text-sm text-slate-600">{notice}</p>}
                 {linkResult && (

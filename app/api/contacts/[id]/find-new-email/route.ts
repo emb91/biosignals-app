@@ -15,9 +15,8 @@ import {
 import { createAdminClient } from '@/lib/supabase-admin';
 import { getOrgEntitlements } from '@/lib/billing/entitlements';
 import {
-  checkAndIncrementUsage,
   refundCredits,
-  reserveCredits,
+  reserveCreditsWithIncludedAllowance,
   settleUsage,
   settleCredits,
 } from '@/lib/billing/credits';
@@ -192,25 +191,23 @@ export async function POST(
     if (member?.org_id) {
       const entitlements = await getOrgEntitlements(member.org_id);
       const operationId = request.headers.get('x-operation-id') || crypto.randomUUID();
-      const usage = await checkAndIncrementUsage({
+      const reservation = await reserveCreditsWithIncludedAllowance({
         orgId: member.org_id,
         userId: user.id,
         action: 'email_finder',
         operationKey: operationId,
-        limit: entitlements.caps.emailFinderRequestsDaily,
-        window: 'utc_day',
-      });
-      if (!usage.ok) return NextResponse.json(usage, { status: 429 });
-      usageContext = { orgId: member.org_id, operationId };
-      const reservation = await reserveCredits({
-        orgId: member.org_id,
-        userId: user.id,
-        action: 'email_finder',
+        window: 'utc_month',
+        windowStart: entitlements.currentPeriodStart,
+        windowEnd: entitlements.currentPeriodEnd,
+        allowanceLimit: entitlements.billingInterval === 'annual'
+          ? entitlements.caps.emailFinderRequestsIncludedMonthly * 12
+          : entitlements.caps.emailFinderRequestsIncludedMonthly,
         idempotencyKey: `email-finder:${operationId}`,
         entityType: 'contact',
         entityId: id,
       });
       if (!reservation.ok) return NextResponse.json(reservation, { status: 402 });
+      usageContext = { orgId: member.org_id, operationId };
       creditTransactionId = reservation.transactionId;
     }
 

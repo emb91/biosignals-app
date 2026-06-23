@@ -170,6 +170,24 @@ The Arcova loop:
 - If pursued, the user-facing product language should be "unlock deeper analysis" or "run premium check", not blockchain/payment-rail language.
 - Validate first which premium lookups are actually worth buying on demand before choosing any agent-payment infrastructure.
 
+## Custom signals (paid bespoke build)
+
+A **paid add-on**: signals a customer wants that we don't currently produce, which we build out bespoke for a fee. The standard catalog ships with the always-on public-data signals (clinical, regulatory, funding, patents, etc.); anything beyond that is a custom build, priced per signal / per integration. The engine already supports it — a custom signal writes into the existing `signal_source_events` pipeline and flows through normalization → readiness → reason with no new scoring code, so the cost is in sourcing/classification, not the scoring engine.
+
+**Headline candidates — first-party engagement** (dormant catalog keys; the obvious first paid builds because the data lives in the customer's stack and we'd wire it in for them):
+- `demo_requested`, `inbound_enquiry` — strongest first-party intent
+- `attended_your_webinar_or_event`, `downloaded_your_content` — medium
+- `visited_your_website`, `responded_to_previous_outreach` — weak/contextual
+
+These match the doctrine's strength hierarchy: pricing enquiry > demo request (strong) → webinar / content (medium) → site visit / engagement (weak). Note the doctrine says first-party engagement "stays in HubSpot" — a custom build is the paid exception: we integrate the customer's source so it rolls into readiness without Arcova becoming a weblytics product.
+
+**Other bespoke candidates** (catalog entries with no live monitor — could be built per-customer):
+- `principal_investigator_new_trial`, `distressed_financing`, `lapsed_customer`, `conference_presentation`, `conference_speaker`
+
+(NOT candidates — these are already live: function-specific hiring `cmc_hiring`/`clinical_ops_hiring`/`regulatory_hiring`/etc. ARE emitted by the jobs-delta hiring monitor, which classifies each scraped LinkedIn posting into a role family; and `new_facility`/`facility_expansion`/`commercialization_move`/`acquisition_distraction` are emitted by the press-release + SEC monitors. The signal key is built dynamically from the classifier output, so a literal grep for `signalKey: 'cmc_hiring'` misses them.)
+
+**Open questions:** pricing model (one-off build fee vs. recurring per-signal); whether a custom build is exclusive to the commissioning customer or folded back into the standard catalog; sourcing cost/feasibility per signal (some need a paid data source or a custom scraper).
+
 ## Product storytelling and reveal
 
 - Make the product feel more like Arcova is actively doing work on the user's behalf, rather than silently outputting tables and boxes.

@@ -9,7 +9,7 @@
  *   npx tsx --env-file=.env.local scripts/backfill-patents-mentions.ts --force
  */
 import { createClient } from '@supabase/supabase-js';
-import { resolveCompanyMentions } from '@/lib/companies/resolve-mentions';
+import { buildCompanyMentionMatches, type CompanyMentionMatch } from '@/lib/companies/mention-provenance';
 
 const BATCH_SIZE = 500;
 
@@ -25,7 +25,7 @@ async function main() {
     console.log('Clearing canonical_company_id on all rows…');
     const { error: clearErr } = await admin
       .from('patent_event_assignees')
-      .update({ canonical_company_id: null })
+      .update({ canonical_company_id: null, canonical_company_match: null })
       .not('canonical_company_id', 'is', null);
     if (clearErr) throw new Error(`force-clear: ${clearErr.message}`);
   }
@@ -53,22 +53,22 @@ async function main() {
     if (!page || page.length === 0) break;
 
     const rows = page as Array<{ publication_number: string; assignee_name: string }>;
-    const uniqueNames = [...new Set(rows.map((r) => r.assignee_name).filter(Boolean))];
-
-    let resolved: Map<string, { canonicalId: string | null }>;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      resolved = await resolveCompanyMentions(admin as any, uniqueNames);
-    } catch (e) {
-      console.error('  resolver failed for page:', e instanceof Error ? e.message : e);
-      resolved = new Map();
-    }
 
     for (const row of rows) {
-      const id = resolved.get(row.assignee_name)?.canonicalId ?? null;
+      let match: CompanyMentionMatch | null = null;
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const matches = await buildCompanyMentionMatches(admin as any, [
+          { sourceText: row.assignee_name, sourceField: 'assignee_name' },
+        ]);
+        match = matches[0] ?? null;
+      } catch (e) {
+        console.error('  resolver failed:', e instanceof Error ? e.message : e);
+      }
+      const id = match?.verified ? match.company_id : null;
       const { error: updateErr } = await admin
         .from('patent_event_assignees')
-        .update({ canonical_company_id: id })
+        .update({ canonical_company_id: id, canonical_company_match: match })
         .eq('publication_number', row.publication_number)
         .eq('assignee_name', row.assignee_name);
       if (updateErr) console.error(`  update failed:`, updateErr.message);

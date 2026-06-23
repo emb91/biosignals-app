@@ -10,6 +10,7 @@ export type BillingPlanKey = 'free' | PlanKey;
 export type BillingInterval = 'monthly' | 'annual';
 
 export type UsageCaps = {
+  activeIcps: number;
   activeMonitoredContacts: number;
   internalMonitoredAccounts: number;
   monitoringCadenceDays: number;
@@ -17,9 +18,9 @@ export type UsageCaps = {
   importedEnrichmentsIncludedMonthly: number;
   importedEnrichmentsHardCapMonthly: number;
   netNewEnrichedLeadsMonthly: number;
-  sequencesRolling24Hours: number;
-  phoneRevealsDaily: number;
-  emailFinderRequestsDaily: number;
+  outreachSequencesIncludedMonthly: number;
+  phoneRevealsIncludedMonthly: number;
+  emailFinderRequestsIncludedMonthly: number;
 };
 
 export type PlanConfig = {
@@ -41,42 +42,45 @@ export type PlanConfig = {
 };
 
 const FREE_CAPS: UsageCaps = {
+  activeIcps: 1,
   activeMonitoredContacts: 100,
   internalMonitoredAccounts: 100,
   monitoringCadenceDays: 30,
   importedRecordsTriagedMonthly: 500,
-  importedEnrichmentsIncludedMonthly: 25,
-  importedEnrichmentsHardCapMonthly: 25,
-  netNewEnrichedLeadsMonthly: 10,
-  sequencesRolling24Hours: 1,
-  phoneRevealsDaily: 2,
-  emailFinderRequestsDaily: 2,
+  importedEnrichmentsIncludedMonthly: 10,
+  importedEnrichmentsHardCapMonthly: 10,
+  netNewEnrichedLeadsMonthly: 5,
+  outreachSequencesIncludedMonthly: 2,
+  phoneRevealsIncludedMonthly: 1,
+  emailFinderRequestsIncludedMonthly: 1,
 };
 
 const STARTER_CAPS: UsageCaps = {
+  activeIcps: 3,
   activeMonitoredContacts: 5_000,
   internalMonitoredAccounts: 1_250,
   monitoringCadenceDays: 30,
   importedRecordsTriagedMonthly: 10_000,
-  importedEnrichmentsIncludedMonthly: 300,
-  importedEnrichmentsHardCapMonthly: 500,
-  netNewEnrichedLeadsMonthly: 2_500,
-  sequencesRolling24Hours: 3,
-  phoneRevealsDaily: 50,
-  emailFinderRequestsDaily: 50,
+  importedEnrichmentsIncludedMonthly: 250,
+  importedEnrichmentsHardCapMonthly: 5_000,
+  netNewEnrichedLeadsMonthly: 50,
+  outreachSequencesIncludedMonthly: 95,
+  phoneRevealsIncludedMonthly: 3,
+  emailFinderRequestsIncludedMonthly: 25,
 };
 
 const GROWTH_CAPS: UsageCaps = {
+  activeIcps: 10,
   activeMonitoredContacts: 10_000,
   internalMonitoredAccounts: 2_500,
   monitoringCadenceDays: 7,
   importedRecordsTriagedMonthly: 50_000,
-  importedEnrichmentsIncludedMonthly: 1_400,
-  importedEnrichmentsHardCapMonthly: 5_000,
-  netNewEnrichedLeadsMonthly: 10_000,
-  sequencesRolling24Hours: 10,
-  phoneRevealsDaily: 200,
-  emailFinderRequestsDaily: 200,
+  importedEnrichmentsIncludedMonthly: 1_200,
+  importedEnrichmentsHardCapMonthly: 10_000,
+  netNewEnrichedLeadsMonthly: 200,
+  outreachSequencesIncludedMonthly: 300,
+  phoneRevealsIncludedMonthly: 12,
+  emailFinderRequestsIncludedMonthly: 60,
 };
 
 export const PLANS: Record<PlanKey, PlanConfig> = {
@@ -126,6 +130,8 @@ export const FREE_TIER = {
 export const ACTION_CREDITS = {
   imported_contact_company_enrichment: 4,
   company_enrichment: 3,
+  // Standalone validation only. Imported enrichment, net-new enrichment, and
+  // email finder include ZeroBounce validation inside their action cost.
   email_validation: 0.5,
   email_finder: 11,
   phone_reveal: 20,

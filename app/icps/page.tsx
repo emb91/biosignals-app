@@ -129,6 +129,11 @@ interface ICP {
   updated_at?: string;
 }
 
+type IcpAllowance = {
+  used: number;
+  limit: number;
+};
+
 interface Persona {
   id: string;
   name: string;
@@ -1406,6 +1411,7 @@ export default function ICPManagerPage() {
 
   const [icps, setIcps] = useState<ICP[]>([]);
   const [personas, setPersonas] = useState<Persona[]>([]);
+  const [icpAllowance, setIcpAllowance] = useState<IcpAllowance | null>(null);
   const [loadingData, setLoadingData] = useState(true);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -1416,9 +1422,10 @@ export default function ICPManagerPage() {
   );
 
   const refreshPageData = async () => {
-    const [icpRes, personaRes] = await Promise.all([
+    const [icpRes, personaRes, billingRes] = await Promise.all([
       fetch(ROUTES.api.icps),
       fetch('/api/contacts'),
+      fetch('/api/billing/summary'),
     ]);
 
     if (icpRes.ok) {
@@ -1437,6 +1444,11 @@ export default function ICPManagerPage() {
     if (personaRes.ok) {
       const result = await personaRes.json();
       setPersonas(result.data || []);
+    }
+
+    if (billingRes.ok) {
+      const result = (await billingRes.json()) as { activeIcps?: IcpAllowance };
+      if (result.activeIcps) setIcpAllowance(result.activeIcps);
     }
   };
 
@@ -1556,6 +1568,7 @@ export default function ICPManagerPage() {
       const res = await fetch(`${ROUTES.api.icps}/${id}`, { method: 'DELETE' });
       if (res.ok) {
         setIcps((prev) => prev.filter((icp) => icp.id !== id));
+        setIcpAllowance((prev) => prev ? { ...prev, used: Math.max(0, prev.used - 1) } : prev);
         setExpandedIds((prev) => { const next = new Set(prev); next.delete(id); return next; });
         toast.success('Company profile deleted');
       } else {
@@ -1578,6 +1591,18 @@ export default function ICPManagerPage() {
 
   const handlePersonaDelete = (deletedPersonaId: string) => {
     setPersonas((prev) => prev.filter((persona) => persona.id !== deletedPersonaId));
+  };
+
+  const icpLimitReached = Boolean(icpAllowance && icpAllowance.used >= icpAllowance.limit);
+  const addIcpLimitMessage = icpAllowance
+    ? `Your plan includes ${icpAllowance.limit} active ICP${icpAllowance.limit === 1 ? '' : 's'}. Delete an existing ICP or upgrade to add another.`
+    : 'Your plan limit has been reached. Delete an existing ICP or upgrade to add another.';
+  const handleAddIcp = () => {
+    if (icpLimitReached) {
+      toast.error(addIcpLimitMessage);
+      return;
+    }
+    router.push('/icps/new');
   };
 
   const handleReenrich = async (icp: ICP) => {
@@ -1641,12 +1666,14 @@ export default function ICPManagerPage() {
               eyebrow="About you · ICPs"
               title="My ICPs"
               subtitle={icps.length > 0
-                ? `The types of accounts you sell to, and who buys within them. ${icps.length} ${icps.length === 1 ? 'ICP' : 'ICPs'} defined — click any to inspect or edit.`
+                ? `The types of accounts you sell to, and who buys within them. ${icps.length} ${icps.length === 1 ? 'ICP' : 'ICPs'} defined${icpAllowance ? ` · ${icpAllowance.used}/${icpAllowance.limit} active ICP slots used` : ''} — click any to inspect or edit.`
                 : 'The types of accounts you sell to, and who buys within them.'}
               action={
                 <button
-                  onClick={() => router.push('/icps/new')}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-teal px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/85"
+                  onClick={handleAddIcp}
+                  disabled={icpLimitReached}
+                  title={icpLimitReached ? addIcpLimitMessage : 'Add new ICP'}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-arcova-teal px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-arcova-teal/85 disabled:cursor-not-allowed disabled:opacity-55"
                 >
                   <Plus className="h-4 w-4" />
                   Add new ICP
@@ -1665,8 +1692,10 @@ export default function ICPManagerPage() {
                   Add your first target company to define who you sell to and who buys.
                 </p>
                 <button
-                  onClick={() => router.push('/icps/new')}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-arcova-teal text-white text-sm font-semibold rounded-lg hover:bg-arcova-teal/85 transition-colors"
+                  onClick={handleAddIcp}
+                  disabled={icpLimitReached}
+                  title={icpLimitReached ? addIcpLimitMessage : 'Add your first company'}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-arcova-teal text-white text-sm font-semibold rounded-lg hover:bg-arcova-teal/85 transition-colors disabled:cursor-not-allowed disabled:opacity-55"
                 >
                   <Plus className="w-4 h-4" />
                   Add your first company

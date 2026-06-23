@@ -1,0 +1,110 @@
+/* ============================================================
+   Arcova — Logo lab. Standalone explorations on the brand wash.
+   Three directions: A-with-orb-dot, refined Offset orb, and the
+   constellation/triangle. Scoped under #logolab.
+   ============================================================ */
+
+#logolab {
+  --ink: #0d3547;
+  --ink-soft: #4a6470;
+  --ink-mute: #7d909a;
+  --ink-faint: #aab8bf;
+  --teal: #00a4b4;
+  --teal-deep: #007f8c;
+  --mint: #8cd9c9;
+  --navy: #003344;
+  --line: rgba(13, 53, 71, 0.08);
+  --line-2: rgba(13, 53, 71, 0.14);
+  --wash: linear-gradient(180deg, #f6fbfb 0%, #eef6f6 46%, #f3f1ea 100%);
+  --soft-shadow: 0 2px 18px -6px rgba(13, 53, 71, 0.1);
+  --font-head: var(--font-manrope), system-ui, sans-serif;
+  --font-body: var(--font-plus-jakarta), system-ui, sans-serif;
+
+  font-family: var(--font-body);
+  color: var(--ink);
+  background: var(--wash);
+  background-attachment: fixed;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+#logolab * { box-sizing: border-box; }
+
+#logolab .wrap { width: 100%; max-width: 1120px; margin: 0 auto; padding: clamp(48px, 7vw, 88px) 28px 120px; }
+
+/* head */
+#logolab .eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: var(--teal-deep); }
+#logolab .eyebrow::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--teal); }
+#logolab h1 { font-family: var(--font-head); font-weight: 800; color: var(--ink); margin: 14px 0 0; font-size: clamp(1.9rem, 1.4rem + 2vw, 2.6rem); line-height: 1.05; letter-spacing: -0.04em; }
+#logolab .lede { margin: 14px 0 0; max-width: 64ch; font-size: 1.02rem; line-height: 1.55; color: var(--ink-soft); }
+
+/* direction blocks */
+#logolab .dir { margin-top: clamp(40px, 5vw, 64px); }
+#logolab .dir-h { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+#logolab .dir-tag { font-family: var(--font-head); font-size: 13px; font-weight: 700; color: #fff; background: var(--ink); width: 26px; height: 26px; border-radius: 8px; display: inline-grid; place-items: center; }
+#logolab .dir-h h2 { font-family: var(--font-head); font-weight: 700; font-size: 1.35rem; letter-spacing: -0.02em; margin: 0; }
+#logolab .dir-note { margin: 8px 0 0; color: var(--ink-soft); font-size: 14.5px; max-width: 70ch; }
+
+/* card grid */
+#logolab .grid { margin-top: 22px; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 18px; }
+#logolab .card { background: rgba(255, 255, 255, 0.6); border: 1px solid var(--line); border-radius: 20px; padding: 16px; box-shadow: var(--soft-shadow); }
+#logolab .card-h { display: flex; align-items: center; gap: 9px; margin: 2px 2px 14px; }
+#logolab .cnum { font-family: var(--font-head); font-size: 11px; font-weight: 700; color: var(--teal-deep); background: rgba(0, 164, 180, 0.12); padding: 3px 8px; border-radius: 999px; }
+#logolab .cname { font-size: 13.5px; font-weight: 600; color: var(--ink); }
+#logolab .cnote { margin: 12px 4px 2px; font-size: 12.5px; line-height: 1.45; color: var(--ink-mute); }
+
+/* variant tiles */
+#logolab .vargrid { margin-top: 22px; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; max-width: 700px; }
+#logolab .tile.mint { background: #a3e1d4; }
+#logolab .tile.grad { background: linear-gradient(155deg, #00a4b4 0%, #8cd9c9 100%); }
+#logolab .tile.mint .tlab, #logolab .tile.grad .tlab { color: rgba(0, 51, 68, 0.5); }
+
+/* hero (the chosen mark, large) */
+#logolab .hero { margin-top: 22px; display: grid; grid-template-columns: 1fr 1fr; gap: 18px; max-width: 560px; }
+#logolab .hero .tile { aspect-ratio: 1 / 1; }
+#logolab .hero .tile svg { width: 74%; height: 74%; }
+
+/* app icons */
+#logolab .appgrid { margin-top: 22px; display: flex; gap: 18px; flex-wrap: wrap; }
+#logolab .appicon { width: 132px; height: 132px; border-radius: 30px; display: grid; place-items: center; box-shadow: var(--soft-shadow); overflow: hidden; }
+#logolab .appicon.navy { background: var(--navy); }
+#logolab .appicon.light { background: #fff; border: 1px solid var(--line); }
+#logolab .appicon svg { width: 74%; height: 74%; }
+
+/* tiles */
+#logolab .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+#logolab .tile { aspect-ratio: 1 / 1; border-radius: 16px; display: grid; place-items: center; position: relative; overflow: hidden; }
+#logolab .tile.light { background: #ffffff; border: 1px solid var(--line); }
+#logolab .tile.dark { background: var(--navy); }
+#logolab .tile svg { width: 64%; height: 64%; display: block; }
+#logolab .tile .tlab { position: absolute; bottom: 8px; left: 10px; font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+#logolab .tile.light .tlab { color: var(--ink-faint); }
+#logolab .tile.dark .tlab { color: rgba(255, 255, 255, 0.4); }
+
+/* SVG letterforms use the brand display font */
+#logolab .glyph text { font-family: var(--font-head); font-weight: 800; letter-spacing: -0.05em; }
+
+/* firefly twinkle */
+@keyframes ll-twinkle { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+#logolab .ff-tw { animation: ll-twinkle 2.8s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+@media (prefers-reduced-motion: reduce) { #logolab .ff-tw { animation: none; } }
+
+/* wordmark lockups */
+#logolab .locks { margin-top: 22px; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+#logolab .lock { border-radius: 18px; padding: 26px 28px; display: flex; align-items: center; gap: 14px; border: 1px solid var(--line); }
+#logolab .lock.light { background: #fff; }
+#logolab .lock.dark { background: var(--navy); border-color: transparent; }
+#logolab .lock.tight { gap: 5px; }
+#logolab .lock svg { display: block; flex: none; }
+#logolab .word { font-family: var(--font-head); font-weight: 500; font-size: 32px; letter-spacing: -0.02em; color: var(--ink); }
+#logolab .word.f-poppins { font-family: var(--font-poppins), sans-serif; letter-spacing: -0.01em; }
+#logolab .word.f-quicksand { font-family: var(--font-quicksand), sans-serif; letter-spacing: 0; }
+#logolab .word.f-urbanist { font-family: var(--font-urbanist), sans-serif; letter-spacing: -0.01em; }
+#logolab .word.f-comfortaa { font-family: var(--font-comfortaa), sans-serif; letter-spacing: -0.03em; }
+#logolab .lock.dark .word { color: #fff; }
+#logolab .lock .llab { margin-left: auto; font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); }
+#logolab .lock.dark .llab { color: rgba(255, 255, 255, 0.4); }
+
+@media (max-width: 520px) {
+  #logolab .wrap { padding-left: 18px; padding-right: 18px; }
+}

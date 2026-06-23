@@ -30,6 +30,7 @@ import {
   recomputeAccountReadiness,
 } from '@/lib/signals/readiness-service';
 import type { SignalKey } from '@/lib/signals/readiness-types';
+import { hasVerifiedCanonicalCompanyMatch } from '@/lib/companies/mention-provenance';
 
 type CompanyRow = {
   id: string;
@@ -83,6 +84,7 @@ type SecFilingRow = {
   items: string[] | null;
   classification: SecFilingClassification | null;
   classified_at: string | null;
+  canonical_company_match?: unknown;
 };
 
 const SOURCE_FORM_D = 'sec_edgar_form_d';
@@ -138,14 +140,17 @@ async function fetchFilingsForCompany(
   const { data, error } = await admin
     .from('sec_filings_local')
     .select(
-      'accession_number, form_type, filing_date, cik, entity_name, entity_name_normalized, filing_url, primary_doc_url, total_offering_amount, total_amount_sold, total_remaining, date_of_first_sale, entity_type, industry_group_type, items, classification, classified_at',
+      'accession_number, form_type, filing_date, cik, entity_name, entity_name_normalized, filing_url, primary_doc_url, total_offering_amount, total_amount_sold, total_remaining, date_of_first_sale, entity_type, industry_group_type, items, classification, classified_at, canonical_company_match',
     )
     .or(orClause)
     .gte('filing_date', cutoffIso)
     .order('filing_date', { ascending: false })
     .limit(limit);
   if (error) throw new Error(`sec_filings_local query: ${error.message}`);
-  return (data ?? []) as SecFilingRow[];
+  return ((data ?? []) as SecFilingRow[]).filter((row) => {
+    if (company.cik && row.cik === company.cik) return true;
+    return hasVerifiedCanonicalCompanyMatch(row.canonical_company_match, company.id);
+  });
 }
 
 async function fetchExistingSourceEventIds(

@@ -24,7 +24,7 @@ import { redactInternalIdsFromAgentUserText } from '@/lib/agent-redact';
 // compares ICP criteria. This is the single biggest lever on this feature's cost.
 const AUDIT_ICP_COLUMNS =
   'id, name, therapeutic_areas, funding_stages, company_type, modalities, ' +
-  'development_stages, company_sizes, example_companies, signals, li_follower_sizes, ' +
+  'development_stages, company_sizes, example_companies, li_follower_sizes, ' +
   'icp_summary, example_company_url, customer_therapeutic_areas, customer_modalities, ' +
   'customer_development_stages, platform_category, target_customers, buyer_types, ' +
   'created_at, updated_at';
@@ -46,7 +46,7 @@ const AUDIT_COMPANY_COLUMNS =
 // criterion — no longer bust the cache and trigger a needless (paid) re-audit.
 const AUDIT_HASH_FIELDS = [
   'name', 'therapeutic_areas', 'funding_stages', 'company_type', 'modalities',
-  'development_stages', 'company_sizes', 'example_companies', 'signals',
+  'development_stages', 'company_sizes', 'example_companies',
   'li_follower_sizes', 'icp_summary', 'customer_therapeutic_areas',
   'customer_modalities', 'customer_development_stages', 'platform_category',
   'target_customers', 'buyer_types',

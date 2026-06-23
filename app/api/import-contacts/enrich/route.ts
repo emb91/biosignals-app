@@ -1,9 +1,8 @@
 import { after, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
 import { createAdminClient } from '@/lib/supabase-admin';
-import { getOrgEntitlements } from '@/lib/billing/entitlements';
 import {
-  checkAndIncrementUsage,
+  recordMeteredUsage,
   refundCredits,
   reserveCredits,
   settleUsage,
@@ -36,59 +35,31 @@ export async function POST(request: Request) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   if (!rows?.length) return NextResponse.json({ error: 'No eligible records found' }, { status: 404 });
 
-  const entitlements = await getOrgEntitlements(member.org_id);
-  const monthStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)).toISOString();
-  const { data: usageRows } = await admin.from('org_usage_events').select('quantity')
-    .eq('org_id', member.org_id).eq('action_type', 'imported_enrichment').gte('occurred_at', monthStart);
-  const used = (usageRows ?? []).reduce((sum, row) => sum + Number(row.quantity ?? 0), 0);
-  const includedRemaining = Math.max(0, entitlements.caps.importedEnrichmentsIncludedMonthly - used);
-  const includedCount = Math.min(includedRemaining, rows.length);
-  const purchasedCount = rows.length - includedCount;
   const estimate = {
     eligibleRecords: rows.length,
     estimatedCredits: rows.length * 4,
-    includedRecords: includedCount,
-    purchasedCreditOnlyRecords: purchasedCount,
-    hardCapRemaining: Math.max(0, entitlements.caps.importedEnrichmentsHardCapMonthly - used),
   };
   if (!body.confirm) return NextResponse.json({ preflight: estimate });
 
   const operationId = body.operationId?.trim() || crypto.randomUUID();
-  const usage = await checkAndIncrementUsage({
+  const usage = await recordMeteredUsage({
     orgId: member.org_id,
     userId: user.id,
     action: 'imported_enrichment',
     quantity: rows.length,
     operationKey: operationId,
-    limit: entitlements.caps.importedEnrichmentsHardCapMonthly,
     window: 'utc_month',
   });
   if (!usage.ok) return NextResponse.json(usage, { status: 429 });
 
-  const includedReservation = includedCount > 0
-    ? await reserveCredits({
-        orgId: member.org_id,
-        userId: user.id,
-        action: 'imported_contact_company_enrichment',
-        quantity: includedCount,
-        idempotencyKey: `import-enrichment:${operationId}:included`,
-      })
-    : { ok: true as const, transactionId: null, reserved: 0, idempotent: false };
-  if (!includedReservation.ok) return NextResponse.json(includedReservation, { status: 402 });
-  const purchasedReservation = purchasedCount > 0
-    ? await reserveCredits({
-        orgId: member.org_id,
-        userId: user.id,
-        action: 'imported_contact_company_enrichment',
-        quantity: purchasedCount,
-        idempotencyKey: `import-enrichment:${operationId}:purchased`,
-        purchasedOnly: true,
-      })
-    : { ok: true as const, transactionId: null, reserved: 0, idempotent: false };
-  if (!purchasedReservation.ok) {
-    await refundCredits(includedReservation.transactionId);
-    return NextResponse.json(purchasedReservation, { status: 402 });
-  }
+  const reservation = await reserveCredits({
+    orgId: member.org_id,
+    userId: user.id,
+    action: 'imported_contact_company_enrichment',
+    quantity: rows.length,
+    idempotencyKey: `import-enrichment:${operationId}`,
+  });
+  if (!reservation.ok) return NextResponse.json(reservation, { status: 402 });
 
   const batchGroups = new Map<string, typeof rows>();
   for (const row of rows) {
@@ -116,11 +87,7 @@ export async function POST(request: Request) {
       const { count: successful } = await admin.from('raw_uploads')
         .select('id', { count: 'exact', head: true })
         .in('id', rows.map((row) => row.id as string)).eq('status', 'enriched');
-      let remainingSuccess = successful ?? 0;
-      const includedSuccess = Math.min(includedCount, remainingSuccess);
-      remainingSuccess -= includedSuccess;
-      await settleCredits(includedReservation.transactionId, includedSuccess * 4);
-      await settleCredits(purchasedReservation.transactionId, Math.min(purchasedCount, remainingSuccess) * 4);
+      await settleCredits(reservation.transactionId, (successful ?? 0) * 4);
       await settleUsage({
         orgId: member.org_id,
         action: 'imported_enrichment',
@@ -129,10 +96,7 @@ export async function POST(request: Request) {
       });
     } catch (caught) {
       console.error('[import-contacts/enrich] background job failed:', caught);
-      await Promise.all([
-        refundCredits(includedReservation.transactionId),
-        refundCredits(purchasedReservation.transactionId),
-      ]);
+      await refundCredits(reservation.transactionId);
       await settleUsage({
         orgId: member.org_id,
         action: 'imported_enrichment',

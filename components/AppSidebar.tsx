@@ -2,8 +2,20 @@
 
 import { useEffect, useState, Suspense, useMemo } from 'react';
 import Image from 'next/image';
+import { Logo } from '@/components/logo';
 import { usePathname } from 'next/navigation';
-import { ChevronLeft, Menu, X } from 'lucide-react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
+  Gauge,
+  LogOut,
+  Menu,
+  Send,
+  Settings as SettingsIcon,
+  UserRound,
+  X,
+} from 'lucide-react';
 import {
   NavIconAccount,
   NavIconContact,
@@ -34,6 +46,12 @@ interface NavItem {
   active?: boolean;
 }
 
+type SidebarUsageSummary = {
+  unlimited: boolean;
+  plan: { key: string; name: string };
+  credits: { available: number; granted: number };
+};
+
 const setupItems: NavItem[] = [
   { name: 'My Company', href: ROUTES.setup.company, icon: NavIconMyCompany },
   { name: 'My ICPs', href: ROUTES.setup.icps, icon: NavIconMyIcps },
@@ -55,9 +73,9 @@ const bottomNavigation: NavItem[] = [
 ];
 
 
-const SIDEBAR_COLLAPSED_STORAGE_KEY = 'arcova_sidebar_collapsed';
-const SIDEBAR_LEGACY_HIDDEN_KEY = 'arcova_sidebar_hidden';
 const NAV_DOT_DISMISS_PREFIX = 'arcova_nav_dot_seen';
+const FULL_WIDTH_SIDEBAR_QUERY = '(min-width: 1280px)';
+const SIDEBAR_VISIBLE_QUERY = '(min-width: 1024px)';
 
 const railGlass = cn(
   'border border-[rgba(13,53,71,0.1)] bg-[rgba(255,255,255,0.55)] shadow-[0_12px_40px_-24px_rgba(13,53,71,0.35),inset_0_1px_0_rgba(255,255,255,0.85)] backdrop-blur-2xl backdrop-saturate-150',
@@ -85,7 +103,7 @@ interface AppSidebarProps {
 }
 
 function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const pathname = usePathname();
   const { step2Complete, setupComplete, loading: setupStateLoading } = useSetupState();
   const { activeSection: activeSetupSection } = useSetupNavigation();
@@ -137,15 +155,21 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
   const [showAccountsDot, setShowAccountsDot] = useState(false);
   const [showHealthDot, setShowHealthDot] = useState(false);
   const [dataJobCount, setDataJobCount] = useState(0);
-  const [creditBalance, setCreditBalance] = useState<number | null>(null);
+  // Cached profile picture for the identity footer (falls back to initials).
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  // Hover-to-expand: when the rail is collapsed, hovering pops the full nav out
+  // as an overlay without reflowing the page.
+  const [hovering, setHovering] = useState(false);
   const [showSignalsDot, setShowSignalsDot] = useState(false);
   const [companyName, setCompanyName] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileHidden, setMobileHidden] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  // Cramped band: sidebar still rendered (≥1280) but the viewport is narrow
-  // enough that table-heavy views with the agent rail run out of room.
-  const [cramped, setCramped] = useState(false);
+  const [fullWidthSidebar, setFullWidthSidebar] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [accountUsageOpen, setAccountUsageOpen] = useState(false);
+  const [usageSummary, setUsageSummary] = useState<SidebarUsageSummary | null>(null);
+  const [usageLoading, setUsageLoading] = useState(true);
 
   // Identity footer: name + company, opens Settings on click.
   const metadata = (user?.user_metadata ?? {}) as Record<string, unknown>;
@@ -154,6 +178,12 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
     ?.trim();
   const emailLocal = user?.email?.split('@')[0]?.replace(/[._-]+/g, ' ').trim();
   const displayName = metaName || emailLocal || 'Your account';
+  // Profile picture: the cached enrichment photo wins; fall back to an OAuth
+  // (e.g. Google) avatar from auth metadata, then to initials.
+  const metaAvatar = [metadata.avatar_url, metadata.picture]
+    .find((v): v is string => typeof v === 'string' && v.trim().length > 0)
+    ?.trim();
+  const resolvedAvatar = avatarUrl || metaAvatar || null;
   const accountInitials = displayName
     .split(/\s+/)
     .slice(0, 2)
@@ -178,93 +208,121 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
     setupItems.some((item) => isActive(item.href)) ||
     pathname === ROUTES.setup.arcova;
 
-  const contactsActive = pathname === ROUTES.contacts;
-  const accountsActive = pathname === ROUTES.accounts;
+  const contactsActive = isActive(ROUTES.contacts) || isActive(ROUTES.leads.contacts);
+  const accountsActive = isActive(ROUTES.accounts) || isActive(ROUTES.leads.accounts);
+
+  const closeAccountMenu = () => {
+    setAccountMenuOpen(false);
+    setAccountUsageOpen(false);
+  };
+
+  const navigateFromAccountMenu = (href: string) => {
+    closeAccountMenu();
+    guardedNavigate(href);
+  };
+
+  const openTeamInvite = () => {
+    closeAccountMenu();
+    if (pathname === ROUTES.settings) {
+      window.history.replaceState(null, '', `${ROUTES.settings}#team-settings`);
+      window.requestAnimationFrame(() => {
+        document.getElementById('team-settings')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+      return;
+    }
+    guardedNavigate(`${ROUTES.settings}#team-settings`);
+  };
+
+  const handleLogout = async () => {
+    closeAccountMenu();
+    try {
+      await logout();
+      window.location.href = '/login';
+    } catch (error) {
+      console.error('Logout failed:', error);
+    }
+  };
+
+  // Cached profile picture for the footer avatar (saved during profile enrichment).
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    fetch('/api/me/profile')
+      .then((response) => (response.ok ? response.json() : null))
+      .then((profile) => {
+        const photo = profile?.enriched?.photoUrl;
+        if (!cancelled && typeof photo === 'string' && photo.trim()) {
+          setAvatarUrl(photo);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
 
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
-    const loadCredits = () => {
+    const loadUsage = () => {
       fetch('/api/billing/summary')
-        .then((response) => response.ok ? response.json() : null)
+        .then((response) => (response.ok ? response.json() : null))
         .then((summary) => {
-          if (!cancelled && typeof summary?.credits?.available === 'number') {
-            setCreditBalance(summary.credits.available);
-          }
+          if (!cancelled && summary) setUsageSummary(summary);
         })
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => {
+          if (!cancelled) setUsageLoading(false);
+        });
     };
-    loadCredits();
-    const interval = window.setInterval(loadCredits, 30_000);
+    setUsageLoading(true);
+    loadUsage();
+    const interval = window.setInterval(loadUsage, 30_000);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [user, pathname]);
+  }, [user]);
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY);
-      if (stored === '1' || stored === '0') {
-        setSidebarCollapsed(stored === '1');
-        return;
-      }
-      const legacy = localStorage.getItem(SIDEBAR_LEGACY_HIDDEN_KEY);
-      if (legacy === '1') {
-        setSidebarCollapsed(true);
-        localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, '1');
-        return;
-      }
-    } catch {
-      /* ignore */
-    }
-    setSidebarCollapsed(false);
-  }, []);
+    closeAccountMenu();
+  }, [pathname]);
 
   const setCollapsed = (collapsed: boolean) => {
     setSidebarCollapsed(collapsed);
-    try {
-      localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, collapsed ? '1' : '0');
-    } catch {
-      /* ignore */
-    }
   };
 
-  // Responsive auto-behaviour (no intermediate icon-rail tier — go straight from
-  // full sidebar to hamburger at 1280px):
-  //   ≥1280px → full sidebar (user can manually collapse via the toggle)
-  //   <1280px → hide sidebar entirely; show hamburger that opens slide-in overlay
+  // Responsive auto-behaviour:
+  //   ≥1280px     → full sidebar by default; user can collapse with the header arrow.
+  //   1024–1279px → compact rail by default; hover reveals the full sidebar as an overlay.
+  //   <1024px     → hide sidebar entirely; show hamburger that opens slide-in overlay.
   useEffect(() => {
-    const mobileMq = window.matchMedia('(max-width: 1279px)');
+    const visibleMq = window.matchMedia(SIDEBAR_VISIBLE_QUERY);
+    const fullWidthMq = window.matchMedia(FULL_WIDTH_SIDEBAR_QUERY);
     const update = () => {
-      setMobileHidden(mobileMq.matches);
-      if (!mobileMq.matches) setMobileOpen(false);
+      const isVisible = visibleMq.matches;
+      setMobileHidden(!isVisible);
+      setFullWidthSidebar(fullWidthMq.matches);
+      if (isVisible) setMobileOpen(false);
     };
     update();
-    mobileMq.addEventListener('change', update);
-    return () => mobileMq.removeEventListener('change', update);
+    visibleMq.addEventListener('change', update);
+    fullWidthMq.addEventListener('change', update);
+    return () => {
+      visibleMq.removeEventListener('change', update);
+      fullWidthMq.removeEventListener('change', update);
+    };
   }, []);
 
-  // Auto-collapse to the icon rail in the cramped band (1280–1599px). On
-  // table-heavy views the agent rail is still shown here and the center column
-  // would otherwise be squeezed into horizontal scroll — the nav matters less
-  // than the data, so it yields the space.
-  useEffect(() => {
-    const crampedMq = window.matchMedia('(min-width: 1280px) and (max-width: 1599px)');
-    const update = () => setCramped(crampedMq.matches);
-    update();
-    crampedMq.addEventListener('change', update);
-    return () => crampedMq.removeEventListener('change', update);
-  }, []);
+  const autoCollapsed = !mobileHidden && !fullWidthSidebar;
+  // The user toggle only applies in full-width mode. Smaller desktop widths are
+  // intentionally hover-reveal rails, so there is no persistent close/open state.
+  const effectiveCollapsed = !mobileHidden && (autoCollapsed || (fullWidthSidebar && sidebarCollapsed));
 
-  // Routes where the center is a wide data table that should win the space war
-  // with the nav when things get cramped.
-  const tableHeavyView =
-    pathname === ROUTES.coverage || pathname === ROUTES.accounts || pathname === ROUTES.leads.contacts;
-
-  // The user toggle collapses everywhere; cramped table-heavy views also
-  // auto-collapse (without overwriting the user's saved preference).
-  const effectiveCollapsed = sidebarCollapsed || (tableHeavyView && cramped);
+  // While collapsed, hovering the rail pops the full nav out as an overlay.
+  // The collapsed footprint is preserved so page content never reflows.
+  const isHoverExpanded = effectiveCollapsed && hovering && !mobileHidden;
+  const displayCollapsed = effectiveCollapsed && !mobileHidden && !isHoverExpanded;
 
   useEffect(() => {
     const loadCompletionStatus = async () => {
@@ -308,8 +366,8 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
           const importReady = Boolean(result.ready);
           const importSignature = importReady ? `import-ready:${result.completeCount ?? 'ready'}` : null;
           importNeedsAttention = dismissibleDotVisible('import', importSignature, pathname === ROUTES.import);
-          contactsNeedAttention = dismissibleDotVisible('contacts', importSignature, pathname === ROUTES.contacts);
-          accountsNeedAttention = dismissibleDotVisible('accounts', importSignature, pathname === ROUTES.accounts);
+          contactsNeedAttention = dismissibleDotVisible('contacts', importSignature, contactsActive);
+          accountsNeedAttention = dismissibleDotVisible('accounts', importSignature, accountsActive);
           setShowImportDot(importNeedsAttention);
           setShowContactsDot(contactsNeedAttention);
           setShowAccountsDot(accountsNeedAttention);
@@ -348,7 +406,7 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
           signalsNeedAttention = dismissibleDotVisible(
             'signals',
             signalSignature,
-            pathname === ROUTES.contacts || pathname === ROUTES.accounts,
+            contactsActive || accountsActive,
           );
           setShowSignalsDot(signalsNeedAttention);
         }
@@ -486,6 +544,13 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
             dot: shouldShowDot(item.name),
           }),
         )}
+        {bottomItems.map((item) =>
+          railIconButton(item.name, item.icon, {
+            onClick: () => guardedNavigate(item.href),
+            active: isActive(item.href),
+            title: item.name,
+          }),
+        )}
         {railIconButton('contacts', NavIconContact, {
           onClick: () => guardedNavigate(ROUTES.contacts),
           active: contactsActive,
@@ -518,9 +583,153 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
     );
   };
 
+  const grantedCredits = usageSummary?.credits.granted ?? 0;
+  const availableCredits = usageSummary?.credits.available ?? 0;
+  const usedCredits = Math.max(0, grantedCredits - availableCredits);
+  const usagePct = grantedCredits > 0 ? Math.min(100, Math.round((usedCredits / grantedCredits) * 100)) : 0;
+  const usageLabel = usageLoading
+    ? 'Loading'
+    : usageSummary?.unlimited
+      ? 'Unlimited'
+      : typeof usageSummary?.credits.available === 'number'
+        ? `${usageSummary.credits.available.toLocaleString()} credits`
+        : 'Open usage';
+
+  const accountMenu = accountMenuOpen ? (
+    <div className="fixed bottom-[4.75rem] left-3 z-[90] w-[18.5rem] overflow-hidden rounded-2xl border border-[rgba(13,53,71,0.12)] bg-white/95 p-2.5 shadow-[0_24px_80px_-32px_rgba(13,53,71,0.45)] backdrop-blur-xl">
+      <div className="flex items-start gap-2.5 px-2 py-2.5">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-arcova-navy/10 text-[11px] font-bold text-arcova-navy">
+          {resolvedAvatar ? (
+            <Image
+              src={resolvedAvatar}
+              alt=""
+              width={36}
+              height={36}
+              unoptimized
+              referrerPolicy="no-referrer"
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            accountInitials
+          )}
+        </span>
+        <span className="min-w-0 leading-tight">
+          <span className="block truncate text-[12px] font-semibold text-arcova-navy">{displayName}</span>
+          {companyName && <span className="block truncate text-[10.5px] text-arcova-navy/45">{companyName}</span>}
+          {user?.email && <span className="block truncate text-[10.5px] text-arcova-navy/45">{user.email}</span>}
+        </span>
+      </div>
+
+      <div className="my-2 h-px bg-[rgba(13,53,71,0.08)]" />
+
+      <button
+        type="button"
+        onClick={() => navigateFromAccountMenu(ROUTES.setup.profile)}
+        className="flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left text-[#0d3547] transition hover:bg-[#f4f7f9]"
+      >
+        <span className="flex min-w-0 items-center gap-3">
+          <UserRound className="h-4 w-4 shrink-0 text-[#4a6470]" />
+          <span className="truncate text-[12.5px] font-medium">Profile</span>
+        </span>
+      </button>
+
+      <button
+        type="button"
+        onClick={() => navigateFromAccountMenu(ROUTES.settings)}
+        className="flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left text-[#0d3547] transition hover:bg-[#f4f7f9]"
+      >
+        <span className="flex min-w-0 items-center gap-3">
+          <SettingsIcon className="h-4 w-4 shrink-0 text-[#4a6470]" />
+          <span className="truncate text-[12.5px] font-medium">Settings</span>
+        </span>
+      </button>
+
+      <button
+        type="button"
+        onClick={openTeamInvite}
+        className="flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left text-[#0d3547] transition hover:bg-[#f4f7f9]"
+      >
+        <span className="flex min-w-0 items-center gap-3">
+          <Send className="h-4 w-4 shrink-0 text-[#4a6470]" />
+          <span className="truncate text-[12.5px] font-medium">Invite a friend</span>
+        </span>
+      </button>
+
+      <div className="my-2 h-px bg-[rgba(13,53,71,0.08)]" />
+
+      <button
+        type="button"
+        onClick={() => setAccountUsageOpen((value) => !value)}
+        className="flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left text-[#0d3547] transition hover:bg-[#f4f7f9]"
+      >
+        <span className="flex min-w-0 items-center gap-3">
+          <Gauge className="h-4 w-4 shrink-0 text-[#4a6470]" />
+          <span className="truncate text-[12.5px] font-medium">Usage remaining</span>
+        </span>
+        <span className="flex shrink-0 items-center gap-1.5 text-[10.5px] text-[#7d909a]">
+          {usageLabel}
+          <ChevronRight className={`h-3.5 w-3.5 text-[#b6c2c8] transition-transform ${accountUsageOpen ? 'rotate-90' : ''}`} />
+        </span>
+      </button>
+
+      {accountUsageOpen && (
+        <div className="mx-2 mb-2 ml-9 rounded-xl border border-[rgba(13,53,71,0.08)] bg-[#f8fbfc] px-3 py-2.5">
+          {usageLoading ? (
+            <p className="text-[12px] text-[#7d909a]">Loading usage</p>
+          ) : usageSummary?.unlimited ? (
+            <p className="text-[12px] text-[#4a6470]">{usageSummary.plan.name}</p>
+          ) : (
+            <div>
+              <div className="flex items-baseline justify-between gap-3 text-[12px]">
+                <span className="font-medium text-[#0d3547]">{availableCredits.toLocaleString()} credits</span>
+                <span className="text-[11px] text-[#7d909a]">{grantedCredits.toLocaleString()} granted</span>
+              </div>
+              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                <div className="h-full rounded-full bg-[#0d3547]" style={{ width: `${usagePct}%` }} />
+              </div>
+              <button
+                type="button"
+                onClick={() => navigateFromAccountMenu('/settings/usage')}
+                className="mt-2 text-xs font-semibold text-[#0d3547] hover:underline"
+              >
+                View details
+              </button>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => navigateFromAccountMenu('/settings/billing')}
+            className="mt-2 flex w-full items-center justify-between gap-3 rounded-lg bg-white px-2.5 py-1.5 text-left text-[12px] font-medium text-[#0d3547] ring-1 ring-[rgba(13,53,71,0.08)] transition hover:bg-[#f4f7f9]"
+          >
+            Upgrade for more usage
+            <ExternalLink className="h-3.5 w-3.5 shrink-0 text-[#4a6470]" />
+          </button>
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={() => void handleLogout()}
+        className="flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-[#0d3547] transition hover:bg-[#f4f7f9]"
+      >
+        <LogOut className="h-4 w-4 shrink-0 text-[#4a6470]" />
+        <span className="text-[12.5px] font-medium">Log out</span>
+      </button>
+    </div>
+  ) : null;
+
   return (
     <>
-      {/* Hamburger button — visible only at <768px when the sidebar is hidden */}
+      {accountMenuOpen && (
+        <button
+          type="button"
+          aria-label="Close account menu"
+          className="fixed inset-0 z-[80] cursor-default bg-transparent"
+          onClick={closeAccountMenu}
+        />
+      )}
+      {accountMenu}
+      {/* Hamburger button — visible only when the sidebar is hidden below desktop widths. */}
       {mobileHidden && !mobileOpen && (
         <button
           type="button"
@@ -548,6 +757,10 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
       )}
 
       <div
+        onMouseEnter={() => {
+          if (effectiveCollapsed && !mobileHidden) setHovering(true);
+        }}
+        onMouseLeave={() => setHovering(false)}
         className={cn(
           'flex h-full min-h-0 bg-transparent',
           mobileHidden
@@ -555,15 +768,17 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
                 'fixed left-0 top-0 z-50 pl-3 py-3 transition-transform duration-200 ease-out',
                 mobileOpen ? 'translate-x-0' : '-translate-x-full',
               )
-            : 'shrink-0 pl-3',
+            : cn('relative shrink-0 pl-3', effectiveCollapsed && 'w-[6.75rem]'),
         )}
       >
       <div
         className={cn(
           'flex h-full min-h-0 flex-col overflow-hidden transition-[width] duration-200 ease-out',
           railGlass,
-          effectiveCollapsed && !mobileHidden ? 'w-[6rem]' : 'w-[18.25rem]',
+          displayCollapsed ? 'w-[6rem]' : 'w-[18.25rem]',
           'rounded-[1.75rem]',
+          // Hover pop-out: float the full nav over the page from the collapsed slot.
+          isHoverExpanded && 'absolute left-3 top-0 z-50 shadow-[0_24px_60px_-24px_rgba(13,53,71,0.55)]',
         )}
       >
         {/* Close button — only at mobile slide-in */}
@@ -581,49 +796,32 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
           </div>
         )}
         {/* Header */}
-        {effectiveCollapsed && !mobileHidden ? (
+        {displayCollapsed ? (
           <div className="flex flex-col items-center border-b border-[rgba(13,53,71,0.08)] px-2.5 py-5">
-            <button
-              type="button"
-              onClick={() => setCollapsed(false)}
-              className="rounded-xl p-0.5 transition-colors hover:bg-white/65"
-              aria-label="Expand sidebar"
-              title="Expand sidebar"
-            >
-              <Image
-                src="/images/network-og.png"
-                alt=""
-                width={40}
-                height={40}
-                className="rounded-xl shadow-sm ring-1 ring-black/5"
-              />
-            </button>
+            {fullWidthSidebar ? (
+              <button
+                type="button"
+                onClick={() => setCollapsed(false)}
+                className="rounded-xl p-0.5 transition-colors hover:bg-white/65"
+                aria-label="Expand sidebar"
+                title="Expand sidebar"
+              >
+                <Logo variant="icon" badge="none" size={42} />
+              </button>
+            ) : (
+              <Logo variant="icon" badge="none" size={42} />
+            )}
           </div>
         ) : (
           <div className="flex items-center gap-2 border-b border-[rgba(13,53,71,0.08)] px-4 py-[1.125rem]">
+            <div className="flex min-w-0 flex-1 items-center gap-2 py-1">
+              <Logo variant="icon" badge="none" size={34} className="shrink-0" />
+              <span className="min-w-0 truncate text-[18px] font-medium tracking-tight text-arcova-navy" style={{ fontFamily: "var(--font-quicksand), system-ui, sans-serif" }}>arcova</span>
+            </div>
+          {fullWidthSidebar && !isHoverExpanded && (
             <button
               type="button"
-              onClick={() => guardedNavigate('/')}
-              className="flex min-w-0 flex-1 items-center gap-2 rounded-xl py-1 text-left transition-colors hover:bg-white/60"
-              aria-label="Go to home"
-              title="Go to home"
-            >
-              <Image
-                src="/images/network-og.png"
-                alt=""
-                width={32}
-                height={32}
-                className="shrink-0 rounded-lg shadow-sm ring-1 ring-black/5"
-              />
-              <span className="min-w-0 leading-tight">
-                <span className="block truncate font-manrope text-[15px] font-extrabold tracking-tight text-arcova-navy">arcova</span>
-                <span className="block truncate text-[10px] font-medium text-arcova-navy/40">GTM intelligence</span>
-              </span>
-            </button>
-            {!mobileHidden && (
-              <button
-                type="button"
-                onClick={() => setCollapsed(true)}
+              onClick={() => setCollapsed(true)}
                 className={cn(sidebarChromeToggleClass, 'h-9 w-9')}
                 aria-label="Collapse sidebar"
                 title="Collapse sidebar"
@@ -634,28 +832,33 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
           </div>
         )}
 
-        {effectiveCollapsed && !mobileHidden ? (
+        {displayCollapsed ? (
           <nav className="flex min-h-0 flex-1 flex-col">
             <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden px-2 py-4">
               {renderCollapsedRail()}
             </div>
             <div className="flex shrink-0 flex-col gap-2 border-t border-[rgba(13,53,71,0.08)] px-2 pb-4 pt-3">
-              {bottomItems.map((item) =>
-                railIconButton(item.name, item.icon, {
-                  onClick: () => guardedNavigate(item.href),
-                  active: isActive(item.href),
-                  title: item.name,
-                }),
-              )}
               <div className="flex justify-center">
                 <button
                   type="button"
-                  onClick={() => guardedNavigate(ROUTES.settings)}
+                  onClick={() => setAccountMenuOpen((value) => !value)}
                   title={companyName ? `${displayName} · ${companyName}` : displayName}
-                  aria-label="Open settings"
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-arcova-navy/10 text-[11px] font-bold text-arcova-navy transition-colors hover:bg-arcova-navy/15"
+                  aria-label="Open account menu"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-arcova-navy/10 text-[11px] font-bold text-arcova-navy transition-colors hover:bg-arcova-navy/15"
                 >
-                  {accountInitials}
+                  {resolvedAvatar ? (
+                    <Image
+                      src={resolvedAvatar}
+                      alt=""
+                      width={36}
+                      height={36}
+                      unoptimized
+                      referrerPolicy="no-referrer"
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    accountInitials
+                  )}
                 </button>
               </div>
             </div>
@@ -703,22 +906,29 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
             <div className="shrink-0 border-t border-[rgba(13,53,71,0.08)] p-3">
               <button
                 type="button"
-                onClick={() => guardedNavigate(ROUTES.settings)}
+                onClick={() => setAccountMenuOpen((value) => !value)}
                 className="flex w-full items-center gap-2.5 rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-white/70"
-                aria-label="Open settings"
-                title="Open settings"
+                aria-label="Open account menu"
+                title={companyName ? `${displayName} · ${companyName}` : displayName}
               >
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-arcova-navy/10 text-[11px] font-bold text-arcova-navy">
-                  {accountInitials}
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-arcova-navy/10 text-[11px] font-bold text-arcova-navy">
+                  {resolvedAvatar ? (
+                    <Image
+                      src={resolvedAvatar}
+                      alt=""
+                      width={32}
+                      height={32}
+                      unoptimized
+                      referrerPolicy="no-referrer"
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    accountInitials
+                  )}
                 </span>
                 <span className="min-w-0 flex-1 leading-tight">
                   <span className="block truncate text-[12.5px] font-semibold text-arcova-navy">{displayName}</span>
                   {companyName && <span className="block truncate text-[10.5px] text-arcova-navy/45">{companyName}</span>}
-                  {creditBalance != null && (
-                    <span className="block truncate text-[10.5px] font-medium text-arcova-teal">
-                      {creditBalance.toLocaleString()} credits
-                    </span>
-                  )}
                 </span>
               </button>
             </div>

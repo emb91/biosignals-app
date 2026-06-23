@@ -18,6 +18,7 @@ export type OrgEntitlements = {
   status: SubscriptionStatus;
   billingInterval: BillingInterval;
   unlimited: boolean;
+  complimentary: boolean;
   seatLimit: number;
   creditsGranted: number;
   creditsAvailable: number;
@@ -56,7 +57,7 @@ export async function getOrgEntitlements(orgId: string): Promise<OrgEntitlements
       .maybeSingle<SubscriptionRow>(),
   ]);
 
-  if (org?.billing_exempt) return unlimitedEntitlements();
+  if (org?.billing_exempt) return complimentaryEntitlements();
 
   const live = Boolean(sub && LIVE_STATUSES.has(sub.status) && isPlanKey(sub.plan_key));
   const planKey: PlanKey | 'free' = live && isPlanKey(sub!.plan_key) ? sub!.plan_key : 'free';
@@ -94,6 +95,7 @@ export async function getOrgEntitlements(orgId: string): Promise<OrgEntitlements
     status,
     billingInterval: interval,
     unlimited: false,
+    complimentary: false,
     seatLimit: plan?.workspaceUsers ?? FREE_TIER.seatLimit,
     creditsGranted,
     creditsAvailable,
@@ -106,28 +108,19 @@ export async function getOrgEntitlements(orgId: string): Promise<OrgEntitlements
   };
 }
 
-function unlimitedEntitlements(): OrgEntitlements {
-  const caps: UsageCaps = {
-    activeMonitoredContacts: UNLIMITED,
-    internalMonitoredAccounts: UNLIMITED,
-    monitoringCadenceDays: 1,
-    importedRecordsTriagedMonthly: UNLIMITED,
-    importedEnrichmentsIncludedMonthly: UNLIMITED,
-    importedEnrichmentsHardCapMonthly: UNLIMITED,
-    netNewEnrichedLeadsMonthly: UNLIMITED,
-    sequencesRolling24Hours: UNLIMITED,
-    phoneRevealsDaily: UNLIMITED,
-    emailFinderRequestsDaily: UNLIMITED,
-  };
+function complimentaryEntitlements(): OrgEntitlements {
+  const plan = PLANS.growth;
+  const caps: UsageCaps = plan.caps;
   return {
     planKey: 'free',
-    planName: 'Unlimited',
+    planName: 'Arcova credits',
     status: 'free',
     billingInterval: 'monthly',
-    unlimited: true,
+    unlimited: false,
+    complimentary: true,
     seatLimit: UNLIMITED,
-    creditsGranted: UNLIMITED,
-    creditsAvailable: UNLIMITED,
+    creditsGranted: plan.monthlyCredits,
+    creditsAvailable: plan.monthlyCredits,
     caps,
     paymentAccessPaused: false,
     currentPeriodStart: null,

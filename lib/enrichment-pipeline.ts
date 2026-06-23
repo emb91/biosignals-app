@@ -6,7 +6,7 @@ import { completeLlm } from '@/lib/llm-client';
 import { stickyIdentity } from '@/lib/company-merge';
 import { cacheProfilePhoto, cacheCompanyLogo } from '@/lib/photo-cache';
 import { recordLlmUsageEvent } from '@/lib/llm-usage';
-import { recordProviderUsage } from '@/lib/provider-usage';
+import { recordProviderUsage, zerobounceValidationBillableQuantity } from '@/lib/provider-usage';
 import {
   enrichOrganizationWithApollo,
   tryApolloPersonalEmailRevealForLookup,
@@ -128,6 +128,57 @@ function formatSupabaseErrorMessage(error: unknown): string | null {
     .filter(Boolean);
 
   return parts.length > 0 ? parts.join(' | ') : null;
+}
+
+type ZeroBounceValidationResponse = {
+  address?: string;
+  status?: string;
+  sub_status?: string;
+  error?: string;
+};
+
+function normalizeZeroBounceDeliverability(response: ZeroBounceValidationResponse): string {
+  const status = String(response.status || '').trim().toLowerCase();
+  if (status === 'valid') return 'verified';
+  if (
+    status === 'invalid' ||
+    status === 'catch-all' ||
+    status === 'unknown' ||
+    status === 'spamtrap' ||
+    status === 'abuse' ||
+    status === 'do_not_mail'
+  ) {
+    return status;
+  }
+  return status || 'unknown';
+}
+
+async function validateEnrichedEmailWithZeroBounce(
+  email: string,
+): Promise<{
+  response: ZeroBounceValidationResponse;
+  deliverability: string;
+  checkedAt: string;
+} | null> {
+  const apiKey = process.env.ZEROBOUNCE_API_KEY;
+  if (!apiKey) return null;
+
+  const baseUrl = process.env.ZEROBOUNCE_API_BASE_URL || 'https://api.zerobounce.net/v2/validate';
+  const url = new URL(baseUrl);
+  url.searchParams.set('api_key', apiKey);
+  url.searchParams.set('email', email);
+  url.searchParams.set('timeout', process.env.ZEROBOUNCE_TIMEOUT_SECONDS || '10');
+
+  const res = await fetch(url, { method: 'GET', cache: 'no-store' });
+  const response = (await res.json().catch(() => ({}))) as ZeroBounceValidationResponse;
+  if (!res.ok) throw new Error(response.error || `Email validation returned HTTP ${res.status}`);
+  if (response.error) throw new Error(response.error);
+
+  return {
+    response,
+    deliverability: normalizeZeroBounceDeliverability(response),
+    checkedAt: new Date().toISOString(),
+  };
 }
 
 /**
@@ -1346,16 +1397,46 @@ export async function runContactResolutionPipelineForContact(
       }
     }
 
-    if (
-      apolloMailbox &&
-      !(manualPrimaryEmail && emailsEqual(apolloMailbox, manualPrimaryEmail))
-    ) {
+    let zeroBounceEmailValidation: Awaited<ReturnType<typeof validateEnrichedEmailWithZeroBounce>> = null;
+    if (apolloMailbox) {
+      try {
+        zeroBounceEmailValidation = await validateEnrichedEmailWithZeroBounce(apolloMailbox);
+        if (zeroBounceEmailValidation) {
+          recordProviderUsage({
+            userId,
+            contactId,
+            provider: 'zerobounce',
+            eventType: 'zerobounce_email_validate',
+            quantity: zerobounceValidationBillableQuantity(zeroBounceEmailValidation.response.status),
+            metadata: {
+              email: apolloMailbox,
+              source: 'imported_lead_enrichment',
+              status: zeroBounceEmailValidation.response.status ?? null,
+              sub_status: zeroBounceEmailValidation.response.sub_status ?? null,
+            },
+          }).catch(() => {});
+        }
+      } catch (zeroBounceErr) {
+        console.warn(
+          '[enrichment-pipeline] ZeroBounce validation for enriched email failed (non-fatal):',
+          zeroBounceErr instanceof Error ? zeroBounceErr.message : zeroBounceErr,
+        );
+      }
+    }
+
+    if (apolloMailbox) {
       await ensureEnrichedEmailEntry(supabase, {
         contactId,
         userId,
         email: apolloMailbox,
         companyDomain: resolvedDomainFromCompany || typedContact.company_domain,
         apolloEmailStatus: apolloEmailStatusForDirectory,
+        emailDeliverability: zeroBounceEmailValidation?.deliverability ?? apolloEmailStatusForDirectory,
+        emailDeliverabilityProvider: zeroBounceEmailValidation ? 'zerobounce' : apolloEmailStatusForDirectory ? 'apollo' : null,
+        emailDeliverabilityCheckedAt: zeroBounceEmailValidation?.checkedAt ?? null,
+        emailDeliverabilityMetadata: zeroBounceEmailValidation
+          ? { validation: zeroBounceEmailValidation.response, source: 'imported_lead_enrichment' }
+          : null,
       });
     }
 
@@ -1450,7 +1531,7 @@ export async function runContactResolutionPipelineForContact(
       ? PATTERN_GUESSED_DELIVERABILITY
       : preserveEmailDeliverability
         ? typedContact.email_deliverability
-        : apolloEmailStatusForDirectory ?? null;
+        : zeroBounceEmailValidation?.deliverability ?? apolloEmailStatusForDirectory ?? null;
     const shouldResetEmailDirectory = resolvedCompanyChanged({
       existingResolvedCompanyName: typedContact.resolved_current_company_name,
       existingResolvedCompanyDomain: typedContact.resolved_current_company_domain,
@@ -1460,6 +1541,21 @@ export async function runContactResolutionPipelineForContact(
 
     if (shouldResetEmailDirectory || (typedContact.email_deliverability && !preserveEmailDeliverability)) {
       await resetContactEmailDeliverabilityForReverification(supabase, { contactId, userId });
+      if (apolloMailbox) {
+        await ensureEnrichedEmailEntry(supabase, {
+          contactId,
+          userId,
+          email: apolloMailbox,
+          companyDomain: resolvedDomainFromCompany || typedContact.company_domain,
+          apolloEmailStatus: apolloEmailStatusForDirectory,
+          emailDeliverability: zeroBounceEmailValidation?.deliverability ?? apolloEmailStatusForDirectory,
+          emailDeliverabilityProvider: zeroBounceEmailValidation ? 'zerobounce' : apolloEmailStatusForDirectory ? 'apollo' : null,
+          emailDeliverabilityCheckedAt: zeroBounceEmailValidation?.checkedAt ?? null,
+          emailDeliverabilityMetadata: zeroBounceEmailValidation
+            ? { validation: zeroBounceEmailValidation.response, source: 'imported_lead_enrichment' }
+            : null,
+        });
+      }
     }
 
     const updatePayload: Record<string, unknown> = {

@@ -92,8 +92,24 @@ type PendingPurchase = {
   leadCount: number;
   requiredCredits: number;
   availableCredits: number;
-  monthlyUsed: number;
-  monthlyLimit: number;
+  planKey: string;
+  canManageBilling: boolean;
+  billingAvailable: boolean;
+  creditPackAvailable: boolean;
+  starterPlanAvailable: boolean;
+  creditPackCredits: number | null;
+  creditPackUsd: number | null;
+};
+
+type BillingSummarySnapshot = {
+  available?: boolean;
+  role?: 'owner' | 'admin' | 'member';
+  plan?: { key?: string };
+  credits?: { available?: number };
+  catalog?: {
+    pack?: { available?: boolean; credits?: number; usd?: number } | null;
+    plans?: Array<{ key?: string; available?: boolean }>;
+  };
 };
 
 /** sessionStorage handoff for the Coverage "Fix blind spots" batch CTA: a
@@ -189,8 +205,11 @@ function userFacingJobError(job: AcquisitionJob): string | null {
 
   // Raw provider/API errors are useful in logs, but they are not product copy.
   // Keep this surface calm and action-oriented.
-  if (error.includes('insufficient credits') || error.includes('upgrade your plan')) {
-    return 'A credit or plan limit was reached when this sourcing run executed. If credits have renewed, start a new sourcing request.';
+  if (error.includes('workspace lead capacity') || error.includes('workspace capacity')) {
+    return 'This sourcing run would exceed your workspace lead capacity. Upgrade your plan or reduce the request size.';
+  }
+  if (error.includes('insufficient credits')) {
+    return 'This sourcing run needs more credits. Add credits, then start a new sourcing request.';
   }
   return 'This sourcing run could not complete. Start a new sourcing request to try again.';
 }
@@ -829,6 +848,8 @@ function DataPageContent() {
   const [clock, setClock] = useState(() => new Date());
   const [pendingPurchase, setPendingPurchase] = useState<PendingPurchase | null>(null);
   const [purchaseSubmitting, setPurchaseSubmitting] = useState(false);
+  const [billingSubmitting, setBillingSubmitting] = useState(false);
+  const [billingError, setBillingError] = useState<string | null>(null);
 
   // ── Load ICP cards + jobs ──────────────────────────────────────────────────
 
@@ -1017,17 +1038,26 @@ function DataPageContent() {
 
     try {
       const response = await fetch('/api/billing/summary');
-      const summary = await response.json().catch(() => ({}));
+      const summary = (await response.json().catch(() => ({}))) as BillingSummarySnapshot & { error?: string };
       if (!response.ok) throw new Error(summary.error || 'Could not load your credit balance.');
+      const planKey = summary.plan?.key ?? 'free';
+      const canManageBilling = summary.role === 'owner' || summary.role === 'admin';
+      const creditPack = summary.catalog?.pack ?? null;
 
+      setBillingError(null);
       setPendingPurchase({
         job,
         operationId: crypto.randomUUID(),
         leadCount,
         requiredCredits: leadCount * 4,
         availableCredits: Number(summary.credits?.available ?? 0),
-        monthlyUsed: Number(summary.netNewLeads?.used ?? 0),
-        monthlyLimit: Number(summary.netNewLeads?.limit ?? 0),
+        planKey,
+        canManageBilling,
+        billingAvailable: Boolean(summary.available),
+        creditPackAvailable: Boolean(creditPack?.available),
+        starterPlanAvailable: Boolean(summary.catalog?.plans?.some((plan) => plan.key === 'starter' && plan.available)),
+        creditPackCredits: typeof creditPack?.credits === 'number' ? creditPack.credits : null,
+        creditPackUsd: typeof creditPack?.usd === 'number' ? creditPack.usd : null,
       });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not load your credit balance.');
@@ -1044,6 +1074,52 @@ function DataPageContent() {
       setPurchaseSubmitting(false);
     }
   }, [pendingPurchase, purchaseSubmitting, submitAcquisitionJob]);
+
+  const openBillingSettings = useCallback(() => {
+    window.location.href = '/settings?billing=credits';
+  }, []);
+
+  const startBillingCheckout = useCallback(async () => {
+    if (!pendingPurchase || billingSubmitting) return;
+    if (!pendingPurchase.canManageBilling || !pendingPurchase.billingAvailable) {
+      openBillingSettings();
+      return;
+    }
+
+    const checkoutBody =
+      pendingPurchase.planKey === 'free'
+        ? { kind: 'plan', planKey: 'starter', billing: 'monthly' }
+        : { kind: 'pack' };
+
+    if (pendingPurchase.planKey === 'free' && !pendingPurchase.starterPlanAvailable) {
+      openBillingSettings();
+      return;
+    }
+    if (pendingPurchase.planKey !== 'free' && !pendingPurchase.creditPackAvailable) {
+      openBillingSettings();
+      return;
+    }
+
+    setBillingSubmitting(true);
+    setBillingError(null);
+    try {
+      const response = await fetch('/api/billing/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(checkoutBody),
+      });
+      const payload = (await response.json().catch(() => ({}))) as { url?: string; error?: string };
+      if (response.ok && payload.url) {
+        window.location.href = payload.url;
+        return;
+      }
+      setBillingError(payload.error || 'Could not open billing checkout. Please try from Settings.');
+    } catch {
+      setBillingError('Could not open billing checkout. Please try from Settings.');
+    } finally {
+      setBillingSubmitting(false);
+    }
+  }, [billingSubmitting, openBillingSettings, pendingPurchase]);
 
   // ── Build page context for agent ──────────────────────────────────────────
 
@@ -1137,10 +1213,18 @@ function DataPageContent() {
   const purchaseWithinCredits = pendingPurchase
     ? pendingPurchase.availableCredits >= pendingPurchase.requiredCredits
     : false;
-  const purchaseWithinMonthlyCap = pendingPurchase
-    ? pendingPurchase.monthlyUsed + pendingPurchase.leadCount <= pendingPurchase.monthlyLimit
-    : false;
-  const purchaseAllowed = purchaseWithinCredits && purchaseWithinMonthlyCap;
+  const purchaseAllowed = purchaseWithinCredits;
+  const blockedPurchaseCtaLabel = !pendingPurchase
+    ? 'Open billing settings'
+    : !purchaseWithinCredits
+      ? pendingPurchase.canManageBilling && pendingPurchase.billingAvailable
+        ? pendingPurchase.planKey === 'free'
+          ? 'Upgrade to Starter'
+          : pendingPurchase.creditPackCredits && pendingPurchase.creditPackUsd
+            ? `Buy ${fmt(pendingPurchase.creditPackCredits)} credits · $${fmt(pendingPurchase.creditPackUsd)}`
+            : 'Buy credits'
+        : 'Open billing settings'
+      : 'Review plan options';
 
   return (
     <>
@@ -1211,7 +1295,10 @@ function DataPageContent() {
       <AlertDialog
         open={Boolean(pendingPurchase)}
         onOpenChange={(open) => {
-          if (!open && !purchaseSubmitting) setPendingPurchase(null);
+          if (!open && !purchaseSubmitting && !billingSubmitting) {
+            setPendingPurchase(null);
+            setBillingError(null);
+          }
         }}
       >
         <AlertDialogContent>
@@ -1234,13 +1321,11 @@ function DataPageContent() {
                   </div>
                 </div>
                 {!purchaseWithinCredits && (
-                  <p className="text-red-600">You need more credits before starting this purchase.</p>
-                )}
-                {purchaseWithinCredits && !purchaseWithinMonthlyCap && (
                   <p className="text-red-600">
-                    This purchase would exceed your monthly net-new lead limit.
+                    You need more credits before starting this purchase. Add credits or upgrade, then come back to start the run.
                   </p>
                 )}
+                {billingError && <p className="text-red-600">{billingError}</p>}
                 <p className="text-xs">
                   You are charged only for genuinely new enriched leads delivered. Duplicates,
                   cache hits, and undelivered records are refunded automatically.
@@ -1249,20 +1334,36 @@ function DataPageContent() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={purchaseSubmitting}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={!purchaseAllowed || purchaseSubmitting}
-              onClick={(event) => {
-                event.preventDefault();
-                void confirmPurchase();
-              }}
-            >
-              {purchaseSubmitting
-                ? 'Starting…'
-                : purchaseAllowed
-                  ? `Use up to ${fmt(pendingPurchase?.requiredCredits ?? 0)} credits`
-                  : 'Purchase unavailable'}
-            </AlertDialogAction>
+            <AlertDialogCancel disabled={purchaseSubmitting || billingSubmitting}>Cancel</AlertDialogCancel>
+            {!purchaseAllowed && (
+              <button
+                type="button"
+                disabled={billingSubmitting}
+                onClick={() => {
+                  if (!purchaseWithinCredits) {
+                    void startBillingCheckout();
+                  } else {
+                    openBillingSettings();
+                  }
+                }}
+                className="inline-flex h-10 items-center justify-center rounded-md bg-arcova-navy px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-arcova-navy/90 disabled:pointer-events-none disabled:opacity-50"
+              >
+                {billingSubmitting ? 'Opening…' : blockedPurchaseCtaLabel}
+              </button>
+            )}
+            {purchaseAllowed && (
+              <AlertDialogAction
+                disabled={purchaseSubmitting}
+                onClick={(event) => {
+                  event.preventDefault();
+                  void confirmPurchase();
+                }}
+              >
+                {purchaseSubmitting
+                  ? 'Starting…'
+                  : `Use up to ${fmt(pendingPurchase?.requiredCredits ?? 0)} credits`}
+              </AlertDialogAction>
+            )}
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

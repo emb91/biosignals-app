@@ -26,6 +26,10 @@ import {
   LEAD_ACTION_PILL_CLASS,
   LEAD_ACTION_SORT_ORDER,
 } from '@/lib/lead-action';
+import {
+  normalizeScore01,
+  resolveEffectivePriority,
+} from '@/lib/effective-priority';
 import { formatProvenanceImportedAt } from '@/lib/data-provenance';
 import { ROUTES, withQuery } from '@/lib/routes';
 import Nango from '@nangohq/frontend';
@@ -632,48 +636,7 @@ const percentDisplayNumber = (value: number | null | undefined): number | null =
 };
 
 /** Normalise any 0–1 or 0–100 score to a 0–1 fraction. */
-function normalize01(value: number | null | undefined): number | null {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
-  if (value > 1 && value <= 100) return value / 100;
-  if (value >= 0 && value <= 1) return value;
-  return null;
-}
-
-/**
- * Contact priority = company_fit × contact_fit × (0.5 + 0.5 × readiness).
- * Hybrid model: both fits act as the floor, readiness is a boost. Folding in
- * company fit means a great contact at a poor-fit company doesn't read as
- * high priority — matches what the column should answer ("who should I reach
- * out to," not "who's a good contact in isolation"). Returns 0–1 or null.
- *
- * `readiness` MUST be EFFECTIVE readiness (effectiveReadiness(company, contact)
- * — the stronger of account + personal signals), NOT contact readiness alone.
- * A well-fit contact at a hot account is reachable on account momentum even
- * with no personal signal (the Althea-@-Illumina case). Callers pass the
- * effective value; this matches the stored priority_score the cron writes.
- *
- * Prefers the stored `priority_score` on the lead (written by the readiness
- * cron — see lib/signals/readiness-service.ts) so all callers see the same
- * value the API sorts on. Falls back to the live computation only when the
- * stored column is null (older rows or a freshly-imported contact before its
- * first readiness recompute).
- */
-function contactPriorityScore(
-  contactFit: number | null | undefined,
-  readiness: number | null | undefined,
-  stored?: number | null,
-  companyFit?: number | null | undefined,
-): number | null {
-  const storedNorm = normalize01(stored);
-  if (storedNorm != null) return storedNorm;
-  const cFit = normalize01(contactFit);
-  if (cFit == null) return null;
-  // Company fit collapses to 1 when missing so older rows still score on
-  // contact fit alone (rather than going null and disappearing from the sort).
-  const coFit = normalize01(companyFit) ?? 1;
-  const r = normalize01(readiness) ?? 0;
-  return coFit * cFit * (0.5 + 0.5 * r);
-}
+const normalize01 = normalizeScore01;
 
 /** Minimal lead shape the CRM-suppression display helpers read. Structural so
  *  it accepts both the lean list `Lead` and the `QueryLead` sort rows. */
@@ -684,16 +647,10 @@ type CrmSuppressibleLead = {
   contact_readiness_score?: number | null;
   contact_fit_score: number | null;
   priority_score?: number | null;
+  intrinsic_priority_score?: number | null;
   company_fit_score?: number | null;
   companies?: { company_fit_score?: number | null } | null;
 };
-
-function leadIsCrmSuppressed(lead: CrmSuppressibleLead): boolean {
-  return isCrmSuppressed(
-    lead.hubspot_lead_state ?? null,
-    lead.hubspot_latest_deal_updated_at ?? null,
-  );
-}
 
 /**
  * Effective readiness for DISPLAY — folds in the CRM suppression cooldown.
@@ -703,8 +660,18 @@ function leadIsCrmSuppressed(lead: CrmSuppressibleLead): boolean {
  * signals) drives the contact again — that's how a closed deal resurfaces.
  */
 function displayEffectiveReadiness(lead: CrmSuppressibleLead): number | null {
-  if (leadIsCrmSuppressed(lead)) return 0.01;
-  return effectiveReadiness(lead.company_readiness_score ?? null, lead.contact_readiness_score ?? null);
+  const intrinsicReadiness = effectiveReadiness(
+    lead.company_readiness_score ?? null,
+    lead.contact_readiness_score ?? null,
+  );
+  return resolveEffectivePriority({
+    intrinsicPriority: lead.intrinsic_priority_score ?? lead.priority_score ?? null,
+    companyFit: lead.company_fit_score ?? lead.companies?.company_fit_score ?? 1,
+    contactFit: lead.contact_fit_score,
+    intrinsicReadiness,
+    crmState: lead.hubspot_lead_state ?? null,
+    crmClosedAt: lead.hubspot_latest_deal_updated_at ?? null,
+  }).effectiveReadiness;
 }
 
 /**
@@ -717,15 +684,18 @@ function displayEffectiveReadiness(lead: CrmSuppressibleLead): number | null {
  */
 function displayContactPriority(lead: CrmSuppressibleLead): number | null {
   const companyFit = lead.company_fit_score ?? lead.companies?.company_fit_score ?? null;
-  if (leadIsCrmSuppressed(lead)) {
-    return contactPriorityScore(lead.contact_fit_score, 0.01, null, companyFit);
-  }
-  return contactPriorityScore(
-    lead.contact_fit_score,
-    displayEffectiveReadiness(lead),
-    lead.priority_score ?? null,
-    companyFit,
+  const intrinsicReadiness = effectiveReadiness(
+    lead.company_readiness_score ?? null,
+    lead.contact_readiness_score ?? null,
   );
+  return resolveEffectivePriority({
+    intrinsicPriority: lead.intrinsic_priority_score ?? lead.priority_score ?? null,
+    companyFit: companyFit ?? 1,
+    contactFit: lead.contact_fit_score,
+    intrinsicReadiness,
+    crmState: lead.hubspot_lead_state ?? null,
+    crmClosedAt: lead.hubspot_latest_deal_updated_at ?? null,
+  }).effectivePriority;
 }
 
 /**

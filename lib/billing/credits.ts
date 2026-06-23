@@ -44,6 +44,13 @@ export type UsageResult =
       usage: { used: number; limit: number; resetsAt: string };
     };
 
+export type CreditBalanceBySource = {
+  included: { granted: number; available: number };
+  purchased: { granted: number; available: number };
+  adjustment: { granted: number; available: number };
+  total: { granted: number; available: number };
+};
+
 export function creditEnforcementEnabled(action?: string): boolean {
   if (process.env.ARCOVA_CREDIT_ENFORCEMENT === 'true') return true;
   if (!action) return false;
@@ -227,9 +234,13 @@ export async function checkAndIncrementUsage(params: {
   operationKey: string;
   limit: number;
   window: 'utc_day' | 'utc_month' | 'rolling_24h';
+  windowStart?: string | null;
+  windowEnd?: string | null;
   metadata?: Record<string, unknown>;
 }): Promise<UsageResult> {
-  const period = usageWindow(params.window);
+  const period = params.windowStart && params.windowEnd
+    ? { start: params.windowStart, end: params.windowEnd }
+    : usageWindow(params.window);
   const admin = createAdminClient();
   const { data, error } = await admin.rpc('check_and_increment_usage', {
     p_org_id: params.orgId,
@@ -277,6 +288,86 @@ export async function checkAndIncrementUsage(params: {
   };
 }
 
+export async function recordMeteredUsage(params: {
+  orgId: string;
+  userId?: string | null;
+  action: string;
+  quantity?: number;
+  operationKey: string;
+  window: 'utc_day' | 'utc_month' | 'rolling_24h';
+  windowStart?: string | null;
+  windowEnd?: string | null;
+  metadata?: Record<string, unknown>;
+}): Promise<UsageResult> {
+  return checkAndIncrementUsage({
+    ...params,
+    limit: Number.MAX_SAFE_INTEGER,
+  });
+}
+
+export async function reserveCreditsWithIncludedAllowance(params: {
+  orgId: string;
+  userId?: string | null;
+  action: CreditAction | string;
+  operationKey: string;
+  allowanceLimit: number;
+  window: 'utc_day' | 'utc_month' | 'rolling_24h';
+  windowStart?: string | null;
+  windowEnd?: string | null;
+  idempotencyKey: string;
+  entityType?: string | null;
+  entityId?: string | null;
+}): Promise<CreditReservation> {
+  const usage = await checkAndIncrementUsage({
+    orgId: params.orgId,
+    userId: params.userId,
+    action: params.action,
+    operationKey: params.operationKey,
+    window: params.window,
+    windowStart: params.windowStart,
+    windowEnd: params.windowEnd,
+    limit: params.allowanceLimit,
+  });
+  const includedAllowanceAvailable = usage.ok;
+  const reservation = await reserveCredits({
+    orgId: params.orgId,
+    userId: params.userId,
+    action: params.action,
+    idempotencyKey: params.idempotencyKey,
+    entityType: params.entityType,
+    entityId: params.entityId,
+    purchasedOnly: !includedAllowanceAvailable,
+  });
+  if (!reservation.ok) {
+    if (includedAllowanceAvailable) {
+      await settleUsage({
+        orgId: params.orgId,
+        action: params.action,
+        operationKey: params.operationKey,
+        quantity: 0,
+      }).catch(() => {});
+    }
+    return reservation;
+  }
+  if (!includedAllowanceAvailable) {
+    try {
+      await recordMeteredUsage({
+        orgId: params.orgId,
+        userId: params.userId,
+        action: params.action,
+        operationKey: params.operationKey,
+        window: params.window,
+        windowStart: params.windowStart,
+        windowEnd: params.windowEnd,
+      });
+    } catch (error) {
+      await refundCredits(reservation.transactionId ?? null).catch(() => {});
+      throw error;
+    }
+  }
+  return reservation;
+}
+
 /** Finalize a provisional usage-cap event after provider work completes. */
 export async function settleUsage(params: {
   orgId: string;
@@ -313,6 +404,39 @@ export async function availableCreditBalance(orgId: string): Promise<number> {
   return (data ?? []).reduce((sum, row) => sum + Number(row.credits_remaining ?? 0), 0);
 }
 
+export async function creditBalanceBySource(orgId: string): Promise<CreditBalanceBySource> {
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from('org_credit_buckets')
+    .select('source, credits_granted, credits_remaining')
+    .eq('org_id', orgId)
+    .lte('valid_from', new Date().toISOString())
+    .gt('expires_at', new Date().toISOString());
+  if (error) {
+    if (isMissingRpc(error)) {
+      return emptyCreditBalance();
+    }
+    throw error;
+  }
+
+  const balance = emptyCreditBalance();
+  for (const row of data ?? []) {
+    const granted = Number(row.credits_granted ?? 0);
+    const available = Number(row.credits_remaining ?? 0);
+    const source = String(row.source ?? '');
+    const bucket = source === 'purchased'
+      ? balance.purchased
+      : source === 'adjustment'
+        ? balance.adjustment
+        : balance.included;
+    bucket.granted += granted;
+    bucket.available += available;
+    balance.total.granted += granted;
+    balance.total.available += available;
+  }
+  return balance;
+}
+
 export function utcMonthWindow(at = new Date()): { start: string; end: string } {
   const start = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1));
   const end = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth() + 1, 1));
@@ -335,6 +459,15 @@ function usageWindow(kind: 'utc_day' | 'utc_month' | 'rolling_24h'): { start: st
 
 function roundCredits(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+function emptyCreditBalance(): CreditBalanceBySource {
+  return {
+    included: { granted: 0, available: 0 },
+    purchased: { granted: 0, available: 0 },
+    adjustment: { granted: 0, available: 0 },
+    total: { granted: 0, available: 0 },
+  };
 }
 
 function isMissingRpc(error: { code?: string }): boolean {

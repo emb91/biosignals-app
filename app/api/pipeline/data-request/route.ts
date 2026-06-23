@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { after } from 'next/server';
 import { createClient } from '@/lib/supabase-server';
+import { createAdminClient } from '@/lib/supabase-admin';
 import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
 import { computeCriteriaHash } from '@/lib/data-acquisition/criteria-hash';
 import type { PipelineDataRequestType } from '@/lib/pipeline-icp-health';
@@ -13,7 +14,7 @@ import {
 import { runDataAcquisitionJob } from '@/lib/data-acquisition/job-runner';
 import { getOrgEntitlements } from '@/lib/billing/entitlements';
 import {
-  checkAndIncrementUsage,
+  recordMeteredUsage,
   refundCredits,
   reserveCredits,
   settleUsage,
@@ -176,16 +177,36 @@ export async function POST(request: Request) {
     const requestedLeadCount = estimate.targetContactCount ?? 0;
     if (reqOrgId && requestedLeadCount > 0) {
       const entitlements = await getOrgEntitlements(reqOrgId);
+      const admin = createAdminClient();
+      const { data: members } = await admin.from('org_members').select('user_id').eq('org_id', reqOrgId);
+      const userIds = (members ?? []).map((row) => row.user_id as string);
+      const { count: storedContacts } = userIds.length
+        ? await admin.from('user_contacts').select('id', { count: 'exact', head: true })
+          .in('user_id', userIds).is('archived_at', null)
+        : { count: 0 };
+      const capacityRemaining = Math.max(0, entitlements.caps.activeMonitoredContacts - (storedContacts ?? 0));
+      if (requestedLeadCount > capacityRemaining) {
+        return NextResponse.json({
+          code: 'workspace_capacity_reached',
+          message: 'This request would exceed your workspace lead capacity.',
+          action: 'Upgrade your plan to hold more leads, or reduce the request size.',
+          capacity: {
+            used: storedContacts ?? 0,
+            limit: entitlements.caps.activeMonitoredContacts,
+            requested: requestedLeadCount,
+            remaining: capacityRemaining,
+          },
+        }, { status: 409 });
+      }
       const operationId = typeof body.operationId === 'string' && body.operationId.trim()
         ? body.operationId.trim()
         : crypto.randomUUID();
-      const usage = await checkAndIncrementUsage({
+      const usage = await recordMeteredUsage({
         orgId: reqOrgId,
         userId: user.id,
         action: 'net_new_enriched_lead',
         quantity: requestedLeadCount,
         operationKey: operationId,
-        limit: entitlements.caps.netNewEnrichedLeadsMonthly,
         window: 'utc_month',
       });
       if (!usage.ok) return NextResponse.json(usage, { status: 429 });

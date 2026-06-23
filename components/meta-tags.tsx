@@ -4,25 +4,25 @@ export function MetaTags() {
   return (
     <Head>
       {/* Basic Meta Tags */}
-      <meta property="og:title" content="We make science make sense | Arcova" />
+      <meta property="og:title" content="Arcova | Revenue engine for life science" />
       <meta
         property="og:description"
-        content="We help turn research into strategy, products, and progress."
+        content="Revenue intelligence for life science teams."
       />
       <meta property="og:image" content="/images/arcova-logo-transparent.png" />
       <meta property="og:type" content="website" />
 
       {/* Twitter Card Tags
       <meta name="twitter:card" content="summary_large_image" />
-      <meta name="twitter:title" content="Arcova | Scientific Evidence for Business Decisions" />
+      <meta name="twitter:title" content="Arcova | Revenue engine for life science" />
       <meta
         name="twitter:description"
-        content="Oxford-trained PhD team turning raw biomedical literature into decision-ready insight."
+        content="Revenue intelligence for life science teams."
       />
       <meta name="twitter:image" content="/images/og-image.png" /> */}
 
       {/* Favicon */}
-      <link rel="icon" type="image/png" href="/arcova-favicon.png" sizes="any" />
+      <link rel="icon" type="image/svg+xml" href="/brand/favicon.svg" />
 
       {/* Basic image tag that some platforms might use */}
       <link rel="image_src" href="/images/og-image.png" />

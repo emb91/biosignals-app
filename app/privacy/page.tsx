@@ -1,5 +1,5 @@
 export const metadata = {
-  title: "Privacy Policy | Arcova",
+  title: "Arcova | Privacy Policy",
   description: "How Arcova collects, uses, stores, and protects personal information.",
 }
 
@@ -18,9 +18,9 @@ export default function PrivacyPage() {
 
         <Section title="1. Who we are">
           <p>
-            Arcova Consulting Limited (“Arcova,” “we,” “us,” or “our”) operates an AI-native
-            revenue intelligence platform for life science companies and the businesses that
-            sell to them. We are based in New Zealand. This policy applies to arcova.bio,
+            Arcova Consulting Limited (“Arcova,” “we,” “us,” or “our”) operates a revenue
+            intelligence platform for life science companies and the businesses that sell to
+            them. We are based in New Zealand. This policy applies to arcova.bio,
             app.arcova.bio, and the Arcova services.
           </p>
         </Section>

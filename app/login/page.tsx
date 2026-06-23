@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import posthog from '@/lib/posthog-client';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,11 +11,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Eye, EyeOff } from 'lucide-react';
 import { ROUTES } from '@/lib/routes';
+import { Turnstile, TurnstileHandle, TURNSTILE_SITE_KEY } from '@/components/turnstile';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [fullName, setFullName] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -22,7 +23,10 @@ export default function LoginPage() {
   // Set when signup succeeded but the account needs email confirmation —
   // we show "check your email" instead of bouncing off the auth gate.
   const [confirmEmailSentTo, setConfirmEmailSentTo] = useState<string | null>(null);
-  
+  // Cloudflare Turnstile token — required only when a site key is configured.
+  const [captchaToken, setCaptchaToken] = useState('');
+  const turnstileRef = useRef<TurnstileHandle>(null);
+
   const { login, signup, loginWithGoogle } = useAuth();
   const router = useRouter();
 
@@ -41,10 +45,17 @@ export default function LoginPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+
+    if (TURNSTILE_SITE_KEY && !captchaToken) {
+      setError('Please complete the verification below.');
+      return;
+    }
+
     setLoading(true);
 
     try {
       if (isSignUp) {
+        posthog.capture('signup_submitted', { email });
         // Deliverability pre-check — don't ask Supabase to email an undeliverable
         // address (bounces hurt sender reputation). Fails open server-side.
         const check = await fetch('/api/auth/validate-email', {
@@ -61,13 +72,16 @@ export default function LoginPage() {
           setLoading(false);
           return;
         }
-        const needsEmailConfirm = await signup(email, password, fullName);
+        const needsEmailConfirm = await signup(email, password, undefined, captchaToken);
         if (needsEmailConfirm) {
           setConfirmEmailSentTo(email);
           return;
         }
       } else {
-        await login(email, password);
+        posthog.capture('login_submitted', { email });
+        await login(email, password, captchaToken);
+        // Identity is set centrally by PostHogIdentify (keyed on user.id) once auth
+        // resolves — identifying by email here would fragment the person across IDs.
       }
       router.push(ROUTES.today);
     } catch (error: any) {
@@ -79,14 +93,19 @@ export default function LoginPage() {
       } else if (message.includes('User already registered') || message.includes('already exists')) {
         setError('An account with this email already exists. Try signing in, or use Google if you signed up that way.');
       } else if (message.includes('Password should be at least')) {
-        setError('Password must be at least 6 characters.');
+        setError('Password must be at least 8 characters.');
       } else if (message.includes('Invalid email')) {
         setError('Please enter a valid email address.');
+      } else if (message.toLowerCase().includes('captcha')) {
+        setError('Verification failed. Please complete the check and try again.');
       } else if (message.includes('rate limit')) {
         setError('Too many attempts. Please try again later.');
       } else {
         setError(message || 'An error occurred. Please try again.');
       }
+      // Turnstile tokens are single-use — clear and re-issue for the retry.
+      setCaptchaToken('');
+      turnstileRef.current?.reset();
     } finally {
       setLoading(false);
     }
@@ -160,21 +179,6 @@ export default function LoginPage() {
               )}
               
               <div className="space-y-4">
-                {isSignUp && (
-                  <div>
-                    <Label htmlFor="fullName">Your name</Label>
-                    <Input
-                      id="fullName"
-                      type="text"
-                      value={fullName}
-                      onChange={(e) => setFullName(e.target.value)}
-                      required
-                      className="mt-1"
-                      placeholder="e.g. Jane Smith"
-                      autoComplete="name"
-                    />
-                  </div>
-                )}
                 <div>
                   <Label htmlFor="email">Email address</Label>
                   <Input
@@ -214,11 +218,20 @@ export default function LoginPage() {
                   </div>
                   {isSignUp && (
                     <p className="text-xs text-gray-500 mt-1">
-                      Password must be at least 6 characters with letters and numbers
+                      Password must be at least 8 characters
                     </p>
                   )}
                 </div>
               </div>
+
+              {TURNSTILE_SITE_KEY && (
+                <Turnstile
+                  ref={turnstileRef}
+                  className="flex justify-center"
+                  onVerify={setCaptchaToken}
+                  onExpire={() => setCaptchaToken('')}
+                />
+              )}
 
               <Button
                 type="submit"

@@ -35,7 +35,7 @@ const LANDING_HTML = `
   <div class="hero-grid"></div>
   <div class="hero-glow"></div>
   <div class="wrap">
-    <h1>Know who to call, and exactly <span class="hl grad" id="hlword">when</span>.</h1>
+    <h1>Revenue intelligence for <span class="hl grad" id="hlword">life science</span>.</h1>
     <p class="hero-sub">Arcova watches your life science market for buying signals, ranks who to reach out to, and drafts the outreach. You just hit send.</p>
     <div class="hero-cta" id="heroCta">
       <a class="btn btn-primary btn-lg" href="/signup" data-cta>Start for free <svg class="arr" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
@@ -357,7 +357,8 @@ const LANDING_HTML = `
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>100</b> active leads monitored</span></li>
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>Monthly</b> signal monitoring</span></li>
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>500</b> imported records triaged / mo</span></li>
-          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>25</b> imported enrichments / mo</span></li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>10</b> imported enrichments / mo</span></li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>5</b> net-new leads / mo</span></li>
         </ul>
         <div class="tbtn"><a class="btn btn-soft" href="/signup">Start for free</a></div>
       </div>
@@ -374,7 +375,8 @@ const LANDING_HTML = `
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>5,000</b> active leads monitored</span></li>
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>Monthly</b> signal monitoring</span></li>
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>10,000</b> imported records triaged / mo</span></li>
-          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>300</b> included imported enrichments / mo</span></li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>250</b> included imported enrichments / mo</span></li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>50</b> net-new leads / mo</span></li>
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span>Extra credits: <b>$100 / 1,000</b></span></li>
         </ul>
         <div class="tbtn"><a class="btn btn-primary" href="/signup">Start for free</a></div>
@@ -391,7 +393,8 @@ const LANDING_HTML = `
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>10,000</b> active leads monitored</span></li>
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>Weekly</b> signal monitoring</span></li>
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>50,000</b> imported records triaged / mo</span></li>
-          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>1,400</b> included imported enrichments / mo</span></li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>1,200</b> included imported enrichments / mo</span></li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span><b>200</b> net-new leads / mo</span></li>
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg><span>Extra credits: <b>$70 / 1,000</b></span></li>
         </ul>
         <div class="tbtn"><a class="btn btn-soft" href="/signup">Start for free</a></div>
@@ -420,12 +423,12 @@ const LANDING_HTML = `
             <tr><td>Active leads monitored</td><td>100</td><td>5,000</td><td>10,000</td></tr>
             <tr><td>Monitoring cadence</td><td>Monthly</td><td>Monthly</td><td>Weekly</td></tr>
             <tr><td>Imported records triaged</td><td>500 / month</td><td>10,000 / month</td><td>50,000 / month</td></tr>
-            <tr><td>Included imported enrichments</td><td>25 / month</td><td>300 / month</td><td>1,400 / month</td></tr>
-            <tr><td>Maximum imported enrichments</td><td>25 / month</td><td>500 / month</td><td>5,000 / month</td></tr>
-            <tr><td>Maximum net-new enriched leads</td><td>10 / month</td><td>2,500 / month</td><td>10,000 / month</td></tr>
-            <tr><td>Sequences generated</td><td>1 / 24 hours</td><td>3 / 24 hours</td><td>10 / 24 hours</td></tr>
-            <tr><td>Phone reveals</td><td>2 / day</td><td>50 / day</td><td>200 / day</td></tr>
-            <tr><td>Email-finder requests</td><td>2 / day</td><td>50 / day</td><td>200 / day</td></tr>
+            <tr><td>Included imported enrichments</td><td>10 / month</td><td>250 / month</td><td>1,200 / month</td></tr>
+            <tr><td>Included net-new enriched leads</td><td>5 / month</td><td>50 / month</td><td>200 / month</td></tr>
+            <tr><td>Extra imported enrichments</td><td>Upgrade for more actions</td><td>Use purchased credits</td><td>Use purchased credits</td></tr>
+            <tr><td>Sequences generated</td><td>2 / month</td><td>95 / month</td><td>300 / month</td></tr>
+            <tr><td>Phone reveals</td><td>1 / month</td><td>3 / month</td><td>12 / month</td></tr>
+            <tr><td>Email-finder requests</td><td>1 / month</td><td>25 / month</td><td>60 / month</td></tr>
             <tr><td>Exports</td><td>Unlimited</td><td>Unlimited</td><td>Unlimited</td></tr>
             <tr><td>Additional 1,000 credits</td><td>Not available</td><td>$100</td><td>$70</td></tr>
           </tbody>
@@ -654,7 +657,7 @@ export default function LandingTest3() {
           const h1 = root.querySelector<HTMLElement>(".hero h1")
           if (h1) h1.innerHTML = b.dataset.w === "ranked"
             ? 'Your life science market, <span class="' + cls + '" id="hlword">ranked</span> every morning.'
-            : 'Know who to call, and exactly <span class="' + cls + '" id="hlword">when</span>.'
+            : 'Revenue intelligence for <span class="' + cls + '" id="hlword">life science</span>.'
         })
         seg("twCta", (b) => {
           const dual = b.dataset.ctaMode === "dual"

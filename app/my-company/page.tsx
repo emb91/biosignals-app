@@ -396,7 +396,7 @@ export default function MyProfilePage() {
         <div className="mx-auto max-w-[1180px]">
 
           <PageHeader
-            eyebrow="About you · My company"
+            eyebrow="About you"
             title="Your company profile"
             subtitle="Used to build target criteria, define buying personas, and find the right leads."
             action={analysisData && !editMode && canEditOrgSetup ? (

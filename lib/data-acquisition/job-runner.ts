@@ -18,15 +18,19 @@ import {
   type PeopleSearchTarget,
 } from '@/lib/data-acquisition/apollo-discovery';
 import {
-  apolloOrganizationMatchesIcpKeywords,
+  apolloOrganizationHardRejectReason,
   buildApolloCompanySearchRecipes,
   buildApolloPeopleSearchRecipe,
-  icpKeywordCorpus,
   type AcquisitionIcp,
   type AcquisitionPersona,
 } from '@/lib/data-acquisition/search-spec';
+import { enrichOrganizationWithApollo } from '@/lib/apollo';
 import { firstCompanyDomain, normalizeCompanyDomain } from '@/lib/data-acquisition/domain-utils';
 import { discoverCompaniesWithWebSearch } from '@/lib/data-acquisition/web-discovery';
+import { completeLlm } from '@/lib/llm-client';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
+import { personaFunctionNames } from '@/lib/persona-functions';
+import { SOURCE_COMPANY_MIN } from '@/lib/lead-action';
 
 type DataAcquisitionJob = {
   id: string;
@@ -102,6 +106,11 @@ type DbCompanyRow = {
   employee_count: number | null;
 };
 
+type UserCompanyFitRow = {
+  company_id: string | null;
+  company_fit_score: number | string | null;
+};
+
 // Jobs in these states own the user's single execution slot. The FIFO queue
 // only starts the next 'queued' job when nothing is in one of these states.
 const ACTIVE_JOB_STATUSES = ['discovering', 'processing', 'importing', 'enriching'] as const;
@@ -140,6 +149,39 @@ function discoveredCompanyFromDbRow(row: DbCompanyRow): DiscoveredCompany | null
   };
 }
 
+function normalizeFitScore01(value: unknown): number | null {
+  const raw = typeof value === 'number' ? value : typeof value === 'string' ? Number.parseFloat(value) : NaN;
+  if (!Number.isFinite(raw)) return null;
+  if (raw > 1 && raw <= 100) return raw / 100;
+  return raw >= 0 && raw <= 1 ? raw : null;
+}
+
+async function loadCompanyFitForPurchase(
+  admin: ReturnType<typeof createAdminClient>,
+  userId: string,
+  companyId: string,
+  icpId: string,
+): Promise<number | null> {
+  const { data, error } = await admin
+    .from('user_companies')
+    .select('company_fit_score')
+    .eq('user_id', userId)
+    .eq('company_id', companyId)
+    .eq('matched_icp_id', icpId)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  return normalizeFitScore01((data as { company_fit_score?: unknown } | null)?.company_fit_score);
+}
+
+function lowCompanyFitPurchaseNote(companyName: string | null, companyFit: number | null): string {
+  const label = companyName?.trim() || 'this account';
+  if (companyFit == null) {
+    return `We did not source contacts at ${label} because it does not have a high company-fit score yet.`;
+  }
+  return `We did not source contacts at ${label} because its company fit is ${Math.round(companyFit * 100)}%, below the ${Math.round(SOURCE_COMPANY_MIN * 100)}% purchase threshold.`;
+}
+
 async function loadPrioritizedCompaniesForIcpAccounts(
   admin: ReturnType<typeof createAdminClient>,
   userId: string,
@@ -149,13 +191,16 @@ async function loadPrioritizedCompaniesForIcpAccounts(
 ): Promise<DbCompanyRow[]> {
   const { data: ownedRows, error: ownedError } = await admin
     .from('user_companies')
-    .select('company_id')
+    .select('company_id, company_fit_score')
     .eq('user_id', userId)
     .eq('matched_icp_id', icpId);
   if (ownedError) throw new Error(ownedError.message);
-  const ownedIds = (ownedRows ?? [])
-    .map((r) => (r as { company_id?: unknown }).company_id)
-    .filter((v): v is string => typeof v === 'string');
+  const ownedIds = ((ownedRows ?? []) as UserCompanyFitRow[])
+    .filter((row) => {
+      const fit = normalizeFitScore01(row.company_fit_score);
+      return typeof row.company_id === 'string' && fit != null && fit >= SOURCE_COMPANY_MIN;
+    })
+    .map((row) => row.company_id as string);
   if (ownedIds.length === 0) return [];
 
   const { data: companies, error } = await admin
@@ -325,6 +370,384 @@ function makeMeter(
     });
     guard.charge(creditUnitsForEvent(eventType, quantity));
   };
+}
+
+function formatPersonaForContactScreen(persona: AcquisitionPersona): string {
+  const functions = personaFunctionNames(persona.functions);
+  return [
+    `Persona: ${persona.name || 'Unnamed persona'}`,
+    `Functions: ${functions.length > 0 ? functions.join(', ') : 'Not specified'}`,
+    `Seniority: ${persona.seniority_levels?.length ? persona.seniority_levels.join(', ') : 'Not specified'}`,
+    `Title examples: ${persona.job_titles?.length ? persona.job_titles.join(', ') : 'Not specified'}`,
+  ].join('\n');
+}
+
+function formatPersonForContactScreen(person: DiscoveredPerson, index: number): string {
+  return [
+    `Contact ${index}`,
+    `Name: ${person.full_name || 'Unknown'}`,
+    `Title: ${person.job_title || 'Unknown'}`,
+    `Company: ${person.company_name || 'Unknown'}`,
+    `Company domain: ${person.company_domain || 'Unknown'}`,
+  ].join('\n');
+}
+
+type ContactPersonaScreenVerdict = {
+  contact_index?: unknown;
+  verdict?: unknown;
+  confidence?: unknown;
+  reason?: unknown;
+};
+
+type ContactPersonaScreenResult = {
+  people: DiscoveredPerson[];
+  rejected: number;
+};
+
+type CompanyIcpScreenVerdict = {
+  verdict?: unknown;
+  score?: unknown;
+  confidence?: unknown;
+  reason?: unknown;
+  matched_on?: unknown;
+  gaps?: unknown;
+};
+
+type CompanyIcpScreenResult = {
+  passes: boolean;
+  verdict: string;
+  score: number | null;
+  confidence: number;
+  reason: string;
+};
+
+function parseContactPersonaScreenResponse(text: string): ContactPersonaScreenVerdict[] {
+  const jsonMatch = text.match(/\[[\s\S]*\]/);
+  if (!jsonMatch) return [];
+  const parsed = JSON.parse(jsonMatch[0]) as unknown;
+  return Array.isArray(parsed) ? (parsed as ContactPersonaScreenVerdict[]) : [];
+}
+
+function parseCompanyIcpScreenResponse(text: string): CompanyIcpScreenVerdict | null {
+  const objectMatch = text.match(/\{[\s\S]*\}/);
+  if (!objectMatch) return null;
+  const parsed = JSON.parse(objectMatch[0]) as unknown;
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+    ? (parsed as CompanyIcpScreenVerdict)
+    : null;
+}
+
+function formatIcpForCompanyScreen(icp: AcquisitionIcp): string {
+  const list = (values: string[] | null | undefined) =>
+    values?.map((value) => value.trim()).filter(Boolean).join(', ') || 'Not specified';
+  return [
+    `ICP name: ${icp.name || 'Unnamed ICP'}`,
+    `Company type: ${icp.company_type || 'Not specified'}`,
+    `Platform category: ${icp.platform_category || 'Not specified'}`,
+    `Therapeutic areas: ${list(icp.therapeutic_areas)}`,
+    `Modalities: ${list(icp.modalities)}`,
+    `Development stages: ${list(icp.development_stages)}`,
+    `Company sizes: ${list(icp.company_sizes)}`,
+    `Funding stages: ${list(icp.funding_stages)}`,
+    `Target customers: ${list(icp.target_customers)}`,
+    `Buyer types: ${list(icp.buyer_types)}`,
+  ].join('\n');
+}
+
+function formatCompanyEvidenceForScreen(evidence: unknown): string {
+  const record = evidence && typeof evidence === 'object' ? evidence as Record<string, unknown> : {};
+  const stringValue = (...keys: string[]) => {
+    for (const key of keys) {
+      const value = record[key];
+      if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+    return 'Unknown';
+  };
+  const arrayValue = (...keys: string[]) => {
+    for (const key of keys) {
+      const value = record[key];
+      if (Array.isArray(value)) {
+        const cleaned = value.map((item) => (typeof item === 'string' ? item.trim() : '')).filter(Boolean);
+        if (cleaned.length > 0) return cleaned.slice(0, 12).join(', ');
+      }
+    }
+    return 'Unknown';
+  };
+
+  return [
+    `Name: ${stringValue('name', 'company_name', 'organization_name')}`,
+    `Domain: ${stringValue('primary_domain', 'domain', 'website_url', 'website')}`,
+    `Description: ${stringValue('short_description', 'description', 'company_description', 'seo_description')}`,
+    `Industry: ${stringValue('industry', 'company_industry')}`,
+    `Keywords: ${arrayValue('keywords', 'industries', 'specialties')}`,
+    `Raw evidence: ${JSON.stringify(record).slice(0, 2500)}`,
+  ].join('\n');
+}
+
+function numericScore(value: unknown): number | null {
+  const n = typeof value === 'number' ? value : typeof value === 'string' ? Number.parseFloat(value) : NaN;
+  if (!Number.isFinite(n)) return null;
+  return Math.max(0, Math.min(100, n > 1 ? n : n * 100));
+}
+
+async function screenCompanyAgainstIcp(params: {
+  evidence: unknown;
+  company: DiscoveredCompany;
+  icp: AcquisitionIcp;
+  job: DataAcquisitionJob;
+  meter: Meter;
+  metadata: Record<string, unknown>;
+}): Promise<CompanyIcpScreenResult> {
+  const { evidence, company, icp, job, meter, metadata } = params;
+  const hardRejectReason = apolloOrganizationHardRejectReason(
+    evidence as { name?: string | null; short_description?: string | null; industry?: string | null },
+    icp,
+  );
+  if (hardRejectReason) {
+    return {
+      passes: false,
+      verdict: 'reject',
+      score: 0,
+      confidence: 1,
+      reason: hardRejectReason,
+    };
+  }
+
+  const prompt = `You screen a company before the system spends money buying contacts.
+
+Decide whether this company is likely a high-fit account for the ICP. Use judgment, not keyword overlap.
+Accept only if the company itself plausibly matches the ICP account profile. Reject if it is merely adjacent, a service/provider when the ICP targets biopharma buyers, an association/media/payer/pet/vet company, or if evidence is too thin/contradictory.
+
+Special handling:
+- Hospitals, CROs, CDMOs, universities, and research institutes can be qualified only when the ICP company type/buying context targets them.
+- Universities may be qualified for tools/research ICPs when the evidence points to researchers/labs; university administration is not enough.
+- Supply/service vendors are not biopharma companies just because they mention oncology or clinical trials.
+
+ICP:
+${formatIcpForCompanyScreen(icp)}
+
+COMPANY EVIDENCE:
+${formatCompanyEvidenceForScreen(evidence)}
+
+Return ONLY valid JSON:
+{
+  "verdict": "qualified" | "reject",
+  "score": <integer 0-100, expected company fit>,
+  "confidence": <number 0-1>,
+  "reason": "<one concise sentence>",
+  "matched_on": ["specific fit evidence"],
+  "gaps": ["specific mismatch or missing evidence"]
+}`;
+
+  try {
+    const completion = await completeLlm({
+      feature: 'company_fit_scoring',
+      prompt,
+      maxTokens: 900,
+      temperature: 0,
+    });
+
+    await recordLlmUsageEvent({
+      userId: job.user_id,
+      provider: completion.provider,
+      feature: 'company_pre_purchase_screen',
+      route: 'lib/data-acquisition/job-runner#screenCompanyAgainstIcp',
+      model: completion.model,
+      usage: completion.usage,
+      metadata: {
+        job_id: job.id,
+        request_type: job.request_type,
+        company: company.name,
+        domain: company.domain,
+      },
+    });
+
+    await meter('llm_fit_screen', 1, {
+      ...metadata,
+      entity_type: 'company',
+      company: company.name,
+      domain: company.domain,
+      reason: 'pre_purchase_company_icp_screen',
+    }, completion.provider);
+
+    const parsed = parseCompanyIcpScreenResponse(completion.text);
+    const verdict = typeof parsed?.verdict === 'string' ? parsed.verdict.toLowerCase() : 'reject';
+    const score = numericScore(parsed?.score);
+    const confidence =
+      typeof parsed?.confidence === 'number' && Number.isFinite(parsed.confidence)
+        ? Math.max(0, Math.min(1, parsed.confidence))
+        : 0;
+    const reason =
+      typeof parsed?.reason === 'string' && parsed.reason.trim()
+        ? parsed.reason.trim().slice(0, 500)
+        : 'LLM did not provide a usable company-screen reason.';
+    const passes = verdict === 'qualified' && (score ?? 0) >= 70 && confidence >= 0.55;
+
+    return {
+      passes,
+      verdict,
+      score,
+      confidence,
+      reason,
+    };
+  } catch (error) {
+    console.warn(
+      '[data-acquisition] company ICP screen failed closed:',
+      error instanceof Error ? error.message : error,
+    );
+    return {
+      passes: false,
+      verdict: 'reject',
+      score: null,
+      confidence: 1,
+      reason: 'company_icp_screen_unavailable',
+    };
+  }
+}
+
+async function screenPeopleAgainstPersonas(params: {
+  people: DiscoveredPerson[];
+  personas: AcquisitionPersona[];
+  job: DataAcquisitionJob;
+  meter: Meter;
+  metadata: Record<string, unknown>;
+}): Promise<ContactPersonaScreenResult> {
+  const { people, personas, job, meter, metadata } = params;
+  if (people.length === 0 || personas.length === 0) {
+    return { people, rejected: 0 };
+  }
+
+  const kept: DiscoveredPerson[] = [];
+  let rejected = 0;
+  const batchSize = 20;
+  const personaBlock = personas.map(formatPersonaForContactScreen).join('\n\n---\n\n');
+
+  for (let start = 0; start < people.length; start += batchSize) {
+    const batch = people.slice(start, start + batchSize);
+    const contactBlock = batch
+      .map((person, offset) => formatPersonForContactScreen(person, offset))
+      .join('\n\n');
+
+    const prompt = `You screen visible Apollo people-search results before paid enrichment.
+
+Use judgment to decide whether each contact's visible title plausibly matches at least one buyer persona.
+Do not use a fixed keyword rule. Reason from the life-sciences meaning of the title, function, seniority, and persona.
+
+Important taxonomy guidance:
+- Partnerships includes alliance management, external partnerships, public-private partnerships, ecosystem partnerships, global health partnerships, and collaboration ownership.
+- Business Development includes licensing, dealmaking, partnering strategy, external growth, and customer-facing strategic opportunities.
+- Strategy & Corporate Development is corporate strategy, portfolio strategy, M&A, strategic planning, and corporate development when partnerships/dealmaking are not the primary role.
+- Manufacturing & CMC includes CMC, technical operations, process development, manufacturing, quality manufacturing, supply operations, and product supply. Supply chain can match Manufacturing & CMC only when the title points to manufacturing, technical operations, product supply, or CMC ownership; purely commercial supply chain is usually not a CMC buyer.
+
+Reject only when the visible title is clearly outside all personas. If the title is plausibly relevant or ambiguous, keep it so enrichment can inspect richer evidence.
+
+BUYER PERSONAS:
+${personaBlock}
+
+CONTACTS:
+${contactBlock}
+
+Return ONLY valid JSON:
+[
+  {
+    "contact_index": 0,
+    "verdict": "keep" | "reject",
+    "confidence": 0.0,
+    "reason": "brief reason"
+  }
+]`;
+
+    try {
+      const completion = await completeLlm({
+        feature: 'intent_scoring',
+        prompt,
+        maxTokens: 1200,
+      });
+
+      await recordLlmUsageEvent({
+        userId: job.user_id,
+        provider: completion.provider,
+        feature: 'contact_persona_pre_enrichment_screen',
+        route: 'lib/data-acquisition/job-runner#screenPeopleAgainstPersonas',
+        model: completion.model,
+        usage: completion.usage,
+        metadata: {
+          job_id: job.id,
+          request_type: job.request_type,
+          batch_size: batch.length,
+          persona_count: personas.length,
+        },
+      });
+
+      await meter('llm_fit_screen', batch.length, {
+        ...metadata,
+        entity_type: 'contact',
+        reason: 'pre_enrichment_persona_screen',
+      }, completion.provider);
+
+      const verdicts = parseContactPersonaScreenResponse(completion.text);
+      const byIndex = new Map<number, ContactPersonaScreenVerdict>();
+      for (const verdict of verdicts) {
+        const index = typeof verdict.contact_index === 'number' ? verdict.contact_index : null;
+        if (index != null && index >= 0 && index < batch.length) {
+          byIndex.set(index, verdict);
+        }
+      }
+
+      for (let index = 0; index < batch.length; index += 1) {
+        const verdict = byIndex.get(index);
+        const decision = typeof verdict?.verdict === 'string' ? verdict.verdict.toLowerCase() : 'keep';
+        const confidence =
+          typeof verdict?.confidence === 'number' && Number.isFinite(verdict.confidence)
+            ? verdict.confidence
+            : 0;
+
+        if (decision === 'reject' && confidence >= 0.7) {
+          rejected += 1;
+          await meter('low_fit_company_rejected', 1, {
+            ...metadata,
+            entity_type: 'contact',
+            person: batch[index].full_name,
+            title: batch[index].job_title,
+            company: batch[index].company_name,
+            reason:
+              typeof verdict?.reason === 'string' && verdict.reason.trim()
+                ? verdict.reason.trim().slice(0, 500)
+                : 'Rejected by pre-enrichment persona screen',
+          }, 'arcova');
+          continue;
+        }
+
+        kept.push(batch[index]);
+      }
+    } catch (error) {
+      console.warn(
+        '[data-acquisition] contact persona screen failed closed:',
+        error instanceof Error ? error.message : error,
+      );
+      rejected += batch.length;
+      for (const person of batch) {
+        await meter('low_fit_company_rejected', 1, {
+          ...metadata,
+          entity_type: 'contact',
+          person: person.full_name,
+          title: person.job_title,
+          company: person.company_name,
+          reason: 'contact_persona_screen_unavailable',
+        }, 'arcova');
+      }
+    }
+  }
+
+  return { people: kept, rejected };
+}
+
+function personaScreenNote(requested: number, kept: number, rejected: number): string | null {
+  if (rejected <= 0) return null;
+  if (kept === 0) {
+    return `We found ${requested} possible contacts, but the persona-fit screen rejected all of them before paid enrichment.`;
+  }
+  return `We found ${requested} possible contacts and screened out ${rejected} before paid enrichment because their visible titles did not match the requested persona.`;
 }
 
 /**
@@ -782,6 +1205,8 @@ type ScreenCache = {
   store: (company: DiscoveredCompany, verdict: string) => Promise<void>;
 };
 
+const COMPANY_SCREEN_VERSION = 'icp_llm_screen_v3';
+
 /**
  * Loads the (user, ICP) screening history so every Apollo org is screened at
  * most once per ICP across all jobs: previously rejected orgs are skipped for
@@ -822,6 +1247,15 @@ async function loadScreenCache(
       if (company.source_id) byOrgId.set(company.source_id, verdict);
       const domainKey = normalizeKey(company.domain);
       if (domainKey) byDomain.set(domainKey, verdict);
+      const matchColumn = company.source_id ? 'apollo_org_id' : 'domain';
+      const matchValue = company.source_id || domainKey;
+      if (matchValue) {
+        await admin.from('screened_organizations')
+          .delete()
+          .eq('user_id', userId)
+          .eq('icp_id', icpId)
+          .eq(matchColumn, matchValue);
+      }
       const { error: insertError } = await admin.from('screened_organizations').insert({
         user_id: userId,
         icp_id: icpId,
@@ -829,9 +1263,8 @@ async function loadScreenCache(
         domain: domainKey || null,
         verdict,
       });
-      // Unique-violation (already cached by a concurrent job) and a missing
-      // table are both fine to ignore; the in-memory maps stay authoritative
-      // for this run.
+      // A concurrent job can still win the delete/insert race. The in-memory
+      // maps stay authoritative for this run.
       if (insertError && insertError.code !== '23505') {
         console.warn('[data-acquisition] screened_organizations insert failed:', insertError.message);
       }
@@ -892,6 +1325,73 @@ async function advanceQueueForUser(userId: string): Promise<void> {
   if (!nextId) return;
 
   await runDataAcquisitionJob(nextId);
+}
+
+/**
+ * Serverless recovery for the narrow failure window where the import pipeline
+ * completed its upload batch but the invocation ended before the acquisition
+ * job and credit transaction were finalized. Safe to call repeatedly.
+ */
+export async function finalizeCompletedDataAcquisitionJob(jobId: string): Promise<boolean> {
+  const admin = createAdminClient();
+  const { data: jobData, error: jobError } = await admin
+    .from('data_acquisition_jobs')
+    .select('*')
+    .eq('id', jobId)
+    .maybeSingle();
+  if (jobError || !jobData) return false;
+
+  const job = jobData as DataAcquisitionJob;
+  if (!ACTIVE_JOB_STATUSES.includes(job.status as (typeof ACTIVE_JOB_STATUSES)[number])) {
+    return false;
+  }
+  if (!job.upload_batch_id) return false;
+
+  const { data: batch } = await admin
+    .from('upload_batches')
+    .select('status')
+    .eq('id', job.upload_batch_id)
+    .maybeSingle<{ status: string | null }>();
+  if (batch?.status !== 'complete') return false;
+
+  const metadata = await buildCoverageWritebackMetadata(admin, job);
+  const completedAt = new Date().toISOString();
+  const { data: finalized, error: finalizeError } = await admin
+    .from('data_acquisition_jobs')
+    .update({
+      status: 'complete',
+      completed_at: completedAt,
+      metadata,
+      updated_at: completedAt,
+    })
+    .eq('id', job.id)
+    .in('status', [...ACTIVE_JOB_STATUSES])
+    .select('imported_contact_count');
+  if (finalizeError || (finalized ?? []).length === 0) return false;
+
+  const delivered = Math.max(
+    0,
+    Number((finalized?.[0] as { imported_contact_count?: number | null })?.imported_contact_count ?? 0),
+  );
+  const transactionId = typeof job.metadata?.customer_credit_transaction_id === 'string'
+    ? job.metadata.customer_credit_transaction_id
+    : null;
+  await settleCredits(transactionId, delivered * 4);
+
+  const usageOperationId = typeof job.metadata?.customer_usage_operation_id === 'string'
+    ? job.metadata.customer_usage_operation_id
+    : null;
+  if (job.org_id && usageOperationId) {
+    await settleUsage({
+      orgId: job.org_id,
+      action: 'net_new_enriched_lead',
+      operationKey: usageOperationId,
+      quantity: delivered,
+    });
+  }
+
+  await advanceQueueForUser(job.user_id);
+  return true;
 }
 
 // ─── Job execution ────────────────────────────────────────────────────────────
@@ -1057,6 +1557,16 @@ async function runContactsAtCompanyJob(
     throw new Error('contacts_at_company job is missing company context');
   }
 
+  const companyFit = await loadCompanyFitForPurchase(admin, job.user_id, companyContext.id, job.icp_id);
+  if (companyFit == null || companyFit < SOURCE_COMPANY_MIN) {
+    await completeJobWithoutPurchase(
+      admin,
+      job,
+      lowCompanyFitPurchaseNote(companyContext.company_name, companyFit),
+    );
+    return;
+  }
+
   // `target_contact_count` is NET-NEW for this path: the agent asks "how many
   // MORE contacts to add" and the confirm dialog shows the number as net-new
   // leads, so source exactly this many NEW people. Owned contacts are loaded
@@ -1114,12 +1624,22 @@ async function runContactsAtCompanyJob(
   const uniquePeople = await dedupAgainstWholeBook(admin, job, people, gap, meter, {
     companyId: companyContext.id,
   });
+  const personaScreen = await screenPeopleAgainstPersonas({
+    people: uniquePeople,
+    personas,
+    job,
+    meter,
+    metadata: { companyId: companyContext.id },
+  });
 
   const capKind = stoppedByGuard ? guard.capReached() : null;
-  const note = capKind ? shortfallNote(capKind, uniquePeople.length, gap, 'contacts') : null;
+  const note =
+    capKind
+      ? shortfallNote(capKind, personaScreen.people.length, gap, 'contacts')
+      : personaScreenNote(uniquePeople.length, personaScreen.people.length, personaScreen.rejected);
 
   await updateJob(job.id, { status: 'processing' });
-  await ingestPeopleAndRunImportPipeline(admin, job, uniquePeople, { companyId: companyContext.id }, meter, note);
+  await ingestPeopleAndRunImportPipeline(admin, job, personaScreen.people, { companyId: companyContext.id }, meter, note);
 }
 
 // ─── more_contacts_at_accounts (and legacy better_contacts rows) ─────────────
@@ -1145,9 +1665,12 @@ async function runContactsAtAccountsJob(
   );
 
   if (prioritizedRows.length === 0) {
-    throw new Error(
-      'No ICP-matched accounts with a usable domain for Apollo search. Add or enrich company domains first.',
+    await completeJobWithoutPurchase(
+      admin,
+      job,
+      `We did not source contacts because this ICP has no accounts at or above the ${Math.round(SOURCE_COMPANY_MIN * 100)}% company-fit purchase threshold.`,
     );
+    return;
   }
 
   const owned = await loadOwnedContactsForCompanies(
@@ -1219,12 +1742,22 @@ async function runContactsAtAccountsJob(
   });
 
   const uniquePeople = await dedupAgainstWholeBook(admin, job, people, requestedTotal, meter, { requestType });
+  const personaScreen = await screenPeopleAgainstPersonas({
+    people: uniquePeople,
+    personas,
+    job,
+    meter,
+    metadata: { requestType },
+  });
 
   const capKind = stoppedByGuard ? guard.capReached() : null;
-  const note = capKind ? shortfallNote(capKind, uniquePeople.length, requestedTotal, 'contacts') : null;
+  const note =
+    capKind
+      ? shortfallNote(capKind, personaScreen.people.length, requestedTotal, 'contacts')
+      : personaScreenNote(uniquePeople.length, personaScreen.people.length, personaScreen.rejected);
 
   await updateJob(job.id, { status: 'processing' });
-  await ingestPeopleAndRunImportPipeline(admin, job, uniquePeople, { requestType }, meter, note);
+  await ingestPeopleAndRunImportPipeline(admin, job, personaScreen.people, { requestType }, meter, note);
 }
 
 // ─── expand_companies ────────────────────────────────────────────────────────
@@ -1242,6 +1775,13 @@ async function runExpandCompaniesJob(
   const maxScreenedCompanies = Math.max(
     targetCompanyCount,
     job.max_screened_companies || targetCompanyCount * 6,
+  );
+  // Company search is cheap; matching-person discovery is the scarce step.
+  // Keep a small bench of qualified companies so a valid but contact-poor
+  // account does not turn the entire purchase into an empty/refunded result.
+  const discoveryCompanyTarget = Math.min(
+    maxScreenedCompanies,
+    Math.max(targetCompanyCount, targetCompanyCount * 3),
   );
 
   // Owned-company keys, loaded once. 10k+ entries are fine in memory; checking
@@ -1265,7 +1805,6 @@ async function runExpandCompaniesJob(
   );
 
   const screenCache = await loadScreenCache(admin, job.user_id, job.icp_id);
-  const icpKeywords = icpKeywordCorpus(icp);
   let screenedCount = 0;
   const acceptedCompanyKeys = new Set<string>();
 
@@ -1286,7 +1825,7 @@ async function runExpandCompaniesJob(
     }
 
     const cachedVerdict = screenCache.lookup(company);
-    if (cachedVerdict === 'qualified') {
+    if (cachedVerdict === `qualified:${COMPANY_SCREEN_VERSION}`) {
       keys.forEach((key) => acceptedCompanyKeys.add(key));
       await meter('qualified_company', 1, {
         company: company.name,
@@ -1296,16 +1835,13 @@ async function runExpandCompaniesJob(
       });
       return 'qualified' as const;
     }
-    if (cachedVerdict) return 'skip' as const; // previously rejected for this ICP, free
-
-    const passes = apolloOrganizationMatchesIcpKeywords(company.raw, icpKeywords);
-    await screenCache.store(company, passes ? 'qualified' : 'rejected:keyword_mismatch');
-    if (!passes) {
+    if (cachedVerdict?.startsWith(`rejected:${COMPANY_SCREEN_VERSION}:`)) {
       return 'skip' as const;
     }
 
-    if (screenedCount >= maxScreenedCompanies) return 'skip' as const;
+    if (provider === 'apollo' && screenedCount >= maxScreenedCompanies) return 'skip' as const;
     screenedCount += 1;
+
     if (provider === 'apollo') {
       await meter('apollo_company_search_result', 1, {
         company: company.name,
@@ -1323,36 +1859,104 @@ async function runExpandCompaniesJob(
       }, 'anthropic_search');
     }
 
+    let evidence = company.raw;
+    if (provider === 'apollo' && company.domain) {
+      try {
+        const enriched = await enrichOrganizationWithApollo({
+          company_domain: company.domain,
+          company_name: company.name,
+          company_linkedin_url: company.linkedin_url,
+        });
+        await meter('apollo_company_enrichment', 1, {
+          company: company.name,
+          domain: company.domain,
+          reason: 'icp_screen_evidence',
+        });
+        evidence = {
+          ...evidence,
+          ...(enriched.raw_company || {}),
+          name: enriched.company_name || evidence.name,
+          short_description: enriched.company_description || evidence.short_description,
+          industry: enriched.company_industry || evidence.industry,
+        };
+      } catch (error) {
+        console.warn(
+          '[data-acquisition] Apollo company screen enrichment failed:',
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
+
+    const screen = await screenCompanyAgainstIcp({
+      evidence,
+      company,
+      icp,
+      job,
+      meter,
+      metadata: {
+        recipe: recipe.name,
+        provider,
+      },
+    });
+
+    await screenCache.store(
+      company,
+      screen.passes
+        ? `qualified:${COMPANY_SCREEN_VERSION}`
+        : `rejected:${COMPANY_SCREEN_VERSION}:${screen.reason}`,
+    );
+    if (!screen.passes) {
+      await meter('low_fit_company_rejected', 1, {
+        company: company.name,
+        domain: company.domain,
+        provider,
+        recipe: recipe.name,
+        verdict: screen.verdict,
+        score: screen.score,
+        confidence: screen.confidence,
+        reason: screen.reason,
+      }, 'arcova');
+      return 'skip' as const;
+    }
+
     keys.forEach((key) => acceptedCompanyKeys.add(key));
-    await meter('qualified_company', 1, { company: company.name, domain: company.domain, provider });
+    await meter('qualified_company', 1, {
+      company: company.name,
+      domain: company.domain,
+      provider,
+      score: screen.score,
+      confidence: screen.confidence,
+      reason: screen.reason,
+    });
     return 'qualified' as const;
   };
 
   const discovery = await discoverApolloCompanies({
     recipes: companyRecipes,
-    targetCompanyCount,
+    targetCompanyCount: discoveryCompanyTarget,
     maxPagesPerRecipe: 20,
     shouldContinue: async () => guard.capReached() === null && screenedCount < maxScreenedCompanies,
-    // Evaluation order per org: (1) owned/selected dedup, free; (2) screened
-    // cache, free; (3) cheap keyword screen, free; (4) metered qualified screen.
+    // Evaluation order per org: (1) owned/selected dedup, free; (2) versioned
+    // screen cache, free; (3) metered evidence screen with Apollo enrichment
+    // when the search row is too sparse to make a defensible decision.
     evaluate: async (company, recipe) => evaluateCompany(company, recipe, 'apollo'),
   });
 
   const qualifiedCompanies = [...discovery.companies];
   if (
-    qualifiedCompanies.length < targetCompanyCount &&
+    qualifiedCompanies.length < discoveryCompanyTarget &&
     guard.capReached() === null &&
     process.env.ANTHROPIC_API_KEY
   ) {
-    const fallbackTarget = targetCompanyCount - qualifiedCompanies.length;
+    const fallbackTarget = discoveryCompanyTarget - qualifiedCompanies.length;
     try {
       const fallbackCompanies = await discoverCompaniesWithWebSearch({
         icp,
         targetCompanyCount: fallbackTarget,
       });
       for (const company of fallbackCompanies) {
-        if (qualifiedCompanies.length >= targetCompanyCount) break;
-        if (guard.capReached() !== null || screenedCount >= maxScreenedCompanies) break;
+        if (qualifiedCompanies.length >= discoveryCompanyTarget) break;
+        if (guard.capReached() !== null) break;
         const verdict = await evaluateCompany(company, { name: 'web_search_fallback' }, 'web_search');
         if (verdict === 'qualified') qualifiedCompanies.push(company);
       }
@@ -1386,7 +1990,7 @@ async function runExpandCompaniesJob(
       return;
     }
     throw new Error(
-      'No new companies passed deduplication and ICP keyword screening. Widen the ICP or try again later.',
+      'No new companies passed deduplication and ICP evidence screening. Widen the ICP or try again later.',
     );
   }
 
@@ -1397,7 +2001,7 @@ async function runExpandCompaniesJob(
     job.target_contact_count || qualifiedCompanies.length * DEFAULT_CONTACTS_PER_COMPANY;
   const contactsPerCompany = Math.max(
     1,
-    Math.ceil(targetContactCount / Math.max(1, qualifiedCompanies.length)),
+    Math.ceil(targetContactCount / targetCompanyCount),
   );
 
   // These companies are new by construction (owned dupes were skipped above),
@@ -1417,15 +2021,24 @@ async function runExpandCompaniesJob(
   });
 
   const uniquePeople = await dedupAgainstWholeBook(admin, job, people, targetContactCount, meter, {});
+  const personaScreen = await screenPeopleAgainstPersonas({
+    people: uniquePeople,
+    personas,
+    job,
+    meter,
+    metadata: {},
+  });
 
   let note: string | null = null;
   if (companyPhaseCapKind && qualifiedCompanies.length < targetCompanyCount) {
     note = shortfallNote(companyPhaseCapKind, qualifiedCompanies.length, targetCompanyCount, 'companies');
   } else if (peoplePhaseCapped && guard.capReached()) {
-    note = shortfallNote(guard.capReached()!, uniquePeople.length, targetContactCount, 'contacts');
+    note = shortfallNote(guard.capReached()!, personaScreen.people.length, targetContactCount, 'contacts');
+  } else {
+    note = personaScreenNote(uniquePeople.length, personaScreen.people.length, personaScreen.rejected);
   }
 
-  await ingestPeopleAndRunImportPipeline(admin, job, uniquePeople, {}, meter, note);
+  await ingestPeopleAndRunImportPipeline(admin, job, personaScreen.people, {}, meter, note);
 }
 
 // ─── Whole-book post-fetch dedup (second line of defense) ────────────────────

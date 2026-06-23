@@ -5,6 +5,7 @@ import {
   normalizeSignalSourceEvent,
   recomputeAccountReadiness,
 } from '@/lib/signals/readiness-service';
+import { hasVerifiedCompanyMention } from '@/lib/companies/mention-provenance';
 import type { SignalKey } from '@/lib/signals/readiness-types';
 
 type CompanyRow = {
@@ -50,6 +51,7 @@ type CtStudy = {
   sourceUrl: string;
   locationsCount: number | null;
   overallOfficials: Array<{ name: string; role: string; affiliation: string }>;
+  mentionedCompanyMatches: unknown;
 };
 
 const SOURCE = 'clinicaltrials_gov';
@@ -135,7 +137,7 @@ async function fetchStudiesForCompany(
   // updated 6 months ago isn't useful intent intel.
   const { data, error } = await admin
     .from('clinical_trials')
-    .select('nct_id, brief_title, overall_status, phases, conditions, lead_sponsor, collaborators, last_update_post_date, locations_count, overall_officials')
+    .select('nct_id, brief_title, overall_status, phases, conditions, lead_sponsor, collaborators, last_update_post_date, locations_count, overall_officials, mentioned_company_matches')
     .contains('mentioned_company_ids', [companyId])
     .gte('last_update_post_date', cutoffIso)
     .order('last_update_post_date', { ascending: false })
@@ -160,8 +162,11 @@ async function fetchStudiesForCompany(
       overallOfficials: Array.isArray(row.overall_officials)
         ? (row.overall_officials as Array<{ name: string; role: string; affiliation: string }>)
         : [],
+      mentionedCompanyMatches: row.mentioned_company_matches,
     };
-  }).filter((s): s is CtStudy => Boolean(s.nctId));
+  })
+    .filter((s): s is CtStudy => Boolean(s.nctId))
+    .filter((s) => hasVerifiedCompanyMention(s.mentionedCompanyMatches, companyId));
 }
 
 async function sourceEventExists(
@@ -251,7 +256,10 @@ async function emitCompanySignal(
       conditions: input.study.conditions,
       phases: input.study.phases,
       lead_sponsor: input.study.leadSponsor,
+      collaborators: input.study.collaborators,
       locations_count: input.study.locationsCount,
+      overall_officials: input.study.overallOfficials,
+      official_affiliations: input.study.overallOfficials.map((official) => official.affiliation).filter(Boolean),
       ...input.metadata,
     },
   });
@@ -279,7 +287,10 @@ async function emitCompanySignal(
         conditions: input.study.conditions,
         phases: input.study.phases,
         lead_sponsor: input.study.leadSponsor,
+        collaborators: input.study.collaborators,
         locations_count: input.study.locationsCount,
+        overall_officials: input.study.overallOfficials,
+        official_affiliations: input.study.overallOfficials.map((official) => official.affiliation).filter(Boolean),
         ...input.metadata,
       },
     },
@@ -446,10 +457,6 @@ export async function runClinicalTrialsMonitor(
 
     try {
       const studies = await fetchStudiesForCompany(admin, row.id, cutoffIso, 100);
-      // The resolver vetted the company match at ingest. No secondary
-      // tokens-based filter needed — that would over-reject legitimate alias
-      // matches (e.g. a Genentech study correctly resolved to canonical Roche
-      // would fail a "does 'roche' appear in 'genentech'?" check).
       const matching = studies;
       let emittedAny = false;
 

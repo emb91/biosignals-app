@@ -20,6 +20,9 @@ for (const cron of config.crons ?? []) {
   if (!source.includes('CRON_SECRET')) {
     failures.push(`Scheduled route does not check CRON_SECRET: ${cron.path}`);
   }
+  if (/if\s*\(\s*!\s*(?:expected|cronSecret|process\.env\.CRON_SECRET)\s*\)\s*return\s+true/.test(source)) {
+    failures.push(`Scheduled route fails open when CRON_SECRET is unset: ${cron.path}`);
+  }
   if (!source.includes('observeCron')) {
     failures.push(`Scheduled route is missing run observability: ${cron.path}`);
   }

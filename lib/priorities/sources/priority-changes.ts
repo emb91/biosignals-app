@@ -16,6 +16,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { isEligibleForPriorityNudge } from '@/lib/effective-priority';
 import { ROUTES } from '@/lib/routes';
 import type { TodayPriority } from '@/lib/priorities/types';
 
@@ -36,6 +37,15 @@ function preview(labels: string[], max = 2): string {
   const shown = labels.slice(0, max);
   const overflow = labels.length - shown.length;
   return shown.join(', ') + (overflow > 0 ? ` +${overflow}` : '');
+}
+
+function compactChangeDetail(kind: 'contact' | 'account', labels: string[], count: number): string {
+  const noun = kind === 'contact' ? 'contact' : 'account';
+  const names = labels.map((label) => label.replace(/\s+\([^)]*\)$/, ''));
+  const namesPreview = preview(names);
+  return namesPreview
+    ? `${namesPreview} changed priority.`
+    : `${count} ${noun}${count === 1 ? '' : 's'} changed priority.`;
 }
 
 type ChangedSnap = {
@@ -87,13 +97,33 @@ export async function computeContactPriorityChanges(
   if (changed.length === 0) return null;
 
   const ids = [...new Set(changed.map((c) => c.entityId))];
-  const { data: contacts } = await supabase
+  const { data: contacts, error: contactsError } = await supabase
     .from('contacts')
-    .select('id, full_name, first_name, last_name')
+    .select('id, full_name, first_name, last_name, crm_is_suppressed')
     .eq('user_id', userId)
     .in('id', ids);
+  // Suppression is a safety/eligibility gate. If we cannot verify it, do not
+  // fail open and surface a potentially closed-won/lost contact.
+  if (contactsError) return null;
+
+  const contactRows = (contacts ?? []) as Array<{
+    id: string;
+    full_name: string | null;
+    first_name: string | null;
+    last_name: string | null;
+    crm_is_suppressed: boolean | null;
+  }>;
+  // Drop CRM-suppressed contacts (closed-won/lost in cooldown). Their DISPLAYED
+  // priority is pinned low by read-time suppression, so the raw snapshot score
+  // moving is invisible to the user — nudging "re-check them" is just confusing.
+  const contactById = new Map(contactRows.map((c) => [c.id, c] as const));
+  const visible = changed.filter((c) =>
+    isEligibleForPriorityNudge(contactById.get(c.entityId)?.crm_is_suppressed),
+  );
+  if (visible.length === 0) return null;
+
   const nameById = new Map(
-    ((contacts ?? []) as Array<{ id: string; full_name: string | null; first_name: string | null; last_name: string | null }>)
+    contactRows
       .map((c) => [
         c.id,
         (c.full_name && c.full_name.trim()) || [c.first_name, c.last_name].filter(Boolean).join(' ').trim() || '',
@@ -101,26 +131,25 @@ export async function computeContactPriorityChanges(
       .filter(([, name]) => Boolean(name)),
   );
 
-  const labels = changed
+  const labels = visible
     .map((c) => {
       const name = nameById.get(c.entityId);
       return name ? moveLabel(name, c.prev_priority_score, c.priority_score) : null;
     })
     .filter((v): v is string => Boolean(v));
 
-  const count = changed.length;
-  const topId = changed[0]?.entityId ?? null;
+  const count = visible.length;
+  const topId = visible[0]?.entityId ?? null;
   return {
     source: 'contact-priority-changes',
     groupKey: 'default',
     severity: 'medium',
-    title: count === 1 ? "A contact's priority changed" : `${count} contacts changed priority`,
-    detail: preview(labels)
-      ? `${preview(labels)} — their priority score moved, so re-check them.`
-      : `${count} contacts had their priority score move recently.`,
+    title: count === 1 ? 'Review priority change' : `Review ${count} priority changes`,
+    detail: compactChangeDetail('contact', labels, count),
     href: topId ? `${ROUTES.leads.contacts}?lead=${encodeURIComponent(topId)}` : ROUTES.leads.contacts,
     cta: 'Review',
     count,
+    meta: { contactIds: visible.map((c) => c.entityId) },
   };
 }
 
@@ -134,35 +163,76 @@ export async function computeAccountPriorityChanges(
   if (changed.length === 0) return null;
 
   const ids = [...new Set(changed.map((c) => c.entityId))];
-  const { data: companies } = await supabase
-    .from('companies')
-    .select('id, company_name')
-    .in('id', ids);
+  // Names live on `companies`; CRM suppression is per-user on `user_companies`.
+  const [
+    { data: companies, error: companiesError },
+    { data: userCompanies, error: userCompaniesError },
+  ] = await Promise.all([
+    supabase.from('companies').select('id, company_name').in('id', ids),
+    supabase
+      .from('user_companies')
+      .select('company_id, crm_is_suppressed')
+      .eq('user_id', userId)
+      .in('company_id', ids),
+  ]);
+  // As above, fail closed if either identity or per-user suppression state
+  // cannot be verified. A transient lookup error must not resurrect bad nudges.
+  if (companiesError || userCompaniesError) return null;
+
+  // Drop CRM-suppressed accounts (closed-won/lost in cooldown) — same reason as
+  // contacts: their displayed priority is pinned low, so a raw-score move is a
+  // confusing nudge.
+  const companyIds = new Set(
+    ((companies ?? []) as Array<{ id: string; company_name: string | null }>).map((c) => c.id),
+  );
+  const suppressionByCompanyId = new Map(
+    ((userCompanies ?? []) as Array<{ company_id: string; crm_is_suppressed: boolean | null }>).map(
+      (c) => [c.company_id, c.crm_is_suppressed] as const,
+    ),
+  );
+  const visible = changed.filter(
+    (c) =>
+      companyIds.has(c.entityId) &&
+      isEligibleForPriorityNudge(suppressionByCompanyId.get(c.entityId)),
+  );
+  if (visible.length === 0) return null;
+
   const nameById = new Map(
     ((companies ?? []) as Array<{ id: string; company_name: string | null }>)
       .filter((c) => c.company_name?.trim())
       .map((c) => [c.id, c.company_name!.trim()] as const),
   );
 
-  const labels = changed
+  const labels = visible
     .map((c) => {
       const name = nameById.get(c.entityId);
       return name ? moveLabel(name, c.prev_priority_score, c.priority_score) : null;
     })
     .filter((v): v is string => Boolean(v));
 
-  const count = changed.length;
-  const topId = changed[0]?.entityId ?? null;
+  const count = visible.length;
+  const topId = visible[0]?.entityId ?? null;
+  const accountIds = visible.map((c) => c.entityId);
+  const href = (() => {
+    if (accountIds.length > 1) {
+      const params = new URLSearchParams({
+        accountIds: accountIds.join(','),
+        focus: 'priority_changes',
+      });
+      return `${ROUTES.accounts}?${params.toString()}`;
+    }
+    return topId ? `${ROUTES.accounts}?companyId=${encodeURIComponent(topId)}` : ROUTES.accounts;
+  })();
+
   return {
     source: 'account-priority-changes',
     groupKey: 'default',
     severity: 'medium',
-    title: count === 1 ? "An account's priority changed" : `${count} accounts changed priority`,
-    detail: preview(labels)
-      ? `${preview(labels)} — their priority score moved, so re-check them.`
-      : `${count} accounts had their priority score move recently.`,
-    href: topId ? `${ROUTES.accounts}?companyId=${encodeURIComponent(topId)}` : ROUTES.accounts,
+    title: count === 1 ? 'Review priority change' : `Review ${count} priority changes`,
+    detail: compactChangeDetail('account', labels, count),
+    href,
     cta: 'Review',
     count,
+    meta: { accountIds },
   };
 }

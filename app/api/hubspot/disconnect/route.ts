@@ -1,7 +1,8 @@
-import { NextResponse } from 'next/server';
+import { after, NextResponse } from 'next/server';
 import { getOrgContext, canEditOrgSetup } from '@/lib/org-context';
 import { resolveOrgNangoConnectionId } from '@/lib/hubspot';
 import { getNangoClient, HUBSPOT_INTEGRATION_ID } from '@/lib/nango';
+import { getPostHogClient } from '@/lib/posthog-server';
 
 export async function DELETE() {
   // Disconnecting the org's CRM is owner/admin only (one connection per org).
@@ -22,6 +23,13 @@ export async function DELETE() {
 
   const del = ctx.supabase.from('nango_connections').delete().eq('integration_id', HUBSPOT_INTEGRATION_ID);
   await (ctx.orgId ? del.eq('org_id', ctx.orgId) : del.eq('user_id', ctx.user.id));
+
+  getPostHogClient().capture({
+    distinctId: ctx.user.id,
+    event: 'hubspot_disconnected',
+    properties: { integration: HUBSPOT_INTEGRATION_ID },
+  });
+  after(() => getPostHogClient().flush());
 
   return NextResponse.json({ ok: true });
 }

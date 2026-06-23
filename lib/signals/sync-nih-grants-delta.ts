@@ -13,7 +13,7 @@
  */
 import type { createAdminClient } from '@/lib/supabase-admin';
 import { normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
-import { resolveCompanyMentions } from '@/lib/companies/resolve-mentions';
+import { buildCompanyMentionMatches, verifiedMentionCompanyIds } from '@/lib/companies/mention-provenance';
 
 const NIH_REPORTER_ENDPOINT = 'https://api.reporter.nih.gov/v2/projects/search';
 
@@ -227,6 +227,7 @@ type GrantUpsertRow = {
   extras: Record<string, unknown> | null;
   last_seen_at: string;
   mentioned_company_ids?: string[];
+  mentioned_company_matches?: Awaited<ReturnType<typeof buildCompanyMentionMatches>>;
 };
 
 function awardToRow(award: ReporterAward, startedAtIso: string): GrantUpsertRow | null {
@@ -315,19 +316,23 @@ export async function syncNihGrantsDelta(input: SyncNihGrantsDeltaInput): Promis
       if (row) rows.push(row);
     }
 
-    // Resolve org_name → canonical company ids in one batched call so signal
-    // monitors can query mentioned_company_ids instead of fuzzy ILIKE.
-    const uniqueOrgs = [...new Set(rows.map((r) => r.org_name).filter((n): n is string => Boolean(n)))];
-    if (uniqueOrgs.length > 0) {
+    // Resolve org_name with provenance so signal monitors can require
+    // verified source evidence instead of fuzzy ILIKE.
+    if (rows.some((r) => Boolean(r.org_name))) {
       try {
-        const resolved = await resolveCompanyMentions(admin, uniqueOrgs);
         for (const row of rows) {
-          const id = row.org_name ? resolved.get(row.org_name)?.canonicalId : null;
-          row.mentioned_company_ids = id ? [id] : [];
+          const matches = await buildCompanyMentionMatches(admin, [
+            { sourceText: row.org_name, sourceField: 'org_name' },
+          ]);
+          row.mentioned_company_matches = matches;
+          row.mentioned_company_ids = verifiedMentionCompanyIds(matches);
         }
       } catch (e) {
         console.error('[sync-nih-grants] resolver failed:', e);
-        for (const row of rows) row.mentioned_company_ids = [];
+        for (const row of rows) {
+          row.mentioned_company_matches = [];
+          row.mentioned_company_ids = [];
+        }
       }
     }
 

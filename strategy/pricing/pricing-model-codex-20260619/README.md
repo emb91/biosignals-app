@@ -5,9 +5,10 @@ This folder consolidates the commercial model, credit-system design, cost analys
 ## Source-of-truth order
 
 1. `ARCOVA_PRICING_AND_CREDIT_SPEC.md` — commercial plans, credits, caps, action prices, and customer-facing rules.
-2. `lib/billing/config.ts` — live application configuration. This remains in the application codebase.
-3. `BILLING_PLAN.md` — implementation status, Stripe setup, rollout, and enforcement plan.
-4. `PRICING_AND_COST_BASIS.md` — COGS, margin policy, and pricing rationale.
+2. `PACKAGE_COMPARISON.md` — compact package comparison for Free, Starter, Growth, and Custom.
+3. `lib/billing/config.ts` — live application configuration. This remains in the application codebase.
+4. `BILLING_PLAN.md` — implementation status, Stripe setup, rollout, and enforcement plan.
+5. `PRICING_AND_COST_BASIS.md` — COGS, margin policy, and pricing rationale.
 
 ## Supporting analysis and tools
 

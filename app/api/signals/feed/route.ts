@@ -50,6 +50,17 @@ type SignalFeedItem = {
   recentPatents?: RecentPatent[];
 };
 
+const HIDDEN_CRM_SIGNAL_SOURCES = new Set(['hubspot_crm_contacts', 'hubspot_crm_deals']);
+const HIDDEN_CRM_SIGNAL_KEYS = new Set([
+  'recently_changed_company',
+  'recently_promoted',
+  'new_internal_role',
+  'title_change',
+  'new_contact_added_in_crm',
+  'open_opportunity_in_crm',
+  'closed_lost_in_crm',
+]);
+
 function normalizeString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
@@ -226,7 +237,13 @@ export async function GET(request: Request) {
     const readinessByContactId = new Map((contactReadinessResult.data || []).map((row: any) => [row.contact_id, row]));
     const reasonByCompanyId = new Map((reasonsResult.data || []).map((row: any) => [row.company_id, row]));
 
-    const mapped: SignalFeedItem[] = activeRows.map((row: any) => {
+    const mapped: SignalFeedItem[] = activeRows.flatMap((row: any) => {
+      const source = normalizeString(row.source_event?.source) ?? 'unknown';
+      const signalKey = String(row.signal_key);
+      if (HIDDEN_CRM_SIGNAL_SOURCES.has(source) && HIDDEN_CRM_SIGNAL_KEYS.has(signalKey)) {
+        return [];
+      }
+
       const companyId = normalizeString(row.company_id);
       const contactId = normalizeString(row.contact_id);
       const readiness =
@@ -236,9 +253,9 @@ export async function GET(request: Request) {
             ? readinessByCompanyId.get(companyId) ?? null
             : null;
       const reason = companyId ? reasonByCompanyId.get(companyId) ?? null : null;
-      return {
+      return [{
         id: String(row.id),
-        signalKey: String(row.signal_key),
+        signalKey,
         signalScope: row.signal_scope === 'contact' ? 'contact' : 'company',
         companyId,
         companyName: normalizeString(row.company?.company_name),
@@ -254,7 +271,7 @@ export async function GET(request: Request) {
         eventAt: normalizeString(row.event_at),
         observedAt: normalizeString(row.observed_at) ?? new Date().toISOString(),
         evidenceExcerpt: normalizeString(row.evidence_excerpt),
-        source: normalizeString(row.source_event?.source) ?? 'unknown',
+        source,
         sourceEventType: normalizeString(row.source_event?.source_event_type) ?? String(row.signal_key),
         sourceUrl: normalizeString(row.source_event?.source_url),
         sourceTitle: normalizeString(row.source_event?.title),
@@ -287,7 +304,7 @@ export async function GET(request: Request) {
               suggestedAngle: normalizeString(reason.suggested_angle),
             }
           : null,
-      };
+      }];
     });
 
     // Attach the individual patents behind each "Patent Portfolio Surge" so the

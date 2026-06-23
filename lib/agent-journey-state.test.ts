@@ -95,6 +95,39 @@ test('setup complete with no imports points to Import', () => {
   assert.equal(state.recommended_next_action?.href, ROUTES.import);
 });
 
+test('existing accounts without import history still recommend account coverage work', () => {
+  const state = buildWorkspaceJourneyState(baseInput({
+    import_state: {
+      has_imported_contacts: false,
+      recent_batches: [],
+      hubspot_last_job: null,
+    },
+    leads: {
+      total: 0,
+      status_counts: { ready: 0, monitor: 0, source: 0, deprioritized: 0 },
+      source_contacts_at_high_fit_companies: [],
+    },
+    accounts: {
+      total: 1,
+      coverage: { covered: 0, opportunity: 1, weak: 0, unscored: 0 },
+      high_fit_poor_coverage_examples: [
+        {
+          id: 'company-1',
+          name: 'PhenoVista',
+          icpId: 'icp-1',
+          icp: 'ICP 1',
+          contact_count: 0,
+          best_contact_fit: null,
+          issue: 'no contacts',
+        },
+      ],
+    },
+  }));
+
+  assert.equal(state.journey_stage, 'accounts_coverage');
+  assert.equal(state.recommended_next_action?.mode, 'contacts_at_companies');
+});
+
 test('source contacts recommend contact sourcing in Data', () => {
   const state = buildWorkspaceJourneyState(baseInput({
     leads: {

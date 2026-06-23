@@ -1,5 +1,5 @@
 export const metadata = {
-  title: "Terms of Service | Arcova",
+  title: "Arcova | Terms of Service",
   description: "Terms governing use of the Arcova revenue intelligence platform.",
 }
 
@@ -12,8 +12,8 @@ export default function TermsPage() {
 
         <Section title="1. Agreement">
           <p>
-            These Terms govern access to Arcova’s websites and AI-native revenue intelligence
-            platform (the “Services”), operated by Arcova Consulting Limited, a New Zealand
+            These Terms govern access to Arcova’s websites and revenue intelligence platform
+            (the “Services”), operated by Arcova Consulting Limited, a New Zealand
             company. By using the Services, you agree to these Terms. If you use Arcova for an
             organization, you confirm that you can bind that organization.
           </p>

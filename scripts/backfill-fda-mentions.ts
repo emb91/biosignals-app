@@ -9,7 +9,7 @@
  *   npx tsx --env-file=.env.local scripts/backfill-fda-mentions.ts --force
  */
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { resolveCompanyMentions } from '@/lib/companies/resolve-mentions';
+import { buildCompanyMentionMatches, verifiedMentionCompanyIds } from '@/lib/companies/mention-provenance';
 
 const BATCH_SIZE = 200;
 
@@ -31,7 +31,7 @@ async function backfillTable(admin: SupabaseClient, spec: TableSpec, force: bool
   if (force) {
     const { error: clearErr } = await admin
       .from(spec.table)
-      .update({ mentioned_company_ids: null })
+      .update({ mentioned_company_ids: null, mentioned_company_matches: [] })
       .not('mentioned_company_ids', 'is', null);
     if (clearErr) throw new Error(`${spec.table} force-clear: ${clearErr.message}`);
   }
@@ -63,28 +63,22 @@ async function backfillTable(admin: SupabaseClient, spec: TableSpec, force: bool
     if (!page || page.length === 0) break;
     const newRows = page as unknown as Record<string, unknown>[];
 
-    const uniqueNames = [
-      ...new Set(
-        newRows
-          .map((r) => r[spec.nameField])
-          .filter((n): n is string => typeof n === 'string' && Boolean(n)),
-      ),
-    ];
-
-    let resolved: Map<string, { canonicalId: string | null }>;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      resolved = await resolveCompanyMentions(admin as any, uniqueNames);
-    } catch (e) {
-      console.error(`  [${spec.table}] resolver failed:`, e instanceof Error ? e.message : e);
-      resolved = new Map();
-    }
-
     for (const row of newRows) {
       const name = row[spec.nameField] as string | null;
-      const id = name ? resolved.get(name)?.canonicalId : null;
-      const ids = id ? [id] : [];
-      let updateQ = admin.from(spec.table).update({ mentioned_company_ids: ids });
+      let matches: Awaited<ReturnType<typeof buildCompanyMentionMatches>> = [];
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        matches = await buildCompanyMentionMatches(admin as any, [
+          { sourceText: name, sourceField: spec.nameField },
+        ]);
+      } catch (e) {
+        console.error(`  [${spec.table}] resolver failed:`, e instanceof Error ? e.message : e);
+      }
+      const ids = verifiedMentionCompanyIds(matches);
+      let updateQ = admin.from(spec.table).update({
+        mentioned_company_ids: ids,
+        mentioned_company_matches: matches,
+      });
       spec.pkCols.forEach((c) => {
         updateQ = updateQ.eq(c, row[c]);
       });

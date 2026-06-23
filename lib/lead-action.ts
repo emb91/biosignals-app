@@ -4,6 +4,19 @@
  * Keeps Leads UI, CSV export, HubSpot push, and import summary aligned.
  */
 
+import {
+  CRM_SUPPRESSION_DAYS,
+  effectiveReadiness,
+  isCrmSuppressed,
+  normalizeScore01,
+} from '@/lib/effective-priority';
+
+export {
+  CRM_SUPPRESSION_DAYS,
+  effectiveReadiness,
+  isCrmSuppressed,
+} from '@/lib/effective-priority';
+
 export type LeadAction =
   | 'source_contact'
   | 'reach_out'
@@ -21,7 +34,7 @@ export type LeadAction =
  * Used by applyOutreachOverride to bump the score-driven action up the
  * outreach funnel once the user has actually staged or sent something.
  */
-export type SequenceDispatchStatus = 'draft' | 'sent' | 'replied' | 'failed' | null;
+export type SequenceDispatchStatus = 'generating' | 'draft' | 'sent' | 'replied' | 'failed' | null;
 
 /**
  * The single "high" threshold (0–1) for fit and readiness. The action model is
@@ -50,33 +63,6 @@ export const REACH_OUT_READINESS_MIN = HIGH_SCORE;
  * around on a trigger event sooner than a fresh customer needs a renewal motion.
  * MVP values — tune as you learn. See the CRM suppression policy memory.
  */
-export const CRM_SUPPRESSION_DAYS = { won: 365, lost: 180 } as const;
-
-/**
- * Is a CRM-resolved (won/lost) contact still inside its suppression cooldown?
- *
- * `leadState` — HubSpot lead state (only 'customer' / 'dormant' suppress).
- * `closedAtIso` — when the deal closed; we use the deal's last-modified date as
- *   a proxy (hubspot_latest_deal_updated_at). Unknown date on a won/lost contact
- *   → treated as suppressed (safe default: don't reach out to a known closed deal
- *   just because we lost the timestamp).
- * `asOfMs` — current time in ms (injectable for tests; defaults to now).
- *
- * Returns false for any non-closed state, so normal fit/readiness logic applies.
- */
-export function isCrmSuppressed(
-  leadState: 'active' | 'customer' | 'dormant' | 'context_only' | 'none' | null | undefined,
-  closedAtIso: string | null | undefined,
-  asOfMs: number = Date.now(),
-): boolean {
-  if (leadState !== 'customer' && leadState !== 'dormant') return false;
-  const windowDays = leadState === 'customer' ? CRM_SUPPRESSION_DAYS.won : CRM_SUPPRESSION_DAYS.lost;
-  const closedMs = closedAtIso ? new Date(closedAtIso).getTime() : null;
-  if (closedMs == null || !Number.isFinite(closedMs)) return true;
-  const ageDays = (asOfMs - closedMs) / 86_400_000;
-  return ageDays < windowDays;
-}
-
 export type LeadLikeForAction = {
   company_fit_score?: number | null;
   fit_score?: number | null;
@@ -147,19 +133,6 @@ export function isLeadReadyAwaitingContactSignal(lead: LeadLikeForAction): boole
  * Use this anywhere a contact's action/gate needs readiness — a great contact
  * at a hot company should read as ready even with no personal signal.
  */
-export function effectiveReadiness(
-  companyReadiness: number | null | undefined,
-  contactReadiness: number | null | undefined,
-): number | null {
-  const c = score01ForAction(companyReadiness);
-  const k = score01ForAction(contactReadiness);
-  if (c == null && k == null) return null;
-  const base = Math.max(c ?? 0, k ?? 0);
-  const bothPresent = (c ?? 0) > 0 && (k ?? 0) > 0;
-  const bumped = bothPresent ? base + 0.1 * Math.min(c ?? 0, k ?? 0) : base;
-  return Math.max(0, Math.min(1, bumped));
-}
-
 /**
  * Canonical action core. Delegates to getActionFromScores (the single source of
  * truth for the three-gate tree). `readiness` here is the contact's effective
@@ -226,7 +199,7 @@ export function applyFixOverride(baseAction: LeadAction, hasSyncIssue: boolean):
  * Outreach-state overlay on the score-driven action. Once the user has staged
  * or sent a sequence, the action tracks the outreach funnel instead of the
  * scoring gates:
- *   - draft  → send_outreach (sequence ready, waiting for the user to dispatch)
+ *   - generating / draft → send_outreach (sequence committed or ready)
  *   - sent   → await_reply   (dispatched, waiting on the prospect)
  *   - replied / failed → fall through to the score-driven action so the user
  *     can decide whether to engage further or retry.
@@ -243,7 +216,7 @@ export function applyOutreachOverride(
 ): LeadAction {
   if (crmState === 'customer' || crmState === 'dormant') return 'deprioritize';
   if (sequenceStatus === 'sent') return 'await_reply';
-  if (sequenceStatus === 'draft') return 'send_outreach';
+  if (sequenceStatus === 'generating' || sequenceStatus === 'draft') return 'send_outreach';
   return baseAction;
 }
 
@@ -349,10 +322,7 @@ export const LEAD_ACTION_SORT_ORDER: Record<LeadAction, number> = {
 };
 
 function score01ForAction(value: number | null | undefined): number | null {
-  if (value == null || !Number.isFinite(value)) return null;
-  if (value > 1 && value <= 100) return value / 100;
-  if (value >= 0 && value <= 1) return value;
-  return null;
+  return normalizeScore01(value);
 }
 
 /**

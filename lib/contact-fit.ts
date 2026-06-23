@@ -1,42 +1,23 @@
-import {
-  BUSINESS_AREA_OPTIONS,
-  SENIORITY_LEVEL_OPTIONS,
-  type BusinessArea,
-  type SeniorityLevel,
-} from '@/lib/arcova-taxonomy';
+import { scoreContacts, type ContactLike, type FitScoreResult, type PersonaRow } from '@/lib/scoring';
 import { createAdminClient } from '@/lib/supabase-admin';
 
-const SCORE_VERSION = 'contact_fit_v1';
-
-const COMPONENT_WEIGHTS = {
-  businessArea: 50,
-  seniority: 50,
-} as const;
+const SCORE_VERSION = 'contact_fit_llm_v2';
 
 type MinimalSupabase = {
   from: (table: string) => any;
 };
 
-type ContactScoreRow = {
+type ContactScoreRow = ContactLike & {
   id: string;
   user_id: string;
   company_id: string | null;
   matched_icp_id: string | null;
-  full_name: string | null;
-  job_title: string | null;
-  job_title_standardised: string | null;
-  headline: string | null;
-  seniority_level: string | null;
-  business_area: string | null;
 };
 
-type PersonaScoreRow = {
+type PersonaScoreRow = PersonaRow & {
   id: string;
   user_id: string;
   icp_id: string | null;
-  name: string | null;
-  functions: string[] | null;
-  seniority_levels: string[] | null;
 };
 
 type ExistingScoreRow = {
@@ -58,6 +39,7 @@ type BreakdownComponent = {
 
 type ContactFitBreakdown = {
   score_version: string;
+  scorer: 'llm';
   matched_on: string[];
   gaps: string[];
   summary: {
@@ -82,6 +64,9 @@ type ContactPersonaScoreResult = {
   rawScore01: number;
   finalScore01: number;
   coverage01: number;
+  reasoning: string;
+  matchedOn: string[];
+  gapsText: string;
   breakdown: ContactFitBreakdown;
 };
 
@@ -91,20 +76,6 @@ export type ContactFitSyncResult = {
   skipped: number;
 };
 
-function normalizeText(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/&/g, 'and')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function dedupe<T extends string>(values: T[]): T[] {
-  return [...new Set(values)];
-}
-
 function roundScore01(value: number): number {
   return Math.round(Math.max(0, Math.min(1, value)) * 1000) / 1000;
 }
@@ -113,227 +84,101 @@ function scoreToPercent(value01: number): number {
   return Math.round(value01 * 100);
 }
 
-function canonicalizeBusinessArea(value: unknown): BusinessArea | null {
-  if (typeof value !== 'string') return null;
-  const normalized = normalizeText(value);
-  return BUSINESS_AREA_OPTIONS.find((option) => normalizeText(option) === normalized) ?? null;
+function normalizeToken(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
-function canonicalizeSeniority(value: unknown): SeniorityLevel | null {
-  if (typeof value !== 'string') return null;
-  const normalized = normalizeText(value);
-  return SENIORITY_LEVEL_OPTIONS.find((option) => normalizeText(option) === normalized) ?? null;
+function splitGaps(value: string): string[] {
+  return value
+    .split(/[.;\n]/)
+    .map((part) => part.trim())
+    .filter(Boolean);
 }
 
-function parsePersonaFunctions(values: string[] | null | undefined): BusinessArea[] {
-  if (!values) return [];
-
-  return dedupe(
-    values
-      .map((value) => {
-        if (typeof value !== 'string') return null;
-        try {
-          const parsed = JSON.parse(value) as { name?: unknown };
-          return canonicalizeBusinessArea(parsed?.name);
-        } catch {
-          return canonicalizeBusinessArea(value);
-        }
-      })
-      .filter((value): value is BusinessArea => Boolean(value)),
-  );
+function matchedTokenSet(values: string[]): Set<string> {
+  return new Set(values.map(normalizeToken).filter(Boolean));
 }
 
-function canonicalizeSeniorityList(values: string[] | null | undefined): SeniorityLevel[] {
-  return dedupe(
-    (Array.isArray(values) ? values : [])
-      .map((value) => canonicalizeSeniority(value))
-      .filter((value): value is SeniorityLevel => Boolean(value)),
-  );
-}
-
-function businessAreaSimilarity(
-  contactArea: BusinessArea | null,
-  personaAreas: BusinessArea[],
-): { score: number | null; matchedValue: BusinessArea | null } {
-  if (!contactArea || personaAreas.length === 0) {
-    return { score: null, matchedValue: null };
-  }
-
-  const matched = personaAreas.find((area) => area === contactArea) ?? null;
-  return { score: matched ? 1 : 0.001, matchedValue: matched };
-}
-
-function senioritySimilarity(
-  contactSeniority: SeniorityLevel | null,
-  personaSeniorities: SeniorityLevel[],
-): { score: number | null; matchedValue: SeniorityLevel | null } {
-  if (!contactSeniority || personaSeniorities.length === 0) {
-    return { score: null, matchedValue: null };
-  }
-
-  const matched = personaSeniorities.find((value) => value === contactSeniority) ?? null;
-
-  return {
-    score: matched ? 1 : 0.001,
-    matchedValue: matched,
-  };
-}
-
-function makeComponent(params: {
+function makeLlmComponent(params: {
   label: string;
   active: boolean;
   available: boolean;
-  weight: number;
-  earned: number;
+  matched: boolean;
+  score01: number;
   detail: string;
   matchedValue?: string | null;
-  matchStatus?: string;
 }): BreakdownComponent {
-  const earned = Math.max(0, Math.min(params.weight, params.earned));
+  const weight = 50;
+  const componentScore = params.matched ? 1 : params.active ? params.score01 : 0;
   return {
     label: params.label,
     active: params.active,
     available: params.available,
-    weight: params.weight,
-    earned,
-    score01: params.weight > 0 ? roundScore01(earned / params.weight) : 0,
+    weight,
+    earned: Math.round(componentScore * weight * 1000) / 1000,
+    score01: roundScore01(componentScore),
     detail: params.detail,
     matchedValue: params.matchedValue ?? null,
-    matchStatus: params.matchStatus,
+    matchStatus: params.matched ? 'llm_match' : params.available ? 'llm_reviewed' : 'unknown',
   };
 }
 
-function computeContactPersonaScore(
+function buildBreakdown(
   contact: ContactScoreRow,
   persona: PersonaScoreRow,
-): ContactPersonaScoreResult {
-  const personaFunctions = parsePersonaFunctions(persona.functions);
-  const contactBusinessArea = canonicalizeBusinessArea(contact.business_area);
-  const businessAreaMatch = businessAreaSimilarity(contactBusinessArea, personaFunctions);
-  const businessAreaComponent = makeComponent({
-    label: 'Business function',
-    active: personaFunctions.length > 0,
-    available: Boolean(contactBusinessArea),
-    weight: COMPONENT_WEIGHTS.businessArea,
-    earned:
-      personaFunctions.length > 0 && businessAreaMatch.score != null
-        ? COMPONENT_WEIGHTS.businessArea * businessAreaMatch.score
-        : 0,
-    detail:
-      personaFunctions.length === 0
-        ? 'No business-function criteria.'
-        : !contactBusinessArea
-          ? `Business area is not classified yet; persona expects ${personaFunctions.join(', ')}.`
-          : businessAreaMatch.score === 1
-            ? `Exact match on ${contactBusinessArea}.`
-            : `Persona expects ${personaFunctions.join(', ')}; contact is ${contactBusinessArea}.`,
-    matchedValue: businessAreaMatch.matchedValue,
-    matchStatus:
-      businessAreaMatch.score === 1
-        ? 'exact'
-        : contactBusinessArea
-          ? 'mismatch'
-          : 'unknown',
-  });
+  score: FitScoreResult,
+): ContactFitBreakdown {
+  const finalScore01 = roundScore01(score.score_normalised);
+  const matched = matchedTokenSet(score.matched_on);
+  const gaps = splitGaps(score.gaps);
+  const hasFunctionMatch = matched.has('function') || matched.has('business area') || matched.has('title');
+  const hasSeniorityMatch = matched.has('seniority');
 
-  const personaSeniorities = canonicalizeSeniorityList(persona.seniority_levels);
-  const contactSeniority = canonicalizeSeniority(contact.seniority_level);
-  const seniorityMatch = senioritySimilarity(contactSeniority, personaSeniorities);
-  const seniorityComponent = makeComponent({
-    label: 'Seniority',
-    active: personaSeniorities.length > 0,
-    available: Boolean(contactSeniority),
-    weight: COMPONENT_WEIGHTS.seniority,
-    earned:
-      personaSeniorities.length > 0 && seniorityMatch.score != null
-        ? COMPONENT_WEIGHTS.seniority * seniorityMatch.score
-        : 0,
-    detail:
-      personaSeniorities.length === 0
-        ? 'No seniority criteria.'
-        : !contactSeniority
-          ? `Seniority is not classified yet; persona expects ${personaSeniorities.join(', ')}.`
-          : seniorityMatch.score === 1
-            ? `Exact seniority match on ${contactSeniority}.`
-            : `Persona expects ${personaSeniorities.join(', ')}; contact is ${contactSeniority}.`,
-    matchedValue: seniorityMatch.matchedValue,
-    matchStatus:
-      seniorityMatch.score === 1
-        ? 'exact'
-        : contactSeniority
-          ? 'mismatch'
-          : 'unknown',
-  });
-
-  const components = {
-    business_area: businessAreaComponent,
-    seniority: seniorityComponent,
-  };
-
-  const componentList = Object.values(components);
-  const activeWeight = componentList.filter((component) => component.active).reduce((sum, component) => sum + component.weight, 0);
-  const availableWeight = componentList
-    .filter((component) => component.active && component.available)
-    .reduce((sum, component) => sum + component.weight, 0);
-  const earnedWeight = componentList.reduce((sum, component) => sum + component.earned, 0);
-
-  const rawScore01 = activeWeight > 0 ? roundScore01(earnedWeight / activeWeight) : 0;
-  const coverage01 = activeWeight > 0 ? roundScore01(availableWeight / activeWeight) : 0;
-  const finalScore01 = rawScore01;
-
-  const matchedOn = componentList
-    .filter((component) => component.active && component.earned > 0)
-    .map((component) => component.label);
-  const gaps = componentList
-    .filter((component) => component.active && component.earned < component.weight)
-    .map((component) => component.label);
-
-  const reasoning = [
-    persona.name
-      ? `Best persona match against ${persona.name} scores ${scoreToPercent(finalScore01)}%.`
-      : `Best persona match scores ${scoreToPercent(finalScore01)}%.`,
-    matchedOn.length > 0
-      ? `Matched on ${matchedOn.join(', ')}.`
-      : 'No strong contact-level matches yet.',
-    gaps.length > 0
-      ? `Still weaker or unresolved on ${gaps.join(', ')}.`
-      : 'All active persona criteria align cleanly.',
-  ].join(' ');
+  const businessDetail = score.reasoning || (
+    score.gaps
+      ? `LLM found business-function uncertainty: ${score.gaps}`
+      : 'LLM reviewed title, headline, normalized function, and persona function criteria.'
+  );
+  const seniorityDetail = hasSeniorityMatch
+    ? `LLM found seniority alignment for ${contact.seniority_level || 'the visible seniority signal'}.`
+    : score.gaps || 'LLM reviewed seniority against persona criteria.';
 
   return {
-    contactId: contact.id,
-    personaId: persona.id,
-    personaName: persona.name,
-    icpId: persona.icp_id,
-    rawScore01,
-    finalScore01,
-    coverage01,
-    breakdown: {
-      score_version: SCORE_VERSION,
-      matched_on: matchedOn,
-      gaps,
-      summary: {
-        raw_score01: rawScore01,
-        final_score01: finalScore01,
-        raw_score_pct: scoreToPercent(rawScore01),
-        final_score_pct: scoreToPercent(finalScore01),
-        coverage01,
-        reasoning,
-      },
-      components,
+    score_version: SCORE_VERSION,
+    scorer: 'llm',
+    matched_on: score.matched_on,
+    gaps,
+    summary: {
+      raw_score01: finalScore01,
+      final_score01: finalScore01,
+      raw_score_pct: score.score,
+      final_score_pct: score.score,
+      coverage01: 1,
+      reasoning: score.reasoning,
+    },
+    components: {
+      business_area: makeLlmComponent({
+        label: 'Business function',
+        active: Boolean(persona.functions?.length || persona.job_titles?.length),
+        available: Boolean(contact.job_title || contact.job_title_standardised || contact.business_area || contact.headline),
+        matched: hasFunctionMatch,
+        score01: finalScore01,
+        detail: businessDetail,
+        matchedValue: hasFunctionMatch
+          ? contact.job_title_standardised || contact.job_title || contact.business_area || null
+          : null,
+      }),
+      seniority: makeLlmComponent({
+        label: 'Seniority',
+        active: Boolean(persona.seniority_levels?.length),
+        available: Boolean(contact.seniority_level || contact.job_title || contact.job_title_standardised),
+        matched: hasSeniorityMatch,
+        score01: finalScore01,
+        detail: seniorityDetail,
+        matchedValue: hasSeniorityMatch ? contact.seniority_level || null : null,
+      }),
     },
   };
-}
-
-function pickWinner(scores: ContactPersonaScoreResult[]): ContactPersonaScoreResult | null {
-  if (scores.length === 0) return null;
-
-  return [...scores].sort((left, right) => {
-    if (right.finalScore01 !== left.finalScore01) return right.finalScore01 - left.finalScore01;
-    if (right.coverage01 !== left.coverage01) return right.coverage01 - left.coverage01;
-    if (right.rawScore01 !== left.rawScore01) return right.rawScore01 - left.rawScore01;
-    return (left.personaName || left.personaId).localeCompare(right.personaName || right.personaId);
-  })[0];
 }
 
 function buildContactPanelSummary(contact: ContactScoreRow): string {
@@ -351,15 +196,14 @@ function buildContactFitSummary(
   if (!winner) {
     return `${name} has no eligible persona match yet, so contact fit is low.`;
   }
-  const scorePct = scoreToPercent(winner.finalScore01);
   const personaLabel = winner.personaName?.trim() || 'the best-matching persona';
-  return `${name} is currently ${scorePct}% aligned to ${personaLabel}.`;
+  return `${name} is currently ${scoreToPercent(winner.finalScore01)}% aligned to ${personaLabel}.`;
 }
 
 async function loadPersonasForUser(supabase: MinimalSupabase, userId: string): Promise<PersonaScoreRow[]> {
   const { data, error } = await supabase
     .from('personas')
-    .select('id, user_id, icp_id, name, functions, seniority_levels')
+    .select('id, user_id, icp_id, name, functions, seniority_levels, job_titles')
     .eq('user_id', userId);
 
   if (error) throw error;
@@ -373,7 +217,7 @@ async function loadContactsById(
 ): Promise<ContactScoreRow[]> {
   const { data, error } = await supabase
     .from('contacts')
-    .select('id, user_id, company_id, full_name, job_title, job_title_standardised, headline, seniority_level, business_area')
+    .select('id, user_id, company_id, full_name, job_title, job_title_standardised, headline, seniority_level, business_area, company_name')
     .eq('user_id', userId)
     .in('id', contactIds);
 
@@ -465,37 +309,61 @@ async function clearContactFit(
   if (updateResult.error) throw updateResult.error;
 }
 
-async function persistScoresForContact(
+function scoreResultForContact(
+  contact: ContactScoreRow,
+  personas: PersonaScoreRow[],
+  score: FitScoreResult,
+): ContactPersonaScoreResult {
+  const persona =
+    personas.find((candidate) => candidate.id === score.persona_id) ??
+    personas.find((candidate) => candidate.name === score.persona_name) ??
+    personas[0];
+  const finalScore01 = roundScore01(score.score_normalised);
+
+  return {
+    contactId: contact.id,
+    personaId: persona.id,
+    personaName: persona.name ?? null,
+    icpId: persona.icp_id ?? null,
+    rawScore01: finalScore01,
+    finalScore01,
+    coverage01: 1,
+    reasoning: score.reasoning,
+    matchedOn: score.matched_on,
+    gapsText: score.gaps,
+    breakdown: buildBreakdown(contact, persona, score),
+  };
+}
+
+async function persistScoreForContact(
   supabase: MinimalSupabase,
   userId: string,
   contact: ContactScoreRow,
-  scores: ContactPersonaScoreResult[],
+  score: ContactPersonaScoreResult,
   stalePersonaIds: string[],
 ): Promise<void> {
   const now = new Date().toISOString();
-  const winner = pickWinner(scores);
 
-  if (scores.length > 0) {
-    const rows = scores.map((score) => ({
-      user_id: userId,
-      contact_id: contact.id,
-      company_id: contact.company_id,
-      persona_id: score.personaId,
-      icp_id: score.icpId,
-      final_score: score.finalScore01,
-      raw_score: score.rawScore01,
-      coverage: score.coverage01,
-      breakdown: score.breakdown,
-      scored_at: now,
-      score_version: SCORE_VERSION,
-    }));
+  const upsertResult = await supabase
+    .from('contact_persona_scores')
+    .upsert(
+      {
+        user_id: userId,
+        contact_id: contact.id,
+        company_id: contact.company_id,
+        persona_id: score.personaId,
+        icp_id: score.icpId,
+        final_score: score.finalScore01,
+        raw_score: score.rawScore01,
+        coverage: score.coverage01,
+        breakdown: score.breakdown,
+        scored_at: now,
+        score_version: SCORE_VERSION,
+      },
+      { onConflict: 'contact_id,persona_id' },
+    );
 
-    const upsertResult = await supabase
-      .from('contact_persona_scores')
-      .upsert(rows, { onConflict: 'contact_id,persona_id' });
-
-    if (upsertResult.error) throw upsertResult.error;
-  }
+  if (upsertResult.error) throw upsertResult.error;
 
   if (stalePersonaIds.length > 0) {
     const deleteResult = await supabase
@@ -508,19 +376,17 @@ async function persistScoresForContact(
     if (deleteResult.error) throw deleteResult.error;
   }
 
-  const newContactFit = winner?.finalScore01 ?? 0;
-
   const updateResult = await supabase
     .from('contacts')
     .update({
-      scored_against_persona_id: winner?.personaId ?? null,
-      contact_fit_score: newContactFit,
-      contact_fit_breakdown: winner?.breakdown ?? null,
-      contact_fit_coverage: winner?.coverage01 ?? null,
+      scored_against_persona_id: score.personaId,
+      contact_fit_score: score.finalScore01,
+      contact_fit_breakdown: score.breakdown,
+      contact_fit_coverage: score.coverage01,
       contact_fit_scored_at: now,
       contact_fit_version: SCORE_VERSION,
       contact_panel_summary: buildContactPanelSummary(contact),
-      contact_fit_summary: buildContactFitSummary(contact, winner),
+      contact_fit_summary: buildContactFitSummary(contact, score),
       updated_at: now,
     })
     .eq('user_id', userId)
@@ -575,17 +441,17 @@ export async function syncContactFitForContacts(
         continue;
       }
 
-      const scores = eligiblePersonas.map((persona) => computeContactPersonaScore(contact, persona));
-      const expectedPersonaIds = new Set(scores.map((score) => score.personaId));
+      const [llmScore] = await scoreContacts([contact], eligiblePersonas);
+      const persistedScore = scoreResultForContact(contact, eligiblePersonas, llmScore);
       const stalePersonaIds = (existingScores.get(contact.id) || []).filter(
-        (personaId) => !expectedPersonaIds.has(personaId),
+        (personaId) => personaId !== persistedScore.personaId,
       );
 
-      await persistScoresForContact(supabase, userId, contact, scores, stalePersonaIds);
+      await persistScoreForContact(supabase, userId, contact, persistedScore, stalePersonaIds);
       result.contactsScored += 1;
     } catch (error) {
       result.failed += 1;
-      console.error('[contact-fit] Failed scoring contact', contactId, error);
+      console.error('[contact-fit] Failed LLM scoring contact', contactId, error);
     }
   }
 

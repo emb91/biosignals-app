@@ -1,32 +1,13 @@
-import {
-  COMPANY_SIZE_OPTIONS,
-  DEVELOPMENT_STAGE_OPTIONS,
-  canonicalizeCompanyType,
-  canonicalizeFundingStage,
-  canonicalizeModality,
-  canonicalizeTherapeuticArea,
-  employeeCountToSizeBucket,
-  expandModalitiesWithParents,
-  type CompanySize,
-  type DevelopmentStage,
-  type FundingStage,
-  type Modality,
-  type TherapeuticArea,
-} from '@/lib/arcova-taxonomy';
-import { normalizePlatformCategoryForStorage } from '@/lib/platform-category';
+import { employeeCountToSizeBucket } from '@/lib/arcova-taxonomy';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { orgIdForUser, scopeIcpsToUser } from '@/lib/org-context';
+import { completeLlm } from '@/lib/llm-client';
+import { recordLlmUsageEvent } from '@/lib/llm-usage';
 
-const SCORE_VERSION = 'company_fit_v2';
+const SCORE_VERSION = 'company_fit_llm_v3';
 
-// Weights sum to 100 (the score is earned ÷ active-weight, so the sum only
-// affects readability, not the math — but keeping it at 100 lets each weight
-// read as "% of importance"). Calibrated 2026-06-02:
-//   company_type is the master signal (also a hard cap below) — a match is
-//   ~half the score. "offering" merges the three archetype-dependent
-//   "what they work on" signals (modalities / therapeutic areas / platform
-//   category) into one OR-check so a therapeutics company isn't penalised for
-//   a missing platform_category, nor a SaaS company for missing modalities.
+// UI component weights. The LLM supplies each component's score; these weights
+// only keep the persisted breakdown compatible with the existing account views.
 const COMPONENT_WEIGHTS = {
   companyType: 45,
   offering: 25,
@@ -35,24 +16,24 @@ const COMPONENT_WEIGHTS = {
   companySize: 10,
 } as const;
 
-const COMPANY_TYPE_CAPS = {
-  exact: 1,
-  unknown: 0.7,
-  mismatch: 0.35,
-  not_applicable: 1,
-} as const;
-
 type MinimalSupabase = {
   from: (table: string) => any;
 };
 
-type CompanyTypeMatchStatus = keyof typeof COMPANY_TYPE_CAPS;
+type CompanyTypeMatchStatus = 'exact' | 'unknown' | 'mismatch' | 'not_applicable';
 
 type CompanyScoreRow = {
   id: string;
   company_name: string | null;
   domain: string | null;
+  website?: string | null;
+  description?: string | null;
+  bio_summary?: string | null;
+  tagline?: string | null;
+  industry?: string | null;
+  sub_industry?: string | null;
   company_type: string | null;
+  company_type_display?: string | null;
   platform_category: string | null;
   therapeutic_areas: string[] | null;
   modalities: string[] | null;
@@ -64,6 +45,10 @@ type CompanyScoreRow = {
   funding_stage: string | null;
   funding_status_label: string | null;
   total_funding_usd: number | null;
+  specialties?: string[] | null;
+  products_services?: string[] | null;
+  services?: string[] | null;
+  technologies?: string[] | null;
 };
 
 type IcpScoreRow = {
@@ -77,6 +62,8 @@ type IcpScoreRow = {
   development_stages: string[] | null;
   company_sizes: string[] | null;
   funding_stages: string[] | null;
+  target_customers?: string[] | null;
+  buyer_types?: string[] | null;
   example_company_enrichment: Record<string, unknown> | null;
 };
 
@@ -143,107 +130,6 @@ type ExistingScoreRow = {
   icp_id: string;
 };
 
-function normalizeString(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
-}
-
-function normalizeNumber(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string' && value.trim()) {
-    const parsed = Number(value.replace(/[$,]/g, '').trim());
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return null;
-}
-
-function normalizeText(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/&/g, 'and')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function dedupe<T extends string>(values: T[]): T[] {
-  return [...new Set(values)];
-}
-
-function canonicalizeDevelopmentStage(value: unknown): DevelopmentStage | null {
-  if (typeof value !== 'string') return null;
-
-  const normalized = normalizeText(value);
-  const aliases: Record<string, DevelopmentStage> = {
-    preclinical: 'Preclinical',
-    'phase 1': 'Phase I',
-    'phase i': 'Phase I',
-    'phase 2': 'Phase II',
-    'phase ii': 'Phase II',
-    'phase 3': 'Phase III',
-    'phase iii': 'Phase III',
-    commercial: 'Commercial',
-    approved: 'Commercial',
-    marketed: 'Commercial',
-    'all stages': 'All stages',
-  };
-
-  return (
-    aliases[normalized] ??
-    DEVELOPMENT_STAGE_OPTIONS.find((option) => normalizeText(option) === normalized) ??
-    null
-  );
-}
-
-function canonicalizeCompanySize(value: unknown): CompanySize | null {
-  if (typeof value !== 'string') return null;
-  const normalized = normalizeText(value);
-  return (
-    COMPANY_SIZE_OPTIONS.find((option) => normalizeText(option) === normalized) ??
-    null
-  );
-}
-
-function canonicalizeStringList<T extends string>(
-  values: unknown,
-  canonicalize: (value: unknown) => T | null,
-): T[] {
-  return dedupe(
-    (Array.isArray(values) ? values : [])
-      .map((value) => canonicalize(value))
-      .filter((value): value is T => Boolean(value)),
-  );
-}
-
-function getCompanyDevelopmentStages(company: CompanyScoreRow): DevelopmentStage[] {
-  const fromArray = canonicalizeStringList(company.development_stages, canonicalizeDevelopmentStage);
-  const fromClinical = canonicalizeDevelopmentStage(company.clinical_stage);
-
-  return dedupe(fromClinical ? [...fromArray, fromClinical] : fromArray);
-}
-
-function getCompanySizeBucket(company: CompanyScoreRow): CompanySize | null {
-  const canonical = canonicalizeCompanySize(company.company_size_bucket);
-  if (canonical) return canonical;
-
-  return canonicalizeCompanySize(
-    employeeCountToSizeBucket(company.employee_count, company.employee_range)[0] ?? null,
-  );
-}
-
-function getIcpReferenceSizeBuckets(icp: IcpScoreRow): CompanySize[] {
-  const explicit = canonicalizeStringList(icp.company_sizes, canonicalizeCompanySize);
-  if (explicit.length > 0) return explicit;
-
-  const enrichment = icp.example_company_enrichment ?? null;
-  const fallback = employeeCountToSizeBucket(
-    normalizeNumber(enrichment?.employee_count ?? null),
-    normalizeString(enrichment?.employee_range ?? null) || null,
-  )[0] ?? null;
-
-  return fallback ? [fallback as CompanySize] : [];
-}
-
 function roundScore01(value: number): number {
   return Math.round(Math.max(0, Math.min(1, value)) * 1000) / 1000;
 }
@@ -252,27 +138,291 @@ function scoreToPercent(value01: number): number {
   return Math.round(value01 * 100);
 }
 
-/**
- * Binary funding stage match: 1 if the company's stage is in the ICP's selected stages, 0 otherwise.
- * ICP funding stages are buckets — adjacent stages don't earn partial credit. Series A is not
- * "almost Public"; either it matches the criteria or it doesn't.
- */
-function fundingStageSimilarity(
-  companyStage: FundingStage | null,
-  targetStages: FundingStage[],
-): number | null {
-  if (!companyStage || targetStages.length === 0) return null;
-  return targetStages.includes(companyStage) ? 1 : 0;
+function cleanTextList(values: unknown, limit = 12): string[] {
+  return [...new Set(
+    (Array.isArray(values) ? values : [])
+      .map((value) => (typeof value === 'string' ? value.trim() : ''))
+      .filter(Boolean),
+  )].slice(0, limit);
 }
 
-/**
- * Binary company size match: 1 if the company's size band is in the ICP's selected bands, 0 otherwise.
- * ICP criteria are buckets — there's no "near miss" credit; either the company falls in a chosen
- * bucket or it doesn't.
- */
-function sizeSimilarity(companySize: CompanySize | null, targetSizes: CompanySize[]): number | null {
-  if (!companySize || targetSizes.length === 0) return null;
-  return targetSizes.includes(companySize) ? 1 : 0;
+function fmtList(values: unknown, fallback = 'Not specified'): string {
+  const list = cleanTextList(values);
+  return list.length > 0 ? list.join(', ') : fallback;
+}
+
+function formatCompanyForLlm(company: CompanyScoreRow): string {
+  return [
+    `Company id: ${company.id}`,
+    `Name: ${company.company_name || 'Unknown'}`,
+    `Domain: ${company.domain || company.website || 'Unknown'}`,
+    `Tagline: ${company.tagline || 'Unknown'}`,
+    `Description: ${company.bio_summary || company.description || 'Unknown'}`,
+    `Industry: ${[company.industry, company.sub_industry].filter(Boolean).join(' / ') || 'Unknown'}`,
+    `Enriched company type: ${company.company_type_display || company.company_type || 'Unknown'}`,
+    `Platform category: ${company.platform_category || 'Unknown'}`,
+    `Therapeutic areas: ${fmtList(company.therapeutic_areas, 'Unknown')}`,
+    `Modalities: ${fmtList(company.modalities, 'Unknown')}`,
+    `Development stages: ${fmtList(company.development_stages, company.clinical_stage || 'Unknown')}`,
+    `Company size: ${company.company_size_bucket || employeeCountToSizeBucket(company.employee_count, company.employee_range)[0] || company.employee_range || 'Unknown'}`,
+    `Funding: ${[company.funding_stage, company.funding_status_label, company.total_funding_usd != null ? `$${company.total_funding_usd}` : null].filter(Boolean).join(' / ') || 'Unknown'}`,
+    `Specialties: ${fmtList(company.specialties, 'Unknown')}`,
+    `Products/services: ${fmtList([...(company.products_services || []), ...(company.services || []), ...(company.technologies || [])], 'Unknown')}`,
+  ].join('\n');
+}
+
+function formatIcpForLlm(icp: IcpScoreRow): string {
+  const example = icp.example_company_enrichment ?? {};
+  const exampleDescription = Array.isArray(example.description)
+    ? example.description.filter((value): value is string => typeof value === 'string').slice(0, 2).join(' ')
+    : typeof example.description === 'string'
+      ? example.description
+      : '';
+
+  return [
+    `ICP id: ${icp.id}`,
+    `ICP name: ${icp.name || 'Unnamed ICP'}`,
+    `Company type: ${icp.company_type || 'Not specified'}`,
+    `Platform category: ${icp.platform_category || 'Not specified'}`,
+    `Therapeutic areas: ${fmtList(icp.therapeutic_areas)}`,
+    `Modalities: ${fmtList(icp.modalities)}`,
+    `Development stages: ${fmtList(icp.development_stages)}`,
+    `Company sizes: ${fmtList(icp.company_sizes)}`,
+    `Funding stages: ${fmtList(icp.funding_stages)}`,
+    `Target customers: ${fmtList(icp.target_customers)}`,
+    `Buyer types: ${fmtList(icp.buyer_types)}`,
+    exampleDescription ? `Reference-company description: ${exampleDescription}` : '',
+  ].filter(Boolean).join('\n');
+}
+
+type LlmCompanyFitComponent = {
+  score?: unknown;
+  detail?: unknown;
+  matched_values?: unknown;
+  gaps?: unknown;
+  available?: unknown;
+};
+
+type LlmCompanyFitItem = {
+  icp_id?: unknown;
+  icp_name?: unknown;
+  score?: unknown;
+  coverage?: unknown;
+  reasoning?: unknown;
+  matched_on?: unknown;
+  gaps?: unknown;
+  components?: unknown;
+};
+
+function number01(value: unknown): number {
+  const n = typeof value === 'number' ? value : typeof value === 'string' ? Number.parseFloat(value) : NaN;
+  if (!Number.isFinite(n)) return 0;
+  return roundScore01(n > 1 ? n / 100 : n);
+}
+
+function stringArray(value: unknown): string[] {
+  return cleanTextList(value, 20);
+}
+
+function llmComponent(
+  components: Record<string, LlmCompanyFitComponent>,
+  key: keyof ScoreBreakdown['components'],
+  label: string,
+  weight: number,
+): BreakdownComponent {
+  const component = components[key] ?? {};
+  const score01 = number01(component.score);
+  const matchedValues = stringArray(component.matched_values);
+  const unmatchedValues = stringArray(component.gaps);
+  return makeComponent({
+    label,
+    active: true,
+    available: typeof component.available === 'boolean' ? component.available : true,
+    weight,
+    earned: weight * score01,
+    detail:
+      typeof component.detail === 'string' && component.detail.trim()
+        ? component.detail.trim()
+        : `${label} scored ${scoreToPercent(score01)}% by the LLM fit scorer.`,
+    matchedCount: matchedValues.length,
+    matchedValues,
+    unmatchedValues,
+    matchStatus: score01 >= 0.8 ? 'strong' : score01 >= 0.45 ? 'partial' : 'weak',
+  });
+}
+
+function fallbackScoreForIcp(company: CompanyScoreRow, icp: IcpScoreRow, reason: string): CompanyIcpScoreResult {
+  const component = (label: string, weight: number) => makeComponent({
+    label,
+    active: true,
+    available: false,
+    weight,
+    earned: 0,
+    detail: reason,
+    matchStatus: 'unknown',
+  });
+  const components = {
+    company_type: component('Company type', COMPONENT_WEIGHTS.companyType),
+    offering: component('Offering', COMPONENT_WEIGHTS.offering),
+    development_stages: component('Development stages', COMPONENT_WEIGHTS.developmentStages),
+    company_size: component('Company size', COMPONENT_WEIGHTS.companySize),
+    funding: component('Funding', COMPONENT_WEIGHTS.funding),
+  };
+  return {
+    icpId: icp.id,
+    icpName: icp.name,
+    icpIndex: icp.icpIndex,
+    rawScore01: 0,
+    finalScore01: 0,
+    scoreCap01: 1,
+    coverage01: 0,
+    companyTypeMatchStatus: 'unknown',
+    breakdown: {
+      score_version: SCORE_VERSION,
+      matched_on: [],
+      gaps: ['LLM scoring unavailable'],
+      summary: {
+        raw_score01: 0,
+        final_score01: 0,
+        raw_score_pct: 0,
+        final_score_pct: 0,
+        score_cap01: 1,
+        coverage01: 0,
+        reasoning: `${company.company_name || 'This company'} was not scored against ${icp.name || 'this ICP'} because ${reason}`,
+      },
+      components,
+    },
+  };
+}
+
+function parseCompanyFitResponse(text: string): LlmCompanyFitItem[] {
+  const jsonMatch = text.match(/\[[\s\S]*\]/);
+  if (!jsonMatch) throw new Error(`Could not parse company-fit response: ${text.slice(0, 240)}`);
+  const parsed = JSON.parse(jsonMatch[0]) as unknown;
+  if (!Array.isArray(parsed)) throw new Error('Company-fit response was not a JSON array');
+  return parsed as LlmCompanyFitItem[];
+}
+
+async function scoreCompanyAgainstIcps(
+  company: CompanyScoreRow,
+  icps: IcpScoreRow[],
+  userId: string,
+): Promise<CompanyIcpScoreResult[]> {
+  const prompt = `You score whether a company is a fit for each ICP. Use judgment, not exact keyword matching.
+
+This score determines account priority and whether the system may later buy contacts, so be conservative:
+- High fit means the company itself matches the ICP's intended buyer/account profile, not merely that one word overlaps.
+- Insurance payers, pet/veterinary companies, media, associations, and generic services companies should score very low unless the ICP explicitly targets them.
+- Hospitals, CROs, CDMOs, universities, and research institutes can be valid only when the ICP company type and buying context actually targets them.
+- Academic or university organizations can fit tools/research ICPs when the evidence points to researchers/labs, but not when it is university administration.
+- Do not punish missing enrichment fields too harshly when the description clearly establishes fit; do punish contradictory evidence.
+
+COMPANY:
+${formatCompanyForLlm(company)}
+
+ICPS:
+${icps.map(formatIcpForLlm).join('\n\n---\n\n')}
+
+Return ONLY a valid JSON array with one object per ICP:
+[
+  {
+    "icp_id": "<ICP id exactly as provided>",
+    "icp_name": "<ICP name>",
+    "score": <integer 0-100>,
+    "coverage": <integer 0-100, how much evidence was available to judge fit>,
+    "reasoning": "<2 concise sentences>",
+    "matched_on": ["company type", "offering", "stage", "size", "funding"],
+    "gaps": ["specific missing or mismatched evidence"],
+    "components": {
+      "company_type": { "score": <0-100>, "available": true, "detail": "...", "matched_values": [], "gaps": [] },
+      "offering": { "score": <0-100>, "available": true, "detail": "...", "matched_values": [], "gaps": [] },
+      "development_stages": { "score": <0-100>, "available": true, "detail": "...", "matched_values": [], "gaps": [] },
+      "company_size": { "score": <0-100>, "available": true, "detail": "...", "matched_values": [], "gaps": [] },
+      "funding": { "score": <0-100>, "available": true, "detail": "...", "matched_values": [], "gaps": [] }
+    }
+  }
+]`;
+
+  const completion = await completeLlm({
+    feature: 'company_fit_scoring',
+    prompt,
+    maxTokens: 3500,
+    temperature: 0,
+  });
+
+  await recordLlmUsageEvent({
+    userId,
+    provider: completion.provider,
+    feature: 'company_fit_scoring',
+    route: 'lib/company-fit#scoreCompanyAgainstIcps',
+    model: completion.model,
+    usage: completion.usage,
+    metadata: {
+      company_id: company.id,
+      icp_count: icps.length,
+    },
+  });
+
+  const parsed = parseCompanyFitResponse(completion.text);
+  return icps.map((icp) => {
+    const item =
+      parsed.find((candidate) => candidate.icp_id === icp.id) ??
+      parsed.find((candidate) => candidate.icp_name === icp.name);
+    if (!item) {
+      return fallbackScoreForIcp(company, icp, 'the LLM did not return a score for this ICP.');
+    }
+
+    const componentsInput =
+      item.components && typeof item.components === 'object' && !Array.isArray(item.components)
+        ? (item.components as Record<string, LlmCompanyFitComponent>)
+        : {};
+    const finalScore01 = number01(item.score);
+    const coverage01 = number01(item.coverage);
+    const components = {
+      company_type: llmComponent(componentsInput, 'company_type', 'Company type', COMPONENT_WEIGHTS.companyType),
+      offering: llmComponent(componentsInput, 'offering', 'Offering', COMPONENT_WEIGHTS.offering),
+      development_stages: llmComponent(componentsInput, 'development_stages', 'Development stages', COMPONENT_WEIGHTS.developmentStages),
+      company_size: llmComponent(componentsInput, 'company_size', 'Company size', COMPONENT_WEIGHTS.companySize),
+      funding: llmComponent(componentsInput, 'funding', 'Funding', COMPONENT_WEIGHTS.funding),
+    };
+    const matchedOn = stringArray(item.matched_on);
+    const gaps = stringArray(item.gaps);
+    const companyTypeScore = components.company_type.score01;
+
+    return {
+      icpId: icp.id,
+      icpName: icp.name,
+      icpIndex: icp.icpIndex,
+      rawScore01: finalScore01,
+      finalScore01,
+      scoreCap01: 1,
+      coverage01,
+      companyTypeMatchStatus:
+        companyTypeScore >= 0.75
+          ? 'exact'
+          : companyTypeScore <= 0.25
+            ? 'mismatch'
+            : 'unknown',
+      breakdown: {
+        score_version: SCORE_VERSION,
+        matched_on: matchedOn,
+        gaps,
+        summary: {
+          raw_score01: finalScore01,
+          final_score01: finalScore01,
+          raw_score_pct: scoreToPercent(finalScore01),
+          final_score_pct: scoreToPercent(finalScore01),
+          score_cap01: 1,
+          coverage01,
+          reasoning:
+            typeof item.reasoning === 'string' && item.reasoning.trim()
+              ? item.reasoning.trim()
+              : `${company.company_name || 'This company'} scored ${scoreToPercent(finalScore01)}% against ${icp.name || 'this ICP'} by the LLM fit scorer.`,
+        },
+        components,
+      },
+    };
+  });
 }
 
 function makeComponent(params: {
@@ -302,266 +452,6 @@ function makeComponent(params: {
     matchStatus: params.matchStatus,
     matchedValues: params.matchedValues,
     unmatchedValues: params.unmatchedValues,
-  };
-}
-
-function computeCompanyIcpScore(company: CompanyScoreRow, icp: IcpScoreRow): CompanyIcpScoreResult {
-  const icpCompanyType = canonicalizeCompanyType(icp.company_type);
-  const companyType = canonicalizeCompanyType(company.company_type);
-
-  const companyTypeMatchStatus: CompanyTypeMatchStatus =
-    !icpCompanyType
-      ? 'not_applicable'
-      : !companyType
-        ? 'unknown'
-        : companyType === icpCompanyType
-          ? 'exact'
-          : 'mismatch';
-
-  const companyTypeComponent = makeComponent({
-    label: 'Company type',
-    active: Boolean(icpCompanyType),
-    available: Boolean(companyType),
-    weight: COMPONENT_WEIGHTS.companyType,
-    earned: companyTypeMatchStatus === 'exact' ? COMPONENT_WEIGHTS.companyType : 0,
-    detail:
-      companyTypeMatchStatus === 'exact'
-        ? `Matches ${icpCompanyType}.`
-        : companyTypeMatchStatus === 'unknown'
-          ? `Company type not enriched yet; ICP expects ${icpCompanyType}.`
-          : icpCompanyType
-            ? `ICP expects ${icpCompanyType}; company is ${companyType ?? 'unknown'}.`
-            : 'No company-type gate on this ICP.',
-    matchStatus: companyTypeMatchStatus,
-    matchedValues: companyTypeMatchStatus === 'exact' && icpCompanyType ? [icpCompanyType] : [],
-    unmatchedValues: companyTypeMatchStatus === 'mismatch' && icpCompanyType ? [icpCompanyType] : [],
-  });
-
-  // ── Offering: archetype-agnostic "what they work on" ───────────────────────
-  // Merges modalities + therapeutic areas + platform category into ONE check.
-  // Active if the ICP defines ANY of them; a hit on ANY one earns full credit.
-  // So a therapeutics company is judged on modalities/TAs (not dinged for an
-  // empty platform_category), and a SaaS company is judged on platform_category
-  // (not dinged for empty modalities/TAs). Each sub-signal keeps any-match
-  // semantics (one overlap = a hit).
-  const icpPlatformCategory = normalizePlatformCategoryForStorage(icp.platform_category);
-  const companyPlatformCategory = normalizePlatformCategoryForStorage(company.platform_category);
-  const platformCategoryMatched =
-    Boolean(icpPlatformCategory) &&
-    Boolean(companyPlatformCategory) &&
-    normalizeText(companyPlatformCategory!) === normalizeText(icpPlatformCategory!);
-
-  const icpTherapeuticAreas = canonicalizeStringList(icp.therapeutic_areas, canonicalizeTherapeuticArea);
-  const companyTherapeuticAreas = new Set(
-    canonicalizeStringList(company.therapeutic_areas, canonicalizeTherapeuticArea),
-  );
-  const matchedTAValues = icpTherapeuticAreas.filter((value) => companyTherapeuticAreas.has(value));
-
-  const icpModalities = canonicalizeStringList(icp.modalities, canonicalizeModality);
-  const companyModalities = canonicalizeStringList(company.modalities, canonicalizeModality);
-  const expandedCompanyModalities = new Set(expandModalitiesWithParents(companyModalities));
-  const matchedModalityValues = icpModalities.filter((value) => expandedCompanyModalities.has(value));
-
-  const offeringActive =
-    icpModalities.length > 0 || icpTherapeuticAreas.length > 0 || Boolean(icpPlatformCategory);
-  const offeringAvailable =
-    companyModalities.length > 0 || companyTherapeuticAreas.size > 0 || Boolean(companyPlatformCategory);
-  const offeringHit =
-    matchedModalityValues.length > 0 || matchedTAValues.length > 0 || platformCategoryMatched;
-  const offeringMatchedValues = [
-    ...matchedModalityValues,
-    ...matchedTAValues,
-    ...(platformCategoryMatched && icpPlatformCategory ? [icpPlatformCategory] : []),
-  ];
-  const offeringExpected = [
-    ...icpModalities,
-    ...icpTherapeuticAreas,
-    ...(icpPlatformCategory ? [icpPlatformCategory] : []),
-  ];
-  const offeringComponent = makeComponent({
-    label: 'Offering',
-    active: offeringActive,
-    available: offeringAvailable,
-    weight: COMPONENT_WEIGHTS.offering,
-    earned: offeringActive && offeringHit ? COMPONENT_WEIGHTS.offering : 0,
-    detail: !offeringActive
-      ? 'No modality, therapeutic-area, or platform criterion.'
-      : !offeringAvailable
-        ? `Offering not enriched yet; ICP expects ${offeringExpected.join(', ')}.`
-        : offeringHit
-          ? `Matches on ${offeringMatchedValues.join(', ')}.`
-          : `No overlap with ICP target ${offeringExpected.join(', ')}.`,
-    matchedCount: offeringMatchedValues.length,
-    totalSelected: offeringExpected.length,
-    matchedValues: offeringMatchedValues,
-    unmatchedValues: offeringExpected.filter((value) => !offeringMatchedValues.includes(value)),
-  });
-
-  const icpStages = canonicalizeStringList(icp.development_stages, canonicalizeDevelopmentStage);
-  const companyStages = getCompanyDevelopmentStages(company);
-  const hasAllStages = icpStages.includes('All stages') || companyStages.includes('All stages');
-  const matchedStageValues = hasAllStages ? icpStages : icpStages.filter((value) => companyStages.includes(value));
-  const unmatchedStageValues = hasAllStages ? [] : icpStages.filter((value) => !companyStages.includes(value));
-  const matchedStages = matchedStageValues.length;
-  // Any-match scoring: a company in any of our target development stages is a fit —
-  // a Phase II company isn't penalised for not also being in Phase I.
-  const developmentStagesComponent = makeComponent({
-    label: 'Development stages',
-    active: icpStages.length > 0,
-    available: companyStages.length > 0,
-    weight: COMPONENT_WEIGHTS.developmentStages,
-    earned:
-      icpStages.length > 0 && (hasAllStages || matchedStages > 0)
-        ? COMPONENT_WEIGHTS.developmentStages
-        : 0,
-    matchedValues: matchedStageValues,
-    unmatchedValues: unmatchedStageValues,
-    detail:
-      icpStages.length === 0
-        ? 'No development-stage criterion.'
-        : companyStages.length === 0
-          ? `Development stage not enriched yet; ICP expects ${icpStages.join(', ')}.`
-          : hasAllStages
-            ? 'Wildcard all-stages match.'
-            : matchedStages > 0
-              ? `Matches on ${matchedStageValues.join(', ')}.`
-              : `No overlap with ICP target ${icpStages.join(', ')}.`,
-    matchedCount: matchedStages,
-    totalSelected: icpStages.length,
-  });
-
-  const icpSizeBuckets = getIcpReferenceSizeBuckets(icp);
-  const companySize = getCompanySizeBucket(company);
-  // Binary: the company is either in one of the ICP's target size bands or it
-  // isn't. No partial credit for adjacent bands (per product decision) — an
-  // out-of-band size earns 0.
-  const sizeInBand = Boolean(companySize) && icpSizeBuckets.includes(companySize!);
-  const companySizeComponent = makeComponent({
-    label: 'Company size',
-    active: icpSizeBuckets.length > 0,
-    available: Boolean(companySize),
-    weight: COMPONENT_WEIGHTS.companySize,
-    earned: icpSizeBuckets.length > 0 && sizeInBand ? COMPONENT_WEIGHTS.companySize : 0,
-    matchedValues: sizeInBand && companySize ? [companySize] : [],
-    detail:
-      icpSizeBuckets.length === 0
-        ? 'No company-size criterion.'
-        : !companySize
-          ? `Company size not enriched yet; ICP expects ${icpSizeBuckets.join(', ')}.`
-          : icpSizeBuckets.includes(companySize)
-            ? `Size-band match on ${companySize}.`
-            : `Size ${companySize} not in ICP target ${icpSizeBuckets.join(', ')}.`,
-    matchStatus:
-      !companySize
-        ? 'unknown'
-        : sizeInBand
-          ? 'exact'
-          : 'mismatch',
-  });
-
-  const icpFundingStages = dedupe(
-    (Array.isArray(icp.funding_stages) ? icp.funding_stages : [])
-      .map((value) =>
-        canonicalizeFundingStage(
-          typeof value === 'string' ? value : null,
-          null,
-        ),
-      )
-      .filter((value): value is FundingStage => Boolean(value)),
-  );
-  const companyFundingStage = canonicalizeFundingStage(
-    company.funding_stage,
-    company.total_funding_usd,
-    company.funding_status_label,
-  );
-  const stageSimilarity = fundingStageSimilarity(companyFundingStage, icpFundingStages);
-  const fundingStageActive = icpFundingStages.length > 0;
-  const fundingAvailable = fundingStageActive && companyFundingStage != null;
-  const fundingComponent = makeComponent({
-    label: 'Funding',
-    active: fundingStageActive,
-    available: fundingAvailable,
-    weight: COMPONENT_WEIGHTS.funding,
-    earned: fundingStageActive ? COMPONENT_WEIGHTS.funding * (stageSimilarity ?? 0) : 0,
-    matchedValues:
-      companyFundingStage && stageSimilarity === 1 ? [companyFundingStage] : [],
-    detail:
-      !fundingStageActive
-        ? 'No funding criterion.'
-        : !fundingAvailable
-          ? 'Funding maturity is not enriched yet.'
-          : companyFundingStage
-            ? `Funding stage ${companyFundingStage} compared with ICP target ${icpFundingStages.join(', ')}.`
-            : `Funding stage missing; ICP target ${icpFundingStages.join(', ')}.`,
-    matchStatus:
-      !fundingAvailable
-        ? 'unknown'
-        : stageSimilarity === 1
-          ? 'exact'
-          : 'mismatch',
-  });
-
-  const components = {
-    company_type: companyTypeComponent,
-    offering: offeringComponent,
-    development_stages: developmentStagesComponent,
-    company_size: companySizeComponent,
-    funding: fundingComponent,
-  };
-
-  const componentList = Object.values(components);
-  const activeWeight = componentList.filter((component) => component.active).reduce((sum, component) => sum + component.weight, 0);
-  const availableWeight = componentList
-    .filter((component) => component.active && component.available)
-    .reduce((sum, component) => sum + component.weight, 0);
-  const earnedWeight = componentList.reduce((sum, component) => sum + component.earned, 0);
-  const rawScore01 = activeWeight > 0 ? roundScore01(earnedWeight / activeWeight) : 0;
-  const coverage01 = activeWeight > 0 ? roundScore01(availableWeight / activeWeight) : 0;
-  const scoreCap01 = COMPANY_TYPE_CAPS[companyTypeMatchStatus];
-  const finalScore01 = roundScore01(Math.min(rawScore01, scoreCap01));
-  const matchedOn = componentList
-    .filter((component) => component.active && component.earned > 0)
-    .map((component) => component.label);
-  const gaps = componentList
-    .filter((component) => component.active && component.earned < component.weight)
-    .map((component) => component.label);
-
-  const reasoning = [
-    icp.name
-      ? `Best match against ${icp.name} scores ${scoreToPercent(finalScore01)}%.`
-      : `Best ICP match scores ${scoreToPercent(finalScore01)}%.`,
-    matchedOn.length > 0
-      ? `Matched on ${matchedOn.join(', ')}.`
-      : 'No strong company-level matches yet.',
-    gaps.length > 0
-      ? `Still weaker or unresolved on ${gaps.join(', ')}.`
-      : 'All active company criteria align cleanly.',
-  ].join(' ');
-
-  return {
-    icpId: icp.id,
-    icpName: icp.name,
-    icpIndex: icp.icpIndex,
-    rawScore01,
-    finalScore01,
-    scoreCap01,
-    coverage01,
-    companyTypeMatchStatus,
-    breakdown: {
-      score_version: SCORE_VERSION,
-      matched_on: matchedOn,
-      gaps,
-      summary: {
-        raw_score01: rawScore01,
-        final_score01: finalScore01,
-        raw_score_pct: scoreToPercent(rawScore01),
-        final_score_pct: scoreToPercent(finalScore01),
-        score_cap01: scoreCap01,
-        coverage01,
-        reasoning,
-      },
-      components,
-    },
   };
 }
 
@@ -633,7 +523,7 @@ async function loadIcpsForUser(supabase: MinimalSupabase, userId: string): Promi
     supabase
       .from('icps')
       .select(
-        'id, name, created_at, company_type, platform_category, therapeutic_areas, modalities, development_stages, company_sizes, funding_stages, example_company_enrichment',
+        'id, name, created_at, company_type, platform_category, therapeutic_areas, modalities, development_stages, company_sizes, funding_stages, target_customers, buyer_types, example_company_enrichment',
       ),
     orgId,
     userId,
@@ -663,7 +553,7 @@ async function loadCompaniesById(
   const { data, error } = await supabase
     .from('companies')
     .select(
-      'id, company_name, domain, company_type, platform_category, therapeutic_areas, modalities, development_stages, clinical_stage, company_size_bucket, employee_count, employee_range, funding_stage, funding_status_label, total_funding_usd',
+      'id, company_name, domain, website, description, bio_summary, tagline, industry, sub_industry, company_type, company_type_display, platform_category, therapeutic_areas, modalities, development_stages, clinical_stage, company_size_bucket, employee_count, employee_range, funding_stage, funding_status_label, total_funding_usd, specialties, products_services, services, technologies',
     )
     .in('id', companyIds);
 
@@ -885,7 +775,7 @@ export async function syncCompanyFitForCompanies(
         continue;
       }
 
-      const scores = icps.map((icp) => computeCompanyIcpScore(company, icp));
+      const scores = await scoreCompanyAgainstIcps(company, icps, userId);
       const expectedIcpIds = new Set(scores.map((score) => score.icpId));
       const staleIcpIds = (existingScores.get(companyId) || []).filter(
         (icpId) => !expectedIcpIds.has(icpId),

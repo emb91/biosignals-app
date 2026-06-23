@@ -9,17 +9,17 @@ import type { Metadata } from "next"
 import LandingPage from "./LandingPage"
 
 export const metadata: Metadata = {
-  title: "Arcova · Know who to call, and exactly when",
+  title: "Arcova | Revenue engine for life science",
   description:
-    "Arcova is the AI-native revenue engine for life science. It watches your market for buying signals — funding, new hires, clinical milestones — ranks who's ready, and drafts the outreach. You just hit send.",
+    "Arcova is a revenue engine for life science teams. It tracks account signals, ranks fit and timing, and supports outreach from one workspace.",
   alternates: { canonical: "/landing-test-4" },
   openGraph: {
     type: "website",
     url: "/landing-test-4",
     siteName: "Arcova",
-    title: "Arcova · Know who to call, and exactly when",
+    title: "Arcova | Revenue engine for life science",
     description:
-      "The AI-native revenue engine for life science. Watches your market for buying signals, ranks who's ready, and drafts the outreach.",
+      "Revenue intelligence for life science teams, with account signals, fit scoring, and outreach workflow in one place.",
     images: [{ url: "/images/network-og.png", width: 1200, height: 630, alt: "Arcova — GTM intelligence for life science" }],
   },
 }

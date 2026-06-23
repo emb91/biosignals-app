@@ -41,4 +41,8 @@ export interface TodayPriority {
     type: 'reenrich-contacts';
     contactIds: string[];
   };
+  meta?: {
+    accountIds?: string[];
+    contactIds?: string[];
+  };
 }

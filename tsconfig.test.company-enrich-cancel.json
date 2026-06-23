@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": "/tmp/arcova-company-enrich-cancel-tests",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "lib/company-enrichment-cancel.ts",
+    "lib/company-enrichment-cancel.test.ts"
+  ]
+}

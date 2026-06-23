@@ -18,6 +18,7 @@ import {
   uniqueTokenCoverage,
   distinctiveTokens,
   sharesDistinctiveToken,
+  verifyNormalizedCompanyEvidence,
 } from './match-helpers';
 
 function tokens(s: string): Set<string> {
@@ -90,6 +91,11 @@ test('distinctiveTokens: strips generic biotech suffixes', () => {
   assert.deepEqual([...t], ['junshi']);
 });
 
+test('distinctiveTokens: strips articles and prepositions', () => {
+  const t = distinctiveTokens('the mt group');
+  assert.deepEqual([...t], []);
+});
+
 test('distinctiveTokens: keeps proper-noun tokens', () => {
   const t = distinctiveTokens('bristol myers squibb');
   assert.deepEqual([...t].sort(), ['bristol', 'myers', 'squibb']);
@@ -135,4 +141,40 @@ test('uniqueTokenCoverage with distinctive-only input rejects generic-suffix-onl
   // {perkinelmer} against canonical "perkinelmer health sciences":
   const cov = uniqueTokenCoverage(distinctiveTokens('perkinelmer'), 'perkinelmer health sciences', []);
   assert.equal(cov, 1);
+});
+
+test('uniqueTokenCoverage: does not resolve unrelated The-* orgs to The MT Group', () => {
+  assert.equal(uniqueTokenCoverage(distinctiveTokens('the cleveland clinic'), 'the mt', []), null);
+  assert.equal(uniqueTokenCoverage(distinctiveTokens('rutgers the state university of new jersey'), 'the mt', []), null);
+  assert.equal(uniqueTokenCoverage(distinctiveTokens('the methodist hospital research institute'), 'the mt', []), null);
+});
+
+test('verifyNormalizedCompanyEvidence: rejects MT Group false provenance', () => {
+  assert.equal(
+    verifyNormalizedCompanyEvidence('the cleveland clinic', 'the mt group', []).verified,
+    false,
+  );
+  assert.equal(
+    verifyNormalizedCompanyEvidence('the beauty tech group', 'the mt group', []).verified,
+    false,
+  );
+  assert.equal(
+    verifyNormalizedCompanyEvidence('biotech inc', 'vir biotechnology', []).verified,
+    false,
+  );
+});
+
+test('verifyNormalizedCompanyEvidence: verifies full company names and aliases', () => {
+  assert.equal(
+    verifyNormalizedCompanyEvidence('the mt group', 'the mt group', []).verified,
+    true,
+  );
+  assert.equal(
+    verifyNormalizedCompanyEvidence('mt group therapeutics', 'the mt group', ['mt group therapeutics']).verified,
+    true,
+  );
+  assert.equal(
+    verifyNormalizedCompanyEvidence('arvinas', 'arvinas therapeutics', []).verified,
+    true,
+  );
 });

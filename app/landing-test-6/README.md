@@ -14,26 +14,34 @@ npm run dev        # then open http://localhost:3000/landing-test-6
 
 Public, full-bleed route (registered in `app/ClientLayout.tsx`).
 
-## The direction (distinct from test-5)
+## The direction
 
-| | test-5 | **test-6** |
-|---|---|---|
-| Hero | split (copy left, feed right) | **centered + product-led** — big two-tone headline over a large command-center board |
-| Features | vertical interactive tabs | **asymmetric bento** (mixed tile sizes, dark accent tiles, Retool-style) |
-| Proof band | "signals we watch" marquee | **impact band** (3 outcome statements) |
-| Differentiation | comparison table | **dark statement + 4 pillars** ("Bolt-on AI summarizes. Arcova decides.") |
-| How it works | stepper with connectors | **inline numbered flow** (3 columns, dividers) |
+Centered, product-led hero (two-tone headline over the live `/today`
+command-center board), a "Built for Life Sciences" segment band, a quiet
+three-up capability strip, an asymmetric **Arcova Engine** bento (Fit /
+Readiness / Priority / Engagement), the **Signals Arcova tracks** moat
+(signal universe ↔ ranked-contacts product view), a dark always-on
+how-it-works panel, the test-7 pricing block, and a punchy final CTA.
+
+Kept in sync with the Claude Design project "Landing Test 6"
+(`landing/Landing Test 6.html` + `landing-test-6.css` / `landing-signals.css`
+/ `landing-pricing7.css`). The editor-only Tweaks panel and its `@import` /
+`@property` chrome are intentionally omitted; fonts come from `next/font`.
 
 ## Structure
 
 ```
 app/landing-test-6/
-  page.tsx            # server — SEO/OG metadata
-  LandingPage.tsx     # "use client" orchestrator (nav-scroll + reveal IO)
-  landing.css         # design system, scoped under #lt6
-  data.ts             # all copy/content (pricing centralized)
+  page.tsx              # server — SEO/OG metadata
+  LandingPage.tsx       # "use client" orchestrator (nav-scroll, reveal IO,
+                        #   hero date/greeting, priority-score count-up, sequence anim)
+  landing.css           # design system + most sections, scoped under #lt6
+  landing-signals.css   # "Signals Arcova tracks" section
+  landing-pricing7.css  # pricing block, scoped under #pt7
+  data.ts               # copy/content (pricing PLANS + COMPARE centralized)
   components/primitives.tsx
-  sections/           # Nav, Hero, Impact, Bento, Flow, Statement, Pricing, FinalCta, Footer
+  sections/             # Nav, Hero, BuiltFor, Caps, Bento, Signals,
+                        #   HowItWorks, Pricing, FinalCta, Footer
 ```
 
 ## Design system
@@ -48,7 +56,7 @@ app/landing-test-6/
 
 ## Placeholders to supply before launch
 
-- **Hero headline** — `"Your whole market, watched and ranked."` is a placeholder
+- **Hero headline** — use concise product positioning, not old slogan copy
   (final tagline TBD); one-line swap in `data.ts` → `HERO`.
 - **Pricing** — Free / Starter $149 workspace / Growth $799 workspace. Annual
   prices are $1,490 and $7,990. Edit once in `data.ts` → `PLANS`; commercial

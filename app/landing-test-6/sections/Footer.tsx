@@ -1,4 +1,4 @@
-import Image from "next/image"
+import { Logo } from "@/components/logo"
 import { FOOTER_COLS } from "../data"
 
 const HREFS: Record<string, string> = {
@@ -16,7 +16,7 @@ export function Footer() {
       <div className="wrap">
         <div className="foot-top">
           <div className="foot-brand">
-            <Image src="/arcova-wordmark.png" alt="Arcova" width={120} height={30} style={{ height: 30, width: "auto" }} />
+            <Logo size={28} badge="none" />
             <p>The AI-native revenue engine for life science. Your whole market, watched and ranked.</p>
           </div>
           {FOOTER_COLS.map((col) => (
@@ -30,7 +30,7 @@ export function Footer() {
         </div>
         <div className="foot-bottom">
           <span className="cr">© 2026 Arcova. All rights reserved.</span>
-          <span className="tag">Your market, watched and ranked.</span>
+          <span className="tag">The revenue engine built for life sciences.</span>
         </div>
       </div>
     </footer>

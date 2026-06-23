@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { effectiveReadiness } from '@/lib/lead-action';
+import { computeIntrinsicPriority } from '@/lib/effective-priority';
 import { buildAccountReadinessContext } from '@/lib/signals/readiness-context';
 import { normalizeReadinessEvent } from '@/lib/signals/readiness-normalize';
 import { buildAccountReason } from '@/lib/signals/readiness-reason';
@@ -292,9 +293,7 @@ export async function recomputeContactReadiness(
   };
 }
 
-/** Mirror of computePriorityScore in readiness-store. Kept local to avoid a
- *  cross-module export for a 3-line helper. Returns null when fit is missing,
- *  undefined when neither input is usable (skip the mirror write). */
+/** Returns null when fit is missing, undefined when neither input is usable. */
 function computeMirroredPriority(
   fitScore: number | null | undefined,
   readinessScore: number | null | undefined,
@@ -303,14 +302,11 @@ function computeMirroredPriority(
   if (typeof fitScore !== 'number' || !Number.isFinite(fitScore)) {
     return readinessScore == null ? undefined : null;
   }
-  if (typeof readinessScore !== 'number' || !Number.isFinite(readinessScore)) return null;
-  // Optional second fit (company fit for contact priority). When absent we
-  // collapse to single-fit × readiness — used by account-level mirrors.
-  const second =
-    typeof secondFitScore === 'number' && Number.isFinite(secondFitScore) ? secondFitScore : 1;
-  const raw = fitScore * second * (0.5 + 0.5 * readinessScore);
-  if (!Number.isFinite(raw)) return null;
-  return Math.max(0, Math.min(1, raw));
+  return computeIntrinsicPriority({
+    companyFit: secondFitScore ?? 1,
+    contactFit: fitScore,
+    readiness: readinessScore,
+  });
 }
 
 export async function generateAccountReason(
@@ -410,4 +406,3 @@ export async function buildPersistedAccountReadinessContext(
     },
   };
 }
-

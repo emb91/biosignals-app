@@ -39,8 +39,13 @@ async function runCron(request: Request) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
   try {
+    const { searchParams } = new URL(request.url);
+    const overlapDaysRaw = searchParams.get('overlapDays');
+    const overlapDays = overlapDaysRaw
+      ? Math.min(8, Math.max(1, Math.trunc(Number(overlapDaysRaw) || 2)))
+      : undefined;
     const admin = createAdminClient();
-    const syncResult = await syncCtDelta({ admin });
+    const syncResult = await syncCtDelta({ admin, overlapDays });
 
     const userIds = await loadActiveUserIds(admin);
     let monitorOk = 0;
@@ -85,6 +90,7 @@ async function runCron(request: Request) {
 
     return NextResponse.json({
       success: true,
+      overlap_days: overlapDays ?? 2,
       sync: syncResult,
       monitor: {
         users_total: userIds.length,

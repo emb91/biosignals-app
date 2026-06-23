@@ -190,3 +190,142 @@ export function apolloOrganizationMatchesIcpKeywords(
     return k.length >= 2 && haystack.includes(k);
   });
 }
+
+function evidenceText(
+  org: { name?: string | null; short_description?: string | null; industry?: string | null },
+): string {
+  return [org.name, org.short_description, org.industry]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+    .replace(/[–—]/g, '-')
+    .replace(/\s+/g, ' ');
+}
+
+function containsAny(text: string, patterns: RegExp[]): boolean {
+  return patterns.some((pattern) => pattern.test(text));
+}
+
+function offeringTerms(icp: AcquisitionIcp): string[] {
+  const aliases: Record<string, string[]> = {
+    oncology: ['oncology', 'cancer', 'tumor', 'tumour'],
+    adc: ['adc', 'antibody-drug conjugate', 'antibody drug conjugate'],
+    'biologic (antibody)': ['antibody', 'biologic'],
+    radiopharmaceutical: ['radiopharmaceutical', 'radioligand', 'radioisotope'],
+    diagnostics: ['diagnostic'],
+    biomarker: ['biomarker'],
+    imaging: ['imaging'],
+    'liquid biopsy': ['liquid biopsy'],
+    'cell therapy': ['cell therapy'],
+    'gene therapy': ['gene therapy'],
+    vaccine: ['vaccine'],
+  };
+  return cleanList([
+    ...(icp.therapeutic_areas || []),
+    ...(icp.modalities || []),
+    icp.platform_category,
+  ], 20).flatMap((value) => aliases[value.toLowerCase()] || [value.toLowerCase()]);
+}
+
+/**
+ * Hard negative screen for pre-purchase company acquisition.
+ *
+ * This deliberately does NOT decide ICP fit. It only catches categories we
+ * should not spend money on unless the ICP explicitly targets that account
+ * type. Nuanced fit now belongs to the LLM screen in the job runner.
+ */
+export function apolloOrganizationHardRejectReason(
+  org: { name?: string | null; short_description?: string | null; industry?: string | null },
+  icp: AcquisitionIcp,
+): string | null {
+  const text = evidenceText(org);
+  if (!text) return 'missing_company_evidence';
+
+  const type = (icp.company_type || '').toLowerCase();
+  const isCroTarget = type.includes('cro') || type.includes('contract research');
+  const isCdmoTarget = type.includes('cdmo') || type.includes('contract development');
+  const isHospitalTarget = type.includes('hospital') || type.includes('health system');
+  const isAcademicTarget = type.includes('academic') || type.includes('research institute');
+
+  const universalNonOperatingOrBuyer = [
+    /\bprofessional (association|society)\b/,
+    /\bnon-?profit (association|society|advocacy|foundation)\b/,
+    /\bnews\b/,
+    /\bmedia\b/,
+    /\bpublishing\b/,
+    /\bjournal\b/,
+    /\bhealth (insurance|insurer|plan|plans|benefits?)\b/,
+    /\binsurance (company|carrier|provider|plan|plans|services?)\b/,
+    /\bmanaged care\b/,
+    /\bmedicare\b/,
+    /\bmedicaid\b/,
+    /\bpayer(s)?\b/,
+    /\bveterinary\b/,
+    /\banimal (hospital|clinic|care|health|healthcare|medicine)\b/,
+    /\bpet (care|health|healthcare|medicine|wellness|insurance|services?)\b/,
+  ];
+  if (containsAny(text, universalNonOperatingOrBuyer)) return 'explicit_non_target_category';
+
+  const croEvidence = containsAny(text, [
+    /\bcontract research organi[sz]ation\b/,
+    /\bclinical research organi[sz]ation\b/,
+    /\bcro\b/,
+    /\bclinical trial services\b/,
+  ]);
+  const cdmoEvidence = containsAny(text, [
+    /\bcdmo\b/,
+    /\bcontract development\b/,
+    /\bcontract manufacturing\b/,
+  ]);
+  const hospitalEvidence = containsAny(text, [
+    /\bhospital\b/,
+    /\bhealth system\b/,
+    /\bhealthcare system\b/,
+    /\bmedical center\b/,
+    /\bmedical centre\b/,
+    /\bclinic\b/,
+  ]);
+  const academicEvidence = containsAny(text, [
+    /\buniversity\b/,
+    /\bacademic (institute|institution|center|centre|organization|medical center|medical centre)\b/,
+    /\bresearch (institute|institution|center|centre)\b/,
+  ]);
+
+  if (isCroTarget) return croEvidence ? null : 'not_a_cro';
+  if (isCdmoTarget) return cdmoEvidence ? null : 'not_a_cdmo';
+  if (isHospitalTarget) return hospitalEvidence ? null : 'not_a_hospital_or_health_system';
+  if (isAcademicTarget) return academicEvidence ? null : 'not_an_academic_or_research_org';
+
+  if (croEvidence) return 'cro_not_targeted_by_icp';
+  if (cdmoEvidence) return 'cdmo_not_targeted_by_icp';
+  if (hospitalEvidence) return 'hospital_not_targeted_by_icp';
+
+  if (type.includes('biotech') || type.includes('biopharma') || type.includes('pharma')) {
+    if (academicEvidence) return 'academic_org_not_targeted_by_biopharma_icp';
+    return null;
+  }
+
+  if (type.includes('tools') || type.includes('instrument')) {
+    const researchBuyerEvidence = containsAny(text, [
+      /\blife sciences? research\b/,
+      /\bbiomedical research\b/,
+      /\bresearch (lab|labs|laboratory|laboratories|institute|institution|center|centre)\b/,
+      /\bacademic (research|medical center|medical centre)\b/,
+    ]);
+    if (academicEvidence && !researchBuyerEvidence) return 'academic_admin_not_research_buyer';
+    return null;
+  }
+
+  return null;
+}
+
+/**
+ * Back-compat helper for tests and callers that still need a synchronous local
+ * screen. `true` now means "not hard-rejected", not "confirmed ICP fit".
+ */
+export function apolloOrganizationMatchesIcp(
+  org: { name?: string | null; short_description?: string | null; industry?: string | null },
+  icp: AcquisitionIcp,
+): boolean {
+  return apolloOrganizationHardRejectReason(org, icp) == null;
+}

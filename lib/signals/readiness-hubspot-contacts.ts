@@ -349,13 +349,14 @@ function buildContactChangeEvents(
       events.push({
         changeType: 'new_contact_added',
         sourceEventType: 'new_contact_added_in_crm',
-        signalKeys: ['new_contact_added_in_crm'],
+        signalKeys: [],
         title: 'New HubSpot contact added',
         summary: 'A new relevant contact was added to a tracked HubSpot account.',
         entityScope: 'company',
         companyId: resolution.companyId,
         contactId: resolution.arcovaContactId,
         buyerFunctionsOverride,
+        isContextOnly: true,
       });
     }
     return events;
@@ -365,13 +366,14 @@ function buildContactChangeEvents(
     events.push({
       changeType: 'account_association_added',
       sourceEventType: 'new_contact_added_in_crm',
-      signalKeys: ['new_contact_added_in_crm'],
+      signalKeys: [],
       title: 'Relevant HubSpot contact associated to account',
       summary: 'A relevant contact was newly associated to a tracked HubSpot account.',
       entityScope: 'company',
       companyId: resolution.companyId,
       contactId: resolution.arcovaContactId,
       buyerFunctionsOverride,
+      isContextOnly: true,
     });
   }
 
@@ -412,14 +414,15 @@ function buildContactChangeEvents(
   ) {
     events.push({
       changeType: 'recently_changed_company',
-      sourceEventType: 'recently_changed_company',
-      signalKeys: ['recently_changed_company'],
+      sourceEventType: 'crm_contact_company_context_changed',
+      signalKeys: [],
       title: 'HubSpot contact changed company context',
-      summary: 'A tracked contact now points to a different company context.',
+      summary: 'HubSpot changed the account association for this contact.',
       entityScope: 'contact',
       companyId: resolution.companyId,
       contactId: resolution.arcovaContactId,
       buyerFunctionsOverride,
+      isContextOnly: true,
     });
     return events;
   }
@@ -433,38 +436,41 @@ function buildContactChangeEvents(
     if (nextRank > prevRank && nextRank > 0) {
       events.push({
         changeType: 'recently_promoted',
-        sourceEventType: 'recently_promoted',
-        signalKeys: ['recently_promoted'],
+        sourceEventType: 'crm_contact_promoted',
+        signalKeys: [],
         title: 'HubSpot contact promoted',
         summary: 'A tracked HubSpot contact appears to have been promoted internally.',
         entityScope: 'contact',
         companyId: resolution.companyId,
         contactId: resolution.arcovaContactId,
         buyerFunctionsOverride,
+        isContextOnly: true,
       });
     } else if (prevRole && nextRole && prevRole !== nextRole) {
       events.push({
         changeType: 'new_internal_role',
-        sourceEventType: 'new_internal_role',
-        signalKeys: ['new_internal_role'],
+        sourceEventType: 'crm_contact_internal_role_changed',
+        signalKeys: [],
         title: 'HubSpot contact moved into a new internal role',
         summary: 'A tracked HubSpot contact appears to have changed function internally.',
         entityScope: 'contact',
         companyId: resolution.companyId,
         contactId: resolution.arcovaContactId,
         buyerFunctionsOverride,
+        isContextOnly: true,
       });
     } else {
       events.push({
         changeType: 'title_change',
-        sourceEventType: 'title_change',
-        signalKeys: ['title_change'],
+        sourceEventType: 'crm_contact_title_changed',
+        signalKeys: [],
         title: 'HubSpot contact title changed',
         summary: 'A tracked HubSpot contact has a materially different title.',
         entityScope: 'contact',
         companyId: resolution.companyId,
         contactId: resolution.arcovaContactId,
         buyerFunctionsOverride,
+        isContextOnly: true,
       });
     }
   }
@@ -473,13 +479,14 @@ function buildContactChangeEvents(
     events.push({
       changeType: 'new_contact_added',
       sourceEventType: 'new_contact_added_in_crm',
-      signalKeys: ['new_contact_added_in_crm'],
+      signalKeys: [],
       title: 'New HubSpot contact added',
       summary: 'A new relevant contact was added to a tracked HubSpot account.',
       entityScope: 'company',
       companyId: resolution.companyId,
       contactId: resolution.arcovaContactId,
       buyerFunctionsOverride,
+      isContextOnly: true,
     });
   }
 

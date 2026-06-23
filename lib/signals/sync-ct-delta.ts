@@ -11,10 +11,13 @@
  */
 import { fetchWithRetry, TokenBucket } from '@/lib/signals/fetch-with-retry';
 import { normalizeCompanyForMatching } from '@/lib/signals/company-name-variants';
-import { resolveCompanyMentions } from '@/lib/companies/resolve-mentions';
+import { buildCompanyMentionMatches, verifiedMentionCompanyIds } from '@/lib/companies/mention-provenance';
 import type { createAdminClient } from '@/lib/supabase-admin';
 
-const DEFAULT_OVERLAP_DAYS = 8;
+// This runs daily. Two days gives one full day of overlap for delayed upstream
+// updates without trying to resolve an entire week of global trial activity in
+// one Vercel invocation.
+const DEFAULT_OVERLAP_DAYS = 2;
 const PAGE_SIZE = 1000; // CT.gov supports up to 1000 per page
 const MAX_PAGES = 25; // 25K trials max per run — way more than typical weekly volume
 const UPSERT_CHUNK = 500;
@@ -119,40 +122,38 @@ async function resolveAndAttachMentions(
   admin: ReturnType<typeof createAdminClient>,
   rows: Record<string, unknown>[],
 ): Promise<void> {
-  // Collect all unique sponsor names across the chunk.
-  const allNames = new Set<string>();
+  if (rows.length === 0) return;
+  let hasAnyName = false;
   for (const r of rows) {
-    const lead = r.lead_sponsor as string | null;
-    if (lead) allNames.add(lead);
+    if (r.lead_sponsor) hasAnyName = true;
     const collabs = (r.collaborators as string[] | null) ?? [];
-    for (const c of collabs) if (c) allNames.add(c);
+    if (collabs.some(Boolean)) hasAnyName = true;
   }
-  if (allNames.size === 0) {
+  if (!hasAnyName) {
     for (const r of rows) r.mentioned_company_ids = [];
     return;
   }
 
-  let resolved: Map<string, { canonicalId: string | null }>;
   try {
-    resolved = await resolveCompanyMentions(admin, [...allNames]);
+    for (const r of rows) {
+      const mentions = [];
+      if (r.lead_sponsor) {
+        mentions.push({ sourceText: r.lead_sponsor as string, sourceField: 'lead_sponsor' });
+      }
+      const collabs = (r.collaborators as string[] | null) ?? [];
+      for (const c of collabs) {
+        if (c) mentions.push({ sourceText: c, sourceField: 'collaborators' });
+      }
+      const matches = await buildCompanyMentionMatches(admin, mentions);
+      r.mentioned_company_matches = matches;
+      r.mentioned_company_ids = verifiedMentionCompanyIds(matches);
+    }
   } catch (e) {
     console.error('[sync-ct-delta] resolver failed for chunk:', e);
-    for (const r of rows) r.mentioned_company_ids = [];
-    return;
-  }
-
-  for (const r of rows) {
-    const names: string[] = [];
-    if (r.lead_sponsor) names.push(r.lead_sponsor as string);
-    const collabs = (r.collaborators as string[] | null) ?? [];
-    for (const c of collabs) if (c) names.push(c);
-
-    const ids = new Set<string>();
-    for (const n of names) {
-      const id = resolved.get(n)?.canonicalId;
-      if (id) ids.add(id);
+    for (const r of rows) {
+      r.mentioned_company_matches = [];
+      r.mentioned_company_ids = [];
     }
-    r.mentioned_company_ids = [...ids];
   }
 }
 

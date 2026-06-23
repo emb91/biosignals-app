@@ -3,7 +3,7 @@
  * Used by /api/leads/query and /api/agent/chat.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getLeadActionFromFits } from '@/lib/lead-action';
+import { getActionFromScores } from '@/lib/lead-action';
 import {
   formatDataProvenanceTypeOnly,
   resolveContactDataProvenance,
@@ -69,6 +69,7 @@ export interface QueryLead {
   company_fit_score: number | null;
   contact_fit_score: number | null;
   readiness_score: number | null;
+  crm_is_suppressed: boolean;
   source: string | null;
   created_at: string | null;
   data_provenance_imported_at: string | null;
@@ -156,15 +157,22 @@ export function applyLeadsSort(leads: QueryLead[], sortBy: LeadSortBy): QueryLea
     const fitB = b.company_fit_score ?? b.companies?.company_fit_score ?? 0;
     const cfitA = a.contact_fit_score ?? 0;
     const cfitB = b.contact_fit_score ?? 0;
+    const actionFor = (lead: QueryLead, fit: number) =>
+      getActionFromScores(
+        fit,
+        lead.contact_fit_score ?? null,
+        lead.readiness_score ?? null,
+        lead.crm_is_suppressed ? 'dormant' : null,
+      );
     switch (sortBy) {
       case 'status_best_first': {
-        const oA = ACTION_ORDER[getLeadActionFromFits(fitA, a.contact_fit_score ?? null, a.readiness_score ?? null)] ?? 0;
-        const oB = ACTION_ORDER[getLeadActionFromFits(fitB, b.contact_fit_score ?? null, b.readiness_score ?? null)] ?? 0;
+        const oA = ACTION_ORDER[actionFor(a, fitA)] ?? 0;
+        const oB = ACTION_ORDER[actionFor(b, fitB)] ?? 0;
         return oB - oA;
       }
       case 'status_worst_first': {
-        const oA = ACTION_ORDER[getLeadActionFromFits(fitA, a.contact_fit_score ?? null, a.readiness_score ?? null)] ?? 0;
-        const oB = ACTION_ORDER[getLeadActionFromFits(fitB, b.contact_fit_score ?? null, b.readiness_score ?? null)] ?? 0;
+        const oA = ACTION_ORDER[actionFor(a, fitA)] ?? 0;
+        const oB = ACTION_ORDER[actionFor(b, fitB)] ?? 0;
         return oA - oB;
       }
       case 'company_fit_desc': return fitB - fitA;
@@ -185,7 +193,12 @@ export function applyLeadsFilters(leads: QueryLead[], filters: LeadQueryFilters)
           : null;
 
     if (filters.actions && filters.actions.length > 0) {
-      const action = getLeadActionFromFits(companyFit, lead.contact_fit_score ?? null, lead.readiness_score ?? null);
+      const action = getActionFromScores(
+        companyFit,
+        lead.contact_fit_score ?? null,
+        lead.readiness_score ?? null,
+        lead.crm_is_suppressed ? 'dormant' : null,
+      );
       if (!filters.actions.includes(action)) return false;
     }
     if (typeof filters.minCompanyFit === 'number') {
@@ -302,7 +315,7 @@ export async function fetchFilteredLeads(
 
   // Fetch contacts ordered by fit score
   const selectClause =
-    'id, full_name, first_name, last_name, job_title, resolved_current_job_title, seniority_level, business_area, company_name, resolved_current_company_name, company_id, company_domain, fit_score, overall_fit_score, contact_fit_score, readiness_score, source, created_at, upload_batches(filename, created_at)';
+    'id, full_name, first_name, last_name, job_title, resolved_current_job_title, seniority_level, business_area, company_name, resolved_current_company_name, company_id, company_domain, fit_score, overall_fit_score, contact_fit_score, readiness_score, crm_is_suppressed, source, created_at, upload_batches(filename, created_at)';
 
   let contactsQuery = supabase
     .from('contacts')
@@ -433,6 +446,7 @@ export async function fetchFilteredLeads(
       company_fit_score: companyFitScore,
       contact_fit_score: typeof r.contact_fit_score === 'number' ? r.contact_fit_score : null,
       readiness_score: typeof r.readiness_score === 'number' ? r.readiness_score : null,
+      crm_is_suppressed: r.crm_is_suppressed === true,
       source: typeof r.source === 'string' ? r.source : null,
       created_at: typeof r.created_at === 'string' ? r.created_at : null,
       data_provenance_imported_at: importedAt,

@@ -43,9 +43,6 @@ export async function POST(request: Request) {
   }
 
   const entitlements = await getOrgEntitlements(ctx.orgId);
-  if (entitlements.unlimited) {
-    return NextResponse.json({ error: 'This workspace has no limits — there is nothing to purchase' }, { status: 400 });
-  }
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin;
   const stripe = getStripe();
@@ -104,6 +101,9 @@ export async function POST(request: Request) {
   }
 
   // Credit pack (one-time payment).
+  if (entitlements.unlimited) {
+    return NextResponse.json({ error: 'Credit packs are not needed on complimentary workspaces. Choose a paid plan first.' }, { status: 400 });
+  }
   if (!isPlanKey(entitlements.planKey)) {
     return NextResponse.json({ error: 'Credit packs are available on paid plans.' }, { status: 403 });
   }

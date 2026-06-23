@@ -52,6 +52,11 @@ import { EntitySignalsList } from '@/components/EntitySignalsList';
 
 const PAGE_SIZE = 50;
 
+function parseIdList(raw: string | null): string[] {
+  if (!raw) return [];
+  return [...new Set(raw.split(',').map((id) => id.trim()).filter(Boolean))];
+}
+
 type AccountRow = {
   id: string;
   company_name: string | null;
@@ -113,6 +118,8 @@ type AccountRow = {
   readiness_score?: number | null;
   raw_readiness_score?: number | null;
   priority_score?: number | null;
+  intrinsic_priority_score?: number | null;
+  crm_is_suppressed?: boolean;
   crm_status?: 'customer' | 'active' | 'dormant' | 'context_only' | 'none' | null;
   crm_deal_stage_label?: string | null;
   crm_closed_at?: string | null;
@@ -590,6 +597,7 @@ export default function AccountsPage() {
   const agentTaskFiredRef = useRef<string | null>(null);
 
   const [agentFilterIds, setAgentFilterIds] = useState<Set<string> | null>(null);
+  const [agentFilterLabel, setAgentFilterLabel] = useState('Filtered by agent');
   // ?sort=newest (from the /today "new accounts" priority) lands sorted by most-recently
   // added, so just-added accounts aren't buried at the bottom of the default priority sort.
   const [tableSortCol, setTableSortCol] = useState<string | null>(
@@ -806,7 +814,8 @@ export default function AccountsPage() {
 
   const fetchAccounts = useCallback(async (silent = false) => {
     if (!user) return;
-    const focusId = accountsDeepLinkCompanyIdRef.current;
+    const focusAccountIds = parseIdList(searchParams.get('accountIds'));
+    const focusId = accountsDeepLinkCompanyIdRef.current || (focusAccountIds.length === 1 ? focusAccountIds[0] : null);
     // `silent` skips the full-table loading spinner — used by the 5s enrichment
     // poll so the list doesn't flash a skeleton every tick.
     if (!silent) setLoadingAccounts(true);
@@ -820,7 +829,30 @@ export default function AccountsPage() {
         total?: number;
         page?: number;
       }>(`/api/accounts?${params}`);
-      const next: AccountRow[] = result.data || [];
+      let next: AccountRow[] = result.data || [];
+      if (focusAccountIds.length > 1) {
+        const existingIds = new Set(next.map((account) => account.id));
+        const missingIds = focusAccountIds.filter((id) => !existingIds.has(id));
+        if (missingIds.length > 0) {
+          const supplemental = await Promise.all(
+            missingIds.map(async (id) => {
+              try {
+                const { data: detail } = await cachedJson<{ data?: Partial<AccountRow> }>(
+                  `/api/accounts/${encodeURIComponent(id)}`,
+                );
+                return detail.data ? ({ ...detail.data, id } as AccountRow) : null;
+              } catch {
+                return null;
+              }
+            }),
+          );
+          next = [...next, ...supplemental.filter((account): account is AccountRow => Boolean(account))];
+        }
+        setAgentFilterIds(new Set(focusAccountIds));
+        setAgentFilterLabel('Priority changes');
+        setTableSortCol('priority');
+        setTableSortDir('desc');
+      }
       setAccounts(next);
       setTotal(result.total || 0);
       if (typeof result.page === 'number' && result.page >= 1) {
@@ -840,7 +872,7 @@ export default function AccountsPage() {
       if (focusId) accountsDeepLinkCompanyIdRef.current = null;
       if (!silent) setLoadingAccounts(false);
     }
-  }, [user, page]);
+  }, [user, page, searchParams]);
 
   useEffect(() => { fetchAccounts(); }, [fetchAccounts]);
 
@@ -1097,14 +1129,19 @@ export default function AccountsPage() {
 
   const handleTableFilter = (_filter: AgentTableFilter, filteredAccounts: QueryAccount[]) => {
     setAgentFilterIds(new Set(filteredAccounts.map((a) => a.id)));
+    setAgentFilterLabel('Filtered by agent');
     setTableSortCol(null);
     setSelectedAccountId(null);
   };
 
   const handleQueryClear = () => {
     setAgentFilterIds(null);
+    setAgentFilterLabel('Filtered by agent');
     setSelectedAccountId(null);
     setTableSortCol(null);
+    if (searchParams.get('accountIds') || searchParams.get('focus')) {
+      router.replace(ROUTES.accounts);
+    }
   };
 
   const handleSortCol = (col: string) => {
@@ -1578,7 +1615,7 @@ export default function AccountsPage() {
                 {agentFilterIds && (
                   <div className="flex items-center justify-between gap-3 rounded-lg border border-arcova-teal/20 bg-arcova-teal/5 px-4 py-2.5">
                     <p className="text-xs font-medium text-arcova-teal">
-                      Filtered by agent · {sortedAccounts.length} account{sortedAccounts.length !== 1 ? 's' : ''}
+                      {agentFilterLabel} · {sortedAccounts.length} account{sortedAccounts.length !== 1 ? 's' : ''}
                     </p>
                     <button
                       type="button"

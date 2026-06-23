@@ -6,7 +6,7 @@
  *   npx tsx --env-file=.env.local scripts/backfill-grants-mentions.ts --force
  */
 import { createClient } from '@supabase/supabase-js';
-import { resolveCompanyMentions } from '@/lib/companies/resolve-mentions';
+import { buildCompanyMentionMatches, verifiedMentionCompanyIds } from '@/lib/companies/mention-provenance';
 
 const BATCH_SIZE = 200;
 
@@ -44,30 +44,21 @@ async function main() {
     if (pageErr) throw new Error(`page error: ${pageErr.message}`);
     if (!page || page.length === 0) break;
 
-    const uniqueOrgs = [
-      ...new Set(
-        (page as Array<{ org_name: string | null }>)
-          .map((r) => r.org_name)
-          .filter((n): n is string => Boolean(n)),
-      ),
-    ];
-
-    let resolved: Map<string, { canonicalId: string | null }>;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      resolved = await resolveCompanyMentions(admin as any, uniqueOrgs);
-    } catch (e) {
-      console.error('  resolver failed for page:', e instanceof Error ? e.message : e);
-      resolved = new Map();
-    }
-
     for (const row of page as Array<{ appl_id: number; org_name: string | null }>) {
       if (force) seenIds.add(row.appl_id);
-      const id = row.org_name ? resolved.get(row.org_name)?.canonicalId : null;
-      const ids = id ? [id] : [];
+      let matches: Awaited<ReturnType<typeof buildCompanyMentionMatches>> = [];
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        matches = await buildCompanyMentionMatches(admin as any, [
+          { sourceText: row.org_name, sourceField: 'org_name' },
+        ]);
+      } catch (e) {
+        console.error('  resolver failed:', e instanceof Error ? e.message : e);
+      }
+      const ids = verifiedMentionCompanyIds(matches);
       const { error: updateErr } = await admin
         .from('nih_grants_local')
-        .update({ mentioned_company_ids: ids })
+        .update({ mentioned_company_ids: ids, mentioned_company_matches: matches })
         .eq('appl_id', row.appl_id);
       if (updateErr) console.error(`  [${row.appl_id}] update failed:`, updateErr.message);
       totalResolved += ids.length;

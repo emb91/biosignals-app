@@ -11,7 +11,7 @@
  *   npx tsx --env-file=.env.local scripts/backfill-press-release-mentions.ts --force
  */
 import { createClient } from '@supabase/supabase-js';
-import { resolveCompanyMentions } from '@/lib/companies/resolve-mentions';
+import { buildCompanyMentionMatches, verifiedMentionCompanyIds } from '@/lib/companies/mention-provenance';
 
 const BATCH_SIZE = 50;
 
@@ -29,7 +29,7 @@ async function main() {
     console.log('Clearing mentioned_company_ids on classified rows…');
     const { error: clearErr } = await admin
       .from('press_release_articles')
-      .update({ mentioned_company_ids: null })
+      .update({ mentioned_company_ids: null, mentioned_company_matches: [] })
       .not('classification', 'is', null)
       .not('mentioned_company_ids', 'is', null);
     if (clearErr) throw new Error(`force-clear: ${clearErr.message}`);
@@ -70,18 +70,15 @@ async function main() {
 
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const resolved = await resolveCompanyMentions(admin as any, candidates);
-        const ids = [
-          ...new Set(
-            [...resolved.values()]
-              .map((r) => r.canonicalId)
-              .filter((id): id is string => typeof id === 'string'),
-          ),
-        ];
+        const matches = await buildCompanyMentionMatches(
+          admin as any,
+          candidates.map((company) => ({ sourceText: company, sourceField: 'candidate_companies' })),
+        );
+        const ids = verifiedMentionCompanyIds(matches);
 
         const { error: updateErr } = await admin
           .from('press_release_articles')
-          .update({ mentioned_company_ids: ids })
+          .update({ mentioned_company_ids: ids, mentioned_company_matches: matches })
           .eq('id', row.id);
         if (updateErr) console.error(`  [${row.id}] update failed:`, updateErr.message);
 

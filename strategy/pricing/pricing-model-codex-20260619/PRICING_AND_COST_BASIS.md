@@ -1,16 +1,16 @@
 # Arcova Pricing and Cost Basis
 
 **Status:** Current operating summary
-**Last updated:** 19 June 2026
+**Last updated:** 23 June 2026
 **Commercial source of truth:** `ARCOVA_PRICING_AND_CREDIT_SPEC.md`
 
 ## Pricing
 
-| Plan | Monthly price | Annual price | Included credits | Active leads | Monitoring |
-|---|---:|---:|---:|---:|---|
-| Free | $0 | — | 100/month | 100 | Monthly |
-| Starter | $149/workspace | $1,490/workspace | 2,000/month or 24,000 upfront | 5,000 | Monthly |
-| Growth | $799/workspace | $7,990/workspace | 8,000/month or 96,000 upfront | 10,000 | Weekly |
+| Plan | Monthly price | Annual price | Included credits | Active ICPs | Active leads | Monitoring |
+|---|---:|---:|---:|---:|---:|---|
+| Free | $0 | — | 100/month | 1 | 100 | Monthly |
+| Starter | $149/workspace | $1,490/workspace | 2,000/month or 24,000 upfront | 3 | 5,000 | Monthly |
+| Growth | $799/workspace | $7,990/workspace | 8,000/month or 96,000 upfront | 10 | 10,000 | Weekly |
 
 Paid plans include unlimited workspace users. Adding users does not multiply credits or caps.
 
@@ -18,7 +18,11 @@ Credit packs:
 
 - Starter: $100 per 1,000 credits.
 - Growth: $70 per 1,000 credits.
-- Purchased credits expire after 12 months and do not bypass plan caps.
+- Purchased credits expire after 12 months and do not increase active ICP capacity,
+  active-lead capacity, or monitoring cadence.
+- Annual credits are granted upfront and can be spent at the customer's chosen pace.
+  Arcova warns when annual usage is ahead of the normal monthly rhythm rather than
+  blocking purely because of pace.
 
 ## Customer credits versus internal cost
 
@@ -33,7 +37,7 @@ Customer action prices:
 
 | Action | Credits |
 |---|---:|
-| Imported contact and company enrichment | 4 |
+| Imported contact and company enrichment | 4, including email validation when an email is returned |
 | Company-only enrichment | 3 |
 | Email validation | 0.5 when billable |
 | Successful new-email lookup and validation | 11 |
@@ -60,6 +64,12 @@ Current verified Apify planning rates:
 Other variable costs include email verification, contact/company lookup, phone reveal, and LLM usage.
 Their actual charges belong in provider telemetry and the internal operations view.
 
+Imported contact and company enrichment includes ZeroBounce validation in COGS when the bundle returns an
+email address. The pricing workbook models this as Apollo person/company lookup plus Apify profile/company
+work plus the expected validation share multiplied by the ZeroBounce validation unit cost. Standalone email
+validation remains a separate internal/customer action only if Arcova exposes an explicit "validate this email"
+workflow later.
+
 Monitoring is the largest recurring cost sensitivity because it repeats across the full active universe.
 The Growth cap is 10,000 active leads.
 
@@ -77,6 +87,8 @@ Hiring-monitor planning should use:
 - Review Growth separately because weekly monitoring makes it more sensitive to full-cap usage.
 - Do not model subscription value using assumed credit-pack purchases unless that scenario explicitly
   includes them.
+- Do not use provider COGS to mechanically set customer credits. Provider COGS informs margin checks;
+  customer credits price the completed product action.
 
 The internal operations view should report:
 
