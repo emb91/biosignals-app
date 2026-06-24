@@ -19,17 +19,21 @@ export async function POST(request: Request) {
   if (!ids.length) return NextResponse.json({ error: 'rawUploadIds required' }, { status: 400 });
 
   const admin = createAdminClient();
+  const { data: member } = await admin.from('org_members').select('org_id')
+    .eq('user_id', user.id).maybeSingle<{ org_id: string }>();
+  if (!member?.org_id) return NextResponse.json({ error: 'Workspace not found' }, { status: 409 });
+
   const { data: rows, error } = await admin.from('raw_uploads')
     .select('id, job_title, company_name, email')
-    .eq('user_id', user.id).in('id', ids).eq('status', 'awaiting_triage');
+    .eq('user_id', user.id)
+    .eq('org_id', member.org_id)
+    .in('id', ids)
+    .eq('status', 'awaiting_triage');
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   if (!rows?.length) return NextResponse.json({ error: 'No records are awaiting triage' }, { status: 404 });
   const estimate = { eligibleRecords: rows.length, estimatedCredits: rows.length * 0.1 };
   if (!body.confirm) return NextResponse.json({ preflight: estimate });
 
-  const { data: member } = await admin.from('org_members').select('org_id')
-    .eq('user_id', user.id).maybeSingle<{ org_id: string }>();
-  if (!member?.org_id) return NextResponse.json({ error: 'Workspace not found' }, { status: 409 });
   const reservation = await reserveCredits({
     orgId: member.org_id,
     userId: user.id,
@@ -56,7 +60,7 @@ export async function POST(request: Request) {
         triage_version: result.version ?? TRIAGE_VERSION,
         triage_scored_at: now,
         status: 'awaiting_enrichment',
-      }).eq('id', row.id);
+      }).eq('id', row.id).eq('org_id', member.org_id);
     }
     const completed = rows.filter((row) => results.has(row.id as string)).length;
     await settleCredits(reservation.transactionId, completed * 0.1);
