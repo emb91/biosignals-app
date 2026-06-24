@@ -31,7 +31,7 @@ import type { ConferencePlatform } from './adapters/types';
  *               eventId is an opaque per-edition number, not derivable); these
  *               are left unchanged and surfaced for manual re-seeding.
  */
-export type RefreshStrategy = 'templated' | 'stable' | 'manual';
+export type RefreshStrategy = 'templated' | 'stable' | 'harvester' | 'manual';
 
 export function refreshStrategyForPlatform(platform: ConferencePlatform | string): RefreshStrategy {
   switch (platform) {
@@ -41,11 +41,54 @@ export function refreshStrategyForPlatform(platform: ConferencePlatform | string
     case 'terrapinn':
     case 'informa':
       return 'stable';
+    case 'conference_harvester':
+      return 'harvester';
     default:
-      // a2z, spargo, conference_harvester, swapcard, abstractsonline, and any
-      // future platform default to manual until a derivation is proven for them.
+      // a2z, spargo, swapcard, abstractsonline, and any future platform default to
+      // manual until a derivation is proven for them.
       return 'manual';
   }
+}
+
+/**
+ * Extract the Conference Harvester EventKey from a row's `exhibitor_source_url`
+ * (a full `…/index.asp?EventKey=NAKXYFLC` URL, or the bare key). Mirrors the
+ * adapter's EventKey parse. Returns null when no key is present.
+ */
+export function harvesterEventKey(sourceKey: string | null | undefined): string | null {
+  if (!sourceKey) return null;
+  const m = sourceKey.match(/EventKey=([A-Z0-9]+)/i);
+  if (m) return m[1];
+  if (/^[A-Z0-9]+$/i.test(sourceKey.trim())) return sourceKey.trim();
+  return null;
+}
+
+/** The Conference Harvester floorplan index URL for an EventKey. */
+export function harvesterIndexUrl(eventKey: string): string {
+  return `https://www.conferenceharvester.com/floorplan/v2/index.asp?EventKey=${encodeURIComponent(eventKey)}`;
+}
+
+/**
+ * Parse EventID + EventClientID out of a Conference Harvester index page's inline
+ * JS (`data: { EventID : 25702, EventClientID : 272, ... }`). Pure mirror of the
+ * adapter's `fetchHarvesterEventIds` scrape, so it's unit-testable.
+ *
+ * IMPORTANT LIMITATION (why harvester refresh is best-effort): the EventKey is the
+ * opaque per-instance handle in the URL. This refresh re-scrapes the index page
+ * for the row's EXISTING EventKey and picks up new EventID/EventClientID — which
+ * works IFF the show reuses its EventKey across editions (the floorplan rolls over
+ * in place). If a society mints a NEW EventKey each year, the old key's index page
+ * won't reflect the new edition, so the row stays unresolved and needs a manual
+ * re-seed (or, later, scraping the society's own "current floorplan" link). We
+ * can only confirm which behavior applies once a next edition actually publishes.
+ */
+export function parseHarvesterEventIds(html: string): {
+  eventId: string | null;
+  eventClientId: string | null;
+} {
+  const eventId = html.match(/EventID\s*:\s*(\d+)/)?.[1] ?? null;
+  const eventClientId = html.match(/EventClientID\s*:\s*(\d+)/)?.[1] ?? null;
+  return { eventId, eventClientId };
 }
 
 /**

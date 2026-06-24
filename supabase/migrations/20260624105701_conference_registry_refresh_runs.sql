@@ -1,16 +1,15 @@
--- Conference registry-refresh monitor — run log (+ optional rotation column).
+-- Conference registry-refresh monitor — run log + rotation column.
 --
--- *** NOT APPLIED *** — created for human review. A second agent is concurrently
--- touching the same DB, so this build does NOT apply migrations or write schema.
--- Apply via the Supabase MCP after review.
+-- Applied via Supabase MCP (remote version 20260624105701); this local filename
+-- matches that version. Additive only.
 --
 -- The registry-refresh cron (app/api/cron/conference-registry-refresh) keeps the
 -- `conferences` table pointed at each recurring show's LIVE edition. It logs each
 -- run to this table, mirroring the per-signal *_sync_runs pattern
 -- (conference_exhibitor_sync_runs, conference_appearance_sync_runs,
--- conference_social_sync_runs). The sync's run-row insert/update is best-effort:
--- until this is applied the cron still runs and returns its structured result;
--- it just can't persist the run row.
+-- conference_social_sync_runs). `conferences.last_refreshed_at` is the dedicated
+-- rotation cursor so the bounded batch walks the whole registry (every checked
+-- row is stamped, so manual/unresolved rows don't jam the batch).
 
 create table if not exists conference_registry_refresh_runs (
   id uuid primary key default gen_random_uuid(),

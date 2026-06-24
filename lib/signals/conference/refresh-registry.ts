@@ -28,9 +28,12 @@ import { conferenceFetch } from './fetch';
 import {
   bumpYearToken,
   extractEditionDates,
+  harvesterEventKey,
+  harvesterIndexUrl,
   looksLikeLiveEdition,
   mapYourShowProbeUrl,
   nextEditionSourceKey,
+  parseHarvesterEventIds,
   refreshStrategyForPlatform,
   smallWorldLabsProbeUrl,
 } from './registry-refresh-helpers';
@@ -143,6 +146,43 @@ async function resolveStableEdition(
   return { patch };
 }
 
+/**
+ * Resolve a CONFERENCE HARVESTER row by re-scraping its floorplan index page for
+ * the row's existing EventKey and refreshing the derived EventID/EventClientID
+ * (and dates) into the row when they've changed — i.e. when the society rolled the
+ * floorplan over to a new edition AT THE SAME EventKey. Returns null when nothing
+ * changed (no-op) or the index can't be read. See parseHarvesterEventIds for the
+ * caveat: a brand-new EventKey per edition is NOT caught here (stays unresolved).
+ */
+async function resolveHarvesterEdition(
+  conf: ConferenceRow,
+): Promise<{ patch: Record<string, unknown> } | null> {
+  const eventKey = harvesterEventKey(conf.exhibitor_source_url);
+  if (!eventKey) return null;
+  const res = await conferenceFetch(harvesterIndexUrl(eventKey), { redirect: 'follow' });
+  if (!res.ok) return null;
+  const body = await res.text();
+  const { eventId, eventClientId } = parseHarvesterEventIds(body);
+  if (!eventId || !eventClientId) return null;
+
+  const currentId =
+    conf.platform_params?.eventId != null ? String(conf.platform_params.eventId) : null;
+  const currentClientId =
+    conf.platform_params?.eventClientId != null ? String(conf.platform_params.eventClientId) : null;
+
+  const patch: Record<string, unknown> = {};
+  if (eventId !== currentId || eventClientId !== currentClientId) {
+    // Keep ids as strings to match the seed convention; preserve any other params.
+    patch.platform_params = { ...(conf.platform_params ?? {}), eventId, eventClientId };
+  }
+  const dates = extractEditionDates(body);
+  if (dates.startDate && dates.startDate !== conf.start_date) patch.start_date = dates.startDate;
+  if (dates.endDate && dates.endDate !== conf.end_date) patch.end_date = dates.endDate;
+
+  if (Object.keys(patch).length === 0) return null;
+  return { patch };
+}
+
 export async function refreshConferenceRegistry(params: {
   admin: Admin;
   /** Restrict to specific conferences (else a rotating batch of registry rows). */
@@ -166,14 +206,13 @@ export async function refreshConferenceRegistry(params: {
     );
   if (params.conferenceIds?.length) {
     query = query.in('id', params.conferenceIds);
-  } else {
-    // Bound per-run work so the cron can't time out as the registry grows. There's
-    // no dedicated last_refreshed_at column yet (see the proposed migration), so we
-    // rotate on updated_at — least-recently-touched first — and cap the batch. The
-    // monthly schedule walks the whole registry over runs. Mirrors the
-    // last_polled_at rotation in sync-conference-delta.ts.
+    // Bound per-run work so the cron can't time out as the registry grows. Rotate
+    // on the dedicated last_refreshed_at cursor — least-recently-refreshed first
+    // (nulls, i.e. never-refreshed rows, first) — and cap the batch. EVERY checked
+    // row is stamped below (even manual/unresolved ones), so the batch always
+    // advances and the monthly schedule walks the whole registry over runs.
     query = query
-      .order('updated_at', { ascending: true, nullsFirst: true })
+      .order('last_refreshed_at', { ascending: true, nullsFirst: true })
       .limit(params.limit ?? REGISTRY_REFRESH_BATCH);
   }
   const { data: confs, error } = await query;
@@ -186,6 +225,22 @@ export async function refreshConferenceRegistry(params: {
     failures: [],
   };
   const now = new Date();
+  const nowIso = now.toISOString();
+
+  // Stamp the rotation cursor on a checked row. Called for EVERY row (resolved,
+  // unresolved, manual, or failed) so the bounded batch always advances and the
+  // same rows don't get re-picked next run. Best-effort: a stamp failure must not
+  // mask the row's real outcome.
+  const stamp = async (id: string, extra?: Record<string, unknown>) => {
+    try {
+      await admin
+        .from('conferences')
+        .update({ last_refreshed_at: nowIso, ...extra })
+        .eq('id', id);
+    } catch {
+      /* non-fatal */
+    }
+  };
 
   for (const conf of (confs ?? []) as ConferenceRow[]) {
     result.rows_checked += 1;
@@ -198,35 +253,45 @@ export async function refreshConferenceRegistry(params: {
           platform: conf.platform,
           reason: 'no programmatic edition signal for platform',
         });
+        await stamp(conf.id);
         continue;
       }
 
       const resolved =
         strategy === 'templated'
           ? await resolveTemplatedEdition(conf)
-          : await resolveStableEdition(conf);
+          : strategy === 'harvester'
+            ? await resolveHarvesterEdition(conf)
+            : await resolveStableEdition(conf);
 
       if (!resolved) {
+        const reason =
+          strategy === 'templated'
+            ? 'next edition not live yet'
+            : strategy === 'harvester'
+              ? 'no new EventKeys on index page (same edition, or new EventKey not yet linked)'
+              : 'no confident edition date on page';
         result.rows_unresolved.push({
           conference_id: conf.id,
           name: conf.name,
           platform: conf.platform,
-          reason:
-            strategy === 'templated'
-              ? 'next edition not live yet'
-              : 'no confident edition date on page',
+          reason,
         });
+        await stamp(conf.id);
         continue;
       }
 
+      // Fold the rotation stamp into the same write as the edition patch.
       const { error: upErr } = await admin
         .from('conferences')
-        .update({ ...resolved.patch, updated_at: now.toISOString() })
+        .update({ ...resolved.patch, updated_at: nowIso, last_refreshed_at: nowIso })
         .eq('id', conf.id);
       if (upErr) throw new Error(`update: ${upErr.message}`);
       result.rows_refreshed += 1;
     } catch (error) {
       result.failures.push({ conference_id: conf.id, error: messageFromUnknown(error) });
+      // Stamp even on failure so a persistently-failing row can't jam the batch.
+      await stamp(conf.id);
     }
   }
 
