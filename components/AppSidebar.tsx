@@ -814,16 +814,16 @@ function AppSidebarInner({ setupFlowOnly = false }: AppSidebarProps) {
                 aria-label="Expand sidebar"
                 title="Expand sidebar"
               >
-                <Logo variant="icon" badge="navy" size={22} />
+                <Logo variant="icon" badge="navy" size={33} />
               </button>
             ) : (
-              <Logo variant="icon" badge="navy" size={22} />
+              <Logo variant="icon" badge="navy" size={33} />
             )}
           </div>
         ) : (
           <div className="flex items-center gap-2 border-b border-[rgba(13,53,71,0.08)] px-5 py-[1.125rem]">
             <div className="flex min-w-0 flex-1 items-center gap-2 py-1">
-              <Logo variant="icon" badge="navy" size={22} className="shrink-0" />
+              <Logo variant="icon" badge="navy" size={33} className="shrink-0" />
               <span className="min-w-0 truncate text-[18px] font-medium tracking-tight text-arcova-navy" style={{ fontFamily: "var(--font-quicksand), system-ui, sans-serif" }}>arcova</span>
             </div>
           {fullWidthSidebar && !isHoverExpanded && (
